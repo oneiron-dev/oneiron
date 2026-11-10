@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
-import { PublicHttpClient, credentialParts } from "./support/clients.ts";
+import { PublicHttpClient, PublicHttpError, credentialParts } from "./support/clients.ts";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiStream, openaiText } from "./support/providers.ts";
@@ -296,7 +296,10 @@ suite.test(test, "OPERATIONS-01", "Typed diagnostics and scoped Coach repair sho
   const posted = await engine.client.call("tasks.create", {
     spec: { title: request }, label: "operations-01", assignee: { agent_def: { agent_def_ref: agentDef } },
     intent_key: "operations-01/post",
-    brief: { schema: 1, type_ref: tree.root, objective: request, intent: { need: request, care: "light" },
+    // A brief's type_ref is an EntityId; the tree's root stamp names its node "root". An
+    // unplaced id with the live tree version lets the engine place the task itself.
+    brief: { schema: 1, type_ref: { node_id: secretHex(16), tree_version: tree.tree_version },
+      objective: request, intent: { need: request, care: "light" },
       success: { question: "Is the harbour schedule repaired?",
         criteria: { yes_if_all: [{ text: "The schedule is repaired after the owner confirms." }] } },
       settled: [], escalation: { to: { people: [owner] }, triggers: [], default: "proceed", reversibility: "reversible_read" } },
@@ -537,7 +540,13 @@ suite.test(test, "OPERATIONS-03", "Feedback with and without vault text should w
   await engine.client.call("vault.reports.route",
     { subject_ref: subject, route: { destination: "publisher", publisher_ref: publisher } });
   const report: FacadeInput<"report"> = { subject_ref: subject, category: "execution_lapse", note: quotedNote };
-  const first = await engine.client.call("report", report);
+  // Diagnostic: a refused report keeps its typed error in the failure message.
+  const first = await engine.client.call("report", report).catch((error: unknown) => {
+    if (error instanceof PublicHttpError) {
+      throw new Error(`report answered HTTP ${error.reply.status} ${error.error?.code ?? "no code"}: ${error.error?.message ?? "no message"}`);
+    }
+    throw error;
+  });
   expect(first).toMatchObject({ already_submitted: false, disclosure: "needs_approval",
     route: { destination: "publisher", publisher_ref: publisher } });
   // The same actor, subject and category through the CLI is the same issue;
@@ -913,6 +922,9 @@ suite.test(test, "OPERATIONS-06", "Surface health burst and queue recovery shoul
   expect((recovered[0]!.state as { result_digest?: string }).result_digest).toBe(putDigest);
   expect(recovered[2]).toMatchObject({ verb: "ai.steps.submit" });
   expect((recovered[2]!.state as { reason?: string }).reason).toMatch(/^host restarted before settlement was observed/);
+  // RED since 2026-11-10 (run on main e79eb76df3e): engine defect [E2E-KV-GET-PREFILTER].
+  // The committed put reads back null, because vault.kv.get filters its head through a
+  // generic claim admission that always excludes core.memory.key_value.
   expect((await engine.client.call("vault.kv.get", address))?.value).toEqual(accepted);
   expect(await engine.client.call("vault.wire_health.thresholds.get", {})).toEqual(low);
   expect(providers.seenFixtureCalls).toHaveLength(1);
