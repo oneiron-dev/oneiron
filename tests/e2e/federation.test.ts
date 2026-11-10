@@ -833,7 +833,9 @@ async function fed04Refusal(attempt: Promise<unknown>, engine: EngineFixture, re
       if (!receipt) throw new Error("Refusal receipt was not readable by the owner");
       expect(receipt.receipt_ref).toBe(receiptRef);
       expect(receipt.transport).toBe("http_facade");
-      expect(receipt.outcome).toEqual({ refused: { code: error.error?.code } });
+      const refusedCode = error.error?.code;
+      if (!refusedCode) throw new Error("Refusal carries no error code");
+      expect(receipt.outcome).toEqual({ refused: { code: refusedCode } });
     }
     return error;
   }
@@ -1284,7 +1286,9 @@ async function fed07Refusal(attempt: Promise<unknown>, engine: EngineFixture): P
     if (!receipt) throw new Error("Refusal receipt was not readable by the owner");
     expect(receipt.receipt_ref).toBe(receiptRef);
     expect(receipt.transport).toBe("http_facade");
-    expect(receipt.outcome).toEqual({ refused: { code: error.error?.code } });
+    const refusedCode = error.error?.code;
+    if (!refusedCode) throw new Error("Refusal carries no error code");
+    expect(receipt.outcome).toEqual({ refused: { code: refusedCode } });
     return error;
   }
   throw new Error("expected a public refusal; the call succeeded");
