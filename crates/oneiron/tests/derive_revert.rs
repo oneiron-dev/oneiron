@@ -162,11 +162,13 @@ fn an_item_changed_since_is_left_alone_and_listed() {
 #[test]
 fn the_owner_reverts_any_batch() {
     let fixture = fixture();
-    let (reverted, _) = revert_as_owner(&fixture.vault, fixture.batch)
+    let (reverted, left) = revert_as_owner(&fixture.vault, fixture.batch)
         .expect("revert")
         .expect("the owner may revert any batch");
+    assert!(left.is_empty(), "{left:?}");
     assert_eq!(reverted, vec!["coffee".to_owned(), "tea".to_owned()]);
     assert!(!active(&fixture, fixture.tea));
+    assert!(!active(&fixture, fixture.coffee));
 }
 
 #[test]
