@@ -13,7 +13,8 @@ use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{
-    Claim, Derived, Named, batches_of, commit_with_sources, source_version,
+    Claim, Derived, Named, Supersede, batches_of, claim_lifecycle, commit, commit_with_sources,
+    source_version,
 };
 use oneiron::test_doors::steward::dreamer;
 use oneiron::{EdgeActorClass, EntityId, Vault};
@@ -128,4 +129,68 @@ fn a_batch_citing_a_source_without_its_version_is_malformed() {
         Vec::new(),
     )
     .expect_err("a cited source with no version is a malformed batch");
+}
+
+#[test]
+fn a_local_name_never_stands_for_a_row_its_item_did_not_create() {
+    let fixture = fixture();
+    let seeded = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-seed",
+        &[
+            claim(&fixture),
+            Derived::Claim(Claim {
+                local: "older",
+                predicate: "preference.coffee",
+                subject: Named::Stored(fixture.person),
+                value: json!("a black filter coffee"),
+                evidence: vec![Named::Stored(fixture.turn)],
+            }),
+        ],
+    )
+    .expect("commit");
+    assert!(
+        seeded.items.iter().all(|item| item.landed),
+        "both seed claims land: {:?}",
+        seeded.items
+    );
+    let stored = seeded.items[0].rows[0];
+    let older = seeded.items[1].rows[0];
+    let before = batches_of(&fixture.vault, fixture.dreamer).expect("read");
+
+    // The supersession creates no row: its name would stand for `stored`, a
+    // row that was there before the batch, cited with no version.
+    commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-alias",
+        &[
+            Derived::Supersede(Supersede {
+                local: "replace_older",
+                new: Named::Stored(stored),
+                old: Named::Stored(older),
+            }),
+            Derived::Claim(Claim {
+                local: "built_on_the_alias",
+                predicate: "preference.tea",
+                subject: Named::Stored(fixture.person),
+                value: json!("a green tea"),
+                evidence: vec![Named::Local("replace_older")],
+            }),
+        ],
+    )
+    .expect_err("a name of an item that creates no row is a malformed reference");
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, older).expect("read"),
+        Some("active".to_owned()),
+        "the malformed batch lands nothing"
+    );
+    assert_eq!(
+        batches_of(&fixture.vault, fixture.dreamer).expect("read"),
+        before,
+        "no batch is recorded"
+    );
 }
