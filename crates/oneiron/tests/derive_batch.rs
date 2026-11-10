@@ -16,8 +16,8 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derivation_floor::define_agent;
 use oneiron::test_doors::derive::{
-    Claim, Named, batch_items, batches_of, commit_claims, derive_verdict, refusal_receipt,
-    refusal_tokens,
+    Claim, Named, batch_items, batches_of, commit_claims, derive_verdict, grant_core_read,
+    refusal_receipt, refusal_tokens,
 };
 use oneiron::test_doors::steward::{
     STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, dreamer, mark_steward_opt_out,
@@ -139,6 +139,9 @@ fn an_ordinary_agents_batch_meets_the_same_floors() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
     let agent = define_agent(&vault).expect("an agent");
+    // The agent cites a TURN, so it reads it: a batch that cites a source
+    // its actor does not read is aborted by the source recheck.
+    grant_core_read(&vault, agent).expect("the agent's read grant");
     assert_kept_refused_dependent(&vault, agent, EdgeActorClass::Agent);
 }
 
