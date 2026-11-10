@@ -12,6 +12,15 @@ const profile = process.env.E2E_PROFILE === "real-small-model"
 const suite = defineFile(import.meta, { profile, slots: 2 });
 afterAll(suite.flush);
 
+async function withWireReason<T>(label: string, call: Promise<T>): Promise<T> {
+  try { return await call; } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(`${label}: HTTP ${error.reply.status} ${error.error?.code ?? "no-code"}: ${(error.error?.message ?? "").slice(0, 300)}`);
+    }
+    throw error;
+  }
+}
+
 /*
  * Sync and federation. A written case proves exactly the subset its name
  * states, and only when that subset keeps a promise of the planned title
@@ -569,9 +578,9 @@ suite.test(test, "SYNC-05", "Switching a device to sync-all makes every authoriz
   const inventory = await home.client.call("vault.notes.create", { kind: "research", markdown: base });
   const crate = await home.client.call("vault.notes.create", { kind: "research", markdown: otherAllowedBody });
   const scope = await ownerBaseClaimScope(home.client, owner);
-  await home.client.call("vault.claims.upsert", {
+  await withWireReason("SYNC-05 claims.upsert", home.client.call("vault.claims.upsert", {
     predicate, subject_ref: crate.id_hex, value: otherAllowedBody, confidence: 0.9, source: "user_stated", scope,
-  });
+  }));
   const atHome = await sync05Standing(home.client, predicate);
   expect(atHome.count).toBe(1);
   expect(atHome.source).toBe("user_stated");
@@ -824,9 +833,9 @@ suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the
     occurred_at: SYNC07_LEARNED_AT, learned_at: SYNC07_LEARNED_AT,
   });
   expect(shared.claim_short_id.length).toBeGreaterThan(0);
-  const delivery = await engine.client.call("vault.federation.connect.export", {
+  const delivery = await withWireReason("SYNC-07 connect.export", engine.client.call("vault.federation.connect.export", {
     pact: pact.pact, window_key: sync07WindowKey(SYNC07_LEARNED_AT, pact.sharerWorld), world_ref: pact.sharerWorld,
-  });
+  }));
   expect(delivery.body.pact).toBe(pact.pact);
   expect(delivery.body.source_vault).toBe(pact.sharerVault);
   expect(delivery.body.recipient_vault).toBe(pact.receiverVault);
