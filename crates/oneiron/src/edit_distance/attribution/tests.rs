@@ -214,6 +214,36 @@ fn the_evidence_door_refuses_a_subject_that_cannot_act() -> Result<()> {
     Ok(())
 }
 
+// ─── reserved namespace ─────────────────────────────────────────────────
+
+#[test]
+fn public_writes_of_both_cost_predicates_are_reserved() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.reserved")?;
+
+    for subject in [actor, skill] {
+        let mut body = ClaimBody::new(
+            crate::learning::PREDICATE_LEARNING_EDIT_COST,
+            ClaimSubject::Entity(subject),
+            Value::F32(0.0),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.evidence = Some(Value::from("forged"));
+        body.source = Some(ClaimSource::Observed);
+        let error = vault
+            .put_claim(&EntityId::now(), &body, t(80), 80)
+            .expect_err("the generic claim API must refuse a reserved predicate");
+        assert!(
+            matches!(error, Error::Claim(ClaimError::ReservedPredicate { .. })),
+            "typed reserved-namespace rejection, got {error:?}"
+        );
+    }
+    Ok(())
+}
+
 // ─── the Blind Curator audit ────────────────────────────────────────────
 
 #[test]
