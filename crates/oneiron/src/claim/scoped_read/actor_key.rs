@@ -848,13 +848,36 @@ impl ScopedReadActorKey {
         envelope: oneiron_authority::federation::Scope,
         alternatives: &[oneiron_authority::federation::Scope],
     ) -> Self {
-        let mut key = self.within_authority(envelope);
-        key.grant_alternatives = Some(alternatives.iter().map(Self::read_authority).collect());
-        key
+        self.within_authority(envelope)
+            .within_grant_alternatives(alternatives)
+    }
+
+    /// This key's rows held to one of `alternatives` alone, each taken as
+    /// every read door checks a proof of it ([`Self::read_authority`]): a
+    /// live key's agent Grants, or a saved lane's frozen ones (OF-506). It
+    /// only narrows: a key that already holds alternatives keeps each
+    /// pairing of one it held with one of these, met, so a row still lies
+    /// inside one of each. With no alternative it reads nothing.
+    #[must_use]
+    pub(super) fn within_grant_alternatives(mut self, alternatives: &[Scope]) -> Self {
+        let alternatives: Vec<Scope> = alternatives.iter().map(Self::read_authority).collect();
+        self.grant_alternatives = Some(match self.grant_alternatives.take() {
+            Some(held) => held
+                .iter()
+                .flat_map(|kept| {
+                    alternatives
+                        .iter()
+                        .map(move |alternative| kept.meet(alternative))
+                })
+                .collect(),
+            None => alternatives.into(),
+        });
+        self
     }
 
     /// The Scopes a row must lie inside one of, alone, beside this key's own
-    /// ([`Self::within_agent_grants`]); `None` when no agent Grant binds it.
+    /// ([`Self::within_grant_alternatives`]); `None` when no agent Grant
+    /// binds it.
     pub(crate) fn grant_alternatives(&self) -> Option<&[oneiron_authority::federation::Scope]> {
         self.grant_alternatives.as_deref()
     }
