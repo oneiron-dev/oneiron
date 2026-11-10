@@ -1,0 +1,16 @@
+{
+  "name": "vault.runs.parks.release",
+  "description": "The owner releases one parked Dreamer try that waits on an owner act (an executor error or a private other park) against the exact park he read: the same try queues again and its notice is resolved. No retry happens without this release.",
+  "input": "crate::dreamer_runner::ReleaseParkedAttemptRequest",
+  "output": "crate::dreamer_runner::ParkReleaseView",
+  "call": "crate::dreamer_runner::release_parked_attempt_as_owner(memory.vault(), &memory.embedded_owner(\"vault.runs.parks.release\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
