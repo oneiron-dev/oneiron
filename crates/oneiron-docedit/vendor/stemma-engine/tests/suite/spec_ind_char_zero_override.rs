@@ -216,6 +216,7 @@ fn untouched_paragraph_keeps_leftchars_zero_after_unrelated_edit() {
         steps: vec![EditStep::SetRunFormatting {
             block_id: target,
             expect: "Confidential".to_string(),
+            occurrence: None,
             semantic_hash: None,
             marks: InlineMarkSet {
                 bold: true,

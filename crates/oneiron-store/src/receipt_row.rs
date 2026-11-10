@@ -313,6 +313,13 @@ pub enum ReceiptKind {
     /// keeps it, projected once, in its own store under a stable receipt id
     /// its `receipt_ref` names. A status read keeps none.
     TaskLifecycle,
+    /// One override of an engine hold on a run (Fable 5.2 item 2, Engine
+    /// call S65-B-R3): a generic Resume released a budget, fan-out, hook or
+    /// annotation hold that its own signal had not released. It names the
+    /// hold, the run, the actor and the time, written in the override's own
+    /// transaction to its own store; the vault owner's override and the
+    /// engine's internal resumes alike.
+    RunHoldOverride,
 }
 
 impl ReceiptKind {
@@ -333,6 +340,7 @@ impl ReceiptKind {
             Self::Hook => "hook",
             Self::ReferenceRefusal => "reference_refusal",
             Self::TaskLifecycle => "task_lifecycle",
+            Self::RunHoldOverride => "run_hold_override",
         }
     }
 
@@ -353,6 +361,7 @@ impl ReceiptKind {
             "hook" => Some(Self::Hook),
             "reference_refusal" => Some(Self::ReferenceRefusal),
             "task_lifecycle" => Some(Self::TaskLifecycle),
+            "run_hold_override" => Some(Self::RunHoldOverride),
             _ => None,
         }
     }

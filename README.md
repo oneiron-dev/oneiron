@@ -181,6 +181,7 @@ to its modules and source files. It does not cover the applications under `apps/
 | [oneiron-guest](./crates/oneiron-guest) | Linux sandbox guest agent and conformance adapter. |
 | [oneiron-sandbox-contract](./crates/oneiron-sandbox-contract) | Shared host/guest sandbox protocol rules. |
 | [oneiron-vault-contract](./crates/oneiron-vault-contract) | Supervisor-to-vault process protocol and limits. |
+| [oneiron-vm-outbox](./crates/oneiron-vm-outbox) | A vault VM's root outbox companion binary. |
 | [oneiron-bench](./crates/oneiron-bench) | Benchmark and evaluation harness. |
 | [oneiron-macos](./apps/macos/src-tauri) | macOS menu-bar voice recorder embedding the vault. |
 
