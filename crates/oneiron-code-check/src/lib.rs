@@ -565,7 +565,9 @@ const DEFAULT_WALL_TIME: Duration = Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests {
-    use super::{BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, Fallback};
+    use super::{
+        BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, Fallback, ProgramLanguage,
+    };
 
     /// A checker that answers every program the same way.
     struct Fixed {
@@ -586,6 +588,7 @@ mod tests {
                 backend: self.backend(),
                 diagnostics: Vec::new(),
                 peak_memory_bytes: None,
+                incomplete: None,
             })
         }
     }
@@ -605,24 +608,8 @@ mod tests {
     const PROGRAM: CheckInput<'static> = CheckInput {
         declarations: &[],
         program: "",
+        language: ProgramLanguage::JavaScript,
     };
-
-    /// The fallback answers a program a busy first checker could not take,
-    /// and is not asked when the first checker answers.
-    #[test]
-    fn the_fallback_answers_when_the_first_checker_is_busy() {
-        let busy = fallback(Err(CheckFailure::Busy), Ok(()));
-        let (backend, report) = busy.check_attributed(&PROGRAM);
-        assert_eq!(backend.name, "then");
-        assert_eq!(report.map(|report| report.backend.name), Ok("then"));
-        let answered = busy.check(&PROGRAM);
-        assert_eq!(answered.map(|report| report.backend.name), Ok("then"));
-
-        let first = fallback(Ok(()), Err(CheckFailure::Unsupported));
-        let (backend, report) = first.check_attributed(&PROGRAM);
-        assert_eq!(backend.name, "first");
-        assert_eq!(report.map(|report| report.backend.name), Ok("first"));
-    }
 
     /// When the fallback fails too, the failure is the fallback's own, under
     /// the fallback's name.

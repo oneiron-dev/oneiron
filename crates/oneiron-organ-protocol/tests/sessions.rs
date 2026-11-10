@@ -1,7 +1,7 @@
 //! The version handshake of the asks design (ARCH-0075
-//! `#organ-host-design-asks`): a session speaks the lower minor of both
-//! sides, so a 1.1 organ under an engine that speaks 1.0 sends no ask; its
-//! verb is told `unsupported` and the call goes on.
+//! `#organ-host-design-asks`). Protocol 2.0 (5b61e287afc, #4328) is a major
+//! bump with asks built in, and it refuses a 1.x engine at hello: such an
+//! engine gets no session, so it is never sent an ask.
 #![cfg(unix)]
 
 use std::os::unix::net::UnixStream;
@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::thread;
 
 use oneiron_organ_protocol::{
-    Answer, AskCode, Call, CallContext, DEFAULT_FRAME_LIMIT, FromOrgan, Hello, Limits, Organ,
-    OrganError, OrganIdentity, Outcome, PROTOCOL, ProtocolVersion, ToOrgan, VerbSpec, recv_frame,
-    send_frame, serve_stream,
+    Answer, CallContext, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hello, Limits, Organ,
+    OrganError, OrganIdentity, PROTOCOL, ProtocolVersion, ToOrgan, Value, VerbSpec, recv_frame,
+    send_frame, serve_stream, to_value,
 };
 
 /// Asks once and reports the refusal code it got.
@@ -34,9 +34,9 @@ impl Organ for Asking {
     }
 
     fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
-        let report = match call.ask("anything", rmpv::Value::Nil) {
+        let report = match call.ask("anything", Value::Nil) {
             Ok(_) => "answered".into(),
-            Err(refusal) => rmpv::ext::to_value(refusal.code).unwrap_or(rmpv::Value::Nil),
+            Err(refusal) => to_value(&refusal.code).unwrap_or(Value::Nil),
         };
         Ok(Answer {
             report,
@@ -63,35 +63,18 @@ fn a_1_1_organ_under_a_1_0_engine_sends_no_ask() {
         limits,
     });
     send_frame(&engine, &hello, &[], DEFAULT_FRAME_LIMIT).expect("hello");
-    let (ack, _) = recv_frame::<FromOrgan>(&engine, DEFAULT_FRAME_LIMIT).expect("ack");
-    let FromOrgan::HelloAck(ack) = ack else {
-        panic!("not an ack: {ack:?}");
-    };
-    // The organ offers its own version; the session is the lower one.
-    assert_eq!(ack.protocol, PROTOCOL);
-    assert_eq!(PROTOCOL.session(old), Some(old));
-    let call = ToOrgan::Call(Call {
-        id: 1,
-        verb: "asking.ask".into(),
-        schema: 1,
-        args: rmpv::Value::Nil,
-        body: None,
-        inputs: Vec::new(),
-        deadline_ms: 10_000,
-    });
-    send_frame(&engine, &call, &[], DEFAULT_FRAME_LIMIT).expect("call");
-    // The very next frame is the reply: no ask came first.
-    let (next, _) = recv_frame::<FromOrgan>(&engine, DEFAULT_FRAME_LIMIT).expect("reply");
-    let FromOrgan::Reply(reply) = next else {
-        panic!("a 1.0 session got {next:?}");
-    };
-    let Outcome::Proposal(proposal) = reply.outcome else {
-        panic!("the call failed: {:?}", reply.outcome);
-    };
-    assert_eq!(
-        proposal.report,
-        rmpv::ext::to_value(AskCode::Unsupported).expect("code")
-    );
+    // Protocol 2.0 (5b61e287afc) refuses a 1.x engine at hello: no ack, no
+    // session, so no call is served and no ask is ever sent.
+    let ack = recv_frame::<FromOrgan>(&engine, DEFAULT_FRAME_LIMIT);
+    assert!(matches!(&ack, Err(FrameError::Closed)), "{ack:?}");
+    assert_eq!(PROTOCOL.session(old), None);
     drop(engine);
-    served.join().expect("served").expect("clean end");
+    let served = served.join().expect("served");
+    assert!(
+        matches!(
+            &served,
+            Err(FrameError::Protocol("the engine speaks another major"))
+        ),
+        "{served:?}"
+    );
 }
