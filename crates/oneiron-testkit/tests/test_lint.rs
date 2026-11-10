@@ -42,7 +42,10 @@ fn the_quarantine_and_the_pr_nightly_and_quarantine_profiles_agree() {
 fn a_quarantine_entry_may_stay_at_most_seven_days() {
     let added = Date::parse("2026-11-10").expect("a date");
     let expires = Date::parse("2026-11-17").expect("a date");
-    assert_eq!(expires.days() - added.days(), quarantine::MAX_QUARANTINE_DAYS);
+    assert_eq!(
+        expires.days() - added.days(),
+        quarantine::MAX_QUARANTINE_DAYS
+    );
     assert_eq!(Date::parse("1970-01-01").map(Date::days), Some(0));
     assert_eq!(Date::parse("2026-13-01"), None);
     assert_eq!(quarantine::union(&[]), "none()");

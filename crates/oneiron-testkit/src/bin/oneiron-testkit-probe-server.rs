@@ -12,8 +12,13 @@ fn main() -> std::io::Result<()> {
     use std::os::unix::net::UnixDatagram;
 
     let pid = std::process::id();
-    let for_us = std::env::var("LISTEN_PID").ok().and_then(|value| value.parse::<u32>().ok()) == Some(pid);
-    let count = std::env::var("LISTEN_FDS").ok().and_then(|value| value.parse::<u32>().ok());
+    let for_us = std::env::var("LISTEN_PID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        == Some(pid);
+    let count = std::env::var("LISTEN_FDS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
     if !for_us || count != Some(1) {
         eprintln!("oneiron-testkit-probe-server: no activated socket for pid {pid}");
         std::process::exit(2);

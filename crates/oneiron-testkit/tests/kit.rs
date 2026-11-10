@@ -4,7 +4,9 @@
 use std::cell::Cell;
 
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::store::embedding::{Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload};
+use oneiron::store::embedding::{
+    Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload,
+};
 use oneiron::{EntityId, TimeRange};
 use oneiron_testkit::fixture::SeedError;
 use oneiron_testkit::{FAKE_EPOCH, FakeClock, FixtureVault, HashingEmbedder, fixture_cache};
@@ -62,17 +64,29 @@ fn a_vault_on_the_fake_clock_records_the_fake_time() {
 #[test]
 fn each_test_gets_its_own_copy_of_a_fixture_seeded_once() {
     let cache = fixture_cache!();
-    let person = EntityId::from_bytes([0x71, 0, 0, 0, 0, 0, 0x71, 0, 0x80, 0, 0, 0, 0, 0, 0, 1]).expect("an id");
+    let person = EntityId::from_bytes([0x71, 0, 0, 0, 0, 0, 0x71, 0, 0x80, 0, 0, 0, 0, 0, 0, 1])
+        .expect("an id");
     let seeded = Cell::new(0);
     let seed = |vault: &oneiron::Vault, clock: &FakeClock| -> Result<(), SeedError> {
         seeded.set(seeded.get() + 1);
         let now = clock.advance(10);
-        vault.put_entity(&person, ENTITY_TYPE_PERSON, TimeRange { start: now, end: now }, 1, b"Ada")?;
+        vault.put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            1,
+            b"Ada",
+        )?;
         Ok(())
     };
     let fixture = FixtureVault::build(&cache, "kit-one-person", seed).expect("build");
-    let again = FixtureVault::build(&cache, "kit-one-person", |_, _| panic!("a built fixture is not seeded again"))
-        .expect("reuse");
+    let again = FixtureVault::build(&cache, "kit-one-person", |_, _| {
+        panic!("a built fixture is not seeded again")
+    })
+    .expect("reuse");
     assert_eq!(fixture, again);
     assert!(seeded.get() <= 1, "seeded at most once in this process");
     assert_eq!(fixture.ended_at(), FAKE_EPOCH + 10);
@@ -81,20 +95,33 @@ fn each_test_gets_its_own_copy_of_a_fixture_seeded_once() {
     let second = fixture.copy().expect("copy");
     assert_ne!(first.path(), second.path());
     assert_eq!(first.clock().now(), FAKE_EPOCH + 10);
-    let other = EntityId::from_bytes([0x71, 0, 0, 0, 0, 0, 0x71, 0, 0x80, 0, 0, 0, 0, 0, 0, 2]).expect("an id");
+    let other = EntityId::from_bytes([0x71, 0, 0, 0, 0, 0, 0x71, 0, 0x80, 0, 0, 0, 0, 0, 0, 2])
+        .expect("an id");
     {
         let vault = first.open().expect("open the first copy");
         assert_eq!(vault.get(&person).expect("read"), Some(b"Ada".to_vec()));
         vault
-            .put_entity(&other, ENTITY_TYPE_PERSON, TimeRange { start: 1, end: 1 }, 1, b"Bo")
+            .put_entity(
+                &other,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"Bo",
+            )
             .expect("write to the first copy");
     }
     // The existing-only door binds the root by descriptor, which only Linux
     // offers; elsewhere the engine refuses it by design.
     #[cfg(target_os = "linux")]
-    let vault = second.open_existing().expect("open the second copy, existing only");
+    let vault = second
+        .open_existing()
+        .expect("open the second copy, existing only");
     #[cfg(not(target_os = "linux"))]
     let vault = second.open().expect("open the second copy");
     assert_eq!(vault.get(&person).expect("read"), Some(b"Ada".to_vec()));
-    assert_eq!(vault.get(&other).expect("read"), None, "copies share nothing");
+    assert_eq!(
+        vault.get(&other).expect("read"),
+        None,
+        "copies share nothing"
+    );
 }

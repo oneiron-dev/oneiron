@@ -10,7 +10,8 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EdgeActorClass, EntityId, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EdgeActorClass, EntityId, Vault,
+    VaultConfig,
 };
 
 /// Unique lexical marker, one analyzer token (lowercase alnum, no separators).

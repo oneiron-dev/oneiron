@@ -58,7 +58,11 @@ impl WaitingTest {
         match tail.and_then(|inside| inside.split_once('/')) {
             // crates/<c>/tests/<stem>.rs or crates/<c>/tests/<binary>/...
             Some(("tests", rest)) => {
-                let binary = rest.split('/').next().unwrap_or(rest).trim_end_matches(".rs");
+                let binary = rest
+                    .split('/')
+                    .next()
+                    .unwrap_or(rest)
+                    .trim_end_matches(".rs");
                 format!(
                     "(package(={}) & binary(={binary}) & test(/(^|::){name}/))",
                     self.package
@@ -66,7 +70,11 @@ impl WaitingTest {
             }
             // crates/<c>/src/<module>[/...]: the test sits under its top module.
             Some(("src", rest)) if rest.contains('/') || !matches!(rest, "lib.rs" | "main.rs") => {
-                let module = rest.split('/').next().unwrap_or(rest).trim_end_matches(".rs");
+                let module = rest
+                    .split('/')
+                    .next()
+                    .unwrap_or(rest)
+                    .trim_end_matches(".rs");
                 format!(
                     "(package(={}) & test(/^{module}::(.+::)?{name}/))",
                     self.package
@@ -115,7 +123,8 @@ impl PendingDoors {
     /// # Errors
     /// The register cannot be read, or a line is malformed.
     pub fn read(path: &Path, today: Date) -> Result<Self, String> {
-        let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        let text =
+            fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
         Self::parse(&text, today)
     }
 
@@ -131,13 +140,14 @@ impl PendingDoors {
                 continue;
             }
             let at = index + 1;
-            let value: serde_json::Value =
-                serde_json::from_str(line).map_err(|error| format!("register line {at}: {error}"))?;
+            let value: serde_json::Value = serde_json::from_str(line)
+                .map_err(|error| format!("register line {at}: {error}"))?;
             let text_of = |name: &str| value.get(name).and_then(serde_json::Value::as_str);
             let (Some(test), Some(file)) = (text_of("test"), text_of("file")) else {
                 continue; // a door row with no waiting test of its own
             };
-            let package = text_of("crate").ok_or_else(|| format!("register line {at}: no crate"))?;
+            let package =
+                text_of("crate").ok_or_else(|| format!("register line {at}: no crate"))?;
             if package == "e2e" {
                 continue; // an E2E case: the E2E runner's to skip, not nextest's
             }

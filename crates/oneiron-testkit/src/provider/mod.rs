@@ -48,10 +48,12 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use serde_json::{Value, json};
 
 pub use self::backend::ScriptedBackend;
-pub use self::digest::{NESTED_PROMPT_FIELDS, PROMPT_FIELDS, PromptDigest, canonical_json, prompt_of};
+pub use self::digest::{
+    NESTED_PROMPT_FIELDS, PROMPT_FIELDS, PromptDigest, canonical_json, prompt_of,
+};
+use self::script::{BarrierState, Script, barrier_map, lock};
 pub use self::script::{ProviderMismatch, SeenCall};
 pub use self::wire::{Protocol, Usage};
-use self::script::{BarrierState, Script, barrier_map, lock};
 use crate::embedder::HashingEmbedder;
 
 /// The call mode a step expects.
@@ -379,12 +381,20 @@ fn answer(shared: &Shared, request: &http::Request, stream: &mut TcpStream) {
         );
         shared.script.violate(violation.clone());
         shared.script.see(seen);
-        let body = wire::error_body(Protocol::OpenAi, 415, &format!("oneiron-testkit: {violation}"));
+        let body = wire::error_body(
+            Protocol::OpenAi,
+            415,
+            &format!("oneiron-testkit: {violation}"),
+        );
         let _ = http::write_body(stream, 415, "application/json", body.to_string().as_bytes());
         return;
     }
     seen.body = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
-    seen.model = seen.body.get("model").and_then(Value::as_str).map(str::to_owned);
+    seen.model = seen
+        .body
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     seen.streamed = seen.body.get("stream").and_then(Value::as_bool) == Some(true);
     let result = match (request.method.as_str(), protocol_of(&request.path)) {
         ("POST", Some(protocol)) => chat(shared, protocol, &mut seen, stream),
@@ -421,9 +431,10 @@ fn chat(
     stream: &mut TcpStream,
 ) -> io::Result<()> {
     if seen.body.is_null() {
-        shared
-            .script
-            .violate(format!("{} {}: the body is not JSON", seen.method, seen.path));
+        shared.script.violate(format!(
+            "{} {}: the body is not JSON",
+            seen.method, seen.path
+        ));
         return refuse(stream, protocol, "the request body is not JSON");
     }
     let body = seen.body.clone();
@@ -447,7 +458,12 @@ fn chat(
     reply(&step, protocol, seen, stream)
 }
 
-fn reply(step: &Step, protocol: Protocol, seen: &SeenCall, stream: &mut TcpStream) -> io::Result<()> {
+fn reply(
+    step: &Step,
+    protocol: Protocol,
+    seen: &SeenCall,
+    stream: &mut TcpStream,
+) -> io::Result<()> {
     let id = format!("testkit-{}", step.id);
     let model = step
         .model
@@ -461,9 +477,17 @@ fn reply(step: &Step, protocol: Protocol, seen: &SeenCall, stream: &mut TcpStrea
             let body = wire::error_body(
                 protocol,
                 *status,
-                &format!("oneiron-testkit: scripted status {status} for step {:?}", step.id),
+                &format!(
+                    "oneiron-testkit: scripted status {status} for step {:?}",
+                    step.id
+                ),
             );
-            return http::write_body(stream, *status, "application/json", body.to_string().as_bytes());
+            return http::write_body(
+                stream,
+                *status,
+                "application/json",
+                body.to_string().as_bytes(),
+            );
         }
         Reply::CutStream { deltas, after } => {
             let mut events = wire::opening_events(protocol, &id, &model, step.usage);
@@ -527,7 +551,11 @@ fn embeddings(shared: &Shared, seen: &SeenCall, stream: &mut TcpStream) -> io::R
     let vectors: Vec<Vec<f32>> = texts.iter().map(|text| embedder.embed_text(text)).collect();
     let words = texts
         .iter()
-        .map(|text| text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).count())
+        .map(|text| {
+            text.split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .count()
+        })
         .sum::<usize>();
     let body = wire::embeddings_reply(embedder.model(), &vectors, words as u64);
     http::write_body(stream, 200, "application/json", body.to_string().as_bytes())
