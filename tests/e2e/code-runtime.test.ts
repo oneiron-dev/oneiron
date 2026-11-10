@@ -3,7 +3,7 @@ import { defineFile, secretHex } from "./support/run.ts";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { EngineFixture } from "./support/engine.ts";
-import { PublicHttpClient, PublicHttpError, credentialParts, type McpClient } from "./support/clients.ts";
+import { McpRpcError, PublicHttpClient, PublicHttpError, credentialParts, type McpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiText } from "./support/providers.ts";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
@@ -126,9 +126,28 @@ function codeRuntime02ToolArguments(tools: CodeRuntime02Tools, name: string, fie
   };
 }
 
+function codeRuntime02RefusalText(call: string, error: unknown): string {
+  if (error instanceof McpRpcError) {
+    const response = error.response;
+    if ("error" in response) {
+      return `${call} refused: HTTP status=2xx; JSON-RPC code=${response.error.code} message=${response.error.message} data=${JSON.stringify(response.error.data ?? null)}`;
+    }
+    return `${call} failed after an MCP success reply: ${JSON.stringify(response.result ?? null).slice(0, 500)}`;
+  }
+  if (error instanceof PublicHttpError) {
+    return `${call} refused: HTTP ${error.reply.status} code=${error.error?.code ?? "?"} message=${error.error?.message ?? "?"} body=${JSON.stringify(error.reply.body ?? null).slice(0, 500)}`;
+  }
+  return error instanceof Error ? `${call} failed: ${error.name}: ${error.message}` : `${call} failed: ${JSON.stringify(error)}`;
+}
+
 async function codeRuntime02Execute(engine: EngineFixture, tools: CodeRuntime02Tools, runRef: string, task: string): Promise<CodeRuntime02ExecuteContent> {
-  const reply = await engine.mcp.callTool("execute_code",
-    codeRuntime02ToolArguments(tools, "execute_code", { run_ref: runRef, task })) as CodeRuntime02ToolResult<CodeRuntime02ExecuteContent>;
+  let reply: CodeRuntime02ToolResult<CodeRuntime02ExecuteContent>;
+  try {
+    reply = await engine.mcp.callTool("execute_code",
+      codeRuntime02ToolArguments(tools, "execute_code", { run_ref: runRef, task })) as CodeRuntime02ToolResult<CodeRuntime02ExecuteContent>;
+  } catch (error) {
+    throw new Error(codeRuntime02RefusalText(`CODE-RUNTIME-02 execute_code run_ref=${runRef}`, error));
+  }
   expect(reply.isError).toBe(false);
   expect(reply.structuredContent.run_ref).toBe(runRef);
   expect(reply.structuredContent.result.status).toBe("complete");
@@ -164,7 +183,10 @@ function codeRuntime02ExpectAbsent(value: unknown): void {
 async function codeRuntime02OwnerRefused(owner: PublicHttpClient, actorRef: string, act: () => Promise<unknown>): Promise<void> {
   let failure: unknown;
   try { await act(); } catch (error) { failure = error; }
-  if (!(failure instanceof PublicHttpError)) throw new Error("Expected a public HTTP refusal");
+  if (!(failure instanceof PublicHttpError)) {
+    const seen = failure instanceof Error ? `${failure.name}: ${failure.message}` : JSON.stringify(failure);
+    throw new Error(`Expected a public HTTP refusal, saw ${seen}`);
+  }
   expect(failure.reply.status).toBe(403);
   expect(failure.error?.code).toBe("FORBIDDEN");
   const receiptRef = failure.error?.receiptRef;
@@ -275,8 +297,10 @@ suite.test(test, "CODE-RUNTIME-02", "Healing fenced and forged-console model rep
       const exhaustedArgs = codeRuntime02ToolArguments(tools, "execute_code",
         { run_ref: "rt02-exhausted", task: "Print the nested executor marker with console.log." });
       const exhaustedReply = await engine.mcp.rpc("tools/call",
-        { name: "execute_code", arguments: exhaustedArgs, _meta: { "oneiron/invocation": secretHex(16) } });
-      if (!("error" in exhaustedReply)) throw new Error("Nested packaging executed instead of failing explicitly");
+        { name: "execute_code", arguments: exhaustedArgs, _meta: { "oneiron/invocation": secretHex(16) } }).catch((error: unknown) => {
+        throw new Error(codeRuntime02RefusalText("CODE-RUNTIME-02 execute_code run_ref=rt02-exhausted", error));
+      });
+      if (!("error" in exhaustedReply)) throw new Error(`Nested packaging executed instead of failing explicitly: ${JSON.stringify(exhaustedReply).slice(0, 1000)}`);
       expect(exhaustedReply.error.code).toBe(-32603);
       const exhaustedData = exhaustedReply.error.data as CodeRuntime02McpErrorData;
       expect(exhaustedData.kind).toBe("code_run_failed");
@@ -574,13 +598,33 @@ function codeRuntime03ToolArguments(
   };
 }
 
+function codeRuntime03RefusalText(call: string, error: unknown): string {
+  if (error instanceof McpRpcError) {
+    const response = error.response;
+    if ("error" in response) {
+      return `${call} refused: HTTP status=2xx; JSON-RPC code=${response.error.code} message=${response.error.message} data=${JSON.stringify(response.error.data ?? null)}`;
+    }
+    return `${call} failed after an MCP success reply: ${JSON.stringify(response.result ?? null).slice(0, 500)}`;
+  }
+  if (error instanceof PublicHttpError) {
+    return `${call} refused: HTTP ${error.reply.status} code=${error.error?.code ?? "?"} message=${error.error?.message ?? "?"} body=${JSON.stringify(error.reply.body ?? null).slice(0, 500)}`;
+  }
+  return error instanceof Error ? `${call} failed: ${error.name}: ${error.message}` : `${call} failed: ${JSON.stringify(error)}`;
+}
+
 async function codeRuntime03CallTool<T>(
   mcp: McpClient,
   tools: CodeRuntime03Tools,
   name: string,
   fields: Record<string, unknown>,
 ): Promise<T> {
-  const reply = await mcp.callTool(name, codeRuntime03ToolArguments(tools, name, fields)) as CodeRuntime03ToolResult<T>;
+  const runRef = typeof fields.run_ref === "string" ? fields.run_ref : "?";
+  let reply: CodeRuntime03ToolResult<T>;
+  try {
+    reply = await mcp.callTool(name, codeRuntime03ToolArguments(tools, name, fields)) as CodeRuntime03ToolResult<T>;
+  } catch (error) {
+    throw new Error(codeRuntime03RefusalText(`CODE-RUNTIME-03 ${name} run_ref=${runRef}`, error));
+  }
   expect(reply.isError).toBe(false);
   expect(reply.structuredContent).toBeDefined();
   return reply.structuredContent;
@@ -1232,12 +1276,27 @@ suite.test(test, "CODE-RUNTIME-07", "Graph filesystem mounts keep pinned snapsho
     const findPush = await codeRuntime07DrainFind(owner, liveMount, "/claims/by-id", 0);
     expect(findWalk.plan).toBe("walk");
     expect(findPush.plan).toBe("pushdown");
-    expect(codeRuntime07TrailingIds(findWalk.lines)).toEqual(codeRuntime07TrailingIds(findPush.lines));
-    expect(codeRuntime07TrailingIds(findWalk.lines)).toContain(claim1);
-    expect(codeRuntime07TrailingIds(findWalk.lines)).toContain(claim2);
+    const walkedIds = codeRuntime07TrailingIds(findWalk.lines);
+    expect(walkedIds).toEqual([...lsWalk.lines].sort());
+    expect(walkedIds).toContain(claim1);
+    expect(walkedIds).toContain(claim2);
+    // An unrestricted walk includes bootstrap claims learned at zero; -newer 0 does not.
+    // Read every walked claim through a second door and apply the same strict time predicate.
+    const walkedClaims: Facade.EntityView[] = [];
+    for (const id of walkedIds) {
+      const claim = await codeRuntime07Entity(owner, id);
+      expect(claim.kind).toBe("CLAIM");
+      walkedClaims.push(claim);
+    }
+    expect(codeRuntime07TrailingIds(findPush.lines)).toEqual(
+      walkedClaims.filter(claim => claim.learned_at > 0).map(claim => claim.id_hex).sort(),
+    );
     const findNewer = await codeRuntime07DrainFind(owner, liveMount, "/claims/by-id", learned1);
     expect(findNewer.plan).toBe("pushdown");
     const newerIds = codeRuntime07TrailingIds(findNewer.lines);
+    expect(newerIds).toEqual(
+      walkedClaims.filter(claim => claim.learned_at > learned1).map(claim => claim.id_hex).sort(),
+    );
     expect(newerIds).toContain(claim2);
     expect(newerIds).not.toContain(claim1);
 

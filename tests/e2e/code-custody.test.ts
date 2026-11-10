@@ -6,7 +6,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { blake3 } from "@noble/hashes/blake3";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
-import { PublicHttpError, credentialParts, type PublicHttpClient } from "./support/clients.ts";
+import { PublicHttpClient, PublicHttpError, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -475,9 +475,15 @@ type LfsBatchResponse = {
   })[];
 };
 // (Reuses this file's canon LFS wire types LfsObject/LfsBatchResponse; no new wire DTOs.)
+// (PublicHttpClient joins the clients.ts import union as a value: the transfer client below
+//  constructs it. PublicHttpError wraps transfer failures with status/code/message.)
 
 const codeCustody06Occurred = 1769947200;
 const codeCustody06Repo = "custody06";
+// Owner A's full-size append hit the shared 10 s request limit on fleet job 4.
+// A local client gives the large transfers up to 25 s per request; completing the whole
+// scenario within the unchanged 30 s flow limit remains unproved.
+const codeCustody06TransferTimeoutMs = 25_000;
 
 function codeCustody06Sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -523,9 +529,40 @@ function codeCustody06ErrorBody(reply: { body: unknown }): Record<string, unknow
   return body.error as Record<string, unknown>;
 }
 
+// Use the same owner credential and doors. The client has no per-request timeout argument,
+// and each artifact append lands a whole version, not an accumulated chunk.
+function codeCustody06TransferClient(engine: EngineFixture): PublicHttpClient {
+  return new PublicHttpClient(engine.url, {
+    credential: engine.pairedActor.credential,
+    artifacts: engine.artifacts,
+    label: "CODE-CUSTODY-06:transfers",
+    timeoutMs: codeCustody06TransferTimeoutMs,
+  });
+}
+
+function codeCustody06TransferError(error: unknown, context: string): Error {
+  const budget = `request_timeout_ms=${codeCustody06TransferTimeoutMs}; flow_deadline=unchanged`;
+  if (error instanceof PublicHttpError) {
+    const wire = error.error;
+    return new Error(`${context}: status=${error.reply.status} code=${wire?.code ?? "unavailable"} message=${wire?.message ?? error.message}; ${budget}`);
+  }
+  const code = error instanceof Error ? error.name : "unknown";
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`${context}: status=unavailable (no HTTP reply retained) code=${code} message=${message}; ${budget}`);
+}
+
+async function codeCustody06Transfer<T>(context: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    throw codeCustody06TransferError(error, context);
+  }
+}
+
 // CODE-CUSTODY-06 — Large blob fidelity and scoped deletion should work.
 // Promise: a >16 MiB blob round-trips byte-exact through two same-byte artifact owners and LFS basic batch/PUT/verify/download; erasing owner A keeps owner B and LFS bytes exact; a read-scoped actor is refused with receipts; a revoked capability slip's next use is refused; another vault discloses nothing.
 // Doors: vault.artifacts.put/append/read, vault.records.erase_preview/confirm, vault.code.origin.register, vault.code.origin.mirror.get, vault.agents.create, self.actor, vault.get, vault.receipts.get, LFS batch/upload/download/verify routes, POST /v1/core/slips/revoke, engine.restart().
+// Budget: full-size transfers use a local 25 s request limit; the 30 s flow deadline still binds.
 // Stays unproved: the mirror half (build-required asset publication, mirror clone/smudge with the original disconnected, mirror_check run): no public door classifies repo paths build-required and no HTTPS mirror fixture is provided (see report).
 suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion should work", async () => {
   const fixtures = await loadFixtures();
@@ -545,17 +582,21 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const peer = engine.peers[0];
     if (!peer) throw new Error("Missing peer vault");
     const contentBase64 = bytes.toString("base64");
+    const transfers = codeCustody06TransferClient(engine);
+    const transferBytes = `bytes=${size} base64=${contentBase64.length}`;
     const putA = await engine.client.call("vault.artifacts.put", {
       name: "custody-06-owner-a", media_type: "application/octet-stream", occurred_at: codeCustody06Occurred,
     });
-    const appendA = await engine.client.call("vault.artifacts.append", {
-      artifact_ref: putA.id_hex, content_base64: contentBase64, occurred_at: codeCustody06Occurred,
-    });
+    const appendA = await codeCustody06Transfer(`owner A append vault.artifacts.append ${transferBytes}`, () =>
+      transfers.call("vault.artifacts.append", {
+        artifact_ref: putA.id_hex, content_base64: contentBase64, occurred_at: codeCustody06Occurred,
+      }));
     if (!("landed" in appendA)) throw new Error("Owner A append did not land");
     expect(appendA.landed.version).toBe(1);
-    const readA = await engine.client.call("vault.artifacts.read", {
-      artifact_ref: putA.id_hex, version: appendA.landed.version,
-    });
+    const readA = await codeCustody06Transfer(`owner A read vault.artifacts.read ${transferBytes}`, () =>
+      transfers.call("vault.artifacts.read", {
+        artifact_ref: putA.id_hex, version: appendA.landed.version,
+      }));
     if (readA === null) throw new Error("Owner A's pinned artifact version is absent");
     const bytesA = Buffer.from(readA.content_base64, "base64");
     expect(bytesA.length).toBe(size);
@@ -563,9 +604,10 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const putB = await engine.client.call("vault.artifacts.put", {
       name: "custody-06-owner-b", media_type: "application/octet-stream", occurred_at: codeCustody06Occurred,
     });
-    const appendB = await engine.client.call("vault.artifacts.append", {
-      artifact_ref: putB.id_hex, content_base64: contentBase64, occurred_at: codeCustody06Occurred,
-    });
+    const appendB = await codeCustody06Transfer(`owner B append vault.artifacts.append ${transferBytes}`, () =>
+      transfers.call("vault.artifacts.append", {
+        artifact_ref: putB.id_hex, content_base64: contentBase64, occurred_at: codeCustody06Occurred,
+      }));
     if (!("landed" in appendB)) throw new Error("Owner B append did not land");
     expect(appendB.landed.version).toBe(1);
     const versionB = appendB.landed.version;
@@ -594,9 +636,10 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     if (!uploadHref || !verifyHref) throw new Error("LFS upload batch offered no actions");
     expect(uploadHref.endsWith(paths.object)).toBe(true);
     expect(verifyHref.endsWith(paths.verify)).toBe(true);
-    const put = await engine.client.request<LfsObject>("PUT", paths.object, bytes, {
-      "content-type": "application/octet-stream",
-    });
+    const put = await codeCustody06Transfer(`LFS PUT ${paths.object} ${transferBytes}`, () =>
+      transfers.request<LfsObject>("PUT", paths.object, bytes, {
+        "content-type": "application/octet-stream",
+      }));
     expect(put.body.oid).toBe(oid);
     expect(put.body.size).toBe(size);
     const verify = await engine.client.request<{ oid: string; size: number; ok: boolean }>("POST", paths.verify, { oid, size });
@@ -612,7 +655,8 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const downloadHref = downloadEntry.actions?.download?.href;
     if (!downloadHref) throw new Error("LFS download batch offered no action");
     expect(downloadHref.endsWith(paths.object)).toBe(true);
-    const download = await engine.client.request<unknown>("GET", paths.object);
+    const download = await codeCustody06Transfer(`LFS GET ${paths.object} ${transferBytes}`, () =>
+      transfers.request<unknown>("GET", paths.object));
     expect(download.bytes.length).toBe(size);
     expect(download.headers.get("content-length")).toBe(String(size));
     expect(download.headers.get("content-type")).toBe("application/octet-stream");
@@ -742,12 +786,14 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     });
     expect(goneA.status).toBe(404);
     expect(codeCustody06ErrorBody(goneA).code).toBe("NOT_FOUND");
-    const readB = await engine.client.call("vault.artifacts.read", { artifact_ref: putB.id_hex, version: versionB });
+    const readB = await codeCustody06Transfer(`owner B read vault.artifacts.read ${transferBytes}`, () =>
+      transfers.call("vault.artifacts.read", { artifact_ref: putB.id_hex, version: versionB }));
     if (readB === null) throw new Error("Owner B's pinned artifact version is absent after erasing A");
     const bytesB = Buffer.from(readB.content_base64, "base64");
     expect(bytesB.length).toBe(size);
     expect(codeCustody06Sha256(bytesB)).toBe(oid);
-    const downloadAfter = await engine.client.request<unknown>("GET", paths.object);
+    const downloadAfter = await codeCustody06Transfer(`LFS GET after erase ${paths.object} ${transferBytes}`, () =>
+      transfers.request<unknown>("GET", paths.object));
     expect(downloadAfter.bytes.length).toBe(size);
     expect(codeCustody06Sha256(downloadAfter.bytes)).toBe(oid);
     await engine.restart();
@@ -756,10 +802,12 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     });
     expect(goneAAfter.status).toBe(404);
     expect(codeCustody06ErrorBody(goneAAfter).code).toBe("NOT_FOUND");
-    const readBAfter = await engine.client.call("vault.artifacts.read", { artifact_ref: putB.id_hex, version: versionB });
+    const readBAfter = await codeCustody06Transfer(`owner B read after restart vault.artifacts.read ${transferBytes}`, () =>
+      transfers.call("vault.artifacts.read", { artifact_ref: putB.id_hex, version: versionB }));
     if (readBAfter === null) throw new Error("Owner B's pinned artifact version is absent after restart");
     expect(codeCustody06Sha256(Buffer.from(readBAfter.content_base64, "base64"))).toBe(oid);
-    const downloadRestart = await engine.client.request<unknown>("GET", paths.object);
+    const downloadRestart = await codeCustody06Transfer(`LFS GET after restart ${paths.object} ${transferBytes}`, () =>
+      transfers.request<unknown>("GET", paths.object));
     expect(downloadRestart.bytes.length).toBe(size);
     expect(codeCustody06Sha256(downloadRestart.bytes)).toBe(oid);
     await engine.artifacts.json("code-custody-06.json", {
