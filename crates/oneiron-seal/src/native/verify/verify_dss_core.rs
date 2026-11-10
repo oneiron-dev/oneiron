@@ -7,6 +7,7 @@ use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
 use crate::native::held_bytes;
 
 use super::super::pdf;
+use super::verify_chain_gates::issuer_permits_crl_sign;
 use super::verify_revocation::{
     EvidenceRejection, UnknownStatus, crl_entry_valid, issued_by, ocsp_entry_valid,
 };
@@ -208,9 +209,11 @@ fn material_valid(
             .chain(anchors.iter())
             .any(|e| e.der == c.der)
     });
-    // Every usable CRL's key-bound issuer cert, so the coverage rule below
-    // can match it against each covered certificate's ACTUAL issuer
-    // (name+key).
+    // Every usable CRL's key-bound signer certificate, so the coverage rule
+    // below can ask whether that signer has revocation authority over each
+    // covered certificate. A CRL that claims nothing about the covered
+    // chains is usable without its scope and freshness judged, so coverage
+    // counts only a signer whose CRL was judged for that certificate.
     let crl_issuers: Vec<&EmbeddedCert> = match crls {
         DssArray::Absent => Vec::new(),
         DssArray::Malformed => {
@@ -272,9 +275,12 @@ fn material_valid(
     }
     // Revocation coverage (§7.5 steps 2-3): every covered NON-ANCHOR chain
     // certificate needs at least one valid evidence item speaking ABOUT it
-    // — a CRL whose key-bound issuer is that certificate's ACTUAL issuer
-    // (the covered cert's own signature verifies under the CRL-signing
-    // key) or an OCSP SingleResponse bound to it with `cert_status` good.
+    // — a CRL under that certificate's issuer name whose signer has
+    // revocation authority over it (crl_signer_authorized: the issuer's own
+    // key, or a key the issuer certified with cRLSign, RFC 5280 §5.1.1.3,
+    // §5.2.1) or an OCSP SingleResponse bound to it with `cert_status` good.
+    // The name match is what makes crl_entry_valid have judged that CRL's
+    // scope, freshness and listing for this certificate.
     // Anchor certificates ride anchor trust and need no coverage. A
     // cert-only DSS or otherwise insufficient valid coverage is unresolved,
     // never a profile pass. Genuine invalid evidence has already failed
@@ -307,7 +313,9 @@ fn material_valid(
         }
         let mut crl_covered = false;
         for issuer in &crl_issuers {
-            if issued_by(cert, issuer, memory)? {
+            if cert.cert.tbs_certificate.issuer == issuer.cert.tbs_certificate.subject
+                && crl_signer_authorized(cert, issuer, &embedded, anchors, memory)?
+            {
                 crl_covered = true;
                 break;
             }
@@ -388,10 +396,12 @@ fn names_covered_certificate(
 /// (RFC 5280 §5.1.1.3, §5.2.1, §6.3.3(f), §8): it issued `cert`, or it holds
 /// a key that `cert`'s own issuer certified under the signer's subject (a
 /// separate CRL-signing key, or a rollover's link certificate the old key
-/// issued for the new one). A same-subject key that only another trust
-/// anchor vouches for is no shadow, but has no authority over `cert`: two
-/// CAs may share a name, and a CRL path must end at the certificate's own
-/// trust anchor.
+/// issued for the new one) and lets it sign CRLs: a certificate that names
+/// the key with a KeyUsage lacking cRLSign gives no authority, whatever
+/// another copy of the key's certificate asserts. A same-subject key that
+/// only another trust anchor vouches for is no shadow, but has no authority
+/// over `cert`: two CAs may share a name, and a CRL path must end at the
+/// certificate's own trust anchor.
 pub(super) fn crl_signer_authorized(
     cert: &EmbeddedCert,
     signer: &EmbeddedCert,
@@ -415,6 +425,7 @@ pub(super) fn crl_signer_authorized(
             if holder.cert.tbs_certificate.subject == *subject
                 && holder.cert.tbs_certificate.subject_public_key_info == *key
                 && holder.der != cert_issuer.der
+                && issuer_permits_crl_sign(&holder.cert)
                 && issued_by(holder, cert_issuer, memory)?
             {
                 return Ok(true);
