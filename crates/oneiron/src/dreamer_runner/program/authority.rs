@@ -355,9 +355,10 @@ impl TurnProgramAuthority {
         }
     }
 
-    /// The read lane this authority reads under while it stands in `txn`: the slip's live,
-    /// verified view; the owner's, for a host action or an attested owner; or the actor's native
-    /// lane. `None` when it does not stand. A feed-woken program's wake is judged on it, as its
+    /// The read key this authority reads under while it stands in `txn`, built as the actor's
+    /// own `Memory` read lane builds it: the slip's credential key, the owner's key for the
+    /// vault owner (a host action and an attested owner included), or the actor's grant-checked
+    /// key. `None` when it does not stand. A feed-woken program's wake is judged on it, as its
     /// own reads are (slice 6.8c, lead call K).
     ///
     /// # Errors
@@ -369,16 +370,28 @@ impl TurnProgramAuthority {
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<crate::claim::ScopedReadActorKey>> {
         use crate::claim::ScopedReadActorKey;
+        let class = self.class()?;
+        // A check that cannot decide reads as not the owner: the narrower lane.
+        let owner = || {
+            crate::memory::actor_is_vault_owner_in_txn(vault, txn, self.actor, class)
+                .unwrap_or(false)
+        };
         Ok(match self.standing_in_txn(vault, txn)? {
-            Standing::Stands(Some(slip)) => ScopedReadActorKey::from_verified_slip(&slip),
+            Standing::Stands(Some(slip)) => {
+                vault.credential_read_key_in_txn(txn, &slip, self.actor, owner())?
+            }
             Standing::Stands(None) => match self.proof {
                 Proof::HostAction { .. } | Proof::AttestedOwner { .. } => {
                     Some(ScopedReadActorKey::vault_owner(self.actor))
                 }
+                Proof::Native | Proof::Slip { .. } if owner() => {
+                    Some(ScopedReadActorKey::vault_owner(self.actor))
+                }
                 Proof::Native | Proof::Slip { .. } => ScopedReadActorKey::with_actor_class(
                     self.actor.to_hex(),
-                    self.class()?.gate_actor_class(),
-                ),
+                    class.gate_actor_class(),
+                )
+                .map(|key| key.require_access_grants(Some(self.actor))),
             },
             Standing::Lapsed | Standing::OwnerNotLive | Standing::Withdrawn { .. } => None,
         })
