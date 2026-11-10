@@ -119,6 +119,8 @@ fn managed_argv(root: &Path) -> Vec<String> {
         "09".repeat(32),
         "--data-dir".to_owned(),
         path("data"),
+        "--keystore-dir".to_owned(),
+        path("keys"),
         "--http-socket".to_owned(),
         path("http.sock"),
         "--ctl-socket".to_owned(),
@@ -1530,6 +1532,19 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     use tower::ServiceExt;
 
     let fixture = spawn_ctl_fixture();
+    let issuer = oneiron::test_support::test_host_issuer();
+    let slip = fixture.server.vault().ensure_host_root_slip(&issuer).unwrap();
+    let timestamp = fixture.server.vault().now_recorded_at();
+    let nonce = oneiron::EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature: String = issuer
+        .binding_proof(&slip, challenge.as_bytes())
+        .unwrap()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let binding =
+        serde_json::json!({"timestamp": timestamp, "nonce": nonce, "signature": signature});
     let app = oneiron_server::managed::build_managed_app(
         Arc::clone(&fixture.server),
         Arc::clone(&fixture.state),
@@ -1548,6 +1563,8 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     let request = Request::builder()
         .method("POST")
         .uri("/v1/core/conversations")
+        .header("authorization", format!("Bearer {}", slip.to_token().unwrap()))
+        .header("x-oneiron-binding", binding.to_string())
         .header("content-type", "application/json")
         .header("content-length", len)
         .body(Body::from_stream(stream))
