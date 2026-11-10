@@ -3,10 +3,8 @@
 //! SNAPSHOT-SETTINGS-IN-6.6, in the shape of S66B-BUDGETS B1 = A). The row in
 //! force is the owner's cap: the Coach lowers a bound and is refused a raise,
 //! an agent without the work-budget class is refused, and the owner raises at
-//! his own door, which writes no engine-control receipt. A holder of any
-//! `engine.controls` class reads the bounds (Engine 10 Nov 14:36, S66F-READ =
-//! C); an agent without one is refused. On the base there is no holder door,
-//! and the read answers the owner alone.
+//! his own door, which writes no engine-control receipt. On the base there is
+//! no holder door. The read side is `snapshot_bounds_read_through_grant`.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -14,17 +12,12 @@
 #![cfg(oneiron_test_support)]
 
 use oneiron::federation::{EngineControlActor, EngineControlClass};
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::settings::snapshot_read::{SNAPSHOT_READ_BOUNDS_KNOB, SnapshotReadSettings};
-use oneiron::task_verb::sdk::{invoke, lower_snapshot_read_bounds_as};
+use oneiron::task_verb::sdk::lower_snapshot_read_bounds_as;
 use oneiron::test_doors::coach::{
     ENGINE_CONTROLS_VERBS, ENGINE_CONTROLS_WORK_BUDGET_VERB, coach, define_agent,
 };
-use oneiron::test_doors::steward::{
-    STEWARD_READ_VERB, open_owner_carrier_vault, owner, stand_steward_grant,
-};
-use oneiron::{EdgeActorClass, EntityId, Vault};
-use serde_json::{Value, json};
+use oneiron::test_doors::steward::{open_owner_carrier_vault, owner, stand_steward_grant};
 
 /// Bounds below the defaults in three places: half the rows per page, and
 /// both lifetimes at five minutes.
@@ -197,57 +190,4 @@ fn the_owner_raises_at_his_own_door_and_the_coach_lowers_from_there() {
         .lower_snapshot_read_bounds_as_holder(coach, lower)
         .expect("the Coach lowers from the owner's new row");
     assert_eq!(vault.snapshot_read_settings().expect("bounds"), lower);
-}
-
-/// `vault.settings.snapshot_read` through the verb, on `actor`'s handle.
-fn read_bounds(vault: &Vault, actor: EntityId, class: EdgeActorClass) -> MemoryResult<Value> {
-    invoke(
-        &vault.memory(actor, class),
-        "vault.settings.snapshot_read",
-        json!({}),
-    )
-}
-
-#[test]
-fn a_holder_of_any_engine_controls_class_reads_the_bounds() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
-    let coach = coach(&vault).expect("the Coach");
-    vault.provision_system_agent_grants().expect("first mint");
-    let agent = define_agent(&vault).expect("an agent");
-    let held = vault.snapshot_read_settings().expect("bounds");
-
-    // No grant: refused.
-    let refused = read_bounds(&vault, agent, EdgeActorClass::Agent).expect_err("no grant");
-    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
-
-    // A Steward grant naming `read` alone names no engine.controls class:
-    // still refused.
-    stand_steward_grant(&vault, agent, &[STEWARD_READ_VERB]).expect("a read grant");
-    let refused = read_bounds(&vault, agent, EdgeActorClass::Agent)
-        .expect_err("`read` is not an engine.controls class");
-    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
-
-    // One class other than the work budget reads the bounds, and still may
-    // not lower them.
-    let other_class = ENGINE_CONTROLS_VERBS
-        .iter()
-        .copied()
-        .find(|verb| *verb != ENGINE_CONTROLS_WORK_BUDGET_VERB)
-        .expect("another class");
-    stand_steward_grant(&vault, agent, &[other_class]).expect("another class");
-    let answer = read_bounds(&vault, agent, EdgeActorClass::Agent)
-        .expect("a holder of an engine.controls class reads the bounds");
-    let read: SnapshotReadSettings = serde_json::from_value(answer).expect("bounds");
-    assert_eq!(read, held);
-    assert!(
-        lower_snapshot_read_bounds_as(&vault, EngineControlActor::Holder(agent), lowered(held))
-            .is_err(),
-        "reading the bounds is not lowering them"
-    );
-
-    // The Coach reads them through its default grant.
-    let answer = read_bounds(&vault, coach, EdgeActorClass::System).expect("the Coach reads");
-    let read: SnapshotReadSettings = serde_json::from_value(answer).expect("bounds");
-    assert_eq!(read, held);
 }
