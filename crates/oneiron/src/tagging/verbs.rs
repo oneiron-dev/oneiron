@@ -838,13 +838,18 @@ impl Memory<'_> {
             }
             Err(error) => return Err(error),
         };
-        // An entity the lane does not read has no mentions it may see.
-        if !lane.is_entity_readable(&entity)? {
+        // An entity the lane does not read has no mentions it may see. A
+        // provisional entity has no row: each of its hits is judged by its
+        // own TURN and MESSAGE below.
+        if self.vault().provisional_entity(&entity)?.is_none()
+            && !lane.is_entity_readable(&entity)?
+        {
             let receipt = lane.read_receipt(None, 0)?;
             return Err(MemoryError::from(Error::EntityNotFound).with_read_receipt(receipt));
         }
         let mut mentions = Vec::new();
         let mut current = std::collections::BTreeMap::new();
+        let mut turn_tags = std::collections::BTreeMap::new();
         for mut hit in self.vault().tagged_mentions(&entity)? {
             if mentions.len() == input.limit {
                 break;
@@ -859,6 +864,26 @@ impl Memory<'_> {
                     && !lane.is_entity_readable(&linked)?
                 {
                     hit.mention.link = hit.mention.link.without(&linked);
+                }
+            }
+            // A coreference names its antecedent mention's place: it shows
+            // only while the lane reads that mention's MESSAGE too.
+            if let Some(antecedent) = hit.mention.antecedent {
+                if let std::collections::btree_map::Entry::Vacant(slot) = turn_tags.entry(hit.turn)
+                {
+                    slot.insert(self.vault().turn_tags(&hit.turn)?);
+                }
+                let source = turn_tags
+                    .get(&hit.turn)
+                    .and_then(Option::as_ref)
+                    .and_then(|tags| tags.mentions.get(antecedent))
+                    .map(|mention| mention.message);
+                let shown = match source {
+                    Some(message) => lane.is_entity_readable(&message)?,
+                    None => false,
+                };
+                if !shown {
+                    hit.mention.antecedent = None;
                 }
             }
             let freshness = match current.get(&hit.turn) {
