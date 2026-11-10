@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::response::Response;
 use oneiron::agent_dispatch::AgentDispatcher;
+use oneiron::llm::BudgetDenied;
 use oneiron::llm::model_step::{
     self, ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepSubmit,
     ModelStepSubmitRequest, RunStepCaller,
@@ -187,7 +188,8 @@ struct RunStep {
     held: HeldLiveRun,
     actor: WriteActor,
     proof: HostBinding,
-    /// Whether the attachment the call came in on still stands.
+    /// Whether the attachment the call came in on still stands. Once it
+    /// answers no it answers no for the rest of the call.
     attached: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
@@ -211,8 +213,22 @@ impl RunStep {
     ) -> MemoryResult<Self> {
         let (actor, _run, held) = hold_live_run(server, auth, session, handle).await?;
         let credential = auth.verified_slip().cloned().ok_or_else(detached)?;
+        let watch = held.attachment_watch(server, credential);
+        // A watch that answered no once, a failed read included, stays no:
+        // a call the host stopped saves no result on a later yes.
+        let lost = AtomicBool::new(false);
+        let attached = move || {
+            if lost.load(Ordering::Relaxed) {
+                return false;
+            }
+            let stands = watch();
+            if !stands {
+                lost.store(true, Ordering::Relaxed);
+            }
+            stands
+        };
         Ok(Self {
-            attached: held.attachment_watch(server, credential),
+            attached: Box::new(attached),
             proof: held.proof(),
             server: Arc::clone(server),
             held,
@@ -267,9 +283,12 @@ impl RunStep {
             &line.guard,
         ));
         // What the step's calls spent and no look booked goes on the scope
-        // whatever the step answered.
-        backend.book_rest();
-        self.answer(receipt?)
+        // whatever the step answered. A booking that fails is an error of
+        // the call, as it is at the run's other model door.
+        let booked = backend.book_rest();
+        let receipt = receipt?;
+        booked?;
+        self.answer(receipt)
     }
 
     fn receipt(&self, input: &ModelStepReceiptRequest) -> MemoryResult<ModelStepReceipt> {
@@ -465,12 +484,13 @@ impl RunStepBackend<'_> {
     }
 
     /// Books on the scope what the step's calls spent and no look booked.
-    fn book_rest(&self) {
-        if let Some(lease) = &self.lease
-            && let Err(error) = lease.book_rest()
-        {
+    fn book_rest(&self) -> oneiron::Result<()> {
+        let Some(lease) = &self.lease else {
+            return Ok(());
+        };
+        lease.book_rest().inspect_err(|error| {
             tracing::warn!(kind = ?error.kind(), "a run's model-step spend was not booked");
-        }
+        })
     }
 }
 
@@ -495,11 +515,13 @@ impl LlmBackend for RunStepBackend<'_> {
                 .generate_step_attempt_while(&self.step.run, request, &may_send)
                 .await;
             self.look();
-            // An attempt stopped for its attachment ends the step's retries:
-            // each would meet the same stop. The engine saves no result for
-            // a run its host no longer holds attached.
+            // An attempt stopped for its attachment is an admission the
+            // host denied, never a model failure: the step neither retries
+            // it nor answers it with its deterministic fallback, and the
+            // engine saves no result for a run its host no longer holds
+            // attached. The key's next call asks the model again.
             if self.detached.load(Ordering::Relaxed) {
-                return Err(FatalLlmError::Auth.into());
+                return Err(BudgetDenied::AdmissionDenied.into());
             }
             answer
         })

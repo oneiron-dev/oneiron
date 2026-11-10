@@ -8,6 +8,9 @@
 //! - Another actor, a run whose lease ended, and a run its host no longer
 //!   holds attached are refused the same way. A run let go while its call
 //!   ran saves no result.
+//! - A call's admission the host denies is no model failure: a durable
+//!   step's deterministic fallback does not answer it, and the key's next
+//!   call asks the model.
 //! - A step key belongs to one run: no other run of the agent and no owner
 //!   step shares it.
 //! - A fresh call is held to the model list of the run's definition; a
@@ -30,22 +33,22 @@ use oneiron::agent_dispatch::{
 use oneiron::attempt_queue::{AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt};
 use oneiron::code_run::HostSelfDispatcher;
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
-use oneiron::llm::Scope;
 use oneiron::llm::model_step::{
     ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepRetryPolicy,
     ModelStepSubmit, RunStepCaller, receipt_as_owner, receipt_as_run_actor,
     resume_saved_as_run_actor, submit_as_run_actor,
 };
+use oneiron::llm::{BudgetDenied, Scope};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, MemoryError};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::HostBinding;
 use oneiron::{
     AttemptId, AttemptQueue, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass,
-    CallEnvelope, CallPurpose, ContentPart, EdgeActorClass, FatalLlmError, FinishReason,
-    LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
-    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStreamResult, LlmUsage,
-    ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence, UnsupportedCapability,
-    Vault, VaultConfig, WriteActor,
+    CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, EdgeActorClass, FatalLlmError,
+    FinishReason, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmInputUsage,
+    LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
+    LlmStreamResult, LlmUsage, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence, UnsupportedCapability, Vault, VaultConfig, WriteActor,
 };
 
 type TestError = Box<dyn std::error::Error>;
@@ -190,6 +193,16 @@ impl ScriptedBackend {
         Self {
             ends: Some(Arc::clone(attachment)),
             ..Self::new(responses)
+        }
+    }
+
+    /// A backend whose one call ends `attachment` and is answered as a host
+    /// answers a physical admission it denies.
+    fn denied(attachment: &Arc<AtomicBool>) -> Self {
+        Self {
+            script: Mutex::new(VecDeque::from([Err(BudgetDenied::AdmissionDenied.into())])),
+            calls: AtomicUsize::new(0),
+            ends: Some(Arc::clone(attachment)),
         }
     }
 
@@ -619,6 +632,58 @@ fn a_run_its_host_no_longer_holds_attached_is_refused_and_saves_no_result() -> T
         assert!(matches!(
             finished.result,
             Some(ModelStepResult::Finished { .. })
+        ));
+        Ok(())
+    })
+}
+
+#[test]
+fn an_admission_the_host_denies_is_no_model_failure_and_saves_no_fallback_answer() -> TestResult {
+    block_on(async {
+        let dir = tempfile::tempdir()?;
+        let vault = open_vault(dir.path())?;
+        let run = leased_run(&vault, "denied-admission-run", Some(SCOPE_UNITS))?;
+        let attachment = Arc::new(AtomicBool::new(true));
+        let watch = || attachment.load(Ordering::SeqCst);
+        let caller = RunStepCaller {
+            attached: &watch,
+            ..run.caller()
+        };
+        let line = host_guard();
+        // A durable step: its deterministic fallback answers a model failure.
+        let mut input = step_input("k");
+        input.request.envelope.class = CallClass::Durable {
+            fallback: DeterministicFallback {
+                name: "fail_closed_to_proposed".to_owned(),
+                config: None,
+            },
+        };
+
+        // The host lets the run go and denies the call's admission. That is
+        // no model failure: no fallback answers it and no result is saved.
+        let denied = ScriptedBackend::denied(&attachment);
+        assert_run_actor_refused(
+            submit_as_run_actor(&vault, caller, input.clone(), &denied, &line)
+                .await
+                .expect_err("a run let go before its call was sent gets no answer"),
+        );
+        assert_eq!(denied.call_count(), 1);
+        attachment.store(true, Ordering::SeqCst);
+        let unfinished = receipt_as_run_actor(&vault, caller, &receipt_request("k"))?;
+        assert!(unfinished.result.is_none());
+
+        // Attached again, the key's next call asks the model itself.
+        let backend = ScriptedBackend::new(1);
+        let finished = submit_as_run_actor(&vault, caller, input, &backend, &line).await?;
+        assert_eq!(finished.step_ref, unfinished.step_ref);
+        assert_eq!(backend.call_count(), 1);
+        assert!(matches!(
+            finished.result,
+            Some(ModelStepResult::Finished {
+                memoized: false,
+                fallback_source: None,
+                ..
+            })
         ));
         Ok(())
     })
