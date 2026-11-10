@@ -102,6 +102,52 @@ pub(crate) fn forward_rematerialize_mirror(
     )
 }
 
+/// Test-only window replay with a caller-chosen edge order: runs the entity
+/// pass for every entity in `doc`, then `edge_pass::run_page` over
+/// `edge_keys_in_order` (including the landing-wait same-page retry),
+/// returning the combined write count. No tombstone pass, settle or
+/// calendar.
+#[cfg(oneiron_test_support)]
+pub(crate) fn replay_window_in_edge_order_for_test(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+    edge_keys_in_order: &[String],
+) -> Result<u32> {
+    let materializer = Materializer::new();
+    let _guard = materializer.lock();
+    let _import = crate::sync::manager::import_scope();
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ctx = RematCtx {
+        vault,
+        doc,
+        window_key,
+        lease_vault_id: materializer.lease_vault_id(),
+        trusted: None,
+        entities_map: doc.get_map("entities"),
+        edges_map: doc.get_map("edges"),
+        tombstones: &tombstones,
+    };
+    let marked: HashSet<String> = quarantine::pending_remat_entities(vault, window_key.as_str())?
+        .into_iter()
+        .collect();
+    let mut ledger = RematLedger {
+        marked,
+        healed: Vec::new(),
+        terminal_quarantines: Vec::new(),
+        pending_entity_dependencies: HashSet::new(),
+        pending_dag_parent_sources: HashSet::new(),
+        protected_admissions: HashSet::new(),
+        count: 0,
+        scope: MarkerScope::Window,
+    };
+    let mut plan = entity_pass::plan(&ctx)?;
+    let rows = plan.rows();
+    entity_pass::run_page(&ctx, &mut ledger, &mut plan, 0..rows)?;
+    edge_pass::run_page(&ctx, &mut ledger, edge_keys_in_order)?;
+    Ok(ledger.count)
+}
+
 #[cfg(test)]
 pub(crate) fn forward_recovery(
     vault: &Vault,
