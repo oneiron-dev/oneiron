@@ -133,6 +133,15 @@ fn a_someone_new_answer_on_a_relationship_message_asserts_no_distinct_fact_outsi
         .put_entity(&outsider, ENTITY_TYPE_PERSON, at(1), 1, b"outsider")
         .expect("a member outside the relationship");
     let (owner, _proof) = embedded_owner(&vault).expect("the owner");
+    // The install's machine keys come from its device keystore, as a host's,
+    // so the identity answer's signed topology event has a carrier.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .ensure_serving_install_profile(
+            &oneiron::test_support::test_host_issuer(),
+            oneiron::authority::MachineRole::Unanswered,
+        )
+        .expect("this install's machine profile");
     let ada_one = person(&vault, "Ada");
     let ada_two = person(&vault, "Ada");
 
