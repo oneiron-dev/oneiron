@@ -2,7 +2,7 @@
 //! re-exported here; the items below stay in the engine. The record's encoders
 //! read its crate-private value and manifest reference, so they stay beside it.
 
-pub use oneiron_store::secret_record::codec::*;
+pub(crate) use oneiron_store::secret_record::codec::*;
 
 use super::floor::{as_u64, required_value};
 use super::types::{
