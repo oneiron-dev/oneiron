@@ -864,11 +864,81 @@ fn owner_whole_vault_keeps_source_credentials_that_scoped_and_contact_exports_nu
     // redaction is rejected.
     let tampered = archive_without_bundle_omissions(&scoped_bytes)?;
     assert!(vault.read_whole_vault_archive(&tampered).is_err());
-    // A contact's shareable bundle of the skill row carries no credential bytes.
+    let tampered = archive_without_import_refusals(&scoped_bytes)?;
+    assert!(vault.read_whole_vault_archive(&tampered).is_err());
+    // The contact door emits selected ASSET bodies, not an expanded source
+    // tree. Seed scan-off residue explicitly: normal package persistence skips
+    // a credential-bearing carrier, so selecting the skill alone tests nothing.
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:contact-source-residue",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.set_secret_scan_mode(&owner, crate::batch::secret_scan::SecretScanMode::Off, 131)?;
+    let carrier =
+        crate::store::skill_source_carrier::source_carrier_id(&id, &tainted.content_hash()?)?;
+    let carrier_bytes = crate::skill_hub::encode_source_carrier(&id, &tainted)?;
+    vault.put_entity(
+        &carrier,
+        crate::registry::ENTITY_TYPE_ASSET,
+        time(),
+        130,
+        &carrier_bytes,
+    )?;
+    assert_eq!(vault.get(&carrier)?.as_deref(), Some(carrier_bytes.as_slice()));
+    let mut selected = vec![id, carrier];
+    let mut source_files = Vec::new();
+    for file in &tainted.files {
+        let file_id = EntityId::now();
+        vault.put_entity(
+            &file_id,
+            crate::registry::ENTITY_TYPE_ASSET,
+            time(),
+            130,
+            &file.content,
+        )?;
+        assert_eq!(vault.get(&file_id)?.as_deref(), Some(file.content.as_slice()));
+        selected.push(file_id);
+        source_files.push((file_id, file.path.as_str()));
+    }
     let bundle: serde_json::Value =
-        serde_json::from_slice(&vault.export_entity_bundle_json(&[id])?)
+        serde_json::from_slice(&vault.export_entity_bundle_json(&selected)?)
             .map_err(|_| Error::InvariantViolation("bundle JSON"))?;
-    let emitted = bundle["entities"][0]["body"].to_string();
+    let entities = bundle["entities"].as_array().expect("contact entities");
+    let carried = entities
+        .iter()
+        .find(|row| row["id"] == carrier.to_hex())
+        .expect("contact output contains the selected source carrier");
+    assert_eq!(carried["entity_type"], crate::registry::ENTITY_TYPE_ASSET);
+    assert!(
+        carried["body"].is_null(),
+        "the opaque source carrier withholds all credential members and its tree hash"
+    );
+    for (file_id, path) in source_files {
+        let carried = entities
+            .iter()
+            .find(|row| row["id"] == file_id.to_hex())
+            .expect("contact output contains the selected source file");
+        match path {
+            "scripts/private.py" => assert!(carried["body"].is_null()),
+            "signature.json" => assert!(carried["body"]["signature"].is_null()),
+            _ => {}
+        }
+    }
+    let emitted = bundle.to_string();
+    for secret in ["residual-file-credential", "residual-signature"] {
+        let encoded = secret
+            .bytes()
+            .map(|byte| byte.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(
+            !emitted.contains(&encoded),
+            "contact bundle contains no credential encoded as byte values: {emitted}"
+        );
+    }
     assert!(
         !emitted.contains("residual-file-credential"),
         "contact bundle: {emitted}"
@@ -883,6 +953,18 @@ fn owner_whole_vault_keeps_source_credentials_that_scoped_and_contact_exports_nu
 /// Copies a whole-vault archive member by member, with `bundle_omissions`
 /// cleared from its manifest: the rows still declare the redaction.
 fn archive_without_bundle_omissions(bytes: &[u8]) -> Result<Vec<u8>> {
+    archive_with_changed_manifest(bytes, |manifest| manifest.bundle_omissions.clear())
+}
+
+/// Leaves the source redaction intact but hides its declared import refusal.
+fn archive_without_import_refusals(bytes: &[u8]) -> Result<Vec<u8>> {
+    archive_with_changed_manifest(bytes, |manifest| manifest.import_refusals.clear())
+}
+
+fn archive_with_changed_manifest(
+    bytes: &[u8],
+    mut change: impl FnMut(&mut WholeVaultDocumentManifest),
+) -> Result<Vec<u8>> {
     use std::io::{Read as _, Write as _};
     let invalid = |what: &str| Error::InvalidConfig(format!("tampered fixture archive: {what}"));
     let mut archive =
@@ -902,7 +984,7 @@ fn archive_without_bundle_omissions(bytes: &[u8]) -> Result<Vec<u8>> {
         if name == VAULT_ARCHIVE_MANIFEST_PATH {
             let mut manifest: WholeVaultDocumentManifest =
                 serde_json::from_slice(&content).map_err(|_| invalid("manifest"))?;
-            manifest.bundle_omissions.clear();
+            change(&mut manifest);
             content = serde_json::to_vec(&manifest).map_err(|_| invalid("manifest"))?;
         }
         out.start_file(name.as_str(), options)
