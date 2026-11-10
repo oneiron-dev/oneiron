@@ -141508,6 +141508,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/facade_live_run_status.rs",
+     "purpose": "Live-run guard refusals keep their status through the real facade router",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/inference_defaults.rs",
      "purpose": "Owner-grade HTTP edit/read proof for resident inference policy rows",
      "surface": {}
@@ -142379,7 +142387,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1827,
-   "test_files": 185
+   "test_files": 186
   },
   "oneiron-skill-attribution": {
    "files": [
