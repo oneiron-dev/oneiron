@@ -662,9 +662,11 @@ The vault variant builds like the others, with these differences:
 - **No guest plumbing.** There is no guest account, fence or guest agent,
   and PID 1 is the pinned `deploy/firecracker/oneiron-vault-init` at
   `/usr/sbin/oneiron-vault-init`, byte for byte.
-- **The engine binaries.** `oneiron-server`, `oneiron-broker`,
-  `oneiron-vm-init` and `oneiron-vm-outbox` (one Cargo invocation, default
-  features) compile in release in the image's build overlay:
+- **The engine binaries.** `oneiron-server`, `oneiron-broker` and
+  `oneiron-vm-init` (one Cargo invocation of the oneiron-server package),
+  then `oneiron-vm-outbox` (its own package, which links the same
+  oneiron-server library), all with default features, compile in release in
+  the image's build overlay:
   build-essential, pkg-config and libexpat1-dev. expat-sys finds Debian's
   Expat through pkg-config and links `libexpat.so.1` (libexpat1, in the
   image), not the Expat 2.1.0 its crate bundles. DT_NEEDED, read from the ELF dynamic sections: oneiron-server links `libexpat.so.1`, `libgcc_s.so.1`, `libm.so.6`, `libc.so.6` and `ld-linux-x86-64.so.2`; oneiron-broker drops the Expat entry; oneiron-vm-init and oneiron-vm-outbox link only `libgcc_s.so.1`, `libc.so.6` and the loader. Every entry is present in `/usr/lib/x86_64-linux-gnu` in the rootfs.

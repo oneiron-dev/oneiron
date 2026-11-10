@@ -19,6 +19,8 @@ fn request() -> LlmRequest {
             tier: TierPrecedence::for_purpose(&CallPurpose::AnswerGen, ModelTierRef("a".into())),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::ThirdParty,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: Vec::new(),
         tools: Vec::new(),

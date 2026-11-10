@@ -101,6 +101,7 @@ fn txn(steps: Vec<EditStep>) -> EditTransaction {
 fn create_step(block_id: NodeId, expect: &str, body: &str) -> EditStep {
     EditStep::CommentCreate {
         block_id,
+        story: None,
         expect: expect.to_string(),
         occurrence: None,
         semantic_hash: None,
