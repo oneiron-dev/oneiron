@@ -1,6 +1,6 @@
 {
   "name": "vault.runs.parks.release",
-  "description": "The owner acts on one parked Dreamer try against the exact park he read. Resume: a try that waits on an owner act (an executor error or a private other park) queues again as the same try; no retry happens without it. Stop: any park of the Dreamer server's own pass ends, its try cancelled on the owner's grounds and its park cleared. Either way its notices are resolved.",
+  "description": "The owner resumes or stops a parked Dreamer try against the exact park read. Resume requeues an executor error or private other park as the same try. Stop cancels the try of a park of the Dreamer server's own pass. Its notices are resolved.",
   "input": "crate::dreamer_runner::ReleaseParkedAttemptRequest",
   "output": "crate::dreamer_runner::ParkReleaseView",
   "call": "crate::dreamer_runner::release_parked_attempt_as_owner(memory.vault(), &memory.embedded_owner(\"vault.runs.parks.release\")?, &input).map_err(crate::memory::MemoryError::from)?",
