@@ -1,16 +1,15 @@
 //! The tag views serve nothing derived from a relationship-scoped MESSAGE
 //! outside that relationship (OPUS-LEAKS, lead call G "leaks today").
 //!
-//! One TURN holds two MESSAGEs: an open one, and one scoped to a
-//! relationship R. The tagger reads both, as it does today. A member outside
-//! R reads the TURN and the open MESSAGE, never the R MESSAGE. Each test then
-//! asserts that one identity writer's output, derived from the R MESSAGE,
-//! stays out of that member's reads:
-//! - the tag views (`vault.tagging.tags`, `vault.tagging.mentions`);
-//! - a provisional entity named only in the R MESSAGE, once confirmed.
+//! One TURN holds two MESSAGEs: one scoped to a relationship S, one scoped
+//! to a relationship R. The tagger reads both, as it does today. The outsider
+//! is a member of S, outside R: it reads the TURN and the S MESSAGE on its
+//! own grant, never the R MESSAGE. The test asserts that the tag views
+//! (`vault.tagging.tags`, `vault.tagging.mentions`) serve that member no
+//! mention from the R MESSAGE.
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The last
-//! assertion of each test is the leak check.
+//! assertion is the leak check.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test tag_views_source_label`.
@@ -19,6 +18,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use oneiron::edge::EdgeActorClass;
 use oneiron::embed::EmbedderLocality;
 use oneiron::memory::extraction::{
@@ -33,10 +35,11 @@ use oneiron::tagging::{
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::open_member_vault;
 use oneiron::{EntityId, ModelId, Vault, VaultConfig};
+use oneiron_authority::federation::scope_codec::read_preset;
 
 const CHECKPOINT: &str = "0123456789abcdef";
-/// The open MESSAGE: every member reads it.
-const OPEN_WORDS: &str = "Ada waved hello.";
+/// The S MESSAGE: the outsider reads it.
+const SHARED_WORDS: &str = "Ada waved hello.";
 /// The R MESSAGE: only R's members read it. Mirela is named nowhere else.
 const HIDDEN_WORDS: &str = "Mirela told Ada about the move.";
 
@@ -117,11 +120,11 @@ struct Fixture {
     outsider: EntityId,
     ada: EntityId,
     turn: EntityId,
-    open_message: EntityId,
+    shared_message: EntityId,
     hidden_message: EntityId,
 }
 
-/// A vault whose tagger saves its tags, a TURN with an open MESSAGE and an
+/// A vault whose tagger saves its tags, a TURN with an S MESSAGE and an
 /// R MESSAGE, tagged once.
 fn tagged_fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -149,11 +152,33 @@ fn tagged_fixture() -> Fixture {
     vault
         .put_entity(&outsider, ENTITY_TYPE_PERSON, at(1), 1, b"outsider")
         .expect("a member outside the relationship");
+    // The outsider is a member of another relationship, S: it reads S's
+    // MESSAGEs on its own live grant, never R's.
+    let shared = EntityId::now();
+    vault
+        .put_entity(&shared, ENTITY_TYPE_RELATIONSHIP, at(1), 1, b"relationship S")
+        .expect("relationship S");
+    vault
+        .create_access_grant(
+            &EntityId::now(),
+            &AccessGrant {
+                principal_ref: outsider,
+                scope: AccessGrantScope::Messages { space_ref: shared },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at: 1,
+                revoked_at: None,
+                expires_at: None,
+                authority_scope: read_preset(),
+                companion_bounds: None,
+            },
+        )
+        .expect("the outsider's grant on S");
     let speaker = person(&vault, "speaker");
     let ada = person(&vault, "Ada");
 
     let turn = EntityId::now();
-    let open_message = EntityId::now();
+    let shared_message = EntityId::now();
     let hidden_message = EntityId::now();
     let message = |id: EntityId, order: u32, words: &str, metadata| WitnessMessage {
         id: Some(id.to_hex()),
@@ -173,7 +198,12 @@ fn tagged_fixture() -> Fixture {
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
             messages: vec![
-                message(open_message, 0, OPEN_WORDS, None),
+                message(
+                    shared_message,
+                    0,
+                    SHARED_WORDS,
+                    Some(serde_json::json!({"rel": shared.to_hex()})),
+                ),
                 message(
                     hidden_message,
                     1,
@@ -203,7 +233,7 @@ fn tagged_fixture() -> Fixture {
         outsider,
         ada,
         turn,
-        open_message,
+        shared_message,
         hidden_message,
     };
     fixture.check_setup();
@@ -221,7 +251,7 @@ impl Fixture {
     }
 
     /// The tags name Ada and Mirela in the R MESSAGE; the outsider reads the
-    /// TURN, the open MESSAGE and Ada, never the R MESSAGE.
+    /// TURN, the S MESSAGE and Ada, never the R MESSAGE.
     fn check_setup(&self) {
         let tags = self
             .vault
@@ -239,8 +269,8 @@ impl Fixture {
             "FIXTURE: the outsider reads the TURN"
         );
         assert!(
-            self.outsider_reads(&self.open_message),
-            "FIXTURE: the outsider reads the open MESSAGE"
+            self.outsider_reads(&self.shared_message),
+            "FIXTURE: the outsider reads the S MESSAGE"
         );
         assert!(
             self.outsider_reads(&self.ada),
@@ -273,8 +303,8 @@ fn tag_views_serve_no_mention_from_a_message_outside_the_readers_relationship() 
     assert!(
         tags.mentions
             .iter()
-            .any(|mention| mention.message_ref == fixture.open_message.to_hex()),
-        "FIXTURE: the outsider sees the open MESSAGE's mention"
+            .any(|mention| mention.message_ref == fixture.shared_message.to_hex()),
+        "FIXTURE: the outsider sees the S MESSAGE's mention"
     );
     let mentions = outsider
         .tagging_mentions(&TaggingMentionsRequest {
@@ -287,8 +317,8 @@ fn tag_views_serve_no_mention_from_a_message_outside_the_readers_relationship() 
     assert!(
         mentions
             .iter()
-            .any(|hit| hit.mention.message_ref == fixture.open_message.to_hex()),
-        "FIXTURE: the outsider sees Ada's mention in the open MESSAGE"
+            .any(|hit| hit.mention.message_ref == fixture.shared_message.to_hex()),
+        "FIXTURE: the outsider sees Ada's mention in the S MESSAGE"
     );
 
     let leaked_tags: Vec<_> = tags
