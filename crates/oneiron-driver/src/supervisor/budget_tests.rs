@@ -10,9 +10,9 @@ use oneiron::{
 
 /// The runner store's old 128-byte budget-id ceiling and the 106-byte base it
 /// left for `{base}:p{n}`, which #2709 (Rule 5: counted, not capped) removed
-/// from the driver and the store. Kept here, under their old names, only so
-/// the tests that pin the old refusal compile unchanged and run once for
-/// their ruling (test rules v2, "run before cut").
+/// from the driver and the store. Kept here, under their old names, so the
+/// three tests below keep their old inputs; they now assert Rule 5's outcome
+/// (the ids are accepted) instead of the removed refusal.
 const MAX_RUNNER_BUDGET_ID_LEN: usize = 128;
 const MAX_PASS_BUDGET_BASE_LEN: usize = MAX_RUNNER_BUDGET_ID_LEN - 22;
 
@@ -32,8 +32,8 @@ fn config_validate_rejects_base_ids_that_overflow_derived_length() {
     assert!(ok.validate().is_ok());
 
     let over = WakeSupervisorConfig::new("b".repeat(MAX_PASS_BUDGET_BASE_LEN + 1), "owner", 1, 100);
-    let error = over.validate().expect_err("over-long base must reject");
-    assert!(matches!(error, oneiron::Error::InvalidConfig(_)));
+    // Ruled refusal removed: #2709 (Rule 5) dropped the 106-byte base ceiling.
+    assert!(over.validate().is_ok(), "Rule 5 accepts the same 107-byte base");
 }
 
 /// Pins the mirrored `MAX_RUNNER_BUDGET_ID_LEN` against the real store:
@@ -57,9 +57,11 @@ fn widest_derived_pass_budget_id_fits_the_runner_store_ceiling() {
 
     let over_long = format!("{widest}b");
     let outcome = DreamerRunnerStore::new(&vault).budget(&over_long);
+    // Ruled refusal removed: #2690 and #2709 (Rule 5) dropped the store's
+    // budget-id ceiling, so the absent 129-byte id reads as `None`.
     assert!(
-        outcome.is_err(),
-        "one byte past the ceiling must fail store validation"
+        outcome.expect("Rule 5 accepts the 129-byte id").is_none(),
+        "the absent 129-byte id has no budget row"
     );
 }
 
@@ -76,8 +78,14 @@ async fn over_long_budget_base_refuses_to_run_instead_of_spinning() {
     let config =
         WakeSupervisorConfig::new("b".repeat(MAX_PASS_BUDGET_BASE_LEN + 1), "owner", 1, 100);
     let supervisor = WakeSupervisor::new(&vault, push, factory, config);
-    let report = supervisor.run().await;
-    assert_eq!(report, WakeSupervisorReport::default(), "no pass may run");
+    // Ruled refusal removed: #2709 (Rule 5) accepts this base. With live
+    // producers and no ticks the supervisor idles, so the bounded run must
+    // still be pending; a refusal would return at once.
+    let outcome = tokio::time::timeout(Duration::from_secs(2), supervisor.run()).await;
+    assert!(
+        outcome.is_err(),
+        "Rule 5 accepts this base; with live producers and no ticks the supervisor idles"
+    );
 }
 
 #[tokio::test]
