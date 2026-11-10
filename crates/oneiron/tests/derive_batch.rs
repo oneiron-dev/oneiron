@@ -28,7 +28,7 @@ use serde_json::json;
 
 const READER: &str = "reader";
 const NO_EVIDENCE: &str = "gate.deny.dreamer_precommit.no_evidence";
-const DEPENDENCY_REFUSED: &str = "derive.dependency_refused";
+const DEPENDENCY_REFUSED: &str = "gate.deny.derive.dependency_refused";
 
 fn put(vault: &Vault, entity_type: u8, body: &[u8]) -> EntityId {
     let id = EntityId::now();

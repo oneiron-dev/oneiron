@@ -13,7 +13,9 @@
 use oneiron::test_doors::consolidation::{
     UnboundPass, consolidate_unbound_turn, open_dreamer_vault,
 };
-use oneiron::test_doors::derive::{Archive, Derived, Named, commit, commit_in_attempt, row_live};
+use oneiron::test_doors::derive::{
+    Archive, Derived, Named, commit, commit_in_attempt, row_live, set_strength_policy,
+};
 use oneiron::test_doors::steward::{
     STEWARD_READ_VERB, archive_every_quiet_claim, dreamer, stand_steward_grant,
 };
@@ -148,7 +150,8 @@ fn an_archive_needs_the_archive_grant() {
 #[test]
 fn an_archive_meets_the_owners_strength_policy() {
     let fixture = fixture();
-    // The shipped policy's quiet window has not passed for a claim landed now.
+    // A policy whose quiet window no claim has passed yet.
+    set_strength_policy(&fixture.vault, 1.0, u64::MAX).expect("strength policy");
     assert_eq!(
         archive(&fixture, true, 0.1),
         (false, vec!["gate.deny.derive.archive_not_quiet".to_owned()])
