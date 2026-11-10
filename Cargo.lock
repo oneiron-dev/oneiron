@@ -9044,6 +9044,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-vm-outbox"
+version = "0.1.0"
+dependencies = [
+ "oneiron-server",
+]
+
+[[package]]
 name = "oneiron-wake-contract"
 version = "0.1.0"
 dependencies = [

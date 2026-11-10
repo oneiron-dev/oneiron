@@ -27,8 +27,15 @@ pub(crate) use crate::store::claim_lineage::{
 pub(crate) const KEY_VALUE_PREDICATE: &str = "core.memory.key_value";
 
 pub(crate) fn claim_generic_readable(body: &ClaimBody) -> bool {
-    body.predicate != KEY_VALUE_PREDICATE
+    !claim_exact_store(body)
         && super::history_store::machine_history_kind(&body.predicate).is_none()
+}
+
+/// Whether `body` is an actor-owned exact-store claim, which only the keyed
+/// reader's own lane mode ([`crate::ports::ClaimReadStatus::ExactStore`])
+/// admits.
+pub(crate) fn claim_exact_store(body: &ClaimBody) -> bool {
+    body.predicate == KEY_VALUE_PREDICATE
 }
 
 /// D19 read-path status gate predicate (ARCH-0003 retrieval rule; ARCH-0004

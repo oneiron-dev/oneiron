@@ -615,6 +615,7 @@ fn gen_step(
             Some(EditStep::SetRunFormatting {
                 block_id: p.block_id.clone(),
                 expect: word,
+                occurrence: None,
                 semantic_hash: None,
                 marks,
                 style,
@@ -702,6 +703,7 @@ fn gen_step(
             let word = pick_word(rng, &p.text)?;
             Some(EditStep::CommentCreate {
                 block_id: p.block_id.clone(),
+                story: None,
                 expect: word,
                 occurrence: None,
                 semantic_hash: None,

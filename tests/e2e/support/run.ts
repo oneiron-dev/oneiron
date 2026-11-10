@@ -222,6 +222,13 @@ export class ManagedProcess {
   get pid(): number { if (!this.child.pid) throw new Error("Process has no pid"); return this.child.pid }
   get running(): boolean { return this.child.exitCode === null && this.child.signalCode === null }
   tail(): string { return this.ring.join("\n") }
+  /** Negative leak scan over the raw, unredacted stdout and stderr kept in memory. It never persists
+   * or returns output. `truncated` means a stream outgrew its window, so absence is unproved. */
+  outputHas(values: readonly string[]): { found: boolean; truncated: boolean } {
+    if (values.length === 0 || values.some(value => !value)) throw new TypeError("outputHas needs non-empty values");
+    return { found: values.some(value => this.stdout.includes(value) || this.stderr.includes(value)),
+      truncated: this.truncated.stdout || this.truncated.stderr };
+  }
   signal(signal: NodeJS.Signals): void {
     if (!this.child.pid) return;
     try { process.kill(-this.child.pid,signal) } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error }
