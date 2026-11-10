@@ -41,11 +41,7 @@ struct Fixture {
 }
 
 /// A vault whose Dreamer landed two claims about one person, each citing a
-/// TURN. Both predicates are `profile.` ones, which the shipped policy
-/// classes normal: a claim of a predicate no rule names is critical, and
-/// until its owner answers that confirmation it is no evidence for a later
-/// Dreamer write (GATE-12), so a SameAs that cites only such claims is
-/// refused.
+/// TURN.
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
@@ -54,9 +50,9 @@ fn fixture() -> Fixture {
     let body = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "user")]))
         .expect("a TURN body");
     let turn = put(&vault, ENTITY_TYPE_TURN, &body);
-    let claim = |local, predicate, value| Claim {
+    let claim = |local, value| Claim {
         local,
-        predicate,
+        predicate: "preference.coffee",
         subject: Named::Stored(person),
         value: json!(value),
         evidence: vec![Named::Stored(turn)],
@@ -67,8 +63,8 @@ fn fixture() -> Fixture {
         EdgeActorClass::System,
         "run-claims",
         &[
-            claim("first", "profile.drink", "an oat milk flat white"),
-            claim("second", "profile.coffee", "a flat white with oat milk"),
+            claim("first", "an oat milk flat white"),
+            claim("second", "a flat white with oat milk"),
         ],
     )
     .expect("the claims commit");
