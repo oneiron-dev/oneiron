@@ -5,13 +5,37 @@ use axum::{
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
-use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
+use oneiron_server::{
+    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
+};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tasks_refuse_preserves_live_run_refusal_status_and_code() {
+/// The facade's generated dispatch polls a frame of several MiB in a dev build
+/// (`ENGINE_THREAD_STACK_BYTES`), more than a test thread's default stack, so
+/// the router runs on threads sized as the server sizes its own.
+#[test]
+fn tasks_refuse_preserves_live_run_refusal_status_and_code() {
+    let run = std::thread::Builder::new()
+        .name("facade-live-run-status".into())
+        .stack_size(ENGINE_THREAD_STACK_BYTES)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
+                .enable_all()
+                .build()
+                .expect("engine-sized test runtime")
+                .block_on(refuse_with_live_run_handles())
+        })
+        .expect("spawn the engine-sized test thread");
+    if let Err(panic) = run.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn refuse_with_live_run_handles() {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
