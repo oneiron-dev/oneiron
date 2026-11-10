@@ -150,7 +150,8 @@ The rule, by cause:
   certificate. Anything else claims nothing: an unrelated CA's stale CRL, an
   extra certificate revoking itself, or a responder's no about a certificate
   outside the chains changes nothing. A shadow's stale CRL is about nothing in
-  the chains, and still reads as possible tampering (below).
+  the chains, and still reads as possible tampering where the result would
+  otherwise be unresolved (below).
 - Judgement is per item. A response or array that is unverifiable as a whole is
   discarded as a whole, with whatever it says. This gives a third party nothing
   more than omitting the item, which an appended DSS revision can always do.
@@ -175,14 +176,16 @@ earned, so a broken DSS appended to a B-T document leaves it B-T.
 Anyone holding a signed PDF can append a DSS without breaking its signatures, so
 presented material must not turn an unresolved check into a failed verdict. These
 cases follow ETSI EN 319 102-1, which discards unusable revocation data and
-reports INDETERMINATE: the verdict is indeterminate, and
-`validation_material_possible_tampering` is always in `reasons`, so the user sees
-the tampering sub-indication.
+reports INDETERMINATE. Where possible tampering is reported (the result would
+otherwise be unresolved, and no other check failed), the verdict is
+indeterminate and `validation_material_possible_tampering` is always in
+`reasons`, so the user sees the tampering sub-indication.
 
 FIX row [SEAL-REPORT-EN-319-102-1-ROLLUP] holds the EN-aligned rollup for the
-genuine failures (EN: TRY_LATER, REVOKED_NO_POE and the rest). Unknown status is
-reported only after the whole response's binding, authorization, freshness and
-signature checks pass. Seal-time OCSP gathering still accepts only all-good
+genuine failures (EN: TRY_LATER, REVOKED_NO_POE and the rest). An unknown status
+counts only after the whole response's signature, binding and authorization
+checks pass and its own SingleResponse is fresh; freshness and status are judged
+per SingleResponse. Seal-time OCSP gathering still accepts only all-good
 responses covering the requested certificate.
 
 An optional `/VRI` index does not preempt validation of the existing global DSS
