@@ -14,6 +14,7 @@ use oneiron_authority::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCe
 use super::grants::{
     PolicyScopedGrant, scoped_read_actor_matches, scoped_read_grant_has_read_effector,
 };
+use super::house_grant::is_shipped_house_read_row;
 use super::resolution::PolicyManifestResolution;
 
 use oneiron_contracts::gate::MAX_SENSITIVITY_BAND;
@@ -150,6 +151,7 @@ impl PolicyManifestResolution {
         for grant in self.scoped_grants().iter().filter(|grant| {
             scoped_read_grant_has_read_effector(grant)
                 && scoped_read_actor_matches(grant, actor)
+                && (actor.authority_scope().is_none() || !is_shipped_house_read_row(grant))
                 && !grant.receipt_required
                 && grant.budget.is_none()
         }) {
@@ -203,16 +205,22 @@ impl PolicyManifestResolution {
             Some(_) if self.diagnostics().loaded_manifest_forces_fail_closed() => {
                 RetrievalPolicyFloor::deny_all()
             }
-            Some(actor) => {
-                let policy = RetrievalPolicyFloor::from_scoped_grants(self.scoped_grants(), actor);
-                match explicit_scope {
-                    Some(scope) => {
-                        let proof = RetrievalPolicyFloor::from_authority_scope(scope);
-                        policy.map_or(proof.clone(), |policy| policy.intersect(&proof))
-                    }
-                    None => policy.unwrap_or_else(RetrievalPolicyFloor::deny_all),
+            Some(actor) => match explicit_scope {
+                Some(scope) => {
+                    // The unchanged shipped house row opens only reads with no proof.
+                    // It does not cap a read carrying an explicit Scope.
+                    let policy = RetrievalPolicyFloor::from_scoped_grants(
+                        self.scoped_grants()
+                            .iter()
+                            .filter(|grant| !is_shipped_house_read_row(grant)),
+                        actor,
+                    );
+                    let proof = RetrievalPolicyFloor::from_authority_scope(scope);
+                    policy.map_or(proof.clone(), |policy| policy.intersect(&proof))
                 }
-            }
+                None => RetrievalPolicyFloor::from_scoped_grants(self.scoped_grants(), actor)
+                    .unwrap_or_else(RetrievalPolicyFloor::deny_all),
+            },
         }
     }
 }
@@ -240,14 +248,14 @@ impl RetrievalPolicyFloor {
         }
     }
 
-    fn from_scoped_grants(
-        grants: &[PolicyScopedGrant],
+    fn from_scoped_grants<'a>(
+        grants: impl IntoIterator<Item = &'a PolicyScopedGrant>,
         actor: &ScopedReadActorKey,
     ) -> Option<Self> {
         let mut saw_read_grant = false;
         let mut floor: Option<Self> = None;
         for grant in grants
-            .iter()
+            .into_iter()
             .filter(|grant| scoped_read_grant_has_read_effector(grant))
         {
             if !scoped_read_actor_matches(grant, actor) {
