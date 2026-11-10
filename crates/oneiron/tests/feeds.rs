@@ -449,14 +449,9 @@ fn a_returning_cursor_past_retention_gets_a_gap_and_resyncs() {
     const T0: u64 = 1_780_000_000;
     let clock = ManualClock::new(T0);
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(
-        dir.path(),
-        VaultConfig {
-            store_clock: clock.bundle(),
-            ..VaultConfig::device()
-        },
-    )
-    .expect("open vault");
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("open vault");
     let key = owner_slip_for(&vault, [0x47; 32], 4 * FEED_RETENTION_SECS).1;
     let lane = vault.scoped_read(key.clone());
     let subscription = follow_from(&vault, &key, FeedSource::Edges, FeedStart::Head);
