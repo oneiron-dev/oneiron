@@ -223,10 +223,13 @@ impl FixtureVault {
     }
 
     /// The fixture a seeding run wrote into `dir` ([`seed_into`], or the
-    /// `oneiron-testkit-seed` binary); `None` when `dir` holds none.
+    /// `oneiron-testkit-seed` binary); `None` when `dir` holds none. A seed
+    /// that left anything beside the vault (key custody) is refused, as
+    /// [`Self::build`] refuses it: a copy would read and retire the
+    /// original's keys. Use such a vault where it was built.
     ///
     /// # Errors
-    /// The record is unreadable.
+    /// The record is unreadable, or the seed left something beside the vault.
     pub fn at(dir: &Path) -> Result<Option<Self>, FixtureError> {
         Self::read(dir)
     }
@@ -251,6 +254,21 @@ impl FixtureVault {
             .get("ended_at")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| FixtureError::Record(format!("{}: no ended_at", dir.display())))?;
+        // Only a seed that left nothing beside the vault is copyable; a record
+        // without the list fails closed.
+        match record.get("beside").and_then(serde_json::Value::as_array) {
+            Some(beside) if beside.is_empty() => {}
+            Some(_) => {
+                return Err(FixtureError::Record(format!(
+                    "{}: the seed left {} beside the vault (key custody or a page seal); a byte copy would \
+                     share those keys. Use the vault where it was built, or seed it per test with \
+                     TestVault::seeded.",
+                    dir.display(),
+                    record["beside"]
+                )));
+            }
+            None => return Err(FixtureError::Record(format!("{}: no beside", dir.display()))),
+        }
         Ok(Some(Self {
             dir: dir.to_path_buf(),
             ended_at,
