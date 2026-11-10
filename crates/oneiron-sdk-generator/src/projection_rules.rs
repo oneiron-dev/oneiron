@@ -101,6 +101,14 @@ impl Tree {
     }
 
     fn verb_file(&self, name: &str) -> PathBuf {
+        assert!(
+            !name.is_empty()
+                && name != "."
+                && name != ".."
+                && !Path::new(name).is_absolute()
+                && !name.contains(['/', '\\']),
+            "a verb file name must be one safe file-name component: {name:?}"
+        );
         self.root
             .join("scripts/sdk/verbs")
             .join(format!("{name}.json"))
@@ -131,6 +139,25 @@ impl Tree {
     fn outputs(&self) -> Result<Outputs, String> {
         outputs(&self.root).map_err(|error| error.to_string())
     }
+}
+
+#[test]
+fn a_row_name_cannot_escape_the_temporary_tree() {
+    let tree = Tree::new("unsafe-row-name");
+    let outside = tree.root.with_extension("json");
+    assert!(!outside.exists());
+    let outside_name = outside
+        .file_stem()
+        .expect("an outside file name")
+        .to_str()
+        .expect("a UTF-8 file name");
+    let mut embed = tree.row("ai.embed");
+    for name in ["../../x".to_owned(), format!("../../../../{outside_name}")] {
+        embed.insert("name".into(), Value::Str(name));
+        assert!(std::panic::catch_unwind(|| tree.write(&embed)).is_err());
+    }
+    assert!(!tree.root.join("scripts/x.json").exists());
+    assert!(!outside.exists());
 }
 
 /// `row[key]` as a dict, to change in place.
@@ -416,6 +443,18 @@ fn a_count_default_comes_from_its_argument() {
                 "{path}: {py}"
             );
         }
+        for (path, conversion) in [
+            (
+                NAPI,
+                format!(
+                    "let limit = limit.map(limit_to_engine).transpose().map_err(facade_error)?.unwrap_or({limit});"
+                ),
+            ),
+            (PYO3, format!("let limit = limit.unwrap_or({limit});")),
+        ] {
+            let native = item(text(outputs, path), "fn vault_recall(", "}\n");
+            assert!(native.contains(&conversion), "{path}: {native}");
+        }
         let remote = item(text(outputs, REMOTE), "pub fn vault_recall(", "\npub fn ");
         assert!(
             remote.contains("VAULT_RECALL_LIMIT_DEFAULT")
@@ -441,14 +480,19 @@ fn a_row_s_name_names_every_binding() {
         (TS_NATIVE, "vaultRoomsBids(input: unknown)"),
         (CLIENT, "\"vault.rooms.bids\""),
         (PY, "def bids(self, spec)"),
+        (PYI, "def bids(self, spec"),
     ];
     for (path, spelling) in surfaces {
+        let old_spelling = spelling.replace("bids", "offers").replace("Bids", "Offers");
+        assert!(
+            text(baseline(), path).contains(&old_spelling),
+            "{path}: {old_spelling}"
+        );
         assert!(
             text(edited(), path).contains(spelling),
             "{path}: {spelling}"
         );
     }
-    assert!(text(baseline(), CORE).contains("pub fn vault_rooms_offers("));
     assert_absent(edited(), "vault.rooms.offers");
 }
 
