@@ -105,7 +105,7 @@ const engine = await EngineFixture.start({
 | `pairedActor` | `{principalRef, actorClass, credential, pin, client, mcp, cli}`. Never print it. |
 | `sdk` | `SdkProcessDriver` using the prepared Node package or Python venv. |
 | `peers` | Additional fresh independent fixtures; no automatic sync or authority. |
-| `awaitReceipt(ref, timeoutMs?)` | Public call-receipt lookup or governance receipt observation; no job drain. |
+| `awaitReceipt(ref, timeoutMs?)` | Resolves `call:` refs through `vault.receipts.get` and other refs only as rows of the `vault.receipts` page (gate-ledger receipts), never a job drain; `witness:` and `put:` refs are write markers, not receipt rows, so they never resolve here: read the written entity back through `vault.get` instead. |
 | `restart()` | Stop and re-serve only this fixture's vault, using the same credential. |
 | `kill()` | SIGKILL the owned server group. First observe a public receipt/ACK/provider barrier. |
 | `close({retainVault?})` | Close peers/server and remove the private root unless explicit local retention. |
@@ -179,6 +179,7 @@ text; they still fail the strict vector fixture until explicitly authored.
 - `client.call<V>(verb, input): Promise<FacadeResult<V>>` accepts only generated
   `FacadeVerb`/`FacadeInput<V>`. `202 PENDING_ASK` is not success. It throws with
   the original envelope. There is no automatic ask replay or credential renewal.
+- `client.callWithReceipt(verb, input)` keeps the same typed call and errors, returning `{value, receiptRef}` with the server's `x-oneiron-receipt-ref` header (`null` when absent).
 - Every protected HTTP request signs a new holder nonce over the canonical
   slip bytes. Only the holder proof is signed locally, never an engine record.
 - `mcp.initialize()`, `listTools()`, `rpc(method, params)`, `request(...)`, and
@@ -191,6 +192,7 @@ text; they still fail the strict vector fixture until explicitly authored.
   receipts. For subscription/multiplexing checks use `send(tag, envelope)` and
   `next(timeoutMs)`, assemble chunks before ACK, and retain binary cursors.
   The client does not interpret CRDT storage or negotiate private sync state.
+  The default `engine.websocket()` client opens the owner-grade full-replication `/ws`; a scoped agent's upgrade is refused by `replication_mode` in `crates/oneiron-server/src/handler/connection.rs` (FIX 23077), so scoped-agent RPC goes over HTTP.
 - `cli.run(args, stdin?, timeoutMs?, privateOutput?)` retains stdout, stderr,
   exit code and signal. `cli.json` and typed `cli.call` throw `CliError.result`
   on nonzero exit. Pass secret data through stdin, never argv.
