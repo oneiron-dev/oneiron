@@ -145,7 +145,8 @@ The rule, by cause:
 - What genuine material says no to counts only when it is about the signer's
   chains: a CRL whose signer has revocation authority over a covered non-anchor
   certificate (it issued it, or holds a key that certificate's own issuer
-  certified: a separate CRL-signing key or a rollover's link certificate), or an
+  certified with cRLSign: a separate CRL-signing key or a rollover's link
+  certificate), or an
   OCSP SingleResponse whose issuer and serial name a covered non-anchor
   certificate. Anything else claims nothing: an unrelated CA's stale CRL, an
   extra certificate revoking itself, or a responder's no about a certificate
@@ -164,8 +165,11 @@ CRL-signing key, a key rollover's link certificate and a same-subject anchored
 CA are vouched for, so they are never shadows. A shadow reports possible
 tampering wherever the result would otherwise be unavailable or unknown; beside
 complete genuine coverage it is disregarded, and the material passes. A key the
-certificate's own issuer certified is that issuer's revocation authority: its
-listing of the certificate is a revocation, and fails. A same-subject CA that
+certificate's own issuer certified with cRLSign is that issuer's revocation
+authority (RFC 5280 §5.1.1.3, §5.2.1): its listing of the certificate is a
+revocation, and fails, and its fresh complete CRL under the issuer's name covers
+the certificate. cRLSign counts only from the certificate the issuer gave the
+key, never from another certificate for the same key. A same-subject CA that
 only another trust anchor vouches for is no shadow, but two CAs may share a name
 (RFC 5280 §8): its CRL claims nothing about the other CA's certificates.
 
