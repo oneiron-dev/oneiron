@@ -804,14 +804,14 @@ impl SyncServer {
     ///
     /// `conn_id = 0` is reserved as the bridge/local-broadcast sender
     /// sentinel; a real connection returning 0 would silently bypass echo
-    /// suppression. `fetch_update` skips 0 on wraparound.
+    /// suppression. `try_update` skips 0 on wraparound.
     pub(crate) fn alloc_conn_id(&self) -> u32 {
         self.next_conn_id
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 let next = current.wrapping_add(1);
                 Some(if next == 0 { 1 } else { next })
             })
-            .expect("fetch_update closure always returns Some")
+            .expect("try_update closure always returns Some")
     }
 }
 

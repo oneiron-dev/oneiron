@@ -287,7 +287,12 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         let live = live_heads_in_txn(&self.store, &*wtxn, identity_ref)?;
-        for body in identity.claim_bodies(*identity_ref)? {
+        // [CHANNEL-IDENTITY-CLAIM-FACET]: the subject's own substrate is no
+        // FACET, so the CLAIM birth gate refused every head. Each head is
+        // born in the vault default facet, as the alias head is.
+        let facet = self.default_facet_in_txn(wtxn)?;
+        for mut body in identity.claim_bodies(*identity_ref)? {
+            body.scope_facet = facet;
             let existing = live.get(&body.predicate);
             if existing.is_some_and(|(_, head)| {
                 head.value == body.value

@@ -216,13 +216,28 @@ fn open_base_entry(root: &Path, relative: &Path, shown: &str) -> Result<fs::File
         )));
     };
     for component in parents {
-        dir = openat(
+        dir = match openat(
             &dir,
             component.as_os_str(),
             directory | OFlags::NOFOLLOW,
             Mode::empty(),
-        )
-        .map_err(|error| failed(error, "crosses a symlinked directory"))?;
+        ) {
+            Ok(next) => next,
+            // Linux answers ENOTDIR, not ELOOP, when `O_DIRECTORY | O_NOFOLLOW`
+            // meets a symlink. A symlinked directory is the escape this walk
+            // refuses, not a missing entry
+            // ([MICROVM-INTERMEDIATE-SYMLINK-NOTFOUND]).
+            Err(Errno::NOTDIR)
+                if statat(&dir, component.as_os_str(), AtFlags::SYMLINK_NOFOLLOW).is_ok_and(
+                    |stat| FileType::from_raw_mode(stat.st_mode) == FileType::Symlink,
+                ) =>
+            {
+                return Err(Error::Code(CodeError::MicroVmOverlayError {
+                    detail: format!("base mount entry {shown} crosses a symlinked directory"),
+                }));
+            }
+            Err(error) => return Err(failed(error, "crosses a symlinked directory")),
+        };
     }
     let kind = statat(&dir, last.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)
         .map(|stat| FileType::from_raw_mode(stat.st_mode))

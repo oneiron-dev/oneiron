@@ -18,7 +18,7 @@ pub(super) fn holds_list_word_run(text: &str) -> bool {
     let mut lower = [0_u8; MAX_LIST_WORD_LEN];
     // Only ASCII bytes are letters, so a byte walk reads the words the
     // stream's char walk reads; a blank past the end ends the last word.
-    for byte in text.bytes().chain([b' ']) {
+    for byte in text.bytes().chain(*b" ") {
         if byte.is_ascii_alphabetic() {
             if let Some(slot) = lower.get_mut(letters) {
                 *slot = byte.to_ascii_lowercase();

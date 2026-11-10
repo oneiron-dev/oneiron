@@ -319,7 +319,12 @@ fn claim_place(row: &UnclearAttribution) -> Option<proposals::FindingPlace> {
         .world
         .filter(|world| *world != crate::claim::base_world_id());
     let scope = claim_scope(row);
-    (scope.is_some() || world.is_some()).then_some(proposals::FindingPlace { scope, world })
+    (scope.is_some() || world.is_some()).then_some(proposals::FindingPlace {
+        scope,
+        world,
+        relationships: None,
+        stamps: None,
+    })
 }
 
 /// The opaque claim scope of a pattern's proposal: its notes' consent scope
