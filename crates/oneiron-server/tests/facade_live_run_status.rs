@@ -50,7 +50,9 @@ async fn refuse_with_live_run_handles() {
         .expect("create server"),
     );
     let issuer = vault.load_host_slip_issuer().expect("host slip issuer");
-    let slip = vault.ensure_host_root_slip(&issuer).expect("owner root slip");
+    let slip = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("owner root slip");
     let token = slip.to_token().expect("owner slip token");
     let app = build_app(server);
 
@@ -62,7 +64,11 @@ async fn refuse_with_live_run_handles() {
             StatusCode::FORBIDDEN,
             "live_run_unavailable",
         ),
-        ("not-a-live-run-handle", StatusCode::BAD_REQUEST, "live_run_invalid"),
+        (
+            "not-a-live-run-handle",
+            StatusCode::BAD_REQUEST,
+            "live_run_invalid",
+        ),
     ] {
         // Each request proves possession afresh; the host secret is not a bearer.
         let timestamp = vault.now_recorded_at();
@@ -78,8 +84,7 @@ async fn refuse_with_live_run_handles() {
             .header("authorization", format!("Bearer {token}"))
             .header(
                 "x-oneiron-binding",
-                json!({"timestamp": timestamp, "nonce": nonce, "signature": signature})
-                    .to_string(),
+                json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string(),
             )
             .header("content-type", "application/json")
             .body(Body::from(
