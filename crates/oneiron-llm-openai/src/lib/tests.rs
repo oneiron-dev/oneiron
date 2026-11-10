@@ -520,9 +520,10 @@ fn a_provider_image_past_the_ceiling_is_refused_before_it_is_decoded() {
     assert_eq!(at_ceiling.image.bytes.len(), CEILING);
     assert_eq!(at_ceiling.metadata.get("created"), Some(&json!(1)));
 
+    // Ruled (FIX 8615, c39a7de7a4a): "a successful image over 64 MiB was
+    // discarded as EmptyResponse. FIXED: replies are kept whole"; "The 64 MiB
+    // image discard and the 512 MiB transport refusal are gone." The same
+    // reply past the former ceiling now decodes whole.
     let past = generate_from(encode(CEILING + 1));
-    assert_eq!(
-        past.map(|reply| reply.image.bytes.len()),
-        Err(LlmError::Fatal(FatalLlmError::EmptyResponse))
-    );
+    assert_eq!(past.map(|reply| reply.image.bytes.len()), Ok(CEILING + 1));
 }

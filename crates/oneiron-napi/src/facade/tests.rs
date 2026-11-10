@@ -229,16 +229,10 @@ fn native_client_export_projects_the_shared_five_format_verb() {
         super::client::NativeClient::open(Some(dir.to_string_lossy().into_owned()), None, None)
             .expect("embedded native client");
     for format in ["toon", "md", "json", "yaml", "txt"] {
-        let answer = client
+        let error = client
             .vault_export(serde_json::json!({"format": format}))
-            .expect("N-API export");
-        assert_eq!(answer["format"], format);
-        assert!(
-            answer["rendered"]
-                .as_str()
-                .unwrap()
-                .contains("evidence_ledger")
-        );
+            .expect_err("OF-222 removed readable-copy vault export formats");
+        assert!(error.to_string().contains("BAD_REQUEST"));
     }
     let error = client
         .vault_export(serde_json::json!({"format":"gemini"}))
