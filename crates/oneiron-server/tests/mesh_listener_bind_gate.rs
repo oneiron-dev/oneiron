@@ -4,19 +4,18 @@
 //! `handler::mesh::start` starts nothing.
 //!
 //! The check runs the shipped binary's `serve` on a fresh install with no bind
-//! address. A fresh install is not enrolled as a machine, and the listener
-//! refuses to start on such an install, so a serve that started it would fail
-//! its startup. Two things are asserted: serve finishes its startup (the mesh
-//! start is part of it) and answers on its API listener, and its log names no
-//! mesh listener.
+//! address. `oneiron init` gives the install a machine identity, so a serve
+//! that ignored the missing address would bind the listener and log
+//! `mesh listening`. Serve logs its finished startup after the mesh start, so
+//! once that line is written the log is complete for the mesh: it must name no
+//! listener, and serve must still be running.
 #![allow(
     clippy::disallowed_methods,
     reason = "a test process starts its own subprocesses; the rule covers the server's crates"
 )]
 
 use std::fs::File;
-use std::io::{Read, Write};
-use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -26,7 +25,7 @@ const SECRET: &str = "mesh-listener-bind-gate-host-secret";
 const STARTUP_FINISHED: &str = "startup finished";
 /// What the mesh listener logs once it is bound (`handler::mesh`).
 const MESH_LISTENING: &str = "mesh listening";
-/// How long a fresh install's serve may take to answer.
+/// How long a fresh install's serve may take to finish its startup.
 const STARTUP_DEADLINE: Duration = Duration::from_secs(180);
 
 /// A running `oneiron serve`, killed on drop so a failed assertion never
@@ -53,24 +52,6 @@ fn oneiron(args: &[&str], config: &Path) -> Command {
         .env_remove("ONEIRON_VAULT_PATH")
         .env_remove("ONEIRON_URL");
     command
-}
-
-/// The status code an unauthenticated request gets, or `None` while the
-/// server does not answer it yet.
-fn status(port: u16) -> Option<u16> {
-    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).ok()?;
-    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
-    stream
-        .write_all(
-            b"POST /v1/core/facade/receipts HTTP/1.1\r\nHost: 127.0.0.1\r\n\
-              Content-Type: application/json\r\nContent-Length: 2\r\n\
-              Connection: close\r\n\r\n{}",
-        )
-        .ok()?;
-    // "HTTP/1.1 401": the code is bytes 9 to 12.
-    let mut head = [0_u8; 12];
-    stream.read_exact(&mut head).ok()?;
-    std::str::from_utf8(&head[9..]).ok()?.parse().ok()
 }
 
 fn log_text(log: &Path) -> String {
@@ -112,41 +93,26 @@ fn serve_without_a_mesh_bind_address_starts_no_mesh_listener() {
         &config,
     );
     command
-        .env("RUST_LOG", "info")
+        .env("RUST_LOG", "info,loro_internal=warn")
         .stdin(Stdio::null())
         .stdout(out)
         .stderr(err);
     let mut server = Server(command.spawn().expect("spawn oneiron serve"));
 
-    // Every request but health waits for the router the startup installs, so
-    // a 401 or 403 means the startup, the mesh start among it, succeeded.
     let deadline = Instant::now() + STARTUP_DEADLINE;
-    loop {
+    while !log_text(&log).contains(STARTUP_FINISHED) {
         if let Some(exit) = server.0.try_wait().expect("poll oneiron serve") {
             panic!(
                 "oneiron serve exited during startup ({exit}): {}",
                 log_text(&log)
             );
         }
-        if matches!(status(port), Some(401 | 403)) {
-            break;
-        }
         assert!(
             Instant::now() < deadline,
-            "oneiron serve never answered: {}",
+            "oneiron serve never finished its startup: {}",
             log_text(&log)
         );
         std::thread::sleep(Duration::from_millis(200));
-    }
-    // The line follows the router's handover by a moment.
-    let logged = Instant::now() + Duration::from_secs(30);
-    while !log_text(&log).contains(STARTUP_FINISHED) {
-        assert!(
-            Instant::now() < logged,
-            "serve answered but never logged its finished startup: {}",
-            log_text(&log)
-        );
-        std::thread::sleep(Duration::from_millis(100));
     }
     let text = log_text(&log);
     assert!(
