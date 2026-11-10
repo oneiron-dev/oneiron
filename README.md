@@ -138,6 +138,12 @@ for `oneiron-py`. The agent-SDK reference generated from the verb table (`types.
 `verbs.md`) is published from main at https://oneiron-dev.github.io/oneiron/agent-sdk/, and every cargo build
 keeps a local copy in `target/debug/sdk-generated/agent-sdk/` (`target/release/...` for a release build).
 
+Debug information is adjustable (details in [build performance](./docs/ops/build-performance.md)):
+
+- Default: dev and test builds use `debug = "line-tables-only"`, so backtraces and panics still show file and line.
+- Perf work: `RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling` builds release code with full debug information and no LTO into `target/profiling`.
+- One run with full debug information: `CARGO_PROFILE_DEV_DEBUG=full cargo test ...`, or `cargo test --config 'profile.dev.debug="full"' ...`.
+
 ## Web frontend
 
 The engine's web frontend lives in [`apps/web`](./apps/web/README.md), imported
@@ -184,6 +190,7 @@ to its modules and source files. It does not cover the applications under `apps/
 | [oneiron-guest](./crates/oneiron-guest) | Linux sandbox guest agent and conformance adapter. |
 | [oneiron-sandbox-contract](./crates/oneiron-sandbox-contract) | Shared host/guest sandbox protocol rules. |
 | [oneiron-vault-contract](./crates/oneiron-vault-contract) | Supervisor-to-vault process protocol and limits. |
+| [oneiron-vm-outbox](./crates/oneiron-vm-outbox) | A vault VM's root outbox companion binary. |
 | [oneiron-bench](./crates/oneiron-bench) | Benchmark and evaluation harness. |
 | [oneiron-macos](./apps/macos/src-tauri) | macOS menu-bar voice recorder embedding the vault. |
 
@@ -212,6 +219,13 @@ cargo nextest run --locked -p oneiron --features sync,test-hooks --profile full
 ```
 
 The second command runs the `sync` build with the slow set included.
+
+Some integration tests reach crate-private items through `oneiron::test_doors`,
+which builds only under `--cfg oneiron_test_support` (never a cargo feature):
+
+```sh
+RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test <file>
+```
 
 - [oneiron.skills.md](./oneiron.skills.md): HTTP API reference.
 - [docs/ops/owner-actions.md](./docs/ops/owner-actions.md): backup, restore,

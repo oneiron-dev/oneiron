@@ -112,6 +112,22 @@ pub(crate) fn put_owed_call_in_txn(
     OWED.put(&vault.store, wtxn, &(attempt, *step_hash), row)
 }
 
+/// Removes the owed rows of `steps`, the calls of `attempt` that a charge
+/// kept owed on its reservation covers: that charge pays them, so no replay
+/// may charge them again. A step of another attempt, and a step with no row,
+/// is left as it is.
+pub(crate) fn delete_covered_owed_calls_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    steps: &[crate::model_step_context::StepEffectBinding],
+) -> Result<()> {
+    for step in steps.iter().filter(|step| step.attempt_id == attempt) {
+        OWED.delete(&vault.store, wtxn, &(attempt, step.step_hash))?;
+    }
+    Ok(())
+}
+
 /// Removes every owed row of one attempt.
 pub(crate) fn delete_attempt_owed_calls_in_txn(
     vault: &Vault,
