@@ -3,7 +3,9 @@
 //! input exactly as they did when they were crate-private.
 
 use oneiron_contracts::affect::{Vad, VadComponent};
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use oneiron_contracts::claim::{
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ReadScope, ScopedReadReceipt,
+};
 use oneiron_contracts::edge::EdgeActorClass;
 use oneiron_contracts::entity_id::{EntityId, derived_domains, parse_entity_id, serde_hex};
 use oneiron_contracts::error::{Error, RegistryError};
