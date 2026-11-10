@@ -46,7 +46,9 @@ pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_UNVERIFIED};
 pub use link::{SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_UNREAD};
 pub use record::{DerivationBatchRecord, ItemRecord};
 pub use settle::{SETTLE_IMPORT_REVIEW, SETTLE_OWNER_HOLD, SETTLE_REFUSED};
-pub use supersede::{SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE};
+pub use supersede::{
+    SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE, SUPERSEDE_REPLACEMENT_UNSETTLED,
+};
 
 /// The provenance `surface` a derivation commit stamps on every row it
 /// lands. The gate reads it as a derivation-class write.

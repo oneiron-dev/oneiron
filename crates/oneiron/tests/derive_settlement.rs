@@ -16,6 +16,7 @@ use oneiron::claim::{
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
+use oneiron::test_doors::derivation_floor::{define_agent, write_derived_claim};
 use oneiron::test_doors::derive::{
     Claim, Derived, Named, Settle, Settlement, Supersede, claim_lifecycle, commit, open_conflict,
     refusal_receipt,
@@ -28,6 +29,7 @@ use serde_json::json;
 
 const READER: &str = "reader";
 const PROTECTED: &str = "gate.deny.derive.supersede_protected_source";
+const REPLACEMENT_UNSETTLED: &str = "gate.deny.derive.supersede_replacement_unsettled";
 const LACKS_DERIVE: &str = "gate.deny.derive.grant_lacks_derive";
 const SETTLE_REFUSED: &str = "gate.deny.derive.settle_refused";
 
@@ -181,6 +183,107 @@ fn a_derived_claim_never_supersedes_user_stated_truth() {
         claim_lifecycle(&fixture.vault, stated).expect("read"),
         Some("active".to_owned()),
         "the stated claim stands"
+    );
+}
+
+/// Writes the owner's own user-stated claim about the fixture's person; its
+/// id. A proposal, so the write meets no criticality confirm.
+fn stated_claim(fixture: &Fixture, value: &str) -> EntityId {
+    let mut body = ClaimBody::new(
+        "preference.coffee",
+        ClaimSubject::Entity(fixture.person),
+        rmpv::Value::from(value),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("a claim body");
+    body.source = Some(ClaimSource::UserStated);
+    let stated = EntityId::now();
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .put_claim(&stated, &body, TimeRange { start: at, end: at }, at)
+        .expect("the owner's own claim");
+    stated
+}
+
+#[test]
+fn a_stored_user_stated_replacement_never_closes_user_stated_truth() {
+    let fixture = fixture();
+    let stated = stated_claim(&fixture, "a black filter coffee");
+    let borrowed = stated_claim(&fixture, "an espresso");
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-borrowed-replacement",
+        &[Derived::Supersede(Supersede {
+            local: "over_stated",
+            new: Named::Stored(borrowed),
+            old: Named::Stored(stated),
+        })],
+    )
+    .expect("commit");
+    let [over_stated] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(
+        !over_stated.landed,
+        "an agent never closes the stated claim: {over_stated:?}"
+    );
+    assert_eq!(over_stated.reasons, vec![PROTECTED.to_owned()]);
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, stated).expect("read"),
+        Some("active".to_owned()),
+        "the stated claim stands"
+    );
+}
+
+#[test]
+fn a_replacement_still_proposed_closes_nothing() {
+    let fixture = fixture();
+    let accepted = landed_claim(&fixture, "an oat milk flat white");
+    let agent = define_agent(&fixture.vault).expect("an agent");
+    let proposal = write_derived_claim(&fixture.vault, agent, fixture.person, &[fixture.turn])
+        .expect("the write door answers")
+        .unwrap_or_else(|codes| panic!("the proposal lands: {codes:?}"));
+    assert_eq!(
+        fixture
+            .vault
+            .get_claim(&proposal)
+            .expect("read")
+            .expect("the proposal")
+            .approval,
+        ClaimApprovalStatus::Proposed,
+        "the replacement waits for its approval"
+    );
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-proposed-replacement",
+        &[Derived::Supersede(Supersede {
+            local: "replace_accepted",
+            new: Named::Stored(proposal),
+            old: Named::Stored(accepted),
+        })],
+    )
+    .expect("commit");
+    let [replace] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(
+        !replace.landed,
+        "a proposal closes no accepted claim: {replace:?}"
+    );
+    assert_eq!(replace.reasons, vec![REPLACEMENT_UNSETTLED.to_owned()]);
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, accepted).expect("read"),
+        Some("active".to_owned()),
+        "the accepted claim stands while its replacement waits"
     );
 }
 

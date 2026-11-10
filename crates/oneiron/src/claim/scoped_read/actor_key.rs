@@ -70,7 +70,7 @@ pub struct ScopedReadActorKey {
     /// A saved lane's records caveat, carried with no proof (OF-506); see
     /// [`Self::within_records`].
     pub(super) record_bound: Option<std::collections::BTreeSet<String>>,
-    /// Set only on a base agent's own key (untangle 6.3, X04); see
+    /// Set on every key that names a base agent (untangle 6.3, X04); see
     /// [`Self::for_engine_actor`].
     system_agent: Option<EntityId>,
 }
@@ -355,6 +355,8 @@ impl ScopedReadActorKey {
     ) -> Option<Self> {
         let mut key = Self::from_parts(actor_ref.into(), Some(actor_class.into()))?;
         key.authority = Some(Scope::default());
+        // It reads nothing, so it is held to no grant either.
+        key.system_agent = None;
         Some(key)
     }
 
@@ -364,6 +366,12 @@ impl ScopedReadActorKey {
         }
         let actor_class = actor_class
             .and_then(|class| (!class.trim().is_empty()).then(|| class.trim().to_owned()));
+        // A base agent's key is held to its Steward grant and its live
+        // MACHINE binding whichever constructor built it (review of #6916):
+        // the guard follows the actor's id, not the call site.
+        let system_agent = EntityId::from_hex(actor_ref.trim())
+            .ok()
+            .filter(|actor| crate::federation::holds_system_agent_grant(*actor));
         Some(Self {
             actor_ref: actor_ref.trim().to_owned(),
             actor_class,
@@ -384,7 +392,7 @@ impl ScopedReadActorKey {
             owner_proof: None,
             owner_by_census: false,
             record_bound: None,
-            system_agent: None,
+            system_agent,
         })
     }
 
@@ -470,22 +478,20 @@ impl ScopedReadActorKey {
     }
 
     /// The read key of the engine actor `reader` (untangle 6.3, census X04):
-    /// [`Self::with_actor_class`] for its id and class, and, for a base
-    /// agent that holds a Steward grant (the Dreamer), held to that grant and
-    /// to its live MACHINE binding. Every read proves both again in its own
-    /// snapshot ([`crate::Vault::system_agent_reads_live_in`]), as a client
-    /// slip proves its issuance, vault and revocation, so a revoked grant or
+    /// [`Self::with_actor_class`] for its id and class. A key that names a
+    /// base agent whose reach a Steward grant carries (the Dreamer) is held
+    /// to that grant and to its live MACHINE binding, whichever constructor
+    /// built it: every read proves both again in its own snapshot
+    /// ([`crate::Vault::system_agent_reads_live_in`]), as a client slip
+    /// proves its issuance, vault and revocation, so a revoked grant or
     /// binding reads nothing. A vault no host has given the grant yet keeps
     /// reading by its policy rows.
     #[must_use]
     pub(crate) fn for_engine_actor(reader: crate::WriteActor) -> Option<Self> {
-        let actor = reader.entity_ref();
-        let mut key =
-            Self::with_actor_class(actor.to_hex(), reader.actor_class().gate_actor_class())?;
-        if crate::federation::holds_system_agent_grant(actor) {
-            key.system_agent = Some(actor);
-        }
-        Some(key)
+        Self::with_actor_class(
+            reader.entity_ref().to_hex(),
+            reader.actor_class().gate_actor_class(),
+        )
     }
 
     /// The base agent whose Steward grant and MACHINE binding this key is
