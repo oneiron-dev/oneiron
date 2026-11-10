@@ -1,9 +1,9 @@
 //! A verb run through the in-process door leaves a receipt the receipt
 //! reader reads back through `vault.receipts`.
 
-use oneiron_testkit::fixture::jsonl_seed;
+use oneiron_testkit::fixture::{jsonl_seed, seed_into};
 use oneiron_testkit::receipt::ReceiptReader;
-use oneiron_testkit::{FixtureVault, TestVault, door, fixture_cache};
+use oneiron_testkit::{FakeClock, FixtureVault, TestVault, door, fixture_cache};
 use serde_json::json;
 
 #[test]
@@ -59,6 +59,28 @@ fn a_seed_that_binds_key_custody_is_never_cached_for_copying() {
     let error = FixtureVault::build(&fixture_cache!(), "door-custody", jsonl_seed(SEED))
         .expect_err("a custody-bound seed is not copyable");
     assert!(error.to_string().contains("beside the vault"), "{error}");
+}
+
+/// A seeding run's directory (`seed_into`, the `oneiron-testkit-seed` binary)
+/// whose seed bound key custody is refused as a fixture: a copy of it would
+/// retire the original's keys.
+#[test]
+fn a_seeded_directory_that_binds_key_custody_is_never_copied() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let record = seed_into(dir.path(), "door-custody-at", FakeClock::vault_config, jsonl_seed(SEED)).expect("seeded");
+    assert!(!record.beside.is_empty(), "the claim-backed put binds key custody");
+    let error = FixtureVault::at(dir.path()).expect_err("a custody-bound seed is not copyable");
+    assert!(error.to_string().contains("beside the vault"), "{error}");
+}
+
+#[test]
+fn a_seeded_directory_with_nothing_beside_the_vault_is_copied() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let record = seed_into(dir.path(), "door-bare-at", FakeClock::vault_config, |_, _| Ok(())).expect("seeded");
+    assert!(record.beside.is_empty(), "{:?}", record.beside);
+    let fixture = FixtureVault::at(dir.path()).expect("readable").expect("a record");
+    let copy = fixture.copy().expect("copy");
+    copy.open().expect("the copy opens");
 }
 
 #[test]
