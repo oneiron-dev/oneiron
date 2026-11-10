@@ -29,11 +29,18 @@ export type AgentTier="read-only"|"propose-only"|"full-access";
 export interface AgentTokenOptions {
   /** 1 to 64 letters, digits, `-`, `_` or `.`. One name is one agent principal however often it is minted. */
   readonly name:string;readonly tier:AgentTier;readonly lifetimeSeconds?:number;
+  /** A host secret for this mint only, for a failed-mint case: the mint process's ONEIRON_AUTH_SECRET (the shipped
+   * CLI refuses it in argv), never the relaunch's. Omitted, the CLI reads the fixture's own secret from its config. */
+  readonly authSecret?:string;
 }
 /** The slip `token agent` minted, held as a paired actor, and what the CLI printed beside it. */
 export interface AgentToken extends PairedActor {
   readonly slipId:string;readonly ceiling:string;readonly revokedSlipIds:readonly string[];
 }
+/** A mint's outcome as data: tryMintAgentToken reports a nonzero CLI exit instead of throwing it. */
+export type AgentTokenAttempt=
+  |{readonly ok:true;readonly actor:AgentToken}
+  |{readonly ok:false;readonly exitCode:number;readonly error:CliError};
 interface PairingLinkReply {
   readonly code:string;readonly expires_at:number;
   readonly pin?:{readonly challenge:readonly number[];readonly digest:readonly number[]};
@@ -259,11 +266,21 @@ export class EngineFixture {
   }
   /** One agent slip from the shipped `token agent` CLI, which mints on the stopped vault: the server stops, the CLI
    * writes the slip to a new owner-only file, and the server starts again as restart() does (MCP sessions and the
-   * cached schema go with the old process). The latest mint for a name sets its tier and revokes its earlier slips. */
+   * cached schema go with the old process). The latest mint for a name sets its tier and revokes its earlier slips.
+   * A nonzero CLI exit throws its CliError; tryMintAgentToken returns it instead. */
   async mintAgentToken(options:AgentTokenOptions):Promise<AgentToken> {
+    const attempt=await this.tryMintAgentToken(options);
+    if(!attempt.ok) throw attempt.error;
+    return attempt.actor;
+  }
+  /** mintAgentToken, with a nonzero CLI exit returned as `{ok:false}`. The server is relaunched with the fixture's
+   * own environment and read by the owner again before either outcome returns. */
+  async tryMintAgentToken(options:AgentTokenOptions):Promise<AgentTokenAttempt> {
     if(this.closed) throw new Error("Cannot mint on a closed fixture");
     const file=resolve(this.root,`agent-token-${secretHex(6)}.credential`);
-    const cli=new CliClient(requireAsset(this.build,"cli"),this.root,this.env,this.artifacts);
+    if(options.authSecret!==undefined) redactor.add(options.authSecret);
+    const env=options.authSecret===undefined?this.env:{...this.env,ONEIRON_AUTH_SECRET:options.authSecret};
+    const cli=new CliClient(requireAsset(this.build,"cli"),this.root,env,this.artifacts);
     await this.server?.stop();
     const minted=await cli.run(["token","agent","--name",options.name,"--tier",options.tier,
       "--config",resolve(this.root,"oneiron.toml"),"--out",file,
@@ -271,13 +288,14 @@ export class EngineFixture {
       .finally(()=>this.launch());
     this.schema=undefined;
     try {
-      if(minted.exitCode!==0) throw new CliError(minted);
+      await this.client.call("vault.receipts",{limit:1});
+      if(minted.exitCode!==0) return {ok:false,exitCode:minted.exitCode,error:new CliError(minted)};
       const credential=(await readFile(file,"utf8")).trim();
       credentialParts(credential); // checks the paired form and registers credential, bearer and seed with the redactor
       const printed=JSON.parse(minted.stdout) as {principal_ref:string;actor_class:string;ceiling:string;slip_id:string;revoked_slip_ids:string[]};
       if(printed.actor_class!=="agent") throw new Error(`token agent minted actor class ${printed.actor_class}`);
-      return {...this.actor(printed.principal_ref,"agent",{credential,pin:null}),
-        slipId:printed.slip_id,ceiling:printed.ceiling,revokedSlipIds:printed.revoked_slip_ids};
+      return {ok:true,actor:{...this.actor(printed.principal_ref,"agent",{credential,pin:null}),
+        slipId:printed.slip_id,ceiling:printed.ceiling,revokedSlipIds:printed.revoked_slip_ids}};
     } finally {
       await rm(file,{force:true});
     }
