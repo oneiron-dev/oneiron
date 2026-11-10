@@ -345,7 +345,10 @@ fn eval_outcome_ingest_requires_a_real_terminal_gate_not_a_raw_reward() {
         oneiron::Error::InvalidConfig(message)
             if message == "retrieval blend tuning requires at least 1 reward outcome(s), found 0"
     ));
-    assert_eq!(vault.retrieval_blend_weight_table().expect("table"), before_tune);
+    assert_eq!(
+        vault.retrieval_blend_weight_table().expect("table"),
+        before_tune
+    );
 }
 
 /// Drops one flag and its value from a rendered vault-open flag list.
@@ -500,9 +503,12 @@ fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
         &vault_path,
         &config,
         &owned(&[
-            "--max-runs", "8",
-            "--learning-rate", "0.10",
-            "--min-reward-count", "1",
+            "--max-runs",
+            "8",
+            "--learning-rate",
+            "0.10",
+            "--min-reward-count",
+            "1",
         ]),
     );
     let tune_result = run_tune(&tune_argv[1..]);
@@ -520,7 +526,10 @@ fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
     let weights = vault.retrieval_blend_weight_table().expect("table");
     assert_eq!(outcomes.len(), 1);
     assert_eq!(outcomes[0].reward, Some(0.75));
-    assert_eq!(weights, before, "a held-out-only window must not replace weights");
+    assert_eq!(
+        weights, before,
+        "a held-out-only window must not replace weights"
+    );
 }
 
 /// The M1 class at bench level: a real vault root is renamed away and an empty

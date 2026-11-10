@@ -787,7 +787,9 @@ fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("reopen");
     reopened.install_device_keystore(keys.clone());
     let mut replay = LinearHostEgress::new(
-        make(&reopened, &responses, scheduler, &calls, &writes, None, 1002),
+        make(
+            &reopened, &responses, scheduler, &calls, &writes, None, 1002,
+        ),
         config(),
     )
     .expect("egress");
@@ -913,7 +915,9 @@ fn interrupted_request_staging_retries_same_operation_after_restart() {
     assert!(door.request_by_ref(&reference).expect("resolve").is_some());
     let mut egress = LinearHostEgress::new(door, config()).expect("egress");
     assert_eq!(
-        egress.create_issue(op, task, &mirror_fields).expect("replay"),
+        egress
+            .create_issue(op, task, &mirror_fields)
+            .expect("replay"),
         created
     );
     let mut altered = mirror_fields.clone();
