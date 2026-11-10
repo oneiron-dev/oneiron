@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import type { PairedActor } from "./support/engine.ts";
-import { McpRpcError, PublicHttpError, WsRpcError } from "./support/clients.ts";
+import { McpRpcError, PublicHttpError } from "./support/clients.ts";
+import { ScriptedProviders } from "./support/providers.ts";
+import { inflateRawSync } from "node:zlib";
 import type { PublicHttpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { BlockedDoor, defineFile, LIMITS, redactor, secretHex } from "./support/run.ts";
@@ -1072,6 +1074,8 @@ function museGate01Error(body: unknown): { code: string; message: string } | nul
 
 suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outbound schedule run without a fresh ask until the owner revokes it", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-GATE-01", profile });
+  let stage = "setup actors and verb class";
+  let lastCan: unknown;
   try {
     const occurred = 1769947200; // The same public setup-time value GATE-09 uses.
     const ownerRef = engine.pairedActor.principalRef;
@@ -1111,6 +1115,10 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
     const agentRecord = await museGate01Person("Muse Gate01 Agent");
     const insideAudience = await museGate01Person("Muse Gate01 Inside Audience");
     const outsideAudience = await museGate01Person("Muse Gate01 Outside Audience");
+    const otherAgentRecord = await museGate01Person("Muse Gate01 Other Agent");
+    const otherAgent = await engine.pairActor({
+      principalRef: otherAgentRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
+    });
     const agent = await engine.pairActor({
       principalRef: agentRecord.id_hex,
       actorClass: "agent",
@@ -1123,6 +1131,10 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
       entity_ref: agentRecord.entity_ref,
     } satisfies FacadeInput<"vault.get">);
     expect(agentReadback.value?.id_hex).toBe(agentRecord.id_hex);
+    for (const audience of [insideAudience, outsideAudience, otherAgentRecord]) {
+      expect((await engine.client.call("vault.get", { entity_ref: audience.entity_ref })).value?.id_hex)
+        .toBe(audience.id_hex);
+    }
 
     const project = (await ownerBaseClaimScope(
       engine.client,
@@ -1171,11 +1183,11 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
       const idempotencyKey = `muse-gate01-${secretHex(8)}`;
       redactor.add(idempotencyKey);
       return {
-        verb: "connector.outbound.schedule",
-        channel: "muse_gate01_channel",
+        verb: "send",
+        channel: "discord",
         target: targetRef,
         idempotency_key: idempotencyKey,
-        trigger: "muse_gate01_case",
+        trigger: "gap_queue",
         trigger_ref: agentRecord.entity_ref,
       } satisfies FacadeInput<"connector.outbound.schedule">;
     };
@@ -1185,6 +1197,7 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
       const answer = await agent.client.call("can", {
         effect: { outbound_schedule: input },
       } satisfies FacadeInput<"can">);
+      lastCan = answer;
       if (!("verdict" in answer)) {
         throw new Error("can effect preflight returned no effect verdict");
       }
@@ -1193,19 +1206,31 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
     const museGate01ExpectAsk = async (
       input: FacadeInput<"connector.outbound.schedule">,
     ): Promise<void> => {
-      const reply = await agent.client.raw(
-        "POST",
-        "/v1/core/facade/connector.outbound.schedule",
-        input,
-      );
-      expect(reply.status).toBe(202);
-      const error = museGate01Error(reply.body);
-      if (!error) throw new Error("202 ask response has no standard error envelope");
-      expect(error.code).toBe("PENDING_ASK");
+      const scheduled = await agent.client.call("connector.outbound.schedule", input);
+      expect(scheduled.gate_outcome).toBe("pending");
+      if (!scheduled.gate_decision_ref) throw new Error("Held schedule has no Gate decision");
+      const receipt = await gateReceipt(engine, `gate:${scheduled.gate_decision_ref.replace(/^gate:/, "")}`);
+      expect(receipt.outcome).toBe("pending");
+      expect(receipt.actor_ref).toBe(agent.principalRef);
     };
+
+    // Actor authority is setup, not the standing consent Grant under test.
+    // Fresh arbitrary agents have no Auto ceiling; that administrative hold would hide the consent decision.
+    const actorPolicy = await engine.client.call("vault.gate.policy.put", {
+      manifest: policyManifest("e2e-muse-gate01-actor", "1", [
+        { actor_class: "agent", actor_ref: agent.principalRef, ceiling: "auto" },
+      ]),
+    });
+    const actorPolicyReadback = await engine.client.call("vault.gate.policy.get", {
+      manifest_ref: actorPolicy.manifest.manifest_ref,
+    });
+    expect(actorPolicyReadback.manifests[0]?.manifest.actor_ceilings).toEqual([
+      { actor_class: "agent", actor_ref: agent.principalRef, ceiling: "auto" },
+    ]);
 
     // P-GATE-002: with no standing Grant, the outbound effect asks, and the
     // attempt leaves a governing receipt for the asking agent.
+    stage = "no-grant outbound preflight and held schedule";
     const firstEffect = museGate01Outbound(insideAudience.id_hex);
     expect(await museGate01Can(firstEffect)).toBe("would_ask");
     const receiptsBeforeAsk = await museGate01ReceiptRefs();
@@ -1224,6 +1249,7 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
 
     // P-GATE-002, P-GATE-003 and P-GATE-010: only the paired owner's
     // yes creates the bounded actor x class x envelope Grant.
+    stage = "owner standing action grant and registry readback";
     const standingRequest = {
       bound: {
         actor: agent.principalRef,
@@ -1267,13 +1293,20 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
     // P-GATE-003: two distinct effects inside actor, class and envelope
     // both run without a fresh ask. The second actual schedule leaves its
     // gate decision and a read-back governing receipt.
+    stage = "in-grant outbound reuse";
     const reuseOne = museGate01Outbound(insideAudience.id_hex);
     const reuseTwo = museGate01Outbound(insideAudience.id_hex);
     expect(reuseOne.idempotency_key).not.toBe(reuseTwo.idempotency_key);
     expect(await museGate01Can(reuseOne)).toBe("allow");
     expect(await museGate01Can(reuseTwo)).toBe("allow");
+    const allowedOne = await agent.client.call("connector.outbound.schedule", reuseOne);
+    expect(allowedOne.gate_outcome).toBe("allow");
+    if (!allowedOne.gate_decision_ref) throw new Error("First in-grant schedule has no Gate decision");
+    expect((await gateReceipt(engine, `gate:${allowedOne.gate_decision_ref.replace(/^gate:/, "")}`)).outcome)
+      .toBe("allow");
     const receiptsBeforeAllowed = await museGate01ReceiptRefs();
     const allowed = await agent.client.call("connector.outbound.schedule", reuseTwo);
+    expect(allowed.gate_outcome).toBe("allow");
     expect(allowed.intent_ref.length).toBeGreaterThan(0);
     if (!allowed.gate_decision_ref) {
       throw new Error("Allowed outbound schedule has no gate decision receipt");
@@ -1287,6 +1320,7 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
 
     // P-GATE-004: another audience exceeds the envelope, so there is a
     // fresh ask, and reuse has not silently widened the Grant row.
+    stage = "outside-audience outbound ask";
     const exceedingEffect = museGate01Outbound(outsideAudience.id_hex);
     expect(await museGate01Can(exceedingEffect)).toBe("would_ask");
     await museGate01ExpectAsk(exceedingEffect);
@@ -1299,7 +1333,7 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
     // The wrong actor kind cannot mint the same Grant for itself, nor
     // revoke the owner's Grant. The mint refusal leaves a receipt and the
     // registry remains exactly the grant the owner created.
-    const receiptsBeforeAgentMint = await museGate01ReceiptRefs();
+    stage = "agent mint and revoke refusals";
     const agentMint = await agent.client.raw(
       "POST",
       "/v1/core/facade/vault.consent.create_standing_grant",
@@ -1311,13 +1345,12 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
     if (!mintError) throw new Error("Agent self-grant refusal has no standard error envelope");
     expect(mintError.code.length).toBeGreaterThan(0);
     expect(mintError.message.length).toBeGreaterThan(0);
-    await museGate01ExpectNewReceipt(
-      receiptsBeforeAgentMint,
-      agent.principalRef,
-      "receipt for the refused agent self-grant",
-    );
+    const mintReceiptRef = new PublicHttpError(agentMint).error?.receiptRef;
+    if (typeof mintReceiptRef !== "string") throw new Error("Agent self-grant refusal has no receiptRef");
+    await engine.awaitReceipt(mintReceiptRef);
 
-    const agentRevoke = await agent.client.raw(
+    // The grantee may renounce its own Grant (P-GATE-010); the wrong actor here is a non-grantee.
+    const agentRevoke = await otherAgent.client.raw(
       "POST",
       "/v1/core/facade/vault.consent.revoke",
       { grant: grantRef } satisfies FacadeInput<"vault.consent.revoke">,
@@ -1337,6 +1370,7 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
 
     // P-GATE-010: the owner revokes in one registry call. The row leaves
     // the live registry but stays visible when revoked grants are included.
+    stage = "owner revoke and next-use ask";
     const revoked = await engine.client.call("vault.consent.revoke", {
       grant: grantRef,
     } satisfies FacadeInput<"vault.consent.revoke">);
@@ -1353,6 +1387,14 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
     const afterRevokeEffect = museGate01Outbound(insideAudience.id_hex);
     expect(await museGate01Can(afterRevokeEffect)).toBe("would_ask");
     await museGate01ExpectAsk(afterRevokeEffect);
+  } catch (error) {
+    const detail = error instanceof PublicHttpError
+      ? `status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`
+      : error instanceof Error ? error.message : String(error);
+    if (stage === "in-grant outbound reuse") {
+      throw new Error(`MUSE-GATE-01 ENGINE DEFECT 2026-11-11: generic action Grant's facade verb class and project/audience envelope do not cover the schedule's send/verb:send/channel requirement (P-GATE-003; FIX 7950/11874); ${stage}; last can=${JSON.stringify(lastCan)}; ${detail}`, { cause: error });
+    }
+    throw new Error(`MUSE-GATE-01 ${stage}: ${detail}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -1594,6 +1636,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
   const fixture = await catalog.readJson<museGate02MaskFixture>("secrets-mask-on-write");
   redactor.add(fixture.credential, Buffer.from(fixture.credential).toString("base64"));
   const engine = await EngineFixture.start({ id: "MUSE-GATE-02", profile });
+  let stage = "witness and masked MESSAGE readback";
   try {
     // Two paired agents: the asker whose lineage can hold the standing
     // grant, and another agent who never receives it.
@@ -1609,6 +1652,10 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     const other = await engine.pairActor({
       principalRef: otherRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
     });
+    for (const record of [askerRecord, otherRecord]) {
+      expect((await engine.client.call("vault.get", { entity_ref: record.entity_ref })).value?.id_hex)
+        .toBe(record.id_hex);
+    }
     const conversation = await engine.client.call("vault.conversations.create", {
       body: { members: [engine.pairedActor.principalRef, asker.principalRef, other.principalRef] },
       occurred_start: fixture.occurredAt, occurred_end: fixture.occurredAt,
@@ -1619,7 +1666,10 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
       messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
         content: fixture.prefix + fixture.credential + fixture.suffix }],
     } satisfies FacadeInput<"vault.witness">);
-    await engine.awaitReceipt(witnessed.receipt_ref);
+    const savedTurn = await engine.client.call("vault.get", {
+      entity_ref: witnessed.turn_id,
+    } satisfies FacadeInput<"vault.get">);
+    expect(savedTurn.value?.id_hex).toBe(witnessed.turn_id);
     expect(witnessed.message_short_ids.length).toBe(1);
     const messageRef = witnessed.message_short_ids[0];
     if (!messageRef) throw new Error("Witness returned no message reference");
@@ -1636,6 +1686,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     const masked = fixture.prefix + fixture.textHandleTemplate.replace("{handle}", handle) + fixture.suffix;
     museGate02NoSecret(saved, fixture.credential);
 
+    stage = "reveal.describe without a grant";
     const card = await asker.client.call("reveal.describe", {
       handle,
     } satisfies FacadeInput<"reveal.describe">);
@@ -1654,6 +1705,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     const afterRenounceWhy = `${fixture.agentReason} muse-gate-02 after renounce`;
 
     // No grant: the ask is held for the owner and carries no value.
+    stage = "approve once and wrong-actor settlement refusal";
     const onceAsk = await museGate02OpenPendingAsk(asker.client, handle, onceWhy, fixture.credential);
     const oncePending = await museGate02PendingAsk(engine, onceAsk.reveal);
     expect(oncePending.receipt.handle).toBe(handle);
@@ -1676,6 +1728,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     expect(await museGate02RegistryRefs(engine)).toEqual(baselineRefs);
 
     // The next distinct intent asks again. There is no duration outcome.
+    stage = "next distinct ask and deny";
     const denyAsk = await museGate02OpenPendingAsk(asker.client, handle, denyWhy, fixture.credential);
     const denyPending = await museGate02PendingAsk(engine, denyAsk.reveal);
     const denyDigest = denyPending.expected_digest;
@@ -1698,6 +1751,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     expect(await museGate02RegistryRefs(engine)).toEqual(baselineRefs);
 
     // Approve and stop asking: a bounded standing grant on the lineage.
+    stage = "approve standing and registry/Gate audit readback";
     const standingAsk = await museGate02OpenPendingAsk(asker.client, handle, standingWhy, fixture.credential);
     const standingAnswered = await museGate02Answer(engine, standingAsk.reveal, "standing");
     const standingGrant = standingAnswered.grant_ref
@@ -1716,11 +1770,9 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     expect(standingRow.revoke_action.grant_ref).toBe(standingGrant);
     expect(standingRow.revoke_action.command.length).toBeGreaterThan(0);
     museGate02NoSecret(standingRow, fixture.credential);
-    const grantAudit = await museGate02AwaitAudit(
-      engine, "standing grant in authority audit",
-      (row) => (row.event_kind === "grant" || row.event_kind === "confirm")
-        && museGate02AuditLinks(row, standingGrant, standingAnswered.receipt_ref),
-    );
+    const grantAudit = await gateReceipt(engine, standingAnswered.receipt_ref);
+    expect(grantAudit.reason_codes).toContain("gate.consent.standing_created");
+    expect(grantAudit.actor_ref).toBe(engine.pairedActor.principalRef);
     const standingRefs = await museGate02RegistryRefs(engine);
     expect(standingRefs).toContain(standingGrant);
     await engine.artifacts.json("muse-gate02-standing.json", {
@@ -1730,6 +1782,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     });
 
     // Reuse inside the bound hydrates at once and mints nothing new.
+    stage = "standing reuse and other-agent bound";
     const reuseAsk = await asker.client.call("reveal", {
       handle, why: reuseWhy,
     } satisfies FacadeInput<"reveal">);
@@ -1747,6 +1800,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     await museGate02WaitDenied(other.client, otherAsk.reveal, handle, otherWhy, fixture.credential);
 
     // The standing grant and its reuse survive a restart.
+    stage = "standing grant restart and reuse";
     await engine.restart();
     const rowAfterRestart = await museGate02FindRegistryRow(engine, standingGrant);
     expect(rowAfterRestart.grant_ref).toBe(standingGrant);
@@ -1762,6 +1816,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     // The issuer (the owner, whose yes created the grant) revokes in the
     // registry with a receipt: gone from the live registry, kept in its
     // history and authority audit, and the asker's next use asks again.
+    stage = "issuer revoke and next-use ask";
     const revoked = await engine.client.call("vault.consent.revoke", {
       grant: standingGrant,
     } satisfies FacadeInput<"vault.consent.revoke">);
@@ -1771,10 +1826,10 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     expect(await museGate02RegistryRefs(engine)).toEqual(baselineRefs);
     const allAfterRevoke = await museGate02Registry(engine, true);
     expect(allAfterRevoke.rows.some((row) => row.grant_ref === standingGrant)).toBe(true);
-    const revokeAudit = await museGate02AwaitAudit(
-      engine, "standing grant revoke in authority audit",
-      (row) => row.event_kind === "revoke" && museGate02AuditLinks(row, standingGrant),
-    );
+    if (!revoked.decision_ref) throw new Error("Owner revoke returned no Gate decision");
+    const revokeAudit = await gateReceipt(engine, `gate:${revoked.decision_ref}`);
+    expect(revokeAudit.reason_codes).toContain("gate.consent.revoked");
+    expect(revokeAudit.actor_ref).toBe(engine.pairedActor.principalRef);
 
     const afterRevokeAsk = await museGate02OpenPendingAsk(asker.client, handle, afterRevokeWhy, fixture.credential);
     // The grantee may drop its own Grant at any time, with no ask (a narrowing, P-GATE-010).
@@ -1785,9 +1840,14 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
         .find((row) => row.receipt.reveal === afterRevokeAsk.reveal)?.grant_ref
       ?? undefined;
     if (!renewedGrant) throw new Error("Approve-and-stop-asking after revoke created no observable grant");
-    expect(renewedGrant).not.toBe(standingGrant);
+    // grant_ref is the bound digest; the same bound re-issues the same registry key.
+    expect(renewedGrant).toBe(standingGrant);
+    expect(renewedAnswered.receipt_ref).not.toBe(standingAnswered.receipt_ref);
+    const renewedRow = await museGate02FindRegistryRow(engine, renewedGrant);
+    expect(renewedRow.status).toBe("active");
     await museGate02WaitGranted(asker.client, afterRevokeAsk.reveal, handle, afterRevokeWhy, fixture.credential);
     // The asker renounces its own grant: the call lands (no 403, no 202 ask), with the revoke receipt.
+    stage = "grantee renounce (check 2)";
     const renounced = await asker.client.call("vault.consent.revoke", {
       grant: renewedGrant,
     } satisfies FacadeInput<"vault.consent.revoke">);
@@ -1796,6 +1856,7 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
     expect(activeAfterRenounce.rows.some((row) => row.grant_ref === renewedGrant)).toBe(false);
     expect(await museGate02RegistryRefs(engine)).toEqual(baselineRefs);
     // The grant stops reading: the asker's next use asks again.
+    stage = "next use after grantee renounce";
     const afterRenounceAsk = await museGate02OpenPendingAsk(asker.client, handle, afterRenounceWhy, fixture.credential);
     const finalDenied = await museGate02Answer(engine, afterRenounceAsk.reveal, "deny");
     await museGate02WaitDenied(asker.client, afterRenounceAsk.reveal, handle, afterRenounceWhy, fixture.credential);
@@ -1807,10 +1868,18 @@ suite.test(test, "MUSE-GATE-02", "A reveal confirmation offers approve once, app
       standing_receipt_ref: standingAnswered.receipt_ref,
       revoke_outcome: revoked.outcome,
       renewed_grant_ref: renewedGrant, renounce_outcome: renounced.outcome,
-      grant_audit_entry_ref: grantAudit.entry_ref,
-      revoke_audit_entry_ref: revokeAudit.entry_ref,
+      grant_audit_receipt_ref: grantAudit.receipt_ref,
+      revoke_audit_receipt_ref: revokeAudit.receipt_ref,
       final_deny_receipt_ref: finalDenied.receipt_ref,
     });
+  } catch (error) {
+    const detail = error instanceof PublicHttpError
+      ? `status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`
+      : error instanceof Error ? error.message : String(error);
+    if (stage === "grantee renounce (check 2)") {
+      throw new Error(`MUSE-GATE-02 ENGINE DEFECT 2026-11-11: vault.consent.revoke is owner-only and refuses the grantee's no-ask narrowing (P-GATE-010; prior MUSE-GATE-02-REVOKE study); ${stage}; ${detail}`, { cause: error });
+    }
+    throw new Error(`MUSE-GATE-02 ${stage}: ${detail}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -1910,7 +1979,7 @@ async function museGate03MakeAgent(
 // schema instead of guessing it: GATE-01's design note records
 // `arguments.spec` for this tool on an older binding, so "spec" is also
 // the fallback when the schema is not a plain properties object.
-async function museGate03DiscoversUpsertWrap(agent: PairedActor): Promise<boolean> {
+async function museGate03DiscoversUpsertWrap(agent: PairedActor): Promise<{ wrapInSpec: boolean; schemaVersion: string }> {
   const listed = await agent.mcp.listTools();
   const listedRecord = museGate03Record(listed);
   const rawTools = Array.isArray(listed) ? listed : listedRecord?.tools;
@@ -1926,21 +1995,31 @@ async function museGate03DiscoversUpsertWrap(agent: PairedActor): Promise<boolea
   }
   const schema = museGate03Record(tool.inputSchema) ?? museGate03Record(tool.input_schema);
   const properties = museGate03Record(schema?.properties);
-  if (properties && "predicate" in properties && !("spec" in properties)) {
-    return false;
+  const schemaVersion = museGate03Record(properties?.schema_version)?.const;
+  if (typeof schemaVersion !== "string") {
+    throw new Error("MUSE-GATE-03 tools/list omits schema_version.const for vault.claims.upsert");
   }
-  return true;
+  const argumentsSchema = museGate03Record(properties?.arguments);
+  const argumentProperties = museGate03Record(argumentsSchema?.properties);
+  return {
+    wrapInSpec: !(argumentProperties && "predicate" in argumentProperties && !("spec" in argumentProperties)),
+    schemaVersion,
+  };
 }
 
 async function museGate03McpUpsert(
   agent: PairedActor,
   input: FacadeInput<"vault.claims.upsert">,
-  wrapInSpec: boolean,
+  toolSchema: { wrapInSpec: boolean; schemaVersion: string },
 ): Promise<museGate03McpAttempt> {
   try {
     const value = await agent.mcp.callTool(
       "vault.claims.upsert",
-      wrapInSpec ? { spec: input } : input,
+      {
+        schema_version: toolSchema.schemaVersion,
+        consent: { policy_ref: "policy:muse-gate03-session", purpose: "MUSE-GATE-03 reversible claim write" },
+        arguments: toolSchema.wrapInSpec ? { spec: input } : input,
+      },
     );
     return { outcome: "result", value };
   } catch (error) {
@@ -1948,7 +2027,11 @@ async function museGate03McpUpsert(
       return { outcome: "rpc-error", value: error.response };
     }
     if (error instanceof PublicHttpError) {
-      return { outcome: "http-error", value: error.reply.body };
+      return { outcome: "http-error", value: {
+        stage: "vault.claims.upsert via MCP", status: error.reply.status,
+        code: error.error?.code ?? "<none>", message: error.error?.message ?? "<none>",
+        suggestion: error.error?.suggestions?.[0] ?? "<none>", body: error.reply.body,
+      } };
     }
     throw error;
   }
@@ -2132,14 +2215,25 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
     redactor.add(sentinel);
   }
   const engine = await EngineFixture.start({ id: "MUSE-GATE-03", profile });
+  let stage = "agent setup and owner control write";
+  let lastAttempt: museGate03McpAttempt | undefined;
   try {
-    const main = await museGate03MakeAgent(engine, "Muse Gate03 Main Agent", [
-      "core:read",
-      "core:write",
+    const predicates = {
+      control: "profile.muse_gate03.control",
+      before: "profile.muse_gate03.before_grant",
+      granted: "profile.muse_gate03.granted",
+      outside: "profile.muse_gate03.outside",
+      revoked: "profile.muse_gate03.after_revoke",
+    };    const agents = await enrolAgents(engine, [
+      { name: "muse-gate03-main", tier: "full-access" },
+      { name: "muse-gate03-outside", tier: "read-only" },
     ]);
-    const outside = await museGate03MakeAgent(engine, "Muse Gate03 Outside Agent", [
-      "core:read",
-    ]);
+    const main = agents[0]!;
+    const outside = agents[1]!;
+    for (const actor of [main, outside]) {
+      expect((await engine.client.call("vault.get", { entity_ref: actor.principalRef })).value?.id_hex)
+        .toBe(actor.principalRef);
+    }
     const mainSelf = await main.client.call("self.actor", {
     } satisfies FacadeInput<"self.actor">);
     const outsideSelf = await outside.client.call("self.actor", {
@@ -2159,6 +2253,8 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
       occurred_end: museGate03Occurred,
       learned_at: museGate03Occurred,
     } satisfies FacadeInput<"vault.conversations.create">);
+    expect((await engine.client.call("vault.get", { entity_ref: conversation.id })).value?.id_hex)
+      .toBe(conversation.id);
     const scope = await ownerBaseClaimScope(
       engine.client,
       engine.pairedActor.principalRef,
@@ -2169,7 +2265,7 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
     const control = await engine.client.call("vault.claims.upsert",
       museGate03ClaimInput(
         conversation.id,
-        museGate03Predicates.control,
+        predicates.control,
         museGate03Sentinels.control,
         "user_stated",
         scope,
@@ -2179,15 +2275,16 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
     const controlRow = await museGate03ExpectAutoLanded(
       engine,
       conversation.id,
-      museGate03Predicates.control,
+      predicates.control,
       museGate03Sentinels.control,
       ownerApproval,
     );
     expect(controlRow.approval).toBe(ownerApproval);
 
-    const mainWrapsInSpec = await museGate03DiscoversUpsertWrap(main);
-    const outsideWrapsInSpec = await museGate03DiscoversUpsertWrap(outside);
+    const mainToolSchema = await museGate03DiscoversUpsertWrap(main);
+    const outsideToolSchema = await museGate03DiscoversUpsertWrap(outside);
 
+    stage = "Proposed ceiling and MCP baseline ask";
     const initialView = await museGate03ManifestView(engine, mainSelf.actor_ref);
     const originalObserved: museGate03SourceTrust | undefined =
       initialView.manifest.source_trust?.["observed"];
@@ -2209,15 +2306,16 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
     );
     const beforeAttempt = await museGate03McpUpsert(main, museGate03ClaimInput(
       conversation.id,
-      museGate03Predicates.before,
+      predicates.before,
       museGate03Sentinels.before,
       "observed",
       scope,
-    ), mainWrapsInSpec);
+    ), mainToolSchema);
+    lastAttempt = beforeAttempt;
     const beforeAsks = await museGate03ExpectAskParked(
       engine,
       conversation.id,
-      museGate03Predicates.before,
+      predicates.before,
       museGate03Sentinels.before,
       ownerApproval,
       pendingBeforeBaseline,
@@ -2229,6 +2327,7 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
 
     // Grant: Auto ceiling plus this actor's explicit observed-source
     // auto permit, in one owner policy put, read back by the helper.
+    stage = "owner grants Auto ceiling and observed-source permit";
     await museGate03SetWriteAuthority(
       engine,
       mainSelf.actor_ref,
@@ -2237,19 +2336,21 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
       true,
       originalObserved,
     );
+    stage = "Auto ceiling and observed-source MCP write";
     const grantedAttempt = await museGate03McpUpsert(main, museGate03ClaimInput(
       conversation.id,
-      museGate03Predicates.granted,
+      predicates.granted,
       museGate03Sentinels.granted,
       "observed",
       scope,
-    ), mainWrapsInSpec);
+    ), mainToolSchema);
+    lastAttempt = grantedAttempt;
     expect(grantedAttempt.outcome).toBe("result");
     expect(museGate03McpIsError(grantedAttempt.value)).toBe(false);
     let grantedRow = await museGate03ExpectAutoLanded(
       engine,
       conversation.id,
-      museGate03Predicates.granted,
+      predicates.granted,
       museGate03Sentinels.granted,
       ownerApproval,
     );
@@ -2260,26 +2361,28 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
 
     // P-GATE-005: a Write-class verb from a read-only slip is outside
     // the slip's class. It must raise an ask, not fail silently.
+    stage = "read-only slip outside-class ask";
     const pendingBeforeOutside = new Set(
       (await museGate03PendingRows(engine)).map((row) => row.decision_ref),
     );
     const outsideAttempt = await museGate03McpUpsert(outside, museGate03ClaimInput(
       conversation.id,
-      museGate03Predicates.outside,
+      predicates.outside,
       museGate03Sentinels.outside,
       "observed",
       scope,
-    ), outsideWrapsInSpec);
+    ), outsideToolSchema);
+    lastAttempt = outsideAttempt;
     expect(
       outsideAttempt.outcome !== "result" ||
       museGate03McpIsError(outsideAttempt.value) ||
-      !(await museGate03ClaimRows(engine, conversation.id, museGate03Predicates.outside))
+      !(await museGate03ClaimRows(engine, conversation.id, predicates.outside))
         .some((row) => row.approval === ownerApproval),
     ).toBe(true);
     const outsideAsks = await museGate03ExpectAskParked(
       engine,
       conversation.id,
-      museGate03Predicates.outside,
+      predicates.outside,
       museGate03Sentinels.outside,
       ownerApproval,
       pendingBeforeOutside,
@@ -2293,11 +2396,12 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
     // consent asks all read back unchanged.
     const heldAskRefs = [...beforeAsks, ...outsideAsks]
       .map((row) => row.decision_ref);
+    stage = "claims policy and asks survive restart";
     await engine.restart();
     grantedRow = await museGate03ExpectAutoLanded(
       engine,
       conversation.id,
-      museGate03Predicates.granted,
+      predicates.granted,
       museGate03Sentinels.granted,
       ownerApproval,
     );
@@ -2317,6 +2421,7 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
     // Wrong actor kind: the granted agent tries to widen the other
     // agent through the owner's policy door. Standard refusal
     // envelope, a refused call receipt read back, no policy change.
+    stage = "agent policy widening refusal";
     const attemptView = await museGate03ManifestView(engine, outsideSelf.actor_ref);
     const widenInput = {
       manifest_ref: attemptView.manifest_ref,
@@ -2351,9 +2456,13 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
     if (typeof refusalCode !== "string" || typeof refusalReceiptRef !== "string") {
       throw new Error("Refused policy put lacks code or receipt reference");
     }
-    const refusalReceipt = await engine.client.call("vault.receipts.get", {
-      receipt_ref: refusalReceiptRef,
-    } satisfies FacadeInput<"vault.receipts.get">);
+    const refusalReceipt = await awaitPublic(
+      () => engine.client.call("vault.receipts.get", {
+        receipt_ref: refusalReceiptRef,
+      } satisfies FacadeInput<"vault.receipts.get">),
+      (value) => value !== null,
+      { label: "MUSE-GATE-03 refused policy-put call receipt", timeoutMs: LIMITS.requestMs },
+    );
     if (!refusalReceipt) throw new Error("Refused policy put has no readable call receipt");
     expect(refusalReceipt.verb).toBe("vault.gate.policy.put");
     if (typeof refusalReceipt.outcome === "string") {
@@ -2375,6 +2484,7 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
     // Undo is the net: while the grant still stands, the agent
     // retracts its own landed claim through a second surface; the
     // row changes state and history keeps the original value.
+    stage = "agent retracts its own landed claim";
     const lifecycleBeforeUndo = grantedRow.lifecycle;
     const undo = await main.client.call("vault.claims.retract", {
       claim_ref: grantedRow.claim_ref,
@@ -2383,7 +2493,7 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
     const rowsAfterUndo = await museGate03ClaimRows(
       engine,
       conversation.id,
-      museGate03Predicates.granted,
+      predicates.granted,
     );
     expect(rowsAfterUndo.every((row) =>
       row.claim_ref !== grantedRow.claim_ref ||
@@ -2397,6 +2507,7 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
 
     // Revoke mid-flow: the owner takes the Auto ceiling and the
     // observed-source auto permit away through the same door.
+    stage = "owner revokes Auto ceiling and observed-source permit";
     await museGate03SetWriteAuthority(
       engine,
       mainSelf.actor_ref,
@@ -2405,20 +2516,22 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
       false,
       originalObserved,
     );
+    stage = "revoked ceiling MCP next-use ask";
     const pendingBeforeRevokeUse = new Set(
       (await museGate03PendingRows(engine)).map((row) => row.decision_ref),
     );
     const revokedAttempt = await museGate03McpUpsert(main, museGate03ClaimInput(
       conversation.id,
-      museGate03Predicates.revoked,
+      predicates.revoked,
       museGate03Sentinels.revoked,
       "observed",
       scope,
-    ), mainWrapsInSpec);
+    ), mainToolSchema);
+    lastAttempt = revokedAttempt;
     const revokedAsks = await museGate03ExpectAskParked(
       engine,
       conversation.id,
-      museGate03Predicates.revoked,
+      predicates.revoked,
       museGate03Sentinels.revoked,
       ownerApproval,
       pendingBeforeRevokeUse,
@@ -2427,6 +2540,14 @@ suite.test(test, "MUSE-GATE-03", "a reversible MCP claim write runs Auto inside 
       attempt: revokedAttempt,
       asks: revokedAsks,
     });
+  } catch (error) {
+    const detail = error instanceof PublicHttpError
+      ? `status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`
+      : error instanceof Error ? error.message : String(error);
+    if (stage === "read-only slip outside-class ask") {
+      throw new Error(`MUSE-GATE-03 MISSING DOOR 2026-11-11: a read-only credential is not a named verb-class Grant; its transport refusal cannot prove the P-GATE-005 outside-class consent ask; need a public named-class Grant/slip setup and scope-exceed producer; ${stage}; attempt=${JSON.stringify(lastAttempt)}; ${detail}`, { cause: error });
+    }
+    throw new Error(`MUSE-GATE-03 ${stage}: ${detail}; last MCP attempt=${JSON.stringify(lastAttempt)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -2516,8 +2637,10 @@ function museGate04RowsFor(
 
 suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner creates it from its scoped warning, and the live bypass reads back active until revoked", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-GATE-04", profile });
+  let stage = "off-by-default registry and ordinary Grant";
   try {
     const ownerRef = engine.pairedActor.principalRef;
+    const catastropheStandingClass = "vault_wide_destruction";
     const agentName = `MUSE-GATE-04 agent ${secretHex(4)}`;
     redactor.add(agentName);
     const agentRecord = await engine.client.call("vault.structural.put", {
@@ -2527,6 +2650,16 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
       principalRef: agentRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
     });
     const agentRef = agent.principalRef;
+    const otherRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: `${agentName} non-grantee` }, occurred_at: museGate04OccurredAt,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const otherAgent = await engine.pairActor({
+      principalRef: otherRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
+    });
+    for (const record of [agentRecord, otherRecord]) {
+      expect((await engine.client.call("vault.get", { entity_ref: record.entity_ref })).value?.id_hex)
+        .toBe(record.id_hex);
+    }
     const agentReceipts = await agent.client.call("vault.receipts", {
       limit: 1,
     } satisfies FacadeInput<"vault.receipts">);
@@ -2554,10 +2687,11 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
     expect(ordinaryRows).toHaveLength(1);
     expect(ordinaryRows[0]?.class).toBe(museGate04OrdinaryClass);
 
+    stage = "ordinary standing grant rejects catastrophe action class";
     const standingRefusal = await museGate04RefusalOf(
       engine.client.call("vault.consent.create_standing_grant", {
         bound: {
-          actor: agentRef, class: museGate04CatastropheStandingClass,
+          actor: agentRef, class: catastropheStandingClass,
           envelope: { project: projectRef, audience: [ownerRef] },
         },
       } satisfies FacadeInput<"vault.consent.create_standing_grant">),
@@ -2567,7 +2701,7 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
       limit: 1000, include_revoked: true,
     } satisfies FacadeInput<"vault.consent.registry">);
     expect(afterStandingAttempt.rows.some(
-      (row) => row.class === museGate04CatastropheStandingClass,
+      (row) => row.class === catastropheStandingClass,
     )).toBe(false);
     expect(await engine.client.call("vault.consent.active_bypass_grants", {
     } satisfies FacadeInput<"vault.consent.active_bypass_grants">)).toEqual([]);
@@ -2579,6 +2713,7 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
       limit: 1000,
     } satisfies FacadeInput<"vault.consent.registry">);
 
+    stage = "scoped bypass warning and tampered warning refusal";
     const bypassBound: museGate04BypassBound = {
       actor: agentRef,
       actor_class: "agent",
@@ -2612,6 +2747,7 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
     expect(await engine.client.call("vault.consent.active_bypass_grants", {
     } satisfies FacadeInput<"vault.consent.active_bypass_grants">)).toEqual([]);
 
+    stage = "agent cannot create bypass";
     const agentWarningRefusal = await museGate04RefusalOf(
       agent.client.call("vault.consent.bypass_grant_warning", {
         bound: bypassBound,
@@ -2627,10 +2763,11 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
     expect(await engine.client.call("vault.consent.active_bypass_grants", {
     } satisfies FacadeInput<"vault.consent.active_bypass_grants">)).toEqual([]);
 
+    stage = "world privacy widen cannot be bypassed";
     let widenRefusal: museGate04Refusal | undefined;
     try {
       const widenWarning = await engine.client.call("vault.consent.bypass_grant_warning", {
-        bound: { ...bypassBound, classes: [museGate04WidenWorldClass] },
+        bound: { ...bypassBound, classes: ["WorldPrivacyWiden"] },
       } satisfies FacadeInput<"vault.consent.bypass_grant_warning">);
       widenRefusal = await museGate04RefusalOf(
         engine.client.call("vault.consent.create_bypass_grant", {
@@ -2646,6 +2783,7 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
     expect(await engine.client.call("vault.consent.active_bypass_grants", {
     } satisfies FacadeInput<"vault.consent.active_bypass_grants">)).toEqual([]);
 
+    stage = "owner creates scoped bypass and reads active state";
     const creationWarning = await engine.client.call("vault.consent.bypass_grant_warning", {
       bound: bypassBound,
     } satisfies FacadeInput<"vault.consent.bypass_grant_warning">);
@@ -2676,8 +2814,10 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
       expect(row.bypass ?? null).not.toBeNull();
     }
 
+    // A non-grantee is the wrong actor; the grantee may renounce under P-GATE-010.
+    stage = "non-grantee cannot revoke bypass";
     const agentRevokeRefusal = await museGate04RefusalOf(
-      agent.client.call("vault.consent.revoke", {
+      otherAgent.client.call("vault.consent.revoke", {
         grant: firstGrantRef,
       } satisfies FacadeInput<"vault.consent.revoke">),
       "agent bypass revoke",
@@ -2686,6 +2826,7 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
     } satisfies FacadeInput<"vault.consent.active_bypass_grants">);
     expect(museGate04StatesFor(activeAfterAgentRevoke, grantRefs)).toHaveLength(grantRefs.length);
 
+    stage = "live bypass survives restart";
     await engine.restart();
     const activeAfterRestart = await engine.client.call("vault.consent.active_bypass_grants", {
     } satisfies FacadeInput<"vault.consent.active_bypass_grants">);
@@ -2699,6 +2840,7 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
     } satisfies FacadeInput<"vault.consent.registry">);
     expect(museGate04RowsFor(registryAfterRestart.rows, grantRefs)).toHaveLength(grantRefs.length);
 
+    stage = "owner revokes bypass and reads inactive state";
     for (const grantRef of grantRefs) {
       await engine.client.call("vault.consent.revoke", {
         grant: grantRef,
@@ -2723,6 +2865,7 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
       liveStates, restartStates, revokedRows,
     });
 
+    stage = "bypass-creation refusal receipt readback";
     const refusalReceiptRef = agentCreateRefusal.receiptRef;
     if (!refusalReceiptRef) {
       throw new Error("Agent bypass-creation refusal carries no receipt reference");
@@ -2738,6 +2881,11 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
     expect(refusalReceipt.verb).toBe("vault.consent.create_bypass_grant");
     expect(refusalReceipt.actor_ref).toBe(agentRef);
     expect(typeof refusalReceipt.outcome === "object" && "refused" in refusalReceipt.outcome).toBe(true);
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(`MUSE-GATE-04 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`, { cause: error });
+    }
+    throw new Error(`MUSE-GATE-04 ${stage}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -2893,22 +3041,18 @@ async function museGate05ReceiptRefs(engine: EngineFixture): Promise<Set<string>
 // the parked claim. Repeats a read only; it never retries the refused write.
 async function museGate05AwaitClaimReceipt(
   engine: EngineFixture,
-  before: ReadonlySet<string>,
-  candidates: readonly string[],
-): Promise<MuseGate05Receipt> {
-  const wanted = new Set(candidates);
-  const matches = (row: MuseGate05Receipt): boolean => !before.has(row.receipt_ref)
-    && ((row.claim_ref != null && wanted.has(row.claim_ref))
-      || (row.claim != null && (wanted.has(row.claim.id)
-        || (row.claim.short_id != null && wanted.has(row.claim.short_id)))));
-  const page = await awaitPublic(
-    () => engine.client.call("vault.receipts", { limit: 1000 }),
-    (value) => value.receipts.some(matches),
-    { label: "receipt left by the refused settlement", timeoutMs: LIMITS.requestMs },
+  refusal: PublicHttpError,
+): Promise<NonNullable<FacadeResult<"vault.receipts.get">>> {
+  const receiptRef = refusal.error?.receiptRef;
+  if (typeof receiptRef !== "string") throw new Error("Refused settlement has no receiptRef");
+  const receipt = await awaitPublic(
+    () => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
+    (value) => value !== null,
+    { label: "MUSE-GATE-05 refused settlement call receipt", timeoutMs: LIMITS.requestMs },
   );
-  const found = page.receipts.find(matches);
-  if (!found) throw new Error("The refusal left no readable receipt for the proposed claim");
-  return found;
+  if (!receipt) throw new Error("The refused settlement has no public call receipt");
+  expect(receipt.verb).toBe("vault.claims.settle");
+  return receipt;
 }
 
 async function museGate05AuditRows(engine: EngineFixture): Promise<MuseGate05AuditRow[]> {
@@ -2961,11 +3105,12 @@ function museGate05TrustedHasRule(view: MuseGate05PolicyView, prefix: string): b
 
 suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own proposal, and a non-holder policy change stays a proposal", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-GATE-05", profile });
+  let stage = "principal identity and independent second slip";
   try {
     const occurred = 1769947200;
-    const predicateControl = "muse_gate05_control";
-    const predicateOwn = "muse_gate05_own";
-    const predicateAfterRevoke = "muse_gate05_after_revoke";
+    const predicateControl = "profile.muse_gate05.control";
+    const predicateOwn = "profile.muse_gate05.own";
+    const predicateAfterRevoke = "profile.muse_gate05.after_revoke";
     const narrowRulePrefix = "muse_gate05_narrow_probe";
     const holderRulePrefix = "muse_gate05_holder_probe";
     const sentinelControl = `muse-gate05-control-${secretHex(8)}`;
@@ -2980,14 +3125,20 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
       body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
     } satisfies FacadeInput<"vault.conversations.create">);
     const subjectRef = conversation.id;
-    const agentRecord = await engine.client.call("vault.structural.put", {
-      kind: "PERSON", body: { name: "Muse Gate05 Proposer" }, occurred_at: occurred,
-    } satisfies FacadeInput<"vault.structural.put">);
-    const agent = await engine.pairActor({
-      principalRef: agentRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
-    });
+    const agents = await enrolAgents(engine, [
+      { name: "muse-gate05-proposer", tier: "full-access" },
+      { name: "muse-gate05-other-proposer", tier: "full-access" },
+    ]);
+    const agent = agents[0]!;
+    const otherProposer = agents[1]!;
+    for (const actor of [agent, otherProposer]) {
+      expect((await engine.client.call("vault.get", { entity_ref: actor.principalRef })).value?.id_hex)
+        .toBe(actor.principalRef);
+    }
+    expect((await engine.client.call("vault.get", { entity_ref: conversation.id })).value?.id_hex)
+      .toBe(conversation.id);
     const agentSecondSlip = await engine.pairActor({
-      principalRef: agentRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
+      principalRef: agent.principalRef, actorClass: "agent", scope: ["core:read", "core:write"],
     });
     expect(agentSecondSlip.principalRef).toBe(agent.principalRef);
     expect(agentSecondSlip.credential === agent.credential).toBe(false);
@@ -2995,8 +3146,21 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
     const claimScope = await ownerBaseClaimScope(engine.client, ownerRef);
     const agentSelf = await agent.client.call("self.actor",
       {} satisfies FacadeInput<"self.actor">);
-    const agentRefs = [agent.principalRef, agentSelf.actor_ref, agentSelf.person_ref]
+    // person_ref is the person the agent acts for, not the opener's actor lineage.
+    expect(agentSelf.actor_ref).toBe(agent.principalRef);
+    const agentRefs = [agent.principalRef, agentSelf.actor_ref]
       .filter((ref): ref is string => typeof ref === "string" && ref.length > 0);
+    const enrolledPolicy = await engine.client.call("vault.gate.policy.get", {});
+    const enrolledManifest = enrolledPolicy.manifests.find(view => view.trusted
+      && view.manifest.actor_ceilings.some(row => row.actor_ref === agent.principalRef));
+    if (!enrolledManifest) throw new Error("Named agent enrollment has no ceiling manifest");
+    await engine.client.call("vault.gate.policy.put", {
+      manifest_ref: enrolledManifest.manifest_ref, expected_body_hash: enrolledManifest.body_hash,
+      manifest: { ...enrolledManifest.manifest, actor_ceilings: enrolledManifest.manifest.actor_ceilings.map(row =>
+        row.actor_ref === agent.principalRef ? { ...row, ceiling: "proposed" as const } : row) },
+    });
+    const enrolledPolicyReadback = await engine.client.call("vault.gate.policy.get", {});
+    expect(museGate05TrustedHasAuto(enrolledPolicyReadback, agentRefs)).toBe(false);
     const ownerSelf = await engine.client.call("self.actor", {} satisfies FacadeInput<"self.actor">);
     expect(agentRefs.includes(ownerSelf.actor_ref)).toBe(false);
 
@@ -3022,10 +3186,11 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
     // The scope a holder mint is bound to: the owner's own read ceiling.
     const ownerCeiling = await engine.client.call("vault.scope.ceiling",
       {} satisfies FacadeInput<"vault.scope.ceiling">);
-    const mintScope = ownerCeiling.scope;
+    const mintScope = { ...ownerCeiling.scope, verbs: { kind: "some" as const, values: ["read"] } };
 
     // P-GATE-015, no grant first (F3 order). The agent opens its own claim
     // proposal. Without any settle Grant it cannot settle that proposal.
+    stage = "no-grant self-settlement refusal";
     const own = await museGate05SeedProposal(engine, agent.client, claimScope, {
       subjectRef, predicate: predicateOwn, sentinel: sentinelOwn,
       source: "observed", occurredAt: occurred,
@@ -3036,12 +3201,10 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
     expect(ownReview.claim.value).toBe(sentinelOwn);
     const ownOpener = ownReview.opener_ref;
     expect(ownOpener != null && agentRefs.includes(ownOpener)).toBe(true);
-    const receiptsBeforeSelfSettle = await museGate05ReceiptRefs(engine);
-    await museGate05Refused(() => agent.client.call("vault.claims.settle", {
+    const selfSettleRefusal = await museGate05Refused(() => agent.client.call("vault.claims.settle", {
       claim_ref: own.claimRef, review_id: ownReview.review_id, decision: "approve",
     } satisfies FacadeInput<"vault.claims.settle">));
-    const selfSettleRefusalReceipt = await museGate05AwaitClaimReceipt(
-      engine, receiptsBeforeSelfSettle, own.candidates);
+    const selfSettleRefusalReceipt = await museGate05AwaitClaimReceipt(engine, selfSettleRefusal);
     expect(selfSettleRefusalReceipt.receipt_ref.length).toBeGreaterThan(0);
     expect(museGate05IsPending(await museGate05PendingRefs(engine), own.candidates)).toBe(true);
     expect((await museGate05ListedClaim(engine, subjectRef, predicateOwn, sentinelOwn))?.approval)
@@ -3049,6 +3212,7 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
 
     // P-GATE-016. The opener cannot mint itself the Grant that would answer
     // its proposal, by either mint door. The registry gains no grant.
+    stage = "agent cannot mint answering authority";
     const registryBeforeMints = await museGate05RegistryRefs(engine);
     await museGate05Refused(() => agent.client.call("vault.agents.grants.mint", {
       agent: agent.principalRef, authority_scope: mintScope, verb_classes: [settleClass],
@@ -3066,6 +3230,7 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
 
     // The owner now mints the agent a real settle Grant. Read it back
     // through the consent registry and the authority audit.
+    stage = "owner native claim-review Grant door";
     const minted = await engine.client.call("vault.agents.grants.mint", {
       agent: agent.principalRef, authority_scope: mintScope, verb_classes: [settleClass],
     } satisfies FacadeInput<"vault.agents.grants.mint">);
@@ -3078,6 +3243,7 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
 
     // Control: with that Grant the agent settles a proposal it did not
     // open. The settlement names the Grant that answered.
+    stage = "non-opener control under native claim-review Grant";
     const control = await museGate05SeedProposal(engine, engine.client, claimScope, {
       subjectRef, predicate: predicateControl, sentinel: sentinelControl,
       source: "user_stated", occurredAt: occurred,
@@ -3106,12 +3272,12 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
     // the same actor: settling its OWN proposal still refuses, approve and
     // reject alike, for the first slip and for the second slip alike. Only
     // lineage is left to differ from the control above.
-    const receiptsBeforeGrantedSelfSettle = await museGate05ReceiptRefs(engine);
-    await museGate05Refused(() => agent.client.call("vault.claims.settle", {
+    stage = "granted opener and second-slip self-settlement refusals";
+    const grantedSelfSettleRefusal = await museGate05Refused(() => agent.client.call("vault.claims.settle", {
       claim_ref: own.claimRef, review_id: ownReview.review_id,
       decision: "approve", grant_ref: grantRef,
     } satisfies FacadeInput<"vault.claims.settle">));
-    await museGate05AwaitClaimReceipt(engine, receiptsBeforeGrantedSelfSettle, own.candidates);
+    await museGate05AwaitClaimReceipt(engine, grantedSelfSettleRefusal);
     await museGate05Refused(() => agentSecondSlip.client.call("vault.claims.settle", {
       claim_ref: own.claimRef, review_id: ownReview.review_id,
       decision: "approve", grant_ref: grantRef,
@@ -3126,6 +3292,7 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
 
     // Revoke (F3 last step). The owner takes the Grant away; the agent's
     // next settle, even of a proposal outside its lineage, refuses again.
+    stage = "native Grant revoke and next-use refusal";
     const revoked = await engine.client.call("vault.agents.grants.revoke", {
       grant_ref: grantRef,
     } satisfies FacadeInput<"vault.agents.grants.revoke">);
@@ -3135,7 +3302,7 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
     expect((await museGate05AuditRows(engine))
       .some((row) => row.grant_ref === grantRef && row.event_kind === "revoke" && row.fold_valid))
       .toBe(true);
-    const afterRevoke = await museGate05SeedProposal(engine, engine.client, claimScope, {
+    const afterRevoke = await museGate05SeedProposal(engine, otherProposer.client, claimScope, {
       subjectRef, predicate: predicateAfterRevoke, sentinel: sentinelAfterRevoke,
       source: "user_stated", occurredAt: occurred,
     });
@@ -3151,6 +3318,7 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
     // A holder outside the opener's lineage settles both waiting
     // proposals: the opener's own claim is accepted, the other rejected.
     // Each settlement receipt names the person who answered.
+    stage = "outside holder settles the two waiting proposals";
     const ownSettlement = await engine.client.call("vault.claims.settle", {
       claim_ref: own.claimRef, review_id: ownReview.review_id, decision: "approve",
     } satisfies FacadeInput<"vault.claims.settle">);
@@ -3177,6 +3345,7 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
     // in either direction, and the direct holder door refuses it. Only a
     // holder's change changes effective (trusted) policy, and a holder
     // reverts it in one more change.
+    stage = "non-holder policy proposals and owner policy restore";
     const policy0 = await engine.client.call("vault.gate.policy.get",
       {} satisfies FacadeInput<"vault.gate.policy.get">);
     const default0 = museGate05DefaultView(policy0);
@@ -3258,6 +3427,7 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
 
     // Survive a restart. The settled claims, the revoked grant, the
     // refusal receipts and the reverted policy all read back unchanged.
+    stage = "settlements revoked Grant and policy survive restart";
     await engine.restart();
     const pendingAfterRestart = await museGate05PendingRefs(engine);
     expect(museGate05IsPending(pendingAfterRestart, own.candidates)).toBe(false);
@@ -3269,7 +3439,9 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
       .not.toBe("proposed");
     await engine.awaitReceipt(ownSettlement.receipt_ref);
     await engine.awaitReceipt(controlSettlement.receipt_ref);
-    expect((await museGate05ReceiptRefs(engine)).has(selfSettleRefusalReceipt.receipt_ref)).toBe(true);
+    expect((await engine.client.call("vault.receipts.get", {
+      receipt_ref: selfSettleRefusalReceipt.receipt_ref,
+    }))?.receipt_ref).toBe(selfSettleRefusalReceipt.receipt_ref);
     expect((await museGate05RegistryRefs(engine)).has(grantRef)).toBe(false);
     const policyAfterRestart = await engine.client.call("vault.gate.policy.get",
       {} satisfies FacadeInput<"vault.gate.policy.get">);
@@ -3295,6 +3467,14 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
       revertPutReceipt: revertPut.receipt_ref,
       originalPolicyBodyHash: hash0,
     });
+  } catch (error) {
+    const detail = error instanceof PublicHttpError
+      ? `status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`
+      : error instanceof Error ? error.message : String(error);
+    if (stage === "owner native claim-review Grant door" || stage === "non-opener control under native claim-review Grant") {
+      throw new Error(`MUSE-GATE-05 MISSING DOOR 2026-11-11: public vault.agents.grants.mint emits a federation Grant, but vault.claims.settle requires a native memory.claim.review consent Grant (64-hex); delegate_memory_authoring(ReviewClaim, target) has no facade door; ${stage}; ${detail}`, { cause: error });
+    }
+    throw new Error(`MUSE-GATE-05 ${stage}: ${detail}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -3341,7 +3521,7 @@ const museGate06ToolsV1: museGate06Tool[] = [
     read_only: true, idempotent: true,
   },
   {
-    name: "send_note", data_class: "personal", header_parameters: ["x-muse-gate06-route"],
+    name: "send_note", data_class: "personal", header_parameters: [],
     destroys: false, spends: false, sends_outward: true, legacy_ask: false,
     read_only: false,
   },
@@ -3357,8 +3537,8 @@ const museGate06ToolsV1: museGate06Tool[] = [
   },
 ];
 
-// Drift: read_notes unchanged; send_note narrowed (its header parameter is
-// gone); summarize_note expanded (personal data, sends outward);
+// Drift: read_notes unchanged; send_note narrows its scope enum in the case;
+// summarize_note expanded (personal data, sends outward);
 // export_notes is new; delete_note is removed.
 const museGate06ToolsV2: museGate06Tool[] = [
   {
@@ -3434,29 +3614,80 @@ async function museGate06Install(
 suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the owner accepts it, and a widened connector asks again while carried rows keep their ruling", async () => {
   const catalog = await loadFixtures();
   const pack = await catalog.readJson<museGate06PackFixture>("gate06-connector-pack");
-  const engine = await EngineFixture.start({ id: "MUSE-GATE-06", profile });
+  let stage = "scripted connector transport setup";
+  let primaryFailed = false;
+  let primary: unknown;
+  const withSchema = (tools: readonly museGate06Tool[], version: "v1" | "v2") => tools.map((tool) => ({
+    ...tool,
+    resolved_input_schema: {
+      type: "object", additionalProperties: false, required: ["scope"],
+      properties: { scope: { type: "string",
+        enum: tool.name === "send_note" && version === "v2" ? ["personal"] : ["personal", "team"],
+      } },
+    },
+  })).sort((left, right) => left.name.localeCompare(right.name));
+  const toolsV1 = withSchema(museGate06ToolsV1, "v1");
+  const toolsV2 = withSchema(museGate06ToolsV2, "v2");
+  const provider = await ScriptedProviders.start({ id: "muse-gate06-discovery", origins: ["connector"], steps: [] });
+  const enqueueDiscovery = (version: string, tools: ReturnType<typeof withSchema>) => {
+    provider.enqueue({
+      id: `${version}-initialize`, origin: "connector", role: "connector", purpose: `${version} MCP discovery`,
+      request: { method: "POST", path: "/mcp", fields: { method: "initialize", params: { protocolVersion: pack.protocol_revision } } },
+      response: { kind: "json", body: { jsonrpc: "2.0", id: "initialize", result: {
+        protocolVersion: pack.protocol_revision, capabilities: { tools: {} },
+        serverInfo: { name: "gate06-notes", version },
+      } } },
+    });
+    provider.enqueue({
+      id: `${version}-initialized`, origin: "connector", role: "connector", purpose: `${version} MCP initialized notification`,
+      request: { method: "POST", path: "/mcp", fields: { method: "notifications/initialized" } },
+      response: { kind: "json", status: 202, body: {} },
+    });
+    provider.enqueue({
+      id: `${version}-tools`, origin: "connector", role: "connector", purpose: `${version} permission declaration`,
+      request: { method: "POST", path: "/mcp", fields: { method: "tools/list", params: {} } },
+      response: { kind: "json", body: { jsonrpc: "2.0", id: "tools/list:0", result: {
+        tools: tools.map((tool) => ({
+          name: tool.name, inputSchema: tool.resolved_input_schema,
+          annotations: { readOnlyHint: tool.read_only ?? false,
+            destructiveHint: tool.destroys, openWorldHint: tool.sends_outward,
+            idempotentHint: tool.idempotent ?? false },
+        })),
+      } } },
+    });
+  };
+  const engine = await EngineFixture.start({ id: "MUSE-GATE-06", profile,
+    serverConfig: `[connectors."muse.gate06_notes"]
+transport = "mcp_http"
+endpoint = "${provider.urls.connector}/mcp"
+`,
+  });
   try {
     // Install the connector pack through the owner pack door, then draft
     // its admission slate from the typed manifest. The pack source this
     // case stamps is the installed receipt's own source, never invented.
+    stage = "install v1 pack source";
     const installedV1 = await museGate06Install(engine, pack.v1_files);
     expect(installedV1.kind).toBe("connector");
     const connector = installedV1.pack_name;
     const sourceV1 = { source_ref: installedV1.source_id, content_hash: installedV1.content_hash };
+    stage = "prepare source-bound connector admission from live v1 discovery";
+    enqueueDiscovery("v1", toolsV1);
     const prepared = await engine.client.call("vault.packs.connector.prepare", {
       connector,
       source: sourceV1,
       summary: pack.summary,
       protocol_revision: pack.protocol_revision,
-      manifest: { pack_source: sourceV1, tools: museGate06ToolsV1 },
+      manifest: { pack_source: sourceV1, tools: toolsV1, elicitation: { legacy_ask_tools: [] } },
     } satisfies FacadeInput<"vault.packs.connector.prepare">);
 
     // P-GATE-018, read back through a different verb: the prepared slate is
     // an unstamped draft. One row per declared tool, drafted at auto, with
     // no owner ruling on any row yet.
+    stage = "read ungranted v1 slate";
     const drafted = await awaitPublic(
       () => engine.client.call("vault.packs.connector.get", { connector }),
-      (view) => view.rows.length === museGate06ToolsV1.length,
+      (view) => view.rows.length === toolsV1.length + 1,
       { label: "drafted connector slate rows", timeoutMs: LIMITS.requestMs },
     );
     expect(drafted.basis.connector).toBe(connector);
@@ -3466,12 +3697,13 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
     expect(drafted.consent_required).toBe(true);
     expect(drafted.status).toBe("pending");
     expect(museGate06Sorted(drafted.rows.map((row) => row.draft.tool)))
-      .toEqual(museGate06Sorted(museGate06ToolsV1.map((tool) => tool.name)));
+      .toEqual(museGate06Sorted([...toolsV1.map((tool) => tool.name), "@elicitation"]));
     for (const row of drafted.rows) {
       expect(row.owner_override ?? null).toBeNull();
     }
     // The draft grants nothing: per-capability authority for this reviewed
     // source is not ready and carries no minted grant on any row.
+    stage = "read unstamped connector authority";
     const draftGrants = await engine.client.call("vault.packs.connector.grants.get", {
       basis: drafted.basis,
     } satisfies FacadeInput<"vault.packs.connector.grants.get">);
@@ -3490,6 +3722,7 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
     });
     const agentSelf = await agent.client.call("self.actor", {});
     expect(agentSelf.actor_class).toBe("agent");
+    stage = "agent cannot stamp v1 slate";
     const agentStamp = await agent.client.raw("POST", "/v1/core/facade/vault.packs.connector.accept", {
       basis: drafted.basis,
       rows: {
@@ -3514,6 +3747,7 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
       read_notes: "always_allow", send_note: "always_ask",
       summarize_note: "auto", delete_note: "never_allow",
     } as const;
+    stage = "owner stamps v1 slate over websocket";
     const ownerSocket = await engine.websocket();
     let stampReceiptRef = "";
     try {
@@ -3522,6 +3756,7 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
       } satisfies FacadeInput<"vault.packs.connector.accept">);
       stampReceiptRef = museGate06ReceiptRef(stampedCall.frames);
     } finally { ownerSocket.close() }
+    stage = "read owner stamp call receipt";
     const stampReceipt = await engine.client.call("vault.receipts.get", { receipt_ref: stampReceiptRef });
     if (!stampReceipt) throw new Error("Owner slate stamp left no readable call receipt");
     expect(stampReceipt.verb).toBe("vault.packs.connector.accept");
@@ -3530,11 +3765,13 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
     // Read the stamp back through get and through grants.get. Accepting
     // does not qualify the connector: the key stays pending until the
     // qualification probes pass, which this case does not run.
+    stage = "read owner stamp and authority settings";
     const stamped = await engine.client.call("vault.packs.connector.get", { connector });
     expect(stamped.stamped).toBe(true);
     expect(museGate06Row(stamped, "read_notes").owner_override?.disposition).toBe("always_allow");
     expect(museGate06Row(stamped, "send_note").owner_override?.disposition).toBe("always_ask");
     expect(museGate06Row(stamped, "delete_note").owner_override?.disposition).toBe("never_allow");
+    stage = "read stamped connector authority";
     const stampedGrants = await engine.client.call("vault.packs.connector.grants.get", {
       basis: stamped.basis,
     } satisfies FacadeInput<"vault.packs.connector.grants.get">);
@@ -3547,26 +3784,31 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
     // P-GATE-019: the pack moves to its version-bumped v2 source and the
     // manifest drifts. Only the expansions re-ask; the unchanged and the
     // narrowed rows carry forward; the removed tool drops without an ask.
+    // send_note narrows the same scope enum, a restriction the engine can prove.
+    stage = "install v2 pack source";
     const installedV2 = await museGate06Install(engine, pack.v2_files);
     expect(installedV2.pack_name).toBe(connector);
     expect(installedV2.content_hash).not.toBe(installedV1.content_hash);
     const sourceV2 = { source_ref: installedV2.source_id, content_hash: installedV2.content_hash };
+    stage = "update connector admission from live v2 discovery";
+    enqueueDiscovery("v2", toolsV2);
     const delta = await engine.client.call("vault.packs.connector.update", {
       prior: stamped.basis,
       source: sourceV2,
       protocol_revision: pack.protocol_revision,
-      manifest: { pack_source: sourceV2, tools: museGate06ToolsV2 },
+      manifest: { pack_source: sourceV2, tools: toolsV2, elicitation: { legacy_ask_tools: [] } },
     } satisfies FacadeInput<"vault.packs.connector.update">);
     expect(delta.changed).toBe(true);
     expect(delta.current.basis.connector).toBe(connector);
     expect(museGate06Sorted(delta.reask)).toEqual(["export_notes", "summarize_note"]);
-    expect(museGate06Sorted(delta.carried)).toEqual(["read_notes", "send_note"]);
+    expect(museGate06Sorted(delta.carried)).toEqual(["@elicitation", "read_notes", "send_note"]);
     expect(museGate06Sorted(delta.dropped)).toEqual(["delete_note"]);
     await engine.artifacts.json("gate06-delta.json", delta);
 
     // Drift is durable state on the key, not a transient prompt: restart,
     // then read the delta slate back. Carried rows keep the owner's v1
     // ruling; re-asked rows carry no ruling and no minted grant.
+    stage = "restart and read carried and reasked rows";
     await engine.restart();
     const drifted = await awaitPublic(
       () => engine.client.call("vault.packs.connector.get", { connector }),
@@ -3575,11 +3817,12 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
     );
     expect(drifted.basis.source).toEqual(sourceV2);
     expect(museGate06Sorted(drifted.rows.map((row) => row.draft.tool)))
-      .toEqual(museGate06Sorted(museGate06ToolsV2.map((tool) => tool.name)));
+      .toEqual(museGate06Sorted([...toolsV2.map((tool) => tool.name), "@elicitation"]));
     expect(museGate06Row(drifted, "read_notes").owner_override?.disposition).toBe("always_allow");
     expect(museGate06Row(drifted, "send_note").owner_override?.disposition).toBe("always_ask");
     expect(museGate06Row(drifted, "summarize_note").owner_override ?? null).toBeNull();
     expect(museGate06Row(drifted, "export_notes").owner_override ?? null).toBeNull();
+    stage = "read drifted connector authority";
     const driftGrants = await engine.client.call("vault.packs.connector.grants.get", {
       basis: drifted.basis,
     } satisfies FacadeInput<"vault.packs.connector.grants.get">);
@@ -3594,18 +3837,24 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
     // the owner can read back.
     const agentSelfAfterRestart = await agent.client.call("self.actor", {});
     expect(agentSelfAfterRestart.actor_class).toBe("agent");
-    const agentSocket = await engine.websocket(agent);
+    stage = "agent delta-stamp HTTP refusal and receipt readback";
     let agentRefusalReceiptRef = "";
     try {
-      await agentSocket.call("vault.packs.connector.accept", {
+      await agent.client.call("vault.packs.connector.accept", {
         basis: drifted.basis,
         rows: { summarize_note: "always_allow", export_notes: "always_allow" },
       } satisfies FacadeInput<"vault.packs.connector.accept">);
       throw new Error("Agent delta stamp was not refused");
     } catch (error) {
-      if (!(error instanceof WsRpcError)) throw error;
-      agentRefusalReceiptRef = museGate06ReceiptRef(error.frames);
-    } finally { agentSocket.close() }
+      if (!(error instanceof PublicHttpError)) throw error;
+      expect([401, 403]).toContain(error.reply.status);
+      const receiptRef = error.error?.receiptRef;
+      if (typeof receiptRef !== "string" || receiptRef.length === 0) {
+        throw new Error(`MUSE-GATE-06 ${stage}: refusal has no receiptRef; status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`, { cause: error });
+      }
+      agentRefusalReceiptRef = receiptRef;
+    }
+    stage = "read agent delta-stamp refusal call receipt";
     const refusalReceipt = await engine.client.call("vault.receipts.get", {
       receipt_ref: agentRefusalReceiptRef,
     });
@@ -3620,6 +3869,7 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
 
     // Only the re-asked rows need the owner's tap. Stamping just those
     // changed rows lands the delta; carried rows keep their v1 ruling.
+    stage = "owner stamps only reasked rows";
     await engine.client.call("vault.packs.connector.accept", {
       basis: afterAgentDelta.basis,
       rows: { summarize_note: "always_ask", export_notes: "never_allow" },
@@ -3630,6 +3880,7 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
     expect(museGate06Row(restamped, "export_notes").owner_override?.disposition).toBe("never_allow");
     expect(museGate06Row(restamped, "read_notes").owner_override?.disposition).toBe("always_allow");
     expect(museGate06Row(restamped, "send_note").owner_override?.disposition).toBe("always_ask");
+    stage = "read delta-restamped connector authority";
     const restampedGrants = await engine.client.call("vault.packs.connector.grants.get", {
       basis: restamped.basis,
     } satisfies FacadeInput<"vault.packs.connector.grants.get">);
@@ -3640,6 +3891,7 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
 
     // Revoke one previously allowed row at the same door. Never allow
     // removes that row's authority and leaves every other row standing.
+    stage = "owner revokes one allowed row";
     await engine.client.call("vault.packs.connector.accept", {
       basis: restamped.basis,
       rows: { read_notes: "never_allow" },
@@ -3647,14 +3899,25 @@ suite.test(test, "MUSE-GATE-06", "A connector draft grants nothing until the own
     const revoked = await engine.client.call("vault.packs.connector.get", { connector });
     expect(museGate06Row(revoked, "read_notes").owner_override?.disposition).toBe("never_allow");
     expect(museGate06Row(revoked, "send_note").owner_override?.disposition).toBe("always_ask");
+    stage = "read revoked connector authority";
     const revokedGrants = await engine.client.call("vault.packs.connector.grants.get", {
       basis: revoked.basis,
     } satisfies FacadeInput<"vault.packs.connector.grants.get">);
     expect(museGate06GrantRow(revokedGrants, "read_notes").setting).toBe("never_allow");
     expect(museGate06GrantRow(revokedGrants, "send_note").setting).toBe("always_ask");
     await engine.artifacts.json("gate06-final.json", { revoked, revokedGrants });
+  } catch (error) {
+    primaryFailed = true;
+    primary = error instanceof PublicHttpError ? new Error(
+      `MUSE-GATE-06 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+      { cause: error },
+    ) : error;
   } finally {
-    await engine.close();
+    const cleanup = await Promise.allSettled([engine.close(), provider.close()]);
+    const failures = cleanup.filter((row): row is PromiseRejectedResult => row.status === "rejected").map((row) => row.reason);
+    if (failures.length > 0) throw new AggregateError(primaryFailed ? [primary, ...failures] : failures,
+      `${primaryFailed ? String(primary) : "MUSE-GATE-06 cleanup"}; cleanup: ${failures.map(String).join("; ")}`);
+    if (primaryFailed) throw primary;
   }
 });
 
@@ -3777,7 +4040,7 @@ async function museGate07ExpectRefusedMint(
       receipt_ref: receiptRef,
     } satisfies FacadeInput<"vault.receipts.get">),
     (value) => value !== null,
-    { label: "refused guest-grant mint call receipt", timeoutMs: LIMITS.requestMs },
+    { label: `MUSE-GATE-07 refused guest-grant mint call receipt ${receiptRef}`, timeoutMs: LIMITS.requestMs },
   );
   if (!receipt) throw new Error("Refused guest-grant mint call receipt reads as none");
   expect(receipt.receipt_ref).toBe(receiptRef);
@@ -3836,6 +4099,7 @@ async function museGate07ReadClaim(
 }
 
 suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, and an empty ceiling exports nothing while an empty selector narrows nothing", async () => {
+  let stage = "peer identity setup";
   const occurred = 1769947200; // Public setup input, as in GATE-09.
   const suffix = secretHex(8);
   const personName = `Gate Seven Person ${suffix}`;
@@ -3851,15 +4115,26 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
   // A real peer vault identity, read through its public door and then closed:
   // this one-slot file never runs two vaults at once (SECRETS-01 pattern).
   const peer = await EngineFixture.start({ id: "MUSE-GATE-07-peer", profile });
-  const peerIdentity = await peer.client.call("vault.federation.connect.identity", {
-  } satisfies FacadeInput<"vault.federation.connect.identity">);
-  expect(peerIdentity.vault.length).toBeGreaterThan(0);
-  await peer.close();
+  let peerIdentity: FacadeResult<"vault.federation.connect.identity">;
+  try {
+    peerIdentity = await peer.client.call("vault.federation.connect.identity", {
+    } satisfies FacadeInput<"vault.federation.connect.identity">);
+    expect(peerIdentity.vault.length).toBeGreaterThan(0);
+  } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-GATE-07 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally { await peer.close() }
 
   const engine = await EngineFixture.start({ id: "MUSE-GATE-07", profile });
   let primaryFailed = false;
   let primary: unknown;
   try {
+    stage = "primary vault claim and actor setup";
     const ownerHex = engine.pairedActor.principalRef;
     const ceilingBefore = await engine.client.call("vault.scope.ceiling", {
     } satisfies FacadeInput<"vault.scope.ceiling">);
@@ -3941,11 +4216,15 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
       worlds: { kind: "some", values: [worldId] },
       facets: { kind: "some", values: [facetId] },
       verbs: { kind: "some", values: ["read", "propose"] },
+      bands: { kind: "all" }, audience: { kind: "all" },
+      sensitivity: { kind: "at_most", value: "private" },
     };
     const widenScope: museGate07Scope = {
       worlds: { kind: "some", values: [worldId] },
       facets: { kind: "some", values: [facetId] },
       verbs: { kind: "some", values: ["read", "widen"] },
+      bands: { kind: "all" }, audience: { kind: "all" },
+      sensitivity: { kind: "at_most", value: "private" },
     };
     const validMint = {
       peer_vault: peerIdentity.vault, authority_scope: validScope,
@@ -3956,6 +4235,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
 
     // No grant yet: a scope value outside read/propose is rejected, and the
     // refusal reads back as a refused call receipt naming the owner actor.
+    stage = "mint rejects widening verb";
     const widenAttempt = await engine.client.raw<unknown>(
       "POST", "/v1/core/facade/vault.federation.connect.grants.mint", {
         peer_vault: peerIdentity.vault, authority_scope: widenScope,
@@ -3964,6 +4244,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
 
     // Wrong actor kind: a paired core:read/core:write agent is not the owner
     // and cannot mint the valid grant either.
+    stage = "non-owner mint refusal";
     const agentAttempt = await agent.client.raw<unknown>(
       "POST", "/v1/core/facade/vault.federation.connect.grants.mint", validMint);
     await museGate07ExpectRefusedMint(engine, agentAttempt, agent.principalRef);
@@ -3976,6 +4257,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
     expect(refusedGrants).toHaveLength(0);
 
     // Grant, allowed: read/propose over the named world, never base.
+    stage = "owner valid six-axis guest-grant mint";
     const minted = await engine.client.call("vault.federation.connect.grants.mint", validMint);
     expect(minted.grant.length).toBeGreaterThan(0);
     expect(minted.guest_actor.length).toBeGreaterThan(0);
@@ -3984,6 +4266,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
     expect(museGate07AxisGrants(minted.resolved_scope.worlds, worldId)).toBe(true);
     expect(museGate07AxisGrants(minted.resolved_scope.worlds, baseScope.world_id)).toBe(false);
     expect(museGate07AxisGrants(minted.resolved_scope.facets, facetId)).toBe(true);
+    stage = "read guest grant and guest actor through vault.get";
     const grantView = await engine.client.call("vault.get", {
       entity_ref: minted.grant,
     } satisfies FacadeInput<"vault.get">);
@@ -3995,6 +4278,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
     if (!guestActorView.value) throw new Error("Guest actor is not readable through vault.get");
 
     // A grant naming base must never resolve to a grant over base.
+    stage = "mint rejects base world";
     const baseAttempt = await engine.client.raw<unknown>(
       "POST", "/v1/core/facade/vault.federation.connect.grants.mint", {
         peer_vault: peerIdentity.vault,
@@ -4002,6 +4286,8 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
           worlds: { kind: "some", values: [baseScope.world_id] },
           facets: { kind: "some", values: [facetId] },
           verbs: { kind: "some", values: ["read"] },
+          bands: { kind: "all" }, audience: { kind: "all" },
+          sensitivity: { kind: "at_most", value: "private" },
         },
       } satisfies FacadeInput<"vault.federation.connect.grants.mint">);
     if (baseAttempt.status >= 200 && baseAttempt.status < 300) {
@@ -4016,6 +4302,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
     }
 
     // An empty guest-grant ceiling must never resolve to access.
+    stage = "intentionally empty guest ceiling";
     const emptyGrantAttempt = await engine.client.raw<unknown>(
       "POST", "/v1/core/facade/vault.federation.connect.grants.mint", {
         peer_vault: peerIdentity.vault, authority_scope: {},
@@ -4045,6 +4332,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
     const emptyCeiling: museGate07ChannelCeiling = {};
 
     // An empty request narrows nothing: both seeded claims export.
+    stage = "empty-selector all-ceiling export";
     const emptyRequestExport = await museGate07Export(engine.client, {}, channelRef, allCeiling);
     expect(emptyRequestExport.credential).toEqual(ceilingBefore);
     const baseExportRow = museGate07FindExportRecord(emptyRequestExport.records, baseClaim);
@@ -4052,6 +4340,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
     const worldExportRow = museGate07FindExportRecord(emptyRequestExport.records, worldClaim);
     if (!worldExportRow) throw new Error("Empty-selector export omitted the named-world claim");
 
+    stage = "empty-world-selector export";
     const emptyWorldsExport = await museGate07Export(engine.client, {
       worlds: { kind: "worlds", world_refs: [], include_base: false },
     }, channelRef, allCeiling);
@@ -4059,6 +4348,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
       .toEqual(museGate07RecordIds(emptyRequestExport.records));
 
     // A named request does narrow: the named world alone, without base.
+    stage = "named-world-selector export";
     const namedWorldExport = await museGate07Export(engine.client, {
       worlds: { kind: "world", world_ref: worldSelectorRef, include_base: false },
     }, channelRef, allCeiling);
@@ -4066,11 +4356,13 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
     expect(museGate07FindExportRecord(namedWorldExport.records, baseClaim)).toBeUndefined();
 
     // Empty and bottom ceilings grant nothing, through the same empty request.
+    stage = "empty channel-ceiling export";
     const emptyCeilingExport = await museGate07Export(engine.client, {}, channelRef, emptyCeiling);
     expect(emptyCeilingExport.records).toHaveLength(0);
     expect(emptyCeilingExport.credential).toEqual(ceilingBefore);
     expect(museGate07AxisGrants(emptyCeilingExport.applied.worlds, worldId)).toBe(false);
     expect(museGate07AxisGrants(emptyCeilingExport.applied.worlds, baseScope.world_id)).toBe(false);
+    stage = "bottom channel-ceiling export";
     const bottomCeilingExport = await museGate07Export(engine.client, {}, channelRef, bottomCeiling);
     expect(bottomCeilingExport.records).toHaveLength(0);
     expect(bottomCeilingExport.credential).toEqual(ceilingBefore);
@@ -4078,6 +4370,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
     // The empty exports removed nothing: the ordinary read door still reads both.
     await museGate07ReadClaim(engine.client, personId, basePredicate, baseValue);
     await museGate07ReadClaim(engine.client, personId, worldPredicate, worldValue);
+    stage = "read exported record position";
     const position = await engine.client.call("vault.scope.position", {
       record_ref: worldExportRow.record.id,
     } satisfies FacadeInput<"vault.scope.position">);
@@ -4094,6 +4387,7 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
       named_world_records: museGate07RecordIds(namedWorldExport.records),
     });
 
+    stage = "restart durable grant claim and ceiling reads";
     await engine.restart();
 
     const ceilingAfter = await engine.client.call("vault.scope.ceiling", {
@@ -4112,18 +4406,23 @@ suite.test(test, "MUSE-GATE-07", "A guest grant encodes only read and propose, a
     if (!grantAfter.value) throw new Error("Guest grant did not survive the restart");
 
     // Revoke, refused again: the same revoke a second time changes nothing.
+    stage = "revoke guest grant";
     const revoked = await engine.client.call("vault.guests.revoke", {
       grant_ref: minted.grant,
     } satisfies FacadeInput<"vault.guests.revoke">);
     expect(revoked.changed).toBe(true);
     expect(revoked.grant_ref).toBe(minted.grant);
     expect(revoked.guest_ref).toBe(minted.guest_actor);
+    stage = "repeat guest-grant revoke";
     const revokedAgain = await engine.client.call("vault.guests.revoke", {
       grant_ref: minted.grant,
     } satisfies FacadeInput<"vault.guests.revoke">);
   } catch (error) {
     primaryFailed = true;
-    primary = error;
+    primary = error instanceof PublicHttpError ? new Error(
+      `MUSE-GATE-07 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+      { cause: error },
+    ) : error;
   } finally {
     try { await engine.close(); } catch (cleanup) {
       if (primaryFailed) {
@@ -4171,11 +4470,11 @@ interface MuseGate08ConsentAttempt {
 }
 
 const museGate08OccurredAt = 1769947200; // Public setup input, as in GATE-09.
-const museGate08Predicate = "preferred_display_name";
-const museGate08InferredPredicate = "inferred_standing_grant_preference";
-const museGate08CheckerBasePredicate = "checker_baseline_note";
-const museGate08CheckerHeldPredicate = "checker_held_note";
-const museGate08CheckerFreePredicate = "checker_free_note";
+const museGate08Predicate = "profile.preferred_display_name";
+const museGate08InferredPredicate = "profile.inferred_standing_grant_preference";
+const museGate08CheckerBasePredicate = "profile.checker_baseline_note";
+const museGate08CheckerHeldPredicate = "profile.checker_held_note";
+const museGate08CheckerFreePredicate = "profile.checker_free_note";
 
 function museGate08IsProposed(approval: string): boolean {
   return approval.toLowerCase() === "proposed";
@@ -4220,396 +4519,431 @@ async function museGate08TryCreateStandingGrant(
 
 suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise authority or silently replace what the user stated", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-GATE-08", profile });
-  const ownerRef = engine.pairedActor.principalRef;
-  const suffix = secretHex(3);
-  const personName = `Muse Gate08 Subject ${suffix}`;
-  const userValue = `Maren ${suffix}`;
-  const generatedValue = `Marenne ${suffix}`;
-  const inferredValue = `inferred: the owner probably wants this agent to write ${museGate08Predicate} without asking (${suffix})`;
-  const checkerBaseValue = `checker baseline ${suffix}`;
-  const checkerHeldValue = `checker held ${suffix}`;
-  const checkerFreeValue = `checker free ${suffix}`;
-  redactor.add(personName, userValue, generatedValue, inferredValue,
-    checkerBaseValue, checkerHeldValue, checkerFreeValue);
-  const scope = await ownerBaseClaimScope(engine.client, ownerRef);
-
-  // Public setup: one witnessed person as the claim subject, as in GATE-09.
-  const conversation = await engine.client.call("vault.conversations.create", {
-    body: {}, occurred_start: museGate08OccurredAt,
-    occurred_end: museGate08OccurredAt, learned_at: museGate08OccurredAt,
-  } satisfies FacadeInput<"vault.conversations.create">);
-  const witness = await engine.client.call("vault.witness", {
-    conversation_ref: conversation.id,
-    occurred_at: museGate08OccurredAt,
-    messages: [{
-      author: "user", message_type: "text",
-      content: `This distinct person is ${personName}.`,
-      is_visible: true, order: 0,
-    }],
-  } satisfies FacadeInput<"vault.witness">);
-  const turn = await engine.client.call("vault.get", {
-    entity_ref: witness.turn_short_id,
-  } satisfies FacadeInput<"vault.get">);
-  if (turn.value?.kind !== "TURN" || !turn.value.id_hex) {
-    throw new Error("MUSE-GATE-08 witnessed TURN missing");
-  }
-  const created = await engine.client.call("vault.people.create", {
-    identity: { name: personName },
-    identity_evidence_refs: [turn.value.id_hex],
-    occurred_at: museGate08OccurredAt,
-  } satisfies FacadeInput<"vault.people.create">);
-  const subjectRef = created.person.id_hex;
-  expect((await engine.client.call("vault.get", {
-    entity_ref: created.person.entity_ref,
-  } satisfies FacadeInput<"vault.get">)).value?.kind).toBe("PERSON");
-
-  // The writing agent, as in SECRETS-01: a public PERSON row, then a real
-  // pairing whose credential holds core:read and core:write. That credential
-  // scope is not consent authority: every consent-door refusal below is by
-  // this already-scoped agent, not by an uncredentialled caller.
-  const agentRecord = await engine.client.call("vault.structural.put", {
-    kind: "PERSON", body: { name: `Muse Gate08 Agent ${suffix}` },
-    occurred_at: museGate08OccurredAt,
-  } satisfies FacadeInput<"vault.structural.put">);
-  const agent = await engine.pairActor({
-    principalRef: agentRecord.id_hex, actorClass: "agent",
-    scope: ["core:read", "core:write"],
-  });
-
-  const museGate08ReadDisputed = async (): Promise<MuseGate08ClaimRow[]> => (
-    await engine.client.call("vault.claims.list", {
-      subject_ref: subjectRef, predicate: museGate08Predicate, limit: 100,
-    } satisfies FacadeInput<"vault.claims.list">)
-  ).value;
-  const museGate08ReadPending = async (): Promise<MuseGate08PendingRow[]> =>
-    engine.client.call("vault.writes.pending", {
-      limit: 1000,
-    } satisfies FacadeInput<"vault.writes.pending">);
-  const museGate08ReadRegistryRefs = async (
-    includeRevoked: boolean,
-  ): Promise<Set<string>> => new Set((
-    await engine.client.call("vault.consent.registry", {
-      limit: 200, include_revoked: includeRevoked,
-    } satisfies FacadeInput<"vault.consent.registry">)
-  ).rows.map((row) => row.grant_ref));
-  const museGate08ReadReceipts = async () => (
-    await engine.client.call("vault.receipts", {
-      limit: 1000,
-    } satisfies FacadeInput<"vault.receipts">)
-  ).receipts;
-
-  // P-GATE-024 / P-GATE-025, act one: the owner states a claim.
-  const userWrite = await engine.client.call("vault.claims.upsert", {
-    predicate: museGate08Predicate, subject_ref: subjectRef, value: userValue,
-    confidence: 1, source: "user_stated", scope, occurred_at: museGate08OccurredAt,
-  } satisfies FacadeInput<"vault.claims.upsert">);
-  expect(userWrite.superseded_short_id ?? null).toBeNull();
-  await engine.awaitReceipt(userWrite.receipt_ref);
-  const userRow = museGate08FindClaim(await museGate08ReadDisputed(), userValue);
-  expect(userRow.source).toBe("user_stated");
-  expect(museGate08IsProposed(userRow.approval)).toBe(false);
-  expect(museGate08IsLive(userRow)).toBe(true);
-
-  // P-GATE-024 / P-GATE-025, act two: the agent commits a generated claim
-  // that disagrees with the user-stated claim on the same subject and
-  // predicate, at full confidence. Confidence and authorship buy it no
-  // supersession: it must land beside the user-stated claim, Proposed.
-  const generatedOutcomes = await agent.client.call("vault.commit", {
-    claims: [{
-      predicate: museGate08Predicate, subject_ref: subjectRef, value: generatedValue,
-      confidence: 1, source: "generated", scope, occurred_at: museGate08OccurredAt,
-    }],
-  } satisfies FacadeInput<"vault.commit">);
-  expect(generatedOutcomes).toHaveLength(1);
-  const generatedOutcome = generatedOutcomes[0];
-  if (!generatedOutcome || generatedOutcome.outcome !== "landed") {
-    throw new Error("MUSE-GATE-08 generated disagreement did not land beside the user-stated claim");
-  }
-  expect(museGate08IsProposed(generatedOutcome.approval)).toBe(true);
-  expect(generatedOutcome.superseded_short_id ?? null).toBeNull();
-  expect(generatedOutcome.claim_short_id).not.toBe(userWrite.claim_short_id);
-  await engine.awaitReceipt(generatedOutcome.receipt_ref);
-
-  const museGate08AssertBeside = async () => {
-    const rows = await museGate08ReadDisputed();
-    const user = museGate08FindClaim(rows, userValue);
-    const generated = museGate08FindClaim(rows, generatedValue);
-    expect(user.claim_ref).toBe(userRow.claim_ref);
-    expect(museGate08IsLive(user)).toBe(true);
-    expect(museGate08IsProposed(user.approval)).toBe(false);
-    expect(generated.source).toBe("generated");
-    expect(museGate08IsProposed(generated.approval)).toBe(true);
-    const pending = await museGate08ReadPending();
-    const generatedPending = pending.find((row) =>
-      [...museGate08ClaimIds(generated), generatedOutcome.claim_short_id]
-        .includes(row.claim_ref));
-    if (!generatedPending) {
-      throw new Error("MUSE-GATE-08 generated claim is missing from vault.writes.pending");
-    }
-    expect(museGate08PendingHas(pending,
-      [...museGate08ClaimIds(user), userWrite.claim_short_id])).toBe(false);
-    const history = await engine.client.call("vault.claims.history", {
-      claim_ref: user.claim_ref,
-    } satisfies FacadeInput<"vault.claims.history">);
-    const historyUser = history.value.find((row) => row.claim_ref === user.claim_ref);
-    if (!historyUser) {
-      throw new Error("MUSE-GATE-08 user-stated claim is missing from its own history");
-    }
-    expect(museGate08IsLive(historyUser)).toBe(true);
-    return { user, generated };
-  };
-  let disputed = await museGate08AssertBeside();
-
-  // The author of a proposal may not settle it: the agent approving its
-  // own generated disagreement must not land it over the user's claim.
-  const review = await engine.client.call("vault.claims.review", {
-    claim_ref: disputed.generated.claim_ref,
-  } satisfies FacadeInput<"vault.claims.review">);
-  expect(museGate08ClaimIds(review.claim)).toContain(disputed.generated.claim_ref);
-  let settleError: PublicHttpError | undefined = undefined;
-  let settlement: FacadeResult<"vault.claims.settle"> | undefined = undefined;
+  let stage = "public setup";
   try {
-    settlement = await agent.client.call("vault.claims.settle", {
-      claim_ref: disputed.generated.claim_ref, review_id: review.review_id,
-      decision: "approve",
-    } satisfies FacadeInput<"vault.claims.settle">);
-  } catch (error) {
-    if (error instanceof PublicHttpError) settleError = error;
-    else throw error;
-  }
-  if (settlement) {
-    expect(settlement.verdict).toBe("rejected");
-    expect(settlement.receipt_ref.length).toBeGreaterThan(0);
-    expect(settlement.changes.every((change) => change.verdict === "rejected")).toBe(true);
-  } else if (settleError) {
-    museGate08ExpectRefusalEnvelope(settleError);
-  } else {
-    throw new Error("MUSE-GATE-08 agent settle attempt produced neither a settlement nor a refusal");
-  }
-  disputed = await museGate08AssertBeside();
+    const ownerRef = engine.pairedActor.principalRef;
+    const suffix = secretHex(3);
+    const personName = `Muse Gate08 Subject ${suffix}`;
+    const userValue = `Maren ${suffix}`;
+    const generatedValue = `Marenne ${suffix}`;
+    const inferredValue = `inferred: the owner probably wants this agent to write ${museGate08Predicate} without asking (${suffix})`;
+    const checkerBaseValue = `checker baseline ${suffix}`;
+    const checkerHeldValue = `checker held ${suffix}`;
+    const checkerFreeValue = `checker free ${suffix}`;
+    redactor.add(personName, userValue, generatedValue, inferredValue,
+      checkerBaseValue, checkerHeldValue, checkerFreeValue);
+    const scope = await ownerBaseClaimScope(engine.client, ownerRef);
 
-  // P-GATE-006: an inferred preference is stored as data and nothing more.
-  // Reading it back proves it landed; the registry must gain no grant.
-  const registryBeforeInferred = await museGate08ReadRegistryRefs(true);
-  const inferredWrite = await agent.client.call("vault.claims.upsert", {
-    predicate: museGate08InferredPredicate, subject_ref: ownerRef, value: inferredValue,
-    confidence: 0.99, source: "inferred", scope, occurred_at: museGate08OccurredAt,
-  } satisfies FacadeInput<"vault.claims.upsert">);
-  await engine.awaitReceipt(inferredWrite.receipt_ref);
-  const museGate08ReadInferred = async (): Promise<MuseGate08ClaimRow> =>
-    museGate08FindClaim((
+    // Public setup: one witnessed person as the claim subject, as in GATE-09.
+    const conversation = await engine.client.call("vault.conversations.create", {
+      body: {}, occurred_start: museGate08OccurredAt,
+      occurred_end: museGate08OccurredAt, learned_at: museGate08OccurredAt,
+    } satisfies FacadeInput<"vault.conversations.create">);
+    const witness = await engine.client.call("vault.witness", {
+      conversation_ref: conversation.id,
+      occurred_at: museGate08OccurredAt,
+      messages: [{
+        author: "user", message_type: "text",
+        content: `This distinct person is ${personName}.`,
+        is_visible: true, order: 0,
+      }],
+    } satisfies FacadeInput<"vault.witness">);
+    const turn = await engine.client.call("vault.get", {
+      entity_ref: witness.turn_short_id,
+    } satisfies FacadeInput<"vault.get">);
+    if (turn.value?.kind !== "TURN" || !turn.value.id_hex) {
+      throw new Error("MUSE-GATE-08 witnessed TURN missing");
+    }
+    const created = await engine.client.call("vault.people.create", {
+      identity: { name: personName },
+      identity_evidence_refs: [turn.value.id_hex],
+      occurred_at: museGate08OccurredAt,
+    } satisfies FacadeInput<"vault.people.create">);
+    const subjectRef = created.person.id_hex;
+    expect((await engine.client.call("vault.get", {
+      entity_ref: created.person.entity_ref,
+    } satisfies FacadeInput<"vault.get">)).value?.kind).toBe("PERSON");
+
+    // The writing agent, as in SECRETS-01: a public PERSON row, then a real
+    // pairing whose credential holds core:read and core:write. That credential
+    // scope is not consent authority: every consent-door refusal below is by
+    // this already-scoped agent, not by an uncredentialled caller.
+    const agentRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: `Muse Gate08 Agent ${suffix}` },
+      occurred_at: museGate08OccurredAt,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const agent = await engine.pairActor({
+      principalRef: agentRecord.id_hex, actorClass: "agent",
+      scope: ["core:read", "core:write"],
+    });
+
+    const museGate08ReadDisputed = async (): Promise<MuseGate08ClaimRow[]> => (
       await engine.client.call("vault.claims.list", {
-        subject_ref: ownerRef, predicate: museGate08InferredPredicate, limit: 100,
+        subject_ref: subjectRef, predicate: museGate08Predicate, limit: 100,
       } satisfies FacadeInput<"vault.claims.list">)
-    ).value, inferredValue);
-  const inferredRow = await museGate08ReadInferred();
-  expect(inferredRow.source).toBe("inferred");
-  const registryAfterInferred = await museGate08ReadRegistryRefs(true);
-  expect([...registryAfterInferred].filter(
-    (ref) => !registryBeforeInferred.has(ref))).toEqual([]);
+    ).value;
+    const museGate08ReadPending = async (): Promise<MuseGate08PendingRow[]> =>
+      engine.client.call("vault.writes.pending", {
+        limit: 1000,
+      } satisfies FacadeInput<"vault.writes.pending">);
+    const museGate08ReadRegistryRefs = async (
+      includeRevoked: boolean,
+    ): Promise<Set<string>> => new Set((
+      await engine.client.call("vault.consent.registry", {
+        limit: 200, include_revoked: includeRevoked,
+      } satisfies FacadeInput<"vault.consent.registry">)
+    ).rows.map((row) => row.grant_ref));
 
-  // The bound uses a verb class the engine itself publishes, preferring the
-  // one covering the claim-write verbs; the test invents no class name.
-  const verbClasses = await engine.client.call("vault.agents.verb_classes.get", {
-  } satisfies FacadeInput<"vault.agents.verb_classes.get">);
-  const grantClass = verbClasses.classes.find((row) =>
-    row.verbs.includes("vault.commit") || row.verbs.includes("vault.claims.upsert")
-  )?.name ?? verbClasses.classes[0]?.name;
-  if (!grantClass) {
-    throw new BlockedDoor("waits on a public verb-class row for a standing-grant bound (vault.agents.verb_classes.get returned no classes)");
-  }
-  const grantInput: FacadeInput<"vault.consent.create_standing_grant"> = {
-    bound: {
-      actor: agent.principalRef, class: grantClass,
-      envelope: { project: scope.scope_project_id, audience: [subjectRef] },
-    },
-  };
-
-  // With the inferred preference on record and no person's yes, the agent
-  // creating a standing grant for itself confers nothing: the refusal is
-  // receipted by the agent's own new receipt row, and the registry - read
-  // through the owner - gains no row.
-  const receiptsBeforeGrantAttempt = new Set(
-    (await museGate08ReadReceipts()).map((row) => row.receipt_ref));
-  const agentGrantAttempt = await museGate08TryCreateStandingGrant(agent.client, grantInput);
-  const agentGrantAttemptError = agentGrantAttempt.error;
-  if (agentGrantAttemptError) museGate08ExpectRefusalEnvelope(agentGrantAttemptError);
-  const receiptsAfterGrantAttempt = await museGate08ReadReceipts();
-  expect(receiptsAfterGrantAttempt.some((row) =>
-    !receiptsBeforeGrantAttempt.has(row.receipt_ref)
-    && row.actor_ref === agent.principalRef)).toBe(true);
-  const registryAfterAgentAttempt = await museGate08ReadRegistryRefs(true);
-  expect([...registryAfterAgentAttempt].filter(
-    (ref) => !registryAfterInferred.has(ref))).toEqual([]);
-
-  // The person's yes: the owner creates the same bounded grant. The grant
-  // is then readable in the registry, an action-domain row for the chosen
-  // verb class - the control that proves the bound itself was well-formed.
-  const ownerGrant = await engine.client.call("vault.consent.create_standing_grant", grantInput);
-  const grantRef = ownerGrant.grant_ref;
-  if (!grantRef) {
-    throw new Error("MUSE-GATE-08 owner's create_standing_grant returned no grant_ref");
-  }
-  const registryWithGrant = await engine.client.call("vault.consent.registry", {
-    limit: 200, include_revoked: false,
-  } satisfies FacadeInput<"vault.consent.registry">);
-  const grantRow = registryWithGrant.rows.find((row) => row.grant_ref === grantRef);
-  if (!grantRow) {
-    throw new Error("MUSE-GATE-08 owner's standing grant is missing from the consent registry");
-  }
-  expect(grantRow.domain).toBe("action");
-  expect(grantRow.class).toBe(grantClass);
-
-  // Holding the grant confers no power over the grant's own life: the
-  // agent's revoke attempt leaves the row live; the owner's revoke ends it.
-  let agentRevokeError: PublicHttpError | undefined = undefined;
-  try {
-    await agent.client.call("vault.consent.revoke", {
-      grant: grantRef,
-    } satisfies FacadeInput<"vault.consent.revoke">);
-  } catch (error) {
-    if (error instanceof PublicHttpError) agentRevokeError = error;
-    else throw error;
-  }
-  if (agentRevokeError) museGate08ExpectRefusalEnvelope(agentRevokeError);
-  expect((await museGate08ReadRegistryRefs(false)).has(grantRef)).toBe(true);
-  const ownerRevoke = await engine.client.call("vault.consent.revoke", {
-    grant: grantRef,
-  } satisfies FacadeInput<"vault.consent.revoke">);
-  expect((await museGate08ReadRegistryRefs(false)).has(grantRef)).toBe(false);
-  expect((await museGate08ReadRegistryRefs(true)).has(grantRef)).toBe(true);
-
-  // Restart: the user-stated claim is still live, the generated disagreement
-  // still waits Proposed beside it, the inferred preference is still only a
-  // claim, and the revoked grant does not return. An agent that has lost
-  // its grant is refused again at its next use of the consent door.
-  await engine.restart();
-  disputed = await museGate08AssertBeside();
-  expect((await museGate08ReadInferred()).source).toBe("inferred");
-  expect((await museGate08ReadRegistryRefs(false)).has(grantRef)).toBe(false);
-  expect((await museGate08ReadRegistryRefs(true)).has(grantRef)).toBe(true);
-  const registryBeforeRetry = await museGate08ReadRegistryRefs(true);
-  const agentGrantRetry = await museGate08TryCreateStandingGrant(agent.client, grantInput);
-  const agentGrantRetryError = agentGrantRetry.error;
-  if (agentGrantRetryError) museGate08ExpectRefusalEnvelope(agentGrantRetryError);
-  expect([...(await museGate08ReadRegistryRefs(true))].filter(
-    (ref) => !registryBeforeRetry.has(ref))).toEqual([]);
-
-  // P-GATE-023, the hold direction: first prove the owner's ordinary
-  // user-stated write is automatic without an enforced checker.
-  const museGate08WriteOwnerClaim = async (predicate: string, value: string) => {
-    const write = await engine.client.call("vault.claims.upsert", {
-      predicate, subject_ref: subjectRef, value,
+    // P-GATE-024 / P-GATE-025, act one: the owner states a claim.
+    stage = "owner user-stated claim upsert";
+    const userWrite = await engine.client.call("vault.claims.upsert", {
+      predicate: museGate08Predicate, subject_ref: subjectRef, value: userValue,
       confidence: 1, source: "user_stated", scope, occurred_at: museGate08OccurredAt,
     } satisfies FacadeInput<"vault.claims.upsert">);
-    await engine.awaitReceipt(write.receipt_ref);
-    return write;
-  };
-  const museGate08ReadSingle = async (
-    predicate: string, value: string,
-  ): Promise<MuseGate08ClaimRow> => museGate08FindClaim((
-    await engine.client.call("vault.claims.list", {
-      subject_ref: subjectRef, predicate, limit: 100,
-    } satisfies FacadeInput<"vault.claims.list">)
-  ).value, value);
-  const checkerBaseWrite = await museGate08WriteOwnerClaim(
-    museGate08CheckerBasePredicate, checkerBaseValue);
-  const checkerBaseRow = await museGate08ReadSingle(
-    museGate08CheckerBasePredicate, checkerBaseValue);
-  expect(museGate08IsProposed(checkerBaseWrite.approval)).toBe(false);
-  expect(museGate08IsProposed(checkerBaseRow.approval)).toBe(false);
-  expect(museGate08PendingHas(await museGate08ReadPending(),
-    [...museGate08ClaimIds(checkerBaseRow), checkerBaseWrite.claim_short_id])).toBe(false);
+    expect(userWrite.superseded_short_id ?? null).toBeNull();
+    await engine.awaitReceipt(userWrite.receipt_ref);
+    const userRow = museGate08FindClaim(await museGate08ReadDisputed(), userValue);
+    expect(userRow.source).toBe("user_stated");
+    expect(museGate08IsProposed(userRow.approval)).toBe(false);
+    expect(museGate08IsLive(userRow)).toBe(true);
 
-  // Bind the verdict role only from names the vault itself publishes: an
-  // existing checker binding, else the default manifest's auto_checker.
-  // The deterministic fixture serves no model, so an enforced check at the
-  // "certain" floor cannot pass and must fail closed to Proposed.
-  const checkerBefore = await engine.client.call("vault.gate.checker.get", {
-  } satisfies FacadeInput<"vault.gate.checker.get">);
-  const baselineBinding = checkerBefore.binding ?? null;
-  const policy = await engine.client.call("vault.gate.policy.get", {
-  } satisfies FacadeInput<"vault.gate.policy.get">);
-  const defaultManifest = policy.manifests.find(
-    (row) => row.manifest_ref === policy.default_manifest_ref) ?? policy.manifests[0];
-  const checkerModel = baselineBinding?.model
-    ?? defaultManifest?.manifest.auto_checker ?? null;
-  if (!checkerModel) {
-    throw new BlockedDoor("waits on a named verdict model for vault.gate.checker.set (the checker binding and the default manifest auto_checker are both empty in the deterministic fixture)");
-  }
-  const checkerSlot: MuseGate08CheckerBinding["slot"] = baselineBinding?.slot ?? "llm";
-  const enforceBinding: MuseGate08CheckerBinding = {
-    model: checkerModel, slot: checkerSlot, floor: "certain", mode: "enforce",
-  };
+    // P-GATE-024 / P-GATE-025, act two: the agent commits a generated claim
+    // that disagrees with the user-stated claim on the same subject and
+    // predicate, at full confidence. Confidence and authorship buy it no
+    // supersession: it must land beside the user-stated claim, Proposed.
+    stage = "generated disagreement commit";
+    const generatedOutcomes = await agent.client.call("vault.commit", {
+      claims: [{
+        predicate: museGate08Predicate, subject_ref: subjectRef, value: generatedValue,
+        confidence: 1, source: "generated", scope, occurred_at: museGate08OccurredAt,
+      }],
+    } satisfies FacadeInput<"vault.commit">);
+    expect(generatedOutcomes).toHaveLength(1);
+    const generatedOutcome = generatedOutcomes[0];
+    if (!generatedOutcome || generatedOutcome.outcome !== "landed") {
+      throw new Error(
+        `MUSE-GATE-08 ENGINE DEFECT 2026-11-11: P-GATE-025 requires the generated disagreement to land Proposed beside the user's claim; vault.commit instead refused it; stage=${stage}; outcome=${JSON.stringify(generatedOutcome)}`,
+      );
+    }
+    expect(museGate08IsProposed(generatedOutcome.approval)).toBe(true);
+    expect(generatedOutcome.superseded_short_id ?? null).toBeNull();
+    expect(generatedOutcome.claim_short_id).not.toBe(userWrite.claim_short_id);
+    await engine.awaitReceipt(generatedOutcome.receipt_ref);
 
-  // The agent whose writes the checker would judge cannot rebind the
-  // checker itself; the owner's read shows the binding unchanged.
-  let checkerError: PublicHttpError | undefined = undefined;
-  try {
-    await agent.client.call("vault.gate.checker.set", {
+    const museGate08AssertBeside = async () => {
+      const rows = await museGate08ReadDisputed();
+      const user = museGate08FindClaim(rows, userValue);
+      const generated = museGate08FindClaim(rows, generatedValue);
+      expect(user.claim_ref).toBe(userRow.claim_ref);
+      expect(museGate08IsLive(user)).toBe(true);
+      expect(museGate08IsProposed(user.approval)).toBe(false);
+      expect(generated.source).toBe("generated");
+      expect(museGate08IsProposed(generated.approval)).toBe(true);
+      const pending = await museGate08ReadPending();
+      const generatedPending = pending.find((row) =>
+        [...museGate08ClaimIds(generated), generatedOutcome.claim_short_id]
+          .includes(row.claim_ref));
+      if (!generatedPending) {
+        throw new Error("MUSE-GATE-08 generated claim is missing from vault.writes.pending");
+      }
+      expect(museGate08PendingHas(pending,
+        [...museGate08ClaimIds(user), userWrite.claim_short_id])).toBe(false);
+      const history = await engine.client.call("vault.claims.history", {
+        claim_ref: user.claim_ref,
+      } satisfies FacadeInput<"vault.claims.history">);
+      const historyUser = history.value.find((row) => row.claim_ref === user.claim_ref);
+      if (!historyUser) {
+        throw new Error("MUSE-GATE-08 user-stated claim is missing from its own history");
+      }
+      expect(museGate08IsLive(historyUser)).toBe(true);
+      return { user, generated };
+    };
+    stage = "generated disagreement readback";
+    let disputed = await museGate08AssertBeside();
+
+    // The author of a proposal may not settle it: the agent approving its
+    // own generated disagreement must not land it over the user's claim.
+    stage = "review generated proposal and refuse self-settlement";
+    const review = await engine.client.call("vault.claims.review", {
+      claim_ref: disputed.generated.claim_ref,
+    } satisfies FacadeInput<"vault.claims.review">);
+    expect(museGate08ClaimIds(review.claim)).toContain(disputed.generated.claim_ref);
+    let settleError: PublicHttpError | undefined = undefined;
+    let settlement: FacadeResult<"vault.claims.settle"> | undefined = undefined;
+    try {
+      settlement = await agent.client.call("vault.claims.settle", {
+        claim_ref: disputed.generated.claim_ref, review_id: review.review_id,
+        decision: "approve",
+      } satisfies FacadeInput<"vault.claims.settle">);
+    } catch (error) {
+      if (error instanceof PublicHttpError) settleError = error;
+      else throw error;
+    }
+    if (settlement) {
+      expect(settlement.verdict).toBe("rejected");
+      expect(settlement.receipt_ref.length).toBeGreaterThan(0);
+      expect(settlement.changes.every((change) => change.verdict === "rejected")).toBe(true);
+    } else if (settleError) {
+      museGate08ExpectRefusalEnvelope(settleError);
+    } else {
+      throw new Error("MUSE-GATE-08 agent settle attempt produced neither a settlement nor a refusal");
+    }
+    disputed = await museGate08AssertBeside();
+
+    // P-GATE-006: an inferred preference is stored as data and nothing more.
+    // Reading it back proves it landed; the registry must gain no grant.
+    stage = "inferred preference cannot mint authority";
+    const registryBeforeInferred = await museGate08ReadRegistryRefs(true);
+    const inferredWrite = await agent.client.call("vault.claims.upsert", {
+      predicate: museGate08InferredPredicate, subject_ref: ownerRef, value: inferredValue,
+      confidence: 0.99, source: "inferred", scope, occurred_at: museGate08OccurredAt,
+    } satisfies FacadeInput<"vault.claims.upsert">);
+    await engine.awaitReceipt(inferredWrite.receipt_ref);
+    const museGate08ReadInferred = async (): Promise<MuseGate08ClaimRow> =>
+      museGate08FindClaim((
+        await engine.client.call("vault.claims.list", {
+          subject_ref: ownerRef, predicate: museGate08InferredPredicate, limit: 100,
+        } satisfies FacadeInput<"vault.claims.list">)
+      ).value, inferredValue);
+    const inferredRow = await museGate08ReadInferred();
+    expect(inferredRow.source).toBe("inferred");
+    const registryAfterInferred = await museGate08ReadRegistryRefs(true);
+    expect([...registryAfterInferred].filter(
+      (ref) => !registryBeforeInferred.has(ref))).toEqual([]);
+
+    // The bound uses a verb class the engine itself publishes, preferring the
+    // one covering the claim-write verbs; the test invents no class name.
+    stage = "discover standing-grant class";
+    const verbClasses = await engine.client.call("vault.agents.verb_classes.get", {
+    } satisfies FacadeInput<"vault.agents.verb_classes.get">);
+    const grantClass = verbClasses.classes.find((row) =>
+      row.verbs.includes("vault.commit") || row.verbs.includes("vault.claims.upsert")
+    )?.name ?? verbClasses.classes[0]?.name;
+    if (!grantClass) {
+      throw new BlockedDoor("waits on a public verb-class row for a standing-grant bound (vault.agents.verb_classes.get returned no classes)");
+    }
+    const grantInput: FacadeInput<"vault.consent.create_standing_grant"> = {
+      bound: {
+        actor: agent.principalRef, class: grantClass,
+        envelope: { project: scope.scope_project_id, audience: [subjectRef] },
+      },
+    };
+
+    // With the inferred preference on record and no person's yes, the agent
+    // creating a standing grant for itself confers nothing: the refusal is
+    // receipted by the agent's own new receipt row, and the registry - read
+    // through the owner - gains no row.
+    stage = "agent self-grant refusal and call-receipt readback";
+    const agentGrantAttempt = await museGate08TryCreateStandingGrant(agent.client, grantInput);
+    const agentGrantAttemptError = agentGrantAttempt.error;
+    if (!agentGrantAttemptError) {
+      throw new Error("MUSE-GATE-08 agent self-grant was not refused");
+    }
+    museGate08ExpectRefusalEnvelope(agentGrantAttemptError);
+    const refusalRef = agentGrantAttemptError.error?.receiptRef;
+    if (typeof refusalRef !== "string" || refusalRef.length === 0) {
+      throw new Error("MUSE-GATE-08 self-grant refusal carried no receiptRef");
+    }
+    const refusalReceipt = await engine.client.call("vault.receipts.get", { receipt_ref: refusalRef });
+    if (!refusalReceipt) throw new Error("MUSE-GATE-08 self-grant call receipt is absent");
+    expect(refusalReceipt.actor_ref).toBe(agent.principalRef);
+    expect(refusalReceipt.verb).toBe("vault.consent.create_standing_grant");
+    if (refusalReceipt.outcome === "ok") throw new Error("MUSE-GATE-08 self-grant receipt reads ok");
+    expect(refusalReceipt.outcome.refused.code).toBe(agentGrantAttemptError.error?.code);
+    const registryAfterAgentAttempt = await museGate08ReadRegistryRefs(true);
+    expect([...registryAfterAgentAttempt].filter(
+      (ref) => !registryAfterInferred.has(ref))).toEqual([]);
+
+    // The person's yes: the owner creates the same bounded grant. The grant
+    // is then readable in the registry, an action-domain row for the chosen
+    // verb class - the control that proves the bound itself was well-formed.
+    stage = "owner standing grant and registry readback";
+    const ownerGrant = await engine.client.call("vault.consent.create_standing_grant", grantInput);
+    const grantRef = ownerGrant.grant_ref;
+    if (!grantRef) {
+      throw new Error("MUSE-GATE-08 owner's create_standing_grant returned no grant_ref");
+    }
+    const registryWithGrant = await engine.client.call("vault.consent.registry", {
+      limit: 200, include_revoked: false,
+    } satisfies FacadeInput<"vault.consent.registry">);
+    const grantRow = registryWithGrant.rows.find((row) => row.grant_ref === grantRef);
+    if (!grantRow) {
+      throw new Error("MUSE-GATE-08 owner's standing grant is missing from the consent registry");
+    }
+    expect(grantRow.domain).toBe("action");
+    expect(grantRow.class).toBe(grantClass);
+
+    // Holding the grant confers no power over the grant's own life: the
+    // agent's revoke attempt leaves the row live; the owner's revoke ends it.
+    stage = "agent cannot revoke owner grant";
+    let agentRevokeError: PublicHttpError | undefined = undefined;
+    try {
+      await agent.client.call("vault.consent.revoke", {
+        grant: grantRef,
+      } satisfies FacadeInput<"vault.consent.revoke">);
+    } catch (error) {
+      if (error instanceof PublicHttpError) agentRevokeError = error;
+      else throw error;
+    }
+    if (agentRevokeError) museGate08ExpectRefusalEnvelope(agentRevokeError);
+    expect((await museGate08ReadRegistryRefs(false)).has(grantRef)).toBe(true);
+    stage = "owner grant revoke and registry readback";
+    const ownerRevoke = await engine.client.call("vault.consent.revoke", {
+      grant: grantRef,
+    } satisfies FacadeInput<"vault.consent.revoke">);
+    expect((await museGate08ReadRegistryRefs(false)).has(grantRef)).toBe(false);
+    expect((await museGate08ReadRegistryRefs(true)).has(grantRef)).toBe(true);
+
+    // Restart: the user-stated claim is still live, the generated disagreement
+    // still waits Proposed beside it, the inferred preference is still only a
+    // claim, and the revoked grant does not return. An agent that has lost
+    // its grant is refused again at its next use of the consent door.
+    stage = "restart claim and grant readback";
+    await engine.restart();
+    disputed = await museGate08AssertBeside();
+    expect((await museGate08ReadInferred()).source).toBe("inferred");
+    expect((await museGate08ReadRegistryRefs(false)).has(grantRef)).toBe(false);
+    expect((await museGate08ReadRegistryRefs(true)).has(grantRef)).toBe(true);
+    const registryBeforeRetry = await museGate08ReadRegistryRefs(true);
+    const agentGrantRetry = await museGate08TryCreateStandingGrant(agent.client, grantInput);
+    const agentGrantRetryError = agentGrantRetry.error;
+    if (agentGrantRetryError) museGate08ExpectRefusalEnvelope(agentGrantRetryError);
+    expect([...(await museGate08ReadRegistryRefs(true))].filter(
+      (ref) => !registryBeforeRetry.has(ref))).toEqual([]);
+
+    // P-GATE-023, the hold direction: first prove the owner's ordinary
+    // user-stated write is automatic without an enforced checker.
+    const museGate08WriteOwnerClaim = async (predicate: string, value: string) => {
+      const write = await engine.client.call("vault.claims.upsert", {
+        predicate, subject_ref: subjectRef, value,
+        confidence: 1, source: "user_stated", scope, occurred_at: museGate08OccurredAt,
+      } satisfies FacadeInput<"vault.claims.upsert">);
+      await engine.awaitReceipt(write.receipt_ref);
+      return write;
+    };
+    const museGate08ReadSingle = async (
+      predicate: string, value: string,
+    ): Promise<MuseGate08ClaimRow> => museGate08FindClaim((
+      await engine.client.call("vault.claims.list", {
+        subject_ref: subjectRef, predicate, limit: 100,
+      } satisfies FacadeInput<"vault.claims.list">)
+    ).value, value);
+    stage = "checker baseline automatic claim";
+    const checkerBaseWrite = await museGate08WriteOwnerClaim(
+      museGate08CheckerBasePredicate, checkerBaseValue);
+    const checkerBaseRow = await museGate08ReadSingle(
+      museGate08CheckerBasePredicate, checkerBaseValue);
+    expect(museGate08IsProposed(checkerBaseWrite.approval)).toBe(false);
+    expect(museGate08IsProposed(checkerBaseRow.approval)).toBe(false);
+    expect(museGate08PendingHas(await museGate08ReadPending(),
+      [...museGate08ClaimIds(checkerBaseRow), checkerBaseWrite.claim_short_id])).toBe(false);
+
+    // Bind the verdict role only from names the vault itself publishes: an
+    // existing checker binding, else the default manifest's auto_checker.
+    // The deterministic fixture serves no model, so an enforced check at the
+    // "certain" floor cannot pass and must fail closed to Proposed.
+    stage = "discover configured checker model";
+    const checkerBefore = await engine.client.call("vault.gate.checker.get", {
+    } satisfies FacadeInput<"vault.gate.checker.get">);
+    const baselineBinding = checkerBefore.binding ?? null;
+    const policy = await engine.client.call("vault.gate.policy.get", {
+    } satisfies FacadeInput<"vault.gate.policy.get">);
+    const defaultManifest = policy.manifests.find(
+      (row) => row.manifest_ref === policy.default_manifest_ref) ?? policy.manifests[0];
+    const checkerModel = baselineBinding?.model
+      ?? defaultManifest?.manifest.auto_checker ?? null;
+    if (!checkerModel) {
+      throw new BlockedDoor("waits on a named verdict model for vault.gate.checker.set (the checker binding and the default manifest auto_checker are both empty in the deterministic fixture)");
+    }
+    const checkerSlot: MuseGate08CheckerBinding["slot"] = baselineBinding?.slot ?? "llm";
+    const enforceBinding: MuseGate08CheckerBinding = {
+      model: checkerModel, slot: checkerSlot, floor: "certain", mode: "enforce",
+    };
+
+    // The agent whose writes the checker would judge cannot rebind the
+    // checker itself; the owner's read shows the binding unchanged.
+    stage = "agent cannot rebind checker";
+    let checkerError: PublicHttpError | undefined = undefined;
+    try {
+      await agent.client.call("vault.gate.checker.set", {
+        binding: enforceBinding,
+      } satisfies FacadeInput<"vault.gate.checker.set">);
+    } catch (error) {
+      if (error instanceof PublicHttpError) checkerError = error;
+      else throw error;
+    }
+    if (!checkerError) {
+      throw new Error("MUSE-GATE-08 agent was able to set the gate checker binding");
+    }
+    museGate08ExpectRefusalEnvelope(checkerError);
+    expect((await engine.client.call("vault.gate.checker.get", {
+    } satisfies FacadeInput<"vault.gate.checker.get">)).binding ?? null).toEqual(baselineBinding);
+
+    stage = "owner checker enforce binding and readback";
+    const checkerSet = await engine.client.call("vault.gate.checker.set", {
       binding: enforceBinding,
     } satisfies FacadeInput<"vault.gate.checker.set">);
+    expect(checkerSet.binding.mode).toBe("enforce");
+    const checkerEnforced = await engine.client.call("vault.gate.checker.get", {
+    } satisfies FacadeInput<"vault.gate.checker.get">);
+    expect(checkerEnforced.binding?.mode).toBe("enforce");
+    expect(checkerEnforced.binding?.floor).toBe("certain");
+
+    // The same ordinary owner write that was automatic above is now held at
+    // Proposed by content alone - and the hold is the checker's whole power.
+    stage = "checker holds automatic write";
+    const heldWrite = await museGate08WriteOwnerClaim(
+      museGate08CheckerHeldPredicate, checkerHeldValue);
+    expect(museGate08IsProposed(heldWrite.approval)).toBe(true);
+    const heldRow = await museGate08ReadSingle(
+      museGate08CheckerHeldPredicate, checkerHeldValue);
+    expect(museGate08IsProposed(heldRow.approval)).toBe(true);
+    expect(museGate08PendingHas(await museGate08ReadPending(),
+      [...museGate08ClaimIds(heldRow), heldWrite.claim_short_id])).toBe(true);
+
+    // Restoring the prior binding (or shadow, the non-enforcing mode, when
+    // there was none) makes the same write automatic again: only the
+    // owner's policy act changed the outcome, never the checked content.
+    const restoredBinding: MuseGate08CheckerBinding = baselineBinding ?? {
+      model: checkerModel, slot: checkerSlot, floor: "certain", mode: "shadow",
+    };
+    stage = "restore checker binding";
+    await engine.client.call("vault.gate.checker.set", {
+      binding: restoredBinding,
+    } satisfies FacadeInput<"vault.gate.checker.set">);
+    expect((await engine.client.call("vault.gate.checker.get", {
+    } satisfies FacadeInput<"vault.gate.checker.get">)).binding?.mode).toBe(restoredBinding.mode);
+    stage = "restored checker permits automatic write";
+    const freeWrite = await museGate08WriteOwnerClaim(
+      museGate08CheckerFreePredicate, checkerFreeValue);
+    expect(museGate08IsProposed(freeWrite.approval)).toBe(false);
+    const freeRow = await museGate08ReadSingle(
+      museGate08CheckerFreePredicate, checkerFreeValue);
+    expect(museGate08IsProposed(freeRow.approval)).toBe(false);
+    expect(museGate08PendingHas(await museGate08ReadPending(),
+      [...museGate08ClaimIds(freeRow), freeWrite.claim_short_id])).toBe(false);
+
+    await engine.artifacts.json("muse-gate08-summary.json", {
+      subject_ref: subjectRef,
+      user_claim: disputed.user.claim_ref,
+      generated_claim: disputed.generated.claim_ref,
+      generated_approval: disputed.generated.approval,
+      grant_ref: grantRef,
+      grant_class: grantClass,
+      checker_model: checkerModel,
+      held_claim_short_id: heldWrite.claim_short_id,
+    });
   } catch (error) {
-    if (error instanceof PublicHttpError) checkerError = error;
-    else throw error;
+    if (error instanceof PublicHttpError) {
+      throw new Error(
+        `MUSE-GATE-08 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    await engine.close();
   }
-  if (!checkerError) {
-    throw new Error("MUSE-GATE-08 agent was able to set the gate checker binding");
-  }
-  museGate08ExpectRefusalEnvelope(checkerError);
-  expect((await engine.client.call("vault.gate.checker.get", {
-  } satisfies FacadeInput<"vault.gate.checker.get">)).binding ?? null).toEqual(baselineBinding);
-
-  const checkerSet = await engine.client.call("vault.gate.checker.set", {
-    binding: enforceBinding,
-  } satisfies FacadeInput<"vault.gate.checker.set">);
-  expect(checkerSet.binding.mode).toBe("enforce");
-  const checkerEnforced = await engine.client.call("vault.gate.checker.get", {
-  } satisfies FacadeInput<"vault.gate.checker.get">);
-  expect(checkerEnforced.binding?.mode).toBe("enforce");
-  expect(checkerEnforced.binding?.floor).toBe("certain");
-
-  // The same ordinary owner write that was automatic above is now held at
-  // Proposed by content alone - and the hold is the checker's whole power.
-  const heldWrite = await museGate08WriteOwnerClaim(
-    museGate08CheckerHeldPredicate, checkerHeldValue);
-  expect(museGate08IsProposed(heldWrite.approval)).toBe(true);
-  const heldRow = await museGate08ReadSingle(
-    museGate08CheckerHeldPredicate, checkerHeldValue);
-  expect(museGate08IsProposed(heldRow.approval)).toBe(true);
-  expect(museGate08PendingHas(await museGate08ReadPending(),
-    [...museGate08ClaimIds(heldRow), heldWrite.claim_short_id])).toBe(true);
-
-  // Restoring the prior binding (or shadow, the non-enforcing mode, when
-  // there was none) makes the same write automatic again: only the
-  // owner's policy act changed the outcome, never the checked content.
-  const restoredBinding: MuseGate08CheckerBinding = baselineBinding ?? {
-    model: checkerModel, slot: checkerSlot, floor: "certain", mode: "shadow",
-  };
-  await engine.client.call("vault.gate.checker.set", {
-    binding: restoredBinding,
-  } satisfies FacadeInput<"vault.gate.checker.set">);
-  expect((await engine.client.call("vault.gate.checker.get", {
-  } satisfies FacadeInput<"vault.gate.checker.get">)).binding?.mode).toBe(restoredBinding.mode);
-  const freeWrite = await museGate08WriteOwnerClaim(
-    museGate08CheckerFreePredicate, checkerFreeValue);
-  expect(museGate08IsProposed(freeWrite.approval)).toBe(false);
-  const freeRow = await museGate08ReadSingle(
-    museGate08CheckerFreePredicate, checkerFreeValue);
-  expect(museGate08IsProposed(freeRow.approval)).toBe(false);
-  expect(museGate08PendingHas(await museGate08ReadPending(),
-    [...museGate08ClaimIds(freeRow), freeWrite.claim_short_id])).toBe(false);
-
-  await engine.artifacts.json("muse-gate08-summary.json", {
-    subject_ref: subjectRef,
-    user_claim: disputed.user.claim_ref,
-    generated_claim: disputed.generated.claim_ref,
-    generated_approval: disputed.generated.approval,
-    grant_ref: grantRef,
-    grant_class: grantClass,
-    checker_model: checkerModel,
-    held_claim_short_id: heldWrite.claim_short_id,
-  });
 });
 
 // MUSE-GATE-09 -- A blocked act names its blocker only to a reader who may
@@ -4731,7 +5065,9 @@ type MuseGate10HealthCheck = {
   subject: string;
   source: string;
   crossing: MuseGate10HealthCrossing;
-  state: { state: string };
+  state: { state: "held" }
+    | { state: "asked" | "answered"; question: string; unit: string }
+    | { state: "superseded"; by: string };
 };
 type MuseGate10HealthList = { checks: MuseGate10HealthCheck[] };
 interface MuseGate10Person {
@@ -4800,18 +5136,21 @@ async function museGate10ExpectClaims(
 }
 
 suite.test(test, "MUSE-GATE-10", "A wire-rate threshold crossing raises a typed health question and still serves every burst write", async () => {
+  const startedAt = performance.now();
+  let stage = "public setup";
   const engine = await EngineFixture.start({ id: "MUSE-GATE-10", profile });
   let primaryFailed = false;
   let primary: unknown;
   try {
     const ownerHex = engine.pairedActor.principalRef;
     const occurred = 1769947200; // Fixed public setup time, as in GATE-09 in this file.
-    const predicate = "harbour_note";
+    const predicate = "profile.harbour_note";
     const count = 4;
     const thresholds: FacadeInput<"vault.wire_health.thresholds.set"> = {
       window_secs: 60, per_verb: 3, per_actor: 3,
     };
 
+    stage = "read owner wire thresholds";
     const baselineThresholds = await engine.client.call("vault.wire_health.thresholds.get", {
     } satisfies FacadeInput<"vault.wire_health.thresholds.get">);
 
@@ -4824,6 +5163,7 @@ suite.test(test, "MUSE-GATE-10", "A wire-rate threshold crossing raises a typed 
     const agent = await engine.pairActor({
       principalRef: agentRecord.id_hex, actorClass: "agent", scope: ["core:read"],
     });
+    stage = "agent threshold change refusal";
     const refusedSet = await agent.client.raw<{ error?: { code?: unknown; message?: unknown } }>(
       "POST", "/v1/core/facade/vault.wire_health.thresholds.set",
       { window_secs: 60, per_verb: 999, per_actor: 999 },
@@ -4838,6 +5178,7 @@ suite.test(test, "MUSE-GATE-10", "A wire-rate threshold crossing raises a typed 
 
     // The same agent then loses its slip mid-flow: the owner revokes it through
     // the public slips door and the dead credential is refused at its next use.
+    stage = "revoke agent slip and read audit";
     const issued = museGate10MintedSlip(
       auditBeforePair, await museGate10AuditRows(engine.client), agent.principalRef,
     );
@@ -4858,6 +5199,7 @@ suite.test(test, "MUSE-GATE-10", "A wire-rate threshold crossing raises a typed 
       && row.subject_ref === slipId && row.fold_valid)).toBe(true);
 
     // Burst subjects: distinct persons, each evidenced by its own witnessed turn.
+    stage = "create distinct evidenced burst subjects";
     const conversation = await engine.client.call("vault.conversations.create", {
       body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
     } satisfies FacadeInput<"vault.conversations.create">);
@@ -4895,6 +5237,7 @@ suite.test(test, "MUSE-GATE-10", "A wire-rate threshold crossing raises a typed 
 
     // Act: the owner installs low detection thresholds; the receipt names the
     // previous and installed rows, and a second door reads the same rows back.
+    stage = "install and read detection thresholds";
     const healthBaseline = (await engine.client.request<MuseGate10HealthList>(
       "GET", "/v1/owner/wire-health",
     )).body;
@@ -4905,6 +5248,7 @@ suite.test(test, "MUSE-GATE-10", "A wire-rate threshold crossing raises a typed 
     } satisfies FacadeInput<"vault.wire_health.thresholds.get">)).toEqual(thresholds);
 
     // Cross both rows with ordinary writes. No write may be refused for rate.
+    stage = "owner ordinary burst upserts";
     const inputs: FacadeInput<"vault.claims.upsert">[] = persons.map((person) => ({
       predicate,
       subject_ref: person.idHex,
@@ -4918,19 +5262,27 @@ suite.test(test, "MUSE-GATE-10", "A wire-rate threshold crossing raises a typed 
       inputs.map((input) => engine.client.call("vault.claims.upsert", input)),
     );
     const fulfilled: FacadeResult<"vault.claims.upsert">[] = [];
-    const rejected: { index: number; code: string }[] = [];
+    const rejected: { index: number; status: number | null; code: string; message: string; suggestion: string }[] = [];
     settled.forEach((row, index) => {
       if (row.status === "fulfilled") {
         fulfilled.push(row.value);
       } else if (row.reason instanceof PublicHttpError) {
-        rejected.push({ index, code: row.reason.error?.code ?? `HTTP_${row.reason.reply.status}` });
+        rejected.push({ index, status: row.reason.reply.status,
+          code: row.reason.error?.code ?? "<none>",
+          message: row.reason.error?.message ?? row.reason.message,
+          suggestion: row.reason.error?.suggestions?.[0] ?? "<none>" });
       } else {
-        rejected.push({ index, code: "UNKNOWN" });
+        rejected.push({ index, status: null, code: "UNKNOWN",
+          message: row.reason instanceof Error ? row.reason.message : String(row.reason),
+          suggestion: "<none>" });
       }
     });
     await engine.artifacts.json("muse-gate10-burst-outcomes.json", {
       receipts: fulfilled.map((receipt) => receipt.receipt_ref), rejected,
     });
+    if (rejected.length > 0) {
+      throw new Error(`MUSE-GATE-10 ${stage}: ${JSON.stringify(rejected)}`);
+    }
     expect(rejected).toHaveLength(0);
     expect(fulfilled).toHaveLength(count);
     for (const receipt of fulfilled) {
@@ -4940,13 +5292,31 @@ suite.test(test, "MUSE-GATE-10", "A wire-rate threshold crossing raises a typed 
 
     // Observe through the health door: the crossing raises a typed question
     // (asked, or answered once the ladder has it) for this actor and verb.
+    const museGate10Question = (start: MuseGate10HealthCheck, list: MuseGate10HealthList): MuseGate10HealthCheck | null => {
+      const bySubject = new Map(list.checks.map((check) => [check.subject, check]));
+      const visited = new Set<string>();
+      let current: MuseGate10HealthCheck | undefined = start;
+      while (current && !visited.has(current.subject)) {
+        visited.add(current.subject);
+        if (current.state.state === "asked" || current.state.state === "answered") {
+          return current.state.question.length > 0 && current.state.unit.length > 0 ? current : null;
+        }
+        if (current.state.state !== "superseded") return null;
+        current = bySubject.get(current.state.by);
+      }
+      return null;
+    };
+    stage = "read typed health question for burst crossing";
     const health = await awaitPublic(
       async () => (await engine.client.request<MuseGate10HealthList>(
         "GET", "/v1/owner/wire-health",
       )).body,
-      (list) => list.checks.some((check) => museGate10IsBurstCheck(check, baselineSubjects, ownerHex)
-        && (check.state.state === "asked" || check.state.state === "answered")),
-      { label: "wire-rate crossing raises a typed health question", timeoutMs: LIMITS.flowMs },
+      (list) => {
+        const burst = list.checks.filter((check) => museGate10IsBurstCheck(check, baselineSubjects, ownerHex));
+        return burst.length > 0 && burst.every((check) => museGate10Question(check, list) !== null);
+      },
+      { label: "MUSE-GATE-10 wire-rate crossing raises a typed health question (including superseded revisions)",
+        timeoutMs: Math.max(1, LIMITS.flowMs - (performance.now() - startedAt) - LIMITS.readyMs) },
     );
     const burstChecks = health.checks.filter(
       (check) => museGate10IsBurstCheck(check, baselineSubjects, ownerHex),
@@ -4961,12 +5331,16 @@ suite.test(test, "MUSE-GATE-10", "A wire-rate threshold crossing raises a typed 
       expect(check.crossing.actors.some(
         (row) => row.actor === ownerHex && row.calls > thresholds.per_actor,
       )).toBe(true);
-      expect(check.state.state === "asked" || check.state.state === "answered").toBe(true);
+      const question = museGate10Question(check, health);
+      if (!question) throw new Error(`MUSE-GATE-10 crossing has no typed question: ${JSON.stringify(check)}`);
+      expect(museGate10IsBurstCheck(question, baselineSubjects, ownerHex)).toBe(true);
+      expect(question.state.state === "asked" || question.state.state === "answered").toBe(true);
     }
     await engine.artifacts.json("muse-gate10-health.json", health);
 
     // Every burst write reads back through the claims door, before and after a
     // restart; the revoked slip stays dead across the restart too.
+    stage = "read burst claims before and after restart";
     await museGate10ExpectClaims(engine.client, persons, predicate);
     await engine.restart();
     await museGate10ExpectClaims(engine.client, persons, predicate);
@@ -4976,7 +5350,10 @@ suite.test(test, "MUSE-GATE-10", "A wire-rate threshold crossing raises a typed 
     expect(deadAfterRestart.status).toBe(401);
   } catch (error) {
     primaryFailed = true;
-    primary = error;
+    primary = error instanceof PublicHttpError ? new Error(
+      `MUSE-GATE-10 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
+      { cause: error },
+    ) : error;
   } finally {
     try {
       await engine.close();
@@ -5062,12 +5439,43 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
   const probeSecretB64 = Buffer.from(probeSecret).toString("base64");
   const sharedSecretB64 = Buffer.from(sharedSecret).toString("base64");
   const occurred = 1_769_947_200;
-  // The custody-door operation named for secret use in the existing
-  // secrets.test.ts SECRETS-03 design note; canon keeps a connector call as
-  // one of the three handle uses and the model sees only its result.
-  const secretOperation = "connector.call";
+  // Use the shipped native-mail T0 operation against a scripted loopback
+  // JMAP origin. The model sees the result, never the credential.
+  const secretOperation = "native_mail.jmap";
+  const learnedEffector = "connector:native_mail"; // SECRET_USE_OPERATIONS' fixed T0 effector.
 
-  const engine = await EngineFixture.start({ id: "MUSE-GATE-11", profile });
+  let stage = "scripted native-mail custody-use setup";
+  let primaryFailed = false;
+  let primary: unknown;
+  const provider = await ScriptedProviders.start({ id: "muse-gate11-native-mail", origins: ["mail"], steps: [] });
+  const enqueueMailCheck = (tag: string) => {
+    provider.enqueue({
+      id: `${tag}-session`, origin: "mail", role: "native-mail", purpose: "T0 credential use JMAP discovery",
+      request: { method: "GET", path: "/.well-known/jmap" },
+      response: { kind: "json", body: { apiUrl: "/jmap", downloadUrl: "/download/{blobId}", capabilities: {
+        "urn:ietf:params:jmap:core": {}, "urn:ietf:params:jmap:mail": {},
+        "urn:ietf:params:jmap:submission": {}, "urn:stalwart:jmap": {},
+      } } },
+    });
+    provider.enqueue({
+      id: `${tag}-domain`, origin: "mail", role: "native-mail", purpose: "T0 credential use domain check",
+      request: { method: "POST", path: "/jmap", fields: {
+        methodCalls: [["x:Domain/get", { accountId: "0", ids: ["gate11-domain"],
+          properties: ["id", "name", "isEnabled", "catchAllAddress", "memberTenantId"] }, "mail"]],
+      } },
+      response: { kind: "json", body: { methodResponses: [["x:Domain/get", { list: [{
+        id: "gate11-domain", name: "gate11.example", isEnabled: true,
+        catchAllAddress: null, memberTenantId: null,
+      }] }, "mail"]] } },
+    });
+  };
+  const engine = await EngineFixture.start({ id: "MUSE-GATE-11", profile,
+    serverConfig: `[native_mail]
+session_url = "${provider.urls.mail}/.well-known/jmap"
+domain = "gate11.example"
+domain_id = "gate11-domain"
+`,
+  });
   try {
     const ownerRef = engine.pairedActor.principalRef;
 
@@ -5083,6 +5491,11 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     const recipientRecord = await engine.client.call("vault.structural.put", {
       kind: "PERSON", body: { name: "Gate11 Recipient" }, occurred_at: occurred,
     } satisfies FacadeInput<"vault.structural.put">);
+    for (const record of [senderRecord, noGrantRecord, recipientRecord]) {
+      const readback = await engine.client.call("vault.get", { entity_ref: record.entity_ref });
+      expect(readback.value?.kind).toBe("PERSON");
+      expect(readback.value?.id_hex).toBe(record.id_hex);
+    }
     const sender = await engine.pairActor({
       principalRef: senderRecord.id_hex, actorClass: "agent",
       scope: ["core:read", "core:write"],
@@ -5098,6 +5511,58 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     // cross-vault: never replicated, doored USE by receipted grants, and
     // the value stays in the owner's custody.
     // ------------------------------------------------------------------
+    const custodyHandle = async (secretId: string): Promise<string> => {
+      const exported = await engine.client.call("vault.export", { format: "archive", include_secrets: false, delivery: "inline" });
+      if (!("archive" in exported)) throw new Error("MUSE-GATE-11 inline custody export returned a transfer");
+      const zip = Buffer.from(exported.archive, "base64");
+      let end = zip.length - 22;
+      for (; end >= Math.max(0, zip.length - 65_557); end--) {
+        if (zip.readUInt32LE(end) === 0x06054b50 && end + 22 + zip.readUInt16LE(end + 20) === zip.length) break;
+      }
+      if (end < Math.max(0, zip.length - 65_557)) throw new Error("MUSE-GATE-11 custody export is not a complete ZIP");
+      const entries = zip.readUInt16LE(end + 10);
+      let cursor = zip.readUInt32LE(end + 16);
+      for (let index = 0; index < entries; index++) {
+        if (zip.readUInt32LE(cursor) !== 0x02014b50) throw new Error("MUSE-GATE-11 invalid export directory");
+        const method = zip.readUInt16LE(cursor + 10);
+        const compressed = zip.readUInt32LE(cursor + 20);
+        const nameLength = zip.readUInt16LE(cursor + 28);
+        const extraLength = zip.readUInt16LE(cursor + 30);
+        const commentLength = zip.readUInt16LE(cursor + 32);
+        const local = zip.readUInt32LE(cursor + 42);
+        const name = zip.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8");
+        if (name === "records/secret_custody.jsonl") {
+          const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+          const wire = zip.subarray(start, start + compressed);
+          if (method !== 0 && method !== 8) throw new Error("MUSE-GATE-11 unsupported export compression");
+          const text = (method === 0 ? wire : inflateRawSync(wire)).toString("utf8");
+          museGate11ExpectNoValues(text, secretValues);
+          const rows = text.split("\n").filter(Boolean).map((line) => JSON.parse(line) as { id: string; handle: string | null; body: string | null });
+          const row = rows.find((candidate) => candidate.id === secretId);
+          if (!row?.handle) throw new Error("MUSE-GATE-11 registered custody record has no exported handle");
+          expect(row.body).toBeNull();
+          return row.handle;
+        }
+        cursor += 46 + nameLength + extraLength + commentLength;
+      }
+      throw new Error("MUSE-GATE-11 export omitted custody rows");
+    };
+    const secretRefusal = async (work: Promise<unknown>, status: number, code: string): Promise<PublicHttpError> => {
+      try { await work } catch (error) {
+        if (!(error instanceof PublicHttpError)) throw error;
+        if (error.reply.status !== status || error.error?.code !== code) {
+          throw new Error(`MUSE-GATE-11 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`, { cause: error });
+        }
+        museGate11ExpectNoValues(error.reply.body, secretValues);
+        const ref = error.error?.receiptRef;
+        if (typeof ref !== "string" || !ref) throw new Error(`MUSE-GATE-11 ${stage}: refusal has no receiptRef`);
+        const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: ref });
+        if (!receipt || receipt.outcome === "ok") throw new Error(`MUSE-GATE-11 ${stage}: refusal call receipt is absent or ok`);
+        expect(receipt.outcome.refused.code).toBe(code);
+        return error;
+      }
+      throw new Error(`MUSE-GATE-11 ${stage}: expected HTTP ${status} ${code}, got success`);
+    };
     const museGate11RegisterAndRead = async (
       name: string,
       valueBase64: string,
@@ -5108,6 +5573,7 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
         value_base64: valueBase64,
         ...(bindings ? { bindings } : {}),
       };
+      stage = `register ${name}`;
       const reply = await engine.client.call("vault.secrets.register", request);
       expect(reply.name).toBe(name);
       museGate11ExpectNoValues(reply, secretValues);
@@ -5124,8 +5590,11 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
       expect(custody.generation).toBe(reply.rotation_generation);
       museGate11ExpectNoValues(custody, secretValues);
       // Third door: the handle card an agent reads before any use.
+      stage = `resolve public custody handle for ${name}`;
+      const handle = await custodyHandle(reply.secret_id);
+      stage = `describe custody handle for ${name}`;
       const card = await sender.client.call("reveal.describe", {
-        handle: reply.secret_id,
+        handle,
       } satisfies FacadeInput<"reveal.describe">);
       expect(card.handle.length).toBeGreaterThan(0);
       expect(card.status).toBe("active");
@@ -5136,19 +5605,12 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     // Probe with no binding: no grant, refused at the custody door first.
     const probeName = `muse-gate11-probe-${secretHex(4)}`;
     const probe = await museGate11RegisterAndRead(probeName, probeSecretB64);
-    const unboundUse = await sender.client.call("self.use", {
+    stage = "unbound T0 self.use refusal";
+    await secretRefusal(sender.client.call("self.use", {
       handle: probe.handle, operation: secretOperation,
-    } satisfies FacadeInput<"self.use">);
-    expect(unboundUse.status).toBe("withheld");
-    expect(unboundUse.result == null).toBe(true);
-    museGate11ExpectNoValues(unboundUse, secretValues);
-    // The withheld receipt names the effector the door checked. Learn it
-    // from that public receipt instead of inventing an effector string.
-    const learnedEffector = unboundUse.receipt.effector;
-    if (!learnedEffector) {
-      throw new Error("Withheld self.use receipt named no effector, so no binding can be authored");
-    }
-    const unboundDecision = unboundUse.receipt.decision;
+    } satisfies FacadeInput<"self.use">), 403, "FORBIDDEN");
+    expect(provider.seenFixtureCalls).toHaveLength(0);
+    expect((await engine.client.call("vault.secrets.custody.get", { name: probeName })).held_here).toBe(true);
 
     // Wrong actor kind: a scoped agent cannot register a secret into owner
     // custody. Refusal reads back as no custody record under that name.
@@ -5178,10 +5640,14 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     expect(shared.reply.bindings.some((binding) => binding.effector === learnedEffector
       && binding.tier_ceiling === 0 && binding.scopes.includes("read"))).toBe(true);
 
+    stage = "bound T0 self.use through scripted native mail";
+    enqueueMailCheck("bound-use");
     const boundUse = await sender.client.call("self.use", {
       handle: shared.handle, operation: secretOperation,
     } satisfies FacadeInput<"self.use">);
     expect(boundUse.status).not.toBe("withheld");
+    expect(boundUse.status).toBe("answered");
+    expect(provider.seenFixtureCalls).toHaveLength(2);
     // The model-facing answer carries the result or failure, never the value
     // in raw or base64 form, and custody is still held here afterwards.
     museGate11ExpectNoValues(boundUse, secretValues);
@@ -5191,15 +5657,15 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     expect(custodyAfterUse.held_here).toBe(true);
     expect(custodyAfterUse.portable).toBe(false);
 
-    // Use is not custody: without a reveal grant, the same agent's reveal
-    // stays an ask and returns no value.
-    const revealPending = await sender.client.call("reveal", {
+    // Cross-vault custody is T0-only: use is allowed at its door, but a T1
+    // reveal is refused and no value enters the agent's context.
+    stage = "cross-vault T0 secret cannot be revealed into context";
+    await secretRefusal(sender.client.call("reveal", {
       handle: shared.handle, why: "check Gate11 shared secret in context",
-    } satisfies FacadeInput<"reveal">);
-    const revealWaiting = await sender.client.call("reveal.wait", revealPending);
-    expect(revealWaiting.decision).toBe("pending");
-    expect(revealWaiting.value == null && revealWaiting.value_base64 == null).toBe(true);
-    museGate11ExpectNoValues(revealWaiting, secretValues);
+    } satisfies FacadeInput<"reveal">), 400, "BAD_REQUEST");
+    const revealCard = await sender.client.call("reveal.describe", { handle: shared.handle });
+    expect(revealCard.reveal).toBe("refused");
+    museGate11ExpectNoValues(revealCard, secretValues);
 
     // ------------------------------------------------------------------
     // P-GATE-030: a channel_send of private content must satisfy BOTH
@@ -5208,28 +5674,29 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     // ------------------------------------------------------------------
     const claimScope = await ownerBaseClaimScope(engine.client, ownerRef);
     const projectRef = claimScope.scope_project_id;
+    stage = "owner private-content claim and readback";
     const claimReceipt = await engine.client.call("vault.claims.upsert", {
-      scope: claimScope, predicate: "muse_gate11_private_note",
+      scope: claimScope, predicate: "profile.muse_gate11_private_note",
       subject_ref: ownerRef, value: privateSentinel,
       source: "user_stated", confidence: 1, occurred_at: occurred,
     } satisfies FacadeInput<"vault.claims.upsert">);
     await engine.awaitReceipt(claimReceipt.receipt_ref);
     const claims = await engine.client.call("vault.claims.list", {
-      subject_ref: ownerRef, predicate: "muse_gate11_private_note", limit: 10,
+      subject_ref: ownerRef, predicate: "profile.muse_gate11_private_note", limit: 10,
     } satisfies FacadeInput<"vault.claims.list">);
     expect(claims.value.some((row) => row.value === privateSentinel)).toBe(true);
     const contentRef = claimReceipt.claim?.id ?? claimReceipt.claim_short_id;
     expect(contentRef.length).toBeGreaterThan(0);
 
-    // Discover the live send channel from the connector catalog instead of
-    // inventing a channel string. Common verb vocabulary: "send".
-    const connectors = await engine.client.call(
-      "connector.list",
-      {} satisfies FacadeInput<"connector.list">,
-    );
-    const sendConnector = connectors.find((entry) => entry.verbs.includes("send"));
+    // Outbound channels come from their capability manifests, not the MCP
+    // connector catalog. The schedule door has no delivery adapter.
+    stage = "discover outbound send capability";
+    const connectors = (await engine.client.request<{ connector: string; verbs: { kind: string }[] }[]>(
+      "GET", "/v1/core/outbound/capabilities",
+    )).body;
+    const sendConnector = connectors.find((entry) => entry.connector === "email" && entry.verbs.some((verb) => verb.kind === "send"));
     if (!sendConnector) {
-      throw new BlockedDoor("waits on a send-capable outbound connector manifest in a fresh vault");
+      throw new Error("MUSE-GATE-11 live outbound capabilities omitted email send");
     }
     const channel = sendConnector.connector;
     expect(channel.length).toBeGreaterThan(0);
@@ -5242,6 +5709,7 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     });
     type MuseGate11Client = (typeof sender)["client"];
     const museGate11CanAs = async (client: MuseGate11Client, tag: string) => {
+      stage = `mixed send can ${tag}`;
       const answer = await client.call("can", {
         effect: { outbound_schedule: museGate11Send(tag) },
       } satisfies FacadeInput<"can">);
@@ -5250,25 +5718,29 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     };
     const museGate11ScheduleAs = async (client: MuseGate11Client, tag: string) => {
       try {
+        stage = `mixed send schedule ${tag}`;
         const receipt = await client.call(
           "connector.outbound.schedule", museGate11Send(tag));
         museGate11ExpectNoValues(receipt, [privateSentinel, ...secretValues]);
+        if (!receipt.gate_decision_ref) throw new Error(`MUSE-GATE-11 ${stage}: schedule has no gate decision`);
+        await engine.awaitReceipt(receipt.gate_decision_ref);
         return { kind: "receipt" as const, receipt };
       } catch (error) {
         if (error instanceof PublicHttpError) {
+          if (error.reply.status === 400) throw error;
           const wire = museGate11WireError(error.reply.body);
           return {
             kind: "refused" as const, status: error.reply.status,
-            code: wire.code, message: wire.message,
+            code: wire.code, message: wire.message, suggestion: error.error?.suggestions?.[0] ?? "<none>",
           };
         }
         throw error;
       }
     };
-    const museGate11Delivered = (
+    const museGate11GateAllows = (
       attempt: Awaited<ReturnType<typeof museGate11ScheduleAs>>,
     ): boolean => attempt.kind === "receipt"
-      && attempt.receipt.outcome === "delivered_to_channel";
+      && attempt.receipt.gate_outcome === "allow";
 
     const museGate11Registry = async () => engine.client.call("vault.consent.registry", {
       limit: 1000,
@@ -5297,6 +5769,7 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     // Wrong actor kind, consent side: an agent's self-grant attempt is
     // refused in the standard envelope and leaves the registry unchanged.
     const refsBeforeSelfGrant = await museGate11LiveGrantRefs();
+    stage = "agent self-grant refusal and registry readback";
     const selfGrant = await sender.client.raw(
       "POST", "/v1/core/facade/vault.consent.create_standing_grant", {
         bound: actionBound,
@@ -5313,9 +5786,10 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     const noGrantAgentVerdict = await museGate11CanAs(noGrantAgent.client, "no-grant-agent");
     expect(noGrantAgentVerdict).not.toBe("allow");
     const noGrantSchedule = await museGate11ScheduleAs(sender.client, "no-grant-schedule");
-    expect(museGate11Delivered(noGrantSchedule)).toBe(false);
+    expect(museGate11GateAllows(noGrantSchedule)).toBe(false);
 
     // Proof order 2a: action grant alone is not either-gate enough.
+    stage = "create action-only standing grant";
     const actionReceipt1 = await engine.client.call("vault.consent.create_standing_grant", {
       bound: actionBound,
     } satisfies FacadeInput<"vault.consent.create_standing_grant">);
@@ -5324,7 +5798,7 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     const actionOnlyVerdict = await museGate11CanAs(sender.client, "action-only");
     expect(actionOnlyVerdict).not.toBe("allow");
     const actionOnlySchedule = await museGate11ScheduleAs(sender.client, "action-only");
-    expect(museGate11Delivered(actionOnlySchedule)).toBe(false);
+    expect(museGate11GateAllows(actionOnlySchedule)).toBe(false);
 
     // Remove it before testing disclosure alone; the live registry is the
     // read-back that the action grant is gone.
@@ -5334,6 +5808,7 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     expect((await museGate11LiveGrantRefs()).includes(actionGrant1)).toBe(false);
 
     // Proof order 2b: disclosure grant alone is not either-gate enough.
+    stage = "create disclosure-only standing grant";
     const disclosureReceipt = await engine.client.call("vault.consent.create_standing_grant", {
       bound: disclosureBound,
     } satisfies FacadeInput<"vault.consent.create_standing_grant">);
@@ -5342,10 +5817,11 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     const disclosureOnlyVerdict = await museGate11CanAs(sender.client, "disclosure-only");
     expect(disclosureOnlyVerdict).not.toBe("allow");
     const disclosureOnlySchedule = await museGate11ScheduleAs(sender.client, "disclosure-only");
-    expect(museGate11Delivered(disclosureOnlySchedule)).toBe(false);
+    expect(museGate11GateAllows(disclosureOnlySchedule)).toBe(false);
 
     // Proof order 2c: both disjoint grants live; the same mixed send passes
     // both checks for the bound actor and stays refused for the other agent.
+    stage = "create second action standing grant";
     const actionReceipt2 = await engine.client.call("vault.consent.create_standing_grant", {
       bound: actionBound,
     } satisfies FacadeInput<"vault.consent.create_standing_grant">);
@@ -5359,15 +5835,16 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     expect(bothNoGrantVerdict).not.toBe("allow");
     const bothSchedule = await museGate11ScheduleAs(sender.client, "both-grants");
     expect(bothSchedule.kind).toBe("receipt");
+    expect(museGate11GateAllows(bothSchedule)).toBe(true);
     if (bothSchedule.kind !== "receipt") {
-      throw new Error(`Both-grant schedule was refused (${bothSchedule.code || bothSchedule.status})`);
+      throw new Error(`Both-grant schedule was refused: status=${bothSchedule.status} code=${bothSchedule.code} message=${bothSchedule.message} suggestion=${bothSchedule.suggestion}`);
     }
     // Covered by live standing grants: reuse inside the bound needs no
     // fresh approval digest. Delivery itself is not asserted; no
     // external channel transport exists in this fixture.
     expect(bothSchedule.receipt.approval_digest ?? null).toBeNull();
     const bothNoGrantSchedule = await museGate11ScheduleAs(noGrantAgent.client, "both-grants-other-agent");
-    expect(museGate11Delivered(bothNoGrantSchedule)).toBe(false);
+    expect(museGate11GateAllows(bothNoGrantSchedule)).toBe(false);
 
     await engine.artifacts.json("muse-gate11-attempts.json", {
       secretEffector: learnedEffector,
@@ -5382,6 +5859,7 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     });
 
     // Full door, part 4: restart, then read every live outcome again.
+    stage = "restart custody and standing-grant readback";
     await engine.restart();
     const custodyAfterRestart = await engine.client.call("vault.secrets.custody.get", {
       name: sharedName,
@@ -5394,15 +5872,19 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     } satisfies FacadeInput<"reveal.describe">);
     expect(cardAfterRestart.status).toBe("active");
     museGate11ExpectNoValues(cardAfterRestart, secretValues);
+    stage = "T0 self.use after restart";
+    enqueueMailCheck("restart-use");
     const useAfterRestart = await sender.client.call("self.use", {
       handle: shared.handle, operation: secretOperation,
     } satisfies FacadeInput<"self.use">);
     expect(useAfterRestart.status).not.toBe("withheld");
+    expect(useAfterRestart.status).toBe("answered");
+    expect(provider.seenFixtureCalls).toHaveLength(4);
     museGate11ExpectNoValues(useAfterRestart, secretValues);
     await museGate11RegistryRow(actionGrant2, "action");
     await museGate11RegistryRow(disclosureGrant, "disclosure");
     const claimsAfterRestart = await engine.client.call("vault.claims.list", {
-      subject_ref: ownerRef, predicate: "muse_gate11_private_note", limit: 10,
+      subject_ref: ownerRef, predicate: "profile.muse_gate11_private_note", limit: 10,
     } satisfies FacadeInput<"vault.claims.list">);
     expect(claimsAfterRestart.value.some((row) => row.value === privateSentinel)).toBe(true);
     expect(await museGate11CanAs(sender.client, "after-restart")).toBe("allow");
@@ -5417,10 +5899,11 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     const afterActionRevokeVerdict = await museGate11CanAs(sender.client, "after-action-revoke");
     expect(afterActionRevokeVerdict).not.toBe("allow");
     const afterActionRevokeSchedule = await museGate11ScheduleAs(sender.client, "after-action-revoke");
-    expect(museGate11Delivered(afterActionRevokeSchedule)).toBe(false);
+    expect(museGate11GateAllows(afterActionRevokeSchedule)).toBe(false);
 
     // Secret twin of losing authority: owner revokes the shared secret;
-    // the next bound use is withheld at the same door.
+    // the next bound use is refused before the provider sees a request.
+    stage = "owner secret revoke and custody readback";
     const secretRevoked = await engine.client.call("vault.secrets.revoke", {
       name: sharedName,
     } satisfies FacadeInput<"vault.secrets.revoke">);
@@ -5428,12 +5911,12 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
     const custodyAfterRevoke = await engine.client.call("vault.secrets.custody.get", {
       name: sharedName,
     } satisfies FacadeInput<"vault.secrets.custody.get">);
-    const useAfterRevoke = await sender.client.call("self.use", {
+    stage = "revoked secret refuses next T0 use";
+    const useAfterRevoke = await secretRefusal(sender.client.call("self.use", {
       handle: shared.handle, operation: secretOperation,
-    } satisfies FacadeInput<"self.use">);
-    expect(useAfterRevoke.status).toBe("withheld");
-    expect(useAfterRevoke.result == null).toBe(true);
-    museGate11ExpectNoValues(useAfterRevoke, secretValues);
+    } satisfies FacadeInput<"self.use">), 400, "BAD_REQUEST");
+    expect(provider.seenFixtureCalls).toHaveLength(4);
+    museGate11ExpectNoValues(useAfterRevoke.reply.body, secretValues);
 
     await engine.artifacts.json("muse-gate11-final.json", {
       probeHandle: probe.handle, sharedHandle: shared.handle,
@@ -5444,9 +5927,26 @@ suite.test(test, "MUSE-GATE-11", "A bound secret is usable through self.use with
         held_here: custodyAfterRevoke.held_here, portable: custodyAfterRevoke.portable,
         generation: custodyAfterRevoke.generation, status: custodyAfterRevoke.status ?? null,
       },
-      useAfterRevoke,
+      useAfterRevoke: { status: useAfterRevoke.reply.status, code: useAfterRevoke.error?.code },
     });
+  } catch (error) {
+    const detail = error instanceof PublicHttpError
+      ? `status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`
+      : error instanceof Error ? error.message : String(error);
+    primaryFailed = true;
+    if (stage.startsWith("mixed send")) {
+      primary = new Error(
+        `MUSE-GATE-11 ENGINE DEFECT 2026-11-11: P-GATE-030 / DEC-0006 invariant 4 needs action AND disclosure; outbound composes only action (FIX-LIST 2802, still HELD); standing action bound also uses a different envelope from the outbound requirement; ${stage}: ${detail}`,
+        { cause: error },
+      );
+    } else {
+      primary = new Error(`MUSE-GATE-11 ${stage}: ${detail}`, { cause: error });
+    }
   } finally {
-    await engine.close();
+    const cleanup = await Promise.allSettled([engine.close(), provider.close()]);
+    const failures = cleanup.filter((row): row is PromiseRejectedResult => row.status === "rejected").map((row) => row.reason);
+    if (failures.length > 0) throw new AggregateError(primaryFailed ? [primary, ...failures] : failures,
+      `${primaryFailed ? String(primary) : "MUSE-GATE-11 cleanup"}; cleanup: ${failures.map(String).join("; ")}`);
+    if (primaryFailed) throw primary;
   }
 });
