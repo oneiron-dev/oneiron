@@ -575,14 +575,16 @@ async function mediaEmb04Resolve(client: PublicHttpClient, asset: MediaEmb04Asse
  * native and text towers return per-space match evidence and authored floors.
  * Resolve serves pinned bytes while the image fill is held, or saved text to
  * a text-only reader, with served-form receipts read through vault.receipts.
- * Owner-only setup and read-only ingest refusals carry call receipts. A fourth
+ * A holder binds a slot to its own declared model and it lands; a non-holder
+ * agent's declare/bind and read-only ingest refusals carry call receipts and
+ * change no bindings. In this personal vault the Owner is the only holder. A fourth
  * offered, declared but unbound rung receives one query and fails explicitly.
  * Restart retains bindings, match evidence, bytes, text and earlier receipts
  * without another document fill. Orthogonal queries abstain in all three spaces.
  * No learned-quality, retry/recovery, per-ASSET fill-state, erasure, thumbnail
  * budget ladder or live content-grant withdrawal claim is made here.
  */
-suite.test(test, "EMBEDDINGS-04", "Typed text, image and audio assets fill declared spaces, recall with match evidence, resolve to the reader's form across restart, and an unavailable media rung refuses its query", async () => {
+suite.test(test, "EMBEDDINGS-04", "Typed text, image and audio assets fill declared spaces, recall with match evidence, resolve to the reader's form across restart, a holder binds a slot to its own model while a non-holder is refused, and an unavailable media rung refuses its query", async () => {
   const catalog = await loadFixtures();
   const data = await catalog.readJson<MediaEmb04Scenarios>("embeddings-scenarios");
   const imageQuery = data.media.queries.find(query => query.kind === "text" && query.target === "image");
@@ -650,8 +652,8 @@ suite.test(test, "EMBEDDINGS-04", "Typed text, image and audio assets fill decla
   mediaEmb04AddQueries("before", plans, false);
   mediaEmb04AddQueries("abstain", noMatchPlans, true);
   mediaEmb04AddQueries("after", plans, false);
-  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-04", steps });
-  const serverConfig = ["text", "image", "audio", "down"].map(origin => `
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-04", origins: ["holder"], steps });
+  const serverConfig = ["text", "image", "audio", "down", "holder"].map(origin => `
 [models.providers.${origin}]
 kind = "local-openai-compat"
 base_url = "${providers.urls[origin]!}"
@@ -660,7 +662,7 @@ request_compression = false
 timeout_secs = ${origin === "down" ? 1 : 5}
 `).join("") + `
 [models.media.embed]
-rungs = ["text:model", "image:model", "audio:model", "down:model"]
+rungs = ["text:model", "image:model", "audio:model", "down:model", "holder:model"]
 inputs = ["text", "image", "audio"]
 `;
   const engine = await EngineFixture.start({ id: "EMBEDDINGS-04", profile, serverConfig });
@@ -671,6 +673,29 @@ inputs = ["text", "image", "audio"]
     expect(setup.spaces.find(row => row.id === mediaEmb04Space(origin))).toEqual(mediaEmb04Declaration(origin));
   expect(Object.values(setup.slots)).not.toContain(mediaEmb04Space("down"));
 
+  // Holder row (ARCH-0019 #default-bindings; DEC-0005): "A holder may also
+  // bind any slot to their own model." Holders are the vault's Owners, and
+  // any Admin or Delegate whose Grant includes the policy power; in this
+  // personal vault the Owner alone holds it, and no typed door mints such
+  // a Grant, so the paired Owner (`engine.client`) is the holder. It
+  // declares a space on its own "holder" model origin, binds the image
+  // slot to it, and the binding lands, read back through list. The case's
+  // working image binding is then restored through the same holder and
+  // read back, so the legs below keep the bindings they already assert.
+  const mediaEmb04HolderDeclaration = { ...mediaEmb04Declaration("image"), id: mediaEmb04Space("holder") };
+  const mediaEmb04HolderRestoredImageSpace = assets.image.space;
+  await engine.client.call("vault.embedding_spaces.declare", mediaEmb04HolderDeclaration);
+  await engine.client.call("vault.embedding_spaces.bind", { kind: "image", space: mediaEmb04Space("holder") });
+  const holderSetup = await engine.client.call("vault.embedding_spaces.list", {});
+  expect(holderSetup.spaces.find(row => row.id === mediaEmb04Space("holder"))).toEqual(mediaEmb04HolderDeclaration);
+  expect(holderSetup.slots.image).toBe(mediaEmb04Space("holder"));
+  await engine.client.call("vault.embedding_spaces.bind", { kind: "image", space: mediaEmb04HolderRestoredImageSpace });
+  const restoredSetup = await engine.client.call("vault.embedding_spaces.list", {});
+  expect(restoredSetup.slots.image).toBe(mediaEmb04HolderRestoredImageSpace);
+  expect(Object.values(restoredSetup.slots)).not.toContain(mediaEmb04Space("holder"));
+
+  // Non-holder row: the paired agent holds core:read/core:write and no
+  // policy power, so its declare/bind are refused and change no bindings.
   const agentRef = "018f0000000070008000000000000404";
   const agentInput: FacadeInput<"vault.agents.create"> = { agent_def_ref: agentRef,
     definition: { agent_id: "media-emb04-reader", desc: "Inert media-space refusal principal", version: "1" } };
@@ -686,8 +711,8 @@ inputs = ["text", "image", "audio"]
     await mediaEmb04RefusalReceipt(engine, bindRefusal, "vault.embedding_spaces.bind", agentRef, "agent"),
   ];
   const refusedSetup = await engine.client.call("vault.embedding_spaces.list", {});
-  expect(refusedSetup.spaces).toEqual(setup.spaces);
-  expect(refusedSetup.slots).toEqual(setup.slots);
+  expect(refusedSetup.spaces).toEqual(restoredSetup.spaces);
+  expect(refusedSetup.slots).toEqual(restoredSetup.slots);
   const readOnly = await engine.pairActor({ principalRef: agentRef, actorClass: "agent", scope: ["core:read"] });
   const deniedAssetRef = "018f0000000070008000000000000405";
   const ingestRefusal = await mediaEmb04Error(() => readOnly.client.call("vault.assets.ingest", {
@@ -775,6 +800,7 @@ inputs = ["text", "image", "audio"]
   ]);
   const beforeRestart = providers.seenFixtureCalls.length;
   await engine.restart();
+  expect((await engine.client.call("vault.embedding_spaces.list", {})).slots.image).toBe(mediaEmb04HolderRestoredImageSpace);
   await mediaEmb04CheckSetup();
   await mediaEmb04RecallPlans();
   for (const asset of Object.values(assets))
