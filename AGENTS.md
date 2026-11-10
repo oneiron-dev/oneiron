@@ -162,7 +162,7 @@ writer.
 - Workflows target `[self-hosted, macos, arm64]` or `[self-hosted, linux, x64]`, never a host
   name. `uniffi-stub` targets the capability label `xcode`; add that label to a runner only
   after a full Xcode (not Command Line Tools alone) is installed there.
-- Host contract: rustup resolving `rust-toolchain.toml` (1.96 with rustfmt and clippy),
+- Host contract: rustup resolving `rust-toolchain.toml` (1.99.1 with rustfmt and clippy),
   `cargo-nextest`, `rg`, git and `python3` ≥ 3.11; macOS runners also need poppler's `pdfsig`
   (`seal-oracle.yml`). Pinned CI-only tools (cargo-deny, typos-cli, nextest where a host lacks
   it) go under `~/ci/tools`; the job installs them on first use.

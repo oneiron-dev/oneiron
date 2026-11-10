@@ -63,8 +63,11 @@ fn segment_value(channels: u64, aec_mode: &str) -> Value {
     ])
 }
 
-fn segment_claim(asset: EntityId, value: Value) -> ClaimBody {
-    ClaimBody::new(
+/// The segment claim as the recorder's sink builds it: born in the vault
+/// default facet, where the audio ASSET was born. The subject is no PERSON,
+/// so the body's own default facet names no FACET row.
+fn segment_claim(vault: &Vault, asset: EntityId, value: Value) -> ClaimBody {
+    let mut body = ClaimBody::new(
         PREDICATE_VOICE_SEGMENT,
         ClaimSubject::Entity(asset),
         value,
@@ -72,7 +75,9 @@ fn segment_claim(asset: EntityId, value: Value) -> ClaimBody {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )
-    .expect("fixture")
+    .expect("fixture");
+    body.scope_facet = vault.default_facet().expect("default facet");
+    body
 }
 
 /// What the recorder's vault sink does: audio bytes as an ASSET entity, then
@@ -86,9 +91,12 @@ fn commit_segment(
     value: Value,
 ) -> Result<(), Error> {
     vault.put_entity(asset, ENTITY_TYPE_ASSET, span(), SPAN_START, SEGMENT_AUDIO)?;
-    let mut body = segment_claim(*asset, value);
-    body.scope_facet = vault.default_facet()?;
-    vault.put_claim(claim_id, &body, span(), SPAN_START)
+    vault.put_claim(
+        claim_id,
+        &segment_claim(vault, *asset, value),
+        span(),
+        SPAN_START,
+    )
 }
 
 /// The claim door — not the app — is what refuses a dishonest segment.
@@ -104,7 +112,7 @@ fn malformed_segment_claim_is_rejected_by_the_claim_door() {
     let err = vault
         .put_claim(
             &EntityId::now(),
-            &segment_claim(asset, segment_value(0, AEC_MODE_ACTIVE)),
+            &segment_claim(&vault, asset, segment_value(0, AEC_MODE_ACTIVE)),
             span(),
             SPAN_START,
         )
@@ -118,7 +126,7 @@ fn malformed_segment_claim_is_rejected_by_the_claim_door() {
     let err = vault
         .put_claim(
             &EntityId::now(),
-            &segment_claim(asset, segment_value(2, "probably_cancelled")),
+            &segment_claim(&vault, asset, segment_value(2, "probably_cancelled")),
             span(),
             SPAN_START,
         )
@@ -129,10 +137,17 @@ fn malformed_segment_claim_is_rejected_by_the_claim_door() {
     );
 
     // The same door accepts the honest body.
-    let mut honest = segment_claim(asset, segment_value(2, AEC_MODE_BYPASSED_HEADPHONES));
-    honest.scope_facet = vault.default_facet().expect("default facet");
     vault
-        .put_claim(&EntityId::now(), &honest, span(), SPAN_START)
+        .put_claim(
+            &EntityId::now(),
+            &segment_claim(
+                &vault,
+                asset,
+                segment_value(2, AEC_MODE_BYPASSED_HEADPHONES),
+            ),
+            span(),
+            SPAN_START,
+        )
         .expect("a well-formed segment claim must land");
 }
 
