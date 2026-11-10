@@ -13,11 +13,14 @@
 //! through each of those doors on an Agent-class `Memory`.
 //!
 //! A new definition wider than its Base, ceiling-Proposed author lands as a
-//! proposal no dispatch runs; one inside the author's slice lands active. An
-//! agent that holds no definition of its own has no slice to lend, so what it
-//! authors is a proposal. A put that grants a stored definition more than its
-//! author's slice holds leaves that definition a proposal; an edit that
-//! grants nothing new stays active. None of these is refused.
+//! proposal no dispatch runs; one inside the author's slice lands active. A
+//! put that grants a stored definition more than its author's slice holds
+//! leaves that definition as it is, still working, and stores the wider
+//! version as a separate proposal record that names it (ARCH-0053 r6: "a
+//! skill update that widens the capability surface requires human
+//! re-consent; doc-only or narrowing edits flow auto"). An author whose own
+//! slice holds the wider grant applies it. An edit that grants nothing new
+//! stays active. None of these is refused.
 
 use std::sync::Arc;
 
@@ -37,6 +40,23 @@ const NOW: u64 = 1_700_000_000;
 // Fixture ids are `[seed; 16]`, off the pinned bytes a fresh vault holds
 // (`0x00 0x11 0x42 0x47 0xA1..=0xA6 0xD7 0xE1 0xFF`).
 const AUTHOR: u8 = 0x70;
+const WIDE_AUTHOR: u8 = 0x71;
+
+/// The key the engine derives the id of a proposed change under
+/// (`agent_def/doors.rs`, `PROPOSED_CHANGE_ID_CONTEXT`).
+const PROPOSED_CHANGE_ID_CONTEXT: &str = "oneiron agent_def proposed change id v1";
+
+/// The id the engine stores version `version` of the definition at `stored`
+/// under, as a proposal: the first 16 bytes of the keyed BLAKE3 hash of the
+/// stored id's bytes then the version's.
+fn proposed_change_id(stored: &EntityId, version: &str) -> EntityId {
+    let mut hasher = blake3::Hasher::new_derive_key(PROPOSED_CHANGE_ID_CONTEXT);
+    hasher.update(stored.as_bytes());
+    hasher.update(version.as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    EntityId::from_bytes(bytes).expect("derived proposal id")
+}
 
 fn definition(
     name: &str,
@@ -123,13 +143,15 @@ fn candidate(slice: Slice) -> AgentDefinition {
     )
 }
 
-/// A personal vault whose owner created one Base, ceiling-Proposed agent.
+/// A personal vault whose owner created two agents.
 struct Fixture {
     vault: Vault,
     /// The embedded owner's PERSON row.
     owner_person: EntityId,
-    /// The agent the owner created.
+    /// The Base, ceiling-Proposed agent the owner created.
     author: EntityId,
+    /// The All, ceiling-Proposed agent the owner created.
+    wide_author: EntityId,
     _dir: tempfile::TempDir,
 }
 
@@ -167,10 +189,31 @@ fn fixture() -> Fixture {
             NOW,
         )
         .expect("owner creates the Base, ceiling-Proposed author");
+    let wide_author = EntityId::from_bytes([WIDE_AUTHOR; 16]).expect("wide author id");
+    vault
+        .create_agent_definition_as(
+            &owner,
+            &wide_author,
+            &definition(
+                "conformance.wide_author",
+                AgentScope::All,
+                AgentCeiling::Proposed,
+                ClaimSource::UserStated,
+                false,
+                true,
+            ),
+            TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+        )
+        .expect("owner creates the All, ceiling-Proposed author");
     Fixture {
         vault,
         owner_person,
         author,
+        wide_author,
         _dir: dir,
     }
 }
@@ -255,11 +298,9 @@ enum Lands {
     Active,
 }
 
-/// Reads `id` back after `write`, tries one dispatch of it, prints one
-/// `CONFORMANCE` line and holds the row to `lands`.
-fn assert_lands(case: &str, write: &Result<(), String>, vault: &Vault, id: EntityId, lands: Lands) {
-    let stored = vault.get_agent_definition(&id).expect("read the row");
-    let dispatch = match AgentDispatcher::new(vault).dispatch(DispatchAgent {
+/// One dispatch of the definition at `id`, as a label.
+fn dispatch_of(vault: &Vault, id: EntityId) -> String {
+    match AgentDispatcher::new(vault).dispatch(DispatchAgent {
         target: AgentDispatchTarget::Custom(id),
         parent_attempt: None,
         dedupe_key: None,
@@ -271,12 +312,19 @@ fn assert_lands(case: &str, write: &Result<(), String>, vault: &Vault, id: Entit
         Ok(AgentDispatchOutcome::ProposedWiden(_)) => "proposed-widen".to_owned(),
         Ok(_) => "workflow".to_owned(),
         Err(error) => format!("refused: {error}"),
-    };
-    let write_label = match write {
+    }
+}
+
+fn write_label_of(write: &Result<(), String>) -> String {
+    match write {
         Ok(()) => "landed".to_owned(),
         Err(error) => format!("refused: {error}"),
-    };
-    let standing = stored.as_ref().map_or_else(
+    }
+}
+
+/// How a definition stands, as a label; `absent` for no row.
+fn standing_of(def: Option<&AgentDefinition>) -> String {
+    def.map_or_else(
         || "absent".to_owned(),
         |def| {
             format!(
@@ -290,7 +338,85 @@ fn assert_lands(case: &str, write: &Result<(), String>, vault: &Vault, id: Entit
                 def.source
             )
         },
+    )
+}
+
+/// Holds a put that widened the stored definition `before` at `id` to a
+/// proposed change: the stored row is as it was and still dispatches, and
+/// version `version` stands beside it as a proposal that names it and that no
+/// dispatch runs. Prints one `CONFORMANCE` line.
+fn assert_proposed_change(
+    case: &str,
+    write: &Result<(), String>,
+    vault: &Vault,
+    id: EntityId,
+    before: &AgentDefinition,
+    version: &str,
+) {
+    let stored = vault
+        .get_agent_definition(&id)
+        .expect("read the stored row");
+    let proposal_id = proposed_change_id(&id, version);
+    let proposal = vault
+        .get_agent_definition(&proposal_id)
+        .expect("read the proposal id");
+    let stored_dispatch = dispatch_of(vault, id);
+    let proposal_dispatch = dispatch_of(vault, proposal_id);
+    let write_label = write_label_of(write);
+    println!(
+        "CONFORMANCE case={case} write={write_label} stored=[{}] dispatch={stored_dispatch} proposal=[{}] proposal_dispatch={proposal_dispatch}",
+        standing_of(stored.as_ref()),
+        standing_of(proposal.as_ref()),
     );
+    assert!(
+        write.is_ok(),
+        "ARCH-0053:20: {case}: the put was refused: {write_label}"
+    );
+    assert!(
+        stored.as_ref() == Some(before),
+        "ARCH-0053 r6: {case}: a put wider than its author's slice changed the stored definition"
+    );
+    assert_eq!(
+        stored_dispatch, "dispatched",
+        "{case}: the stored definition keeps working after a widening put"
+    );
+    let proposal = proposal.expect("ARCH-0053 r6: the wider version is stored as a proposal");
+    assert_eq!(
+        proposal.approval_status,
+        ClaimApprovalStatus::Proposed,
+        "ARCH-0053:20: {case}: the wider version is stored as other than a proposal"
+    );
+    assert_eq!(
+        proposal.version, version,
+        "{case}: the proposal is the version put"
+    );
+    assert!(
+        proposal.scope == AgentScope::All,
+        "{case}: the proposal holds the wider scope"
+    );
+    let names_stored = match &proposal.provenance {
+        RmpValue::Map(entries) => entries.iter().any(|(key, value)| {
+            key.as_str() == Some("replaces") && value.as_str() == Some(id.to_hex().as_str())
+        }),
+        _ => false,
+    };
+    assert!(
+        names_stored,
+        "{case}: the proposal names the definition it would replace"
+    );
+    assert_ne!(
+        proposal_dispatch, "dispatched",
+        "ARCH-0053:20: {case}: the proposal is dispatchable"
+    );
+}
+
+/// Reads `id` back after `write`, tries one dispatch of it, prints one
+/// `CONFORMANCE` line and holds the row to `lands`.
+fn assert_lands(case: &str, write: &Result<(), String>, vault: &Vault, id: EntityId, lands: Lands) {
+    let stored = vault.get_agent_definition(&id).expect("read the row");
+    let dispatch = dispatch_of(vault, id);
+    let write_label = write_label_of(write);
+    let standing = standing_of(stored.as_ref());
     println!("CONFORMANCE case={case} write={write_label} stored=[{standing}] dispatch={dispatch}");
     assert!(
         write.is_ok(),
@@ -361,13 +487,17 @@ fn run_new_definition(door: Door, candidate_seed: u8, slice: Slice) {
     );
 }
 
-/// The author creates a child inside its own slice through `vault.batch`,
-/// and the child stands active.
-fn author_creates_child(fixture: &Fixture, child_seed: u8) -> (EntityId, AgentDefinition) {
+/// `author` creates a Base, ceiling-Proposed child through `vault.batch`,
+/// inside its own slice, and the child stands active.
+fn author_creates_child(
+    fixture: &Fixture,
+    author: EntityId,
+    child_seed: u8,
+) -> (EntityId, AgentDefinition) {
     let id = EntityId::from_bytes([child_seed; 16]).expect("child id");
     put(
         &fixture.vault,
-        fixture.author,
+        author,
         Door::Batch,
         id,
         &candidate(Slice::Within),
@@ -440,16 +570,24 @@ fn agent_without_a_definition_stores_a_new_definition_as_a_proposal() {
     );
 }
 
-#[test]
-fn agent_batch_widening_the_scope_of_its_own_definition_leaves_a_proposal() {
-    let fixture = fixture();
-    let mut wider = fixture
+/// The author's own stored definition as it stands, and that definition at
+/// scope All, version "2".
+fn own_definition_widened(fixture: &Fixture) -> (AgentDefinition, AgentDefinition) {
+    let before = fixture
         .vault
         .get_agent_definition(&fixture.author)
         .expect("read the author")
         .expect("the author row");
+    let mut wider = before.clone();
     wider.scope = AgentScope::All;
     wider.version = "2".to_owned();
+    (before, wider)
+}
+
+#[test]
+fn agent_batch_widening_its_own_definition_stores_a_separate_proposal() {
+    let fixture = fixture();
+    let (before, wider) = own_definition_widened(&fixture);
     let write = put(
         &fixture.vault,
         fixture.author,
@@ -458,25 +596,20 @@ fn agent_batch_widening_the_scope_of_its_own_definition_leaves_a_proposal() {
         &wider,
         NOW + 5,
     );
-    assert_lands(
+    assert_proposed_change(
         "agent-memory/vault.batch/own-row/scope-base-to-all",
         &write,
         &fixture.vault,
         fixture.author,
-        Lands::Proposal,
+        &before,
+        "2",
     );
 }
 
 #[test]
-fn agent_raw_put_widening_the_scope_of_its_own_definition_leaves_a_proposal() {
+fn agent_raw_put_widening_its_own_definition_stores_a_separate_proposal() {
     let fixture = fixture();
-    let mut wider = fixture
-        .vault
-        .get_agent_definition(&fixture.author)
-        .expect("read the author")
-        .expect("the author row");
-    wider.scope = AgentScope::All;
-    wider.version = "2".to_owned();
+    let (before, wider) = own_definition_widened(&fixture);
     let write = put(
         &fixture.vault,
         fixture.author,
@@ -485,19 +618,21 @@ fn agent_raw_put_widening_the_scope_of_its_own_definition_leaves_a_proposal() {
         &wider,
         NOW + 5,
     );
-    assert_lands(
+    assert_proposed_change(
         "agent-memory/memory.raw_put_entity/own-row/scope-base-to-all",
         &write,
         &fixture.vault,
         fixture.author,
-        Lands::Proposal,
+        &before,
+        "2",
     );
 }
 
 #[test]
-fn agent_batch_widening_the_scope_of_a_definition_it_authored_leaves_a_proposal() {
+fn agent_batch_widening_a_definition_it_authored_stores_a_separate_proposal() {
     let fixture = fixture();
-    let (id, mut wider) = author_creates_child(&fixture, 0x79);
+    let (id, before) = author_creates_child(&fixture, fixture.author, 0x79);
+    let mut wider = before.clone();
     wider.scope = AgentScope::All;
     wider.version = "2".to_owned();
     let write = put(
@@ -508,19 +643,54 @@ fn agent_batch_widening_the_scope_of_a_definition_it_authored_leaves_a_proposal(
         &wider,
         NOW + 5,
     );
-    assert_lands(
+    assert_proposed_change(
         "agent-memory/vault.batch/authored-row/scope-base-to-all",
         &write,
         &fixture.vault,
         id,
-        Lands::Proposal,
+        &before,
+        "2",
+    );
+}
+
+/// An author whose own slice holds the wider grant holds the power to give
+/// it: its widening put of a definition it authored is applied.
+#[test]
+fn agent_batch_widening_inside_its_own_slice_is_applied() {
+    let fixture = fixture();
+    let (id, mut wider) = author_creates_child(&fixture, fixture.wide_author, 0x7B);
+    wider.scope = AgentScope::All;
+    wider.version = "2".to_owned();
+    let write = put(
+        &fixture.vault,
+        fixture.wide_author,
+        Door::Batch,
+        id,
+        &wider,
+        NOW + 5,
+    );
+    assert_lands(
+        "wide-agent-memory/vault.batch/authored-row/scope-base-to-all",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Active,
+    );
+    let stored = fixture
+        .vault
+        .get_agent_definition(&id)
+        .expect("read the child")
+        .expect("the child row");
+    assert!(
+        stored.scope == AgentScope::All && stored.version == "2",
+        "the widening inside the author's slice landed"
     );
 }
 
 #[test]
 fn agent_batch_edit_that_grants_a_stored_definition_nothing_new_stays_active() {
     let fixture = fixture();
-    let (id, mut edited) = author_creates_child(&fixture, 0x7A);
+    let (id, mut edited) = author_creates_child(&fixture, fixture.author, 0x7A);
     edited.instructions = Some("Count twice.\n".to_owned());
     edited.version = "2".to_owned();
     let write = put(
