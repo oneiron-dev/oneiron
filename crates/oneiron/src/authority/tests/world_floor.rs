@@ -1640,7 +1640,8 @@ fn laptop_key_record(
         *EntityId::now().as_bytes(),
     )
     .unwrap();
-    let envelope = seal_world_key(&binding, to, secret.public_key(), &key).unwrap();
+    let pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+    let envelope = seal_world_key(&binding, to, secret.public_key(), &key, &pad).unwrap();
     let record = WorldKeyWrapsRecord {
         key: *key.id(),
         commitment: binding.commitment,
@@ -1648,6 +1649,8 @@ fn laptop_key_record(
         policy: binding.policy,
         machine: start.laptop.0,
         wraps: vec![(to, envelope.to_bytes())],
+        request: None,
+        permitted: vec![to],
     };
     let entry = sign_ed(
         unsigned_entry(
