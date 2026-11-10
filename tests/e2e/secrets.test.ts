@@ -476,7 +476,9 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
     const origin = providers.urls.connector;
     if (!origin) throw new Error("SECRETS-03 connector origin was not assigned");
     const endpoint = `${origin}/mcp`;
-    const current = await EngineFixture.start({ id: "SECRETS-03", profile, serverLog: "debug",
+    // Debug for every workspace crate (EnvFilter matches targets by prefix, so "oneiron" covers oneiron_*); dependencies at
+    // info keep each server stream inside the harness 4 MiB scan window (job 4: RUST_LOG=debug truncated it, absence unproved).
+    const current = await EngineFixture.start({ id: "SECRETS-03", profile, serverLog: "info,oneiron=debug",
       serverConfig: `[connectors.secrets_probe]\ntransport = "mcp_http"\nendpoint = ${JSON.stringify(endpoint)}\n`,
     });
     engine = current;
@@ -878,7 +880,9 @@ suite.test(test, "SECRETS-06",
     const secrets06ScanJson = (label: string, value: unknown): void => {
       secrets06Scan(label, Buffer.from(JSON.stringify(value) ?? "", "utf8"));
     };
-    const engine = await EngineFixture.start({ id: "SECRETS-06", profile, serverLog: "debug" });
+    // Debug for every workspace crate (EnvFilter matches targets by prefix, so "oneiron" covers oneiron_*); dependencies at
+    // info keep each server stream inside the harness 4 MiB scan window (job 4: RUST_LOG=debug truncated it, absence unproved).
+    const engine = await EngineFixture.start({ id: "SECRETS-06", profile, serverLog: "info,oneiron=debug" });
     let secrets06BodyFailure: unknown = null;
     try {
       // Preserve exact wire bytes and generated input/result types, even on reads.
@@ -1411,7 +1415,9 @@ suite.test(test, "SECRETS-07", "Owner policy applies the same Allow, Warn, Block
   try {
     const policyOrigin = providers.urls.policy;
     if (!policyOrigin) throw new Error("SECRETS-07 policy fixture has no origin");
-    const engine = await EngineFixture.start({ id: "SECRETS-07", profile, serverLog: "debug", serverConfig: `
+    // Debug for every workspace crate (EnvFilter matches targets by prefix, so "oneiron" covers oneiron_*); dependencies at
+    // info keep each server stream inside the harness 4 MiB scan window (job 4: RUST_LOG=debug truncated it, absence unproved).
+    const engine = await EngineFixture.start({ id: "SECRETS-07", profile, serverLog: "info,oneiron=debug", serverConfig: `
 [models.providers.policy]
 kind = "local-openai-compat"
 base_url = "${policyOrigin}"
@@ -1737,7 +1743,8 @@ enabled = false
       await engine.close();
       const secrets07Logged = values.flatMap(value => [value, Buffer.from(value).toString("base64")]);
       const secrets07ServerOutput = engine.serverOutputHas(secrets07Logged);
-      expect({ check: "SECRETS-07 server logs carry no candidate and are complete", ok: secrets07ServerOutput.found === false && secrets07ServerOutput.truncated === false }).toEqual({ check: "SECRETS-07 server logs carry no candidate and are complete", ok: true });
+      expect({ check: "SECRETS-07 server logs carry no candidate", found: secrets07ServerOutput.found }).toEqual({ check: "SECRETS-07 server logs carry no candidate", found: false });
+      expect({ check: "SECRETS-07 server log window is complete", truncated: secrets07ServerOutput.truncated }).toEqual({ check: "SECRETS-07 server log window is complete", truncated: false });
     } catch (error) {
       secrets07BodyFailures.push(error);
     } finally {
@@ -2015,7 +2022,9 @@ suite.test(test, "SECRETS-09", "Owner policy is off by default; a configured bac
   try {
     const origin = providers.urls.policy;
     if (!origin) throw new Error("SECRETS-09 scripted policy origin is absent");
-    const engine = await EngineFixture.start({ id: "SECRETS-09", profile, serverLog: "debug", serverConfig: `
+    // Debug for every workspace crate (EnvFilter matches targets by prefix, so "oneiron" covers oneiron_*); dependencies at
+    // info keep each server stream inside the harness 4 MiB scan window (job 4: RUST_LOG=debug truncated it, absence unproved).
+    const engine = await EngineFixture.start({ id: "SECRETS-09", profile, serverLog: "info,oneiron=debug", serverConfig: `
 [models.providers.policy]
 kind = "local-openai-compat"
 base_url = "${origin}"
@@ -2254,12 +2263,14 @@ enabled = false
         secrets09Scan(bytes, needles, "SECRETS-09 export member bytes exclude raw and base64 values");
       }
       await engine.close();
-      expect({ check: "SECRETS-09 server output excludes raw and base64 needles", ok: engine.serverOutputHas(needles).found === false
-        && engine.serverOutputHas(needles).truncated === false })
-        .toEqual({ check: "SECRETS-09 server output excludes raw and base64 needles", ok: true });
-      expect({ check: "SECRETS-09 server output excludes the candidate pair", ok: engine.serverOutputHas([value, base64]).found === false
-        && engine.serverOutputHas([value, base64]).truncated === false })
-        .toEqual({ check: "SECRETS-09 server output excludes the candidate pair", ok: true });
+      const secrets09NeedleScan = engine.serverOutputHas(needles);
+      const secrets09PairScan = engine.serverOutputHas([value, base64]);
+      expect({ check: "SECRETS-09 server output excludes raw and base64 needles", found: secrets09NeedleScan.found })
+        .toEqual({ check: "SECRETS-09 server output excludes raw and base64 needles", found: false });
+      expect({ check: "SECRETS-09 server output excludes the candidate pair", found: secrets09PairScan.found })
+        .toEqual({ check: "SECRETS-09 server output excludes the candidate pair", found: false });
+      expect({ check: "SECRETS-09 server log window is complete", truncated: secrets09NeedleScan.truncated || secrets09PairScan.truncated })
+        .toEqual({ check: "SECRETS-09 server log window is complete", truncated: false });
     } catch (error) {
       secrets09BodyError = error;
     }
