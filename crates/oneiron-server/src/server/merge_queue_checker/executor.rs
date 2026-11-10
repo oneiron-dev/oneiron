@@ -22,8 +22,8 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::Duration;
 
 use oneiron::code_sandbox::SandboxGuestTier;
-use oneiron::code_sandbox::egress::ProcessDescriptorFloor;
 use oneiron::code_sandbox::microvm::{MicroVmBackend, SandboxBackends, select_backend_for_session};
+use oneiron::host_net_floor::ProcessDescriptorFloor;
 use oneiron::merge_queue::{
     QueueCheckEnvironment, QueueCheckExecution, QueueCheckHold, QueueCheckHoldReason,
     QueueCheckHost, QueueCheckInputs, QueueCheckInvocation, QueueCheckNeed, QueueCheckRun,

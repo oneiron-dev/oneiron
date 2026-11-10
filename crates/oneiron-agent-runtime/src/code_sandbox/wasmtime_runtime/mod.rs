@@ -16,13 +16,13 @@ pub mod bindings {
     wasmtime::component::bindgen!({ path: "../oneiron/wit", world: "guest" });
 }
 
-use super::guest_error::guest_failure;
 use super::source::{PreparedSource, prepare_source};
 use super::{SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
     CANCEL_POLL_SLICE, JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep,
     JsCodeModeStepOutcome, JsCodeModeStream, StepCancellation,
 };
+use crate::guest_error::guest_failure;
 use crate::{Error, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
