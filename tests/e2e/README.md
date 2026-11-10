@@ -202,6 +202,8 @@ text; they still fail the strict vector fixture until explicitly authored.
   `claimUpsert`, `recall`, `receipts`; Python inputs are native snake_case.
   The Node driver also takes `{verb:"facade", path, input}`: any generated
   facade method by its dotted SDK path as the package spells it, no casing conversion.
+  Each Node result row also carries `receiptRef`: the handle's `lastReceiptRef()` right
+  after that operation, refusals included.
   Per-operation `{ok:false,error}` retains SDK errors; assert them explicitly.
   Broader SDK journeys may use an owned real process and the public package,
   never a private binding or Rust helper. `sdk.pair(link)` redeems through the

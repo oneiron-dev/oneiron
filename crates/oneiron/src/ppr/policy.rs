@@ -72,7 +72,7 @@ pub(super) fn vad_multiplier(vad: Option<Vad>, alpha: f32) -> f32 {
 pub(crate) fn canonical_vad_alpha(alpha: f32) -> f32 {
     if alpha == 0.0 { 0.0 } else { alpha }
 }
-pub(super) fn seed_weights_with_deadline(
+pub(crate) fn seed_weights_with_deadline(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],

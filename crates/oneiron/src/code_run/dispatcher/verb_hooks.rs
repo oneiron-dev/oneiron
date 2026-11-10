@@ -471,9 +471,10 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
             json!({"denied": value.outcome, "reasonCodes": value.reason_codes})
         }
         SelfDispatchOutcome::Failed(_) => json!({"failed": true}),
-        SelfDispatchOutcome::AgentDefinitionPut(value) => {
-            json!({"id": value.id.to_hex(), "disposition": value.disposition.as_str()})
-        }
+        SelfDispatchOutcome::AgentDefinitionPut(value) => json!({"output": {
+            "id": value.id.to_hex(),
+            "disposition": value.disposition.as_str(),
+        }}),
         SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref, .. }) => {
             json!({
                 "kind": "agent_spawn",

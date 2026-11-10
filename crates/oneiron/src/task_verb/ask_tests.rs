@@ -229,7 +229,8 @@ fn cancelled_ask_member_cannot_answer_or_mint_a_wait_trap() -> Result<()> {
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = vault.ensure_embedded_owner_actor()?;
     vault.mint_standing_outbound_grant(
-        &EntityId::now(),
+        &crate::test_util::embedded_owner_proof(&vault),
+        EntityId::now(),
         &crate::genui::GrantMintIntent {
             principal_ref: owner.to_hex(),
             origin_component_id: "tasks".into(),
@@ -239,7 +240,6 @@ fn cancelled_ask_member_cannot_answer_or_mint_a_wait_trap() -> Result<()> {
                 verb_class: AgentVerb::Cancel.as_str().into(),
             },
         },
-        1,
     )?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
     let receipt = memory.tasks_ask(&spec(&vault, owner, "cancelled"))?;
@@ -2527,7 +2527,8 @@ fn pending_soft_confirm_recovers_route_and_remains_gated_without_authorization()
             Some(TaskAskSoftConfirmDelivery::PendingGate)
         );
         reopened.mint_standing_outbound_grant(
-            &EntityId::now(),
+            &crate::test_util::embedded_owner_proof(&reopened),
+            EntityId::now(),
             &GrantMintIntent {
                 principal_ref: companion.to_hex(),
                 origin_component_id: "tasks".into(),
@@ -2537,7 +2538,6 @@ fn pending_soft_confirm_recovers_route_and_remains_gated_without_authorization()
                     verb_class: "send".into(),
                 },
             },
-            1_000,
         )?;
         assert_eq!(reopened.retry_pending_ask_soft_confirms(64)?, 1);
         assert_eq!(
