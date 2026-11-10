@@ -13,7 +13,7 @@
 
 use oneiron_code_check::{
     CheckFailure, CheckInput, CodeCheck, Declaration, MICROSOFT_TS_VERSION, MicrosoftTsc,
-    ProgramLanguage,
+    ProgramLanguage, TscRsBudget, TscRsWasm,
 };
 use sha2::{Digest, Sha512};
 use std::path::PathBuf;
