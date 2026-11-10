@@ -24,6 +24,8 @@ fn on_device_request() -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OnDevice,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,

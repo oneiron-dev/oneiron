@@ -63,6 +63,7 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
     );
     let session = oneiron::task_verb::verb_hook_boundary::hook_session_for_call(
         Some(memory),
+        &oneiron::verbs::VERB_TABLE,
         tool,
         &input,
         held.as_ref(),
