@@ -519,8 +519,13 @@ fn mint_agent_credential(
                 .map_err(anyhow::Error::from)
         })
         .and_then(|replaced| {
+            // ARCH-0028: one name is one agent principal, of class `agent`.
+            // The binding makes the PERSON one of this vault's own agents,
+            // so a credential that carries the vault's write grant holds
+            // the off-record save grant too (ARCH-0052 d5, PRIVACY-07). It
+            // lands with the grant, in one writer.
             vault
-                .grant_agent_principal(&owner, &principal, ceiling)
+                .bind_and_grant_agent_principal(&issuer, &owner, agent, ceiling)
                 .map_err(anyhow::Error::from)?;
             Ok(replaced)
         });
