@@ -268,6 +268,40 @@ impl TaskPair {
             .ensure_embedded_owner_actor()
             .expect("store the owner actor");
         converge(&a, &b, &window);
+        // FIX (9062f8d0f89 #1346): the embedded owner has no default Agent
+        // Auto ceiling. Author a separate pack so the default seed stays
+        // unchanged for the harness's initial-unshared-seed guard. Install it
+        // BEFORE minting the cancel grant, which binds to the policy frontier.
+        let policy_pack_ref = EntityId::now();
+        let policy_pack = rmpv::Value::Map(vec![
+            (rmpv::Value::from("schema_version"), rmpv::Value::from("1.2")),
+            (
+                rmpv::Value::from("pack_id"),
+                rmpv::Value::from("task-authority-owner-ceiling"),
+            ),
+            (rmpv::Value::from("pack_version"), rmpv::Value::from("1.0.0")),
+            (
+                rmpv::Value::from("min_engine_version"),
+                rmpv::Value::from("0.0.0"),
+            ),
+            (rmpv::Value::from("defaults"), rmpv::Value::Map(vec![])),
+            (rmpv::Value::from("rules"), rmpv::Value::Array(vec![])),
+            (
+                rmpv::Value::from("actor_ceilings"),
+                rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                    (rmpv::Value::from("actor_class"), rmpv::Value::from("agent")),
+                    (
+                        rmpv::Value::from("actor_ref"),
+                        rmpv::Value::from(owner.to_hex()),
+                    ),
+                    (rmpv::Value::from("ceiling"), rmpv::Value::from("auto")),
+                ])]),
+            ),
+        ]);
+        let mut policy_pack_bytes = Vec::new();
+        rmpv::encode::write_value(&mut policy_pack_bytes, &policy_pack)
+            .expect("writing MessagePack to a Vec cannot fail");
+
         // Each device holds the owner's standing cancel grant: the authority to
         // stop one's own work is not something a second machine borrows over
         // the wire. The owner, whose row node B now holds, mints it on each
@@ -278,16 +312,12 @@ impl TaskPair {
                 .vault
                 .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
                 .expect("the owner authenticates on each device");
-            // FIX (9062f8d0f89 #1346): the embedded owner has no default agent
-            // Auto ceiling (only the first-party E1 actor does), so `tasks.create`
-            // would park a proposal. Grant it on each device, for the create and
-            // the peer cancel, BEFORE minting the cancel grant: a standing grant
-            // binds to the policy frontier current at mint.
             node.vault
-                .grant_agent_principal(
+                .install_owner_policy_manifest(
                     &proof,
-                    &owner.to_hex(),
-                    oneiron::store::agent_record::AgentCeiling::Auto,
+                    policy_pack_ref,
+                    policy_pack_bytes.clone(),
+                    now,
                 )
                 .expect("grant the owner's agent Auto ceiling on each device");
             node.vault
