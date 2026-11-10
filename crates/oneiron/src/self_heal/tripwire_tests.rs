@@ -91,8 +91,9 @@ fn unavailable_or_oversized_tripwire_inputs_are_not_reported_as_healthy() {
             .put(txn, b"retr_run:v0:invalid-key", b"invalid-row")
     })
     .unwrap();
+    // 9811925ae45: the limit arg is gone; every stored run is read.
     assert!(matches!(
-        v.run_retrieval_miss_detector("corrupt", 10),
+        v.run_retrieval_miss_detector("corrupt"),
         Err(crate::Error::CorruptedIndex(_))
     ));
     let receipts =

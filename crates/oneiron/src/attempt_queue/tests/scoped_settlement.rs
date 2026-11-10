@@ -7,6 +7,18 @@ const KEY: &str = "shared";
 const ACTOR_A: &str = "actor-a";
 const ACTOR_B: &str = "actor-b";
 
+/// The pre-BLAKE3 dedupe key bytes (`be16(kind.len()) || kind || key`),
+/// frozen here: 41b4a5f8f11 (#3369, C069) deleted the helper and every call
+/// ("the raw dedupe fallback is gone"), so the queue never reads or writes
+/// this key again. Settlement still must not touch it.
+fn legacy_dedupe_index_key(kind: &str, dedupe_key: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(2 + kind.len() + dedupe_key.len());
+    key.extend_from_slice(&(kind.len() as u16).to_be_bytes());
+    key.extend_from_slice(kind.as_bytes());
+    key.extend_from_slice(dedupe_key.as_bytes());
+    key
+}
+
 fn enqueue_actor(vault: &Vault, queue: &AttemptQueue<'_>, actor: &str) -> Result<AttemptRecord> {
     let mut wtxn = vault.store.env.write_txn()?;
     let EnqueueOutcome::Enqueued(record) = queue.enqueue_with_task_ref_and_dedupe_actor_in_txn(
