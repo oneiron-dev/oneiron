@@ -6,7 +6,9 @@ use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
 };
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
-use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use oneiron::registry::{
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
+};
 use oneiron::{
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DreamerConsolidationScope, EdgeKind, SessionEndWake,
     SessionMintOutcome, TimeRange, VaultConfig, dreamer_consolidation::decode_partition_payload,
@@ -199,6 +201,42 @@ fn meso_wake(vault: &Vault, session: &EntityId) -> SessionEndWake {
 fn sitting_key(vault: &Vault) -> SessionKey {
     let actor = EntityId::from_bytes([0x5e; 16]).expect("actor id");
     vault.local_session_key(actor).expect("local session key")
+}
+
+/// Witness into an open sitting so its close can plan the turn (OF-536).
+fn witness_dirty_turn(
+    vault: &Vault,
+    key: SessionKey,
+    conversation: &EntityId,
+    learned_at: u64,
+) -> EntityId {
+    vault
+        .put_entity(
+            &key.actor,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"fixture person",
+        )
+        .expect("provision sitting actor");
+    let witness_turn: oneiron::WitnessTurn = serde_json::from_value(serde_json::json!({
+        "conversation_ref": conversation.to_hex(),
+        "messages": [{
+            "author": "user",
+            "message_type": "dialogue",
+            "content": "sitting turn",
+            "is_visible": true,
+            "order": 0,
+        }],
+        "occurred_at": learned_at,
+    }))
+    .expect("witness input");
+    vault
+        .memory(key.actor, oneiron::EdgeActorClass::Human)
+        .with_session(key)
+        .witness(&witness_turn)
+        .expect("witness turn")
+        .turn_id
 }
 
 fn driver(
@@ -424,12 +462,13 @@ fn a_completed_wake_attempt_is_never_recreated_by_a_later_close_attempt() {
         clock,
     );
     let conversation = seed_conversation(&vault, 0x61);
-    seed_dirty_turn(&vault, &conversation, 999);
+    let key = sitting_key(&vault);
 
     let SessionHintEffect::Minted(id) = apply_now(&driver, SessionHint::AppOpen).expect("open")
     else {
         panic!("expected mint");
     };
+    witness_dirty_turn(&vault, key, &conversation, 999);
     now.store(1_060_000, Ordering::Release);
     let SessionHintEffect::Ended(_) = apply_now(&driver, SessionHint::ExplicitEnd).expect("end")
     else {
@@ -652,7 +691,6 @@ async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
     let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let conversation = seed_conversation(&vault, 0x62);
-    seed_dirty_turn(&vault, &conversation, 999_999);
 
     hint.push_session_hint(key, SessionHint::AppOpen, None)
         .expect("open channel");
@@ -662,6 +700,7 @@ async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
         .expect("read")
         .expect("A open")
         .session;
+    witness_dirty_turn(&vault, key, &conversation, 999_999);
 
     // ExplicitEnd then AppOpen, buffered together: arrival order is
     // lifecycle causality — A ends, then a NEW sitting B mints. The old
@@ -941,7 +980,7 @@ async fn ready_meso_deadline_beats_an_applied_pending_hint() {
         Ok(SessionHintEffect::Minted(_))
     ));
     let conversation = seed_conversation(&vault, 0x72);
-    seed_dirty_turn(&vault, &conversation, 999_999);
+    witness_dirty_turn(&vault, key, &conversation, 999_999);
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
     let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);

@@ -754,8 +754,6 @@ async fn presentation_failure_does_not_repeat_digest_tick_or_starve_macro_and_pu
         Arc::clone(&now_ms),
     );
     let (push, wake, _hint) = PushTick::channel_with_clock(now_ms, 1_000);
-    wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
-        .unwrap();
     let mut ticks = HybridTick::new(timer, push);
     let first = ticks.next_tick().await.unwrap();
     assert!(
@@ -813,6 +811,10 @@ async fn presentation_failure_does_not_repeat_digest_tick_or_starve_macro_and_pu
         store.status(macro_id).unwrap().unwrap().attempt.state,
         AttemptState::Completed
     );
+    // FIX 11403: a buffered push takes the first turn ahead of a due deadline.
+    // Queue it after the deadline reads, while the digest fault is still present.
+    wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+        .unwrap();
     let third = tokio::time::timeout(Duration::from_secs(2), ticks.next_tick())
         .await
         .unwrap();

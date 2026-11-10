@@ -90,6 +90,24 @@ fn planning_attempt_applies_cut_and_dispatch_reads_live_completion() -> WaveResu
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = EntityId::now();
     let epic = fixture(&vault, owner)?;
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    let owner_proof = vault.authenticate_owner(
+        owner,
+        "principal:wave-plan",
+        true,
+        oneiron::store::GateDecisionId::now(),
+    )?;
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .set_consult_fanout_policy(
+            &owner_proof,
+            &oneiron::task_verb::ConsultFanOutPolicy {
+                mode: oneiron::task_verb::ConsultFanOutMode::FullAccess,
+                ..Default::default()
+            },
+        )
+        .expect("owner permits the planned cut to launch without a decision ladder");
     vault.enqueue_wave_plan(epic, "do work", serde_json::json!({"budget":2}), 100)?;
     let planner = AgentPlanner {
         seen: RefCell::new(Vec::new()),
