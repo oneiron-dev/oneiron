@@ -5,9 +5,12 @@
 //! or an agent whose live Grant names the act (`free_time_policy_set`, FIX
 //! 5660), its Grant checked again in the write; the engine stamps the
 //! revision, who set it and the time. Neither the agent's words nor a hosted
-//! root stand in for the owner. Every set and clear is also signed as a
-//! `PolicySettingSet` every machine the owner admits folds and checks, best
-//! effort: the row stands whatever that meets.
+//! root stand in for the owner. Every set and clear by the owner or by such
+//! an agent is also signed as a `PolicySettingSet` every machine the owner
+//! admits folds and checks, best effort: the row stands whatever that meets.
+//! A holder of `engine.controls` moves only the schedule of a policy that
+//! stands; that move leaves no signed act, and its record is the
+//! engine-control receipt.
 
 use serde::{Deserialize, Serialize};
 
@@ -97,9 +100,10 @@ pub struct FreeTimePolicy {
     /// agent's set (`set_by_agent`), and once that owner was erased (FIX
     /// 8875). Audit only; no rule reads it.
     pub set_by: Option<EntityId>,
-    /// The agent whose act within its live Grant set it (FIX 5660), its
-    /// signed record naming the Grant; `None` for the owner's own set, and
-    /// once that agent was erased. Audit only; no rule reads it.
+    /// The agent whose act set it: within its live Grant (FIX 5660), its
+    /// signed record naming the Grant, or a holder's schedule move, whose
+    /// record is the engine-control receipt; `None` for the owner's own set,
+    /// and once that agent was erased. Audit only; no rule reads it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set_by_agent: Option<EntityId>,
     /// The Grant the agent's set acted under (FIX 11608); `None` for the
@@ -475,9 +479,13 @@ impl Vault {
     /// S66B-BUDGETS B2 = A), replacing revision `expected_revision`. The
     /// policy must stand: setting or clearing one chooses a cap, which is the
     /// owner's act. Its `total_units`, `cap_shown_at_ms` and pinned split
-    /// stay as the owner set them. The act is the vault owner's, made by the
-    /// holder through its grant (`ActBy::Agent`), as an agent's set within a
-    /// live Grant is. Returns the receipt and the policy now in force.
+    /// stay as the owner set them. The row stamps the holder and its grant
+    /// (`set_by_agent`, `set_grant`), and the record of the move is the
+    /// engine-control receipt, as for every other holder door. Unlike the
+    /// owner's set or a set by an agent whose Grant names
+    /// `free_time_policy_set`, a holder's move leaves no signed
+    /// `PolicySettingSet` (review of #6918). Returns the receipt and the
+    /// policy now in force.
     ///
     /// # Errors
     /// `InvalidConfig` when `holder` holds no live `engine.controls` or no
@@ -511,10 +519,6 @@ impl Vault {
                             "this holder holds no live engine.controls.wake_cadence".into(),
                         )
                     })?;
-                let owner = crate::policy_model::owners_in_txn(self, txn)?
-                    .first()
-                    .copied()
-                    .ok_or_else(|| Error::InvalidConfig("this vault has no owner".into()))?;
                 self.read_agent_definition_in_txn(txn, &agent)?;
                 let record = current_revision_in_txn(self, txn, agent, expected_revision)?;
                 let Some(prior) = record.as_ref().and_then(|record| record.policy.clone()) else {
@@ -547,16 +551,11 @@ impl Vault {
                 let record =
                     FreeTimePolicyRecord::after(record, agent, Some(policy.clone()), holder, set_at)?;
                 POLICY.put(&self.store, txn, &agent, &record)?;
-                let actor = FreeTimeActor {
-                    owner,
-                    by: ActBy::Agent {
-                        agent: holder,
-                        grant,
-                    },
-                    acting: holder,
-                    surface: None,
-                };
-                record_act_in_txn(self, txn, &actor, agent, Some(&prior), Some(&policy));
+                // No signed `PolicySettingSet` here: the authority checker
+                // admits an agent's free-time act only under a grant that
+                // names `free_time_policy_set`, which is the whole set and
+                // clear, and `engine.controls` must not give that. The
+                // receipt this door returns is the record of the move.
                 set = Some(policy);
                 Ok(())
             },
