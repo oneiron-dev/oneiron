@@ -99,10 +99,7 @@ fn installed_hub_catalog_parity_and_capability_admission() -> Result<()> {
         temporal::TimeRange,
     };
     let source = pack_fixture()?;
-    assert_eq!(
-        source.content_hash().to_hex(),
-        MODEL_PACK_HASH
-    );
+    assert_eq!(source.content_hash().to_hex(), MODEL_PACK_HASH);
     // Install admission resolves the seeded policy manifest.
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
