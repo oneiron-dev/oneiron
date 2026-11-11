@@ -167,7 +167,9 @@ fn block_on<F: Future>(future: F) -> F::Output {
 #[test]
 fn claim_recheck_verdict_is_decided_on_the_ladder() -> TestResult {
     let directory = tempfile::tempdir()?;
-    let vault = Vault::open(directory.path(), VaultConfig::default())?;
+    // The seed installs the mail pack and syncs the source as the embedded
+    // owner, whose proof needs the vault's writer lease: open it owned.
+    let vault = Vault::open_owned(directory.path(), VaultConfig::default())?;
     let _owner = vault.ensure_embedded_owner_actor()?;
     let now_ms = u64::try_from(
         std::time::SystemTime::now()
