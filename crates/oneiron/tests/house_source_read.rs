@@ -9,9 +9,11 @@
 //! a question that reached the ladder settles `NotAProject`, one whose source
 //! the house may not read settles `Unread` with no call. The CLAIM cases keep
 //! the no-proof MESSAGE floor separate from its own Grant or verified slip.
-//! No `cfg` is needed. The bound-house case names the role the house runs
-//! its org at, which the bind takes since HOUSE-BIND = A; the other four
-//! cases use doors on main.
+//! No `cfg` is needed. The two bound-house cases name the role the house
+//! runs its org at, which the bind takes since HOUSE-BIND = A; the other
+//! four cases use doors on main. The bound house's verified slip reads a
+//! CLAIM as the seeded house's does: its engine-default row, like the
+//! shipped one, is left out of a read that carries an explicit Scope.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -329,23 +331,21 @@ fn the_seeded_houses_verified_read_slip_still_reads_a_claim() -> TestResult {
     Ok(())
 }
 
-#[test]
-fn after_a_workspace_finish_the_bound_house_reads_the_owners_unscoped_message() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+/// A host start, then the owner's finish of a workspace whose house is
+/// `sys.default`, a seeded AGENT_DEF other than the root's seeded leader, at
+/// role member. The host start roots the vault under the host, binds the
+/// owner, and gives the root its first signature (`oneiron-server`
+/// `sign_root_project`). Returns the host's issuer, the owner and the house.
+fn finish_with_bound_house(vault: &Vault) -> Result<(HostSlipIssuer, EntityId, EntityId)> {
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
-    // A host start: the vault is rooted under the host, the owner bound, and
-    // the root takes its first signature (`oneiron-server` `sign_root_project`).
-    let issuer = oneiron::test_support::provision_engine_machines(&vault);
-    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    let issuer = oneiron::test_support::provision_engine_machines(vault);
+    oneiron::test_support::bind_host_owner(vault, &issuer, owner)?;
     let owner_proof =
         vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let signer = vault.owner_project_signer(&issuer)?;
     let root = vault.root_project()?;
     vault.sign_owner_project(&owner_proof, &signer, root)?;
 
-    // The owner's finish of a workspace whose house is a seeded AGENT_DEF
-    // other than the root's seeded leader.
     let (house, _) = vault
         .get_seeded_agent_definition_by_logical_id("sys.default")?
         .expect("sys.default is seeded on open");
@@ -378,6 +378,14 @@ fn after_a_workspace_finish_the_bound_house_reads_the_owners_unscoped_message() 
         Some(house.to_hex()),
         "the workspace's house leads the root"
     );
+    Ok((issuer, owner, house))
+}
+
+#[test]
+fn after_a_workspace_finish_the_bound_house_reads_the_owners_unscoped_message() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let (_issuer, owner, _house) = finish_with_bound_house(&vault)?;
 
     let decider = CountingDecider::new();
     owner_turn(&vault, owner, serde_json::json!({}));
@@ -402,6 +410,53 @@ fn after_a_workspace_finish_the_bound_house_reads_the_owners_unscoped_message() 
         decider.calls(),
         2,
         "the second question reached the ladder too"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_bound_houses_verified_read_slip_still_reads_a_claim() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let (issuer, owner, house) = finish_with_bound_house(&vault)?;
+    let claim = owner_claim(&vault, owner)?;
+
+    let no_proof = vault
+        .scoped_read(
+            ScopedReadActorKey::with_actor_class(house.to_hex(), "agent")
+                .expect("the bound house has an agent read key"),
+        )
+        .read(&[PointRead::id(claim)], None)?
+        .single();
+    assert_eq!(
+        no_proof.value.as_ref().map(|row| row.id),
+        None,
+        "the bound house's no-proof key must not read an owner CLAIM outside the MESSAGE band"
+    );
+
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = [0xaa; 32];
+    claims.holder_ref = house.to_hex();
+    claims.actor_class = Some("agent".to_owned());
+    claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    claims.expires_at = claims.issued_at + 600;
+    claims.ttl_secs = 600;
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let challenge = b"bound-house-claim-point-read";
+    let signature = issuer.binding_proof(&slip, challenge)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, challenge, &signature)?;
+    assert_eq!(proof.claims().holder_ref, house.to_hex());
+    assert_eq!(proof.claims().actor_class.as_deref(), Some("agent"));
+    let key = ScopedReadActorKey::from_verified_slip(&proof)
+        .expect("the bound house's verified slip carries read");
+    let read = vault
+        .scoped_read(key)
+        .read(&[PointRead::id(claim)], None)?
+        .single();
+    assert_eq!(
+        read.value.as_ref().map(|row| row.id),
+        Some(claim),
+        "the bound house's verified read slip must still point-read the owner's CLAIM"
     );
     Ok(())
 }
