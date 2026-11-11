@@ -1,7 +1,8 @@
 /* Where the note of an information mark goes. To the right of the block
    the mark sits in when there is room there; otherwise under the mark,
-   its right edge on the mark's right edge. Pure: callers measure, this
-   computes. */
+   its right edge on the mark's right edge (above the mark instead when the
+   viewport has no room under it and more above). Pure: callers measure,
+   this computes. */
 
 /* The resting delay before the note shows. */
 export const INFO_NOTE_DELAY_MS = 160
@@ -24,7 +25,7 @@ export interface NoteRect {
 }
 
 export interface InfoNotePlacement {
-  side: 'right' | 'under'
+  side: 'right' | 'under' | 'above'
   left: number
   top: number
   width: number
@@ -57,7 +58,16 @@ export function placeInfoNote(
     const markInView = mark.top + mark.height > 0 && mark.top < viewport.height
     placement.left = Math.max(MARGIN_PX, Math.min(placement.left, viewport.width - MARGIN_PX - placement.width))
     if (markInView && noteHeight > 0) {
-      placement.top = Math.max(MARGIN_PX, Math.min(placement.top, viewport.height - MARGIN_PX - noteHeight))
+      const roomUnder = viewport.height - MARGIN_PX - (mark.top + mark.height + INFO_NOTE_UNDER_GAP_PX)
+      const roomAbove = mark.top - INFO_NOTE_UNDER_GAP_PX - MARGIN_PX
+      if (placement.side === 'under' && roomUnder < noteHeight && roomAbove > roomUnder) {
+        /* Under would cover the row: the note goes above the mark. */
+        placement.side = 'above'
+        placement.top = mark.top - INFO_NOTE_UNDER_GAP_PX - noteHeight
+      } else if (placement.side === 'right') {
+        placement.top = Math.min(placement.top, viewport.height - MARGIN_PX - noteHeight)
+      }
+      placement.top = Math.max(MARGIN_PX, placement.top)
     }
   }
   placement.left = Math.round(placement.left)

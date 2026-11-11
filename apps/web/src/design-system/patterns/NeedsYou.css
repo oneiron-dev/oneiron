@@ -105,6 +105,11 @@
   transform: scale(0.96);
 }
 
+/* The clock of an answers line outside an ask sits at its right end. */
+.sl-needs-you-answers > .sl-needs-you-later {
+  margin-left: auto;
+}
+
 /* Chips: each answer on the chip tone; hover lifts it to the disc tone.
    The pencil and the cross are quieter than the words. */
 .sl-needs-you-answers[data-answers="chips"] .sl-needs-you-answer {

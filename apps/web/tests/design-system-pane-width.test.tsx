@@ -6,6 +6,7 @@ import { SplitPane } from '../src/design-system/patterns/SplitPane'
 import {
   COLUMN_ROOM_PX,
   LIST_PANE_PX,
+  SPLIT_EDGE_PX,
   THING_PANE_MAX_PX,
   THING_PANE_MIN_PX,
   paneBounds,
@@ -29,12 +30,13 @@ describe('the pane width rule', () => {
     assert.equal(paneWidth('list', 2400, 248), 340)
   })
 
-  test('a pane for one thing takes what the column leaves: the width less the sidebar less 620 + 92', () => {
+  test('a pane for one thing takes what the column leaves: the width less the sidebar less 620 + 92, less the 1 px edge', () => {
     assert.equal(COLUMN_ROOM_PX, 92)
+    assert.equal(SPLIT_EDGE_PX, 1)
     /* The sheet of a 1440 px window: 1374 px, a 248 px sidebar. */
-    assert.equal(paneWidth('thing', 1374, 248), 1374 - 248 - 712)
+    assert.equal(paneWidth('thing', 1374, 248), 1374 - 248 - 712 - 1)
     /* The same inside the work area alone. */
-    assert.equal(paneWidth('thing', 1126), 1126 - 712)
+    assert.equal(paneWidth('thing', 1126), 1126 - 712 - 1)
   })
 
   test('never under 380 px, never over 680 px', () => {
@@ -42,8 +44,8 @@ describe('the pane width rule', () => {
     assert.equal(THING_PANE_MAX_PX, 680)
     assert.equal(paneWidth('thing', 1034, 248), 380)
     assert.equal(paneWidth('thing', 2560, 248), 680)
-    assert.equal(paneWidth('thing', 712 + 380), 380)
-    assert.equal(paneWidth('thing', 712 + 381), 381)
+    assert.equal(paneWidth('thing', 713 + 380), 380)
+    assert.equal(paneWidth('thing', 713 + 381), 381)
   })
 
   test('the drag bounds', () => {
@@ -53,7 +55,7 @@ describe('the pane width rule', () => {
 
   test('the CSS track carries the same rule', () => {
     assert.equal(paneTrack('list'), '340px')
-    assert.equal(paneTrack('thing', 248), 'clamp(380px, calc(100% - 248px - (var(--sl-col, 620px) + 92px)), 680px)')
+    assert.equal(paneTrack('thing', 248), 'clamp(380px, calc(100% - 248px - (var(--sl-col, 620px) + 92px) - 1px), 680px)')
   })
 })
 

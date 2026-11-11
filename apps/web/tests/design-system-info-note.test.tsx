@@ -42,12 +42,26 @@ describe('placeInfoNote', () => {
     assert.equal(placeInfoNote(inner, block, 1260).side, 'under')
   })
 
-  test('inside the viewport: an under note near the left edge keeps the margin; a tall note stays above the foot', () => {
-    const near = { left: 20, top: 700, width: 30, height: 30 }
-    const p = placeInfoNote(near, { left: 0, top: 690, width: 600, height: 60 }, 800, 120, { width: 800, height: 800 })
+  test('inside the viewport: an under note near the left edge keeps the margin', () => {
+    const near = { left: 20, top: 300, width: 30, height: 30 }
+    const p = placeInfoNote(near, { left: 0, top: 290, width: 600, height: 60 }, 800, 120, { width: 800, height: 800 })
     assert.equal(p.side, 'under')
     assert.equal(p.left, 8)
-    assert.equal(p.top, 800 - 8 - 120)
+    assert.equal(p.top, 334)
+  })
+
+  test('no room under the mark near the foot of the viewport: the note goes above it, never over the row', () => {
+    const near = { left: 600, top: 700, width: 30, height: 30 }
+    const p = placeInfoNote(near, { left: 0, top: 690, width: 640, height: 60 }, 800, 120, { width: 800, height: 800 })
+    assert.equal(p.side, 'above')
+    assert.equal(p.top, 700 - 4 - 120)
+  })
+
+  test('a note beside the block stays above the foot of the viewport', () => {
+    const low = { left: 884, top: 840, width: 30, height: 30 }
+    const p = placeInfoNote(low, { ...block, top: 830 }, 1400, 90, { width: 1400, height: 900 })
+    assert.equal(p.side, 'right')
+    assert.equal(p.top, 900 - 8 - 90)
   })
 })
 

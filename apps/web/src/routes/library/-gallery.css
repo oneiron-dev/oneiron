@@ -401,7 +401,46 @@
 .lib-messages {
   display: flex;
   flex-direction: column;
-  padding: 0 8px;
+}
+
+/* The column demo: the card under a message keeps a little air. */
+.lib-column-card {
+  margin-top: 10px;
+}
+
+.lib-pin-mark {
+  display: inline-grid;
+}
+
+/* A block with an information mark: a raised card, the column's width. */
+.lib-info-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: var(--sl-col);
+  min-height: 44px;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
+}
+
+.lib-info-title {
+  flex: 1;
+  font-size: var(--sl-t-say);
+  color: var(--sl-ink-1);
+}
+
+/* A clipping area only a little wider than the block: no room beside it.
+   The space under the block is for the note. */
+.lib-info-narrow {
+  width: calc(var(--sl-col) + 40px);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.lib-info-narrow .lib-info-block {
+  margin-bottom: 120px;
 }
 
 .lib-crew-right {
