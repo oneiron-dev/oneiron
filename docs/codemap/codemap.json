@@ -31311,7 +31311,7 @@
      "path": "src/dreamer_consolidation/stage_log.rs",
      "purpose": "The one line a consolidation partition attempt logs when it ends (L07 DREAM-OBSERVE): the wall ms of each…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 14
      }
     },
     {
@@ -67449,7 +67449,7 @@
      "path": "src/recovery/checkpoint/authority_plane.rs",
      "purpose": "A historical restore gives content as it stood, never authority as it stood",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -68043,7 +68043,7 @@
      "path": "src/recovery/checkpoint/payload/restore.rs",
      "purpose": "KS7-5 restore: every compartment the artifact's payload names is required through the restore's one custody…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -90920,6 +90920,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ClosedModelRun"
+     ],
+     "path": "src/test_doors/dreamer_stage_line.rs",
+     "purpose": "Doors for `tests/dreamer_stage_line.rs` (FIX 21929): a partition's stage clock closed at set instants, and…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/esign_seal_verify_reasons.rs",
      "purpose": "Door for `tests/esign_seal_verify_reasons.rs`, declared inside e-sign so it can reach the ledger writer…",
@@ -90995,7 +91008,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 27
+      "mod": 28
      }
     },
     {
@@ -99369,6 +99382,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_stage_line.rs",
+     "purpose": "FIX 21929 (brief 21, Dreamer r5): a partition's stage line splits the residual `extract_ms` into the slot's…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -100294,6 +100315,14 @@
      "notable": [],
      "path": "tests/report_route_one_reader.rs",
      "purpose": "Regression coverage for report routing with LMDB's one reader slot per thread",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/restore_over_live_compartment_rows.rs",
+     "purpose": "Live restores compare refused families with the image's opened compartments",
      "surface": {}
     },
     {
@@ -102162,7 +102191,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102339,8 +102368,8 @@
    },
    "over_bar": 246,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7316,
-   "test_files": 980
+   "source_files": 7317,
+   "test_files": 982
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -105696,6 +105725,16 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/load/dream/call_proxy.rs",
+     "purpose": "The model-call timing proxy of `load dream` (FIX 21929)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -105720,9 +105759,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/load/dream/report.rs",
-     "purpose": "The `load dream` result: the JSON report and the 15-line summary on stdout",
+     "purpose": "The `load dream` result: the JSON report and the summary lines on stdout",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -106336,9 +106375,9 @@
      "purpose": "Campaign #5 interface bench task generation and smoke harness"
     },
     "load": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "`load` subcommand — the engine's load bench on the shipped server binary"
     },
@@ -106399,9 +106438,9 @@
      "purpose": "`vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120)"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "oneiron-bench — benchmark harness drivers",
-   "source_files": 159,
+   "source_files": 160,
    "test_files": 19
   },
   "oneiron-broker": {
