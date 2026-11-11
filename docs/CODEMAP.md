@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7260 | 941 | 244 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7263 | 944 | 244 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 22 | 6 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 67 | 1 | 0 |
@@ -64,7 +64,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 643 | 4 | 1 |
-| [oneiron-testkit](codemap/oneiron-testkit.md) | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… | 20 | 7 | 0 |
+| [oneiron-testkit](codemap/oneiron-testkit.md) | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… | 20 | 7 | 1 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 40 | 0 | 2 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 58 | 1 | 1 |
 | [oneiron-vm-outbox](codemap/oneiron-vm-outbox.md) | `oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine… | 1 | 0 | 0 |
@@ -263,7 +263,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `share` | file+dir | 9 | L | yes | Revocable brief read grants |
 | `share_travel` | file+dir | 8 | L | yes | What travels with a body when it leaves the vault (OF-491) |
 | `side_table` | dir | 16 | L | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
-| `skill` | dir | 31 | m | yes | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
+| `skill` | dir | 30 | m | yes | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
 | `skill_attribution` | dir | 35 | L | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `skill_convert` | dir | 8 | m | yes | Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry… |
 | `skill_hub` | dir | 108 | L | yes | Skill-hub records, provenance aliases, adapter contracts, and update gates |
@@ -272,7 +272,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `skill_scan` | file+dir | 3 | m | — | Deterministic static skill scanning and the activation risk consult |
 | `slim` | file+dir | 6 | m | yes | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
 | `snapshot_read` | dir | 3 | s | — | Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of… |
-| `source_audience` | dir | 8 | L | — | Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A… |
+| `source_audience` | dir | 9 | L | — | Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A… |
 | `speculative` | file+dir | 2 | m | — | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
 | `store` | dir | 394 | L | yes | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `subject_model` | file+dir | 17 | m | yes | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
@@ -286,7 +286,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `task_work_line` | file | 1 | s | yes | The vault's task-work line: the inherent `Vault` methods that admit task work through the line in… |
 | `team` | dir | 22 | m | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
 | `temporal` | file | 1 | s | — | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
-| `test_doors` | dir | 12 | m | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `test_doors` | dir | 14 | m | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `test_support` | file | 1 | s | — | Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which… |
 | `test_util` | dir | 6 | m | — | Shared test helpers |
 | `tests` | dir | 22 | — | — | — |
@@ -1193,7 +1193,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `embedder` | file | 1 | s | The hashing embedder: stable pseudo-vectors with no model |
 | `fault` | file | 1 | s | Fault injection through doors the engine already has |
 | `fixture` | file | 1 | m | Fixture vaults: seed a vault once, copy it for every test |
-| `lint` | file | 1 | m | The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3… |
+| `lint` | file | 1 | L | The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3… |
 | `pending_door` | file | 1 | s | The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, "Door waits")… |
 | `provider` | dir | 6 | m | Scripted model doors: answers from a script keyed by prompt digest, never from a model |
 | `quarantine` | file | 1 | s | The flaky-test quarantine and the three nextest tiers |
