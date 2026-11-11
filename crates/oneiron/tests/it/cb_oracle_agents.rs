@@ -1130,8 +1130,10 @@ mod cb_a {
         };
         // ARCH-0026: the stock rows bind the commitment projector, the e-sign
         // seal actor with its SealJob auto checker (16fc2ad674d; Engine ruling
-        // T0F-STOCK-GENERATED-ROWS = A) and the Dreamer. The helper rebinds the
-        // projector's row and keeps the other two.
+        // T0F-STOCK-GENERATED-ROWS = A), the scope summary landing writer
+        // (cd9f9715a50; Engine ruling SUMMARY-AS-RECORD-PERMIT-SHAPE = A) and
+        // the Dreamer. The helper rebinds the projector's row and keeps the
+        // other three.
         let mut actor_refs = permits.iter_mut().map(|permit| {
             let Value::Map(fields) = permit else {
                 panic!("Generated permit is a row");
@@ -1141,13 +1143,16 @@ mod cb_a {
                 .find_map(|(key, value)| (key.as_str() == Some("actor_ref")).then_some(value))
                 .expect("Generated permit is actor-bound")
         });
-        let (Some(actor_ref), Some(_seal_ref), Some(dreamer_ref), None) = (
+        let (Some(actor_ref), Some(_seal_ref), Some(_landing_ref), Some(dreamer_ref), None) = (
+            actor_refs.next(),
             actor_refs.next(),
             actor_refs.next(),
             actor_refs.next(),
             actor_refs.next(),
         ) else {
-            panic!("the stock Generated rows bind the projector, the seal actor and the Dreamer");
+            panic!(
+                "the stock Generated rows bind the projector, seal, summary landing and Dreamer"
+            );
         };
         let dreamer = vault
             .dreamer_authority()
