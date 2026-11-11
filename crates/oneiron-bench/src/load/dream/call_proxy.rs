@@ -95,7 +95,9 @@ fn shape(body: &[u8]) -> RequestShape {
         let mut running = blake3::Hasher::new();
         for message in messages {
             running.update(blake3::hash(message.to_string().as_bytes()).as_bytes());
-            shape.prefixes.push(running.finalize().to_hex()[..16].to_owned());
+            shape
+                .prefixes
+                .push(running.finalize().to_hex()[..16].to_owned());
         }
     }
     shape
@@ -188,7 +190,10 @@ fn head(bytes: &[u8], response: bool) -> Head {
 
 /// The end of the blank line closing a head in `bytes`, if it came.
 fn head_end(bytes: &[u8]) -> Option<usize> {
-    bytes.windows(4).position(|w| w == b"\r\n\r\n").map(|at| at + 4)
+    bytes
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|at| at + 4)
 }
 
 /// Where a chunked body that starts at `bytes[0]` ends, if all of it came.
@@ -537,7 +542,10 @@ fn requests(
             };
             settle(
                 shared,
-                exchange.lock().ok().and_then(|mut exchange| exchange.request(call)),
+                exchange
+                    .lock()
+                    .ok()
+                    .and_then(|mut exchange| exchange.request(call)),
             );
             queued = true;
             out.extend_from_slice(&buffer[sent..end]);
@@ -605,7 +613,10 @@ fn responses(
                 };
                 settle(
                     shared,
-                    exchange.lock().ok().and_then(|mut exchange| exchange.response(answer)),
+                    exchange
+                        .lock()
+                        .ok()
+                        .and_then(|mut exchange| exchange.response(answer)),
                 );
             }
             if !buffer.is_empty() {
@@ -626,7 +637,10 @@ fn responses(
         };
         settle(
             shared,
-            exchange.lock().ok().and_then(|mut exchange| exchange.response(answer)),
+            exchange
+                .lock()
+                .ok()
+                .and_then(|mut exchange| exchange.response(answer)),
         );
     }
     fail_unanswered(exchange, shared);
@@ -643,9 +657,7 @@ pub(super) fn summary(calls: &[CallRecord], from_ms: f64, to_ms: f64) -> Value {
         .collect();
     let mut ms: Vec<f64> = inside.iter().map(|c| c.end_ms - c.start_ms).collect();
     ms.sort_by(f64::total_cmp);
-    let pick = |q: f64| {
-        (!ms.is_empty()).then(|| ms[((ms.len() - 1) as f64 * q).round() as usize])
-    };
+    let pick = |q: f64| (!ms.is_empty()).then(|| ms[((ms.len() - 1) as f64 * q).round() as usize]);
     let mut edges: Vec<(f64, i64)> = inside
         .iter()
         .flat_map(|c| [(c.start_ms, 1), (c.end_ms, -1)])
@@ -704,7 +716,9 @@ mod tests {
         let early = exchange.response(answer(429)).is_none();
         let first = exchange.request(call(1)).map(|(c, a)| (c.seq, a.status));
         let second_waits = exchange.request(call(2)).is_none();
-        let second = exchange.response(answer(200)).map(|(c, a)| (c.seq, a.status));
+        let second = exchange
+            .response(answer(200))
+            .map(|(c, a)| (c.seq, a.status));
         assert_eq!(
             (early, first, second_waits, second),
             (true, Some((1, 429)), true, Some((2, 200)))
@@ -801,7 +815,8 @@ mod tests {
     #[test]
     fn message_end_frames_length_chunked_and_interim() {
         let request = b"POST /v1/chat/completions HTTP/1.1\r\nContent-Length: 4\r\n\r\nbodyNEXT";
-        let chunked = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\nX";
+        let chunked =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\nX";
         let interim = b"HTTP/1.1 100 Continue\r\n\r\n";
         assert_eq!(
             (

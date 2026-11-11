@@ -184,13 +184,18 @@ fn execute(plan: &Plan) -> Result<(), String> {
     let calls_log = dir.join(CALLS_NAME);
     let proxy = call_proxy::CallProxy::start(&plan.model_base_url, origin, calls_log.clone())?;
     if let Some(proxy) = &proxy {
-        say(&format!("model calls through the timing proxy {}", proxy.base_url));
+        say(&format!(
+            "model calls through the timing proxy {}",
+            proxy.base_url
+        ));
     }
     setup::write_models(
         &vault,
         proxy
             .as_ref()
-            .map_or(plan.model_base_url.as_str(), |proxy| proxy.base_url.as_str()),
+            .map_or(plan.model_base_url.as_str(), |proxy| {
+                proxy.base_url.as_str()
+            }),
         &plan.model,
         plan.model_context_tokens,
     )?;
