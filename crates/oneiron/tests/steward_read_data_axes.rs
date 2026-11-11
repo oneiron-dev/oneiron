@@ -2,14 +2,15 @@
 //! (S67-READ-AXES = C, Engine 10 Nov; untangle 6.3b). Its read was held to
 //! the grant's `read` verb and its live MACHINE binding only: the policy
 //! fold rebuilt its read row over every record kind, and the read guard
-//! never looked at the grant's scope. So a grant the owner had narrowed
+//! never looked at the grant's scope. So a grant row narrowed on a data axis
 //! still read every kind.
 //!
-//! The owner narrows the grant with acts of their own: a Steward holder
-//! override that names the Dreamer, then the Dreamer's member role changed
-//! to Member and back to Steward on a shared vault. The role change resolves
-//! the marked grant row again, under the override. The second test runs
-//! those acts; the first writes the row they leave.
+//! The host's mint leaves every data axis whole. The one owner path that
+//! narrowed one went through the membership doors (a Steward holder
+//! override, then the Dreamer's member role changed and changed back); those
+//! doors no longer reach a base agent's grant
+//! (`steward_grant_is_no_membership`). The read holds to the row all the
+//! same, so the test writes the narrowed row through a door.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -18,18 +19,15 @@
 
 use std::collections::BTreeSet;
 
-use oneiron::federation::FederationGrantRole as Role;
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::{consolidate_unbound_turn, open_dreamer_vault};
 use oneiron::test_doors::steward::{
-    GrantMark, STEWARD_READ_VERB, STEWARD_VERBS, class_key_reads, dreamer, grant_mark, owner,
-    stand_steward_grant, stand_steward_grant_in_bands, write_dreamer_band_override,
+    STEWARD_VERBS, class_key_reads, dreamer, stand_steward_grant, stand_steward_grant_in_bands,
 };
 use oneiron::{EntityId, Vault};
 
 const READER: &str = "reader";
-const SHARED: u64 = 42;
 
 /// The model's reply: one new person, named in T1, and its name.
 fn reply() -> String {
@@ -126,48 +124,5 @@ fn the_dreamer_reads_inside_the_record_kinds_of_its_grant() {
 
     stand_steward_grant_in_bands(&vault, dreamer, &STEWARD_VERBS, &[kept])
         .expect("the grant held to one kind");
-    assert_reads_the_kept_kind_only(&vault, dreamer, &read, kept);
-}
-
-#[test]
-fn an_owners_holder_override_and_a_role_round_trip_narrow_the_dreamers_read() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let vault = open_dreamer_vault(dir.path(), READER).expect("fixture vault");
-    let dreamer = dreamer(&vault).expect("the Dreamer");
-    // The rows are written while the vault's policy rows let the Dreamer
-    // read and land, before any grant is marked.
-    let rows = rows_of_three_kinds(&vault);
-
-    // The owner shares the vault; the Dreamer's Steward grant stands on it.
-    let owner = owner(&vault).expect("owner proof");
-    vault
-        .initialize_shared_vault(&owner, SHARED, None, &[], 1)
-        .expect("a shared vault");
-    let grant = stand_steward_grant(&vault, dreamer, &STEWARD_VERBS).expect("whole grant");
-    let read = read_now(&vault, dreamer, &rows);
-    let kept = kept_kind(&read);
-
-    // The owner's holder override, then the member-role round trip that
-    // resolves the marked grant row again under it.
-    write_dreamer_band_override(&vault, SHARED, &[kept]).expect("holder override");
-    vault
-        .change_shared_member_role(&owner, SHARED, dreamer, Role::Member, None)
-        .expect("the owner makes the Dreamer a Member");
-    vault
-        .change_shared_member_role(&owner, SHARED, dreamer, Role::Steward, None)
-        .expect("the owner makes the Dreamer a Steward again");
-    let Some(GrantMark::Minted {
-        grant: marked,
-        verbs,
-    }) = grant_mark(&vault, dreamer).expect("mark")
-    else {
-        panic!("the marker still names a grant");
-    };
-    assert_eq!(marked, grant, "the role change rewrote the marked row");
-    assert!(
-        verbs.contains(STEWARD_READ_VERB),
-        "the narrowed grant still stands with read: {verbs:?}"
-    );
-
     assert_reads_the_kept_kind_only(&vault, dreamer, &read, kept);
 }

@@ -333,6 +333,28 @@ impl Vault {
         }
     }
 
+    /// In the membership door's writer, before the change: refuses ask
+    /// `ask` unless the Steward who filed it is still a live Steward of
+    /// `vault_id` (review of #6915). An ask outlived its Steward: after an
+    /// Admin removed them, another Admin's apply still landed the change in
+    /// their name and wrote them its outcome notice, which a person outside
+    /// the vault then read with the receipt. The applier declines such an
+    /// ask, or makes the change as their own.
+    pub(super) fn member_ask_steward_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ask: &str,
+        vault_id: u64,
+        holders: &[super::LiveActHolder],
+    ) -> Result<()> {
+        let id = EntityId::from_hex(ask)?;
+        let ask = MEMBER_ASK.get(&self.store, txn, &id)?.ok_or_else(invalid)?;
+        if ask.vault_id != vault_id || !is_steward(holders, EntityId::from_hex(&ask.steward)?) {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
     /// In the membership door's writer, after its receipt: close ask `ask`
     /// as applied by `applier`, name its Steward in the receipt, and tell
     /// the Steward. The ask must still be open, for this vault.
