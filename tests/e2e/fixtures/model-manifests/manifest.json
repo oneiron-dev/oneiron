@@ -23,7 +23,9 @@
         "modelCalls": "none: every pin names provider `fixture` or `McGill-NLP`, which no E2E host config serves",
         "consumer": "MUSE-LOOP-04 (coordination.test.ts)"
       },
-      "scenarios": [],
+      "scenarios": [
+        "MUSE-LOOP-04"
+      ],
       "requires": [
         "vault.models.manifest.replace",
         "vault.models.manifest.read"
