@@ -2,13 +2,14 @@
 //! public verbs reaches the readers in its audience, and no reader outside
 //! it finds its word on any surface it reaches.
 
+use oneiron::{DreamerAttemptExecution, DreamerParkCause, EntityId};
 use oneiron_testkit::TestVault;
 use oneiron_testkit::canary::{
     CanaryActor, CanaryClass, CanaryScan, CanaryVault, ClaimBand, NEUTRAL_PHRASE, PENDING,
 };
 use oneiron_testkit::dreamer::{
-    DreamerPass, allow_scripted_extraction, attach_test_host, grant_dreamer_read, print_seen,
-    read_everything_scope, scripted_backend,
+    DreamerAttemptRun, DreamerPass, DreamerPassError, DreamerPassReport, allow_scripted_extraction,
+    attach_test_host, grant_dreamer_read, print_seen, read_everything_scope, scripted_backend,
 };
 use oneiron_testkit::provider::SeenCall;
 use serde_json::json;
@@ -191,9 +192,9 @@ fn the_detector_names_each_canary_that_reaches_a_reader_outside_its_audience() {
 /// claim extracted from that message inherits its relationship set
 /// (dreamer_consolidation/executor/extraction.rs), and a relationship-stamped
 /// claim lands only over a live RELATIONSHIP row, which no public door mints
-/// (the pending class `claim/relationship`): a proposed one parks the attempt
-/// on "invalid active relationship". The rescan of a row the pass derived
-/// waits for that door.
+/// (the pending class `claim/relationship`). The rescan of a row the pass
+/// derived waits for that door. Even with no claim proposed, the attempt
+/// parks ([`turn_wake_outcome`]).
 const DREAMER_TURN_WAKE_CALLS: &[(&str, &str)] = &[(
     "04e5a959f9218289a8ba88ec259eec11a090a694637349ccfcb1103f73d527c2",
     r#"{"candidates":[],"persons":[]}"#,
@@ -201,6 +202,65 @@ const DREAMER_TURN_WAKE_CALLS: &[(&str, &str)] = &[(
 
 /// The Timer wake's model calls over the canary vault, after the turn wake.
 const DREAMER_TIMER_WAKE_CALLS: &[(&str, &str)] = &[];
+
+/// The turn wake's outcome over the canary vault. The relationship message's
+/// micro consolidation parks for a retry after its extraction call, on
+/// "invalid active relationship" for the canary relationship space, even
+/// when the reply proposes no claim. The witness took that space as the
+/// message's `rel`, but no RELATIONSHIP row has its id (FIX row
+/// MESSAGE-REL-NOT-RELATIONSHIP-ROW). So the Dreamer never finishes that
+/// message. That park, and no other unfinished work, is the outcome this
+/// test expects. A turn wake that finishes means the engine has changed:
+/// drop this park.
+fn turn_wake_outcome(
+    pass: Result<DreamerPassReport, DreamerPassError>,
+    space: EntityId,
+) -> Result<DreamerPassReport, String> {
+    let report = match pass {
+        Err(DreamerPassError::Unfinished(report)) => report,
+        Ok(_) => {
+            return Err(format!(
+                "finished, so the relationship message's micro consolidation no longer parks \
+                 on the canary relationship space {}: FIX row MESSAGE-REL-NOT-RELATIONSHIP-ROW \
+                 has moved; drop the expected park in turn_wake_outcome",
+                space.to_hex()
+            ));
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let known = format!("invalid active relationship {}: ", space.to_hex());
+    let parked: Vec<&DreamerAttemptRun> = report
+        .attempts
+        .iter()
+        .filter(|attempt| {
+            !attempt.unlent
+                && matches!(
+                    attempt.execution,
+                    Ok(DreamerAttemptExecution::Park { .. }
+                        | DreamerAttemptExecution::ParkWithSpend { .. })
+                )
+        })
+        .collect();
+    let expected = match parked.as_slice() {
+        [only] => {
+            only.attempt_type == "micro"
+                && matches!(
+                    &only.execution,
+                    Ok(DreamerAttemptExecution::ParkWithSpend {
+                        reason,
+                        cause: DreamerParkCause::Retry,
+                        ..
+                    }) if reason.starts_with(&known)
+                )
+        }
+        _ => false,
+    };
+    if expected && report.unfinished() == ["1 attempt(s) parked"] {
+        Ok(*report)
+    } else {
+        Err(DreamerPassError::Unfinished(report).to_string())
+    }
+}
 
 #[test]
 fn a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary() {
@@ -226,11 +286,13 @@ fn a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary() {
     let mut prompts = turn.finish();
     prompts.extend(timer.finish());
     // Either pass's error names the other's outcome too.
+    let turn_pass = turn_wake_outcome(turn_pass, canaries.space());
     let (turn_report, timer_report) = match (turn_pass, timer_pass) {
         (Ok(turn), Ok(timer)) => (turn, timer),
         (turn, timer) => panic!(
             "turn wake: {}\ntimer wake: {}",
-            turn.map_or_else(|error| error.to_string(), |_| "finished".to_owned()),
+            turn.err()
+                .unwrap_or_else(|| "parked as expected".to_owned()),
             timer.map_or_else(|error| error.to_string(), |_| "finished".to_owned()),
         ),
     };
