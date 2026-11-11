@@ -103,8 +103,9 @@ export interface MessageRowThreadLineProps extends React.ComponentPropsWithRef<'
   unread?: boolean
 }
 
-/* The line under a parent message: who took part, the reply count and the
-   last reply's time. Hover and focus swap the time for `view thread`. */
+/* The line under a parent message: who took part, the reply count in
+   words (`2 replies`, serif) and the last reply's time as a figure. Hover
+   and focus swap the time for `view thread`. */
 function MessageRowThreadLine({
   replies,
   lastReply,
@@ -126,7 +127,7 @@ function MessageRowThreadLine({
       {participants ? <span className="sl-thread-line-people">{participants}</span> : null}
       {unread ? <span className="sl-thread-line-unread" aria-hidden="true" /> : null}
       <span className="sl-thread-line-count">{count}</span>
-      {lastReply ? <span className="sl-thread-line-last">{lastReply}</span> : null}
+      {lastReply ? <Figure className="sl-thread-line-last">{lastReply}</Figure> : null}
       <span className="sl-thread-line-view">view thread</span>
     </button>
   )

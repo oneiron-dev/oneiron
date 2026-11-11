@@ -156,22 +156,11 @@
   background: var(--sl-ink-1);
 }
 
-.sl-thread-line-count,
-.sl-thread-line-last {
-  font-family: var(--sl-mono);
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
-  font-size: var(--sl-t-figure);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
 .sl-thread-line-count {
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
   color: var(--sl-ink-2);
-}
-
-.sl-thread-line-last {
-  color: var(--sl-ink-3);
+  white-space: nowrap;
 }
 
 .sl-thread-line-view {
