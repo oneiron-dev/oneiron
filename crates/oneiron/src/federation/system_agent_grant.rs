@@ -71,6 +71,19 @@ pub(crate) fn holds_system_agent_grant(actor: EntityId) -> bool {
     crate::dreamer_runner::authority::dreamer_actor_id().is_ok_and(|dreamer| dreamer == actor)
 }
 
+/// Whether `row` is a base agent's Steward grant: role and preset Steward, an
+/// access grant with no expiry, naming an agent whose reach such a grant
+/// carries ([`holds_system_agent_grant`]). A person's Steward membership is
+/// not one.
+#[must_use]
+pub(crate) fn is_system_agent_steward_grant(row: &FederationGrant) -> bool {
+    row.role == FederationGrantRole::Steward
+        && row.preset == FederationGrantPreset::Steward
+        && row.kind == FederationGrantKind::Access
+        && row.expires_at.is_none()
+        && holds_system_agent_grant(row.member_ref)
+}
+
 /// The grant row `grant` while it stands in `txn` as a Steward grant naming
 /// `agent` (role and preset Steward, an access grant with no expiry), else
 /// `None`: revoked, withdrawn, rewritten or never there. Its authority scope
