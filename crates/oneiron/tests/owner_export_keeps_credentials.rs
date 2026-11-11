@@ -7,15 +7,15 @@
 //!
 //! * `owner_archive_keeps_skill_source_credentials_and_restores_them` pins
 //!   CONS-06: skill source files keep their credential bytes, the tree keeps
-//!   its identity hash, nothing is omitted or refused, and a fresh vault
-//!   restores the exact source (the restore is held out; see below).
+//!   its identity hash, nothing is omitted or refused, and a fresh seeded
+//!   vault opened a second later restores the exact source.
 //! * `owner_archive_keeps_json_text_credentials` pins CONS-07: JSON text
 //!   bodies that hide a token behind escapes or duplicate keys ship
 //!   byte-equal in the owner's archive.
 //! * `owner_archive_keeps_credential_fields_and_binary_payloads` pins CONS-09:
 //!   a PERSON MessagePack body keeps its credential fields and encoded
-//!   payloads, and a fresh vault restores every field (the restore is held
-//!   out; see below).
+//!   payloads, and a fresh seeded vault opened a second later restores
+//!   every field.
 //!
 //! Every test also pins the nulling side: CONS-07's contact bundle and scoped
 //! record vector never carry the credential text. The scoped record vector
@@ -34,12 +34,10 @@
 //! These tests are intended to fail on main edffeb5696f for their promises'
 //! reasons (the writer nulls) and pass with owner retention.
 //!
-//! The restore halves of CONS-06 and CONS-09 are held out in place under
-//! `#[cfg(any())]` (FIX row WHOLE-VAULT-IMPORT-PACK-SEED-COLLISION): a
-//! whole-vault restore into a fresh vault fails on main before any user row
-//! lands. A seeded destination collides on the engine-seeded pack skills; an
-//! unseeded one has no root project, so the archive's root is refused as a
-//! parentless project. Every export-side assert stays live.
+//! The restore halves run into a fresh SEEDED destination opened at least a
+//! wall-clock second after the source, so the engine-seed seconds differ and
+//! the import exercises seed-time tolerance. Neither source holds expression
+//! preferences, so both restores stay on the actorless door.
 
 use oneiron::batch::export::{ExportImportRefusal, ExportSourceContent};
 use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
@@ -59,20 +57,16 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-// FIX [WHOLE-VAULT-IMPORT-PACK-SEED-COLLISION]: no fresh vault restores a whole-vault archive yet.
-#[cfg(any())]
-fn open_restore_vault(source: &Vault) -> Result<(tempfile::TempDir, Vault)> {
+fn open_restore_vault() -> Result<(tempfile::TempDir, Vault)> {
+    // The pack seeds' wall-clock second must differ from the source's, so the
+    // restore exercises seed-time tolerance: any 1100 ms interval crosses a
+    // second boundary.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     let dir = tempfile::tempdir()?;
-    let fresh = Vault::open_unseeded_for_test(dir.path(), VaultConfig::default())?;
-    // Keep the source's runtime kind vocabulary without seeding its pack skills.
-    for registration in source.structural_kind_registrations() {
-        fresh.register_structural_kind(
-            registration.type_byte,
-            registration.short_id_prefix,
-            registration.zone,
-            registration.pack,
-        )?;
-    }
+    let fresh = Vault::open(dir.path(), VaultConfig::default())?;
+    // No structural-kind copy: a seeded destination already registers the
+    // project kinds, and re-registering them rejects with a type-byte or
+    // prefix collision. Every row these archives restore is a static kind.
     Ok((dir, fresh))
 }
 
@@ -89,8 +83,6 @@ fn encode(value: &Value) -> Vec<u8> {
     bytes
 }
 
-// FIX [WHOLE-VAULT-IMPORT-PACK-SEED-COLLISION]: only the held-out CONS-09 restore reads fields.
-#[cfg(any())]
 fn field<'a>(value: &'a Value, name: &str) -> &'a Value {
     value
         .as_map()
@@ -224,13 +216,10 @@ fn owner_archive_keeps_skill_source_credentials_and_restores_them() -> Result<()
             )),
         "the owner's archive refuses nothing of its skill"
     );
-    // FIX [WHOLE-VAULT-IMPORT-PACK-SEED-COLLISION]: a whole-vault restore into a fresh
-    // vault fails on main before any user row lands; held out in place.
-    #[cfg(any())]
     {
         // The owner's archive restores the skill's exact source on import: a
         // fresh vault's own archive carries the same tree.
-        let (_fresh_dir, fresh) = open_restore_vault(&vault)?;
+        let (_fresh_dir, fresh) = open_restore_vault()?;
         fresh.import_whole_vault_archive(export.bytes())?;
         let again = fresh.export_whole_vault(true)?;
         assert!(again.manifest().secrets_included);
@@ -563,23 +552,12 @@ fn owner_archive_keeps_credential_fields_and_binary_payloads() -> Result<()> {
         matches!(row.body, ExportBody::MessagePack(_)),
         "the owner's archive keeps the person body typed, not nulled"
     );
-    // FIX [WHOLE-VAULT-IMPORT-PACK-SEED-COLLISION]: a whole-vault restore into a fresh
-    // vault fails on main before any user row lands; held out in place.
-    #[cfg(any())]
     {
         // The destination owner also disables masking so this check isolates
         // exact archive restoration from the destination's write-scan policy.
-        let (_fresh_dir, fresh) = open_restore_vault(&vault)?;
-        // The source's embedded owner and substrate are seeded at time zero.
-        // Copy only that owner before scan_off would create it at the current time.
-        let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
-        fresh.put_entity(
-            &owner_id,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 0, end: 0 },
-            0,
-            &vault.get(&owner_id)?.expect("source owner row"),
-        )?;
+        let (_fresh_dir, fresh) = open_restore_vault()?;
+        // No owner copy: the seeded destination already holds the embedded
+        // owner at time zero, so scan_off below creates nothing.
         scan_off(&fresh, "principal:person-restore-residue", 10)?;
         fresh.import_whole_vault_archive(export.bytes())?;
         let stored = fresh.get(&id)?.expect("restored person row");
