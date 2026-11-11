@@ -27,8 +27,7 @@ use super::*;
 mod tests_commitment;
 mod tests_push;
 
-const COALESCE_FLOOR_MS: u64 =
-    crate::session::DEFAULT_SESSION_IDLE_FLOOR_SECS.saturating_mul(1_000);
+const COALESCE_FLOOR_MS: u64 = crate::TEST_SESSION_IDLE_FLOOR_SECS.saturating_mul(1_000);
 
 struct ScriptedDeadlines {
     deadlines: Vec<Option<CommitmentDeadline>>,
