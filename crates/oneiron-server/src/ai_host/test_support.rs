@@ -48,7 +48,10 @@ pub(crate) fn pin_every_role(vault: &Vault, model: &str, route: oneiron::ModelLo
                         model.name(),
                         model.revision()
                     );
-                    (oneiron::ModelId::new(encoder).unwrap(), ModelSlot::Oneironer)
+                    (
+                        oneiron::ModelId::new(encoder).unwrap(),
+                        ModelSlot::Oneironer,
+                    )
                 } else {
                     (model, ModelSlot::Llm)
                 };
