@@ -773,6 +773,25 @@ impl Vault {
             LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {}
         }
         let requested = decode_agent_definition(body)?;
+        let definition =
+            self.prepare_agent_authored_create_in_txn(txn, authoring, id, &requested)?;
+        encode_agent_definition(&definition).map(AuthoredPut::Bounded)
+    }
+
+    /// Prepares a fresh agent-authored definition in the caller's writer
+    /// (ARCH-0053:20), using the same slice rule as a generic definition put.
+    /// The caller writes the bounded definition in this transaction.
+    ///
+    /// # Errors
+    ///
+    /// The author writer's refusals, as [`Self::agent_authored_put_in_txn`].
+    pub(crate) fn prepare_agent_authored_create_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authoring: &AgentAuthoring,
+        id: &EntityId,
+        requested: &AgentDefinition,
+    ) -> Result<AgentDefinition> {
         let author = &authoring.author;
         let author_holds_definition = matches!(
             live_entity_row_in_txn(&self.store, txn, author)?,
@@ -786,15 +805,15 @@ impl Vault {
                 txn,
                 author,
                 id,
-                &requested,
+                requested,
                 false,
                 authoring.door,
             )?
             .0
         } else {
-            self.ensure_new_authored_definition_in_txn(txn, id, &requested)?;
-            let within = self.within_granted_slice_in_txn(txn, authoring, &requested)?;
-            let mut definition = requested;
+            self.ensure_new_authored_definition_in_txn(txn, id, requested)?;
+            let within = self.within_granted_slice_in_txn(txn, authoring, requested)?;
+            let mut definition = requested.clone();
             mark_agent_authored(&mut definition, author, authoring.door);
             definition.approval_status = if within {
                 ClaimApprovalStatus::Approved
@@ -803,7 +822,7 @@ impl Vault {
             };
             definition
         };
-        encode_agent_definition(&definition).map(AuthoredPut::Bounded)
+        Ok(definition)
     }
 
     /// Whether `requested` is inside the slice of an agent that holds no

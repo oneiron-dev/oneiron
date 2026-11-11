@@ -376,6 +376,7 @@ impl Vault {
                     source_id,
                     hub: &hub,
                     publisher: &candidate.publisher,
+                    agent_author: None,
                     foreign: publisher.as_ref(),
                     verdict: PackFitVerdict {
                         fits: true,
@@ -525,6 +526,7 @@ impl Vault {
                     source_id,
                     hub: &hub,
                     publisher: &candidate.publisher,
+                    agent_author: None,
                     foreign: publisher.as_ref(),
                     verdict: PackFitVerdict {
                         fits: true,

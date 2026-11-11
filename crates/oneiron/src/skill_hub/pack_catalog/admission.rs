@@ -34,6 +34,9 @@ pub(super) struct PackCommit<'a> {
     pub(super) source_id: EntityId,
     pub(super) hub: &'a HubRef,
     pub(super) publisher: &'a str,
+    /// The verified writer of an agent's own local pack, never inferred from
+    /// the manifest or publisher text. Other install doors carry no author.
+    pub(super) agent_author: Option<crate::WriteActor>,
     /// The admitted publisher each bundled skill's import receipt names;
     /// None for the owner's own put.
     pub(super) foreign: Option<&'a ForeignSkillPublisher>,
@@ -171,6 +174,7 @@ impl Vault {
                 source_id: ask.source_id,
                 hub: &ask.hub,
                 publisher: ask.publisher.identity(),
+                agent_author: None,
                 foreign: Some(&ask.publisher),
                 verdict: ask.verdict,
                 permissions: &ask.permissions,
@@ -357,13 +361,20 @@ impl Vault {
             PACK_CANDIDATE.put(&self.store, txn, &candidate_key(&source), &receipt)?;
             return Ok(PackInstallDisposition::Candidate(Box::new(receipt)));
         }
-        // An active travelling AgentPack mints its inert agent here, after its
-        // skills went through the common door (FIX 2041, 3168).
+        // After the common skill door, an agent's own local pack mints through
+        // the author writer (ARCH-0053:20). Owner and hub imports stay inert
+        // (FIX 2041, 3168).
         let receipt = PackInstallReceipt {
             agent: match travel {
                 Some(travel) => Some(
-                    self.admit_travel_agent_in_txn(txn, source, travel, at)?
-                        .to_hex(),
+                    self.admit_travel_agent_in_txn(
+                        txn,
+                        source,
+                        travel,
+                        commit.agent_author.as_ref(),
+                        at,
+                    )?
+                    .to_hex(),
                 ),
                 None => None,
             },
