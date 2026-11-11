@@ -135,6 +135,10 @@ impl Vault {
     /// empty surface a fresh import holds, so it still waits for the owner's
     /// answer ([`HubAdmissionDisposition::PendingConsent`]).
     /// A rejection consumes this decision; new content/evidence needs a fresh ask.
+    /// Without an owner answer to spend, the refusal is read from the
+    /// append-only history by candidate and binding, before scoring and again
+    /// in the committing transaction, so another baseline's later ruling on the
+    /// same candidate does not reopen it.
     pub fn admit_marketplace_skill(
         &self,
         ask: &HubActivationAsk,
@@ -155,13 +159,8 @@ impl Vault {
                 {
                     return Ok(HubAdmissionDisposition::PendingConsent);
                 }
-            } else if self
-                .hub_admission_receipt_in_txn(&txn, &ask.candidate)?
-                .is_some_and(|receipt| !receipt.accepted && receipt.binding == ask.binding)
-            {
-                return Err(invalid(
-                    "the held-out admission refused this ask; new content or evidence needs a fresh ask",
-                ));
+            } else {
+                self.check_hub_admission_not_refused_in_txn(&txn, ask)?;
             }
             snapshot
         };
@@ -207,6 +206,7 @@ impl Vault {
                     })?,
                 )
             } else {
+                self.check_hub_admission_not_refused_in_txn(txn, ask)?;
                 None
             };
             let receipt =
@@ -295,6 +295,26 @@ impl Vault {
                 Ok(receipt)
             })
             .transpose()
+    }
+    /// Refuses an ask the held-out admission already refused: any scored
+    /// refusal in the append-only history for this candidate and binding, not
+    /// only the latest receipt, which another baseline's ruling replaces.
+    fn check_hub_admission_not_refused_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ask: &HubActivationAsk,
+    ) -> Result<()> {
+        let candidate = ask.candidate.to_hex();
+        for row in ADMISSION_HISTORY.iter_from(&self.store, txn, &[])? {
+            let (_, receipt) = row?;
+            if !receipt.accepted && receipt.candidate == candidate && receipt.binding == ask.binding
+            {
+                return Err(invalid(
+                    "the held-out admission refused this ask; new content or evidence needs a fresh ask",
+                ));
+            }
+        }
+        Ok(())
     }
     pub(super) fn check_hub_ask_in_txn(
         &self,

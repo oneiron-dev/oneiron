@@ -101,19 +101,7 @@ impl Fixture {
                 oneiron::store::GateDecisionId::now(),
             )
             .expect("authenticated owner");
-        let baseline = EntityId::now();
-        let mut record = package("fixture.base", "1", "baseline", false).record;
-        record.source = ClaimSource::UserStated;
-        record.content_hash = None;
-        vault
-            .put_skill_record(&baseline, &record, at(2), 2)
-            .expect("baseline candidate");
-        record.lifecycle_status = SkillLifecycle::Active;
-        record.approval_status = ClaimApprovalStatus::Approved;
-        vault
-            .update_skill_record(&baseline, &record, at(3), 3)
-            .expect("active baseline");
-        reserve(&vault, &baseline, &record.skill_id);
+        let baseline = active_baseline(&vault, "fixture.base", 2);
         Self {
             vault,
             _temp: temp,
@@ -160,6 +148,24 @@ impl Fixture {
             .expect("import candidate");
         (id, source)
     }
+}
+
+/// An active local skill with a held-out reserve, written at `now` and `now + 1`.
+fn active_baseline(vault: &Vault, name: &str, now: u64) -> EntityId {
+    let baseline = EntityId::now();
+    let mut record = package(name, "1", "baseline", false).record;
+    record.source = ClaimSource::UserStated;
+    record.content_hash = None;
+    vault
+        .put_skill_record(&baseline, &record, at(now), now)
+        .expect("baseline candidate");
+    record.lifecycle_status = SkillLifecycle::Active;
+    record.approval_status = ClaimApprovalStatus::Approved;
+    vault
+        .update_skill_record(&baseline, &record, at(now + 1), now + 1)
+        .expect("active baseline");
+    reserve(vault, &baseline, &record.skill_id);
+    baseline
 }
 
 fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
@@ -281,6 +287,8 @@ struct Replay {
     principal: EntityId,
     deadline: RetrievalDeadline,
     wording: BTreeMap<String, String>,
+    /// The score of instructions that "check result"; everything else scores 0.2.
+    lift: f64,
 }
 impl Replay {
     fn new() -> Self {
@@ -288,6 +296,14 @@ impl Replay {
             principal: EntityId::now(),
             deadline: RetrievalDeadline::after(Duration::from_secs(3600)),
             wording: BTreeMap::from([("score".to_owned(), "Score the held-out replay".to_owned())]),
+            lift: 0.9,
+        }
+    }
+    /// A judge under which the candidate scores no better than its baseline.
+    fn refusing() -> Self {
+        Self {
+            lift: 0.2,
+            ..Self::new()
         }
     }
 }
@@ -313,7 +329,7 @@ impl DecisionProvider for Replay {
         let instructions = call.state["instructions"].as_str().expect("instructions");
         Ok(answer(DecisionAnswer::Score(
             if instructions.contains("check result") {
-                0.9
+                self.lift
             } else {
                 0.2
             },
@@ -457,6 +473,57 @@ fn gate_22_a_no_permission_hub_skill_lands_active_on_fit_without_an_owner_answer
             .lifecycle_status,
         SkillLifecycle::Active
     );
+    Ok(())
+}
+
+#[test]
+fn gate_22_b_a_refused_no_permission_ask_stays_refused_after_another_baseline_rules() -> Result<()>
+{
+    let fixture = Fixture::new();
+    let second = active_baseline(&fixture.vault, "fixture.second", 4);
+    let (hub, publisher) = fixture.hub();
+    let candidate = package("fixture.new", "1", "check result", false);
+    assert_eq!(candidate.capabilities, SkillCapabilitySurface::default());
+    let (id, source) = fixture.import(hub, "fixture", &candidate, 20);
+    let first =
+        fixture
+            .vault
+            .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)?;
+    let other = fixture
+        .vault
+        .prepare_marketplace_activation(id, &source, &publisher, second)?;
+    let refusing = Replay::refusing();
+    for (ask, now) in [(&first, 31), (&other, 32)] {
+        let HubAdmissionDisposition::Ruled(receipt) =
+            fixture
+                .vault
+                .admit_marketplace_skill(ask, &refusing, at(now), now)?
+        else {
+            panic!("a no-permission candidate must rule without an owner answer");
+        };
+        assert!(!receipt.accepted);
+    }
+    assert!(
+        fixture
+            .vault
+            .admit_marketplace_skill(&first, &Replay::new(), at(33), 33)
+            .is_err(),
+        "a refused ask must not score again once another baseline has ruled"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&id)?
+            .expect("refused candidate")
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    let latest = fixture
+        .vault
+        .hub_admission_receipt(&id)?
+        .expect("latest ruling");
+    assert!(!latest.accepted);
+    assert_eq!(latest.evidence_skill, second.to_hex());
     Ok(())
 }
 
