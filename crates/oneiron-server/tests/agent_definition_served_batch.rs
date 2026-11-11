@@ -17,7 +17,9 @@ use oneiron::federation::ScopeAxis;
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
+use oneiron_server::{
+    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
+};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -284,22 +286,45 @@ async fn run_new_definition(door: ServedDoor, candidate_seed: u8, slice: Slice) 
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn served_batch_stores_no_active_definition_wider_than_its_agent_slice() {
-    run_new_definition(ServedDoor::Batch, 0x73, Slice::Wider).await;
+/// Runs one served case on threads that have the engine's native stack
+/// (`ENGINE_THREAD_STACK_BYTES`), as `oneiron serve` runs its doors. A
+/// generated facade dispatch frame is larger than a libtest thread's stack in
+/// a dev build (FIX 16372), so the case never polls the door on that thread.
+fn run_on_engine_stack(door: ServedDoor, candidate_seed: u8, slice: Slice) {
+    let case = std::thread::Builder::new()
+        .name(format!("served-{}", door.name()))
+        .stack_size(ENGINE_THREAD_STACK_BYTES)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(run_new_definition(door, candidate_seed, slice));
+        })
+        .expect("engine-stack thread");
+    if let Err(panic) = case.join() {
+        std::panic::resume_unwind(panic);
+    }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn served_batch_stores_a_definition_inside_its_agent_slice_active() {
-    run_new_definition(ServedDoor::Batch, 0x75, Slice::Within).await;
+#[test]
+fn served_batch_stores_no_active_definition_wider_than_its_agent_slice() {
+    run_on_engine_stack(ServedDoor::Batch, 0x73, Slice::Wider);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn served_remember_stores_no_active_definition_wider_than_its_agent_slice() {
-    run_new_definition(ServedDoor::Remember, 0x76, Slice::Wider).await;
+#[test]
+fn served_batch_stores_a_definition_inside_its_agent_slice_active() {
+    run_on_engine_stack(ServedDoor::Batch, 0x75, Slice::Within);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn served_remember_stores_a_definition_inside_its_agent_slice_active() {
-    run_new_definition(ServedDoor::Remember, 0x77, Slice::Within).await;
+#[test]
+fn served_remember_stores_no_active_definition_wider_than_its_agent_slice() {
+    run_on_engine_stack(ServedDoor::Remember, 0x76, Slice::Wider);
+}
+
+#[test]
+fn served_remember_stores_a_definition_inside_its_agent_slice_active() {
+    run_on_engine_stack(ServedDoor::Remember, 0x77, Slice::Within);
 }
