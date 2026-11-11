@@ -166,20 +166,7 @@ pub(super) fn prepare(
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("read settings file {}", path.display()))?;
     let mut table: toml::Table = crate::config::parse_toml(path, &raw)?;
-    // The supervisor's leaves are refused first: an argv-only binding the
-    // schema has no key for (the training outbox, OF-420; a guest's
-    // container CLI, the organ directory, the container CLI's HOME and
-    // runtime directory, and the mesh) reads as the supervisor's, never as
-    // unknown.
-    visit(&table, &mut Vec::new(), &mut |field, _| {
-        if matches_any(field, SUPERVISOR_OWNED) {
-            return Err(refused(field, SettingsRefusal::SupervisorOwned, None));
-        }
-        if matches_any(field, ENVIRONMENT_KEYS) {
-            return Err(refused(field, SettingsRefusal::EnvironmentSecret, None));
-        }
-        Ok(())
-    })?;
+    refuse_supervisor_leaves(&table)?;
     refuse_unknown(&table)?;
     refuse_default_import_roots(&table)?;
     let roots = owner_roots(
@@ -459,6 +446,24 @@ fn declared_stack<'a>(table: &'a toml::Table, field: &[String]) -> Option<&'a st
 }
 
 /// Calls `check` on every key of `table`, depth first, with its dotted field.
+/// The supervisor's leaves and the keys named by an environment variable,
+/// refused by presence alone, before anything else in the file is read. An
+/// argv-only binding the schema has no key for (the training outbox, OF-420;
+/// a guest's container CLI, the organ directory, the container CLI's HOME
+/// and runtime directory, and the mesh) reads as the supervisor's, never as
+/// unknown.
+fn refuse_supervisor_leaves(table: &toml::Table) -> Result<(), ManagedError> {
+    visit(table, &mut Vec::new(), &mut |field, _| {
+        if matches_any(field, SUPERVISOR_OWNED) {
+            return Err(refused(field, SettingsRefusal::SupervisorOwned, None));
+        }
+        if matches_any(field, ENVIRONMENT_KEYS) {
+            return Err(refused(field, SettingsRefusal::EnvironmentSecret, None));
+        }
+        Ok(())
+    })
+}
+
 fn visit(
     table: &toml::Table,
     field: &mut Vec<String>,
@@ -507,5 +512,37 @@ fn refused<S: AsRef<str>>(
         field: parts.join("."),
         reason,
         cause,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An owner's settings file never sets a managed vault's clock: a manual
+    /// clock would let whoever writes its file set the time every proof
+    /// window, lease and expiry is judged by. Each leaf alone is refused as
+    /// the supervisor's, before the file it names is read.
+    #[test]
+    fn a_managed_settings_file_that_sets_the_vaults_clock_is_refused() {
+        for (text, leaf) in [
+            ("[runtime]\nclock = \"manual\"\n", "runtime.clock"),
+            ("[runtime]\nclock = \"system\"\n", "runtime.clock"),
+            (
+                "[runtime]\nclock_file = \"/nonexistent/clock\"\n",
+                "runtime.clock_file",
+            ),
+        ] {
+            let table: toml::Table = text.parse().unwrap();
+            match refuse_supervisor_leaves(&table) {
+                Err(ManagedError::SettingsRefused { field, reason, .. }) => {
+                    assert_eq!(field, leaf, "{text}");
+                    assert_eq!(reason, SettingsRefusal::SupervisorOwned, "{text}");
+                }
+                other => panic!("{text}: {other:?}"),
+            }
+        }
+        let other: toml::Table = "[runtime]\nseat_host = false\n".parse().unwrap();
+        assert!(refuse_supervisor_leaves(&other).is_ok());
     }
 }

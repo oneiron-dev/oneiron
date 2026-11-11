@@ -124,15 +124,51 @@ fn owner_config() -> BookingAntiAbuseOwnerConfig {
 }
 
 fn seed_rows() -> Vec<BookingAntiAbuseRuleRow> {
-    default_booking_anti_abuse_rows(
+    let mut rows = default_booking_anti_abuse_rows(
         id(PAGE),
         Some(EventTypeKey("intro-call".to_owned())),
         &owner_config(),
     )
-    .expect("seed rows validate")
+    .expect("seed rows validate");
+    // FIX 9627 (439971c2702): the amendment door requires `amended_by` to
+    // name the authenticated person; the constructor stamps the page.
+    for row in &mut rows {
+        row.amended_by = id(OWNER);
+    }
+    rows
 }
 
-fn install_rows(vault: &Vault, rows: &[BookingAntiAbuseRuleRow]) {
+/// The suite's amending person: the fixture owner as a live, bound owner
+/// person (FIX 9627, 439971c2702: the amendment door authenticates the
+/// amender and `amended_by` must name them).
+fn owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    if vault.get(&id(OWNER)).expect("read owner").is_none() {
+        vault
+            .put_entity(
+                &id(OWNER),
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"booking owner fixture",
+            )
+            .expect("owner person");
+    }
+    crate::test_util::bind_test_owner(vault, id(OWNER));
+    vault
+        .authenticate_owner(
+            id(OWNER),
+            &id(OWNER).to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
+fn install_rows(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    rows: &[BookingAntiAbuseRuleRow],
+) {
     let scope = &rows.first().expect("rows").scope;
     install_page_and_config(
         vault,
@@ -140,7 +176,8 @@ fn install_rows(vault: &Vault, rows: &[BookingAntiAbuseRuleRow]) {
         scope.event_type.as_ref().expect("event type"),
     );
     for row in rows {
-        let outcome = apply_rule_amendment(vault, 0, row.clone(), None).expect("install row");
+        let outcome =
+            apply_rule_amendment(vault, owner, 0, row.clone(), None).expect("install row");
         assert!(outcome.owner_notice_required);
     }
 }
@@ -158,11 +195,14 @@ fn seed_rule(rule: &BookingAntiAbuseRule) -> BookingAntiAbuseRuleRow {
     }
 }
 
-fn assert_rejected_without_activation(vault: &Vault, row: BookingAntiAbuseRuleRow) {
-    let row_id = row.row_id.clone();
+fn assert_rejected_without_activation(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    row: BookingAntiAbuseRuleRow,
+) {
     let scope = row.scope.clone();
     assert!(matches!(
-        apply_rule_amendment(vault, 0, row, None),
+        apply_rule_amendment(vault, owner, 0, row, None),
         Err(BookingError::InvalidConstraint(message)) if message.contains("InvalidBookingPage")
     ));
     assert!(
@@ -171,15 +211,13 @@ fn assert_rejected_without_activation(vault: &Vault, row: BookingAntiAbuseRuleRo
             .is_empty(),
         "a rejected activation must not store a rule row"
     );
-    let rtxn = vault.store.env.read_txn().expect("read transaction");
+    // FIX 9628/9629 (0d2519f310e): notices are derived from the rows in force
+    // and retained proposals, not stored rows, so the same condition reads
+    // through the derived view.
     assert!(
-        !storage::NOTICE
-            .contains(
-                &vault.store,
-                &rtxn,
-                &(*storage::NOTICE_KEY_TAG, storage::notice_digest(&row_id, 1)),
-            )
-            .expect("read owner notice"),
+        booking_anti_abuse_notices(vault)
+            .expect("read owner notices")
+            .is_empty(),
         "a rejected activation must not write an owner notice"
     );
 }
@@ -393,7 +431,8 @@ fn owner_config_thresholds_validate_ratified_ranges_without_constants() {
 #[test]
 fn tightening_auto_applies_and_emits_notice() {
     let (_dir, vault) = open_vault();
-    install_rows(&vault, &seed_rows());
+    let owner = owner_proof(&vault);
+    install_rows(&vault, &owner, &seed_rows());
     let row_id = booking_rule_row_id(
         &scope(),
         &BookingAntiAbuseRule::RequiredIntake {
@@ -408,7 +447,7 @@ fn tightening_auto_applies_and_emits_notice() {
         2,
     );
     tighter.row_id.clone_from(&row_id);
-    let outcome = apply_rule_amendment(&vault, 1, tighter.clone(), None).expect("tighten");
+    let outcome = apply_rule_amendment(&vault, &owner, 1, tighter.clone(), None).expect("tighten");
     assert!(outcome.owner_notice_required);
     assert_eq!(outcome.stored.version, 2);
     assert!(outcome.stored.owner_stamp_ref.is_none());
@@ -436,14 +475,15 @@ fn tightening_auto_applies_and_emits_notice() {
     assert!(row_notices[1].contains("version 2 (tightening)"));
 
     // The compare-and-set refuses a stale expected version.
-    let stale = apply_rule_amendment(&vault, 1, tighter, None);
+    let stale = apply_rule_amendment(&vault, &owner, 1, tighter, None);
     assert!(stale.is_err(), "stale expected version must refuse");
 }
 
 #[test]
 fn loosening_requires_exact_row_version_stamp_hash() {
     let (_dir, vault) = open_vault();
-    install_rows(&vault, &seed_rows());
+    let owner = owner_proof(&vault);
+    install_rows(&vault, &owner, &seed_rows());
     let row_id = booking_rule_row_id(
         &scope(),
         &BookingAntiAbuseRule::RequiredIntake {
@@ -459,7 +499,7 @@ fn loosening_requires_exact_row_version_stamp_hash() {
 
     // No stamp: refused.
     assert!(
-        apply_rule_amendment(&vault, 1, looser.clone(), None).is_err(),
+        apply_rule_amendment(&vault, &owner, 1, looser.clone(), None).is_err(),
         "a loosening without a stamp must refuse"
     );
 
@@ -474,7 +514,7 @@ fn loosening_requires_exact_row_version_stamp_hash() {
         proposed_row_version_hash: other_hash,
     };
     assert!(
-        apply_rule_amendment(&vault, 1, looser.clone(), Some(&wrong_row_stamp)).is_err(),
+        apply_rule_amendment(&vault, &owner, 1, looser.clone(), Some(&wrong_row_stamp)).is_err(),
         "a stamp bound to different rows must refuse"
     );
 
@@ -489,7 +529,14 @@ fn loosening_requires_exact_row_version_stamp_hash() {
             .expect("hash wrong version"),
     };
     assert!(
-        apply_rule_amendment(&vault, 1, looser.clone(), Some(&wrong_version_stamp)).is_err(),
+        apply_rule_amendment(
+            &vault,
+            &owner,
+            1,
+            looser.clone(),
+            Some(&wrong_version_stamp)
+        )
+        .is_err(),
         "a stamp bound to a different version must refuse"
     );
 
@@ -499,7 +546,8 @@ fn loosening_requires_exact_row_version_stamp_hash() {
         stamp_ref: id(STAMP),
         proposed_row_version_hash: exact_hash,
     };
-    let outcome = apply_rule_amendment(&vault, 1, looser, Some(&stamp)).expect("stamped loosening");
+    let outcome =
+        apply_rule_amendment(&vault, &owner, 1, looser, Some(&stamp)).expect("stamped loosening");
     assert!(outcome.owner_notice_required);
     assert_eq!(outcome.stored.owner_stamp_ref, Some(id(STAMP)));
     assert_eq!(outcome.stored.version, 2);
@@ -521,7 +569,7 @@ fn loosening_requires_exact_row_version_stamp_hash() {
         ..stamp
     };
     assert!(
-        apply_rule_amendment(&vault, 2, replay, Some(&replay_bound_stamp)).is_ok(),
+        apply_rule_amendment(&vault, &owner, 2, replay, Some(&replay_bound_stamp)).is_ok(),
         "a fresh stamp binds a fresh proposal; nothing pending exists to replay"
     );
 }
@@ -529,15 +577,17 @@ fn loosening_requires_exact_row_version_stamp_hash() {
 #[test]
 fn activation_refuses_a_missing_booking_page() {
     let (_dir, vault) = open_vault();
+    let owner = owner_proof(&vault);
     let row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
         min_chars: nz16(10),
     });
-    assert_rejected_without_activation(&vault, row);
+    assert_rejected_without_activation(&vault, &owner, row);
 }
 
 #[test]
 fn page_wide_activation_refuses_an_existing_non_booking_subject() {
     let (_dir, vault) = open_vault();
+    let owner = owner_proof(&vault);
     let mut row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
         min_chars: nz16(10),
     });
@@ -552,12 +602,13 @@ fn page_wide_activation_refuses_an_existing_non_booking_subject() {
             b"non-booking subject fixture",
         )
         .expect("non-booking entity");
-    assert_rejected_without_activation(&vault, row);
+    assert_rejected_without_activation(&vault, &owner, row);
 }
 
 #[test]
 fn activation_refuses_a_page_without_live_event_configuration() {
     let (_dir, vault) = open_vault();
+    let owner = owner_proof(&vault);
     let row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
         min_chars: nz16(10),
     });
@@ -570,12 +621,13 @@ fn activation_refuses_a_page_without_live_event_configuration() {
             b"booking page fixture",
         )
         .expect("page entity");
-    assert_rejected_without_activation(&vault, row);
+    assert_rejected_without_activation(&vault, &owner, row);
 }
 
 #[test]
 fn activation_refuses_a_mismatched_live_event_configuration() {
     let (_dir, vault) = open_vault();
+    let owner = owner_proof(&vault);
     let row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
         min_chars: nz16(10),
     });
@@ -584,12 +636,13 @@ fn activation_refuses_a_mismatched_live_event_configuration() {
         row.scope.page_ref,
         &EventTypeKey("different-event".to_owned()),
     );
-    assert_rejected_without_activation(&vault, row);
+    assert_rejected_without_activation(&vault, &owner, row);
 }
 
 #[test]
 fn page_wide_activation_accepts_a_configured_booking_page() {
     let (_dir, vault) = open_vault();
+    let owner = owner_proof(&vault);
     let mut row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
         min_chars: nz16(10),
     });
@@ -601,7 +654,7 @@ fn page_wide_activation_accepts_a_configured_booking_page() {
         &EventTypeKey("intro-call".to_owned()),
     );
     let notices_before = booking_anti_abuse_notices(&vault).expect("notices before");
-    let outcome = apply_rule_amendment(&vault, 0, row.clone(), None)
+    let outcome = apply_rule_amendment(&vault, &owner, 0, row.clone(), None)
         .expect("configured booking page activates page-wide row");
     assert!(outcome.owner_notice_required);
 
@@ -624,6 +677,7 @@ fn page_wide_activation_accepts_a_configured_booking_page() {
 #[test]
 fn put_rule_is_private_and_public_activation_is_amendment_only() {
     let (_dir, vault) = open_vault();
+    let owner = owner_proof(&vault);
     let first = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
         min_chars: nz16(10),
     });
@@ -634,24 +688,24 @@ fn put_rule_is_private_and_public_activation_is_amendment_only() {
         first.scope.page_ref,
         first.scope.event_type.as_ref().expect("event type"),
     );
-    assert!(apply_rule_amendment(&vault, 0, first.clone(), None).is_ok());
+    assert!(apply_rule_amendment(&vault, &owner, 0, first.clone(), None).is_ok());
 
     // The private-put bypasses this module cannot offer: every wrong
     // version framing refuses, so only the versioned transaction stores.
     assert!(
-        apply_rule_amendment(&vault, 0, first.clone(), None).is_err(),
+        apply_rule_amendment(&vault, &owner, 0, first.clone(), None).is_err(),
         "re-creation through the version-0 door must refuse an existing row"
     );
     let mut v3 = first.clone();
     v3.version = 3;
     assert!(
-        apply_rule_amendment(&vault, 1, v3, None).is_err(),
+        apply_rule_amendment(&vault, &owner, 1, v3, None).is_err(),
         "skipping a version must refuse"
     );
     let mut v1_again = first;
     v1_again.version = 1;
     assert!(
-        apply_rule_amendment(&vault, 1, v1_again, None).is_err(),
+        apply_rule_amendment(&vault, &owner, 1, v1_again, None).is_err(),
         "restating version 1 must refuse"
     );
     let v2 = amend_with(
@@ -661,7 +715,7 @@ fn put_rule_is_private_and_public_activation_is_amendment_only() {
         2,
     );
     assert!(
-        apply_rule_amendment(&vault, 5, v2, None).is_err(),
+        apply_rule_amendment(&vault, &owner, 5, v2, None).is_err(),
         "an expected version the store does not hold must refuse"
     );
 
@@ -701,11 +755,12 @@ fn amendment_direction_orders_each_variant_axis() {
         },
     ] {
         let (_dir, vault) = open_vault();
-        install_rows(&vault, std::slice::from_ref(&current));
+        let owner = owner_proof(&vault);
+        install_rows(&vault, &owner, std::slice::from_ref(&current));
         let mut proposed = current.clone();
         proposed.version = 2;
         proposed.rule = rule;
-        let outcome = apply_rule_amendment(&vault, 1, proposed.clone(), None)
+        let outcome = apply_rule_amendment(&vault, &owner, 1, proposed.clone(), None)
             .expect("re-assertion or tightening activates without a stamp");
         assert_eq!(outcome.stored.version, 2);
         assert!(outcome.stored.owner_stamp_ref.is_none());
@@ -720,7 +775,8 @@ fn amendment_direction_orders_each_variant_axis() {
     }
 
     let (_dir, vault) = open_vault();
-    install_rows(&vault, std::slice::from_ref(&current));
+    let owner = owner_proof(&vault);
+    install_rows(&vault, &owner, std::slice::from_ref(&current));
     let mut proposed = current.clone();
     proposed.version = 2;
     proposed.rule = BookingAntiAbuseRule::MinimumNotice {
@@ -728,23 +784,23 @@ fn amendment_direction_orders_each_variant_axis() {
         high_value_secs: nz64(100_000),
     };
     let notices_before = booking_anti_abuse_notices(&vault).expect("notices before");
-    assert!(apply_rule_amendment(&vault, 1, proposed.clone(), None).is_err());
+    assert!(apply_rule_amendment(&vault, &owner, 1, proposed.clone(), None).is_err());
 
     // Variant drift must not bypass owner authorization.
     let mut drift = proposed.clone();
     drift.rule = BookingAntiAbuseRule::QuarantineBorderline;
-    assert!(apply_rule_amendment(&vault, 1, drift, None).is_err());
+    assert!(apply_rule_amendment(&vault, &owner, 1, drift, None).is_err());
 
     // Versions must advance by exactly one; scope and id are immutable.
     let mut invalid = current.clone();
     invalid.version = 3;
-    assert!(apply_rule_amendment(&vault, 1, invalid.clone(), None).is_err());
+    assert!(apply_rule_amendment(&vault, &owner, 1, invalid.clone(), None).is_err());
     invalid.version = 2;
     invalid.scope = BookingRuleScope {
         page_ref: id(OTHER_PAGE),
         event_type: None,
     };
-    assert!(apply_rule_amendment(&vault, 1, invalid, None).is_err());
+    assert!(apply_rule_amendment(&vault, &owner, 1, invalid, None).is_err());
     let rows = booking_anti_abuse_rules(&vault, &scope).expect("state after refusals");
     let stored = rows
         .iter()
@@ -764,7 +820,7 @@ fn amendment_direction_orders_each_variant_axis() {
         stamp_ref: id(STAMP),
         proposed_row_version_hash: booking_rule_row_version_hash(&proposed).expect("proposal hash"),
     };
-    let outcome = apply_rule_amendment(&vault, 1, proposed.clone(), Some(&stamp))
+    let outcome = apply_rule_amendment(&vault, &owner, 1, proposed.clone(), Some(&stamp))
         .expect("mixed-axis amendment requires its matching stamp");
     assert_eq!(outcome.stored.version, 2);
     assert_eq!(outcome.stored.owner_stamp_ref, Some(id(STAMP)));
@@ -809,8 +865,9 @@ fn amendment_direction_orders_each_variant_axis() {
     };
     for proposed in [slot_tighter, slot_refresh] {
         let (_dir, vault) = open_vault();
-        install_rows(&vault, std::slice::from_ref(&slot));
-        let outcome = apply_rule_amendment(&vault, 1, proposed.clone(), None)
+        let owner = owner_proof(&vault);
+        install_rows(&vault, &owner, std::slice::from_ref(&slot));
+        let outcome = apply_rule_amendment(&vault, &owner, 1, proposed.clone(), None)
             .expect("lower cap and TTL-only refresh activate without a stamp");
         assert_eq!(outcome.stored.version, 2);
         assert!(outcome.stored.owner_stamp_ref.is_none());
@@ -828,10 +885,11 @@ fn amendment_direction_orders_each_variant_axis() {
 #[test]
 fn version_hash_binds_the_exact_row_and_version() {
     let (_dir, vault) = open_vault();
+    let owner = owner_proof(&vault);
     let row = seed_rule(&BookingAntiAbuseRule::RequiredIntake {
         min_chars: nz16(20),
     });
-    install_rows(&vault, std::slice::from_ref(&row));
+    install_rows(&vault, &owner, std::slice::from_ref(&row));
 
     let mut proposed = amend_with(
         &BookingAntiAbuseRule::RequiredIntake {
@@ -847,7 +905,7 @@ fn version_hash_binds_the_exact_row_and_version() {
 
     let notices_before = booking_anti_abuse_notices(&vault).expect("notices before");
     assert!(
-        apply_rule_amendment(&vault, 1, proposed.clone(), Some(&stamp)).is_err(),
+        apply_rule_amendment(&vault, &owner, 1, proposed.clone(), Some(&stamp)).is_err(),
         "a stamp for the pre-mutation proposal must not authorize activation"
     );
     let rows = booking_anti_abuse_rules(&vault, &row.scope).expect("read rejected state");
@@ -872,7 +930,7 @@ fn version_hash_binds_the_exact_row_and_version() {
         stamp_ref: id(STAMP),
         proposed_row_version_hash: booking_rule_row_version_hash(&proposed).expect("new hash"),
     };
-    let outcome = apply_rule_amendment(&vault, 1, proposed, Some(&matching_stamp))
+    let outcome = apply_rule_amendment(&vault, &owner, 1, proposed, Some(&matching_stamp))
         .expect("the same proposal activates with its matching stamp");
     assert!(outcome.owner_notice_required);
     assert_eq!(outcome.stored.version, 2);
@@ -1114,11 +1172,9 @@ fn booking_rule_row_ids_bind_full_page_and_event_identity() {
         id_a, id_b,
         "prefix-colliding pages still own distinct row ids"
     );
-    assert_ne!(
-        rule_row_key(&id_a),
-        rule_row_key(&id_b),
-        "distinct ids never share a storage key"
-    );
+    // FIX 9628 (0d2519f310e): activated rows are manifest entries keyed by
+    // row id; the storage-key promise is the row-id promise now.
+    assert_ne!(id_a, id_b, "distinct ids never share a storage key");
 
     // The full page hex and the full 32-byte event-key digest are bound —
     // no 8/4-hex truncation anywhere in the id.
@@ -1131,13 +1187,18 @@ fn booking_rule_row_ids_bind_full_page_and_event_identity() {
     // version: the second page never trips the first page's
     // "already exists".
     let (_dir, vault) = open_vault();
+    let owner = owner_proof(&vault);
     let mut proposed_rows = Vec::new();
     for page in [page_a, page_b] {
         install_page_and_config(&vault, page, &event);
         let rows = default_booking_anti_abuse_rows(page, Some(event.clone()), &owner_config())
             .expect("seed rows");
         for row in &rows {
-            let outcome = apply_rule_amendment(&vault, 0, row.clone(), None).expect("activate");
+            // FIX 9627 (439971c2702): `amended_by` must name the
+            // authenticated person; the constructor stamps the page.
+            let mut row = row.clone();
+            row.amended_by = id(OWNER);
+            let outcome = apply_rule_amendment(&vault, &owner, 0, row, None).expect("activate");
             assert_eq!(outcome.stored.version, 1);
         }
         proposed_rows.extend(rows);
@@ -1811,7 +1872,8 @@ fn booking_rule_storage_is_disjoint_from_campaign_compliance() {
     // per-activation notices — sits under the booking-only prefix, and
     // the rule rows round-trip through the public reader.
     let (_dir, vault) = open_vault();
-    install_rows(&vault, &seed_rows());
+    let owner = owner_proof(&vault);
+    install_rows(&vault, &owner, &seed_rows());
     let rows = booking_anti_abuse_rules(&vault, &scope()).expect("read rows");
     assert_eq!(rows.len(), 10);
     let notices = booking_anti_abuse_notices(&vault).expect("notices");

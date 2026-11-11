@@ -12,6 +12,14 @@ impl EntityStoreRead for Memory {
             txn.entities.iter().map(|(id, row)| Ok((*id, row.encode()))),
         ))
     }
+    fn port_entity_raw_records_borrowed<'a>(
+        &self,
+        txn: &'a Snapshot,
+    ) -> Result<PortRows<'a, (EntityId, std::borrow::Cow<'a, [u8]>)>> {
+        Ok(Box::new(txn.entities.iter().map(|(id, row)| {
+            Ok((*id, std::borrow::Cow::Owned(row.encode())))
+        })))
+    }
     fn port_entity_records<'a>(
         &self,
         txn: &'a Snapshot,
