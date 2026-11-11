@@ -118,8 +118,9 @@ pub enum ActAuthority {
 }
 
 /// An agent's act its live Grant names: the agent, the Grant and the act kind
-/// the Grant was checked for. Only [`Vault::granted_act`] builds one, and a
-/// door checks the Grant again in its own transaction.
+/// the Grant was checked for. Only [`Vault::granted_act`] builds one from a
+/// known Grant, and [`Vault::agent_act_owner_in_txn`] from the actor's swept
+/// standing Grant; a door checks the Grant again in its own transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantedAct {
     agent: EntityId,
@@ -153,10 +154,14 @@ impl GrantedAct {
 /// and an agent's free-time policy, any set or clear (FIX 5660, CALLS "FIX
 /// 5660 agent free-time act"); each other door takes agents when its lane
 /// writes the Grant line that names its act (contract §4).
-const AGENT_GRANTABLE_ACTS: [OwnerActKind; 3] = [
+const AGENT_GRANTABLE_ACTS: [OwnerActKind; 4] = [
     OwnerActKind::TopologySeal,
     OwnerActKind::WorldPrivacy,
     OwnerActKind::FreeTimePolicy,
+    // The Engine's ruling Wed 11-11 (OPUS-E2E-3 model-binding-proposer-grant):
+    // "An agent whose Grant names vault.models.bindings.propose may propose
+    // a binding. It is a proposal, and the owner still decides."
+    OwnerActKind::ModelBindingPropose,
 ];
 
 /// The verb a Grant names a world-settings act by. A Grant can only ever name
@@ -168,13 +173,19 @@ pub(crate) const WORLD_PRIVACY_TIGHTEN_VERB: &str = "world_privacy_tighten";
 /// narrower-or-wider order exists for the policy.
 pub(crate) const FREE_TIME_POLICY_SET_VERB: &str = "free_time_policy_set";
 
+/// The verb a Grant names an agent's model-binding proposal by: the facade
+/// verb itself, since the proposal is the verb's whole act.
+pub(crate) const MODEL_BINDING_PROPOSE_VERB: &str = "vault.models.bindings.propose";
+
 /// The verb an agent's Grant lists to name `act`: the act's wire tag, but for
-/// a world's settings, whose one grantable direction is the tighten, and the
-/// free-time policy, whose verb names the set.
+/// a world's settings, whose one grantable direction is the tighten, the
+/// free-time policy, whose verb names the set, and a model-binding proposal,
+/// whose verb is the facade verb.
 fn grant_verb(act: OwnerActKind) -> &'static str {
     match act {
         OwnerActKind::WorldPrivacy => WORLD_PRIVACY_TIGHTEN_VERB,
         OwnerActKind::FreeTimePolicy => FREE_TIME_POLICY_SET_VERB,
+        OwnerActKind::ModelBindingPropose => MODEL_BINDING_PROPOSE_VERB,
         other => other.as_str(),
     }
 }
@@ -551,6 +562,54 @@ impl crate::Vault {
                 _ => false,
             },
         )
+    }
+}
+
+impl crate::Vault {
+    /// The owner whose will the bound actor `agent`'s act `act` carries, for
+    /// a door the facade calls with the actor alone: the actor's first live
+    /// Grant naming the act, in id order, still stands now; on a shared vault
+    /// a Grant lapsed on its pact membership alone is passed over for a later
+    /// one, and with none, the lapse refuses. The standing read is the
+    /// replica's own rule ([`grant_standing_in_txn`], withdrawn markers and
+    /// tombstones included), and the Grant found is checked again by
+    /// [`Self::granted_act_owner_in_txn`], in the acting transaction, which
+    /// also resolves the owner. A revoked, expired or lapsed Grant is refused
+    /// at this use.
+    pub(crate) fn agent_act_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        act: OwnerActKind,
+    ) -> crate::error::Result<EntityId> {
+        let now = self.instant_in_txn(txn)?.secs();
+        let mut lapsed = false;
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
+            if grant_standing_in_txn(&self.store, txn, id, agent, act, now)? != GrantStanding::Names
+            {
+                continue;
+            }
+            if grant_row_pact_standing_lapsed_in_txn(self, txn, id) {
+                lapsed = true;
+                continue;
+            }
+            let granted = GrantedAct {
+                agent,
+                grant: id,
+                act,
+            };
+            return self.granted_act_owner_in_txn(txn, &granted, act);
+        }
+        Err(authority_refused(match no_standing(lapsed) {
+            NoStanding::PactStandingLapsed => PACT_STANDING_LAPSED,
+            NoStanding::NotStanding => GRANT_NAMES_NO_ACT,
+        }))
     }
 }
 
