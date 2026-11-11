@@ -940,9 +940,16 @@ function RoomConversation({ specimen }: { specimen: string }) {
       <Composer
         className="lib-room-write"
         placeholder="Write to eiri"
-        savedIn="Saved in your own vault"
+        persona={<Composer.Persona initial="o" note="You write as Owen. Saved in your own vault." aria-label="Owen" />}
+        onVoice={() => {}}
+        onDictate={() => {}}
         onSend={(text) => setSent((s) => [...s.slice(-2), text])}
-      />
+      >
+        <Composer.Add label="Add to the message">
+          <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
+          <Menu.Item icon={<Icon name="tool" />}>model and effort</Menu.Item>
+        </Composer.Add>
+      </Composer>
     </div>
   )
 }

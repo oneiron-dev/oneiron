@@ -39,8 +39,6 @@
   /* The round plate under a resident in a crew stack, and its hover. */
   --sl-chip: light-dark(#E4E6E9, var(--sl-night-chip, #302D2A));
   --sl-chip-hover: light-dark(#DBDDE0 /* provisional */, #393633 /* provisional */);
-  /* A text field while it holds focus (the write box, the write line). */
-  --sl-sunk-focus: light-dark(#F7F6F3 /* provisional */, #292623 /* provisional */);
 
   /* The ink ladder: silver in dark, slate in light. ink-4 is never text. */
   --sl-ink-1: light-dark(#1E2226, #E8E1D5);

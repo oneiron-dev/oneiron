@@ -122,6 +122,8 @@ export { snapToMagnet, SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, type MagnetSnap } fr
 export {
   Composer,
   type ComposerProps,
+  type ComposerSize,
+  type ComposerTools,
   type ComposerSendDetails,
   type ComposerAddProps,
   type ComposerCarryProps,
@@ -130,6 +132,7 @@ export {
   type ComposerPersonaProps,
   type ComposerPersonaKind,
 } from './patterns/Composer'
+export { composerKeySends, composerSendText, type ComposerKeyState } from './patterns/composer-keys'
 export { OutsideLine, type OutsideLineProps, type OutsideLineGroupProps, type OutsideLineGuestProps } from './patterns/OutsideLine'
 export { ConnectionRow, type ConnectionRowProps } from './patterns/ConnectionRow'
 export { FileRow, type FileRowProps } from './patterns/FileRow'
@@ -144,7 +147,6 @@ export {
 export { ClaimText, type ClaimTextProps } from './patterns/ClaimText'
 export { claimInk, type ClaimInk } from './patterns/claim-ink'
 export { findBoostWord } from './patterns/find-boost-word'
-export { WriteLine, type WriteLineProps } from './patterns/WriteLine'
 export { TaskList, type TaskListProps } from './patterns/TaskList'
 export {
   TaskRow,

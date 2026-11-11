@@ -5,7 +5,7 @@ import { Unfold } from '../primitives/Unfold'
 import { Verb } from '../primitives/Verb'
 import { cx, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { taskCountWords } from './task-group'
-import { WriteLine, type WriteLineProps } from './WriteLine'
+import { Composer, type ComposerProps } from './Composer'
 
 /* ── the list's open row ───────────────────────────────────────────────── */
 
@@ -108,7 +108,7 @@ export interface TaskRowBodyProps extends React.ComponentPropsWithRef<'div'> {}
 
 /* What unfolds under the row, with a hairline at its left: the task's last
    lines, what it asks (a question and a NeedsYou.Picks line inside a
-   NeedsYou.Answer), a line to write to it, its own tasks. */
+   NeedsYou.Answer), the small write box, its own tasks. */
 function TaskRowBody({ className, ...props }: TaskRowBodyProps) {
   return <div className={cx('sl-task-body', className)} {...props} />
 }
@@ -127,12 +127,12 @@ function TaskRowQuestion({ className, ...props }: TaskRowQuestionProps) {
   return <p className={cx('sl-task-question', className)} {...props} />
 }
 
-export interface TaskRowWriteProps extends WriteLineProps {}
+export interface TaskRowWriteProps extends Omit<ComposerProps, 'size'> {}
 
-/* One line to write to the task: a WriteLine. Enter sends; Escape leaves
-   the line and folds the row. */
+/* One line to write to the task: the small write box. Enter sends; Escape
+   leaves the field and folds the row. */
 function TaskRowWrite({ placeholder = 'Write to this task', className, ...props }: TaskRowWriteProps) {
-  return <WriteLine className={cx('sl-task-write', className)} placeholder={placeholder} {...props} />
+  return <Composer size="small" className={cx('sl-task-write', className)} placeholder={placeholder} {...props} />
 }
 
 export interface TaskRowOwnProps extends Omit<React.ComponentPropsWithRef<'div'>, 'children'> {
