@@ -16,6 +16,10 @@
 //! gate decision. These tests call the verbs by name on the embedded owner's
 //! handle, as the facade does.
 
+// The cadence-scan case reads its scans through `oneiron::test_doors`, which
+// only the test command's `--cfg oneiron_test_support` compiles.
+#![cfg(oneiron_test_support)]
+
 use std::sync::Arc;
 
 use oneiron::agent_def::{
