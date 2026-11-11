@@ -10,19 +10,26 @@
 //! the same writer. Any other caller needs the TASK binding: the branch
 //! realizes a TASK whose Owner standing L02's rule proves for it
 //! ([`Memory::highway_task_actor_in`]). A host credential that acts as no
-//! person, the host's root or a slip it holds, keeps both as the owner does,
-//! and nothing else of his (FIX 6429): it holds every other root power, and
-//! paused and resumed before. Nothing else narrows: the queue's
-//! own pause and resume run as they always did, so a leased branch still
-//! refuses a pause, and a repeat answers `already_paused` or
-//! `already_resumed` and writes nothing.
+//! person, the host's root or a slip it holds, is admitted as the owner is
+//! (FIX 6429), and nothing else of his.
+//!
+//! Who releases a held branch is keyed on the hold and the caller (Fable 5.2
+//! item 2, lead 06:5x). The vault owner overrides any hold. Every other
+//! caller, the TASK's owner and the host included, resumes only a person's
+//! pause it placed itself; an engine hold (budget, fan-out, hook, annotation)
+//! or another caller's pause refuses it, `FORBIDDEN` with one reason code
+//! (`awaits:*`) naming the signal the branch waits on and a fix naming the
+//! door that gives it. Its pause of a held branch is refused the same way.
+//! Past that, the queue's own pause and resume run as they always did, so a
+//! leased branch still refuses a pause, and a repeat answers
+//! `already_paused` or `already_resumed` and writes nothing.
 
 use serde::{Deserialize, Serialize};
 
 use super::run_doors::{RunBranchView, branch_view};
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
-    InterveneAttempt, InterveneOutcome,
+    HoldSignal, InterveneAttempt, InterveneOutcome,
 };
 use crate::authority::{TaskActorVerb, VerifiedSlip};
 use crate::claim::ScopedReadActorKey;
@@ -73,6 +80,17 @@ pub enum RunControlEffect {
 pub enum RunControl {
     Pause,
     Resume,
+}
+
+/// How run control admitted its caller, which decides what held branch it
+/// releases (module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunControlStanding {
+    /// The vault owner: overrides any hold.
+    Owner,
+    /// The host acting as no person, or the TASK's owner: releases only a
+    /// person's pause it placed.
+    Caller,
 }
 
 impl RunControl {
@@ -138,8 +156,8 @@ impl Memory<'_> {
     ///
     /// `NOT_FOUND` for a branch no row names, or one of a TASK the caller is
     /// no party to; `FORBIDDEN` for a caller that is neither the vault owner
-    /// nor the TASK's owner; the queue's refusal of the transition; a broken
-    /// actor binding; storage errors.
+    /// nor the TASK's owner, or one a hold refuses (module docs); the queue's
+    /// refusal of the transition; a broken actor binding; storage errors.
     pub fn control_run(
         &self,
         branch: AttemptId,
@@ -168,9 +186,9 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         key: Option<&ScopedReadActorKey>,
         record: &AttemptRecord,
-    ) -> MemoryResult<()> {
+    ) -> MemoryResult<RunControlStanding> {
         if self.vault_owner_standing_in(txn, key)? {
-            return Ok(());
+            return Ok(RunControlStanding::Owner);
         }
         let Some(task) = record
             .task_ref
@@ -184,7 +202,7 @@ impl Memory<'_> {
             ));
         };
         self.highway_task_actor_in(txn, task, TaskActorVerb::Owner, RUN_CONTROL_FIX)?;
-        Ok(())
+        Ok(RunControlStanding::Caller)
     }
 
     /// Whether this surface's caller stands as the vault owner in `txn`: by
@@ -226,17 +244,19 @@ impl Memory<'_> {
 impl crate::Vault {
     /// Pauses or resumes `branch` for a host credential that acts as no
     /// person (FIX 6429): the host's root where it acts as nobody, or a slip
-    /// cut from it. For these two controls alone it stands as the owner
-    /// does, admitted in the writer on `proof`, a slip the host holds that
-    /// grants a write and is live there. The event names `actor`, the label
+    /// cut from it. For these two controls alone it is admitted as the owner
+    /// is, in the writer on `proof`, a slip the host holds that grants a write
+    /// and is live there; a held branch it releases as any caller other than
+    /// the vault owner does (module docs). The event names `actor`, the label
     /// the door authenticated it under. Every other caller takes
     /// [`Memory::control_run`].
     ///
     /// # Errors
     ///
     /// `NOT_FOUND` for a branch no row names; `FORBIDDEN` for a slip the
-    /// host does not hold, one that grants no write, or one no longer live;
-    /// the queue's refusal of the transition; storage errors.
+    /// host does not hold, one that grants no write, or one no longer live,
+    /// or a branch a hold keeps (module docs); the queue's refusal of the
+    /// transition; storage errors.
     pub fn control_run_as_host(
         &self,
         proof: &VerifiedSlip,
@@ -250,7 +270,7 @@ impl crate::Vault {
                 && (proof.allows_verb("write") || proof.allows_verb("core:write"))
                 && self.capability_slip_is_live_in_txn(txn, proof)?
             {
-                return Ok(());
+                return Ok(RunControlStanding::Caller);
             }
             Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
@@ -262,7 +282,8 @@ impl crate::Vault {
 }
 
 /// Pauses or resumes `branch` in one writer that admits its caller by
-/// `admit` first, and answers the queue's own outcome. The event names
+/// `admit` first, and answers the queue's own outcome; a caller other than
+/// the vault owner passes the table's caller-class column. The event names
 /// `actor`.
 fn intervene_admitted(
     vault: &crate::Vault,
@@ -270,7 +291,7 @@ fn intervene_admitted(
     control: RunControl,
     actor: String,
     note: Option<String>,
-    admit: impl FnOnce(&heed::RoTxn<'_>, &AttemptRecord) -> MemoryResult<()>,
+    admit: impl FnOnce(&heed::RoTxn<'_>, &AttemptRecord) -> MemoryResult<RunControlStanding>,
 ) -> MemoryResult<InterveneOutcome> {
     let queue = AttemptQueue::new(vault);
     let now = vault.store.clock.now_recorded_at();
@@ -278,20 +299,62 @@ fn intervene_admitted(
         let record = queue
             .get_in_write_txn(wtxn, branch)?
             .ok_or(Error::EntityNotFound)?;
-        admit(wtxn, &record)?;
-        Ok::<_, MemoryError>(queue.intervene_in_txn(
-            wtxn,
-            InterveneAttempt {
-                id: branch,
-                kind: control.kind(),
-                actor,
-                note,
-                now,
-            },
-        )?)
+        let input = InterveneAttempt {
+            id: branch,
+            kind: control.kind(),
+            actor,
+            note,
+            now,
+        };
+        match admit(wtxn, &record)? {
+            RunControlStanding::Owner => Ok::<_, MemoryError>(queue.intervene_in_txn(wtxn, input)?),
+            RunControlStanding::Caller => queue
+                .intervene_as_caller_in_txn(wtxn, input)?
+                .map_err(hold_refusal),
+        }
     })?;
     vault.store.notify_attempt_observers();
     Ok(outcome)
+}
+
+/// The refusal of a caller a hold keeps: `FORBIDDEN`, the signal's reason
+/// code, and the door that gives the signal.
+fn hold_refusal(signal: HoldSignal) -> MemoryError {
+    let (message, fix) = match signal {
+        HoldSignal::BudgetResume => (
+            "the branch waits under its run's budget hold".to_owned(),
+            "The vault owner resumes a budget hold (vault.budgets.hold.resume) once its lease has room.",
+        ),
+        HoldSignal::FanoutApproval { launch_ref } => (
+            format!(
+                "the branch waits on the approval of fan-out launch {}",
+                launch_ref.to_hex()
+            ),
+            "Approve the launch with vault.fanout.resume_as if you hold its decision role; the vault owner rules it with vault.fanout.resume.",
+        ),
+        HoldSignal::HookAnswer => (
+            "the branch waits on its verb hook's ask".to_owned(),
+            "Answer the ask with tasks.answer if you are one of its members; the run resumes once it is answered.",
+        ),
+        HoldSignal::AnnotationReattach {
+            artifact_id,
+            thread_id,
+        } => (
+            format!(
+                "the branch waits for comment thread {} of artifact {} to reattach",
+                thread_id.to_hex(),
+                artifact_id.to_hex()
+            ),
+            "Reattach the comment thread at its exact words; the run resumes then.",
+        ),
+        HoldSignal::Pauser => (
+            "another caller paused the branch".to_owned(),
+            "Ask whoever paused it, or the vault owner, to resume it.",
+        ),
+    };
+    let mut refusal = MemoryError::new(MEMORY_CODE_FORBIDDEN, message, &[fix]);
+    refusal.reason_codes = vec![signal.reason_code().to_owned()];
+    refusal
 }
 
 /// The attempt id `branch` names: thirty-two hex digits.

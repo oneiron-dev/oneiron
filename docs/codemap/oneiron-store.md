@@ -386,6 +386,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/overlay_db/iters.rs` | src | s | 7 enum · 1 fn | OverlayDupValues, OverlayIter, OverlayPrefix, OverlayRange, OverlayRevRange, OverlayStrIter, OverlayStrPrefix | Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str) |
 | `src/overlay_db/merge.rs` | src | m | 4 struct · 11 crate-vis | MergedPrefixRows, MergedRows, PrefetchedMergedRows, StrMergedRows | Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and… |
 | `src/overlay_db/mod.rs` | src | s | 3 mod · 1 re-export | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
+| `src/overlay_db/tests.rs` | test | s | — | — | — |
 | `src/own_rate_record.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 const | OwnRate, OwnRateCheck, OwnRateKind | Own-rate advisory thresholds and first-crossing check records |
 | `src/pack_hook_actor_class.rs` | src | s | 1 enum | HookActorClass | The actor classes a pack hook's selector may name |
 | `src/pad_object_membership.rs` | src | s | 1 enum | PadObjectMembership | Generation membership policy named by a pad-object install |
@@ -416,7 +417,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/reaction_predicate.rs` | src | s | 1 const | — | Reaction outcome predicate stored by event-outcome projections |
 | `src/reader_fold_receipt.rs` | src | s | 2 struct | ReceiptPartial, SummaryMemo | Stored reader-fold receipts and their occurrence vocabulary |
 | `src/receipt_identity.rs` | src | s | 1 fn · 2 const | — | The identity marker carried after receipt attribution is erased |
-| `src/receipt_row.rs` | src | m | 1 enum · 6 fn · 83 const | ReceiptKind | Receipt row fields, query values, and deterministic ordering |
+| `src/receipt_row.rs` | src | s | 1 enum · 6 fn · 38 const | ReceiptKind | Receipt row fields, query values, and deterministic ordering |
 | `src/receive_scan.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 const | PushedBlob, ReceiveBlobKind, ReceiveScanHit | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
 | `src/record_links/blocks.rs` | src | m | 1 struct · 1 enum · 2 fn | Blocks, Line | The block structure [`super::parse_record_links`] reads a text's lines through (CommonMark, as far as… |
 | `src/record_links/mod.rs` | src | m | 2 struct · 2 fn · 4 const · 1 mod | ProseLink, ProseLinks | Pure parsing of record links in Markdown text |
@@ -474,10 +475,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_lease/types.rs` | src | s | 1 struct · 1 re-export | SecretTaintRef | Lease/registration/receipt row types, VaultInstant clock, key prefixes |
 | `src/secret_manifest.rs` | src | m | 2 struct · 3 fn · 1 const | SecretManifest, SecretManifestEntry | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
 | `src/secret_name_index.rs` | src | s | 1 struct | NameEntry | The live secret name index: each live custody record's name, the record it resolves to and the name's… |
-| `src/secret_record/codec.rs` | src | s | 1 enum · 6 fn · 4 const | BodyValue | MessagePack body codec for custody records, bands, floors, and bindings |
-| `src/secret_record/mod.rs` | src | s | 3 struct · 1 trait · 7 fn · 9 const · 4 mod · 18 re-export | SecretBinding, SecretCustodyFloor, SecretCustodyFloorSource, TierBand | Secret custody floor and binding vocabulary used by the store layer |
-| `src/secret_record/types.rs` | src | s | 2 struct · 1 enum · 5 fn · 5 const · 2 re-export | SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus | Custody domain types: classes, tiers, bands, floors, bindings, records, and metadata |
-| `src/secret_record/write_records.rs` | src | s | 5 struct · 4 enum · 6 fn · 1 const | ArchiveSameId, CustodyKeptHere, CustodyPlan, FoundKeyAction, FoundKeySettled, FoundNote, RepoFileKeys, RepoFileOriginal +1 | Custody write context, stored-value forms, and value-free change and found-key records |
+| `src/secret_record/codec.rs` | src | s | 5 fn · 4 const | — | MessagePack body codec for custody records, bands, floors, and bindings |
+| `src/secret_record/mod.rs` | src | s | 3 struct · 1 trait · 7 fn · 9 const · 4 mod · 16 re-export | SecretBinding, SecretCustodyFloor, SecretCustodyFloorSource, TierBand | Secret custody floor and binding vocabulary used by the store layer |
+| `src/secret_record/types.rs` | src | s | 1 struct · 1 enum · 2 fn · 5 const · 2 re-export | SecretCustodyMetadata, SecretCustodyStatus | Custody domain types: classes, tiers, bands, floors, bindings, status and metadata |
+| `src/secret_record/write_records.rs` | src | s | 5 struct · 4 enum · 5 fn · 1 const | ArchiveSameId, CustodyKeptHere, CustodyPlan, FoundKeyAction, FoundKeySettled, FoundNote, RepoFileKeys, RepoFileOriginal +1 | Custody write context, stored-value forms, and value-free change and found-key records |
 | `src/secret_rotation.rs` | src | s | 8 fn · 1 const | — | SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build… |
 | `src/serialize.rs` | src | s | 26 mod | — | Store-layer modules of core `serialize`; core re-exports each one at its old path |
 | `src/serialize/access_grant_fields.rs` | src | s | 4 const | — | Access-grant body fields used by context-pack serialization |
@@ -547,6 +548,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/source_audience_obligation.rs` | src | s | 1 enum · 3 fn · 1 const | SourceAudienceObligation | The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack… |
 | `src/store_clock.rs` | src | m | 2 struct · 2 trait · 20 fn · 1 const · 1 mod | Clock, IdGen, LeaseRenewal, StoreClock | Per-store clock and id source |
 | `src/store_clock/lease_journal.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | LeaseJournal | The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A) |
+| `src/store_clock/tests.rs` | test | s | — | — | The store clock's reads, observed through what a caller gets back |
 | `src/structural_kind_registry.rs` | src | s | 1 mod | — | Store-layer modules of core `store::structural_kind_registry`; core re-exports each one at its old path |
 | `src/structural_kind_registry/registry.rs` | src | s | 2 fn · 1 const | — | Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules |
 | `src/task_body_checks.rs` | src | s | 4 fn | — | Lenient raw TASK terminal and deadline checks used at storage admission |

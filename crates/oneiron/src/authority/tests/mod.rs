@@ -37,7 +37,6 @@ mod readonly_fold;
 mod retired_device_ops;
 mod revoke_proof_matrix;
 mod support;
-mod tier_floor;
 mod weak_keys;
 
 mod anchor_independence;

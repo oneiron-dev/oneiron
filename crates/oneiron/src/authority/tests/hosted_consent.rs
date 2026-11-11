@@ -18,8 +18,6 @@ fn managed_host_genesis_passes_consent_and_self_host_refuses_it() {
                     AuthorityTier::CloudCustodial,
                 ),
                 genesis_nonce: [82; 32],
-                tier_floor: AuthorityTier::Software,
-                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
                 recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             },
             key.clone(),
@@ -107,8 +105,6 @@ fn cached_snapshot_rechecks_posture_for_host_root() {
                     AuthorityTier::CloudCustodial,
                 ),
                 genesis_nonce: [244; 32],
-                tier_floor: AuthorityTier::Software,
-                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
                 recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             },
             key.clone(),
@@ -184,9 +180,6 @@ fn managed_root_accepts_logged_slips_but_never_device_key_widens() {
                 old_key: issuer.public_key(),
                 new_device: candidate,
             },
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::Software,
-            },
         ] {
             let attempt = issuer
                 .sign_entry(
@@ -202,7 +195,7 @@ fn managed_root_accepts_logged_slips_but_never_device_key_widens() {
             let fold = fold_authority_log_for_posture(
                 &[genesis.clone(), mint.clone(), attempt],
                 &observed,
-                1 + DEFAULT_PENDING_WIDEN_DELAY_SECS,
+                1 + 86_400,
                 &BTreeMap::new(),
                 crate::HostingPrivacyPosture::Hosted,
             );
@@ -218,7 +211,7 @@ fn managed_root_accepts_logged_slips_but_never_device_key_widens() {
 fn retired_device_key_widens_do_not_activate_in_any_posture() {
     let root = ed_key(71);
     let root_key = authority_key_from_ed(&root);
-    let genesis = genesis_entry(71, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(71, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let new_key = authority_key_from_ed(&ed_key(72));
     for posture in [
@@ -235,9 +228,6 @@ fn retired_device_key_widens_do_not_activate_in_any_posture() {
                 AuthorityOp::RotateKey {
                     old_key: root_key.clone(),
                     new_device: candidate,
-                },
-                AuthorityOp::SetTierFloor {
-                    tier_floor: AuthorityTier::Hardware,
                 },
             ] {
                 let attempted = sign_ed(
@@ -256,7 +246,7 @@ fn retired_device_key_widens_do_not_activate_in_any_posture() {
                 let folded = fold_authority_log_for_posture(
                     &[genesis.clone(), attempted],
                     &seen,
-                    1 + DEFAULT_PENDING_WIDEN_DELAY_SECS,
+                    1 + 86_400,
                     &BTreeMap::new(),
                     posture,
                 );
@@ -310,8 +300,6 @@ fn pairing_mints_a_logged_slip_not_a_client_authority_key_in_every_posture() {
                     },
                     genesis_nonce: [91; 32],
                     recovery: GenesisRecoveryStep::Saved([1; 32]),
-                    tier_floor: AuthorityTier::Software,
-                    pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
                 },
                 1,
             )
