@@ -34,7 +34,7 @@ const HOSTED_LEGAL_DOCS_URL_SCHEME: &str = "https://";
 /// attributed: attribution fields the gate-notice ledger would refuse, a
 /// `docs_url` that is not a document a reader can trust, a missing or
 /// unbounded policy document, an undeclared output contract, rows that carry
-/// no readable rule, two rows claiming the same category, or pattern rules the
+/// no readable rule or named external reference, or pattern rules the
 /// engine cannot compile.
 ///
 /// Every bound here mirrors one the ledger already enforces, so registration
@@ -150,6 +150,18 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
             return invalid(
                 "row_text",
                 "must not be blank: the row text IS the rule the model is shown",
+            );
+        }
+        if row.basis.subject.trim().is_empty() {
+            return invalid(
+                "row_basis_subject",
+                "must name the jurisdiction, provider or resource",
+            );
+        }
+        if row.basis.reference.trim().is_empty() {
+            return invalid(
+                "row_basis_reference",
+                "must name the law, provider term or capacity reference",
             );
         }
         if row.category.trim().is_empty() {

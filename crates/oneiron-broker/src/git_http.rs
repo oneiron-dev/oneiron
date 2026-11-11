@@ -45,7 +45,7 @@
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
-use crate::digest::{field, sorted_headers};
+use crate::digest::{BodyDigest, field, is_hex_digest, sorted_headers};
 use crate::{PROTOCOL_VERSION, Refusal};
 
 #[cfg(unix)]
@@ -61,8 +61,9 @@ pub(crate) use serve::serve_git;
 /// The blake3 key-derivation context of a git request digest.
 const DIGEST_CONTEXT: &str = "oneiron-broker 2026-11-06 git request digest v1";
 
-/// The longest value the one header a git call may carry can hold.
-const MAX_GIT_HEADER_VALUE: usize = 1024;
+/// The longest value the one header a git call may carry can hold, and the
+/// longest call id a git or an LFS exchange may name.
+pub(crate) const MAX_GIT_HEADER_VALUE: usize = 1024;
 
 /// The one request header a git call may carry: the protocol version stock
 /// git negotiates, kept the same across one conversation.
@@ -280,9 +281,7 @@ pub fn check_git_headers(headers: &[(String, String)]) -> Result<(), Refusal> {
 /// as it spools the body; the broker takes it again as it receives the body
 /// and sends nothing whose digest differs.
 pub struct GitRequestDigest {
-    hasher: blake3::Hasher,
-    expected: u64,
-    seen: u64,
+    body: BodyDigest,
 }
 
 impl GitRequestDigest {
@@ -309,18 +308,14 @@ impl GitRequestDigest {
             field(&mut hasher, name.as_bytes());
             field(&mut hasher, value.as_bytes());
         }
-        hasher.update(&body_len.to_le_bytes());
         Self {
-            hasher,
-            expected: body_len,
-            seen: 0,
+            body: BodyDigest::new(hasher, body_len),
         }
     }
 
     /// Takes the next `bytes` of the body.
     pub fn update(&mut self, bytes: &[u8]) {
-        self.seen = self.seen.saturating_add(bytes.len() as u64);
-        self.hasher.update(bytes);
+        self.body.update(bytes);
     }
 
     /// The digest, as lowercase hex, once the whole body passed.
@@ -330,10 +325,13 @@ impl GitRequestDigest {
     /// [`Refusal::Body`] when the body's bytes are not the length the
     /// digest began with.
     pub fn finish(self) -> Result<String, Refusal> {
-        if self.seen != self.expected {
-            return Err(Refusal::Body);
-        }
-        Ok(self.hasher.finalize().to_hex().to_string())
+        self.body.finish()
+    }
+
+    /// Its body half, for the broker's spool to take the body into.
+    #[cfg(unix)]
+    pub(crate) fn into_body(self) -> BodyDigest {
+        self.body
     }
 }
 
@@ -412,28 +410,11 @@ impl GitCallHeader {
         if self.target.exchange == GitExchange::Advertisement && self.body_len != 0 {
             return Err(Refusal::Body);
         }
-        if self.digest.len() != 64
-            || !self
-                .digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
+        if !is_hex_digest(&self.digest) {
             return Err(Refusal::Digest);
         }
         self.target.url()
     }
-}
-
-/// The broker's acknowledgement of a git exchange's header and body: the
-/// body is spooled and its digest is the header's, so the daemon may hand
-/// over the credential; or the exchange is refused, and nothing was sent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GitPrepared {
-    pub(crate) version: u32,
-    pub(crate) call: String,
-    pub(crate) digest: String,
-    pub(crate) refused: Option<Refusal>,
 }
 
 /// The digest of one whole git request.

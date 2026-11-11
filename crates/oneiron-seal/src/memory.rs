@@ -369,6 +369,33 @@ impl MemoryLedger {
         })
     }
 
+    /// Adds bytes to a hold from this same ledger before an allocation.
+    /// These are not decode bytes, so a parse pass cannot return them early.
+    pub(crate) fn extend_hold(
+        &self,
+        hold: &mut LedgerHold,
+        additional: u64,
+    ) -> Result<(), SealMemoryRefusal> {
+        self.take(additional, false)?;
+        hold.bytes = hold.bytes.saturating_add(additional);
+        Ok(())
+    }
+
+    /// Adopts `bytes` ALREADY taken from this ledger's spare (FIX 14217):
+    /// no second take, no service call, infallible. The hold returns the
+    /// bytes to spare when it drops with the adopted value.
+    /// Contract (caller-proved): `bytes` were charged to THIS ledger
+    /// exactly once for an allocation still live, never released or adopted
+    /// twice, and dropped BEFORE the hold (as [`Held`] orders fields).
+    /// Over-adopt forges spare; under-adopt stays conservative. Only proven
+    /// callers: `walk::pages` output, `revision_ends` ends.
+    pub(crate) fn adopt_charged(&self, bytes: usize) -> LedgerHold {
+        LedgerHold {
+            state: Arc::clone(&self.state),
+            bytes: wide(bytes),
+        }
+    }
+
     /// Returns `bytes` from decoded or scoped allocations that were freed,
     /// to spare room for a later admission. Never more than is live: held
     /// service reservations and a kept refusal stay as they are, and this
@@ -436,6 +463,17 @@ pub(crate) struct LedgerHold {
     bytes: u64,
 }
 
+impl LedgerHold {
+    /// Returns only bytes this hold charged, after their allocation is freed.
+    /// The ledger's refusal, if any, stays latched.
+    pub(crate) fn shrink(&mut self, freed: u64) {
+        let freed = freed.min(self.bytes);
+        self.bytes -= freed;
+        let mut state = lock(&self.state);
+        state.spare = state.spare.saturating_add(freed);
+    }
+}
+
 impl Drop for LedgerHold {
     fn drop(&mut self) {
         let mut state = lock(&self.state);
@@ -476,6 +514,69 @@ impl<T> Deref for Held<T> {
 /// A length as a service counts bytes.
 fn wide(bytes: usize) -> u64 {
     u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
+/// The memory the crate's unit tests run under: a service that grants every
+/// reservation, and one operation's limits and ledger over it.
+#[cfg(test)]
+pub(crate) mod testing {
+    #![allow(clippy::expect_used)]
+
+    use std::sync::{Arc, LazyLock};
+
+    use super::{
+        AdmittedBytes, MemoryLedger, SealMemory, SealMemoryProvider, SealMemoryRefusal, SharedBytes,
+    };
+    use crate::api::SealResourceLimits;
+    use crate::error::SealStage;
+
+    /// Grants every reservation and holds nothing.
+    pub(crate) struct GrantAllMemory;
+
+    impl SealMemory for GrantAllMemory {
+        fn reserve(&self, _bytes: u64) -> Result<Box<dyn Send>, SealMemoryRefusal> {
+            Ok(Box::new(()))
+        }
+    }
+
+    /// The default limits, naming [`GrantAllMemory`] as their memory service:
+    /// what an engine's config carries.
+    pub(crate) fn grant_all_limits() -> SealResourceLimits {
+        SealResourceLimits {
+            memory: SealMemoryProvider::new(Arc::new(GrantAllMemory)),
+            ..SealResourceLimits::default()
+        }
+    }
+
+    /// [`grant_all_limits`], opened as one operation with its own ledger.
+    pub(crate) fn operation_limits() -> SealResourceLimits {
+        grant_all_limits()
+            .operation(SealStage::Verification)
+            .expect("a configured memory service opens an operation")
+    }
+
+    /// One operation over [`GrantAllMemory`] that lives as long as the test
+    /// process, for a helper that returns something borrowing its limits
+    /// (a verifier's `Checks`).
+    pub(crate) fn process_operation_limits() -> &'static SealResourceLimits {
+        static LIMITS: LazyLock<SealResourceLimits> = LazyLock::new(operation_limits);
+        &LIMITS
+    }
+
+    /// The ledger of one fresh operation over [`GrantAllMemory`].
+    pub(crate) fn operation_ledger() -> Arc<MemoryLedger> {
+        operation_limits()
+            .memory
+            .ledger()
+            .expect("an operation has a ledger")
+    }
+
+    /// A copy of `bytes` admitted under [`GrantAllMemory`] and shared, as a
+    /// fetch response or a gathered CRL holds its bytes.
+    pub(crate) fn shared_bytes(bytes: &[u8]) -> SharedBytes {
+        let memory = SealMemoryProvider::new(Arc::new(GrantAllMemory));
+        Arc::new(AdmittedBytes::copy_from(&memory, bytes).expect("grant-all memory admits a copy"))
+    }
 }
 
 /// The ledger changes in one step under its lock, so a holder that panicked

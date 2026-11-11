@@ -108,6 +108,21 @@ pub(super) fn apply_edge_in_txn(
         }
         return Ok(EdgeRematOutcome::Deferred);
     }
+    // A landing reply whose signed landing has not arrived yet waits: its
+    // ChildOf/RepliesTo stays deferred with its replay marker, never a
+    // terminal quarantine, so a later window walk retries it.
+    if matches!(
+        kind,
+        crate::edge::EdgeKind::ChildOf | crate::edge::EdgeKind::RepliesTo
+    ) && crate::conversation_dag::landing_reply_waits_in(
+        &vault.store,
+        &vault.store,
+        &*wtxn,
+        &src,
+    )? {
+        quarantine::set_replay_remat_marker_in_txn(vault, wtxn, window_key.as_str(), &src)?;
+        return Ok(EdgeRematOutcome::Deferred);
+    }
     if soft_addressing
         && !matches!(
             crate::batch::stored_entity_type(&vault.store, &*wtxn, &tgt)?,

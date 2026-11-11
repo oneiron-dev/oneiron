@@ -91,7 +91,9 @@ async fn serve_with_handles(
     // So is the custody anchor door's credential, on its own pipe when the
     // supervisor hands one: never the environment (FIX 5788, FIX 6517).
     let anchor = host.custody_anchor_credentials(config.backup.custody_anchor_url.as_deref())?;
-    let mut vault_config = config.base_vault_config();
+    let mut vault_config = config
+        .base_vault_config()
+        .with_checkpoint_host_holds_recipient(host.checkpoint_host_holds_recipient());
     // The supervisor delivered this vault's data key at boot (FIX 4531).
     vault_config.privacy.data_key_custody = oneiron::VaultDataKeyCustody::SupervisorDelivered;
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
@@ -185,8 +187,10 @@ async fn serve_with_handles(
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.
-    // Its broker is the same-user child beside this binary; a missing broker
-    // or secret leaves those calls refused before they start, as on any host.
+    // Its default broker is the same-user child beside this binary. Explicit
+    // trusted bindings may name a separate-user socket or custom program/roots.
+    // A missing broker or secret leaves those calls refused before they start,
+    // as on any host.
     let broker = crate::models::BrokerContext::for_serve(&vault, &config);
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
@@ -229,6 +233,7 @@ async fn serve_with_handles(
                 .as_ref()
                 .map(crate::config::DesktopConfig::guest),
         )
+        .with_artifact_backend(config.artifact_backend.clone())?
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
@@ -430,7 +435,6 @@ async fn serve_with_handles(
     // (FIX 11851): captured before `verified` spends the restore. `None`
     // without a restore, and the watch's first look is then unplanned as
     // today.
-    #[cfg(target_os = "linux")]
     let restore_fresh = restore
         .as_ref()
         .map(|restore| restore.fresh_recipients().to_vec());
@@ -501,6 +505,19 @@ async fn serve_with_handles(
         );
     }
 
+    #[cfg(not(target_os = "linux"))]
+    if managed.escrow_recipient.is_some() || managed.break_glass_recipient.is_some() {
+        // A non-Linux process host gets the same late seal as Linux: the VM
+        // companion and carrier stay Linux-only, the argv watch does not.
+        super::carrier_watch::spawn_argv_watch(
+            Arc::clone(&state),
+            Arc::clone(&vault),
+            managed.clone(),
+            shutdown.clone(),
+            restore_fresh,
+        );
+    }
+
     // Subscribed before the opening push reads the training setting, so a
     // change between the two still reaches the report task (FIX 5575).
     let training_changes = vault.subscribe_proactivity_changes();
@@ -531,6 +548,8 @@ async fn serve_with_handles(
     handles.connector_sends = Some(sync_server.spawn_connector_send_worker(admitted()));
     // Checked built-in channels, under the same admission (OF-519).
     handles.builtin_host = Some(crate::builtin_host::spawn(&sync_server, admitted()));
+    // The calendar safeguard's pattern head, unless the host installed its own (FIX 12099).
+    crate::calendar_host::install_calendar_label_head(crate::calendar_host::PatternLabelHead);
     // Failure signals reach our collector under the same admission (OF-380).
     // Managed mode reads no environment: the send's bearer is its vault secret (FIX 5013).
     handles.failure_signals = Some(crate::ai_host::failure_signals::spawn(
@@ -778,6 +797,11 @@ async fn serve_with_handles(
         mesh.end_streams().await;
     }
     upgrades.await;
+    // This machine's send executor and agent run leases go to another
+    // machine while the device-sync link can still carry the release
+    // (FIX 4747).
+    sync_server.release_send_executor_leases().await;
+    sync_server.release_agent_run_leases().await;
     // Its channel detaches before the mesh it rides closes.
     if let Some(device_sync) = device_sync {
         device_sync.stop().await;

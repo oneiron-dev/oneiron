@@ -19,10 +19,13 @@ impl SelfWakePolicyWriteCall {
 }
 
 /// Arguments for the `vault.search` fixture call.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SelfMemorySearchCall {
     pub query: String,
     pub limit: usize,
+    /// The caller's retrieval filter (FIX 3977): it only narrows what the
+    /// run's reader key admits. `None` reads that key's floor.
+    pub filter: Option<crate::memory::ReadFilterInput>,
 }
 
 impl SelfMemorySearchCall {
@@ -31,7 +34,19 @@ impl SelfMemorySearchCall {
         Self {
             query: query.into(),
             limit,
+            filter: None,
         }
+    }
+
+    /// The same call under the caller's retrieval filter `filter`, met with
+    /// any filter it already carries: a rebind only narrows.
+    #[must_use]
+    pub fn with_read_filter(mut self, filter: Option<crate::memory::ReadFilterInput>) -> Self {
+        self.filter = match (self.filter.take(), filter) {
+            (Some(held), Some(asked)) => Some(held.meet(&asked)),
+            (held, asked) => held.or(asked),
+        };
+        self
     }
 }
 

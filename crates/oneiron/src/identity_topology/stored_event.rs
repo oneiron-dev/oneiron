@@ -54,10 +54,9 @@ pub enum StoredIdentityOpAction {
         /// Map rows it recorded as explicit ambiguous residue.
         applied_residue: u64,
     },
-    /// A facet event and the masks it minted (ARCH-0022 type-13, ONE-1745).
-    /// Every stored facet event is an APPLIED one: the propose lane is not
-    /// armed for this kind (see [`Vault::apply_identity_topology_op`](crate::Vault::apply_identity_topology_op)), so
-    /// `facets` is never empty and always names live FACET entities.
+    /// An APPLIED facet event and the masks it minted (ARCH-0022 type-13,
+    /// ONE-1745): `facets` is never empty and names the FACET entities the
+    /// apply door minted. A parked facet is [`Self::ParkedFacet`].
     Facet {
         /// The entity whose masks were partitioned; stays `Active` (r6).
         entity: EntityId,
@@ -73,6 +72,20 @@ pub enum StoredIdentityOpAction {
         /// The origin claims the op forked under their masks (r9), sorted by
         /// id: one per applied assignment.
         forked: Vec<EntityId>,
+    },
+    /// A PARKED facet decision (FIX 7814): the specs and the scoping map a
+    /// ruling would apply, with nothing minted. No FACET id exists and no
+    /// claim forks until the resolution door approves it; the approving
+    /// ruling's applied op is then its own [`Self::Facet`] event. Wire kind
+    /// `facet`, told apart from an applied facet by its specs field.
+    ParkedFacet {
+        /// The entity whose masks are proposed; stays `Active`.
+        entity: EntityId,
+        /// The specs a ruling mints, in the op's order — the order every
+        /// [`ReassignmentTarget::Facet`](super::ReassignmentTarget::Facet) index addresses.
+        specs: Vec<FacetSpec>,
+        /// Canonically ordered scoping map.
+        reassignment: ReassignmentMap,
     },
     /// An anti-merge assertion and the CLAIM it is carried by (ONE-1746).
     /// The pair is stored NORMALIZED ([`distinct_pair_key`](super::distinct_pair_key)), so the ledger
@@ -170,7 +183,7 @@ impl StoredIdentityOpAction {
         match self {
             Self::Merge { .. } => EVENT_KIND_MERGE,
             Self::Split { .. } => EVENT_KIND_SPLIT,
-            Self::Facet { .. } => EVENT_KIND_FACET,
+            Self::Facet { .. } | Self::ParkedFacet { .. } => EVENT_KIND_FACET,
             Self::AssertDistinct { .. } => EVENT_KIND_ASSERT_DISTINCT,
             Self::Undo { .. } => EVENT_KIND_UNDO,
             Self::ProposalCancellation { .. } => EVENT_KIND_PROPOSAL_CANCELLATION,
@@ -188,9 +201,9 @@ impl StoredIdentityOpAction {
     #[must_use]
     pub const fn reassignment_map(&self) -> Option<&ReassignmentMap> {
         match self {
-            Self::Split { reassignment, .. } | Self::Facet { reassignment, .. } => {
-                Some(reassignment)
-            }
+            Self::Split { reassignment, .. }
+            | Self::Facet { reassignment, .. }
+            | Self::ParkedFacet { reassignment, .. } => Some(reassignment),
             Self::Merge { .. }
             | Self::AssertDistinct { .. }
             | Self::Undo { .. }
@@ -226,6 +239,11 @@ impl StoredIdentityOpAction {
                 assigned: *applied_assigned as usize,
                 residue: *applied_residue as usize,
             }),
+            // A park applied nothing, as a parked split records zero rows.
+            Self::ParkedFacet { .. } => Some(ReassignmentStats {
+                assigned: 0,
+                residue: 0,
+            }),
             Self::Merge { .. }
             | Self::AssertDistinct { .. }
             | Self::Undo { .. }
@@ -247,7 +265,9 @@ impl StoredIdentityOpAction {
     /// reason evidence is: the transition table reads only the mask COUNT
     /// (`facets.is_empty()` and the index bound), never a label. The labels
     /// themselves are runtime data on the minted FACET entity bodies, which
-    /// is where a reader wanting them looks. An assert_distinct REASON is a
+    /// is where a reader wanting them looks. A PARKED facet carries its specs
+    /// verbatim: no FACET body exists yet, and its approving ruling mints
+    /// from them (FIX 7814). An assert_distinct REASON is a
     /// placeholder for the identical reason — it rides the event's evidence
     /// rationale, which is where a reader wanting it looks.
     #[must_use]
@@ -285,6 +305,16 @@ impl StoredIdentityOpAction {
                         label: String::new(),
                     })
                     .collect(),
+                reassignment: reassignment.clone(),
+                evidence: IdentityOpEvidence::default(),
+            })),
+            Self::ParkedFacet {
+                entity,
+                specs,
+                reassignment,
+            } => IdentityTopologyAction::Apply(IdentityTopologyOp::Facet(FacetOp {
+                entity: *entity,
+                facets: specs.clone(),
                 reassignment: reassignment.clone(),
                 evidence: IdentityOpEvidence::default(),
             })),

@@ -96,11 +96,16 @@ pub fn strings_step((object, generation): ObjectId) -> MemberStep {
 /// Whether `bytes`' frame parses as a PDF: its header, cross-reference and
 /// trailer, no object kept (FIX 2474).
 pub fn opens(bytes: &[u8]) -> bool {
+    opens_with_pacing(bytes, &super::ReadPacing::default())
+}
+
+pub fn opens_with_pacing(bytes: &[u8], pacing: &super::ReadPacing) -> bool {
     Document::load_mem_with_options(
         bytes,
         LoadOptions {
             filter: Some(|_, _| None),
             max_decompressed_size: Some(expanded_floor()),
+            decode_admission: pacing.decoder(),
             ..LoadOptions::default()
         },
     )

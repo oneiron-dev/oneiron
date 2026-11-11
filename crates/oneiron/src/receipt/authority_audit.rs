@@ -14,6 +14,11 @@
 //! has, each named for what it is: the stored occurred interval and
 //! learned-at stamp, and the signer's advisory timestamp the fold never reads.
 //!
+//! An owner's signed Grant mint the fold counts reads one fact beside the
+//! log: when this vault marks the Grant it made withdrawn, its detail is
+//! `mint; withdrawn`, its pair for a withdrawal no counted entry names (FIX
+//! 22193, `agent_grant_act`).
+//!
 //! On a vault that adopted a checkpoint image (OF-469), the page also lists
 //! cold rows: entries the adopted image covers that this vault does not
 //! store. They merge into the same entity-id order and cursor as the stored
@@ -165,6 +170,12 @@ pub struct AuthorityAuditRow {
     /// A federation lifecycle op's grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
+    /// The execution receipt named by a signed membership withdrawal or Owner handover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<String>,
+    /// The grant ids the signed Owner handover says the change affected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affected_grants: Vec<String>,
     /// A critical-write confirm's claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim_ref: Option<String>,
@@ -368,7 +379,8 @@ impl Vault {
                         continue;
                     }
                     let entry = decode_authority_log_entry_body(&record.body)?;
-                    let row = project_row(id, &record, &entry, &fold, &issues)?;
+                    let mut row = project_row(id, &record, &entry, &fold, &issues)?;
+                    agent_grant_act::pair_marked_withdrawal(self, &txn, &entry.op, &mut row)?;
                     if query.kinds.is_empty() || query.kinds.contains(&row.event_kind) {
                         rows.push(row);
                     }
@@ -455,6 +467,8 @@ struct OpFields {
     detail: Option<String>,
     subject_ref: Option<String>,
     grant_ref: Option<String>,
+    receipt_ref: Option<String>,
+    affected_grants: Vec<String>,
     claim_ref: Option<String>,
     holder_ref: Option<String>,
     parent_ref: Option<String>,
@@ -494,11 +508,15 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
-        AuthorityOp::SlipGrantRevoke { grant_ref } => (
+        AuthorityOp::SlipGrantRevoke {
+            grant_ref,
+            membership_receipt,
+        } => (
             Revoke,
             "slip_grant_revoke",
             OpFields {
                 grant_ref: Some(grant_ref.to_hex()),
+                receipt_ref: membership_receipt.clone(),
                 ..OpFields::default()
             },
         ),
@@ -566,7 +584,21 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::OwnerRoot(_) => (Other, "owner_root", OpFields::default()),
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
-        AuthorityOp::OwnerHandover(_) => (Other, "owner_handover", OpFields::default()),
+        AuthorityOp::OwnerHandover(action) => (
+            Other,
+            "owner_handover",
+            OpFields {
+                detail: Some(action.cause.wire().to_owned()),
+                subject_ref: Some(action.from.to_hex()),
+                receipt_ref: Some(action.receipt.clone()),
+                affected_grants: action
+                    .affected_grants
+                    .iter()
+                    .map(|id| id.to_hex())
+                    .collect(),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::ResidenceDirective(_) => (Other, "residence_directive", OpFields::default()),
         AuthorityOp::ResidenceResult(_) => (Other, "residence_result", OpFields::default()),
         AuthorityOp::GrantTravelSet(set) => (
@@ -754,39 +786,9 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
             },
         ),
         AuthorityOp::AgentGrantAct(record) => agent_grant_act::classify(record),
-        // A membership change no host issuer signed, signed later by its
-        // carrier (FIX 12335): a revoke of the Grants it withdrew, its
-        // subject the member whose role moved, its holder the person who
-        // executed it, its detail the cause, how many Grants it withdrew and
-        // whether it hands the Owner role over. Its one Grant, when it names
-        // one alone, is its grant.
-        AuthorityOp::MembershipExecution(record) => (
-            if record.withdrawn_grants.is_empty() {
-                Other
-            } else {
-                Revoke
-            },
-            "membership_execution",
-            OpFields {
-                detail: Some(format!(
-                    "{}; {} grants withdrawn{}",
-                    record.cause.wire(),
-                    record.withdrawn_grants.len(),
-                    if record.handover.is_some() {
-                        "; owner handover"
-                    } else {
-                        ""
-                    }
-                )),
-                subject_ref: Some(record.member.to_hex()),
-                grant_ref: match record.withdrawn_grants.as_slice() {
-                    [grant] => Some(grant.to_hex()),
-                    _ => None,
-                },
-                holder_ref: Some(record.person.to_hex()),
-                ..OpFields::default()
-            },
-        ),
+        AuthorityOp::MembershipExecution(record) => {
+            agent_grant_act::classify_membership_execution(record)
+        }
         AuthorityOp::PolicySettingSet(set) => carried_act::classify_policy_setting(set),
         AuthorityOp::ExportAct(record) => carried_act::classify_export(record),
     }
@@ -849,6 +851,8 @@ fn project_row(
         vault_ref: entry.vault_id.as_ref().map(|id| hex_lower(id)),
         subject_ref: fields.subject_ref,
         grant_ref: fields.grant_ref,
+        receipt_ref: fields.receipt_ref,
+        affected_grants: fields.affected_grants,
         claim_ref: fields.claim_ref,
         holder_ref: fields.holder_ref,
         parent_ref: fields.parent_ref,

@@ -22,9 +22,10 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::entity_id::EntityId;
-use crate::skill_hub::osv::{OsvDevClient, OsvQuery};
+use crate::skill_hub::osv::hub_advisory_query;
 use crate::skill_hub::{
-    CallerPermissions, MarketplaceFit, RefFetch, RuleSkillFit, SkillFitSetting, pinned_tracking,
+    CallerPermissions, MarketplaceFit, RuleSkillFit, SkillFitSetting, SkillHubAdapter,
+    pinned_tracking,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -519,15 +520,10 @@ impl Offer<'_> {
             start: self.now,
             end: self.now,
         };
-        let osv = Some(&OsvDevClient as &dyn OsvQuery);
-        let fitted = match vault.hub_ref_fetch(&pinned_tracking(hub_ref.clone())?, None)? {
-            RefFetch::Git(adapter, _) => vault.fit_marketplace_skill(
-                &adapter, hub_ref, &publisher, &*fit, osv, occurred, self.now,
-            )?,
-            RefFetch::Http(adapter, _) => vault.fit_marketplace_skill(
-                &adapter, hub_ref, &publisher, &*fit, osv, occurred, self.now,
-            )?,
-        };
+        let fetch = vault.hub_ref_fetch(&pinned_tracking(hub_ref.clone())?, None)?;
+        let osv = Some(hub_advisory_query(fetch.kind()));
+        let fitted = vault
+            .fit_marketplace_skill(&fetch, hub_ref, &publisher, &*fit, osv, occurred, self.now)?;
         let mut permissions = section.to_vec();
         permissions.extend(fitted.requested_permissions());
         permissions.sort();
@@ -546,8 +542,12 @@ impl Offer<'_> {
                 if vault.skill_hash_blocked_in_txn(txn, approved.content_hash)? {
                     return Ok(Fit::ask(HASH_BLOCKED, &permissions));
                 }
-                let entity =
-                    vault.commit_fitted_skill_in_txn(txn, &fitted, Some(target_skill_ref))?;
+                let entity = vault.commit_fitted_skill_in_txn(
+                    txn,
+                    &fitted,
+                    Some(target_skill_ref),
+                    &mut crate::skill_hub::SkillImportRows::default(),
+                )?;
                 // The section's ref is where every rebuild re-finds the skill:
                 // content held elsewhere aborts this writer, and the offer
                 // asks.

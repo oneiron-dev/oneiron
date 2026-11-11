@@ -7,9 +7,10 @@
 //! landing declared. Nothing else is read: no raw body, no summary and no
 //! home. A chat log reads the same span as its own reader, in its own
 //! snapshot ([`conversation_span_text_in`]), before a summary stands in for
-//! the turns it covers.
+//! the turns it covers, and pins each raw turn it holds the same way
+//! ([`scoped_turn_text_in`], FIX 5031).
 
-use super::{collect_in, dreamer_read, residency_deferred, snapshot};
+use super::{TurnText, collect_in, dreamer_read, residency_deferred, snapshot};
 use crate::claim::ScopedRead;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::{EntityId, Error, Result, Vault};
@@ -70,4 +71,58 @@ pub(crate) fn conversation_span_text_in(
         texts.push(words.to_owned());
     }
     Ok(ConversationSpanRead::Ready(texts))
+}
+
+/// One stored TURN's projected text read as `read` in the caller's `txn`
+/// (FIX 5031): the TURN row through `read`, its MESSAGE rows as the same
+/// actor under the relationship gate. A chat log pins its raw turns this
+/// way, so a room's held ceiling, a proof and a locality reach those pins
+/// as they reach the log's evidence. `None` when `read` does not read the
+/// row or it is no TURN.
+///
+/// # Errors
+///
+/// Storage errors, and a turn whose text does not project: a message the
+/// reader may not read refuses the turn.
+pub(crate) fn scoped_turn_text_in(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<TurnText>> {
+    let Some((kind, _, body)) = read
+        .get_entities_parts_in_txn(txn, std::slice::from_ref(turn))?
+        .pop()
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    if kind != ENTITY_TYPE_TURN {
+        return Ok(None);
+    }
+    collect_in(read, txn, turn, &body, &mut 0).map(Some)
+}
+
+/// The projected text of a TURN row `read` already read in `txn` (`body` is
+/// its logical body), by the same projection as [`scoped_turn_text_in`].
+/// Each MESSAGE row is read through `read` itself (review of #6921): its own
+/// key and grant mode, its bound caller filter and its room ceiling, never a
+/// reader rebuilt from its key, so the words a TURN serves pass every check a
+/// direct read of each MESSAGE row would. A MESSAGE row `read` withholds is
+/// counted into `withheld` before the turn refuses, so a refusal with a count
+/// above zero is the reader's withholding, never a malformed turn (primitive
+/// A, `crate::snapshot_read`).
+///
+/// # Errors
+///
+/// Storage errors, and a turn whose text does not project.
+pub(crate) fn scoped_turn_body_text_in(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    body: &[u8],
+    withheld: &mut usize,
+) -> Result<TurnText> {
+    super::collect_with(read.vault(), txn, turn, body, withheld, |ids| {
+        read.get_entities_parts_in_txn(txn, ids)
+    })
 }

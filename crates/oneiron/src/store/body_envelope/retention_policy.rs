@@ -16,7 +16,11 @@
 //! its copies' holders stayed with the old host) keeps it. Nothing here
 //! refuses an export or a restore. The finisher reads the policy again for
 //! a Retention intent under the custody write guard, then the LMDB writer,
-//! before any key goes; an erase stays the provenance door's alone.
+//! before any key goes; an erase stays the provenance door's alone. Neither
+//! the sweep nor the finisher retires anything while a read snapshot older
+//! than the last committed write is live (FIX 22101): such a snapshot may
+//! still hold the key row a later write dropped, and opens its key from
+//! custody.
 
 use std::collections::BTreeSet;
 
@@ -165,18 +169,32 @@ fn named_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<Option<BTreeSet<[u8; 1
     Ok(Some(named))
 }
 
+/// Whether every live read snapshot of `store` sees the last write
+/// committed before `txn`, the writer that decides a retention (FIX 22101).
+/// A key row a committed write dropped is then in no snapshot, so no reader
+/// is left to open the instance it named; an older snapshot still holds the
+/// row and opens its key from custody, so nothing retires until it ends.
+fn snapshots_see_last_commit(store: &Store, txn: &RoTxn<'_>) -> Result<bool> {
+    let last = txn.id().saturating_sub(1);
+    Ok(store
+        .env
+        .oldest_reader_txn_id()?
+        .is_none_or(|oldest| oldest >= last))
+}
+
 /// Whether a Retention intent for `instance` may still run, read again by
 /// the finisher under the custody write guard and the LMDB writer: no lease,
-/// kept copy or standing hold needs it now. Its live uses the caller reads.
-/// `kept` is the pass's holder snapshot (FIX 9067), read once per holder
-/// epoch under the same guard; the lease and hold checks stay per intent.
+/// kept copy, standing hold or older read snapshot needs it now. Its live
+/// uses the caller reads. `kept` is the pass's holder snapshot (FIX 9067),
+/// read once per holder epoch under the same guard; the lease, hold and
+/// snapshot checks stay per intent.
 pub(super) fn retention_ready_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     instance: &[u8; 16],
     kept: &BTreeSet<[u8; 16]>,
 ) -> Result<bool> {
-    if store.core.key_custody.local().is_none() {
+    if store.core.key_custody.local().is_none() || !snapshots_see_last_commit(store, txn)? {
         return Ok(false);
     }
     if store.core.key_custody.body_leased(instance)
@@ -197,7 +215,9 @@ impl Store {
     /// Retention retirement staged and its obligations dropped with it; a
     /// standing Retention intent the policy would keep now is withdrawn.
     /// Returns how many it staged. An archived vault, or one with no
-    /// custody yet, retires nothing.
+    /// custody yet, retires nothing; while a read snapshot older than a
+    /// page's writer's last commit is live, the pass stops there and the
+    /// next one reads again (FIX 22101).
     ///
     /// # Errors
     ///
@@ -223,6 +243,9 @@ impl Store {
         let mut staged = 0;
         for page in live.chunks(SWEEP_PAGE) {
             let mut wtxn = self.env.write_txn()?;
+            if !snapshots_see_last_commit(self, &wtxn)? {
+                return Ok(staged);
+            }
             let Some(context) = RetentionContext::read(self, &wtxn)? else {
                 return Ok(staged);
             };

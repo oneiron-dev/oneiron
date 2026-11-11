@@ -11,10 +11,12 @@
 //! said stays in the history, marked interrupted. A turn whose stream ends
 //! without a stop keeps every word it said, marked incomplete (FIX 7808).
 //! Each safeguard notice said to the person enters the history too, and the
-//! next turn hears it. A turn assembled for a new audience revision, as after
-//! an attendee entered the call's room, starts from that audience's own
-//! history (OF-365 P5), and so does one after another call went live in the
-//! room or ended. A call heard in a room reads it again each turn, with
+//! next turn hears it. So does what the person heard of an answer, when they
+//! heard less than it handed to speech (FIX 4899): the answer keeps the words
+//! it generated, and a note beside it names the sentences heard in full. A
+//! turn assembled for a new audience revision, as after an attendee entered
+//! the call's room, starts from that audience's own history (OF-365 P5), and
+//! so does one after another call went live in the room or ended. A call heard in a room reads it again each turn, with
 //! every speaker a call live there must place; a room a missing entry holds
 //! starts no turn (FIX 3342). What a turn's memories read found, heard and
 //! withheld goes to the owner's client with the turn's first event, its
@@ -31,7 +33,10 @@ use oneiron::conversation::RoomLiveSpeakerEntries;
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, FinishReason};
 use oneiron::store::GateSystemNoticeRecord;
-use oneiron::voice_cascade::{Brain, BrainEvent, BrainRequest, GenerationEpoch, TurnMemories};
+use oneiron::voice_cascade::{
+    Brain, BrainEvent, BrainRequest, GenerationEpoch, HeardBasis, HeardCoverage, HeardPlayback,
+    TurnMemories,
+};
 use oneiron::{
     BudgetExhaustionPolicy, DisclosureContext, EntityId, LlmMessage, LlmMessageRole, LlmResponse,
     LlmStream, LlmStreamEvent, MemoriesSection, Vault, WriteActor,
@@ -78,6 +83,7 @@ pub struct ChatBrainBindings {
     /// The call's credential, as the owner door admitted it at hello. Each
     /// turn's memories are read under it; it is never bound again.
     pub(crate) auth: CoreAuth,
+    pub(crate) phone: Option<Arc<super::phone::PhoneCallRead>>,
     /// The room the call is heard in, as the host proved the caller reads
     /// it at hello: the host's own binding, never a claim a request makes.
     /// Each turn proves it again under `auth`. `None` for no room.
@@ -108,6 +114,7 @@ pub struct ChatBrain {
     /// The room's live speakers `history` was heard under, for a call heard
     /// in a room.
     history_live: Option<RoomLiveSpeakerEntries>,
+    history_phone_scope: Option<oneiron::federation::Scope>,
     turn: Option<Running>,
     retiring: Vec<JoinHandle<()>>,
     /// Each tool context, beside the rows the connector call listed.
@@ -115,6 +122,10 @@ pub struct ChatBrain {
     /// The rows each of this call's turns was made from, by generation: a
     /// safeguard notice is made from the turn whose sentence it judged.
     said_by: BTreeMap<GenerationEpoch, Vec<EntityId>>,
+    /// What each interrupted turn generated, by generation, until what the
+    /// person heard of it arrives (FIX 4899): words speech never took count
+    /// as unheard.
+    interrupted: BTreeMap<GenerationEpoch, String>,
 }
 
 /// One history message, beside the rows it was made from (FIX 4778): the
@@ -181,16 +192,23 @@ impl ChatBrain {
             .chat_seat()
             .cloned()
             .ok_or_else(|| refused("no [models] rung serves generative_reasoner"))?;
+        let history_phone_scope = bindings
+            .phone
+            .as_ref()
+            .map(|phone| phone.current_scope())
+            .transpose()?;
         Ok(Self {
             bindings,
             seat,
             history: Arc::new(Mutex::new(Vec::new())),
             history_revision: None,
             history_live: None,
+            history_phone_scope,
             turn: None,
             retiring: Vec::new(),
             foreign: Vec::new(),
             said_by: BTreeMap::new(),
+            interrupted: BTreeMap::new(),
         })
     }
 
@@ -232,6 +250,7 @@ impl ChatBrain {
         request: &BrainRequest,
         memories: Option<Memories>,
         heard: Option<TurnMemories>,
+        phone_scope: Option<&oneiron::federation::Scope>,
     ) -> oneiron::Result<OpenedTurn> {
         let ChatBrainBindings {
             ai,
@@ -287,9 +306,25 @@ impl ChatBrain {
         } else {
             oneiron::prompt::place_context_for_layout(&mut messages, layout, context.as_slice());
         }
-        let admitted = ai
+        if let Some(phone) = &self.bindings.phone {
+            let scope =
+                phone_scope.ok_or_else(|| refused("phone context has no captured scope"))?;
+            phone
+                .prepare_generation(
+                    request.generation,
+                    scope.clone(),
+                    said_from.clone(),
+                    request.interlocutors.clone(),
+                )
+                .map_err(refused)?;
+        }
+        let mut admitted = ai
             .admit_role(vault, CHAT_ROLE, chat_request(&self.seat, messages))
             .map_err(refused)?;
+        if let Some(phone) = &self.bindings.phone {
+            phone.admitted_media_agent(vault).map_err(refused)?;
+            admitted.ladder = Arc::new(admitted.ladder.for_model_list(phone.models())?);
+        }
         let line = format!(
             "voice:{}:{}",
             request.session_ref,
@@ -308,6 +343,21 @@ impl ChatBrain {
         // read from (FIX 6935).
         let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
+        let run = match &self.bindings.phone {
+            Some(phone) => {
+                let phone = Arc::clone(phone);
+                let generation = request.generation;
+                run.initiated_by(Some(phone.agent()))
+                    .within_text_dispatch_release(Arc::new(move || {
+                        if phone.accepts_output(generation) {
+                            Ok(())
+                        } else {
+                            Err(oneiron::llm::FatalLlmError::InvalidRequest.into())
+                        }
+                    }))
+            }
+            None => run,
+        };
         let (stream, binding) = admitted
             .ladder
             .stream_recorded(&run, admitted.request.clone(), None)
@@ -371,8 +421,11 @@ impl ChatBrain {
         let (read, members, room) = match in_room {
             Some((read, members, room)) => (read, Some(members), Some(room)),
             None => {
-                let read = crate::api::scoped_read_for_core_auth(vault, auth)
-                    .map_err(|error| refused(format!("{error:?}")))?;
+                let read = match &self.bindings.phone {
+                    Some(phone) => phone.read(),
+                    None => crate::api::scoped_read_for_core_auth(vault, auth)
+                        .map_err(|error| refused(format!("{error:?}")))?,
+                };
                 (read, None, None)
             }
         };
@@ -380,18 +433,24 @@ impl ChatBrain {
             Some(room) => room.live.merged_into(request.interlocutors.clone()),
             None => request.interlocutors.clone(),
         };
-        let read = crate::api::narrow_to_core_audience(
-            vault,
-            auth,
-            read,
-            members.as_deref(),
-            room.as_ref(),
-            Some(&set),
-        )
-        .map_err(|error| refused(format!("{error:?}")))?;
-        // With no room (or no proven reader) this is `resolve`'s context.
-        let reader = room.as_ref().is_some_and(|room| room.reader.is_some());
-        let disclosure = DisclosureContext::resolve_room(vault, set, reader)?;
+        let (read, disclosure) = if self.bindings.phone.is_some() && room.is_none() {
+            let disclosure = read.phone_line_disclosure(set)?;
+            (read, disclosure)
+        } else {
+            let read = crate::api::narrow_to_core_audience(
+                vault,
+                auth,
+                read,
+                members.as_deref(),
+                room.as_ref(),
+                Some(&set),
+            )
+            .map_err(|error| refused(format!("{error:?}")))?;
+            // With no room (or no proven reader) this is `resolve`'s context.
+            let reader = room.as_ref().is_some_and(|room| room.reader.is_some());
+            let disclosure = DisclosureContext::resolve_room(vault, set, reader)?;
+            (read, disclosure)
+        };
         let mut section = MemoriesSection::pins_only(Some(disclosure.assembly(0)));
         let receipts =
             section.include_pinned_ids_with_disclosure(&read, &ids, Some(&disclosure))?;
@@ -501,16 +560,17 @@ impl ChatBrain {
             tracing::warn!("voice brain: a cancelled turn's memories receipt was not delivered");
         }
         let said = running.said.lock().ok().and_then(|mut said| said.take());
-        if let Some(said) = said.filter(|said| !said.is_empty())
-            && let Ok(mut history) = self.history.lock()
-        {
-            history.push((
-                text_message(
-                    LlmMessageRole::Assistant,
-                    format!("{said}{INTERRUPTED_MARK}"),
-                ),
-                running.said_from,
-            ));
+        if let Some(said) = said.filter(|said| !said.is_empty()) {
+            if let Ok(mut history) = self.history.lock() {
+                history.push((
+                    text_message(
+                        LlmMessageRole::Assistant,
+                        format!("{said}{INTERRUPTED_MARK}"),
+                    ),
+                    running.said_from,
+                ));
+            }
+            self.interrupted.insert(running.generation, said);
         }
     }
 }
@@ -537,10 +597,24 @@ fn room_audience<'a>(
 impl Brain for ChatBrain {
     fn start(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
         self.abort();
+        let phone_scope = self
+            .bindings
+            .phone
+            .as_ref()
+            .map(|phone| phone.current_scope())
+            .transpose()
+            .map_err(refused)?;
+        if phone_scope.is_some() && phone_scope != self.history_phone_scope {
+            // An aborted task may still own the old Arc on another executor.
+            self.history = Arc::new(Mutex::new(Vec::new()));
+            self.foreign.clear();
+            self.said_by.clear();
+        }
         let (memories, heard, live) = self.memories(request)?;
         self.rebuild_history(request.audience_revision, live)?;
         let (stream, tainted, memories, said_from, capture) =
-            self.open(request, memories, heard)?;
+            self.open(request, memories, heard, phone_scope.as_ref())?;
+        self.history_phone_scope = phone_scope;
         let generation = request.generation;
         // The person's words: no stored row.
         self.history
@@ -614,6 +688,14 @@ impl Brain for ChatBrain {
         generation: GenerationEpoch,
         notice: &GateSystemNoticeRecord,
     ) -> oneiron::Result<()> {
+        if self
+            .bindings
+            .phone
+            .as_ref()
+            .is_some_and(|phone| !phone.accepts_notice(generation, notice))
+        {
+            return Ok(());
+        }
         let mut rows = self.said_by.get(&generation).cloned().unwrap_or_default();
         rows.extend(notice_rows(notice));
         self.history
@@ -631,6 +713,97 @@ impl Brain for ChatBrain {
             ));
         Ok(())
     }
+
+    /// What the person heard of `generation`'s answer enters the call's
+    /// history as System context beside the answer, which keeps the words
+    /// it generated (FIX 4899): when they heard fewer of its sentences in
+    /// full than it handed to speech, or an interrupted turn generated words
+    /// speech never took, the next turn knows which. It is heard as made
+    /// from that turn's rows; a turn already answering is not interrupted.
+    fn heard(
+        &mut self,
+        generation: GenerationEpoch,
+        playback: &HeardPlayback,
+    ) -> oneiron::Result<()> {
+        let generated = self.interrupted.remove(&generation);
+        let Some(note) = heard_note(playback, generated.as_deref()) else {
+            return Ok(());
+        };
+        let rows = self.said_by.get(&generation).cloned().unwrap_or_default();
+        self.history
+            .lock()
+            .map_err(|_| refused("history poisoned"))?
+            .push((text_message(LlmMessageRole::System, note), rows));
+        Ok(())
+    }
+}
+
+/// The history's note on what the person heard of an answer (FIX 4899):
+/// the sentences heard in full, then the heard part of the next one when an
+/// alignment placed it. `generated` is what an interrupted answer generated:
+/// text the cadence still held, or speech had not taken, was never spoken.
+/// `None` when they heard every sentence in full and no generated word went
+/// unspoken.
+fn heard_note(playback: &HeardPlayback, generated: Option<&str>) -> Option<String> {
+    let full: Vec<&str> = playback
+        .utterances
+        .iter()
+        .filter(|utterance| utterance.coverage == HeardCoverage::Full)
+        .map(|utterance| utterance.text.trim())
+        .collect();
+    let submitted: usize = playback
+        .utterances
+        .iter()
+        .map(|utterance| visible_chars(&utterance.text))
+        .sum();
+    let unspoken = generated.is_some_and(|generated| visible_chars(generated) > submitted);
+    if full.len() == playback.utterances.len() && !unspoken {
+        return None;
+    }
+    if playback.utterances.is_empty() {
+        return Some(
+            "What the person heard of the answer above: nothing; none of it was spoken.".to_owned(),
+        );
+    }
+    let basis = match playback.basis {
+        HeardBasis::ClientReport => "as their client reported it",
+        HeardBasis::SentUpperBound => "at most, as their client reported nothing",
+    };
+    let mut note = format!(
+        "What the person heard of the answer above ({basis}): {} of the {} sentences handed to speech in full",
+        full.len(),
+        playback.utterances.len()
+    );
+    if !full.is_empty() {
+        note.push_str(": ");
+        note.push_str(
+            &full
+                .iter()
+                .map(|text| format!("\"{text}\""))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+    note.push('.');
+    if let Some(part) = playback
+        .utterances
+        .iter()
+        .filter(|utterance| utterance.coverage == HeardCoverage::Partial)
+        .find_map(|utterance| utterance.heard_text.as_deref())
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        note.push_str(&format!(" Then part of the next one: \"{part}\"."));
+    }
+    note.push_str(" They did not hear the rest.");
+    Some(note)
+}
+
+/// `text`'s characters other than whitespace: the cadence cuts the
+/// generated text into sentences without changing them, so what speech took
+/// of it measures the same way.
+fn visible_chars(text: &str) -> usize {
+    text.chars().filter(|ch| !ch.is_whitespace()).count()
 }
 
 impl Drop for ChatBrain {

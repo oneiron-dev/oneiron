@@ -53,6 +53,13 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         }
     }
 
+    /// The pool over `line`, whose bound, wait and crossing its owner sets:
+    /// a vault server's connection floor is the process's descriptor line
+    /// (FIX 6299), which its construction sized.
+    pub(crate) fn on_line(line: WorkLine<K>) -> Self {
+        Self { line }
+    }
+
     /// One turn at a time: an exclusive resource's queue, which is not a
     /// threshold and asks no question when it is busy.
     pub(crate) fn exclusive(wait: Duration) -> Self {
@@ -71,12 +78,6 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         self.line.waiting()
     }
 
-    /// The crossing in progress while work waits for a permit: its epoch
-    /// ([`WorkLine::crossing_epoch`]). `None` while nobody waits.
-    pub(crate) fn crossing_epoch(&self) -> Option<u64> {
-        self.line.crossing_epoch()
-    }
-
     /// A permit for `key`'s work, now or at its turn.
     pub(crate) async fn admit(&self, key: K) -> Result<Permit, WaitTimedOut> {
         self.admit_in_line(key).await
@@ -93,10 +94,20 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
             .admit_in_line_observed(key, crate::api::admission_observer())
     }
 
+    /// A permit at this caller's fair turn, without adding a wait deadline.
+    /// Dropping the future removes its place from the same native line.
+    pub(crate) fn admit_untimed(&self, key: K) -> impl Future<Output = Permit> + Send + 'static {
+        self.line
+            .admit_in_line_untimed(key, crate::api::admission_observer())
+    }
+
     /// [`Self::admit`] on this thread, at `key`'s place in the same line, for
     /// work that runs on a blocking worker rather than on the runtime.
+    /// Its wait shows on the serving call's admission receipt, as an awaited
+    /// one does: a blocking hop carries the call's observer (FIX 21154).
     pub(crate) fn admit_blocking(&self, key: K) -> Result<Permit, WaitTimedOut> {
-        self.line.admit_blocking(key)
+        self.line
+            .admit_blocking_observed(key, crate::api::admission_observer())
     }
 
     /// A permit for the host's own work, given only when no caller waits.
@@ -112,6 +123,15 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         wait: Duration,
     ) -> Result<Permit, WaitTimedOut> {
         self.line.admit_background_blocking_for(wait)
+    }
+
+    /// The same background line and wait, also ending when `cancel` completes.
+    pub(crate) fn admit_background_blocking_for_cancel(
+        &self,
+        wait: Duration,
+        cancel: impl Future<Output = ()>,
+    ) -> Result<Permit, WaitTimedOut> {
+        self.line.admit_background_blocking_for_cancel(wait, cancel)
     }
 
     /// A free permit for the host's own work, or `None` with nothing put in
@@ -132,15 +152,22 @@ struct RowCrossing {
 }
 
 impl LineCrossing for RowCrossing {
-    fn crossed(&self, bound: u64, observed: u64) {
+    /// The row asks once for the crossing. The Connections row's crossing
+    /// also raises the pool's live pressure check, whether a socket waits
+    /// or a guest's bundle found too little room (FIX 7656, FIX 6304).
+    fn crossed(&self, epoch: u64, bound: u64, observed: u64) {
         self.questions.ask(self.row, bound, observed);
+        if self.row == LimitRow::Connections
+            && let Some(pressure) = self.questions.pool_pressure()
+        {
+            pressure.raise(epoch, bound.max(1));
+        }
     }
 
     fn drained(&self, epoch: u64) {
         self.questions.drained(self.row, epoch);
     }
 }
-
 /// What crossing one `[limits]` row with a burst came to: how many callers
 /// were turned away, and whether the row asked. Rule five holds at the row
 /// when nobody was and it did.

@@ -61,7 +61,7 @@ fn thin_note_view(
         return Ok(None);
     }
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let core = super::decode_note_body_in_txn(
+    let core = super::decode_note_core_in_txn(
         &vault.store,
         &txn,
         &thin.raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],

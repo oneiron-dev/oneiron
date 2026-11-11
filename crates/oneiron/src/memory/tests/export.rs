@@ -1,4 +1,5 @@
-//! The public export verb renders the full vault and hydratable short refs.
+//! The public export verb writes the whole-vault archive (OF-222), whose
+//! short refs hydrate, and the lossy OKF bundle.
 use super::*;
 
 fn owner_vault() -> (tempfile::TempDir, crate::Vault, EntityId) {
@@ -6,6 +7,44 @@ fn owner_vault() -> (tempfile::TempDir, crate::Vault, EntityId) {
     let vault = crate::Vault::open_owned(dir.path(), VaultConfig::default()).unwrap();
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     (dir, vault, owner)
+}
+
+/// Each export target (OF-222, fe8d9318937) with the format its manifest
+/// names: the whole-vault archive, and the lossy OKF bundle.
+const TARGETS: [(&str, &str); 2] = [
+    (
+        EXPORT_TARGET_ARCHIVE,
+        crate::batch::export::VAULT_ARCHIVE_FORMAT,
+    ),
+    (EXPORT_TARGET_OKF, crate::batch::export::VAULT_OKF_FORMAT),
+];
+
+/// The export of `format`, its other options the defaults.
+fn export_in(memory: &Memory<'_>, format: &str) -> MemoryResult<MemoryExport> {
+    memory.export(&ExportOptions {
+        format: Some(format.into()),
+        ..ExportOptions::default()
+    })
+}
+
+/// Every member of an export's ZIP as text, in archive order: what a reader
+/// of the export can search.
+fn export_text(export: &MemoryExport) -> String {
+    use std::io::Read as _;
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(export.archive.as_slice())).unwrap();
+    let mut text = String::new();
+    for index in 0..archive.len() {
+        let mut bytes = Vec::new();
+        archive
+            .by_index(index)
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        text.push_str(&String::from_utf8_lossy(&bytes));
+        text.push('\n');
+    }
+    text
 }
 
 #[test]
@@ -27,29 +66,28 @@ fn export_five_formats_and_rehydrate_each_emitted_short_ref() {
         .unwrap()
         .short_ref
         .unwrap();
-    let json = memory
-        .export(&ExportOptions {
-            format: Some("json".into()),
-        })
-        .unwrap();
-    let document: serde_json::Value = serde_json::from_str(&json.rendered).unwrap();
-    assert!(document["manifest"]["secrets_nulled"].as_bool().unwrap());
-    let entities = document["evidence_ledger"]["entities"].as_array().unwrap();
+    let archive = export_in(&memory, EXPORT_TARGET_ARCHIVE).unwrap();
+    // The archive reader checks every member against the manifest.
+    let document = vault.read_whole_vault_archive(&archive.archive).unwrap();
+    assert!(document.manifest.secrets_nulled);
+    assert_eq!(
+        document.manifest.format,
+        crate::batch::export::VAULT_ARCHIVE_FORMAT,
+        "missing full vault in {EXPORT_TARGET_ARCHIVE}"
+    );
+    let entities = &document.evidence_ledger.entities;
     for (id, reference) in [(actor, &actor_ref), (other, &other_ref)] {
         assert!(
             entities
                 .iter()
-                .any(|row| row["id"] == id.to_hex() && row["short_ref"] == *reference)
+                .any(|row| row.id == id.to_hex() && row.short_ref.as_ref() == Some(reference))
         );
     }
-    for row in entities
-        .iter()
-        .chain(document["claims"].as_array().unwrap())
-    {
-        if let Some(reference) = row["short_ref"].as_str() {
+    for row in entities.iter().chain(&document.claims) {
+        if let Some(reference) = row.short_ref.as_deref() {
             let (short, hash) = crate::entity_id::parse_short_ref_syntax(reference).unwrap();
             let hydrated = vault.hydrate_short_id(short, hash).unwrap().unwrap();
-            assert_eq!(hydrated.id.to_hex(), row["id"].as_str().unwrap());
+            assert_eq!(hydrated.id.to_hex(), row.id);
         }
     }
     let hydrated = memory
@@ -59,39 +97,25 @@ fn export_five_formats_and_rehydrate_each_emitted_short_ref() {
         hydrated.iter().map(|view| &view.id_hex).collect::<Vec<_>>(),
         vec![&actor.to_hex(), &other.to_hex()]
     );
-    for format in ["toon", "md", "json", "yaml", "txt"] {
-        let export = memory
-            .export(&ExportOptions {
-                format: Some(format.into()),
-            })
-            .unwrap();
+    for (target, format) in TARGETS {
+        let export = export_in(&memory, target).unwrap();
         assert_eq!(export.format, format);
-        assert!(
-            export.rendered.contains(&actor_ref),
-            "missing actor in {format}"
-        );
-        assert!(
-            export.rendered.contains(&other_ref),
-            "missing other in {format}"
-        );
-        assert!(
-            export.rendered.contains("evidence_ledger"),
-            "missing full vault in {format}"
-        );
+        let text = export_text(&export);
+        assert!(text.contains(&actor.to_hex()), "missing actor in {target}");
+        assert!(text.contains(&other.to_hex()), "missing other in {target}");
     }
     assert_eq!(
         memory.export(&ExportOptions::default()).unwrap().format,
-        "toon"
+        crate::batch::export::VAULT_ARCHIVE_FORMAT
     );
-    assert_eq!(
-        memory
-            .export(&ExportOptions {
-                format: Some("gemini".into())
-            })
-            .unwrap_err()
-            .code,
-        MEMORY_CODE_BAD_REQUEST
-    );
+    // An unknown format, and each rendered format OF-222 removed.
+    for format in ["gemini", "toon", "md", "json", "yaml", "txt"] {
+        assert_eq!(
+            export_in(&memory, format).unwrap_err().code,
+            MEMORY_CODE_BAD_REQUEST,
+            "{format}"
+        );
+    }
 }
 
 #[test]
@@ -116,42 +140,30 @@ fn export_uses_current_note_document_in_all_formats_without_rewriting_birth() {
         )
         .unwrap();
     assert_eq!(vault.get_raw(&note).unwrap().unwrap(), birth);
-    for format in ["toon", "md", "json", "yaml", "txt"] {
-        let rendered = memory
-            .export(&ExportOptions {
-                format: Some(format.into()),
-            })
-            .unwrap()
-            .rendered;
+    for (target, _) in TARGETS {
+        let export = export_in(&memory, target).unwrap();
+        let rendered = export_text(&export);
         assert!(
             rendered.contains("new-only-string"),
-            "stale NOTE in {format}"
+            "stale NOTE in {target}"
         );
         assert!(
             !rendered.contains("old-only-string"),
-            "birth NOTE in {format}"
+            "birth NOTE in {target}"
         );
-        if format == "json" {
-            let raw: serde_json::Value = serde_json::from_str(&rendered).unwrap();
-            let entries = raw["evidence_ledger"]["entities"].as_array().unwrap();
-            let note_raw = entries
-                .iter()
-                .find(|row| row["id"] == note.to_hex())
-                .unwrap();
-            let exported: crate::serialize::ExportBody =
-                serde_json::from_value(note_raw["body"].clone()).unwrap();
-            let roundtrip = crate::serialize::ExportBody::from_bytes(
-                &exported.to_bytes().unwrap(),
-                ENTITY_TYPE_NOTE,
-            );
-            assert_eq!(exported, roundtrip, "NOTE archive body roundtrip");
-            let archive = vault.read_whole_vault_json(rendered.as_bytes()).unwrap();
+        if target == EXPORT_TARGET_ARCHIVE {
+            let archive = vault.read_whole_vault_archive(&export.archive).unwrap();
             let row = archive
                 .evidence_ledger
                 .entities
                 .iter()
                 .find(|row| row.id == note.to_hex())
                 .unwrap();
+            let roundtrip = crate::serialize::ExportBody::from_bytes(
+                &row.body.to_bytes().unwrap(),
+                ENTITY_TYPE_NOTE,
+            );
+            assert_eq!(row.body, roundtrip, "NOTE archive body roundtrip");
             let crate::serialize::ExportBody::MessagePack(body) = &row.body else {
                 panic!("NOTE must retain a typed MessagePack body");
             };
@@ -175,16 +187,20 @@ fn export_streamed_message_uses_committed_document_not_pointer_or_partial() {
     let turn = WitnessTurn {
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: Some(EntityId::now().to_hex()),
+        thread_audience: None,
         occurred_at: 10,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: WitnessAuthor::User,
             message_type: "dialogue".into(),
             content: String::new(),
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
+            quote: None,
         }],
+        assertions: Default::default(),
     };
     let first = memory
         .begin_message_stream(&turn, Some(MessageWriteMode::Atomic))
@@ -219,24 +235,19 @@ fn export_streamed_message_uses_committed_document_not_pointer_or_partial() {
         Some(expected),
         "only committed stream text may appear inline"
     );
-    for format in ["toon", "md", "json", "yaml", "txt"] {
-        let export = memory
-            .export(&ExportOptions {
-                format: Some(format.into()),
-            })
-            .unwrap();
+    for (target, _) in TARGETS {
+        let export = export_in(&memory, target).unwrap();
+        let rendered = export_text(&export);
         assert!(
-            export.rendered.contains(expected),
-            "missing committed MESSAGE in {format}"
+            rendered.contains(expected),
+            "missing committed MESSAGE in {target}"
         );
         assert!(
-            !export.rendered.contains("-uncommitted-tail"),
-            "partial leaked in {format}"
+            !rendered.contains("-uncommitted-tail"),
+            "partial leaked in {target}"
         );
-        if format == "json" {
-            let archive = vault
-                .read_whole_vault_json(export.rendered.as_bytes())
-                .unwrap();
+        if target == EXPORT_TARGET_ARCHIVE {
+            let archive = vault.read_whole_vault_archive(&export.archive).unwrap();
             let row = archive
                 .evidence_ledger
                 .entities
@@ -266,16 +277,20 @@ fn preview_migrated_edited_message_reads_committed_document() {
         .witness(&WitnessTurn {
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
+            thread_audience: None,
             occurred_at: 10,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
                 message_type: "dialogue".into(),
                 content: "migrated base".into(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
+            assertions: Default::default(),
         })
         .unwrap();
     let writer = WriteActor::new(actor, EdgeActorClass::Human);
@@ -411,22 +426,17 @@ fn export_migrated_note_and_asset_text_uses_committed_document() {
             .windows(b"note-document-base".len())
             .any(|slice| slice == b"note-document-base")
     );
-    for format in ["toon", "md", "json", "yaml", "txt"] {
-        let export = memory
-            .export(&ExportOptions {
-                format: Some(format.into()),
-            })
-            .unwrap();
+    for (target, _) in TARGETS {
+        let export = export_in(&memory, target).unwrap();
+        let rendered = export_text(&export);
         for expected in ["asset-document-base-current", "note-document-base-current"] {
             assert!(
-                export.rendered.contains(expected),
-                "missing {expected} in {format}"
+                rendered.contains(expected),
+                "missing {expected} in {target}"
             );
         }
-        if format == "json" {
-            let archive = vault
-                .read_whole_vault_json(export.rendered.as_bytes())
-                .unwrap();
+        if target == EXPORT_TARGET_ARCHIVE {
+            let archive = vault.read_whole_vault_archive(&export.archive).unwrap();
             let asset_row = archive
                 .evidence_ledger
                 .entities
@@ -486,7 +496,7 @@ fn export_refuses_other_people_and_unleased_owner_handles() {
 /// the whole vault only while it is an owner of this vault.
 #[test]
 fn a_live_full_slip_without_the_owner_role_does_not_export_the_vault() {
-    use crate::authority::HostSlipIssuer;
+    use crate::authority::{ActSurface, HostSlipIssuer};
     let (_dir, vault, _owner) = owner_vault();
     let other = put_person(&vault, 41);
     let issuer = HostSlipIssuer::from_secret(b"fixture-export-non-owner-root").unwrap();
@@ -510,7 +520,7 @@ fn a_live_full_slip_without_the_owner_role_does_not_export_the_vault() {
     assert!(proof.is_full_vault_owner_grade());
     assert_eq!(
         facade_for(&vault, other)
-            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .export_with_verified_owner(&ExportOptions::default(), &proof, ActSurface::ThisInstall)
             .unwrap_err()
             .code,
         MEMORY_CODE_FORBIDDEN
@@ -523,7 +533,7 @@ fn a_live_full_slip_without_the_owner_role_does_not_export_the_vault() {
 /// live-owner check reads the deletion tombstone too.
 #[test]
 fn a_deleted_owner_does_not_export_the_vault_with_a_live_slip() {
-    use crate::authority::HostSlipIssuer;
+    use crate::authority::{ActSurface, HostSlipIssuer};
     let (_dir, vault, actor) = owner_vault();
     let issuer = HostSlipIssuer::from_secret(b"fixture-export-deleted-owner-root").unwrap();
     let root = vault.ensure_host_root_slip(&issuer).unwrap();
@@ -546,13 +556,13 @@ fn a_deleted_owner_does_not_export_the_vault_with_a_live_slip() {
     let memory = facade_for(&vault, actor);
     assert!(
         memory
-            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .export_with_verified_owner(&ExportOptions::default(), &proof, ActSurface::ThisInstall)
             .is_ok()
     );
     assert!(vault.delete_entity(&actor).unwrap());
     assert_eq!(
         memory
-            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .export_with_verified_owner(&ExportOptions::default(), &proof, ActSurface::ThisInstall)
             .unwrap_err()
             .code,
         MEMORY_CODE_FORBIDDEN
@@ -561,7 +571,7 @@ fn a_deleted_owner_does_not_export_the_vault_with_a_live_slip() {
 
 #[test]
 fn verified_owner_export_rechecks_read_only_and_revoked_slips() {
-    use crate::authority::HostSlipIssuer;
+    use crate::authority::{ActSurface, HostSlipIssuer};
     use crate::federation::ScopeAxis;
     let (_dir, vault, actor) = owner_vault();
     let issuer = HostSlipIssuer::from_secret(b"fixture-export-owner-root").unwrap();
@@ -583,7 +593,7 @@ fn verified_owner_export_rechecks_read_only_and_revoked_slips() {
     let memory = facade_for(&vault, actor);
     assert!(
         memory
-            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .export_with_verified_owner(&ExportOptions::default(), &proof, ActSurface::ThisInstall)
             .is_ok()
     );
 
@@ -602,7 +612,7 @@ fn verified_owner_export_rechecks_read_only_and_revoked_slips() {
         .unwrap();
     assert_eq!(
         memory
-            .export_with_verified_owner(&ExportOptions::default(), &narrow)
+            .export_with_verified_owner(&ExportOptions::default(), &narrow, ActSurface::ThisInstall)
             .unwrap_err()
             .code,
         MEMORY_CODE_FORBIDDEN
@@ -612,7 +622,7 @@ fn verified_owner_export_rechecks_read_only_and_revoked_slips() {
         .unwrap();
     assert_eq!(
         memory
-            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .export_with_verified_owner(&ExportOptions::default(), &proof, ActSurface::ThisInstall)
             .unwrap_err()
             .code,
         MEMORY_CODE_FORBIDDEN
@@ -643,27 +653,32 @@ fn conflicting_authority_roots_suspend_embedded_export() {
 fn every_export_lands_a_receipt_and_a_refused_one_lands_none() {
     let (_dir, vault, owner) = owner_vault();
     let other = put_person(&vault, 38);
-    assert!(
-        facade_for(&vault, other)
-            .export(&ExportOptions::default())
-            .is_err()
-    );
+    // Another person's handle, and a format OF-222 removed.
+    let refused = [
+        (other, ExportOptions::default()),
+        (
+            owner,
+            ExportOptions {
+                format: Some("md".into()),
+                ..ExportOptions::default()
+            },
+        ),
+    ];
+    for (actor, options) in &refused {
+        assert!(
+            facade_for(&vault, *actor).export(options).is_err(),
+            "{options:?}"
+        );
+    }
     assert!(vault.export_receipts().unwrap().is_empty());
-    let export = facade_for(&vault, owner)
-        .export(&ExportOptions {
-            format: Some("md".into()),
-        })
-        .unwrap();
+    let export = export_in(&facade_for(&vault, owner), EXPORT_TARGET_ARCHIVE).unwrap();
     let receipts = vault.export_receipts().unwrap();
     assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].format, "md");
-    assert_eq!(receipts[0].bytes, export.rendered.len() as u64);
-    assert_eq!(
-        receipts[0].digest,
-        blake3::hash(export.rendered.as_bytes())
-            .to_hex()
-            .to_string()
-    );
+    assert_eq!(receipts[0].format, EXPORT_TARGET_ARCHIVE);
+    assert_eq!(receipts[0].bytes, Some(export.archive.len() as u64));
+    let digest = blake3::hash(&export.archive).to_hex().to_string();
+    assert_eq!(receipts[0].digest, Some(digest.clone()));
+    assert_eq!(export.digest, digest);
     assert_eq!(receipts[0].by, owner.to_hex());
     facade_for(&vault, owner)
         .export(&ExportOptions::default())
@@ -747,6 +762,7 @@ fn served_both_ways(
             predicate: None,
             lifecycle: None,
             limit: 10,
+            filter: None,
         })
         .unwrap()
         .value;
@@ -827,7 +843,7 @@ fn a_write_accepted_body_of_wide_floats_serves_its_numbers() {
     rmpv::encode::write_value(&mut body, &value).unwrap();
     assert!(crate::batch::secret_scan::scan_write_payload(&body).is_ok());
     let (_dir, vault, owner) = owner_vault();
-    let numbers = crate::companion::companion_value_to_json(&value);
+    let numbers = crate::serialize::msgpack_value_to_json(&value);
     for served in served_both_ways(&vault, owner, value, 0x6e) {
         assert_eq!(served, numbers);
     }
@@ -904,6 +920,9 @@ fn the_chat_document_pack_withholds_a_body_the_write_door_refuses() {
                     format,
                     lease: None,
                     composer: None,
+                    budget: None,
+                    token_budget: None,
+                    reader_agent_ref: None,
                 },
             )
             .unwrap()
@@ -954,6 +973,7 @@ fn a_claim_predicate_is_read_as_the_text_it_is_served_as() {
             predicate: None,
             lifecycle: None,
             limit: 10,
+            filter: None,
         })
         .unwrap()
         .value;
@@ -1033,6 +1053,7 @@ fn a_claim_predicate_is_read_as_the_text_it_is_served_as() {
             predicate: None,
             lifecycle: None,
             limit: 10,
+            filter: None,
         })
         .unwrap()
         .value;
@@ -1060,9 +1081,8 @@ fn a_write_accepted_body_of_wide_integers_serves_its_numbers() {
     let (wide, narrow) = (body(&[0xcc]), body(&[]));
     assert!(crate::batch::secret_scan::scan_write_payload(&wide).is_ok());
     assert!(crate::batch::secret_scan::scan_write_payload(&narrow).is_err());
-    let numbers = crate::companion::companion_value_to_json(
-        &rmpv::decode::read_value(&mut &wide[..]).unwrap(),
-    );
+    let numbers =
+        crate::serialize::msgpack_value_to_json(&rmpv::decode::read_value(&mut &wide[..]).unwrap());
     let (_dir, vault, owner) = scan_off_vault();
     let memory = facade_for(&vault, owner);
     let bundle = |asset: EntityId| -> serde_json::Value {
@@ -1128,9 +1148,8 @@ fn a_repeated_key_is_read_in_the_bytes_of_the_value_it_keeps() {
         body.extend(value);
     }
     assert!(crate::batch::secret_scan::scan_write_payload(&body).is_ok());
-    let served = crate::companion::companion_value_to_json(
-        &rmpv::decode::read_value(&mut &body[..]).unwrap(),
-    );
+    let served =
+        crate::serialize::msgpack_value_to_json(&rmpv::decode::read_value(&mut &body[..]).unwrap());
     assert_eq!(served["letters"][2], u64::from(letters[1]));
     let (_dir, vault, owner) = scan_off_vault();
     let memory = facade_for(&vault, owner);

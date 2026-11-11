@@ -5,7 +5,8 @@ use super::versions::AdmittedRevision;
 use super::{RetrievalFilter, ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimSubject;
-use crate::vault::ReadMode;
+use crate::vault::entity_revision::revision_for_mode_in_txn;
+use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Error, HydratedShortIdDeletion, Result, TimeRange};
 type EntityParts = (u8, u64, Vec<u8>);
 
@@ -40,7 +41,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         Ok(self
             .entity_raw_with_mode_held_in(txn, &policy, &filter, id, ReadMode::Live, &authority)?
             .map(|revision| revision.raw))
@@ -57,7 +58,7 @@ impl ScopedRead<'_> {
         ids: &[EntityId],
     ) -> Result<Vec<bool>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         ids.iter()
             .map(|id| self.is_entity_readable_held_in(txn, &policy, id, &filter, &authority))
             .collect()
@@ -110,7 +111,7 @@ impl ScopedRead<'_> {
         mode: ReadMode,
     ) -> Result<Vec<Option<EntityParts>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         ids.iter()
             .map(|id| {
                 let Some(revision) =
@@ -219,6 +220,36 @@ impl ScopedRead<'_> {
         self.read_projected(reads, requested, |_, rows| Ok::<_, Error>(rows))
     }
 
+    /// [`Self::read`], each row with the live revision of its record in the
+    /// read's own snapshot (FIX 4817): the revision whose words the row
+    /// carries, so a later reader can tell whether those words still stand.
+    pub(crate) fn read_revisions(
+        &self,
+        reads: &[PointRead<'_>],
+    ) -> Result<ScopedReadResult<Vec<Option<(ReadRow, Option<RevisionRef>)>>>> {
+        self.read_projected(reads, None, |txn, rows| {
+            rows.into_iter()
+                .map(|row| {
+                    row.map(|row| {
+                        let revision = match self.session_view {
+                            Some(view) => {
+                                revision_for_mode_in_txn(view, txn, &row.id, ReadMode::Live)?
+                            }
+                            None => revision_for_mode_in_txn(
+                                &self.vault.store,
+                                txn,
+                                &row.id,
+                                ReadMode::Live,
+                            )?,
+                        };
+                        Ok::<_, Error>((row, revision))
+                    })
+                    .transpose()
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+    }
+
     /// Reads every target in ordered frames under one snapshot and receipt.
     ///
     /// `offset` is the first input slot in the frame. The callback runs inside
@@ -297,11 +328,19 @@ impl ScopedRead<'_> {
         opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
-        // A file-plane ASSET's body file is read in the snapshot this read
-        // opens, so the bodies are pinned before it opens (FIX 12149).
-        let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
-        let txn = self.grant_read_txn()?;
+        let _bodies = self.prepare_point_read::<E>()?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         self.read_projected_opaque_in_txn(&txn, reads, requested, opaque, project)
+    }
+
+    /// Prepare grant time and pin point-read bodies before opening a snapshot.
+    /// Hold the returned guard through the snapshot and its projections.
+    pub(crate) fn prepare_point_read<E: From<Error>>(
+        &self,
+    ) -> std::result::Result<Option<oneiron_store::result_body_pins::ResultBodyPin>, E> {
+        let bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
+        self.persist_grant_clock()?;
+        Ok(bodies)
     }
 
     /// The ordinary point read and projection in the caller's snapshot.
@@ -329,7 +368,7 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
         // One serving txn, one held authority: the reader's relationship
         // context and its own Grants load once for every slot (FIX 7462).
-        let authority = HeldAuthority::for_request(requested);
+        let authority = self.held_for(requested);
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
@@ -384,7 +423,7 @@ impl ScopedRead<'_> {
         let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
-        let authority = HeldAuthority::for_request(requested);
+        let authority = self.held_for(requested);
         let mut suppressed = 0;
         let frame_size = crate::request_limits::MAX_BATCH_ENTITIES;
         for (frame_index, frame) in reads.chunks(frame_size).enumerate() {
@@ -514,26 +553,13 @@ impl ScopedRead<'_> {
         // Erased relationship/private bodies cannot prove a scope.
         let reveals = |filter: &crate::gate::ResolvedRetrievalFilter| -> Result<bool> {
             Ok(hydrated.deletion.is_some()
-                && self.audience_readable_in(txn, &hydrated.id)?
-                && hydrated.entity_type != crate::registry::ENTITY_TYPE_NOTE
-                && !(self.relationship_gated_in(txn)?
-                    && matches!(
-                        hydrated.entity_type,
-                        crate::registry::ENTITY_TYPE_CLAIM
-                            | crate::registry::ENTITY_TYPE_MESSAGE
-                            | crate::registry::ENTITY_TYPE_SUMMARY
-                    ))
-                && !filter.deny_all
-                && filter.read_scope().bands.contains(&hydrated.entity_type)
-                // Only authority covering every possible old position may reveal
-                // deletion metadata, never a narrow grant.
-                && self.credential_allows_id(&hydrated.id)
-                && self.facets_allow_shell_in(txn, &hydrated.id)?
-                && crate::gate::scoped_read_record_allowed(
+                && self.deletion_revealed_in(
+                    txn,
                     policy,
-                    &self.actor_key,
-                    &oneiron_authority::federation::scope_codec::read_preset(),
-                ))
+                    filter,
+                    &hydrated.id,
+                    hydrated.entity_type,
+                )?)
         };
         if !reveals(filter)? {
             // A withheld private NOTE shell counts exactly like a missing row.
@@ -567,5 +593,56 @@ impl ScopedRead<'_> {
             }),
             0,
         ))
+    }
+
+    /// Whether this reader may learn that `id`, an entity of `entity_type`
+    /// that is deleted or withdrawn, is gone: the one rule a short reference
+    /// to an erased row and a change feed's withdrawal entry share. Only
+    /// authority covering every position the row could have held may reveal
+    /// deletion metadata, never a narrow grant.
+    fn deletion_revealed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+        id: &EntityId,
+        entity_type: u8,
+    ) -> Result<bool> {
+        Ok(self.audience_readable_in(txn, id)?
+            && entity_type != crate::registry::ENTITY_TYPE_NOTE
+            && !(self.relationship_gated_in(txn)?
+                && matches!(
+                    entity_type,
+                    crate::registry::ENTITY_TYPE_CLAIM
+                        | crate::registry::ENTITY_TYPE_MESSAGE
+                        | crate::registry::ENTITY_TYPE_SUMMARY
+                ))
+            && !filter.deny_all
+            && filter.read_scope().bands.contains(&entity_type)
+            && self.credential_allows_id(id)
+            && self.facets_allow_shell_in(txn, id)?
+            && crate::gate::scoped_read_record_allowed(
+                policy,
+                &self.actor_key,
+                &oneiron_authority::federation::scope_codec::read_preset(),
+            ))
+    }
+
+    /// For each withdrawn entity `(id, entity_type)`, whether this reader may
+    /// learn it is gone ([`Self::deletion_revealed_in`]), judged under this
+    /// lane's own policy and filter in `txn`. A change feed delivers a
+    /// withdrawal entry only where this answers `true` (untangle slice 6.8).
+    pub(crate) fn withdrawals_revealed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        withdrawn: &[(EntityId, u8)],
+    ) -> Result<Vec<bool>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        withdrawn
+            .iter()
+            .map(|(id, entity_type)| {
+                self.deletion_revealed_in(txn, &policy, &filter, id, *entity_type)
+            })
+            .collect()
     }
 }

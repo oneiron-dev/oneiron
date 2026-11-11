@@ -10,8 +10,8 @@ use crate::gate::{ApprovalTarget, ExternalEffectGateInput};
 use crate::outbound_consent::tool_call::PreparedToolCall;
 use crate::outbound_intent_ledger::{
     AdmittedApproval, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentId,
-    IntentLedgerError, IntentResolution, OutboundSendOutcome, PinnedApproval, derive_intent_id,
-    hash_frozen_payload, keep_pinned_approval_in_txn, keep_press_after_admission,
+    IntentLedgerError, IntentResolution, OutboundSendOutcome, derive_intent_id,
+    hash_frozen_payload, keep_press_after_admission,
 };
 use crate::receipt::ReceiptRecord;
 
@@ -33,6 +33,9 @@ pub(crate) struct OutboundEffectResult {
     pub(crate) gate_reason_codes: Vec<String>,
     pub(crate) gate_receipt_reasons: Vec<String>,
     pub(crate) budget_charge: Option<EffectorBudgetCharge>,
+    /// Newly fired by this call's committed Done, independent of whether
+    /// this execution made a new admission charge or resumed an old one.
+    pub(crate) budget_settlement_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
     /// OF-327 suppression is not a Gate denial or a Gate reason code.
     pub(crate) dedupe_suppressed: bool,
     pub(crate) suppression_receipt: Option<ReceiptRecord>,
@@ -56,6 +59,11 @@ pub(crate) struct OutboundEffectResult {
     /// instant, Unix seconds, its windows all open again: nothing was
     /// recorded, charged or sent.
     pub(crate) paced_until: Option<u64>,
+    /// FIX 4747 slice 7: why an agent run's effect did not go at its
+    /// admission (its run stood down, an earlier executor may have made it,
+    /// the owner left it, or its run's marks are full): nothing was
+    /// recorded, charged or sent. `None` for every other result.
+    pub(crate) agent_run_effect: Option<crate::agent_dispatch::AgentRunEffectStop>,
 }
 
 impl OutboundEffectResult {
@@ -139,6 +147,11 @@ pub(crate) struct PreparedEffect {
     /// A second actor the same mutation speaks for, admitted beside the
     /// primary under the same writer (OF-427).
     pub(crate) co_actor: Option<CoActorAdmission>,
+    /// The sibling route this send must not go beside (FIX 11029: an
+    /// interrupt and its ambient alternative): its logical attempt. A first
+    /// admission is refused under the writer while the sibling's call may
+    /// have gone.
+    pub(crate) exclusive_route: Option<AttemptId>,
 }
 
 /// A second actor one external mutation speaks for (OF-427): the verified
@@ -170,26 +183,19 @@ pub(crate) type CoActorKeepPress = Box<
         + Send,
 >;
 
-/// FIX 6424 part 2a: keeps the presses the committed admission of
-/// `intent_id` spent, for its retry: the primary's beside its Pending row,
-/// the co-actor's where its binding keeps it, each in a writer of its own
-/// after that admission committed. A press that does not write is logged and
-/// the admission stands (CALLS `FIX 6424 kept press write failure`).
+/// Keeps the co-actor press the committed admission of `intent_id` spent,
+/// in its existing post-commit writer. A press that does not write is logged
+/// and the admission stands (CALLS `FIX 6424 kept press write failure`).
+/// The primary proof already committed with the Pending row.
 ///
 /// # Errors
 /// None while that call stands; else a keeper's storage failure.
 pub(super) fn keep_spent_presses(
     vault: &Vault,
     intent_id: IntentId,
-    pinned: Option<PinnedApproval>,
     co_actor: Option<(EffectDigest, CoActorKeepPress)>,
 ) -> Result<(), IntentLedgerError> {
     let subject = crate::entity_id::bytes_to_hex_lower(&intent_id);
-    if pinned.is_some() {
-        keep_press_after_admission(vault, &subject, |wtxn| {
-            keep_pinned_approval_in_txn(vault, wtxn, pinned)
-        })?;
-    }
     if let Some((spent, keep)) = co_actor {
         keep_press_after_admission(vault, &subject, |wtxn| keep(vault, wtxn, spent))?;
     }
@@ -230,6 +236,30 @@ impl PreparedEffect {
     }
 }
 
+/// What the chokepoint does with an outcome-free Pending call that may have
+/// gone out, before any resend (FIX 4747): the step its transport's
+/// provider lookup, or the owner's answer, gives it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UncertainSendStep {
+    /// The provider kept the send: the row settles delivered, and nothing
+    /// is sent. The transport keeps the provider's ref for the receipt.
+    Delivered,
+    /// The provider answered that it has no such send: the row becomes a
+    /// definite non-delivery, its possible-delivery mark cleared, and it is
+    /// sent.
+    LookedUpUnsent,
+    /// The owner answered resend: the row is sent once more, still marked
+    /// as one that may have gone out before.
+    OwnerReleased,
+    /// The provider would drop a resend under the same id for now: the row
+    /// is sent again, still Pending and marked as one that may have gone, so
+    /// a resend resumed later asks the lookup again (review #6555).
+    ResendDeduplicated,
+    /// Nobody can tell: the row stays Pending and uncertain, nothing is
+    /// sent, and the caller asks the owner.
+    Hold,
+}
+
 /// Connector-agnostic transport. The endpoint, bytes, and idempotency key are
 /// readable only from the frozen call supplied here.
 pub(crate) trait OutboundTransport {
@@ -239,7 +269,7 @@ pub(crate) trait OutboundTransport {
     /// the send's terminal bridge settles a turn program's step with it
     /// (DOOR-141 PR2). The outcome stays the ACK contract above; by default
     /// a transport hands on none.
-    fn settled_result(&self) -> Option<&[u8]> {
+    fn take_settled_result(&mut self) -> Option<crate::outbound_consent::RawOutboundBody> {
         None
     }
 
@@ -263,6 +293,45 @@ pub(crate) trait OutboundTransport {
     /// stays one whose delivery is unknown.
     fn known_non_delivery(&self, _call: &FrozenOutboundCall) -> bool {
         false
+    }
+
+    /// Whether this transport looks a call that may have gone out up at its
+    /// provider before any resend (FIX 4747; canon ARCH-0023b "never a blind
+    /// retry"): such a call that came back ambiguous stays Pending and
+    /// uncertain instead of being abandoned, and its resend waits for
+    /// [`Self::uncertain_send_step`]. Only a connector-send TASK's dispatch
+    /// transport does; by default a transport does not, and the chokepoint
+    /// keeps its rule.
+    fn looks_up_uncertain_sends(&self) -> bool {
+        false
+    }
+
+    /// Whether `call`'s provider deduplicates a resend under its key only
+    /// for a window and then forgets it (LINE's retry key, 24 hours), so an
+    /// uncertain resend of it goes through [`Self::uncertain_send_step`]
+    /// like a non-idempotent one: inside the window the lookup lets it go,
+    /// after it the owner is asked (FIX 4747, review #6555). By default no
+    /// provider's key lapses.
+    fn idempotent_resend_is_time_bounded(&self, _call: &FrozenOutboundCall) -> bool {
+        false
+    }
+
+    /// The step for `call`, an outcome-free Pending row that may have gone
+    /// out, before its resend (FIX 4747). Asked only when
+    /// [`Self::looks_up_uncertain_sends`]; by default nobody can tell.
+    fn uncertain_send_step(&mut self, _call: &FrozenOutboundCall) -> UncertainSendStep {
+        UncertainSendStep::Hold
+    }
+
+    /// What the provider's own record says became of `call`, a row the
+    /// ledger holds uncertain (FIX 8814 follow-up): read back from the
+    /// provider, never inferred. By default a transport cannot ask, and the
+    /// row stays uncertain.
+    fn read_back_delivery(
+        &self,
+        _call: &FrozenOutboundCall,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        crate::outbound_intent_ledger::DeliveryReadBack::Unknown
     }
 
     /// Whether this transport's caller holds a paced result and brings the

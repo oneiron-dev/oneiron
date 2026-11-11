@@ -34,6 +34,8 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
         ReceiptKind::Share,
         &[
             "recipient_ref",
+            "grant",
+            "recipient",
             "subject_ref",
             "audience_ref",
             "share_id",
@@ -92,6 +94,12 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
             "calendar_ref",
             "page_ref",
         ],
+    ),
+    // A hold override: the fan-out launch, or the comment's artifact and
+    // thread, the released hold named. (Engine call S65-B-R3)
+    (
+        ReceiptKind::RunHoldOverride,
+        &["launch_ref", "artifact_ref", "thread_ref"],
     ),
     // A served form: the ASSET it served, and the ASSET_TEXT it read in
     // place of the body. (FIX 4848)
@@ -165,6 +173,18 @@ fn referenced_rows(vault: &Vault, receipt: &ReceiptRecord) -> Result<Option<Vec<
         if let Some(value) = receipt.fields.get(*name) {
             rows.extend(value.split(',').filter_map(row_of));
         }
+    }
+    if receipt.receipt_kind == ReceiptKind::Share
+        && receipt.outcome == "prepared"
+        && let Some(sequence) = receipt.receipt_id.strip_prefix("share:export:")
+    {
+        let Ok(sequence) = sequence.parse() else {
+            return Ok(None);
+        };
+        let Some(source) = crate::share_travel::export_travel_source_rows(vault, sequence)? else {
+            return Ok(None);
+        };
+        rows.extend(source);
     }
     if receipt.receipt_kind == ReceiptKind::Hook {
         let read = match receipt.fields.get(HOOK_RUN_KEY) {

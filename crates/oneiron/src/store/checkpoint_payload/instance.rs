@@ -342,10 +342,23 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         entity: &EntityId,
     ) -> Result<()> {
+        self.roll_checkpoint_payload_of_owner_in_txn(wtxn, &OwnerRef::entity(entity))
+    }
+
+    /// [`Self::roll_checkpoint_payload_for_purge_in_txn`] for any `owner`:
+    /// the next capture reseals what the owner keeps under a fresh leaf, and
+    /// the generation left behind retires once that reseal lands, so no older
+    /// checkpoint opens what a write in this transaction took out (FIX 17393:
+    /// an erased owner's id on an outbound call another actor's payload
+    /// keeps).
+    pub(crate) fn roll_checkpoint_payload_of_owner_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        owner: &OwnerRef,
+    ) -> Result<()> {
         if !CHECKPOINT_PAYLOADS_ENABLED {
             return Ok(());
         }
-        let owner = OwnerRef::entity(entity);
         let instances = instances_in_txn(self, wtxn, owner.subtype, &owner.owner32)?;
         let Some(active) = only_active(instances)? else {
             return Ok(());

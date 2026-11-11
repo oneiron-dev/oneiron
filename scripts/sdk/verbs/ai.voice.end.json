@@ -1,0 +1,16 @@
+{
+  "name": "ai.voice.end",
+  "description": "Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation.",
+  "input": "crate::task_verb::sdk::LiveVoiceSessionRequest",
+  "output": "crate::task_verb::sdk::LiveVoiceProcessed",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.end\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

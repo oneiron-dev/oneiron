@@ -10,7 +10,7 @@
 //! typed reason instead of truncating.
 
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::mpsc::{TryRecvError, channel};
 use std::time::Instant;
 
 use crate::code_run::{CodeRunBridgeCall, CodeRunHistoryTurn};
@@ -27,6 +27,11 @@ use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmRequest, WriteActor};
 
 pub(super) mod live_fork;
+mod speech;
+mod wait;
+
+pub(super) use self::speech::speech_call_text;
+use wait::FlightReceiver;
 
 /// Runs one background pass where the host chooses: a thread, a blocking
 /// pool. The executor never spawns one itself.
@@ -53,7 +58,7 @@ struct LiveSeat {
     placement: EpochPlacement,
     hot_steps: u64,
     spawn: Arc<dyn CompactionSpawn>,
-    flight: Option<Receiver<FlightOutcome>>,
+    flight: Option<FlightReceiver>,
     /// The in-flight batch's folds by kind: they need no backend call and
     /// land with its passes, in the same ledger write.
     kind_folds: Option<KindFolds>,
@@ -323,20 +328,25 @@ impl RunCompaction {
         let Seat::Live(seat) = &mut self.seat else {
             return None;
         };
-        let outcome = match seat.flight.as_ref()?.try_recv() {
-            Ok(outcome) => outcome,
-            Err(TryRecvError::Empty) => return None,
-            Err(TryRecvError::Disconnected) => FlightOutcome {
-                epoch: Some(PassOutcome::Refused(CompactionRefusal {
-                    suppression: CompactionSuppression::TurnScoped { check: None },
-                    detail: "the compaction pass ended without an answer".to_owned(),
-                })),
-                folds: Vec::new(),
-                epoch_execution: None,
-                unavailable: None,
+        let outcome = match seat.flight.take()? {
+            FlightReceiver::Ready(outcome) => outcome,
+            FlightReceiver::Receiving(receiver) => match receiver.try_recv() {
+                Ok(outcome) => outcome,
+                Err(TryRecvError::Empty) => {
+                    seat.flight = Some(FlightReceiver::Receiving(receiver));
+                    return None;
+                }
+                Err(TryRecvError::Disconnected) => FlightOutcome {
+                    epoch: Some(PassOutcome::Refused(CompactionRefusal {
+                        suppression: CompactionSuppression::TurnScoped { check: None },
+                        detail: "the compaction pass ended without an answer".to_owned(),
+                    })),
+                    folds: Vec::new(),
+                    epoch_execution: None,
+                    unavailable: None,
+                },
             },
         };
-        seat.flight = None;
         let kind_folds = seat.kind_folds.take();
         let hooks = std::mem::take(&mut seat.hooks);
         self.report.in_flight = false;
@@ -563,7 +573,7 @@ impl RunCompaction {
                                     unavailable: None,
                                 });
                             }));
-                            seat.flight = Some(receiver);
+                            seat.flight = Some(FlightReceiver::Receiving(receiver));
                             seat.kind_folds = kind_folds;
                             seat.hooks = hooks;
                             self.report.in_flight = true;
@@ -584,16 +594,40 @@ impl RunCompaction {
                 }
             }
         }
-        if used_tokens < seat.driver.window_token_budget() {
-            return Ok(None);
+        Ok(seat.window_full(used_tokens))
+    }
+
+    /// One request's size fed again within its turn (FIX 17594): a request
+    /// built again past a batch of folds by kind the feed landed replaces
+    /// the size the feed was given, and the next feed's velocity reads from
+    /// it. It takes no breakpoint and starts no flight. Returns why the run
+    /// must park, when its window is full.
+    pub(super) fn recount(&mut self, used_tokens: u64) -> Option<WindowFullReason> {
+        self.report.used_tokens = used_tokens;
+        let Seat::Live(seat) = &mut self.seat else {
+            return None;
+        };
+        if let Some((_, fed)) = seat.last_feed.as_mut() {
+            *fed = used_tokens;
         }
-        Ok(Some(if seat.flight.is_some() {
+        seat.window_full(used_tokens)
+    }
+}
+
+impl LiveSeat {
+    /// Why a run whose request is `used_tokens` long must park: its window
+    /// is full, with a pass in flight, a hold, or nothing left to compact.
+    fn window_full(&self, used_tokens: u64) -> Option<WindowFullReason> {
+        if used_tokens < self.driver.window_token_budget() {
+            return None;
+        }
+        Some(if self.flight.is_some() {
             WindowFullReason::InFlight
-        } else if let Some(held) = seat.held {
+        } else if let Some(held) = self.held {
             WindowFullReason::Suppressed(held)
         } else {
             WindowFullReason::NothingToCompact
-        }))
+        })
     }
 }
 
@@ -667,7 +701,7 @@ pub(super) fn request_tokens(request: &LlmRequest) -> u64 {
         .iter()
         .flat_map(|message| &message.content)
         .map(|part| match part {
-            ContentPart::Text { text } => count_context_pack_tokens(text) as u64,
+            ContentPart::Text { text, .. } => count_context_pack_tokens(text) as u64,
             _ => 0,
         })
         .sum()
@@ -777,20 +811,13 @@ fn hex_ids(text: &str, found: &mut std::collections::BTreeSet<EntityId>) {
     }
 }
 
-/// The window identity of one step: stable per (run, step), never stored.
-pub(super) fn step_message_id(run_id: EntityId, seq: u64) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:executor-compaction-step:v1");
-    hasher.update(run_id.as_bytes());
-    hasher.update(&seq.to_be_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    loop {
-        if let Ok(id) = EntityId::from_bytes(bytes) {
-            return id;
-        }
-        bytes[0] ^= 0x42;
-    }
+/// The window identity of one step: stable per (run, step), never stored,
+/// by the one derived-id rule (FIX 9838).
+pub(super) fn step_message_id(run_id: EntityId, seq: u64) -> crate::Result<EntityId> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::EXECUTOR_COMPACTION_STEP,
+        &[run_id.as_bytes(), &seq.to_be_bytes()],
+    )
 }
 
 /// The engine-authored first words of a failed step's console.
@@ -936,7 +963,10 @@ pub(super) fn epoch_frame(
         }
         return Ok(Some(Some(crate::LlmMessage {
             role: crate::LlmMessageRole::User,
-            content: vec![ContentPart::Text { text: fold.stub() }],
+            content: vec![ContentPart::Text {
+                text: fold.stub(),
+                signature: None,
+            }],
         })));
     };
     if seq as u64 != row.first() {
@@ -967,6 +997,7 @@ pub(super) fn epoch_frame(
                 text.as_deref(),
                 &handles,
             ),
+            signature: None,
         }],
     })))
 }
@@ -1003,18 +1034,6 @@ pub(super) fn result_read_affordance(read: &str) -> super::EngineExecutorResult<
     }))?)
 }
 
-/// The text one speech call dispatched: a hook's rewrite where one rewrote
-/// it, else the guest's own request.
-pub(super) fn speech_call_text(call: &crate::code_run::CodeRunBridgeCall) -> Option<&str> {
-    let rmpv::Value::Map(entries) = call.rewritten_request.as_ref().unwrap_or(&call.request) else {
-        return None;
-    };
-    entries
-        .iter()
-        .find(|(key, _)| key.as_str() == Some("text"))
-        .and_then(|(_, value)| value.as_str())
-}
-
 /// Every stored result's read path `text` names.
 pub(super) fn result_reads(text: &str, found: &mut std::collections::BTreeSet<String>) {
     let mut rest = text;
@@ -1028,18 +1047,11 @@ pub(super) fn result_reads(text: &str, found: &mut std::collections::BTreeSet<St
     }
 }
 
-/// The request identity of one fold's pass: stable per (run, fold).
-pub(super) fn fold_request_id(run_id: EntityId, fold: u64) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:executor-fold-request:v1");
-    hasher.update(run_id.as_bytes());
-    hasher.update(&fold.to_be_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    loop {
-        if let Ok(id) = EntityId::from_bytes(bytes) {
-            return id;
-        }
-        bytes[0] ^= 0x42;
-    }
+/// The request identity of one fold's pass: stable per (run, fold), by the
+/// one derived-id rule (FIX 9838).
+pub(super) fn fold_request_id(run_id: EntityId, fold: u64) -> crate::Result<EntityId> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::EXECUTOR_FOLD_REQUEST,
+        &[run_id.as_bytes(), &fold.to_be_bytes()],
+    )
 }

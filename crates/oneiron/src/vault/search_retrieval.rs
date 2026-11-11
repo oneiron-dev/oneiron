@@ -2,6 +2,7 @@
 
 use super::Vault;
 use super::doctor_manifest::{TextIndexStatus, read_text_schema_version};
+use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::store::retrieval_values::RetrievalWithTelemetry;
@@ -153,7 +154,7 @@ impl Vault {
         } else {
             self.search_text_scored(&self.store, query, limit, profile, |_| Ok(()))?
         };
-        Ok(self.text_search_telemetry(results, limit))
+        Ok(self.text_search_telemetry(results, limit, None))
     }
 
     /// [`Self::search_text`], with `observe` run over its hits in the read
@@ -164,8 +165,85 @@ impl Vault {
         limit: usize,
         observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
     ) -> Result<Vec<ScoredEntity>> {
+        self.search_text_observed_for_attempt(query, limit, observe, None)
+    }
+
+    /// The same observed search, recording the host-bound leased attempt
+    /// that requested it. The binding is telemetry, never read authority.
+    pub(crate) fn search_text_observed_for_attempt(
+        &self,
+        query: &str,
+        limit: usize,
+        observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
+        dispatch_attempt: Option<AttemptId>,
+    ) -> Result<Vec<ScoredEntity>> {
         let results = self.default_text_search(query, limit, observe)?;
-        Ok(self.text_search_telemetry(results, limit).value)
+        Ok(self
+            .text_search_telemetry(results, limit, dispatch_attempt)
+            .value)
+    }
+
+    /// [`Self::search_text_observed`] whose every posting `lane`'s plan
+    /// admits inside the scan, before the rank and the cut (FIX 3977): a row
+    /// the lane's key or its bound caller filter refuses takes no place a
+    /// readable match could fill. `observe` runs over the hits in the read
+    /// that scored them; the caller still admits each hit again in a fresh
+    /// read. `dispatch_attempt` is the leased attempt its telemetry row
+    /// names, as [`Self::search_text_observed_for_attempt`] records it.
+    pub(crate) fn search_text_scoped_observed(
+        &self,
+        lane: &crate::claim::ScopedRead<'_>,
+        query: &str,
+        limit: usize,
+        observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
+        dispatch_attempt: Option<AttemptId>,
+    ) -> Result<Vec<ScoredEntity>> {
+        let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
+        let crate::claim::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = lane.recall_plan()?;
+        // A key that reads nothing by itself still searches the rows its own
+        // live Grants read (FIX 7528).
+        if candidates.deny_all {
+            lane.end_recall_plan()?;
+            return Ok(Vec::new());
+        }
+        let started_at = self.store.clock.now_recorded_at();
+        let started = Instant::now();
+        // The count this search serves, asked before the read opens. Best
+        // effort: the search serves its rows either way.
+        let _ = self.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
+        let scores = (|| {
+            let txn = self.store.env.read_txn()?;
+            let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
+            let mut admits = |id: &crate::EntityId| admit(id);
+            let scores = self.text_scoped_in_txn(
+                &self.store,
+                &txn,
+                crate::ports::TextQuery {
+                    query,
+                    limit,
+                    rank: &config,
+                    filter_all: true,
+                    matches_scope: &mut admits,
+                    private_note_ids: None,
+                    recency: None,
+                },
+            )?;
+            observe(&txn, scores.as_slice());
+            Ok::<_, Error>(scores)
+        })();
+        lane.end_recall_plan()?;
+        let results = TimedSearch {
+            scores: scores?,
+            started_at,
+            started,
+        };
+        Ok(self
+            .text_search_telemetry(results, limit, dispatch_attempt)
+            .value)
     }
 
     /// One BM25 search under the contract-default rank profile, `observe`
@@ -176,6 +254,10 @@ impl Vault {
         limit: usize,
         observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
     ) -> Result<TimedSearch> {
+        self.measure_limit(
+            crate::limit_ask::EngineLimit::RecallQueryBytes,
+            query.len() as u64,
+        );
         let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
         // The count this search serves, asked before the read opens. Best
@@ -197,13 +279,15 @@ impl Vault {
         &self,
         results: TimedSearch,
         limit: usize,
+        dispatch_attempt: Option<AttemptId>,
     ) -> RetrievalWithTelemetry<Vec<ScoredEntity>> {
-        let run_id = self.record_vault_search_retrieval_run(
+        let run_id = self.record_vault_search_retrieval_run_for_attempt(
             RetrievalSignal::Text,
             results.started_at,
             results.started,
             &results.scores,
             limit,
+            dispatch_attempt,
         );
         RetrievalWithTelemetry {
             retrieval_quality: crate::retrieval_quality::classify_retrieval_quality(
@@ -239,6 +323,10 @@ impl Vault {
     ) -> Result<TimedSearch> {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
+        self.measure_limit(
+            crate::limit_ask::EngineLimit::RecallQueryBytes,
+            query.len() as u64,
+        );
         let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
         // The count this search serves, asked after the trust check and
@@ -304,13 +392,28 @@ impl Vault {
         results: &[ScoredEntity],
         limit: usize,
     ) -> Option<RetrievalRunId> {
+        self.record_vault_search_retrieval_run_for_attempt(
+            signal, started_at, started, results, limit, None,
+        )
+    }
+
+    fn record_vault_search_retrieval_run_for_attempt(
+        &self,
+        signal: RetrievalSignal,
+        started_at: u64,
+        started: Instant,
+        results: &[ScoredEntity],
+        limit: usize,
+        dispatch_attempt: Option<AttemptId>,
+    ) -> Option<RetrievalRunId> {
         if !self.store.retrieval_telemetry_capture_enabled() {
             return None;
         }
         let run_id = RetrievalRunId::from_bytes(self.store.clock.ulid().ok()?);
-        let record = Self::vault_search_retrieval_run_record(
+        let mut record = Self::vault_search_retrieval_run_record(
             run_id, signal, started_at, started, results, limit,
         );
+        record.dispatch_attempt = dispatch_attempt;
         let run_id = record.run_id;
         if let Err(error) = self.store.record_retrieval_run(&record) {
             tracing::warn!(

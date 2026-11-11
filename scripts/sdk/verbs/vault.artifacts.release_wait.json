@@ -1,0 +1,24 @@
+{
+  "name": "vault.artifacts.release_wait",
+  "description": "Lets one held organ call go, by its run ref, under the consent a Discard needs.",
+  "input": "crate::blob_artifact::ProposalSettleRequest",
+  "output": "crate::blob_artifact::ReleasedWait",
+  "call": "memory.artifacts_release_wait(&input)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Lets one held organ call go, by its run ref, under the consent a Discard needs.\n",
+      "ts": "/** Lets one held organ call go, by its run ref, under the consent a Discard needs. */",
+      "py": "Lets one held organ call go, by its run ref, under the consent a Discard needs."
+    }
+  }
+}

@@ -118,15 +118,11 @@ impl CallHeader {
 
     /// Every check on the request, with no I/O: the daemon runs it before it
     /// reads the key, and the broker again before it sends. Returns the URL the
-    /// request goes to. A call too large to frame, a body past
-    /// [`MAX_STREAM`], is refused here too, so the daemon never reads a key
-    /// for a frame the broker would not read (FIX 1895).
+    /// request goes to. Large ordinary bodies travel in bounded chunks without
+    /// a cumulative byte limit.
     pub fn check(&self, body: &[u8]) -> Result<Url, Refusal> {
         if self.version != PROTOCOL_VERSION {
             return Err(Refusal::Version);
-        }
-        if body.len() > MAX_STREAM {
-            return Err(Refusal::Body);
         }
         if !serde_json::to_vec(self).is_ok_and(|header| header.len() <= MAX_HEADER) {
             return Err(Refusal::Frame);
@@ -150,7 +146,10 @@ impl CallHeader {
     /// Checks a Responses whole turn against admission, then checks that the
     /// planned create only adds a chain id and omits a prefix of its input.
     pub fn check_responses(&self, body: &[u8], whole: &[u8]) -> Result<Url, Refusal> {
-        if self.shape != Shape::OpenAiResponses || body.len() > MAX_STREAM {
+        if self.shape != Shape::OpenAiResponses
+            || body.len() > MAX_STREAM
+            || whole.len() > MAX_STREAM
+        {
             return Err(Refusal::Body);
         }
         let url = self.check(whole)?;

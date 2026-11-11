@@ -65,6 +65,10 @@ pub(super) struct OffRecordSessionEntry {
     /// (`Vault::scan_checks`), never kept in the vault, dropped with the
     /// entry.
     pub(super) pending_scan_checks: crate::scan_check::PendingScanChecks,
+    /// The caller bindings of this instance's sealed held calls whose first
+    /// code consent ask did not open (FIX 4520): RAM only, dropped with the
+    /// entry and cleared at close.
+    pub(super) code_consent_asks: super::code_consent_asks::CodeConsentAskBindings,
 }
 
 pub(super) struct OffRecordSessionEntryState {
@@ -260,6 +264,7 @@ impl OffRecordSessionRegistry {
             }),
             published_record: ArcSwapOption::from(Some(Arc::new(record))),
             pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
+            code_consent_asks: super::code_consent_asks::CodeConsentAskBindings::default(),
         });
         sessions.insert(session_ref.to_owned(), entry.clone());
         self.published.store(Arc::new(sessions.clone()));
@@ -268,6 +273,16 @@ impl OffRecordSessionRegistry {
 
     pub(super) fn entry(&self, session_ref: &str) -> Result<Option<Arc<OffRecordSessionEntry>>> {
         Ok(self.sessions()?.get(session_ref).cloned())
+    }
+
+    /// Every registered instance with its key, cloned under the registry
+    /// lock, which is then released: managed stop closes each (FIX 13868).
+    pub(super) fn entries(&self) -> Result<Vec<(String, Arc<OffRecordSessionEntry>)>> {
+        Ok(self
+            .sessions()?
+            .iter()
+            .map(|(key, entry)| (key.clone(), Arc::clone(entry)))
+            .collect())
     }
 
     /// The key a call from `actor` names by `session_ref` among the
@@ -363,6 +378,20 @@ impl OffRecordSessionRegistry {
                 each(&entry.pending_scan_checks);
             }
         }
+    }
+
+    /// Calls `each` with the code consent asks every live session keeps,
+    /// read from the published snapshots (FIX 4520). The first error stops.
+    pub(super) fn each_code_consent_asks(
+        &self,
+        mut each: impl FnMut(&super::code_consent_asks::CodeConsentAskBindings) -> Result<()>,
+    ) -> Result<()> {
+        for entry in self.published.load().values() {
+            if entry.published_record.load().is_some() {
+                each(&entry.code_consent_asks)?;
+            }
+        }
+        Ok(())
     }
 
     /// Whether any session is live, overlay rows or not.

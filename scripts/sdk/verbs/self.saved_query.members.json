@@ -1,0 +1,13 @@
+{
+  "name": "self.saved_query.members",
+  "description": "One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved.",
+  "input": "crate::campaign::surface::SavedQueryMembersRequest",
+  "output": "crate::campaign::surface::SavedQueryMembershipPageView",
+  "call": "memory.saved_query_members_page(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

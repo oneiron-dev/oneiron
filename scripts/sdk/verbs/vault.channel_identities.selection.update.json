@@ -1,0 +1,16 @@
+{
+  "name": "vault.channel_identities.selection.update",
+  "description": "Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer.",
+  "input": "crate::memory::channel_doors::ChannelSelectionUpdateRequest",
+  "output": "crate::channel_identity_selection::ChannelIdentitySelectionRuleSet",
+  "call": "memory.channel_selection_update(input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true
+}

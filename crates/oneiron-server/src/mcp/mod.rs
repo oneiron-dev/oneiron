@@ -44,6 +44,7 @@ pub(crate) use self::booking_inputs::{
 };
 pub use self::codec::McpToolArguments;
 pub(crate) use self::codec::mcp_raw_call_arguments;
+pub(crate) use self::endpoint_args::McpHeldContent;
 pub(crate) use self::endpoint_args::validate_mcp_endpoint_tool_args_as;
 pub use self::endpoint_args::{
     McpCacheHint, McpExecuteCodeToolArgs, McpInvokeActionToolArgs, McpPageRequest,
@@ -57,9 +58,10 @@ pub use self::endpoint_schema::{
 };
 pub use self::exec_host::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
-    McpCodeModeProvider, McpEngineNativeCodeHost, PlannedMeter, PlannedModel, PlannedRoute,
-    ReaderMeter, RunCompactionSeat, bind_mcp_code_execution_host, mcp_code_execution_host,
-    mcp_code_run_id, mcp_scoped_identity_id,
+    McpCodeModeProvider, McpCodeRunResumeCondition, McpCodeRunResumed, McpCodeRunSelfBrief,
+    McpEngineNativeCodeHost, PlannedMeter, PlannedModel, PlannedRoute, ReaderMeter,
+    ReaderRequestObserver, RunCompactionSeat, RunProfiledCompactionSeat,
+    bind_mcp_code_execution_host, mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub(crate) use self::exec_host::{
     EngineRunError, ModelCallBackend, ModelListBackend, OffRecordRunSession, ScopeMeter,
@@ -72,11 +74,11 @@ pub use self::paging::{
     McpResultEnd, McpRetrievalHealth, clamp_foreign_cache_ttl_ms, mcp_canonical_json,
     mcp_page_argument_digest,
 };
-pub(crate) use self::paging::{McpPageCursorState, McpPageSnapshot};
+pub(crate) use self::paging::{McpPageCursorState, McpPageSnapshot, mcp_page_argument_digest_held};
 pub use self::registry::McpConnectorActorRegistry;
 pub(crate) use self::results::mcp_stamp_call_receipt;
 pub use self::results::{
-    McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError,
+    McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError, McpSetupSelfBrief,
     mcp_effective_scope_label, mcp_effective_scope_value, mcp_recovery_suggestions,
     mcp_setup_payload, mcp_verb_board_section,
 };
@@ -94,7 +96,6 @@ pub use self::tool_catalog::{
     MCP_BOOK_OPERATIONS, MCP_SERVER_NAME, MCP_TOOL_ARGS_SCHEMA_VERSION, McpToolValidationError,
     McpValidatedToolArgs,
 };
-
 #[cfg(test)]
 mod tests;
 

@@ -110,13 +110,15 @@ pub enum SelfCall {
     /// `self.code.*` (FIX 6867): a leased agent run's own repo reads, import
     /// and work, under its owner's Grant. The actor, lease, TASK and run come
     /// from the host binding.
-    Repo(super::repo_calls::RepoRunCall),
+    Repo(Box<super::repo_calls::RepoRunCall>),
 }
 
 impl SelfCall {
-    /// Returns the host effect class for this call.
+    /// Returns the host effect class for this call. Not `const`: the Repo
+    /// arm reads through its Box (FIX 6952); `RepoRunCall::effect` and
+    /// `writes` stay const for their own callers.
     #[must_use]
-    pub const fn effect(&self) -> SelfEffect {
+    pub fn effect(&self) -> SelfEffect {
         match self {
             Self::AgentsSpawn(_) => SelfEffect::AgentsSpawn,
             Self::AgentsPut(_) => SelfEffect::AgentsPut,

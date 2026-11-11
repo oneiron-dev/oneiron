@@ -10,14 +10,21 @@
 //! a body past the inline bound still spills whole: nothing is capped. A
 //! request the wall refuses outright is withheld, never stored raw: the
 //! capsule keeps the step's start without it when the start admits, so a
-//! continuation still finds its checkpoint (FIX 6254).
+//! continuation still finds its checkpoint (FIX 6254). An admitted request
+//! is published as its pieces: each one its run does not hold yet for the
+//! actor, then the manifest as the capsule's own body (FIX 4192). The
+//! step's start is published as its pieces the same way. FIX 19821: its
+//! manifest and nodes are held inline whatever the bound.
 
 mod refresh;
+mod start_publication;
 
 pub(crate) use refresh::refresh_staged_request;
+use start_publication::{publish_start_in_txn, start_estimate, start_lens_in_txn};
 
 use std::borrow::Cow;
 use std::ops::Range;
+use std::sync::{Mutex, PoisonError};
 
 use heed::RwTxn;
 
@@ -25,12 +32,16 @@ use super::super::super::contribution::{
     ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment,
 };
 use super::super::super::replay_capsule::{
-    CapsuleContent, CapsuleDraft, CapsuleRequest, ExecutorStepStart, ExposureSlot, StepCapture,
-    StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
+    CapsuleContent, CapsuleDraft, CapsuleRequest, ConsoleSlot, ExecutorStepStart, ExposureSlot,
+    StepCapture, StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
 };
-use super::super::records::{REPLAY_RECORDS, finish_output};
+use super::super::StartCompaction;
+use super::super::fold_answers::words_withdrawn;
+use super::super::records::{FinishedOutput, REPLAY_RECORDS, finish_output};
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::erase::actor_gone_in_txn;
+use super::pieces::{PieceScope, RequestPieces, unheld_lens};
+use super::start_pieces::StartPieces;
 use super::{
     CAPSULES, FORKS, ForkProvenance, ForkRow, ForkValue, ForkWrite, capsule_key,
     fork_capsule_in_txn, fork_row_name,
@@ -38,8 +49,11 @@ use super::{
 use crate::batch::secret_scan::{
     SidePart, TextReplacements, admit_side_parts, admit_tracked_side_parts,
 };
-use crate::code_run::{decode_code_run_replay_record, encode_code_run_replay_record};
+use crate::code_run::{
+    FoldWordRef, decode_code_run_replay_record, encode_code_run_replay_record, recorded_fold_words,
+};
 use crate::compaction::output::OutputRef;
+use crate::dreamer_runner::step_replay::CapsuleFoldWords;
 use crate::error::GateError;
 use crate::store::{BodyMint, BodySink};
 use crate::{ContentPart, EntityId, Error, LlmRequest, LlmResponse, Result, Vault};
@@ -70,11 +84,15 @@ pub(super) fn spilling(bound: u64, lens: &[usize]) -> usize {
 }
 
 /// Where a writer's bodies go: inline within the bound, past it into the
-/// instances minted before the writer opened.
+/// instances minted before the writer opened. FIX 7284: it keeps each body
+/// it published, with the reader pin on its final digest, until it is
+/// dropped after its writer commits or aborts, so the pin lasts through the
+/// commit that names the body.
 pub(super) struct Spill {
     bound: u64,
     mint: BodyMint,
     reserved: usize,
+    published: Mutex<Vec<FinishedOutput>>,
 }
 
 impl Spill {
@@ -87,6 +105,7 @@ impl Spill {
             bound,
             mint: vault.store.body_mint()?.reserve(reserved)?,
             reserved,
+            published: Mutex::new(Vec::new()),
         })
     }
 
@@ -111,14 +130,47 @@ impl Spill {
         path: &str,
         bytes: &[u8],
     ) -> Result<OutputRef> {
-        let mut sink = BodySink::new(vault.store.body_dir()?, self.bound, Some(self.mint.clone()));
+        self.publish_bounded_in_txn(vault, wtxn, owner, path, bytes, self.bound)
+    }
+
+    /// FIX 19821: [`Self::publish_in_txn`], with the body held inline
+    /// whatever the inline bound. A step start's manifest and nodes go
+    /// here. A restore reads them among its rows to find every piece that
+    /// holds the start's content. Such a body takes no instance.
+    pub(super) fn publish_inline_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        owner: EntityId,
+        path: &str,
+        bytes: &[u8],
+    ) -> Result<OutputRef> {
+        self.publish_bounded_in_txn(vault, wtxn, owner, path, bytes, u64::MAX)
+    }
+
+    /// [`Self::publish_in_txn`], with the body inline up to `bound` bytes.
+    fn publish_bounded_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        owner: EntityId,
+        path: &str,
+        bytes: &[u8],
+        bound: u64,
+    ) -> Result<OutputRef> {
+        let mut sink = BodySink::new(vault.store.body_dir()?, bound, Some(self.mint.clone()));
         sink.write(bytes)?;
         let finished = finish_output(path.to_owned(), sink, true, vault.limit_watch(), |digest| {
             vault.pin_result_body(digest)
         })?;
         vault.put_code_run_output_in_txn(wtxn, &finished, &finished.output, Some(owner))?;
         tracing::debug!(bytes = bytes.len(), "a replay capsule body is published");
-        Ok(finished.output.output_ref())
+        let output = finished.output.output_ref();
+        self.published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(finished);
+        Ok(output)
     }
 }
 
@@ -136,6 +188,7 @@ pub(super) fn with_spill<T>(
             bound,
             mint: vault.store.body_mint()?.reserve(reserved)?,
             reserved,
+            published: Mutex::new(Vec::new()),
         };
         match vault.try_with_write_txn_grouped(|wtxn| write(wtxn, &spill)) {
             Ok(written) => return Ok(written),
@@ -152,31 +205,23 @@ pub(super) fn with_spill<T>(
 
 /// Writes `draft` as its attempt's capsule: its request and start bodies as
 /// the wall admits them, published, and its row, in one transaction. `None`,
-/// with nothing written, when the step's actor is gone by now.
+/// with nothing written, when the step's actor is gone by now. FIX 4192:
+/// the instances minted first are for the request's pieces its run does
+/// not hold yet for the actor, and the start.
 pub(crate) fn put_staged_capsule(
     vault: &Vault,
     draft: &CapsuleDraft<'_>,
 ) -> Result<Option<StepReplayCapsule>> {
-    let lens = [draft.request.len(), start_estimate(vault, draft.capture)?];
+    let scope = PieceScope {
+        run: draft.capture.run,
+        actor: draft.actor,
+    };
+    let mut lens = unheld_lens(vault, &draft.request, scope)?;
+    lens.push(start_estimate(vault, draft.capture)?);
     let reserved = spilling(vault.code_result_inline_bytes(), &lens);
     with_spill(vault, reserved, |wtxn, spill| {
         write_capsule_in_txn(vault, wtxn, spill, draft)
     })
-}
-
-/// About how large the step's start body is, read before the writer opens:
-/// at most twice the run's row as stored (its bytes ride as MessagePack
-/// integers), and the task.
-fn start_estimate(vault: &Vault, capture: &StepCapture<'_>) -> Result<usize> {
-    if capture.start.is_none() {
-        return Ok(0);
-    }
-    let rtxn = vault.store.env.read_txn()?;
-    let row = REPLAY_RECORDS
-        .get_borrowed(&vault.store, &rtxn, &capture.run)?
-        .as_deref()
-        .map_or(0, <[u8]>::len);
-    Ok(row.saturating_mul(2).saturating_add(capture.task.len()))
 }
 
 /// The capsule's bodies admitted and published, and its row put, in `wtxn`.
@@ -189,6 +234,10 @@ fn write_capsule_in_txn(
     // A capture after its actor is gone writes nothing: the erase has run,
     // or runs, over what it would keep.
     if actor_gone_in_txn(vault, wtxn, &draft.actor) {
+        return Ok(None);
+    }
+    // FIX 18924: a request that copies withdrawn fold words is not kept.
+    if words_withdrawn(&vault.store, wtxn, &draft.capture.fold_words)? {
         return Ok(None);
     }
     let key = draft.key();
@@ -208,10 +257,16 @@ fn write_capsule_in_txn(
         }
         Err(refusal) => return Err(refusal.into()),
     };
-    let start_len = start.as_ref().map_or(0, |(bytes, _)| bytes.len());
-    spill.holds(&[request.bytes.len(), start_len])?;
+    // FIX 4192: the request and the start are kept as pieces the run holds
+    // once for the actor, and their manifests are the capsule's own bodies.
+    let scope = PieceScope { run, actor };
+    let pieces = RequestPieces::of(&request.bytes)?;
+    let mut lens = pieces.lens_in_txn(&vault.store, wtxn, scope)?;
+    lens.extend(start_lens_in_txn(vault, wtxn, scope, start.as_ref())?);
+    spill.holds(&lens)?;
     let stored = &request.bytes;
-    let request_ref = spill.publish_in_txn(vault, wtxn, run, &draft.request_path, stored)?;
+    let request_ref = pieces.publish_in_txn(vault, wtxn, spill, scope, &draft.request_path)?;
+    let fold_words = capsule_fold_words(capture, start.as_ref());
     let start = publish_start_in_txn(vault, wtxn, spill, draft, start)?;
     let capsule = StepReplayCapsule {
         attempt: draft.attempt,
@@ -229,6 +284,7 @@ fn write_capsule_in_txn(
         messages_digest: draft.messages_digest,
         source_rows: capture.source_rows.clone(),
         exposures: stored_slots(&draft.exposures, capture.request, &request),
+        console: stored_console(draft.console.as_ref(), capture.request, &request),
         seed: request_seed(capture),
         binding: None,
         route_pin: None,
@@ -237,9 +293,24 @@ fn write_capsule_in_txn(
         content: CapsuleContent::Kept { actor },
         context: None,
         answer: None,
+        fold_words,
     };
     CAPSULES.put(vault, wtxn, &key, &capsule)?;
     Ok(Some(capsule))
+}
+
+/// The folds whose words a new capsule's bodies copy (FIX 18924): its
+/// request's as its capture names them, its start's as its prefix records
+/// them, and none in a context it does not hold yet.
+fn capsule_fold_words(
+    capture: &StepCapture<'_>,
+    start: Option<&AdmittedStart>,
+) -> CapsuleFoldWords {
+    CapsuleFoldWords {
+        request: capture.fold_words.clone(),
+        start: start.map_or_else(Vec::new, |start| start.fold_words.clone()),
+        context: Vec::new(),
+    }
 }
 
 /// The capsule of a step whose request the wall refused outright (FIX
@@ -250,12 +321,16 @@ fn write_withheld_in_txn(
     wtxn: &mut RwTxn<'_>,
     spill: &Spill,
     draft: &CapsuleDraft<'_>,
-    start: Option<(Vec<u8>, u64)>,
+    start: Option<AdmittedStart>,
     reasons: &[&'static str],
 ) -> std::result::Result<Option<StepReplayCapsule>, Unwritten> {
     let capture = draft.capture;
-    let start_len = start.as_ref().map_or(0, |(bytes, _)| bytes.len());
-    spill.holds(&[0, start_len])?;
+    let scope = PieceScope {
+        run: capture.run,
+        actor: draft.actor,
+    };
+    spill.holds(&start_lens_in_txn(vault, wtxn, scope, start.as_ref())?)?;
+    let fold_words = capsule_fold_words(capture, start.as_ref());
     let start = publish_start_in_txn(vault, wtxn, spill, draft, start)?;
     let capsule = StepReplayCapsule {
         attempt: draft.attempt,
@@ -277,6 +352,7 @@ fn write_withheld_in_txn(
                 ..slot.clone()
             })
             .collect(),
+        console: unstored_console(draft.console.as_ref()),
         seed: request_seed(capture),
         binding: None,
         route_pin: None,
@@ -285,6 +361,7 @@ fn write_withheld_in_txn(
         content: CapsuleContent::Kept { actor: draft.actor },
         context: None,
         answer: None,
+        fold_words,
     };
     CAPSULES.put(vault, wtxn, &draft.key(), &capsule)?;
     Ok(Some(capsule))
@@ -299,25 +376,14 @@ fn request_seed(capture: &StepCapture<'_>) -> Option<u64> {
         .and_then(serde_json::Value::as_u64)
 }
 
-/// The step's start, admitted before, published as a body the run owns.
-fn publish_start_in_txn(
-    vault: &Vault,
-    wtxn: &mut RwTxn<'_>,
-    spill: &Spill,
-    draft: &CapsuleDraft<'_>,
-    start: Option<(Vec<u8>, u64)>,
-) -> Result<Option<ExecutorStepStart>> {
-    let run = draft.capture.run;
-    Ok(match start {
-        Some((bytes, bridge_start)) => Some(ExecutorStepStart {
-            body: spill.publish_in_txn(vault, wtxn, run, &draft.start_path, &bytes)?,
-            path: draft.start_path.clone(),
-            digest: *blake3::hash(&bytes).as_bytes(),
-            bridge_start,
-            erased: false,
-        }),
-        None => None,
-    })
+/// A step's start as the wall admitted it: its body, the bridge log's
+/// length at it, the folds whose words its prefix records (FIX 18924), and
+/// the body cut into its pieces (FIX 4192).
+struct AdmittedStart {
+    bytes: Vec<u8>,
+    bridge_start: u64,
+    fold_words: Vec<FoldWordRef>,
+    pieces: StartPieces,
 }
 
 /// A request as the wall admitted it: its canonical bytes as stored, its
@@ -396,7 +462,7 @@ fn admit_start_in_txn(
     wtxn: &mut RwTxn<'_>,
     key: &[u8],
     capture: &StepCapture<'_>,
-) -> Result<Option<(Vec<u8>, u64)>> {
+) -> Result<Option<AdmittedStart>> {
     let Some(start) = &capture.start else {
         return Ok(None);
     };
@@ -417,15 +483,19 @@ fn admit_start_in_txn(
 /// The start body from one admitted view of the run's row: the row as
 /// stored, read as the wall would store it now and kept so where that
 /// differs, and the prefix the body carries taken from that same view, so
-/// the run's row still descends from it byte for byte. The body goes through
-/// the wall too, and the prefix it carries must come back as it went in.
+/// the run's row still descends from it byte for byte. The body also holds
+/// the run's epochs and fold ledger from this same writer, inside that
+/// prefix (FIX 4198). The body goes through the wall too, and the prefix it
+/// carries must come back as it went in. FIX 18924: a prefix that records a
+/// fold answer whose words are withdrawn keeps no start, and the start
+/// names the folds whose words its prefix records.
 fn admitted_start(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
     key: &[u8],
     capture: &StepCapture<'_>,
     start: &StepStartCapture<'_>,
-) -> Result<Option<(Vec<u8>, u64)>> {
+) -> Result<Option<AdmittedStart>> {
     let Some(stored) = REPLAY_RECORDS.get(&vault.store, wtxn, &capture.run)? else {
         return Ok(None);
     };
@@ -446,6 +516,10 @@ fn admitted_start(
     }
     let mut prefix = source;
     prefix.live_run = None;
+    let fold_words = recorded_fold_words(&prefix.bridge_calls);
+    if words_withdrawn(&vault.store, wtxn, &fold_words)? {
+        return Ok(None);
+    }
     let record = encode_code_run_replay_record(&prefix)?;
     let body = StepStartBody {
         record: record.clone(),
@@ -456,6 +530,9 @@ fn admitted_start(
         global_tier: start.global_tier.clone(),
         soft_steps: start.soft_steps,
         prompt_fingerprint: start.prompt_fingerprint.to_owned(),
+        // FIX 4198: the run's compaction at this cut, read in this writer.
+        // It holds no epoch's digest and no fold's words (FIX 18694).
+        compaction: StartCompaction::captured_in_txn(&vault.store, wtxn, &prefix)?,
     };
     let mut parts = [SidePart::Body(encode_start(&body)?)];
     admit_side_parts(vault, wtxn, (START_PLACE, key), &mut parts, reads_start)?;
@@ -470,10 +547,13 @@ fn admitted_start(
             "the wall changed a step start's admitted prefix",
         ));
     }
-    Ok(Some((
-        encode_start(&body)?,
-        prefix.bridge_calls.len() as u64,
-    )))
+    let bytes = encode_start(&body)?;
+    Ok(Some(AdmittedStart {
+        pieces: StartPieces::of(&bytes)?,
+        bytes,
+        bridge_start: prefix.bridge_calls.len() as u64,
+        fold_words,
+    }))
 }
 
 fn encode_start(body: &StepStartBody) -> Result<Vec<u8>> {
@@ -508,24 +588,61 @@ fn stored_slots(
     slots
         .iter()
         .map(|slot| ExposureSlot {
-            stored: stored_span(slot, sent, &admitted.request, replaced),
+            stored: stored_span(
+                (slot.message, slot.part),
+                slot.stored,
+                sent,
+                &admitted.request,
+                replaced,
+            ),
             ..slot.clone()
         })
         .collect()
 }
 
-/// Where `slot` sits in `stored`, the request as the wall admitted it: its
-/// bounds moved by the replacements the wall made in its text, and the hash
-/// of the masked bytes between them. `None` when a bound falls inside a
-/// replaced span, or the text changed by more than those replacements.
+/// `console`, located in `sent`, moved to where it sits in the request as
+/// the wall admitted it (FIX 3608), as an exposure moves.
+fn stored_console(
+    console: Option<&ConsoleSlot>,
+    sent: &LlmRequest,
+    admitted: &AdmittedRequest,
+) -> Option<ConsoleSlot> {
+    let console = console?;
+    let stored = match &admitted.replaced {
+        Some(replaced) => {
+            let at = (console.message, console.part);
+            stored_span(at, console.stored, sent, &admitted.request, replaced)
+        }
+        None => console.stored,
+    };
+    Some(ConsoleSlot {
+        stored,
+        ..console.clone()
+    })
+}
+
+/// `console` kept with no stored span: its request was withheld.
+fn unstored_console(console: Option<&ConsoleSlot>) -> Option<ConsoleSlot> {
+    console.map(|console| ConsoleSlot {
+        stored: None,
+        ..console.clone()
+    })
+}
+
+/// Where `span`, in part `at` (its message and part) of `sent`, sits in
+/// `stored`, the request as the wall admitted it: its bounds moved by the
+/// replacements the wall made in its text, and the hash of the masked bytes
+/// between them. `None` when a bound falls inside a replaced span, or the
+/// text changed by more than those replacements.
 fn stored_span(
-    slot: &ExposureSlot,
+    at: (u32, u32),
+    span: Option<StoredSpan>,
     sent: &LlmRequest,
     stored: &LlmRequest,
     replaced: &TextReplacements,
 ) -> Option<StoredSpan> {
-    let span = slot.stored?;
-    let (sent_text, stored_text) = (text_part(sent, slot)?, text_part(stored, slot)?);
+    let span = span?;
+    let (sent_text, stored_text) = (text_part(sent, at)?, text_part(stored, at)?);
     let Some(moves) = replaced.get(blake3::hash(sent_text.as_bytes()).as_bytes()) else {
         // The wall left this text as it was.
         return (sent_text == stored_text).then_some(span);
@@ -581,11 +698,11 @@ fn same_bytes(kept: Option<&[u8]>, held: Option<&[u8]>) -> bool {
     kept.is_some() && kept == held
 }
 
-/// The text of `slot`'s part in `request`.
-fn text_part<'r>(request: &'r LlmRequest, slot: &ExposureSlot) -> Option<&'r str> {
-    let message = request.messages.get(usize::try_from(slot.message).ok()?)?;
-    match message.content.get(usize::try_from(slot.part).ok()?)? {
-        ContentPart::Text { text } => Some(text.as_str()),
+/// The text of part `at` (its message and part) in `request`.
+fn text_part(request: &LlmRequest, (message, part): (u32, u32)) -> Option<&str> {
+    let message = request.messages.get(usize::try_from(message).ok()?)?;
+    match message.content.get(usize::try_from(part).ok()?)? {
+        ContentPart::Text { text, .. } => Some(text.as_str()),
         _ => None,
     }
 }

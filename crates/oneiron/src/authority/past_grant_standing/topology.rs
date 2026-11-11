@@ -69,7 +69,9 @@ fn preserves(
                     revokes.push((*hash, entry, record));
                 }
             },
-            AuthorityOp::SlipGrantRevoke { grant_ref } if *grant_ref == grant => return Ok(false),
+            AuthorityOp::SlipGrantRevoke { grant_ref, .. } if *grant_ref == grant => {
+                return Ok(false);
+            }
             AuthorityOp::MembershipExecution(record)
                 if record.withdrawn_grants.binary_search(&grant).is_ok() =>
             {

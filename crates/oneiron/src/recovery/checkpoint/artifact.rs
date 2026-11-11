@@ -299,6 +299,14 @@ impl Vault {
     /// It trusts the signers whose seeds this vault's keystore holds.
     pub fn checkpoint_key(&self) -> Result<CheckpointKey> {
         self.unlock_vault_key()?;
+        self.held_checkpoint_key()
+    }
+
+    /// [`Self::checkpoint_key`] from the vault key this handle already holds,
+    /// for a reader that must write nothing (a HOST order's artifact
+    /// capture): a locked key refuses (`vault_subkey`) instead of unlocking,
+    /// and no keystore slot or wrap is made.
+    pub(crate) fn held_checkpoint_key(&self) -> Result<CheckpointKey> {
         Ok(CheckpointKey {
             vault_id: *self.vault_id().as_bytes(),
             kek: Kek::from_zeroizing(self.vault_subkey(SEAL_CONTEXT)?),

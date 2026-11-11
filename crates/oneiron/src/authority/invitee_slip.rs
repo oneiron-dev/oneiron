@@ -8,7 +8,9 @@
 //! reads the invitation beside the fold's revocation check, so the slip
 //! stands only while the invitation is pending and unexpired, while its key
 //! is the one the invitation records and while the credential that bound it
-//! is live. Once they have joined, the member pairs an ordinary credential.
+//! is live. Explicit acceptance may return a regular member credential from
+//! the same writer, bound to that device key; plain acceptance stays issuer-free
+//! and the member may pair an ordinary credential afterwards.
 
 use std::collections::BTreeSet;
 
@@ -62,6 +64,50 @@ impl Vault {
             org_ref: None,
             grant_ref: None,
             invitation_ref: Some(invitation.to_owned()),
+            share_ref: None,
+            delegation: None,
+            comm: None,
+            trusted_contact: None,
+            seat_claim: None,
+        };
+        self.mint_slip_in_txn(txn, issuer, claims)
+    }
+
+    /// Mints the regular human credential for the actual grant selected by
+    /// the acceptance writer. The caller supplies that same writer's decoded
+    /// grant and its id; normal minting still checks the host and authority log.
+    pub(crate) fn mint_accepted_member_slip_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        grant_ref: EntityId,
+        grant: &crate::federation::FederationGrant,
+        holder_key: [u8; 32],
+        expires_at: u64,
+    ) -> Result<CapabilitySlip> {
+        let vault_id = self
+            .authority_view_readonly_in_txn(txn)?
+            .vault_id
+            .ok_or_else(invalid_authority)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let claims = SlipClaims {
+            slip_id: random_slip_id(),
+            vault_id,
+            parent_id: None,
+            holder_ref: grant.member_ref.to_hex(),
+            binding_key: holder_key,
+            scope: grant.authority_scope.clone(),
+            issued_at: now,
+            expires_at,
+            ttl_secs: expires_at.checked_sub(now).ok_or_else(invalid_authority)?,
+            single_use: false,
+            records: BTreeSet::new(),
+            channels: BTreeSet::new(),
+            actor_class: Some(ACTOR_CLASS_HUMAN.to_owned()),
+            org_ref: None,
+            grant_ref: Some(grant_ref.to_hex()),
+            invitation_ref: None,
+            share_ref: None,
             delegation: None,
             comm: None,
             trusted_contact: None,
@@ -128,6 +174,12 @@ impl Vault {
     ) -> Result<()> {
         self.require_live_slip_grant_in_txn(txn, claims, now)?;
         self.require_live_slip_invitation_in_txn(txn, claims, now)?;
+        if let Some(share) = &claims.share_ref {
+            let share = EntityId::from_hex(share).map_err(|_| invalid_authority())?;
+            let holder = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
+            crate::share::live_share_for_holder_in_txn(self, txn, &share, &holder, now)?
+                .ok_or_else(invalid_authority)?;
+        }
         self.require_live_delegation_in_txn(txn, claims)?;
         self.require_live_trusted_contact_binding_in_txn(txn, claims, now)?;
         self.require_live_seat_claim_in_txn(txn, claims)

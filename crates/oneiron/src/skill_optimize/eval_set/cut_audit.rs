@@ -113,8 +113,9 @@ pub struct EvalCutAudit {
     pub cut_at: u64,
     pub rubric_revision: String,
     pub membership_digest: String,
-    /// Who authorized the cut: the actual authoring skill, or the owner
-    /// explicitly setting up the cohort. Owner setup claims no skill use.
+    /// Who authorized the cut: the actual authoring skill, the owner
+    /// explicitly setting up the cohort, or the automated probe import,
+    /// which authorizes nothing. Owner setup claims no skill use.
     pub author: EvalCutAuthor,
     pub inventory_digest: String,
     pub members: Vec<AuditCase>,
@@ -139,6 +140,8 @@ pub enum EvalCutAuthor {
     Owner {
         person: EntityId,
     },
+    /// The automated probe import, which authorizes nothing (FIX 10144).
+    ProbeImport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -300,6 +303,13 @@ fn text_sources(
     Ok((turns, artifacts))
 }
 
+/// Whether the case claims an attempt's task input: one `attempt:` receipt
+/// and no parents. A claimed input that does not read is a coverage gap;
+/// any other case has no task input to read.
+fn claims_attempt_input(receipts: &[String], parents: &[EntityId]) -> bool {
+    matches!(receipts, [receipt] if receipt.starts_with("attempt:")) && parents.is_empty()
+}
+
 /// The purpose-limited reader: one case's source text, for this audit's
 /// comparison alone, with each source it could not read noted as a gap.
 fn case_texts(
@@ -332,6 +342,24 @@ fn case_texts(
                 case: case.case,
                 source: Some(amendment_receipt_id(artifact)),
             }),
+        }
+    }
+    {
+        let txn = vault.store.env.read_txn()?;
+        match super::replay_input::cut_audit_task_text_in_txn(
+            vault,
+            &txn,
+            &case.receipts,
+            &case.parents,
+        )? {
+            Some((_, text)) => texts.push(text),
+            None if claims_attempt_input(&case.receipts, &case.parents) => {
+                gaps.push(CoverageGap {
+                    case: case.case,
+                    source: case.receipts.first().cloned(),
+                });
+            }
+            None => {}
         }
     }
     Ok(texts)
@@ -445,9 +473,9 @@ pub(super) fn prepare_cut_audit(
 
 /// [`case_texts`], listing into `rows` each row the text was read from, from
 /// those same reads: every TURN whose text was read and each MESSAGE child
-/// that text joined, as [`crate::embed::turn_text_in_txn`] joins them, and
-/// every finalized proposal artifact read. A source it could not read is a
-/// gap, as there, and lists nothing.
+/// that text joined, as [`crate::embed::turn_text_in_txn`] joins them, every
+/// finalized proposal artifact read, and the attempt whose task input was
+/// read. A source it could not read is a gap, as there, and lists nothing.
 fn case_texts_listing(
     vault: &Vault,
     lineage: &LineageReader,
@@ -494,6 +522,27 @@ fn case_texts_listing(
             }),
         }
     }
+    {
+        let txn = vault.store.env.read_txn()?;
+        match super::replay_input::cut_audit_task_text_in_txn(
+            vault,
+            &txn,
+            &case.receipts,
+            &case.parents,
+        )? {
+            Some((attempt, text)) => {
+                rows.push(attempt);
+                texts.push(text);
+            }
+            None if claims_attempt_input(&case.receipts, &case.parents) => {
+                gaps.push(CoverageGap {
+                    case: case.case,
+                    source: case.receipts.first().cloned(),
+                });
+            }
+            None => {}
+        }
+    }
     Ok(texts)
 }
 
@@ -525,8 +574,9 @@ fn case_shingles_listing(
 
 /// [`prepare_cut_audit`], listing into `rows` every row whose text the audit
 /// compared, from the same reads ([`case_texts_listing`]): the TURNs, their
-/// MESSAGE children and the proposal artifacts. A cut that would take no
-/// member reads no text and lists none.
+/// MESSAGE children, the proposal artifacts and the attempts whose task
+/// input was read. A cut that would take no member reads no text and lists
+/// none.
 pub(super) fn prepare_cut_audit_listing(
     vault: &Vault,
     lineage: &LineageReader,
@@ -574,6 +624,56 @@ pub(super) fn prepare_cut_audit_listing(
         flags,
         gaps,
     }))
+}
+
+/// The pinned near-copy method, for the probe import's advisory audit (FIX
+/// 10144): the same token 5-gram Jaccard the sealed cuts use.
+pub(super) fn pinned_method() -> AuditMethodPin {
+    AuditMethodPin {
+        name: METHOD_NAME.to_owned(),
+        revision: METHOD_REVISION,
+        normalizer: NORMALIZER.to_owned(),
+        shingle_size: u64::try_from(SHINGLE_SIZE).unwrap_or(u64::MAX),
+        threshold: THRESHOLD,
+    }
+}
+
+/// Scores probe query texts the way the sealed audit scores case texts (FIX
+/// 10144): each member with text against each other case with text. Cases
+/// without text compare nothing.
+pub(super) fn score_probe_texts(
+    members: &[(EntityId, Vec<String>)],
+    compared: &[(EntityId, Vec<String>)],
+) -> (u64, Vec<NearCopyFlag>) {
+    let shingled = |cases: &[(EntityId, Vec<String>)]| {
+        cases
+            .iter()
+            .map(|(case, texts)| (*case, shingles(texts)))
+            .filter(|(_, set)| !set.is_empty())
+            .collect::<Vec<_>>()
+    };
+    let left = shingled(members);
+    let right = shingled(compared);
+    let mut comparisons = 0_u64;
+    let mut flags = Vec::new();
+    for (member, member_set) in &left {
+        for (other, other_set) in &right {
+            comparisons = comparisons.saturating_add(1);
+            let intersection = member_set.intersection(other_set).count();
+            let union = member_set.len() + other_set.len() - intersection;
+            let score = intersection as f64 / union as f64;
+            if score >= THRESHOLD {
+                flags.push(NearCopyFlag {
+                    member_case: *member,
+                    other_case: *other,
+                    score,
+                    intersection: u64::try_from(intersection).unwrap_or(u64::MAX),
+                    union: u64::try_from(union).unwrap_or(u64::MAX),
+                });
+            }
+        }
+    }
+    (comparisons, flags)
 }
 
 impl Vault {

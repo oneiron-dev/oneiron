@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::outbound::{
-    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, ServedChannelSink,
+    EngineSendId, OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
+    OutboundIntent, SentLookup, SentLookupTarget, ServedChannelSink,
 };
 use reqwest::header::HeaderValue;
 
@@ -12,6 +13,7 @@ mod caldav;
 mod card_pass;
 mod feed_poll;
 mod ics;
+mod pattern_head;
 mod safeguard;
 mod transcript_drain;
 mod xml;
@@ -19,6 +21,7 @@ pub(crate) use caldav::HttpCalDav;
 pub(crate) use card_pass::spawn_calendar_card_pass;
 pub(crate) use feed_poll::spawn_calendar_polls;
 pub(crate) use ics::HttpIcsFeed;
+pub(crate) use pattern_head::PatternLabelHead;
 pub(crate) use safeguard::calendar_body_screener;
 pub use safeguard::install_calendar_label_head;
 pub(crate) use transcript_drain::spawn_pending_transcript_drain;
@@ -87,6 +90,22 @@ impl<'a> CalendarChannelSink<'a> {
             ordinary: ServedChannelSink::with_client(vault, clients.ordinary.clone())
                 .with_line_push_allowance(line_push_allowance),
             client: clients.calendar.clone(),
+        }
+    }
+
+    /// Whether this machine holds what this sink sends `intent` with (FIX
+    /// 4747 slice 4), the send lease reaper's read-only check: an invite
+    /// needs the iMIP submission transport `invite` reads before its send;
+    /// every other send is the served sink's to judge
+    /// ([`ServedChannelSink::holds_channel`]).
+    pub(crate) fn holds_channel(vault: &Vault, intent: &OutboundIntent) -> bool {
+        if intent.channel == "calendar" && intent.verb == "calendar.invite" {
+            matches!(
+                oneiron::calendar::connectors::door::imip_transport(vault),
+                Ok(Some(_))
+            )
+        } else {
+            ServedChannelSink::holds_channel(vault, intent)
         }
     }
 
@@ -220,6 +239,20 @@ impl OutboundExecutionSink for CalendarChannelSink<'_> {
             self.invite(request)
         } else {
             self.ordinary.execute(request)
+        }
+    }
+
+    /// FIX 4747: an iMIP invite keeps no id of ours to look up; every other
+    /// send is the served sink's to look up.
+    fn lookup_sent(
+        &mut self,
+        engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        if target.intent.channel == "calendar" && target.intent.verb == "calendar.invite" {
+            SentLookup::CannotTell
+        } else {
+            self.ordinary.lookup_sent(engine_send_id, target)
         }
     }
 }

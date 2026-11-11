@@ -245,7 +245,9 @@ fn rebind(
     previous_revision: RevisionRef,
     encoded: &[u8],
 ) -> Result<ClaimValueRedactionBinding> {
-    let frontier = Frontiers::decode(encoded).map_err(|_| invalid("claim revision frontier"))?;
+    let document_frontier = super::frontier::FrontierEntry::decode(encoded)?.document()?;
+    let frontier =
+        Frontiers::decode(document_frontier).map_err(|_| invalid("claim revision frontier"))?;
     let before = source
         .fork_at(&frontier)
         .map_err(|_| invalid("claim revision binding"))?;
@@ -254,7 +256,7 @@ fn rebind(
         .map_err(|_| invalid("redacted claim revision binding"))?;
     let before = doc_raw(&before)?;
     let after = doc_raw(&after)?;
-    let revision = if reference(&entity, encoded) == previous_revision {
+    let revision = if reference(&entity, document_frontier) == previous_revision {
         previous_revision
     } else if reference(&entity, &before) == previous_revision {
         reference(&entity, &after)

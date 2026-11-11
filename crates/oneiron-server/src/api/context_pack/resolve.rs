@@ -1,34 +1,35 @@
-//! Route handler plus depth/policy/time/budget resolution for context-pack assembly.
+//! Route handler and shared pipeline for context-pack assembly.
 
-use super::super::{
-    MemoriesRequest, core_engine_error, json_payload, non_empty_query, scoped_read_for_core_auth,
-    validate_core_query_seeds,
-};
-use super::controls::{
-    ContextPackBudgetControls, ContextPackDepthControls, ContextPackPolicyControls,
-    ContextPackRetrievalBudgetControls, ContextPackTimeControls, CoreContextPackRequest,
-};
+use super::super::{MemoriesRequest, core_engine_error, json_payload, non_empty_query};
+pub(crate) use super::builder_controls::*;
+use super::controls::CoreContextPackRequest;
 use super::media_query::embed_media_seeds;
 use super::response::{
     CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
     run_context_pack_builder,
 };
 use super::response_limits::ContextPackResponseLimits;
-use super::{
-    narrow_to_core_audience, narrow_to_reader, reader_optional_memory,
-    resolve_core_disclosure_with_once, resolve_core_interlocutor_set, resolve_core_room,
-    spend_core_once_disclosures,
+use super::validate::{
+    ContextPackSignalRequest, ValidatedContextPack, validate_context_pack,
+    validate_rewritten_context_pack,
+};
+use super::{narrow_to_reader, resolve_core_disclosure_with_once, spend_core_once_disclosures};
+use crate::api::FacadeCall;
+use crate::api::native_read_hooks::{
+    NativeReadAnswer, NativeReadBody, NativeReadError, decoded, encoded, native_read_hooked,
 };
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
 use crate::error::ApiErrorEnvelope;
-use crate::error::EnvelopedApiError;
 use crate::projection::View;
 use crate::server::{QueryDoor, SyncServer};
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
+use oneiron::code_run::vault_read::VaultReadMethod;
+use serde_json::Value;
 use std::sync::Arc;
 
 /// Assemble a context pack from existing retrieval and hydration APIs.
@@ -49,16 +50,133 @@ use std::sync::Arc;
 pub(crate) async fn core_context_pack(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CoreContextPackRequest>, JsonRejection>,
-) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
+    headers: HeaderMap,
+    extensions: Extensions,
+    payload: Result<Json<Value>, JsonRejection>,
+) -> Result<Json<Value>, NativeReadError> {
     auth.require(CoreScope::Read)?;
     // A facet-narrowed credential reads a facet-narrowed pack (FIX 646): every
     // row, count and handle the pack echoes passes the admitted read, the
     // room's signed facets met in (FIX 643).
-    let req = json_payload(payload)?;
-    req.check_query_bytes(&server, &auth, QueryDoor::ContextPack, "query")?;
-    let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
-    Ok(Json(response))
+    let body = json_payload(payload)?;
+    let call = FacadeCall::http(&server, &auth, &headers, &extensions);
+    let answer = core_context_pack_hooked(&server, &call, body).await?;
+    Ok(Json(answer.value))
+}
+
+/// The members of a context pack request that its route reads and the
+/// native `memory.context_pack` contract does not carry: its room, session,
+/// reaction signals, affect, assembly policy, time window, projection,
+/// interlocutors and reader.
+const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
+    "conversation_id",
+    "session_id",
+    "signals_since",
+    "signals_after",
+    "signals_limit",
+    "signals_deadline_ms",
+    "signals_person",
+    "query_affect",
+    "queryAffect",
+    "hydrate",
+    "include_edges",
+    "includeEdges",
+    "include_vectors",
+    "includeVectors",
+    "view",
+    "policy",
+    "time",
+    "interlocutors",
+    "reader",
+];
+
+/// `POST /v1/core/context-pack` on `body`, for `call`'s caller, through its
+/// verb-hook boundary as `memory.context_pack` (FIX 1435). Every request
+/// check runs first, under the caller's own read, before the pre chain:
+/// `admit_context_pack`. A hook's rewrite meets the same checks on the
+/// chain's blocking thread, beside the caller's own route controls and
+/// under the caller's own credential. The pack runs on the request the
+/// chain left, as that request was validated; that pipeline runs no hook
+/// itself.
+pub(crate) async fn core_context_pack_hooked(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    body: Value,
+) -> Result<NativeReadAnswer, NativeReadError> {
+    let auth = call.auth();
+    let pack = admit_context_pack(server, auth, &body).await?;
+    let admit = {
+        let (server, auth) = (Arc::clone(server), auth.clone());
+        move |body: &Value| admit_rewritten_context_pack(&server, &auth, body)
+    };
+    let body = NativeReadBody::split(body, CONTEXT_PACK_ROUTE_CONTROLS);
+    native_read_hooked(
+        server,
+        call,
+        VaultReadMethod::ContextPack,
+        body,
+        pack,
+        admit,
+        |pack| read_context_pack(server, auth, pack),
+    )
+    .await
+}
+
+/// The context pack `body` decoded, and its query checked against
+/// `[limits].retrieval_query_bytes`.
+fn decoded_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    body: &Value,
+) -> Result<CoreContextPackRequest, ApiError> {
+    let req: CoreContextPackRequest = decoded(body)?;
+    req.check_query_bytes(server, auth, QueryDoor::ContextPack, "query")?;
+    Ok(req)
+}
+
+/// The route's own admission of the context pack `body` for `auth`, before
+/// any hook runs (FIX 1435): decoded, its query bytes checked, then
+/// validated, its reader, room and contacts on the request's context-input
+/// worker.
+async fn admit_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    body: &Value,
+) -> Result<ValidatedContextPack, ApiError> {
+    let req = decoded_context_pack(server, auth, body)?;
+    validate_context_pack(server, auth, req).await
+}
+
+/// [`admit_context_pack`] of a hook's rewritten `body`, on the hook chain's
+/// blocking thread (FIX 1435).
+fn admit_rewritten_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    body: &Value,
+) -> Result<ValidatedContextPack, ApiError> {
+    let req = decoded_context_pack(server, auth, body)?;
+    validate_rewritten_context_pack(server, auth, req)
+}
+
+/// A validated context pack, assembled for `auth` through the shared
+/// pipeline, as the JSON the route answers. The answer goes beside the rows
+/// the final response lists it was derived from
+/// (`CoreContextPackResponse::producer_rows`, FIX 1435). A response whose
+/// rows are not all known lists none.
+async fn read_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    pack: ValidatedContextPack,
+) -> Result<NativeReadAnswer, NativeReadError> {
+    let (response, _, _) = execute_context_pack(server, auth, pack, None).await?;
+    let rows = response
+        .producer_rows()
+        .map_err(|error| core_engine_error("producer ids failed", error))?;
+    let value = encoded(&response)?;
+    Ok(match rows {
+        Some(rows) => NativeReadAnswer::listed(value, rows),
+        None => NativeReadAnswer::unlisted(value),
+    })
 }
 
 /// The shared context-pack pipeline behind `/v1/core/context-pack` and the
@@ -70,7 +188,7 @@ pub(crate) async fn core_context_pack(
 pub(crate) async fn run_context_pack(
     server: &SyncServer,
     auth: &CoreAuth,
-    mut req: CoreContextPackRequest,
+    req: CoreContextPackRequest,
     memories: Option<MemoriesRequest>,
 ) -> Result<
     (
@@ -80,45 +198,46 @@ pub(crate) async fn run_context_pack(
     ),
     ApiError,
 > {
-    oneiron::memory::caps::check_deadline_ms(req.signals_deadline_ms)
-        .map_err(|error| ApiError::bad_request(error.to_string(), Some("signals_deadline_ms")))?;
-    if req.signals_deadline_ms.is_some() && req.signals_since.is_none() {
-        return Err(ApiError::bad_request(
-            "signals_since is required for reaction signals",
-            Some("signals_since"),
-        ));
-    }
-    // Every ref the request names resolves under the caller's own read: a
-    // room or contact it cannot read is one that does not exist. A room's
-    // members read its roster by membership, as their room turns do.
-    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
-    let optional_memory = reader_optional_memory(&scoped_read, req.reader.as_ref())?;
-    let room_id = req
-        .conversation_id
-        .as_deref()
-        .map(|room| super::super::parse_entity_id_param(room, "conversation_id"))
-        .transpose()?;
-    let (room_members, room) = resolve_core_room(&server.vault, auth, &scoped_read, room_id)?;
-    let interlocutors = resolve_core_interlocutor_set(
-        &server.vault,
-        auth,
-        &scoped_read,
-        req.interlocutors.as_ref(),
-        room.as_ref(),
-    )?;
+    let pack = validate_context_pack(server, auth, req).await?;
+    execute_context_pack(server, auth, pack, memories).await
+}
+
+/// [`run_context_pack`] on `pack`, a request already validated (FIX 1435):
+/// scoped retrieval, projection and evidence. The paid embedding, the once
+/// answers, the retrieval, the observations, the signal read and the
+/// disclosure receipts all run here, in that order.
+pub(crate) async fn execute_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    pack: ValidatedContextPack,
+    memories: Option<MemoriesRequest>,
+) -> Result<
+    (
+        CoreContextPackResponse,
+        Option<oneiron::MemoriesSection>,
+        Option<oneiron::MemoriesCursor>,
+    ),
+    ApiError,
+> {
+    let ValidatedContextPack {
+        read,
+        mut req,
+        optional_memory,
+        room_id,
+        room,
+        interlocutors,
+        media,
+        skill_reliability,
+        candidate_limit,
+        query_affect,
+        ranking,
+        time,
+        signals,
+    } = pack;
+    let scoped_read = read
+        .into_borrowed(&server.vault)
+        .map_err(|_| ApiError::internal_server_error("context-pack reader return failed"))?;
     let query = non_empty_query(req.query.as_deref());
-    // A media query seeds the pack on its own; a vector beside it is still
-    // checked.
-    validate_core_query_seeds(
-        query.or(req.media.as_ref().map(|_| "media")),
-        req.query_vector.as_deref(),
-    )?;
-    let media = req
-        .media
-        .as_ref()
-        .map(|media| media.decode(server.config.limits.retrieval_query_bytes))
-        .transpose()?;
-    let skill_reliability = req.skill_reliability_query(&server.vault)?;
     let (edge_hop, _, max_neighbors, _) =
         resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
     let hydrate = req
@@ -145,20 +264,6 @@ pub(crate) async fn run_context_pack(
     let skip_optional_recall =
         optional_memory.is_some_and(|choice| narrow_to_reader(&mut req.budget, &mut view, choice));
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
-    let scoped_read = narrow_to_core_audience(
-        &server.vault,
-        auth,
-        scoped_read,
-        room_members.as_deref(),
-        room.as_ref(),
-        interlocutors.as_ref(),
-    )?;
-    let candidate_limit = scoped_read
-        .search_candidate_limit(req.limit)
-        .map_err(|error| {
-            tracing::error!(kind = ?error.kind(), "core context-pack scoped read setup failed");
-            core_engine_error("core context-pack scoped read setup failed", error)
-        })?;
     // Embedded once everything free is checked: it is a paid call. On the
     // one-space preset the text query is embedded into the text slot's space.
     // A reader whose optional memory is `none` embeds nothing (FIX 8151);
@@ -187,9 +292,15 @@ pub(crate) async fn run_context_pack(
         ),
     );
 
-    let mut builder = server
-        .vault
-        .context_pack()
+    // Every channel and neighbor takes the reader's row gate, its bound
+    // caller filter included, before its cut (FIX 3977); the pack is still
+    // filtered under the reader once it runs.
+    let plan = scoped_read.context_pack_plan().map_err(|error| {
+        tracing::error!(kind = ?error.kind(), "core context-pack scoped plan failed");
+        core_engine_error("core context-pack scoped read setup failed", error)
+    })?;
+    let mut builder = plan
+        .admit(server.vault.context_pack())
         .media_query_memory(&server.memory)
         .limit(candidate_limit)
         .hydrate(hydrate)
@@ -224,11 +335,11 @@ pub(crate) async fn run_context_pack(
             candidate_limit,
         );
     }
-    if let Some(affect) = req.query_affect {
-        builder = builder.query_affect(affect.vad()?);
+    if let Some(vad) = query_affect {
+        builder = builder.query_affect(vad);
     }
-    builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
-    builder = apply_context_pack_time(builder, req.time.as_ref())?;
+    builder = ranking.applied(builder);
+    builder = time.applied(builder);
     let (mut builder, retrieval_budget) = apply_context_pack_budget(
         builder,
         req.budget.as_ref(),
@@ -295,6 +406,7 @@ pub(crate) async fn run_context_pack(
         server,
         auth,
         &req,
+        signals,
         &scoped_read,
         signal_disclosure.as_ref(),
         &mut response,
@@ -334,262 +446,30 @@ pub(crate) async fn run_context_pack(
     Ok((response, memories, cursor))
 }
 
-pub(crate) fn resolved_context_pack_depth(
-    depth: Option<&ContextPackDepthControls>,
-    edge_hop: u32,
-    max_neighbors: usize,
-) -> (u32, &'static str, usize, &'static str) {
-    let depth_edge_hop = depth.and_then(|depth| depth.edge_hop);
-    let depth_max_neighbors = depth.and_then(|depth| depth.max_neighbors);
-    (
-        depth_edge_hop.unwrap_or(edge_hop),
-        if depth_edge_hop.is_some() {
-            "depth.edge_hop"
-        } else {
-            "edge_hop"
-        },
-        depth_max_neighbors.unwrap_or(max_neighbors),
-        if depth_max_neighbors.is_some() {
-            "depth.max_neighbors"
-        } else {
-            "max_neighbors"
-        },
-    )
-}
-
-pub(crate) fn default_true() -> bool {
-    true
-}
-
-pub(crate) fn default_context_neighbors() -> usize {
-    50
-}
-
-pub(crate) fn apply_context_pack_policy<'a>(
-    mut builder: oneiron::ContextPackBuilder<'a>,
-    policy: Option<&ContextPackPolicyControls>,
-) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
-    let Some(policy) = policy else {
-        return Ok(builder);
-    };
-    if let Some(half_life_days) = policy.boost_recency_days {
-        if !half_life_days.is_finite() || half_life_days <= 0.0 {
-            return Err(ApiError::bad_request(
-                "boost_recency_days must be finite and positive",
-                Some("policy.boost_recency_days"),
-            ));
-        }
-        builder = builder.boost_recency(half_life_days);
-    }
-    if policy.boost_salience.unwrap_or(false) {
-        builder = builder.boost_salience();
-    }
-    if policy.boost_confidence.unwrap_or(false) {
-        builder = builder.boost_confidence();
-    }
-    if policy.boost_contiguity.unwrap_or(false) {
-        builder = builder.boost_contiguity();
-    }
-    Ok(builder)
-}
-
-pub(crate) fn apply_context_pack_time<'a>(
-    mut builder: oneiron::ContextPackBuilder<'a>,
-    time: Option<&ContextPackTimeControls>,
-) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
-    let Some(time) = time else {
-        return Ok(builder);
-    };
-    let occurred_range = match (time.occurred_start, time.occurred_end) {
-        (Some(start), Some(end)) if start <= end => Some((start, end)),
-        (Some(_), Some(_)) => {
-            return Err(ApiError::bad_request(
-                "occurred_start must be less than or equal to occurred_end",
-                Some("time.occurred_start"),
-            ));
-        }
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(ApiError::bad_request(
-                "occurred_start and occurred_end must be supplied together",
-                Some("time"),
-            ));
-        }
-        (None, None) => None,
-    };
-    let learned_range = match (time.learned_start, time.learned_end) {
-        (Some(start), Some(end)) if start <= end => Some((start, end)),
-        (Some(_), Some(_)) => {
-            return Err(ApiError::bad_request(
-                "learned_start must be less than or equal to learned_end",
-                Some("time.learned_start"),
-            ));
-        }
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(ApiError::bad_request(
-                "learned_start and learned_end must be supplied together",
-                Some("time"),
-            ));
-        }
-        (None, None) => None,
-    };
-    if let (Some(since), Some((_, learned_end))) = (time.since, learned_range)
-        && since > learned_end
-    {
-        return Err(ApiError::bad_request(
-            "since must be less than or equal to learned_end",
-            Some("time.since"),
-        ));
-    }
-    if let Some(since) = time.since {
-        builder = builder.filter_since(since);
-    }
-    if let Some((start, end)) = occurred_range {
-        builder = builder.filter_occurred_range(start, end);
-    }
-    if let Some((start, end)) = learned_range {
-        builder = builder.filter_learned_range(start, end);
-    }
-    Ok(builder)
-}
-
-pub(crate) fn apply_context_pack_budget<'a>(
-    mut builder: oneiron::ContextPackBuilder<'a>,
-    budget: Option<&ContextPackBudgetControls>,
-    scoped_candidate_limit: usize,
-    result_limit: usize,
-    default_selected_edges: usize,
-) -> Result<
-    (
-        oneiron::ContextPackBuilder<'a>,
-        oneiron::ContextPackRetrievalBudget,
-    ),
-    ApiError,
-> {
-    if let Some(max_item_tokens) = budget.and_then(|budget| budget.max_item_tokens)
-        && max_item_tokens > 0
-    {
-        builder = builder.max_item_tokens(max_item_tokens);
-    }
-    if let Some(budget) = budget {
-        if let Some(token_budget) = budget.token_budget {
-            builder = builder.token_budget(token_budget);
-        }
-        if let Some(max_field_chars) = budget.max_field_chars {
-            builder = builder.max_field_chars(max_field_chars);
-        }
-    }
-    let retrieval = budget.and_then(|budget| budget.retrieval.as_ref());
-    let (response_budget, internal_budget) = resolve_context_pack_retrieval_budgets(
-        retrieval,
-        result_limit,
-        scoped_candidate_limit,
-        default_selected_edges,
-    );
-    builder = builder.retrieval_budget(internal_budget);
-    Ok((builder, response_budget))
-}
-
-pub(crate) fn resolve_context_pack_retrieval_budgets(
-    retrieval: Option<&ContextPackRetrievalBudgetControls>,
-    result_limit: usize,
-    scoped_candidate_limit: usize,
-    default_selected_edges: usize,
-) -> (
-    oneiron::ContextPackRetrievalBudget,
-    oneiron::ContextPackRetrievalBudget,
-) {
-    let selected_edges = retrieval
-        .and_then(|retrieval| retrieval.selected_edges)
-        .unwrap_or(default_selected_edges);
-    let mut response_budget = oneiron::ContextPackRetrievalBudget::from_limit(
-        result_limit,
-        oneiron::TokenAllocation::default(),
-        selected_edges,
-    );
-    if let Some(retrieval) = retrieval {
-        if let Some(claims) = retrieval.claims {
-            response_budget.claims = claims;
-        }
-        if let Some(turns) = retrieval.turns {
-            response_budget.turns = turns;
-        }
-        if let Some(summaries) = retrieval.summaries {
-            response_budget.summaries = summaries;
-        }
-        if let Some(facets) = retrieval.facets {
-            response_budget.facets = facets;
-        }
-        if let Some(other) = retrieval.other {
-            response_budget.other = other;
-        }
-    }
-    let internal_budget =
-        widen_context_pack_retrieval_budget(response_budget, scoped_candidate_limit);
-    (response_budget, internal_budget)
-}
-
-pub(crate) fn widen_context_pack_retrieval_budget(
-    budget: oneiron::ContextPackRetrievalBudget,
-    scoped_candidate_limit: usize,
-) -> oneiron::ContextPackRetrievalBudget {
-    let widen = |bucket: usize| {
-        if bucket == 0 {
-            0
-        } else {
-            bucket.max(scoped_candidate_limit)
-        }
-    };
-    oneiron::ContextPackRetrievalBudget::new(
-        widen(budget.claims),
-        widen(budget.turns),
-        widen(budget.summaries),
-        widen(budget.facets),
-        widen(budget.other),
-        budget.selected_edges,
-    )
-}
-
 /// The agent signal feed rides the context pack of the agent's next turn:
 /// reactions to the reader's own messages since `signals_since`, paged, each
-/// admitted by the same scoped read as the pack.
+/// admitted by the same scoped read as the pack. `signal_request` was
+/// checked with the request (FIX 1435); its deadline starts here.
 fn read_reaction_signals(
     server: &SyncServer,
     auth: &CoreAuth,
     req: &CoreContextPackRequest,
+    signal_request: Option<ContextPackSignalRequest>,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     disclosure: Option<&oneiron::disclosure::DisclosureContext>,
     response: &mut CoreContextPackResponse,
 ) -> Result<(), ApiError> {
-    let Some(since) = req.signals_since else {
-        if req.signals_after.is_some()
-            || req.signals_limit.is_some()
-            || req.signals_person.is_some()
-            || req.signals_deadline_ms.is_some()
-        {
-            return Err(ApiError::bad_request(
-                "signals_since is required for reaction signals",
-                Some("signals_since"),
-            ));
-        }
+    let Some(ContextPackSignalRequest {
+        person,
+        since,
+        room,
+        deadline_ms,
+        paging,
+    }) = signal_request
+    else {
         return Ok(());
     };
-    let person = req
-        .signals_person
-        .as_deref()
-        .or_else(|| auth.principal_ref())
-        .ok_or_else(|| {
-            ApiError::bad_request("signals_person is required", Some("signals_person"))
-        })?;
-    if !auth.is_owner_grade() && auth.principal_ref() != Some(person) {
-        return Err(ApiError::forbidden_scope("signals_person"));
-    }
-    let person = super::super::parse_entity_id_param(person, "signals_person")?;
-    let room = req
-        .conversation_id
-        .as_deref()
-        .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
-        .transpose()?;
-    let deadline = req.signals_deadline_ms.map(|ms| {
+    let deadline = deadline_ms.map(|ms| {
         oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms))
     });
     let signal_error = |error: oneiron::Error| match &error {
@@ -616,12 +496,14 @@ fn read_reaction_signals(
     // withholds. Only an owner-grade caller with no slip keeps the raw feed
     // of one person's messages; a delegated, room-scoped or
     // interlocutor-scoped read is filtered by the same scoped read and
-    // disclosure clamp as the pack. Paging follows the filter, so a cursor
-    // never names a signal this caller was not shown.
+    // disclosure clamp as the pack, and so is a read that names its own
+    // filter, which the pack's reader carries (FIX 3977). Paging follows the
+    // filter, so a cursor never names a signal this caller was not shown.
     let scoped = auth.verified_slip().is_some()
         || !auth.is_owner_grade()
         || req.conversation_id.is_some()
-        || req.interlocutors.is_some();
+        || req.interlocutors.is_some()
+        || req.filter.is_some();
     let mut kept = Vec::new();
     for signal in signals {
         checkpoint()?;
@@ -650,13 +532,7 @@ fn read_reaction_signals(
         kept.push(signal);
     }
     checkpoint()?;
-    let page = oneiron::reaction::page_reaction_signals(
-        kept,
-        req.signals_after.as_deref(),
-        req.signals_limit
-            .unwrap_or(oneiron::reaction::MAX_REACTION_SIGNAL_PAGE),
-    )
-    .map_err(|e| core_engine_error("reaction signal page failed", e))?;
+    let page = paging.page(kept);
     checkpoint()?;
     let signals = page
         .signals

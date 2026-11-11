@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.outcomes.end",
+  "description": "The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward.",
+  "input": "crate::store::RetrievalEndOutcome",
+  "output": "Vec<crate::task_verb::sdk::RetrievalRunEvidence>",
+  "call": "crate::task_verb::sdk::retrieval_outcomes_end_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.outcomes.end\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

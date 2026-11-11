@@ -71,6 +71,7 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
     }
     // A sealed request is checked when it opens, an erased one never again
     // (FIX 9283, 9372): the stored form keeps its digest, not its hash.
+    approval::validate_pinned_approval(record)?;
     let readable = payload::readable_payload(record.payload())?;
     if let Some(payload) = readable {
         approval::validate_admitted_approval(record, payload)?;

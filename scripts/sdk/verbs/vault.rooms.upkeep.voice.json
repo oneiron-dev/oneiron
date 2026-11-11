@@ -1,0 +1,17 @@
+{
+  "name": "vault.rooms.upkeep.voice",
+  "description": "The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread.",
+  "input": "crate::workspace_roster::RoomUpkeepVoiceRequest",
+  "output": "crate::workspace_roster::RoomUpkeepVoiceReceipt",
+  "call": "memory.rooms_upkeep_voice(&input)?",
+  "scope": "Write",
+  "lands_turn": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -17,6 +17,24 @@ pub struct EsignSealInput {
     pub revisions: Vec<EsignSignatureRevision>,
 }
 
+/// Builds the input inside its admitted call and lends it lexically to
+/// dispatch. The immutable source survives a pre-dispatch rebuild; input,
+/// model, revisions and their pool unwind before the next reservation.
+pub trait EsignSealProducer {
+    fn source_bytes(&self) -> u64;
+
+    fn with_input(
+        &mut self,
+        resources: &oneiron_docedit::resource::Resources,
+        planned_bytes: u64,
+        measured_bytes: u64,
+        dispatch: &mut dyn FnMut(
+            &EsignSealInput,
+            &super::producer_input::EsignInputBudget,
+        ) -> Result<EsignSealed, super::seal::EsignSealError>,
+    ) -> Result<EsignSealed, super::seal::EsignSealError>;
+}
+
 /// A PAdES sealer the engine reaches through a port. It blocks: the seal
 /// task runs it, never a request.
 pub trait EsignSealer: Send + Sync {
@@ -29,9 +47,9 @@ pub trait EsignSealer: Send + Sync {
     /// See [`EsignSealerError`].
     fn seal(
         &self,
-        input: &EsignSealInput,
         request: &EsignSealRequest,
-    ) -> Result<EsignSealed, EsignSealerError>;
+        producer: &mut dyn EsignSealProducer,
+    ) -> Result<EsignSealed, super::seal::EsignSealError>;
 
     /// Verifies a sealed PDF, in a process that never sealed: a second
     /// opinion on what the sealer cannot check itself (the timestamp, the

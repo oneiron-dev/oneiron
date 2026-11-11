@@ -12,9 +12,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::ManifestDbs;
-use crate::store::note_body::NoteBody;
+use crate::store::note_body::NoteCore;
 use crate::store::note_body::NoteKind;
-use crate::store::note_body::encode_note_body;
+use crate::store::note_body::encode_note_core;
 use crate::store::note_kind::COMPACTION_INTENT_NOTE_KIND;
 use crate::store::row_birth::RowBirth;
 use crate::temporal::TimeRange;
@@ -32,13 +32,14 @@ const EPOCH_PROCESS: &str = "compaction.epoch";
 /// erased or withdrawn before the mint (`withdrawn`) keeps only the span and
 /// the refs: its note and pins are words of the window, and the summary they
 /// prompted is born withdrawn. The one hook a ruling on the intent's text
-/// changes.
+/// changes. Returns the NOTE's core row and its birth text, the text its
+/// document is born from (FIX 7783).
 pub(super) fn intent_note_body(
     request: &CompactionRequest,
     author: EntityId,
     summary: EntityId,
     withdrawn: bool,
-) -> Result<Vec<u8>> {
+) -> Result<(Vec<u8>, String)> {
     let through = request
         .window
         .last()
@@ -71,14 +72,14 @@ pub(super) fn intent_note_body(
     for source in &request.sources {
         markdown.push_str(&format!("- {}\n", source.to_hex()));
     }
-    encode_note_body(&NoteBody {
+    let core = encode_note_core(&NoteCore {
         kind: NoteKind::parse(COMPACTION_INTENT_NOTE_KIND).ok_or(Error::InvariantViolation(
             "the compaction intent NOTE kind is shipped",
         ))?,
         author_ref: crate::store::note_body::NoteActor::Actor(author),
-        markdown,
         source_revision_ref: *summary.as_bytes(),
-    })
+    })?;
+    Ok((core, markdown))
 }
 
 /// The epoch's birth (Rule A): `intent` first, as its Prompt; then every
@@ -96,7 +97,7 @@ pub(super) fn epoch_birth(
     let window = request
         .window
         .iter()
-        .filter(|_| request.log == WindowLog::Conversation)
+        .filter(|_| matches!(request.log, WindowLog::Conversation(_)))
         .flat_map(|message| [message.message_id, message.turn_id]);
     let mut seen = std::collections::BTreeSet::new();
     let inputs: Vec<EntityId> = std::iter::once(intent)
@@ -214,7 +215,13 @@ fn edge_weight(kind: EdgeKind) -> f32 {
     }
 }
 
-/// Stages the intent NOTE on a base mint's `batch` (see [`intent_ops`]).
+/// Stages the intent NOTE on a base mint's `batch` (see [`intent_ops`]): its
+/// core `body` and its birth text `markdown`, which the batch's birth op
+/// births the NOTE's document from.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the batch, the NOTE's ids and time, its core and birth text, and its sources"
+)]
 pub(super) fn stage_intent<'v>(
     batch: BatchBuilder<'v>,
     intent: EntityId,
@@ -222,10 +229,18 @@ pub(super) fn stage_intent<'v>(
     summary: EntityId,
     at: u64,
     body: &[u8],
+    markdown: &str,
     sources: &[EntityId],
 ) -> BatchBuilder<'v> {
     let mut batch = batch
-        .put_authored_note(&intent, &author, TimeRange { start: at, end: at }, at, body)
+        .put_authored_note(
+            &intent,
+            &author,
+            TimeRange { start: at, end: at },
+            at,
+            body,
+            markdown,
+        )
         .edge(
             &intent,
             EdgeKind::AuthoredBy,

@@ -1,10 +1,10 @@
 //! Run resident-authored graph workflows from the admitted skill source tree.
 
 use super::SkillRole;
-use crate::attempt_queue::AttemptRecord;
+use crate::attempt_queue::{AttemptId, AttemptRecord, ReadSetProducer};
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::questions::{
-    AnswerRecord, GraphAnswerer, run_graph_question_with_proposals,
+    AnswerRecord, GraphAnswerer, run_graph_question_with_current,
 };
 use crate::model_decision::questions::{GraphQuestionInput, GraphQuestionRef};
 use crate::{EntityId, Vault, WriteActor};
@@ -63,6 +63,19 @@ fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(reason))
 }
 
+fn record_graph_input_rows(vault: &Vault, attempt: AttemptId, mut rows: Option<Vec<EntityId>>) {
+    if let Some(rows) = rows.as_mut() {
+        rows.sort_unstable();
+        rows.dedup();
+    }
+    if let Err(error) =
+        vault.record_attempt_sources(attempt, ReadSetProducer::SKILL_GRAPH_INPUT, rows)
+    {
+        tracing::warn!(kind = ?error.kind(), "graph workflow input rows were not recorded");
+        let _ = vault.record_attempt_sources(attempt, ReadSetProducer::SKILL_GRAPH_INPUT, None);
+    }
+}
+
 impl GraphSkillProgram {
     /// Structure only: every stage, input and reference is admitted however
     /// many there are, and each input runs as its own question (FIX 10152).
@@ -110,12 +123,75 @@ pub fn execute_graph_workflow_skill(
     answerer: &mut impl GraphAnswerer,
     now: u64,
 ) -> std::result::Result<GraphSkillResult, GraphSkillFailure> {
+    execute_graph_workflow_skill_inner(
+        vault, leased, skill, reference, executor, principal, actor, answerer, now, None,
+    )
+}
+
+/// The same workflow with the admitted caller's current credential read key.
+/// The host supplies a key built from that caller's `Memory`; source reads
+/// meet it with each saved question's frozen lane in their own transaction.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the host lends the same execution facts and its current reader"
+)]
+pub fn execute_graph_workflow_skill_with_read_key(
+    vault: &Vault,
+    leased: &AttemptRecord,
+    skill: &EntityId,
+    reference: &str,
+    executor: &str,
+    principal: EntityId,
+    actor: WriteActor,
+    answerer: &mut impl GraphAnswerer,
+    now: u64,
+    current: Option<crate::claim::ScopedReadActorKey>,
+) -> std::result::Result<GraphSkillResult, GraphSkillFailure> {
+    execute_graph_workflow_skill_inner(
+        vault,
+        leased,
+        skill,
+        reference,
+        executor,
+        principal,
+        actor,
+        answerer,
+        now,
+        current.as_ref(),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shared execution keeps native and credential-backed workflows identical"
+)]
+fn execute_graph_workflow_skill_inner(
+    vault: &Vault,
+    leased: &AttemptRecord,
+    skill: &EntityId,
+    reference: &str,
+    executor: &str,
+    principal: EntityId,
+    actor: WriteActor,
+    answerer: &mut impl GraphAnswerer,
+    now: u64,
+    current: Option<&crate::claim::ScopedReadActorKey>,
+) -> std::result::Result<GraphSkillResult, GraphSkillFailure> {
     let prepare = || -> Result<GraphSkillProgram> {
         let owner = leased
             .lease_owner
             .as_deref()
             .ok_or(invalid("graph workflow requires a live attempt lease"))?;
         crate::skill_reliability::validate_executor(executor)?;
+        if let Err(error) = vault.declare_attempt_read_producers(
+            leased.id,
+            &[
+                ReadSetProducer::SKILL_PACK,
+                ReadSetProducer::SKILL_GRAPH_INPUT,
+            ],
+        ) {
+            tracing::warn!(kind = ?error.kind(), "graph workflow read producers were not declared");
+        }
         let loaded = vault.load_resident_skill_pack(
             leased.id,
             &actor.entity_ref(),
@@ -145,6 +221,7 @@ pub fn execute_graph_workflow_skill(
         completed: GraphSkillResult::default(),
     })?;
     let mut completed = GraphSkillResult::default();
+    let mut source_rows = Some(Vec::new());
     for (stage, step) in program.stages.iter().enumerate() {
         completed.stages.push(Vec::new());
         for (input_index, input) in step.inputs.iter().enumerate() {
@@ -178,7 +255,7 @@ pub fn execute_graph_workflow_skill(
                 completed.stages[stage].push(None);
                 continue;
             }
-            match run_graph_question_with_proposals(
+            match run_graph_question_with_current(
                 vault,
                 principal,
                 actor,
@@ -187,9 +264,12 @@ pub fn execute_graph_workflow_skill(
                 &proposals,
                 answerer,
                 now,
+                current,
+                &mut source_rows,
             ) {
                 Ok(result) => completed.stages[stage].push(result.answers.into_iter().next()),
                 Err(failure) => {
+                    record_graph_input_rows(vault, leased.id, None);
                     return Err(GraphSkillFailure {
                         stage: Some(stage),
                         input: Some(input_index),
@@ -200,5 +280,6 @@ pub fn execute_graph_workflow_skill(
             }
         }
     }
+    record_graph_input_rows(vault, leased.id, source_rows);
     Ok(completed)
 }

@@ -39,7 +39,7 @@ pub use crate::store::attempt_outcomes::{
     InterveneAttempt, InterveneOutcome, RetryOutcome,
 };
 pub use crate::store::attempt_record::{
-    AttemptPlacement, AttemptRecord, PlannedBinding, PlannedExactness,
+    AttemptLeaseExpiry, AttemptPlacement, AttemptRecord, PlannedBinding, PlannedExactness,
 };
 
 impl AttemptRecord {

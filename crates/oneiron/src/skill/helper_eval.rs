@@ -94,6 +94,7 @@ pub fn callable_helper_measurement_requests(
                 seat: seat.clone(),
                 incumbent: arm(parent.as_ref().and_then(content)),
                 candidate: arm(Some(candidate)),
+                requested_offers: None,
                 cohort: cohort.id,
                 membership_digest: cohort.membership_digest.clone(),
                 rubric_revision: cohort.rubric_revision.clone(),

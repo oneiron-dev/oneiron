@@ -113,6 +113,7 @@ mod audience;
 mod connector_archive_link;
 mod connector_conversation;
 pub use connector_conversation::ConnectorWitness;
+pub(crate) use connector_conversation::connector_witness_row_ids;
 mod connector_witness_grant;
 pub use audience::{
     IMPORT_AUDIENCE_ONLY_ME, IMPORT_AUDIENCE_SOURCE, ImportAudience, ImportAudienceCluster,
@@ -127,6 +128,7 @@ pub mod history;
 mod parsed;
 pub use parsed::{ParsedImport, ParsedMessage};
 mod pdf;
+pub(crate) mod tables;
 pub use pdf::{PdfText, PdfTextError, pdf_text};
 
 // The lift sweep's typed acceptance for this module's authored side

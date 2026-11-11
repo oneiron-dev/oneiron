@@ -146,12 +146,12 @@ impl ConsolidationExecutor<'_> {
         let read = merge_read(ctx.vault, self.actor)?;
         let proposals = {
             let txn = ctx.vault.store.env.read_txn()?;
-            if let Some((completed_units, step_hashes)) =
+            if let Some((completed_units, step_bindings)) =
                 landed_units_in_txn(ctx.vault, &txn, attempt_id)?
             {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units,
-                    step_hashes,
+                    step_bindings,
                 });
             }
             let merged = merged_snapshot_in_txn(ctx.vault, &txn, input.merge)?;
@@ -161,7 +161,7 @@ impl ConsolidationExecutor<'_> {
                     return Ok(DreamerAttemptExecution::Deferred {
                         completed_units: 0,
                         retry_at: (ctx.now_ms / 1_000).saturating_add(merged.retry_secs),
-                        step_hashes: Vec::new(),
+                        step_bindings: Vec::new(),
                     });
                 }
             }
@@ -273,7 +273,7 @@ impl ConsolidationExecutor<'_> {
                 &MergeResult {
                     outputs,
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                     chunks: Vec::new(),
                     links,
                 },
@@ -282,7 +282,7 @@ impl ConsolidationExecutor<'_> {
         match commit {
             Ok(()) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             // A proposal that moved before the commit lands again on resume;
             // a gate only an owner act opens keeps the private park.
@@ -314,6 +314,7 @@ impl ConsolidationExecutor<'_> {
             ));
         };
         let keyless = call.inference.selected_keyless();
+        let paid = call.inference.selected_paid();
         // The call labels its claims and questions before its state renders
         // (FIX 7506).
         let mut labels = CallLabelMap::default();
@@ -329,7 +330,11 @@ impl ConsolidationExecutor<'_> {
         let state = pack.state(anchor, partners, &mut labels);
         let mut scope = Scope {
             world: anchor.body.world,
-            relationship: anchor.body.rel.clone(),
+            relationship: anchor
+                .body
+                .rel
+                .as_ref()
+                .map(|ids| ids.iter().copied().collect()),
             project: Some(anchor.body.scope_project),
             ..Scope::default()
         };
@@ -365,6 +370,7 @@ impl ConsolidationExecutor<'_> {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: keyless,
+                host_paid: paid,
             }
             .with_purpose_defaults(),
             messages: Vec::new(),
@@ -422,15 +428,28 @@ impl ConsolidationExecutor<'_> {
             .await;
         // Every generation that finished is spent, whatever the call's
         // outcome.
-        for (index, (hash, usage, _)) in spent.iter().enumerate() {
-            if let Err(error) = charges.record_terminal(vault, step.attempt_id, *hash, usage) {
-                for (_, usage, memoized) in &spent[index..] {
-                    if !*memoized {
+        for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
+            if let Some(binding) = binding {
+                if let Err(error) =
+                    charges.record_terminal(vault, binding.attempt_id, binding.step_hash, usage)
+                {
+                    for (_, usage, _, memoized) in &spent[index..] {
+                        if !*memoized {
+                            charges.record_usage(usage);
+                        }
+                    }
+                    if let Some(usage) = decided
+                        .as_ref()
+                        .err()
+                        .and_then(DurableStepError::spent_usage)
+                    {
                         charges.record_usage(usage);
                     }
+                    return super::residency::spent_or_deferred(error, ctx, charges)
+                        .map(ControlFlow::Break);
                 }
-                return super::residency::spent_or_deferred(error, ctx, charges)
-                    .map(ControlFlow::Break);
+            } else {
+                charges.record_usage(usage);
             }
         }
         let decisions = match decided {
@@ -456,9 +475,10 @@ impl ConsolidationExecutor<'_> {
                 return Ok(ControlFlow::Break(charges.park_on_error(&error)));
             }
             Err(error) => {
-                return Ok(ControlFlow::Break(
-                    charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error)),
-                ));
+                return Ok(ControlFlow::Break(charges.park_for(
+                    &error.to_string(),
+                    crate::dreamer_runner::dreamer_park_cause_of_step(&error),
+                )));
             }
         };
         // A question the decision clock cut keeps its memo: the attempt

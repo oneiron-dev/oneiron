@@ -11,7 +11,6 @@ use std::fs::File;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
 
 use base64::Engine as _;
-use serde::de::DeserializeOwned;
 
 /// Bytes of base64 text a [`Base64FileSink`] holds before it decodes them.
 const BASE64_PIECE: usize = 64 * 1024;
@@ -26,6 +25,21 @@ pub(super) const BASE64_DECODE_BUFFER_BYTES: usize = BASE64_TEXT_BUFFER_BYTES.di
 pub(in crate::api) struct JsonInvalid;
 
 type Decoded<T> = Result<T, JsonInvalid>;
+
+/// Invalid JSON, or a source-file failure while replaying a property name.
+#[derive(Debug)]
+pub(in crate::api) enum HeadFail {
+    /// The document is not the object the route reads.
+    Invalid,
+    /// The source position or the original quoted name could not be read.
+    Failed,
+}
+
+impl From<JsonInvalid> for HeadFail {
+    fn from(_: JsonInvalid) -> Self {
+        Self::Invalid
+    }
+}
 
 /// Where a bulk member's string goes as it is read.
 pub(in crate::api) trait StringSink {
@@ -64,34 +78,57 @@ impl<'a> BulkMember<'a> {
     }
 }
 
-/// Decodes the object `reader` holds to its end: each bulk member's string
-/// to its sink, every other member as `T`. A bulk member given twice, given
-/// as anything but a string, or missing while required, or anything after
-/// the object, is malformed.
-pub(super) fn decode_object<T: DeserializeOwned>(
-    reader: impl BufRead,
-    bulk: &mut [BulkMember<'_>],
-) -> Decoded<T> {
+/// Scans the object to its end: bulk strings to their sinks, other members
+/// to the head file for the route's later DTO decode. A bulk given twice,
+/// given as anything but a string, or missing while required, or anything
+/// after the object, is malformed.
+pub(super) fn scan_object_head<const N: usize>(
+    reader: impl BufRead + Seek,
+    bulk: &mut [BulkMember<'_>; N],
+    head: &mut TextFileSink,
+) -> Result<(), HeadFail> {
     let mut scan = Scanner { reader };
-    let mut head = vec![b'{'];
+    let mut has_members = false;
     scan.skip_whitespace()?;
     scan.expect(b'{')?;
+    write_head(head, b"{");
     scan.skip_whitespace()?;
     if scan.peek()? == Some(b'}') {
         scan.bump();
     } else {
         loop {
             scan.skip_whitespace()?;
+            let name_start = scan
+                .reader
+                .stream_position()
+                .map_err(|_| HeadFail::Failed)?;
             scan.expect(b'"')?;
-            let mut name = Vec::new();
-            scan.string(&mut |run: &[u8]| name.extend_from_slice(run))?;
-            let name = String::from_utf8(name).map_err(|_| JsonInvalid)?;
+            let mut names = bulk.each_ref().map(|member| Some(member.name.as_bytes()));
+            scan.string(&mut |run| {
+                for name in &mut names {
+                    *name = (*name).and_then(|remaining| remaining.strip_prefix(run));
+                }
+            })?;
+            let name_end = scan
+                .reader
+                .stream_position()
+                .map_err(|_| HeadFail::Failed)?;
+            let index = names
+                .iter()
+                .position(|name| name.is_some_and(<[u8]>::is_empty));
+            if index.is_none() {
+                if has_members {
+                    write_head(head, b",");
+                }
+                copy_raw_name(&mut scan.reader, name_start, name_end, head)?;
+            }
             scan.skip_whitespace()?;
             scan.expect(b':')?;
             scan.skip_whitespace()?;
-            if let Some(member) = bulk.iter_mut().find(|member| member.name == name) {
+            if let Some(index) = index {
+                let member = &mut bulk[index];
                 if member.seen {
-                    return Err(JsonInvalid);
+                    return Err(HeadFail::Invalid);
                 }
                 member.seen = true;
                 scan.expect(b'"')?;
@@ -100,34 +137,169 @@ pub(super) fn decode_object<T: DeserializeOwned>(
                     member.refused = true;
                 }
             } else {
-                if head.len() > 1 {
-                    head.push(b',');
-                }
-                head.extend_from_slice(
-                    serde_json::to_string(&name)
-                        .map_err(|_| JsonInvalid)?
-                        .as_bytes(),
-                );
-                head.push(b':');
-                scan.copy_value(&mut head)?;
+                write_head(head, b":");
+                scan.copy_value(head)?;
+                has_members = true;
             }
             scan.skip_whitespace()?;
             match scan.next()? {
                 Some(b',') => {}
                 Some(b'}') => break,
-                _ => return Err(JsonInvalid),
+                _ => return Err(HeadFail::Invalid),
             }
         }
     }
     scan.skip_whitespace()?;
     if scan.peek()?.is_some() {
-        return Err(JsonInvalid);
+        return Err(HeadFail::Invalid);
     }
     if bulk.iter().any(|member| member.required && !member.seen) {
-        return Err(JsonInvalid);
+        return Err(HeadFail::Invalid);
     }
-    head.push(b'}');
-    serde_json::from_slice(&head).map_err(|_| JsonInvalid)
+    write_head(head, b"}");
+    Ok(())
+}
+
+/// Scans one JSON object to its end with its bulk member nested under
+/// `path`, one object member per step from the top (FIX 22074): the bulk
+/// string goes to its sink, and every member, the bulk one's name with an
+/// empty string in its place, goes to the head file, each value as it
+/// stands. Every step of the path, and the bulk member, must be there
+/// once: a step given twice, or as anything but an object, and anything
+/// after the object, is malformed. The source span of each step's object,
+/// outermost first, is returned.
+pub(super) fn scan_member_path(
+    reader: impl BufRead + Seek,
+    path: &[&'static str],
+    bulk: &mut BulkMember<'_>,
+    head: &mut TextFileSink,
+) -> Result<Vec<(u64, u64)>, HeadFail> {
+    let mut scan = Scanner { reader };
+    let mut spans = Vec::with_capacity(path.len());
+    scan.skip_whitespace()?;
+    scan_path_object(&mut scan, path, bulk, head, &mut spans)?;
+    scan.skip_whitespace()?;
+    if scan.peek()?.is_some() || !bulk.seen {
+        return Err(HeadFail::Invalid);
+    }
+    Ok(spans)
+}
+
+/// One object of [`scan_member_path`], from its opening brace.
+fn scan_path_object<R: BufRead + Seek>(
+    scan: &mut Scanner<R>,
+    path: &[&'static str],
+    bulk: &mut BulkMember<'_>,
+    head: &mut TextFileSink,
+    spans: &mut Vec<(u64, u64)>,
+) -> Result<(), HeadFail> {
+    let wanted = path.first().copied().unwrap_or(bulk.name).as_bytes();
+    let mut seen = false;
+    let mut first = true;
+    scan.expect(b'{')?;
+    write_head(head, b"{");
+    scan.skip_whitespace()?;
+    // An empty object holds no step of the path.
+    if scan.peek()? == Some(b'}') {
+        return Err(HeadFail::Invalid);
+    }
+    loop {
+        scan.skip_whitespace()?;
+        let name_start = scan
+            .reader
+            .stream_position()
+            .map_err(|_| HeadFail::Failed)?;
+        scan.expect(b'"')?;
+        let mut name = Some(wanted);
+        scan.string(&mut |run| name = name.and_then(|remaining| remaining.strip_prefix(run)))?;
+        let name_end = scan
+            .reader
+            .stream_position()
+            .map_err(|_| HeadFail::Failed)?;
+        if !first {
+            write_head(head, b",");
+        }
+        first = false;
+        copy_raw_name(&mut scan.reader, name_start, name_end, head)?;
+        scan.skip_whitespace()?;
+        scan.expect(b':')?;
+        scan.skip_whitespace()?;
+        write_head(head, b":");
+        if name.is_some_and(<[u8]>::is_empty) {
+            if seen {
+                return Err(HeadFail::Invalid);
+            }
+            seen = true;
+            match path.split_first() {
+                None => {
+                    bulk.seen = true;
+                    scan.expect(b'"')?;
+                    scan.string(&mut |run: &[u8]| bulk.take(run))?;
+                    if !bulk.refused && !bulk.sink.finish() {
+                        bulk.refused = true;
+                    }
+                    write_head(head, b"\"\"");
+                }
+                Some((_, rest)) => {
+                    if scan.peek()? != Some(b'{') {
+                        return Err(HeadFail::Invalid);
+                    }
+                    let start = scan
+                        .reader
+                        .stream_position()
+                        .map_err(|_| HeadFail::Failed)?;
+                    let index = spans.len();
+                    spans.push((start, start));
+                    scan_path_object(scan, rest, bulk, head, spans)?;
+                    spans[index].1 = scan
+                        .reader
+                        .stream_position()
+                        .map_err(|_| HeadFail::Failed)?;
+                }
+            }
+        } else {
+            scan.copy_value(head)?;
+        }
+        scan.skip_whitespace()?;
+        match scan.next()? {
+            Some(b',') => {}
+            Some(b'}') => break,
+            _ => return Err(HeadFail::Invalid),
+        }
+    }
+    write_head(head, b"}");
+    if seen { Ok(()) } else { Err(HeadFail::Invalid) }
+}
+
+/// Replays only the original quoted name, ending at the scanner's saved position.
+fn copy_raw_name(
+    reader: &mut (impl BufRead + Seek),
+    start: u64,
+    end: u64,
+    head: &mut TextFileSink,
+) -> Result<(), HeadFail> {
+    let mut remaining = end.checked_sub(start).ok_or(HeadFail::Failed)?;
+    reader
+        .seek(SeekFrom::Start(start))
+        .map_err(|_| HeadFail::Failed)?;
+    while remaining > 0 {
+        let buffer = reader.fill_buf().map_err(|_| HeadFail::Failed)?;
+        if buffer.is_empty() {
+            return Err(HeadFail::Failed);
+        }
+        let take = remaining.min(buffer.len() as u64) as usize;
+        write_head(head, &buffer[..take]);
+        reader.consume(take);
+        remaining -= take as u64;
+    }
+    Ok(())
+}
+
+/// Keeps the first head-file failure while the scanner still judges syntax.
+fn write_head(head: &mut TextFileSink, run: &[u8]) {
+    if head.refusal.is_none() {
+        let _ = head.write(run);
+    }
 }
 
 /// Decodes an object containing only the declared string members. Names
@@ -310,18 +482,18 @@ impl<R: BufRead> Scanner<R> {
 
     /// One value as it stands, appended to `out`. Only its extent is found
     /// here; the DTO's decode judges what it holds.
-    fn copy_value(&mut self, out: &mut Vec<u8>) -> Decoded<()> {
+    fn copy_value(&mut self, out: &mut TextFileSink) -> Decoded<()> {
         match self.peek()?.ok_or(JsonInvalid)? {
             b'"' => {
                 self.bump();
-                out.push(b'"');
+                write_head(out, b"\"");
                 self.copy_string(out)
             }
             b'{' | b'[' => {
                 let mut depth = 0usize;
                 loop {
                     let byte = self.next()?.ok_or(JsonInvalid)?;
-                    out.push(byte);
+                    write_head(out, &[byte]);
                     match byte {
                         b'"' => self.copy_string(out)?,
                         b'{' | b'[' => depth += 1,
@@ -340,7 +512,7 @@ impl<R: BufRead> Scanner<R> {
                     if matches!(byte, b',' | b'}' | b']' | b' ' | b'\n' | b'\r' | b'\t') {
                         break;
                     }
-                    out.push(byte);
+                    write_head(out, &[byte]);
                     self.bump();
                 }
                 Ok(())
@@ -350,13 +522,13 @@ impl<R: BufRead> Scanner<R> {
 
     /// A string as it stands, after its opening quote, through its closing
     /// quote.
-    fn copy_string(&mut self, out: &mut Vec<u8>) -> Decoded<()> {
+    fn copy_string(&mut self, out: &mut TextFileSink) -> Decoded<()> {
         loop {
             let byte = self.next()?.ok_or(JsonInvalid)?;
-            out.push(byte);
+            write_head(out, &[byte]);
             match byte {
                 b'"' => return Ok(()),
-                b'\\' => out.push(self.next()?.ok_or(JsonInvalid)?),
+                b'\\' => write_head(out, &[self.next()?.ok_or(JsonInvalid)?]),
                 _ => {}
             }
         }
@@ -447,6 +619,11 @@ impl SpooledField {
     /// 11140).
     pub(in crate::api) fn file(&self) -> (&File, u64) {
         (&self.file, self.len)
+    }
+
+    /// The field's file and its length, owned.
+    pub(super) fn into_parts(self) -> (File, u64) {
+        (self.file, self.len)
     }
 }
 

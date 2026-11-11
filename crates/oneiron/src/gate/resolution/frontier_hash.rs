@@ -56,6 +56,30 @@ pub(super) fn hash_policy_frontier_v0(
             hash_u64(hasher, u64::from(*minimum));
         }
     }
+    if let Some(row) = &resolution.code_consent_settlement {
+        use crate::gate::code_consent_settlement::CodeConsentSettlementEligibility;
+        hash_str(hasher, crate::gate::code_consent_settlement::KEY);
+        match &row.eligible {
+            CodeConsentSettlementEligibility::AllPowerHolders => {
+                hash_str(hasher, "all_power_holders")
+            }
+            CodeConsentSettlementEligibility::Named(holders) => {
+                hash_str(hasher, "named");
+                hash_len(hasher, holders.len());
+                for holder in holders {
+                    hash_str(hasher, holder);
+                }
+            }
+        }
+        hash_bool(hasher, row.conflicting_authored_rows);
+        hash_len(hasher, row.sources.len());
+        for source in &row.sources {
+            hash_str(hasher, &source.manifest_ref);
+            hash_bytes(hasher, &source.body_hash);
+            hash_u64(hasher, u64::from(source.version));
+            hash_str(hasher, source.origin.as_str());
+        }
+    }
     // A new project's birth and the vault ceiling read these resolved policy
     // rows. A policy edit must move the frontier even if other gate axes agree.
     if resolution.project_depth_default.is_some() || resolution.project_depth_max.is_some() {
@@ -91,6 +115,14 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(auto_checker) = resolution.auto_checker.as_deref() {
         hash_str(hasher, "auto_checker");
         hash_str(hasher, auto_checker);
+    }
+    // The common owner-change wait moves start deadlines, so naming one
+    // moves the frontier; a manifest that never names it keeps its exact
+    // no-common frontier hash. A domain tag rides with the value so no
+    // future optional field can collide with this one.
+    if let Some(wait_secs) = resolution.owner_change_wait_secs {
+        hash_str(hasher, "owner_change_wait_secs");
+        hash_u64(hasher, wait_secs);
     }
     // The raw resolved table, never the fail-closed accessor: a malformed
     // manifest contributes no decoded rows at all and its malformed-ness is
@@ -729,6 +761,10 @@ fn hash_source_trust_row(hasher: &mut Sha256, row: Option<SourceTrustRow>) {
     // resolve unchanged under another.
     let actor_ref = row.actor_ref.as_ref().map(EntityId::to_hex);
     hash_opt_str(hasher, actor_ref.as_deref());
+    if let Some(checker) = row.auto_checker {
+        hash_str(hasher, "source_auto_checker");
+        hash_str(hasher, checker.as_str());
+    }
 }
 
 fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
@@ -796,6 +832,9 @@ fn hash_opt_sensitivity(hasher: &mut Sha256, sensitivity: Option<PolicySensitivi
         match sensitivity {
             PolicySensitivity::Normal => "normal",
             PolicySensitivity::Sensitive => "sensitive",
+            PolicySensitivity::Public => "public",
+            PolicySensitivity::Private => "private",
+            PolicySensitivity::Restricted => "restricted",
         },
     );
 }

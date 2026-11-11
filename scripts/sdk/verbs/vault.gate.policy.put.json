@@ -1,0 +1,17 @@
+{
+  "name": "vault.gate.policy.put",
+  "description": "The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions.",
+  "input": "crate::policy_manifest_doors::PolicyManifestPut",
+  "output": "crate::policy_manifest_doors::PolicyManifestReceipt",
+  "call": "crate::policy_manifest_doors::put_policy_manifest_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.policy.put\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "policy_putter"
+}

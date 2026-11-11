@@ -1,6 +1,6 @@
 //! Rebuildable claim projections maintained at the shared put chokepoint.
 use crate::scan_check::ScanCount;
-use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
+use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable, SideTableDbs};
 use crate::store::EngineScan;
 use crate::store::Store;
 use crate::write_envelope::claim_body::ClaimBody;
@@ -250,6 +250,21 @@ pub(crate) fn claim_ids_for_predicate_in_txn(
     })?;
     Ok(ids)
 }
+
+/// Whether claim `id` sits in `predicate`'s posting list in this view: one
+/// point read, no body decode. An exclusion hint for recall, never a grant
+/// (FIX 21959).
+pub(crate) fn claim_has_predicate_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    predicate: &str,
+) -> Result<bool> {
+    Ok(PREDICATE_INDEX
+        .get(dbs, txn, &(predicate_hash(predicate), *id))?
+        .is_some_and(|stored| stored == predicate))
+}
+
 /// A predicate index row: `(predicate hash, claim id)` and its value.
 type PredicateRow = Result<(([u8; 32], EntityId), String)>;
 

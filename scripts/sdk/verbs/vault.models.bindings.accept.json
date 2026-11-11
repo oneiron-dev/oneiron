@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.bindings.accept",
+  "description": "Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks.",
+  "input": "crate::llm::catalog_doors::ModelBindingAccept",
+  "output": "crate::llm::catalog_doors::ModelBindingProposal",
+  "call": "memory.vault().accept_model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.accept\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

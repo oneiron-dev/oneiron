@@ -92,6 +92,7 @@ impl Vault {
                 preferred_id,
                 TimeRange { start: at, end: at },
                 at,
+                &mut crate::skill_hub::SkillImportRows::default(),
             )?;
             let holder = self.read_skill_record_in_txn(txn, &id)?;
             if holder.desc != package.record.desc

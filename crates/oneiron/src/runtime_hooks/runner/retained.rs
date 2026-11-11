@@ -84,12 +84,18 @@ impl RetainedRuns {
         }
     }
 
-    /// Prefer the other existing source after each completed evaluation,
-    /// so a continuous claim feed cannot starve settlement hooks.
-    pub(super) fn sources(&self, binding: EntityId) -> [super::FactSource; 2] {
+    /// Start from the source after the one each completed evaluation came
+    /// from, in turn, so a continuous claim feed cannot starve settlement,
+    /// tick or inbound hooks.
+    pub(super) fn sources(
+        &self,
+        binding: EntityId,
+    ) -> [super::FactSource; super::FactSource::ALL.len()] {
         let mut sources = super::FactSource::ALL;
-        if self.next_source.get(&binding) == Some(&sources[1]) {
-            sources.reverse();
+        if let Some(next) = self.next_source.get(&binding)
+            && let Some(at) = sources.iter().position(|source| source == next)
+        {
+            sources.rotate_left(at);
         }
         sources
     }
@@ -157,11 +163,12 @@ impl RetainedRuns {
             match self.finish(&mut pending) {
                 Ok(()) => {
                     let source = pending.run.entry.position.source();
-                    let next = super::FactSource::ALL
-                        .into_iter()
-                        .find(|next| *next != source)
-                        .expect("two fact sources");
-                    self.next_source.insert(binding, next);
+                    let all = super::FactSource::ALL;
+                    let at = all
+                        .iter()
+                        .position(|next| *next == source)
+                        .expect("a fact source of the runner");
+                    self.next_source.insert(binding, all[(at + 1) % all.len()]);
                     report.append(pending.report);
                 }
                 Err(error) => {

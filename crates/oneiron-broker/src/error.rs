@@ -54,14 +54,16 @@ pub enum Refusal {
     WireModel,
     /// The key is empty, too short or too long, or holds a byte outside the
     /// strip rule's alphabet (one a URL holds, less the percent sign), or is
-    /// part of the marker the rule writes.
+    /// part of the marker the rule writes. An LFS action is refused with it
+    /// too when it holds the credential placeholder off the repository's
+    /// origin, or is handed a credential it names no placeholder for.
     #[error("secret refused")]
     Secret,
     /// The provider could not be reached; no request byte was written.
     #[error("provider unreachable")]
     Connect,
-    /// A git exchange's body could not be held for its send: the disk has
-    /// no room for it, or its spool failed.
+    /// A git or an LFS exchange's body could not be held for its send: the
+    /// disk has no room for it, or its spool failed.
     #[error("request body could not be spooled")]
     Spool,
 }
@@ -77,7 +79,8 @@ pub enum Failure {
     /// The call ran out of time.
     #[error("call timed out")]
     Timeout,
-    /// The reply is over the broker's buffer bound.
+    /// The reply is over the broker's buffer bound, or an LFS batch reply
+    /// over the reply limit the daemon named.
     #[error("reply is too large")]
     ReplyTooLarge,
     /// The reply is content-encoded, so the key could not be stripped from it.
@@ -90,7 +93,9 @@ pub enum Failure {
     /// A streamed reply held a form of the key. A model stream redacts each
     /// form at its bytes and goes on (FIX 6103), so it never sends this; a
     /// git reply, whose pkt-lines and pack checksums a rewrite would break,
-    /// is cut with it instead (OSH-3).
+    /// is cut with it instead (OSH-3), and so is an LFS reply that carried
+    /// the credential (a batch's once its exact echoes in action headers
+    /// are rewritten, and an action's the credential was installed on).
     #[error("streamed reply holds the key")]
     ReplyHoldsKey,
 }

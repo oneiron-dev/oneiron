@@ -62,7 +62,7 @@ pub struct RawDatabases {
 /// restore swaps out is sealed under the writer that marks it: from then on
 /// every write transaction refuses, so neither its rows nor the key custody
 /// it shares with its replacement change through any handle on it.
-pub(crate) struct StoreEnv {
+pub struct StoreEnv {
     env: Env,
     sealed: std::sync::atomic::AtomicBool,
 }
@@ -189,6 +189,14 @@ pub struct StoreCore {
     /// archived when it opened, and the lock that keeps a retirement from
     /// racing a live snapshot's decrypt.
     pub(in crate::store) key_custody: crate::store::key_custody::KeyCustody,
+    /// Body instances minted outside every writer, which a put inside one
+    /// draws to file a long ASSET body (FIX 22091).
+    #[cfg(unix)]
+    pub(crate) body_instance_pool: crate::store::BodyInstancePool,
+    /// The result-body pins and collector notes this store's vault handles
+    /// share, so a writer that files a body without a pin forgets the
+    /// collector's notes on it (FIX 22101).
+    pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
     /// A device-only flag commits under the write side; a raw send's verdict
     /// reads the flags and accepts under the read side. A flag committed
     /// before a verdict reads is seen by it; one committed later finds the
@@ -196,7 +204,7 @@ pub struct StoreCore {
     pub(crate) device_only_flag_lock: std::sync::RwLock<()>,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
-    pub(crate) env: StoreEnv,
+    pub env: StoreEnv,
     /// Raw handles; runtime access goes through the [`Store`] accessors.
     /// `pub(in crate::store)` so no code outside `crate::store` can bypass the
     /// [`OverlayDb`] seam — open-time machinery and accessor construction both
@@ -345,6 +353,9 @@ pub struct StoreCore {
     /// Legal-hold refusals waiting for their hold log: the refusing
     /// transaction rolls back (OF-470). Never persisted.
     pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
+    /// Wakes a HOST order's prospective capture worker after a new message
+    /// is sealed to it (FIX 13866). Never persisted.
+    pub(crate) host_legal_prospective: super::legal_hold::ProspectiveWake,
     /// Content-free, per-vault: bumped after each committed legal-hold
     /// release and each hold maintenance pass, so a deferred delete that a
     /// standing hold kept asks again (FIX 1488). Never persisted.
@@ -358,6 +369,8 @@ pub struct StoreCore {
     /// Content-free, per-vault: bumped after each commit that may have
     /// changed an admitted policy manifest (FIX 11402). Never persisted.
     pub(crate) policy_manifest_updates: tokio::sync::watch::Sender<u64>,
+    /// Content-free, per-vault terminal hook-ask changes, published after commit.
+    pub(crate) verb_hook_ask_updates: tokio::sync::watch::Sender<u64>,
     /// The one decision-answer signal every ask door and waiter on this open
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.

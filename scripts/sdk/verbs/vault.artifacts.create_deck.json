@@ -1,0 +1,16 @@
+{
+  "name": "vault.artifacts.create_deck",
+  "description": "Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit.",
+  "input": "crate::blob_artifact::deck_creation::DeckEmissionRequest",
+  "output": "crate::blob_artifact::deck_creation::DeckEmissionOutcome",
+  "call": "memory.artifacts_create_deck(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "refs": [
+    "/outline_ref"
+  ]
+}

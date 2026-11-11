@@ -1,0 +1,23 @@
+{
+  "name": "vault.claims.history",
+  "description": "The supersession timeline of one claim, oldest first, with the read's narrowing receipt.",
+  "uniffi": {
+    "args": {
+      "claim_ref": "String"
+    },
+    "output": "ClaimViews"
+  },
+  "input": "ClaimHistoryRequest",
+  "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
+  "call": "memory.with_read_filter(input.filter.as_ref()).claim_history(&input.claim_ref)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered"
+}

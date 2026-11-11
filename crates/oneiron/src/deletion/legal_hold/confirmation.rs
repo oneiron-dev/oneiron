@@ -13,7 +13,8 @@
 //! In a shared vault with two or more Owners an explicit erase waits out the
 //! vault's `erase` veto window first (ARCH-0043, FIX 9781): each record
 //! starts its own `erase` act, and its erase runs from the legal-hold pass
-//! once that act completes and nothing holds the record.
+//! once that act completes and no customer hold names the record. A host
+//! order never delays it: it is preserved as its clone.
 //!
 //! The owner withdraws an erase that still waits through its own door, under
 //! the confirm's owner authority (FIX 10401).
@@ -25,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     ErasePendingReason, EraseWithdrawal, LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold,
     LegalHoldEventKind, LegalHoldKind, LegalHoldReason, LegalHoldTarget, LiftAndEraseOutcome,
-    LiftAndEraseStatus, erase_status, kept_status,
+    LiftAndEraseStatus, erase_status,
 };
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -174,8 +175,6 @@ fn shown_state_in_txn(
 /// What the confirm's writer settled.
 struct Settled {
     actor: EntityId,
-    /// Each record a host order keeps, with the orders the owner may see.
-    kept: BTreeMap<EntityId, Vec<LegalHold>>,
     /// The customer holds lifted or narrowed.
     holds: Vec<EntityId>,
     /// The shared vault whose veto window the erase waits out (FIX 9781).
@@ -218,16 +217,14 @@ impl Vault {
     /// linked, logged, lifted or erased, and the outcome's `changed` is what
     /// the confirm shows now.
     ///
-    /// A host order is never lifted here: its records keep their bytes,
-    /// read as retained for law with the order's bound, the erase waits,
-    /// and it runs once Oneiron lifts the order. An erase that ran reads
-    /// erased once its receipt is complete, and [`super::ERASE_COMPLETION_PENDING`]
-    /// with its receipt while what it waits on is owed, wherever the bytes
-    /// live; a record a secret order keeps reads that, and nothing more (C2,
-    /// C4, WILL-PLAN L01 row 04). In a shared vault with two or more Owners
-    /// nothing is erased at once: each record starts its own `erase` act and
-    /// reads completion pending on the veto window, its erase run once the
-    /// act completes and nothing holds it (FIX 9781).
+    /// A host order is not lifted here and does not delay the vault erase:
+    /// it is preserved as its clone outside the vault. An erase that ran
+    /// reads erased once its receipt is complete, and
+    /// [`super::ERASE_COMPLETION_PENDING`] with its receipt while what it
+    /// waits on is owed (C4, WILL-PLAN L01 row 04). In a shared vault with two
+    /// or more Owners nothing is erased at once: each record starts its own
+    /// `erase` act and reads completion pending on the veto window, its erase
+    /// run once the act completes and nothing holds it (FIX 9781).
     ///
     /// # Errors
     /// The owner proof no longer holds, or neither a record nor the
@@ -274,17 +271,12 @@ impl Vault {
         self.finish_redaction_erases_logged();
         let memory = self.memory(settled.actor, EdgeActorClass::Human);
         let reason = DeleteReason::OwnerErase;
-        let now = self.store.clock.now_recorded_at();
         let mut statuses = Vec::with_capacity(records.len());
         let mut failed = false;
         for record in records {
-            let kept = settled.kept.get(&record);
-            let status = match (settled.veto_vault, kept) {
-                (Some(vault_id), _) => {
-                    self.wait_out_veto(owner, vault_id, record, &settled.waiting, kept, now)
-                }
-                (None, Some(seen)) => kept_status(seen, now),
-                (None, None) => match memory.owner_confirmed_erase(owner, record, reason) {
+            let status = match settled.veto_vault {
+                Some(vault_id) => self.wait_out_veto(owner, vault_id, record, &settled.waiting),
+                None => match memory.owner_confirmed_erase(owner, record, reason) {
                     Ok(receipt) => erase_status(&memory, owner, receipt.receipt_ref),
                     Err(error) => {
                         failed = true;
@@ -320,30 +312,10 @@ impl Vault {
         let now = self.store.clock.now_recorded_at();
         // Each customer hold on these targets, with what leaves it.
         let mut lifting: BTreeMap<EntityId, (LegalHold, Vec<LegalHoldTarget>)> = BTreeMap::new();
-        // Each kept record, with the host orders on it the owner may see.
-        let mut kept: BTreeMap<EntityId, Vec<LegalHold>> = BTreeMap::new();
         for record in records {
             let target = LegalHoldTarget::Record(*record);
             for hold in hold_store::holds_on_in_txn(&self.store, txn, &target)? {
                 hold_store::link_erase_in_txn(&self.store, txn, record, &hold)?;
-                if hold.kind == LegalHoldKind::HostOrder {
-                    hold_store::log_in_txn(
-                        &self.store,
-                        txn,
-                        &hold,
-                        LegalHoldEventKind::LiftAndEraseConfirmed,
-                        LegalHoldReason::CompletionPending,
-                        vec![target],
-                        &who,
-                        now,
-                        None,
-                    )?;
-                    let seen = kept.entry(*record).or_default();
-                    if hold.owner_may_see(now) {
-                        seen.push(hold);
-                    }
-                    continue;
-                }
                 let leaving: Vec<LegalHoldTarget> = hold
                     .targets
                     .iter()
@@ -356,8 +328,7 @@ impl Vault {
                 left.extend(leaving);
             }
         }
-        // The claim-free partition leaves its customer holds; a host order on
-        // it stays (FIX 9782).
+        // Release the claim-free partition's customer holds (FIX 9782).
         if claim_free_partition {
             let target = LegalHoldTarget::GatePartition(None);
             for hold in hold_store::holds_on_in_txn(&self.store, txn, &target)? {
@@ -408,25 +379,25 @@ impl Vault {
                 None,
             )?;
         }
-        // An erase a host order keeps waits for it; in a shared vault with two
-        // or more Owners every erase waits out the veto window (FIX 9781).
+        // In a shared vault with two or more Owners every erase waits out the
+        // veto window (FIX 9781).
         let veto_vault = self.owner_erase_veto_vault_in_txn(txn)?;
         let mut waiting = BTreeMap::new();
-        for record in records {
-            if veto_vault.is_none() && !kept.contains_key(record) {
-                continue;
+        if veto_vault.is_some() {
+            for record in records {
+                let request = PendingErase {
+                    confirmed_by: Some(actor.to_hex()),
+                    confirmed_at: now,
+                    kind: PendingEraseKind::LiftAndErase,
+                    reason: DeleteReason::OwnerErase,
+                    generation: self.store.clock.entity_id()?,
+                    veto_act: None,
+                    withdrawn: None,
+                };
+                let stored =
+                    hold_store::put_pending_erase_in_txn(&self.store, txn, record, request)?;
+                waiting.insert(*record, stored);
             }
-            let request = PendingErase {
-                confirmed_by: Some(actor.to_hex()),
-                confirmed_at: now,
-                kind: PendingEraseKind::LiftAndErase,
-                reason: DeleteReason::OwnerErase,
-                generation: self.store.clock.entity_id()?,
-                veto_act: None,
-                withdrawn: None,
-            };
-            let stored = hold_store::put_pending_erase_in_txn(&self.store, txn, record, request)?;
-            waiting.insert(*record, stored);
         }
         // A birth these holds kept from an erased actor's scrub goes with
         // them (FIX 6280), and so does each Gate decision scrub they kept
@@ -434,7 +405,6 @@ impl Vault {
         let cancelled = self.settle_held_scrubs_in_txn(txn)?;
         Ok(Settled {
             actor,
-            kept,
             holds: lifting.into_keys().collect(),
             veto_vault,
             waiting,
@@ -551,17 +521,15 @@ impl Vault {
 
     /// A record whose erase waits out shared vault `vault_id`'s veto window
     /// (FIX 9781): its own `erase` act, started under `owner`'s proof unless
-    /// its waiting erase already names one. It reads as its host order keeps
-    /// it, else completion pending on the window. A failed start drops the
-    /// waiting erase and is the record's failure.
+    /// its waiting erase already names one. It reads completion pending on
+    /// the window. A failed start drops the waiting erase and is the record's
+    /// failure.
     fn wait_out_veto(
         &self,
         owner: &AuthenticatedOwner,
         vault_id: u64,
         record: EntityId,
         waiting: &BTreeMap<EntityId, PendingErase>,
-        kept: Option<&Vec<LegalHold>>,
-        now: u64,
     ) -> LiftAndEraseStatus {
         let Some(pending) = waiting.get(&record) else {
             return LiftAndEraseStatus::Failed {
@@ -589,12 +557,9 @@ impl Vault {
                 message: error.to_string(),
             };
         }
-        match kept {
-            Some(seen) => kept_status(seen, now),
-            None => LiftAndEraseStatus::CompletionPending {
-                receipt_ref: None,
-                reason: Some(ErasePendingReason::VetoWindow),
-            },
+        LiftAndEraseStatus::CompletionPending {
+            receipt_ref: None,
+            reason: Some(ErasePendingReason::VetoWindow),
         }
     }
 

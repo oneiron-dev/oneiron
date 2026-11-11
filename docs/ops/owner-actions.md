@@ -77,14 +77,49 @@ An explicit owner backup (`oneiron backup` or `POST /v1/owner/backups`) keeps th
 canonical selection, including private worlds. Scheduled, managed-hourly and pre-idle backups
 use a separate automatic selection. When an entity's known world dependencies are all resolved
 to sealed copies **Off**, that selection leaves out its core row, text/phonetic index sources,
-and the document rows the native checkpoint getter assigns wholly to it. It also leaves out
-known Off worlds' window snapshots and durable window updates. Shared document proposals keep
-their other owners' fragments. Authority-log rows and non-payload links stay intact.
+and the document rows the native checkpoint getter assigns wholly to it. The same native ownership
+check covers NOTE heads, head-document indexes and overrides, typed-body heads and head snapshots,
+office source pointers, blob artifact current heads, media vectors with their device provenance,
+and committed codebase snapshot rows, and entity revision state, documents, retained frontiers and
+reverse identity rows, as well as row birth envelopes and born-from indexes. Staged index inputs,
+staged phonetic codes and vector-refill markers keep
+their existing treatment. Forks, proposal snapshots, receipts, bundles, pins, exports,
+blob version histories, code revisions and media refusals keep their existing treatment, as do codebase
+indexes and custody reports. Attachment occurrence
+rows whose native body getter binds every part to that record are also left out, including
+their body descriptors and digest-holder rows, before body files are counted. A shared body
+file still travels when another included row names it; its digest is never a world identity.
+The selection also leaves out known Off worlds' window snapshots and durable window updates.
+It leaves out valid queued updates for those windows only when their exact sequence has no
+delete-bearing sidecar. Any matching sidecar, including an undecodable one, keeps the update
+and marker unchanged so pending deletes can still replay after restore. Pending document
+edit journals (`qd:e:`) and semantic NOTE requests (`qn:e:`) also stay intact: they are durable
+unacknowledged work, not disposable cache rows. Their world projection must preserve replay,
+not just drop a queued payload. Shared document proposals keep their other owners' fragments.
+Authority-log rows and non-payload links stay intact.
+
+An unpromoted residence read cache also leaves the automatic image when its blob exactly
+matches a core row already proved all-Off and its native opened window, document frame and
+touch row are valid. A cache can also qualify without a core row when the home's original
+document export recorded its complete source-world set, that nonempty set is now all sealed
+Off, and the recorded hashes match both cached payloads. Projected copies and unknown source
+worlds provide no such evidence. The home records the complete set only when its live grant
+and selector cover every world. A reply also requires the original credential and destination
+to cover the complete set; it never trims a partial set into a completeness claim. This
+provenance is not read authority. Missing, unauthorized, malformed or mismatched evidence
+never refuses the working document read.
+
+The two payload rows, source provenance, opened marker and touch row leave together, so a
+later open can refetch rather than fail on a marker with no bytes. Unknown or mixed placement,
+stale or malformed cache bytes, and promoted windows stay unchanged. Fetch writes provenance
+with the cache in one transaction; prune, erase and promotion remove it with those bytes.
+The thin index, live cache, pending journals and promotion markers are not pruned by a backup.
 
 This is partial world selection, not a guarantee that an Off world's every byte is absent.
-Unknown or mixed world placement keeps its existing behavior. Digest-keyed body families,
-queued or mixed carriers and exterior custody publication still need their own world
-projection. The read setting **One machine** alone does not exclude a sealed backup.
+Unknown or mixed world placement keeps its existing behavior. Other body or response references,
+delete-bearing or unclassified queued updates, other mixed carriers and exterior custody
+publication still need their own world projection. The read setting **One machine** alone
+does not exclude a sealed backup.
 
 Backup watermark markers use schema 2 and record `whole_vault` or `automatic` selection.
 Content and custody positions must match exactly. A whole-vault artifact can satisfy an
@@ -340,6 +375,8 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
 | `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
+| `model_pack_retirement` | minute | a model pack's retirement: its notices 60, 30 and 7 days before (none while your model manifest outranks the pack), and on the day the move to its successor, with the change notice and its revert. `serve` sends them for your vault and for each shared vault it keeps open, and counts the models your other machines offer over the mesh, also when `[models]` is empty. `oneiron maintain` sends them too, for the same models: those your `[models]` roles name, those on the workers `serve` launches, and the mesh models `serve` last found with its mesh on (a `serve` with the mesh off marks them stale at its start) |
+| `oauth_expiry` | hour | an app's OAuth sign-in rows past their lifetime: sign-in requests (their inbox ask offers no tap any more), codes, access and refresh tokens, token families past their last refresh token, and stale copies of an app's client metadata document that no sign-in uses. A sign-in you allowed that lapsed before the app held a token also loses the agent grant your allow made. So does one that failed before the app held a token, when the failure left the grant in place. The consent registry lists the grant as revoked |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its
@@ -361,8 +398,9 @@ counted as refused.
 
 A managed vault that is stopped between uses tells its supervisor when to wake it: a
 `housekeeping` entry in its wake ledger carries the next secret-lease expiry, voice-print
-retention deadline, critical-confirm window or waiting erasure. Cache and retention hygiene never
-wake a vault.
+retention deadline, critical-confirm window, waiting erasure, or model pack notice mark or
+retirement day that still has work (a notice not yet sent, a move not yet made). Cache and
+retention hygiene never wake a vault.
 Signing reminders, consult digests, moderation-hold pruning, the TASK attribution pump, attempt
 lease reclaim and self-heal detector runs need authority only the host holds; the report lists
 them as `host_only` with the reason.
@@ -428,9 +466,11 @@ members disagree with it. It is plaintext and re-imports into a fresh vault
 Credentials inside records are nulled by the serializer. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
 and credential-bearing bodies are withheld and named in `result_body.jsonl`.
-`epoch_floor.jsonl` has a row `{session, epoch, turn_end}` for each session whose epoch summary a
-purge removed: where that summary left the count, and nothing it said. An import only raises a
-session's floor to its row, so a re-imported vault never numbers an epoch under a removed one.
+`epoch_floor.jsonl` has a row `{session, conversation, epoch, turn_end}` for each epoch lineage
+whose summary a purge removed: a conversation's lineage inside its session, or the session's own
+when `conversation` is absent. The row says where that summary left the count, and nothing it
+said. An import only raises a lineage's floor to its row, so a re-imported vault never numbers an
+epoch under a removed one.
 
 Your own archive also carries your keys, by default: each active secret-custody record's value,
 in `records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. Keep
@@ -466,6 +506,23 @@ write a receipt (time, format, bytes, digest, who, diary reads), and `doctor` sh
 recorded. The receipt is best effort: if it cannot be written the export still succeeds, a warning
 is logged, and `last_export` stays as it was. An export is your exit path, not a backup: restore
 from a backup file, the vault's encrypted snapshot.
+
+## Export secret supplement import marks
+
+`GET /v1/core/export-secret-supplements/{request}` and `oneiron secrets show-supplement`
+return `marked_imported`. It is true only when the authority fold admits the request's
+signed import mark. It does not report whether this install restored the custody secret.
+The holder's work `status` and the import's `restored`, `unchanged` or `skipped` outcome
+remain separate facts.
+
+A successful import keeps its secret even if this install has no live machine profile or
+loaded signing key to carry the mark. When a mark cannot be carried, a warning is logged;
+if no mark was already admitted, `marked_imported` stays false and the request's relayed
+copies remain until their window retires. Once the real profile and key are available,
+repeat the existing import with the same supplement and a current owner credential.
+An `unchanged` import retries the mark too; a `skipped` import does not.
+This is an explicit retry, not an automatic background job. An admitted mark ends relay
+retention; copies the owner kept remain readable.
 
 ## Secret scan switch
 
@@ -515,7 +572,7 @@ like any other reveal; approve once opens the agent's next read of that file.
 
 When a write's mask lifts a key out of a record, or marks a file, you get one inbox notice for
 that record, whatever number of keys it held. The notice lists each key's handle, its kind and
-where it sat. Answer each key one of four ways:
+where it sat. Answer each key using an action in its `actions` list:
 
 ```sh
 oneiron api raw GET '/v1/owner/secrets/found?pending=true'    # each record, its keys and what may still be done
@@ -537,8 +594,34 @@ oneiron api raw POST /v1/owner/secrets/found/not-a-secret --data '{"handle": "sc
   value an earlier revoke erased can't be marked not a secret; if the value appears again, its new
   finding can.
 
-Each answer writes its receipt. Not a secret works only for a key found in a record's body or in a
-file. A key in a claim or a text field keeps its handle.
+Each answer writes its receipt. The listing's `actions` says what is available for that key.
+The native text rulings support a record's body, a text field, a claim or a file; a signed MACHINE
+claim whose history owns its body keeps its handle. A repository finding supports **Not a secret**
+only and leaves its bytes, history and marks unchanged.
+
+To keep a real secret as text by choice, rather than declare a false hit, use **Kept as text**
+(`kept_as_text` in the action list):
+
+```sh
+oneiron api raw POST /v1/owner/secrets/found/keep-as-text --data '{"handle": "sc12"}'
+```
+
+This uses the same native restore, custody revoke and kept-value screen as **Not a secret**, but
+records the owner's distinct choice and receipt reason. It does not declare that the value is
+not a secret. Use it only where the key's `actions` lists `kept_as_text`.
+
+To re-enter a kept value after marking a key **Not a secret** or **Kept as text**, use the
+`re_enter` action on its card. Include settled keys in the listing with `pending=false`:
+
+```sh
+oneiron api raw GET '/v1/owner/secrets/found?pending=false'
+oneiron api raw POST /v1/owner/secrets/found/re-enter \
+  --data '{"handle": "sc12", "value_base64": "..."}'
+```
+
+This seals the supplied value in its existing custody record and returns the standing ruling
+and receipt unchanged. It does not rotate the key or undo the owner's choice. Use the rotate
+door to re-enter or reissue a key that is still active.
 
 ## Bind a secret so an agent can use it
 
@@ -866,6 +949,22 @@ every one as rejected. Either way one receipt represents the run. Routes: `GET
 
 The SDK verbs `vault.fanout.resume` (approve a held fan-out once, approve and remember it under a cap, or deny it) and `vault.fanout.ack` (acknowledge the width check of one that already went out) take the plan digest you saw from `vault.fanout.launch` and run under the owner's credential, over the facade and MCP.
 
+### Coach case escalations
+
+When the Coach routes a stored failed-attempt case to a person, its `coach.heal`
+proposal can carry `repair.route` with `route: "escalate_with_diagnosis"`, the
+original failing agent's `agent_ref`, and the case's evidence as `diagnosis_ref`.
+This uses the same evidence reference as a Coach skill-repair diagnosis. The
+proposal still carries the case, failed attempt, evidence, checkpoint and Q&A
+thread references; it does not claim a new diagnosis artifact or a Q&A exchange.
+
+The intent is attached only while the durable case and its failed attempt still
+match in the proposal's write transaction. Otherwise the ordinary route-only
+proposal remains, with `repair: null`. This changes no consent or repair execution:
+review and approve or decline it through the ordinary run review. It does not
+apply a fix, resume the failed attempt or change a grant. Person proposals for bare
+blocked reports remain route-only.
+
 ## Settle an open contradiction
 
 When two claims disagree and nothing settled them, the vault keeps a `conflict.open` marker
@@ -946,7 +1045,11 @@ fields of its reply:
   `already_queued: true`.
 
 The resident Dreamer picks the step up at once: its deadline watch reads the queue again after
-every `host.wake`. Poll the root until `outcome.state` is not `running`:
+every `host.wake`. Poll the root until `outcome.state` is not `running`.
+`awaiting_host` still has unfinished work: it is not success, and `settled` stays false.
+Those jobs remain queued for their normal Coach host consumer; inspect the root again after
+that consumer serves them. This status does not say the host is absent or unavailable.
+To inspect the root:
 
 ```
 oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
@@ -955,7 +1058,11 @@ oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
 (Over MCP, the `vault.sieve.settlements.get` tool with `{"spec": {"wake": "<attempt>"}}`.)
 `jobs` lists every job under the root; `outcome` says what they came to:
 
-- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`).
+- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`),
+  other than the all-host-queued case below. A leased or landing Coach job is still `running`.
+- `awaiting_host`: every job in `outcome.waiting_on` is queued or scheduled on `coach.host`
+  or `coach.heal`. Every job, its lineage and its queue eligibility remain unchanged; the
+  status does not mark it completed or claim a missing consumer has been installed.
 - `succeeded`: every job completed. `outcome.result_refs` and `outcome.conclusions` are what
   they produced.
 - `partial`: nothing is running, but a job is parked or paused (`parked`, with its cause), was
@@ -971,6 +1078,29 @@ leaves what the interest queue still holds as one remainder job, due a policy in
 The step reports that remainder as `deferred` and does not wait for it. A lane job that another
 wake already holds queued (one Coach host job per kind, one curator slot, one remainder) stays
 under that wake's root, not this one.
+
+## Let the Dreamer apply its nightly identity links
+
+Nightly continuations propose `SameAs` links. They apply those links only under the owner's
+standing action grant for this vault's Dreamer; without one, each link remains proposed.
+To mint that existing grant through the SDK, MCP or HTTP facade:
+
+```sh
+oneiron api call vault.consent.create_nightly_link_grant --data '{}'
+```
+
+Over HTTP, call `POST /v1/core/facade/vault.consent.create_nightly_link_grant` with `{}` and
+an owner credential. Over MCP, pass `{"spec": {}}`. The vault resolves its own Dreamer System
+principal and mints exactly `dreamer.nightly_link.apply` on `dreamer:nightly-links`, without a
+project target or budget. No actor id or class comes from the request, and no grant is minted
+by default. The generic standing-action request's project/audience envelope does not express
+this bound.
+
+The answer is the normal consent receipt, including `grant_ref`. It appears in
+`vault.consent.registry`; withdraw it with `vault.consent.revoke`, passing
+`{"grant": "<grant_ref>"}`. The landing transaction still checks that the grant is active and
+its issuer is a live vault owner. Minting it changes no reader scope, trust, model policy or
+other Dreamer setting, and does not start a night step.
 
 ## Revert anything the Dreamer changed
 
@@ -1506,11 +1636,71 @@ participates, the vault keeps a standing grant on that channel for the sender, s
 you; turning participation off revokes it. A record leaves the vault only once the publisher took
 it: a failed send keeps it for the next one.
 
+`GET /v1/owner/status` includes `failure_signals`: the configured `destination_host`
+(host only, never its URL path or credentials), `exports_enabled`, stored `waiting` quantities
+(`count_rows`, `signal_count`, `code_fix_records`), and an optional `last_batch_receipt`
+(`occurred_at`, `outcome`). Waiting quantities include a carried batch's shares once, not twice.
+They count stored work, even with exports off, not only work currently eligible to leave.
+An ambiguous send settles its counts but leaves its code-fix records queued for deduplicated retry.
+The receipt is the newest durable material result in native receipt order (timestamp descending,
+then kind and id ascending); equal timestamps do not establish sub-second order. Repeated material
+results retain their first observation. It is historical evidence, not current connectivity, and
+idle passes or failures before receipt persistence do not replace it. Reading status sends,
+settles, purges and approves nothing, and reveals no batch body or receipt free-text fields.
+
 The counts come from the Coach's detectors. Each diagnostic they raise counts once, ever: a missed
 recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
 `other` with its detector named. Your own refusal of a single consent ask is never counted. A
 diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
 Counts wait in the vault, across restarts, until the publisher takes them.
+
+## Coach environment repair drafts
+
+When a failure case is routed to `environment`, the served Coach author can draft a
+reviewable change to one of the agent's actual access grants. It uses the configured
+Coach model and the pass's existing draft budget. The input contains the recorded
+case, agent, checkpoint, diagnosis, failure class and cause context, plus every native
+grant target the engine selected. Each target includes its `grant_ref`, term digest
+and canonical grant terms as data. Revoked and expired terms remain reviewable; they
+do not authorize access or renewal.
+
+The shipped instruction is `prompts/coach-environment-repair.md`. Override it through
+`[models.dreamer.wording]` with `coach_environment_repair_prompt` or
+`coach_environment_repair_prompt_file`. Inline/file resolution and relative paths
+follow the other Coach wording settings.
+
+The answer is `{"grant_ref":"<supplied target>","change":{"<term>":"<proposed value>"},"rationale":"<why>"}`.
+A null `grant_ref` declines; use null `change` with that decline. The engine still
+checks that a drafted change is a non-empty object, has a non-blank rationale and
+names one supplied target. In the same transaction as the heal, it rechecks the case,
+agent and current grant terms before filing a `coach.environment_repair` Proposed
+artifact. Declines, malformed answers, unavailable models, author errors, unusable
+changes, unbound targets and stale cases or terms retain the ordinary route-only heal.
+Custom `CoachHealAuthor` implementations keep their default `None` unless they
+implement this method.
+
+No draft mutates or revives a grant, applies a repair, changes a tool or connector,
+resumes a run, grants authority or proves a replay passed. A proposal about terminal
+access still requires a new grant for renewal. The Issues path is unchanged.
+
+## Coach prompt repair drafts
+
+When a case is routed to `prompt_inject`, the served Coach author can now draft prompt text
+using its configured Coach model and the pass's existing draft budget. It receives the recorded
+case, agent, pre-failure checkpoint, diagnosis and cause context as data. The existing engine
+writer binds those references again and files a `coach.prompt_repair` Proposed artifact with
+the heal. This draft does not inject text, resume a run, grant authority or prove a replay passed.
+
+The shipped instruction lives in `prompts/coach-prompt-repair.md`. Override it through
+`[models.dreamer.wording]` with `coach_prompt_repair_prompt` or
+`coach_prompt_repair_prompt_file`, using the same inline/file resolution as the other Coach
+wording. A relative file path resolves from the config directory.
+
+The answer is `{"prompt":"<exact text>","rationale":"<why>"}`. A null `prompt` declines.
+The engine still handles an empty draft, unavailable model, author error, stale case or missing
+binding as a route-only heal. Custom `CoachHealAuthor` implementations keep the default `None`
+unless they implement this method. Skill edits, producer fixes and environment repairs keep
+their existing behavior.
 
 ## Model-graded self-heal detectors
 
@@ -2437,16 +2627,16 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
   before you `POST` it with `{"records": ["<hex>", ...]}`. Each record answers `erased` with its
   receipt once the receipt is complete, `completion_pending` with the receipt and
   `"reason": "historical_sweep"` while its history sweep is queued (the same rule self-hosted and
-  hosted), `retained_for_law` with the order's `bound` (the law, jurisdiction, issuing authority
-  and end) and what self-hosting changes, or `failed` (the hold is lifted; a plain delete retries).
+  hosted), or `failed` (the hold is lifted; a plain delete retries).
 
 The SDK verbs `vault.legal_holds.place`, `.widen`, `.list`, `.log` and `.lift_and_erase` do the
 same under the owner's credential. Where Oneiron hosts the bytes, a legal order Oneiron must obey
-can also hold records. You cannot lift it, and an erase you confirm waits until it ends. You see
-the order whole, with its reference and terms, unless the order itself requires silence; then you
-see nothing of it until that silence ends, and an erase it keeps reads only `completion_pending`.
+can also cover records. It keeps nothing in your vault: what it covers is copied, sealed, into the
+host's separate legal-hold store, and your deletes and erases run as usual. You cannot lift it. You
+see the order whole, with its reference and terms, unless the order itself requires silence; then
+you see nothing of it until that silence ends.
 
-An erase that still waits, on such an order or on a shared vault's veto window, is yours to
+An erase that still waits on a shared vault's veto window is yours to
 withdraw: the SDK verb `vault.legal_holds.withdraw_erase` with `{"records": ["<hex>", ...]}`
 answers each record `withdrawn`, `not_waiting`, `confirmed_by_another_owner` (only the Owner who
 confirmed it withdraws it; yours is the objection to its `erase` act), or `under_way` when its
@@ -2717,11 +2907,51 @@ oneiron api raw POST /v1/owner/maintain
 oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 ```
 
+## The operator's admin routes
+
+On a self-hosted vault, the host operator runs the admin commands without an owner slip. The
+operator's own credential comes from `oneiron token operator` on the stopped vault; it is never
+an owner or a person, and it reaches `/v1/operator/*` only. The host's root also passes. A
+managed vault serves none of these routes to its operator.
+
+| Route | What it does |
+|---|---|
+| `GET /v1/operator/status` | The same answer as `GET /v1/owner/status`. |
+| `GET /v1/operator/backups` | This vault's backups, oldest first. |
+| `POST /v1/operator/backups` | Takes one backup now, under the server's backup lock and retention. |
+| `POST /v1/operator/backups/rehearse` | `{}` or `{"file": "<name>"}`: a restore rehearsal in a scratch copy; the vault does not change. |
+| `POST /v1/operator/maintain` | Every housekeeping sweep now, as `POST /v1/owner/maintain` without `lift_secrets`. |
+
+A restore over the vault and the named repairs of `oneiron maintain` need a stopped vault, so they
+stay CLI commands. Lifting secrets is an owner act and has no operator route. Owner recovery is
+an owner act too: the operator's credential gets 403 at `/v1/operator/shared/recover-owner`.
+With the credential's `token` in `ONEIRON_SECRET` and its `binding_key` in `ONEIRON_BINDING_KEY`:
+
+```sh
+oneiron api raw GET /v1/operator/status
+oneiron api raw POST /v1/operator/backups
+```
+
 ## Shared-merge evidence questions
 
 Set `shared_merge_evidence_rows` under `[limits]` to change the existing shared-merge
 evidence question's bound. The value must be a positive integer. The default remains
 4,096 rows; the override does not change the question policy.
+
+## Membership withdrawal receipt links
+
+A signed `slip_grant_revoke` made by a shared-vault membership change names
+that change's execution receipt in `membership_receipt`. The writer uses the
+same receipt ID for the grant withdrawals, any Owner handover, and its committed
+membership receipt. The authority audit exposes this signed link as `receipt_ref`
+next to `grant_ref`. Owner handover audit rows also retain their signed
+`affected_grants` list.
+
+An ordinary guest revoke has no membership receipt link. A membership change
+without a live host issuer still lands through the existing pending carrier
+record, which names its own original execution receipt. A receipt link is a
+record of what the signer named, not an authority grant or proof that another
+replica has received the change.
 
 ## Limits today
 

@@ -7,7 +7,8 @@
 )]
 use std::io::{Cursor, Read, Write};
 
-use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
+use oneiron_docedit::resource::Resources;
+use oneiron_docedit::retained_opc::{Limits, Package};
 use oneiron_xlsx_formula::engine::FormualizerEngine;
 use oneiron_xlsx_formula::{
     DocumentLocation, FormulaError, RecalcClock, preserve_external_links, route_workbook,
@@ -25,13 +26,8 @@ const UNKNOWN: &[u8] = b"opaque vendor bytes\0\xff";
 fn limits() -> Limits {
     Limits {
         archive_bytes: 64 * 1024 * 1024,
-        entries: 1_000,
         part_bytes: 16 * 1024 * 1024,
         expanded_bytes: 64 * 1024 * 1024,
-        xml: XmlLimits {
-            max_depth: 256,
-            max_nodes: 1_000_000,
-        },
     }
 }
 
@@ -136,7 +132,7 @@ fn with_strings(bytes: &[u8], items: &str) -> Vec<u8> {
     )
 }
 fn part_bytes(bytes: &[u8], name: &str) -> Option<Vec<u8>> {
-    Package::open(bytes, limits())
+    Package::open(bytes, limits(), &Resources::measuring())
         .expect("retained XLSX")
         .part(name)
         .expect("readable part")
@@ -159,13 +155,19 @@ fn recalc_at(
     bytes: &[u8],
     clock: &RecalcClock,
 ) -> oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc> {
-    FormualizerEngine::new().recalculate_xlsx(bytes, limits(), clock, None)
+    FormualizerEngine::new().recalculate_xlsx(bytes, limits(), clock, None, &Resources::measuring())
 }
 fn recalc_located(
     bytes: &[u8],
     location: &DocumentLocation,
 ) -> oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc> {
-    FormualizerEngine::new().recalculate_xlsx(bytes, limits(), &tokyo(), Some(location))
+    FormualizerEngine::new().recalculate_xlsx(
+        bytes,
+        limits(),
+        &tokyo(),
+        Some(location),
+        &Resources::measuring(),
+    )
 }
 /// Formula cells of the first row, `(cell, formula)`, each caching 0.
 fn formula_cells(formulas: &[(&str, &str)]) -> String {
@@ -621,7 +623,7 @@ fn closed_linked_workbooks_recalculate_from_their_saved_values() {
         );
     }
     assert_eq!(
-        preserve_external_links(&input, &report.bytes, limits()),
+        preserve_external_links(&input, &report.bytes, limits(), &Resources::measuring()),
         Ok(())
     );
 }
@@ -922,15 +924,20 @@ fn destructive_external_link_fallback_is_refused() {
         fallback(&input),
         "external reference to a defined name of a linked workbook"
     );
-    assert_eq!(preserve_external_links(&input, &input, limits()), Ok(()));
+    assert_eq!(
+        preserve_external_links(&input, &input, limits(), &Resources::measuring()),
+        Ok(())
+    );
     let damaged = with_part(
         &input,
         "xl/externalLinks/externalLink1.xml",
         b"<externalLink/>".to_vec(),
     );
     assert_eq!(
-        preserve_external_links(&input, &damaged, limits()),
-        Err("fallback altered or dropped an external-link part")
+        preserve_external_links(&input, &damaged, limits(), &Resources::measuring()),
+        Err(FormulaError::InvalidWorkbook(
+            "fallback altered or dropped an external-link part"
+        ))
     );
     let unlinked = with_part(
         &input,
@@ -938,8 +945,10 @@ fn destructive_external_link_fallback_is_refused() {
         format!(r#"<Relationships xmlns="{REL}"/>"#),
     );
     assert_eq!(
-        preserve_external_links(&input, &unlinked, limits()),
-        Err("fallback altered or dropped an external-link part")
+        preserve_external_links(&input, &unlinked, limits(), &Resources::measuring()),
+        Err(FormulaError::InvalidWorkbook(
+            "fallback altered or dropped an external-link part"
+        ))
     );
 }
 
@@ -952,15 +961,20 @@ fn formula_only_external_references_cannot_be_destroyed_by_fallback() {
     );
     let damaged = with_part(&input, OUTPUT, sheet(r#"<c r="A1"><v>42</v></c>"#));
     assert_eq!(
-        preserve_external_links(&input, &damaged, limits()),
-        Err("fallback altered or dropped an external formula link")
+        preserve_external_links(&input, &damaged, limits(), &Resources::measuring()),
+        Err(FormulaError::InvalidWorkbook(
+            "fallback altered or dropped an external formula link"
+        ))
     );
     let recached = with_part(
         &input,
         OUTPUT,
         sheet(r#"<c r="A1"><f>'[linked.xlsx]S'!A1</f><v>43</v></c>"#),
     );
-    assert_eq!(preserve_external_links(&input, &recached, limits()), Ok(()));
+    assert_eq!(
+        preserve_external_links(&input, &recached, limits(), &Resources::measuring()),
+        Ok(())
+    );
 }
 
 #[test]
@@ -973,23 +987,31 @@ fn a_formula_too_long_to_parse_safely_is_classified_without_deep_recursion() {
     let linked = chain("'[linked.xlsx]S'!A1", 100_000);
     // Under the byte limit, over the token limit.
     let linked_tokens = chain("'[linked.xlsx]S'!A1", 5_000);
-    let xml = limits().xml;
-    assert!(route_workbook([], [], [local.as_str()], xml).is_in_process());
-    assert!(!route_workbook([], [], [linked.as_str()], xml).is_in_process());
-    assert!(!route_workbook([], [], [linked_tokens.as_str()], xml).is_in_process());
+    let resources = Resources::measuring();
+    assert!(route_workbook([], [], [local.as_str()], &resources).is_in_process());
+    assert!(!route_workbook([], [], [linked.as_str()], &resources).is_in_process());
+    assert!(!route_workbook([], [], [linked_tokens.as_str()], &resources).is_in_process());
     // A bracket that names no workbook still parses as local.
-    assert!(route_workbook([], [], ["SUM(Prices[Price])"], xml).is_in_process());
+    assert!(route_workbook([], [], ["SUM(Prices[Price])"], &resources).is_in_process());
 
     let cell = |formula: &str| sheet(&format!(r#"<c r="A1"><f>{formula}</f><v>1</v></c>"#));
     let unlinked = with_part(&fixture("", "", false), OUTPUT, cell("1"));
     let input = with_part(&unlinked, OUTPUT, cell(&local));
-    assert_eq!(preserve_external_links(&input, &unlinked, limits()), Ok(()));
+    assert_eq!(
+        preserve_external_links(&input, &unlinked, limits(), &Resources::measuring()),
+        Ok(())
+    );
     for formula in [&linked, &linked_tokens] {
         let input = with_part(&unlinked, OUTPUT, cell(formula));
-        assert_eq!(preserve_external_links(&input, &input, limits()), Ok(()));
         assert_eq!(
-            preserve_external_links(&input, &unlinked, limits()),
-            Err("fallback altered or dropped an external formula link")
+            preserve_external_links(&input, &input, limits(), &Resources::measuring()),
+            Ok(())
+        );
+        assert_eq!(
+            preserve_external_links(&input, &unlinked, limits(), &Resources::measuring()),
+            Err(FormulaError::InvalidWorkbook(
+                "fallback altered or dropped an external formula link"
+            ))
         );
     }
 }
@@ -1013,7 +1035,7 @@ fn a_reference_repeating_the_workbook_qualifier_falls_back_without_deep_recursio
         &format!(r#"<definedName name="Far">{formula}</definedName>"#),
     );
     assert_eq!(fallback(&named), reason);
-    assert!(!route_workbook([], [], [formula.as_str()], limits().xml).is_in_process());
+    assert!(!route_workbook([], [], [formula.as_str()], &Resources::measuring()).is_in_process());
 }
 
 #[test]
@@ -1027,9 +1049,9 @@ fn a_long_local_formula_with_structured_references_stays_editable_beside_a_link(
     let quoted = format!("{long}+LEN(\"[linked.xlsx]S!A1\")");
     // Excel brackets a column header holding `!` twice: `Prices[[Cost!USD]]`.
     let header = sum("Prices[[Cost!USD]]", 130);
-    let xml = limits().xml;
+    let resources = Resources::measuring();
     for formula in [&long, &quoted, &header] {
-        assert!(route_workbook([], [], [formula.as_str()], xml).is_in_process());
+        assert!(route_workbook([], [], [formula.as_str()], &resources).is_in_process());
     }
     // Over the bound, a workbook qualifier in any reference still routes out.
     for link in [
@@ -1038,7 +1060,7 @@ fn a_long_local_formula_with_structured_references_stays_editable_beside_a_link(
         "SUM('C:\\dir\\[linked.xlsx]S'!B9)",
     ] {
         let formula = format!("{long}+{link}");
-        assert!(!route_workbook([], [], [formula.as_str()], xml).is_in_process());
+        assert!(!route_workbook([], [], [formula.as_str()], &resources).is_in_process());
     }
 
     let cells = |a1: &str, b1: &str| {
@@ -1050,11 +1072,16 @@ fn a_long_local_formula_with_structured_references_stays_editable_beside_a_link(
     let base = fixture("", "", false);
     let input = with_part(&base, OUTPUT, cells(&long, link));
     let edited = with_part(&base, OUTPUT, cells(&longer, link));
-    assert_eq!(preserve_external_links(&input, &edited, limits()), Ok(()));
+    assert_eq!(
+        preserve_external_links(&input, &edited, limits(), &Resources::measuring()),
+        Ok(())
+    );
     let unlinked = with_part(&base, OUTPUT, cells(&longer, "1"));
     assert_eq!(
-        preserve_external_links(&input, &unlinked, limits()),
-        Err("fallback altered or dropped an external formula link")
+        preserve_external_links(&input, &unlinked, limits(), &Resources::measuring()),
+        Err(FormulaError::InvalidWorkbook(
+            "fallback altered or dropped an external formula link"
+        ))
     );
 }
 
@@ -1928,7 +1955,7 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     assert_eq!(report["engine"]["engine"], "oneiron-xlsx-formula");
     assert_eq!(
         report["engine"]["version"],
-        "0.1.0+formualizer.0.9.3-oneiron.13"
+        "0.1.0+formualizer.0.9.3-oneiron.33"
     );
     assert_eq!(report["formulas"], 1);
     assert_eq!(report["precision_fallback"], false);

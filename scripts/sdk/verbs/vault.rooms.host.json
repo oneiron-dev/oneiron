@@ -1,0 +1,16 @@
+{
+  "name": "vault.rooms.host",
+  "description": "Who hosts a room now, and the caller's own speaking role there.",
+  "input": "RoomHostRequest",
+  "output": "crate::workspace_roster::RoomStanding",
+  "call": "memory.rooms_host(crate::EntityId::from_hex(&input.room_ref)?, input.session_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

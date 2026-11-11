@@ -1,7 +1,6 @@
 //! TASK creation door with admission, hooks, and rate limiting.
 //! Entry [`Memory::tasks_create`]; dispatched from the `verbs` agent-verb surface.
 //! Owned by `task_verb`; validation lives in `create_validation`, specs in `create_spec`.
-use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
 mod hook_effect;
@@ -37,7 +36,7 @@ use super::create_validation::{
     ValidatedTaskCreate, admit_task_parent, human_route_refusal, task_create_proposal_value,
     task_route_dedupe_key, validate_task_create,
 };
-use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
+use super::rate_limit::{record_task_create, task_actor_ceiling};
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::terminal_state::TaskExecutionState;
 use super::verb_kind::{TaskAssignee, TaskKind};
@@ -66,6 +65,7 @@ fn create_proposal_identity(value: &Value) -> Vec<u8> {
 impl Memory<'_> {
     /// Mints one TASK plus one linked realizing attempt when the actor's live
     /// definition/manifest ceiling permits Auto; otherwise parks one proposal.
+    /// A watch TASK mints with no attempt: its due tick settles it (FIX 22121).
     ///
     /// A create carrying a typed brief is a post: it runs through the one
     /// task highway (OF-220), which owns its idempotency, settlement and
@@ -105,7 +105,7 @@ impl Memory<'_> {
         spec: &TaskCreateSpec,
         rate_limit: TaskCreateRateLimit,
     ) -> MemoryResult<TaskCreateReceipt> {
-        let verb = task_verb_contract(AgentVerb::TasksCreate);
+        let verb = crate::verb_names::TASKS_CREATE;
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let now = spec.now.unwrap_or_else(|| self.vault().now_recorded_at());
         let rate_now = self.vault().store.clock.now_recorded_at();
@@ -293,7 +293,12 @@ impl Memory<'_> {
                     return None;
                 }
                 match proposal_origin_in(self.vault(), &rtxn, *id) {
-                    Ok(parked) => (parked == origin).then_some(*id),
+                    Ok(parked) => {
+                        let same_creator =
+                            parked.as_ref().and_then(TaskCreateOrigin::intent_identity)
+                                == origin.as_ref().and_then(TaskCreateOrigin::intent_identity);
+                        same_creator.then_some(*id)
+                    }
                     Err(error) => {
                         unreadable = Some(error);
                         None
@@ -380,6 +385,8 @@ impl Memory<'_> {
             spec: validated.spec.clone(),
             consult: validated.consult.clone(),
             ttl: validated.ttl,
+            due_at: validated.due_at,
+            watch: validated.watch,
             state: Some(TaskExecutionState::Queued),
             provenance: provenance.clone(),
             created_at: now,
@@ -389,6 +396,9 @@ impl Memory<'_> {
             subproject_ref: None,
             team: None,
         });
+        // FIX 4749: the storage door files a standard TASK with a due time
+        // in the watcher due index as this body lands, as it files a synced
+        // copy; a consult carries the stamp but never ticks.
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
         // A TASK is born in its writer's world and facet (ARCH-0067 §5).
         if self.birth_position() != BirthPosition::default() {
@@ -530,7 +540,11 @@ impl Memory<'_> {
     /// [`Self::route_created_task_in_txn`] under an origin already resolved:
     /// a live binding's, a host-bound post's, or the one an approved
     /// proposal or wave plan witnessed. `None` is an unstamped root; a root
-    /// witness carries only the conversation that started the work.
+    /// witness keeps caller provenance and the conversation, when known.
+    ///
+    /// Every create route lands here, so a watch TASK (FIX 22121) queues
+    /// no realizing attempt and dispatches nothing on any of them: the
+    /// hooks on its due tick do its work, and that tick settles it.
     pub(super) fn route_created_task_with_origin_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -539,6 +553,9 @@ impl Memory<'_> {
         origin: Option<&TaskCreateOrigin>,
         now: u64,
     ) -> MemoryResult<TaskRouteOutcome> {
+        if let Some(due_at) = validated.watch_due_at() {
+            return Ok(TaskRouteOutcome::WatchTick { due_at });
+        }
         match validated.assignee {
             // Absent assignee is the schema-v1 representation of the Dreamer
             // lane and routes identically — old rows are never rewritten.
@@ -596,6 +613,7 @@ impl Memory<'_> {
                         type_ref: Some(validated.type_ref.clone()),
                         budget,
                         origin_conversation: origin.and_then(TaskCreateOrigin::origin_conversation),
+                        caller_origin: origin.map(TaskCreateOrigin::caller_origin),
                         team,
                         objectives,
                         // FIX 11592: the instrument this request was admitted

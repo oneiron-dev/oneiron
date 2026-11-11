@@ -263,6 +263,7 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
         facade
             .calendar_read(&CalendarReadRequest {
                 event_ref: busy.to_hex(),
+                filter: None,
             })
             .expect("read")
             .is_none()
@@ -277,6 +278,7 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
                 }),
                 text: None,
                 limit: 50,
+                filter: None,
             })
             .expect("search")
             .is_empty()
@@ -335,6 +337,7 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
     let view = facade
         .calendar_read(&CalendarReadRequest {
             event_ref: busy.to_hex(),
+            filter: None,
         })
         .expect("read")
         .value
@@ -353,6 +356,7 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
             }),
             text: None,
             limit: 50,
+            filter: None,
         })
         .expect("search");
     assert_eq!(found.len(), 1);
@@ -470,6 +474,7 @@ fn calendar_imported_source_permit_is_actor_bound() {
         let read = facade
             .calendar_read(&CalendarReadRequest {
                 event_ref: busy.to_hex(),
+                filter: None,
             })
             .expect("read");
         assert_eq!(read.is_some(), allowed, "{label}");
@@ -482,6 +487,7 @@ fn calendar_imported_source_permit_is_actor_bound() {
                 }),
                 text: None,
                 limit: 50,
+                filter: None,
             })
             .expect("search");
         assert_eq!(found.len(), usize::from(allowed), "{label}");
@@ -545,6 +551,7 @@ fn calendar_surface_scopes_read_search_and_freebusy() {
         facade
             .calendar_read(&CalendarReadRequest {
                 event_ref: busy.to_hex(),
+                filter: None,
             })
             .expect("read")
             .is_none()
@@ -559,6 +566,7 @@ fn calendar_surface_scopes_read_search_and_freebusy() {
                 }),
                 text: None,
                 limit: 50,
+                filter: None,
             })
             .expect("search")
             .is_empty()

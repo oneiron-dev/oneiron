@@ -9,6 +9,7 @@ use crate::code_run::ProgramStepFeedback;
 use crate::code_sandbox::ProposalSpoolFloor;
 use crate::code_sandbox::source::prepare_source;
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
+use crate::guest_error::{GuestErrorMask, GuestProgramError};
 use crate::{
     EntityId, Result, Vault,
     code_sandbox::microvm::{
@@ -159,8 +160,10 @@ impl Vault {
         Ok(ids)
     }
 
-    /// Run the installed exact script in the configured foreign code-mode VM.
-    /// No configured isolating backend means a refusal, not an in-process run.
+    /// Run the installed exact script in the configured foreign code-mode VM,
+    /// on the isolating backend this vault's installed backends carry for the
+    /// Foreign tier. No configured isolating backend means a refusal, not an
+    /// in-process run.
     pub fn run_script_pack(
         self: &Arc<Self>,
         request: PackScriptRun<'_>,
@@ -175,9 +178,11 @@ impl Vault {
             .collect();
         self.require_pack_grants_verified(request.name, &requested)?;
         let run_id = EntityId::now();
-        let mut backend =
-            crate::code_sandbox::microvm::select_backend_for_tier(SandboxGuestTier::Foreign)?
-                .ok_or_else(|| invalid("foreign tier selected no isolation"))?;
+        let mut backend = crate::code_sandbox::microvm::select_backend_for_tier(
+            &*self.runtime().sandbox_backends(),
+            SandboxGuestTier::Foreign,
+        )?
+        .ok_or_else(|| invalid("foreign tier selected no isolation"))?;
         backend.set_read_transport(transport);
         let egress: Arc<dyn oneiron_container::EgressRelay> =
             Arc::new(crate::code_sandbox::egress::OpenEgressProxy::new(
@@ -297,7 +302,7 @@ impl Vault {
             vault: Arc::clone(self),
             grants: bindings,
         });
-        let injected = plan.assemble_program(&prepared, &guest_grants)?;
+        let (injected, prelude_lines) = plan.assemble_program(&prepared, &guest_grants)?;
         let mut component = Vec::new();
         fs::File::open(&image.component)
             .map_err(|_| invalid("guest component unavailable"))?
@@ -344,7 +349,16 @@ impl Vault {
             .transpose()?;
         let exit = result?;
         if exit.status != 0 {
-            return Err(invalid("pack script failed in sandbox"));
+            // The script's own error, masked with this vault's custody values,
+            // names its authored position past the grants prelude (FIX 9209).
+            return Err(match exit.guest_error {
+                Some(message) => {
+                    GuestProgramError::new(message).into_error(&prepared, prelude_lines, |body| {
+                        self.mask_known_values(body)
+                    })
+                }
+                None => invalid("pack script failed in sandbox"),
+            });
         }
         let deltas = adapter.collect_overlay_proposals()?;
         if deltas.len() != 1 {

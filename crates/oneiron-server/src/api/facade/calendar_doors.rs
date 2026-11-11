@@ -167,12 +167,15 @@ pub(crate) async fn calendar_connector_pull(
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             let operation = wire.operation().clone();
+            let safeguard_enabled = feed::inbound_safeguard_enabled(&memory)?;
             let now = server.vault().now_recorded_at();
             let seed = now;
-            let outcome = oneiron::calendar::run_calendar_connector_sync(
+            let outcome = oneiron::calendar::run_calendar_connector_sync_with_screener(
                 server.vault(),
                 &operation,
                 &CalDavConnector::new(wire),
+                crate::calendar_host::calendar_body_screener(),
+                safeguard_enabled,
                 now,
                 seed,
             )
@@ -196,6 +199,7 @@ pub(crate) async fn calendar_connector_write(
         move |server, memory, owner| {
             let view = memory.calendar_read(&oneiron::calendar::CalendarReadRequest {
                 event_ref: input.event_ref.clone(),
+                filter: None,
             })?;
             if view.value.is_none() {
                 return Err(

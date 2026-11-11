@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.threads.unshare",
+  "description": "Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving.",
+  "input": "crate::mail_pack::MailThreadShareRequest",
+  "output": "crate::mail_pack::MailThreadShareReceipt",
+  "call": "memory.mail_threads_unshare(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

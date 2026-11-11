@@ -6,7 +6,7 @@ use rmpv::Value;
 
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::claim_body::ClaimSubject;
-use crate::write_envelope::claim_body::RelationshipScope;
+use crate::write_envelope::claim_body::{RelationshipScope, RelationshipSet};
 use oneiron_contracts::claim::ClaimApprovalStatus;
 use oneiron_contracts::claim::ClaimLifecycleStatus;
 use oneiron_contracts::claim::ClaimSource;
@@ -155,9 +155,10 @@ pub struct WriteEnvelope {
     approval: ClaimApprovalStatus,
     session_tag: Option<String>,
     machine_signature: Option<MachineWriteSignature>,
-    /// ONE-1314. Stamped HOST-INTERNALLY only: no public constructor, guest
-    /// payload, or API argument reaches this field, and the 4-arity
-    /// constructors below can only produce the trivial value.
+    /// ONE-1314. Stamped HOST-INTERNALLY only: no guest payload or API
+    /// argument reaches this field (no `Deserialize` on the envelope or the
+    /// lineage), and the 4-arity constructors below can only produce the
+    /// trivial value; see [`Self::with_lineage`].
     lineage: SourceLineage,
 }
 
@@ -185,9 +186,16 @@ impl WriteEnvelope {
     ///
     /// The ONE non-trivial-lineage constructor, reserved for host dispatchers
     /// that own a run's effect history (the code-run dispatcher, the Dreamer
-    /// promotion writer). It is `pub(crate)` on purpose: no public, guest, or
-    /// API path may supply a lineage value, so a caller cannot narrow its own
-    /// history to ride the auto lane.
+    /// promotion writer). No guest or API path may supply a lineage value, so
+    /// a caller cannot narrow its own history to ride the auto lane.
+    ///
+    /// `pub` because those dispatchers are in core and the envelope's fields
+    /// stay in the store, which encodes them. The guard is the wire, not Rust
+    /// privacy: neither [`SourceLineage`] nor [`WriteEnvelope`] implements
+    /// `Deserialize`, so no guest payload or API body decodes into one, and
+    /// the dispatchers stamp the lineage host-side. An in-process caller of
+    /// this constructor already chooses the declared source through
+    /// [`Self::new`], so the constructor gives it no new authority.
     pub fn with_lineage(
         actor: WriteActor,
         source: ClaimSource,
@@ -457,7 +465,7 @@ impl ClaimCandidate {
     /// Limits the claim to one RELATIONSHIP. Validated at the write door.
     #[must_use]
     pub fn with_relationship(mut self, relationship: EntityId) -> Self {
-        self.relationship = Some(BTreeSet::from([relationship]));
+        self.relationship = Some(RelationshipSet::from([relationship]));
         self
     }
 
@@ -470,7 +478,7 @@ impl ClaimCandidate {
         self
     }
 
-    pub const fn relationship(&self) -> Option<&BTreeSet<EntityId>> {
+    pub const fn relationship(&self) -> Option<&RelationshipSet> {
         self.relationship.as_ref()
     }
 
@@ -648,10 +656,17 @@ impl ClaimCandidate {
                         .as_str()
                         .and_then(|value| EntityId::from_hex(value).ok()),
                 };
+                // An explicit stamp is the copied record's canonical facet or
+                // project, the one its read is judged by; a selector in the
+                // opaque map never overrides it (review round 2 of #6972).
                 if let Some(id) = id {
                     match key.as_str() {
-                        Some("facet" | "facet_ref" | "facetRef") => body.scope_facet = id,
-                        Some("scopeProjectId") => body.scope_project = id,
+                        Some("facet" | "facet_ref" | "facetRef") if self.facet_stamp.is_none() => {
+                            body.scope_facet = id;
+                        }
+                        Some("scopeProjectId") if self.project_stamp.is_none() => {
+                            body.scope_project = id;
+                        }
                         _ => {}
                     }
                 }

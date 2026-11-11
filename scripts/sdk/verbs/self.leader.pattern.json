@@ -1,0 +1,9 @@
+{
+  "name": "self.leader.pattern",
+  "input": "crate::code_run::LeaderPatternInput",
+  "output": "crate::code_run::LeaderPatternOutput",
+  "scope": "Read",
+  "context": "run",
+  "effect": "Leader",
+  "run_surface": "live"
+}

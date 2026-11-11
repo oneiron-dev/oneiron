@@ -81,8 +81,13 @@ pub use crate::context_board::consult_result::ConsultResultPresence;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskTerminalRecord {
     pub disposition: TaskTerminalDisposition,
-    /// Compatibility decoders may read `None` from an old row; every new
-    /// terminal transition writes `Some`.
+    /// The entity the TASK's work produced. `None` where the transition has
+    /// none to name: a final `Failed` report that names none (a runner's
+    /// failed try among them), the owner's Stop on a blocked TASK, and a
+    /// watch TASK's settle at its tick's release, whose work is what the
+    /// hooks on that tick enqueue (FIX 22121); and on an old row a
+    /// compatibility decoder reads. Every other terminal transition writes
+    /// `Some`.
     pub result_ref: Option<EntityId>,
     pub summary: Option<ConsultResultSummary>,
     pub finished_at: u64,

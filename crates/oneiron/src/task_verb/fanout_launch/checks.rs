@@ -101,7 +101,7 @@ pub(super) fn record_dispatched_check_in(
     check: DispatchedCheck<'_>,
 ) -> MemoryResult<()> {
     let mut launch = match load_launch(vault, txn, check.launch_ref)? {
-        Some(launch) if launch.payload != check.payload => return Err(reused_cut()),
+        Some(launch) if !launch.payload.same_intent(&check.payload) => return Err(reused_cut()),
         Some(launch) => launch,
         None => {
             let governed = policy_in(vault, txn, &ConsultFanOutScope::default())?;
@@ -122,6 +122,7 @@ pub(super) fn record_dispatched_check_in(
                 pause: None,
                 check_row: None,
                 held_attempts: Vec::new(),
+                resumed_by_override: Vec::new(),
                 dispatched_at: None,
                 task_refs: Vec::new(),
                 denied: false,
@@ -169,7 +170,7 @@ pub(super) fn settle_held_attempts_in(
         if !record.fanout_hold_for(launch.launch_ref) {
             continue;
         }
-        queue.intervene_in_txn(
+        queue.release_hold_in_txn(
             txn,
             InterveneAttempt {
                 id: *id,

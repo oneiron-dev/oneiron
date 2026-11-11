@@ -1,0 +1,13 @@
+{
+  "name": "vault.rooms.private_threads",
+  "description": "That a room's private threads exist: id, creator, created and last-active times, member count; never a name, members or words. The vault's Owner or an Admin, seated or not, or the companion agent of either may call it.",
+  "input": "crate::workspace_roster::RoomPrivateThreadsRequest",
+  "output": "Vec<crate::workspace_roster::PrivateThreadMetadata>",
+  "call": "memory.rooms_private_threads(&input)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

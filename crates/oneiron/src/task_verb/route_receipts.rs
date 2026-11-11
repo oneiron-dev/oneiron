@@ -22,11 +22,15 @@ pub enum TaskRouteLane {
     ChildActor,
     /// A person was asked. Nothing realizes the task; the Dreamer follows up.
     HumanAssignee,
+    /// A watch TASK (FIX 22121). Nothing realizes it: the hooks on its due
+    /// tick do its work, and that tick settles it.
+    Watch,
 }
 
 /// What routing one created TASK actually did. The peer variant naming zero
 /// attempts is the point: the synced entity IS the transport. The human variant
-/// names zero attempts for a different reason — a person is not a worker.
+/// names zero attempts for a different reason — a person is not a worker. The
+/// watch variant names none because its due tick's hooks do the work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TaskRouteOutcome {
     DreamerAttempt {
@@ -45,6 +49,11 @@ pub enum TaskRouteOutcome {
     HumanFollowup {
         actor_ref: EntityId,
     },
+    /// A watch TASK queued no work; its tick at `due_at` (Unix seconds)
+    /// runs its hooks and settles it (FIX 22121).
+    WatchTick {
+        due_at: u64,
+    },
 }
 
 impl TaskRouteOutcome {
@@ -57,10 +66,12 @@ impl TaskRouteOutcome {
             Self::PeerSyncedOnly { .. } => TaskRouteLane::PeerActor,
             Self::HumanFollowup { .. } => TaskRouteLane::HumanAssignee,
             Self::ChildAddressed { .. } => TaskRouteLane::ChildActor,
+            Self::WatchTick { .. } => TaskRouteLane::Watch,
         }
     }
 
-    /// The local realizing attempt, or `None` on the peer and human lanes.
+    /// The local realizing attempt, or `None` on the peer, human and watch
+    /// lanes.
     #[must_use]
     pub const fn local_attempt(self) -> Option<AttemptId> {
         match self {
@@ -69,7 +80,8 @@ impl TaskRouteOutcome {
             }
             Self::PeerSyncedOnly { .. }
             | Self::ChildAddressed { .. }
-            | Self::HumanFollowup { .. } => None,
+            | Self::HumanFollowup { .. }
+            | Self::WatchTick { .. } => None,
         }
     }
 }

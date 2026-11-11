@@ -1,0 +1,16 @@
+{
+  "name": "calendar.connector.write",
+  "description": "Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite.",
+  "input": "crate::calendar::connectors::door::CalendarConnectorWriteRequest",
+  "output": "crate::calendar::RemoteWriteReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.write\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

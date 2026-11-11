@@ -1,0 +1,29 @@
+{
+  "name": "vault.export",
+  "description": "Owner-only whole-vault archive or OKF bundle; includes custody secrets. ZIP import: oneiron import archive on a stopped vault. Delivery transfer returns transfer_ref for vault.export.transfer.read and vault.export.transfer.release.",
+  "input": "crate::memory::ExportOptions",
+  "output": "crate::memory::ExportAnswer",
+  "call": "crate::memory::ExportAnswer::Inline(memory.export(&input)?)",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "owner_grade": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "assemble": true,
+    "defaults": true,
+    "args": [
+      {
+        "name": "format",
+        "kind": "format"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Exports the whole vault as one archive (a ZIP of JSONL records,\n    /// files by BLAKE3 and a manifest); includes custody secrets.\n    /// Load a ZIP with `oneiron import archive` while the vault is stopped.\n    /// It carries every world wherever it goes;\n    /// `notices` names each world the owner's recipient choice would keep\n    /// from there, and why.\n",
+      "ts": "/** Exports the whole vault as one archive (ZIP, base64 in `archive`); owner only; includes custody secrets. Load a ZIP with `oneiron import archive` while the vault is stopped; no served import verb exists. `notices` names each world it carries that the owner's recipient choice would keep from where it goes. */",
+      "py": "Exports the whole vault as one archive (ZIP, base64 in `archive`); owner only; includes custody secrets. Load a ZIP with `oneiron import archive` while the vault is stopped; no served import verb exists. `notices` names each world it carries that the owner's recipient choice would keep from where it goes."
+    }
+  }
+}

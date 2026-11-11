@@ -8,11 +8,15 @@
 //!
 //! It mints through the side-row wall's one core
 //! ([`admit_seeded_parts`]), with each part's own record and place on its
-//! custody origin.
+//! custody origin. A replay proves what an earlier admission stored with
+//! that core's plan alone ([`plan_parts_in_txn`]), which mints and writes
+//! nothing (FIX 21363).
 //!
 //! A document whose stored history is its receipt ledger cannot take a
 //! handle in place of what an operation wrote; [`scan_document_in_txn`]
-//! refuses a hit there instead.
+//! refuses a hit there instead. A typed body then lands its call again from
+//! the body as the call found it, each string the call writes admitted here,
+//! so no operation holds the value (FIX 2372, `typed_body::mask`).
 
 use std::sync::Arc;
 
@@ -20,7 +24,7 @@ use heed::{RoTxn, RwTxn};
 
 use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
 use super::secret_spans;
-use super::side_row::{SidePart, admit_seeded_parts};
+use super::side_row::{SidePart, admit_seeded_parts, plan_seeded_parts};
 use super::wipe::{PlanValues, replace_wiped, wipe_part};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -66,6 +70,23 @@ pub(crate) fn admit_parts_in_txn(
     admit_parts_with(vault, wtxn, record, parts, lifted, None)
 }
 
+/// [`admit_parts_in_txn`] as its plan alone (FIX 21363), for a replay that
+/// proves an earlier admission stored what it offers again: the parts take
+/// the handles of the values `known` holds, and nothing is minted or
+/// written. A secret `known` does not hold refuses with the door's reason.
+/// Returns whether a part changed.
+pub(crate) fn plan_parts_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    record: EntityId,
+    parts: &mut [(&str, Part<'_>)],
+    known: Arc<KnownValues>,
+) -> Result<bool> {
+    admit_copy(record, parts, |origins, copy| {
+        plan_seeded_parts(vault, wtxn, origins, copy, known)
+    })
+}
+
 /// [`admit_parts_in_txn`] with the known values the caller already read in
 /// this writer, if it did.
 fn admit_parts_with(
@@ -75,6 +96,18 @@ fn admit_parts_with(
     parts: &mut [(&str, Part<'_>)],
     lifted: &mut Lifted,
     known: Option<Arc<KnownValues>>,
+) -> Result<bool> {
+    admit_copy(record, parts, |origins, copy| {
+        admit_seeded_parts(vault, wtxn, origins, copy, lifted, known)
+    })
+}
+
+/// Runs `admit` on a copy of `parts`, each under its place on `record`, and
+/// writes the copy back into the parts once it placed a handle.
+fn admit_copy(
+    record: EntityId,
+    parts: &mut [(&str, Part<'_>)],
+    admit: impl FnOnce(&[(EntityId, &str)], &mut [SidePart]) -> Result<bool>,
 ) -> Result<bool> {
     let origins = parts
         .iter()
@@ -89,7 +122,7 @@ fn admit_parts_with(
         .collect::<Vec<_>>();
     // The parts' copies hold the secrets until they are written back; a
     // copy not written back is wiped (FIX 1101).
-    let placed = admit_seeded_parts(vault, wtxn, &origins, &mut admitted, lifted, known);
+    let placed = admit(&origins, &mut admitted);
     if !matches!(placed, Ok(true)) {
         admitted.iter_mut().for_each(wipe_part);
         return placed;

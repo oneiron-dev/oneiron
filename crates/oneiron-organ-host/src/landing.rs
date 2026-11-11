@@ -14,6 +14,32 @@ use oneiron_organ_protocol::{Value, to_value};
 use crate::outcome::OrganOutcome;
 
 impl OrganOutcome {
+    /// The version rows of each vault input the host lent this call: the
+    /// artifact, its version CLAIM and its content ASSET. They are rows the
+    /// producer read beside its made_by, so a reader of the waiting proposal
+    /// must admit them too (FIX 12261 slice b, FIX 9312). An input version
+    /// the vault no longer holds adds no row.
+    ///
+    /// # Errors
+    ///
+    /// The vault's read error.
+    pub fn input_version_rows(&self, vault: &Vault) -> oneiron::Result<Vec<EntityId>> {
+        let mut rows = Vec::new();
+        for input in self.receipt.inputs.iter().filter(|input| !input.lent) {
+            let Ok(artifact) = EntityId::from_hex(&input.artifact) else {
+                continue;
+            };
+            if let Some((_, version_rows)) =
+                vault.blob_artifact_version_rows(&artifact, Some(input.version))?
+            {
+                rows.extend(version_rows);
+            }
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        Ok(rows)
+    }
+
     /// The made_by envelope this call gives what it made: `actor` ran it,
     /// `trigger` is the task, ask, run or skill it answers.
     #[must_use]
@@ -301,12 +327,20 @@ pub fn propose_organ_outputs(
 ) -> oneiron::Result<Vec<PendingProposalView>> {
     let now = vault.now_recorded_at();
     let made_by = outcome.made_by(actor.entity_ref(), trigger, now);
+    let read_rows = outcome.input_version_rows(vault)?;
     outcome
         .native_outputs(run_ref, Some(&made_by))
         .iter()
         .map(|output| {
             let reader = vault.organ_landing_reader(submitter)?;
-            vault.propose_native_output(artifact, output, Some(reader), actor, now)
+            vault.propose_native_output_with_reads(
+                artifact,
+                output,
+                Some(reader),
+                (actor, now),
+                &read_rows,
+                None,
+            )
         })
         .collect()
 }

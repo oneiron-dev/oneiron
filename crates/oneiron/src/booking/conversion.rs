@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{BookingError, EventTypeKey, PublicBookingPageToken, RankedSlot, SlotMask};
 use crate::calendar::tz::utc_to_wall;
-use crate::lens::LensText;
 
 /// Owner-authored content. A host chooses layout, localization and assets.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,7 +33,7 @@ impl BookingLandingContent {
     pub fn validate(&self) -> Result<(), BookingError> {
         let bounded = |text: &str, limit: usize| text.len() <= limit;
         // Every configured FAQ and pre-confirm field is kept; only each item
-        // and the encoded whole are bounded.
+        // is bounded.
         if !bounded(&self.intro, 2048)
             || self.faq.iter().any(|faq| {
                 faq.question.trim().is_empty()
@@ -60,17 +59,8 @@ impl BookingLandingContent {
                 "public booking landing content is invalid or exceeds bounds".to_owned(),
             ));
         }
-        // The public lens stores the entire object in one JSON MetaLine value.
-        // Check those exact serialized bytes at the owner write/read door too:
-        // raw length alone misses escaping of quotes and control characters.
-        let json = serde_json::to_string(self).map_err(|_| {
-            BookingError::InvalidConfig("public booking landing content cannot encode".to_owned())
-        })?;
-        LensText::new(json).map_err(|_| {
-            BookingError::InvalidConfig(
-                "public booking landing content exceeds lens bounds".to_owned(),
-            )
-        })?;
+        // The public lens carries the encoded whole across as many lens
+        // texts as it takes (FIX 20663), so the whole is not bounded here.
         Ok(())
     }
 }
@@ -163,11 +153,7 @@ pub fn booking_snippet_links(
     }
     // The trusted host supplies its public-face URL, never the per-vault JSON
     // route. A query hint is added only after validating its exact capability.
-    if !valid_public_page_url(public_page_url, page_token)
-        || mask.event_type.0.trim().is_empty()
-        || mask.event_type.0.len() > 64
-        || visitor_tz.len() > 64
-    {
+    if !valid_public_page_url(public_page_url, page_token) || mask.event_type.0.trim().is_empty() {
         return Err(BookingError::Surface(
             "invalid public-face booking URL or hint".to_owned(),
         ));
@@ -234,9 +220,7 @@ pub fn booking_snippet_selection_from_url(
 /// engine's JSON model route. A query is a hint, never booking authority.
 #[must_use]
 pub fn parse_booking_snippet_query(query: &str) -> Option<BookingSnippetSelection> {
-    if query.len() > 512 {
-        return None;
-    }
+    // A query of any length (ABC row 67): a long event type's hint parses.
     let mut parts = query.split('&');
     let event_type = decode_component(parts.next()?.strip_prefix("event_type=")?)?;
     let start_utc = parts.next()?.strip_prefix("start_utc=")?.parse().ok()?;
@@ -244,8 +228,6 @@ pub fn parse_booking_snippet_query(query: &str) -> Option<BookingSnippetSelectio
     let visitor_tz = decode_component(parts.next()?.strip_prefix("visitor_tz=")?)?;
     if parts.next().is_some()
         || event_type.trim().is_empty()
-        || event_type.len() > 64
-        || visitor_tz.len() > 64
         || start_utc >= end_utc
         || utc_to_wall(start_utc, &visitor_tz).is_err()
     {

@@ -281,7 +281,8 @@ impl ClaimMaterialization {
     /// tombstone, deletion fence, pending delete or erased source) and no
     /// deletion of it is in flight. A hard delete's fence commits with its
     /// publication, before the purge, so the bytes it still holds are never
-    /// permission to copy them under a fresh id.
+    /// permission to copy them under a fresh id. An active use limit likewise
+    /// keeps the predecessor's bytes from becoming an unrestricted successor.
     pub(crate) fn succession_source_live(
         store: &crate::store::Store,
         txn: &heed::RoTxn<'_>,
@@ -290,7 +291,8 @@ impl ClaimMaterialization {
         Ok(
             crate::vault::live_entity_row_in_txn(store, txn, claim)?.is_live()
                 && crate::deletion::topology_delete_reservation_in_txn(store, txn, claim)?
-                    .is_none(),
+                    .is_none()
+                && crate::store::legal_hold::use_limit_in_txn(store, txn, claim)?.is_none(),
         )
     }
 

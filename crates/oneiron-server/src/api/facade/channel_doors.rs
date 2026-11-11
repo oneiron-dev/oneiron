@@ -6,7 +6,7 @@ use oneiron::channel_identity_selection::ChannelIdentitySelectionRuleSet;
 use oneiron::memory::channel_doors::*;
 
 use super::FacadeApiError;
-use super::host_doors::support::owner_action::as_owner;
+use super::host_doors::support::owner_action::{as_owner, as_owner_paced};
 use super::host_doors::support::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -14,12 +14,14 @@ use crate::server::SyncServer;
 pub(crate) async fn vault_channel_identities_provision(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    paced: Option<super::FacadePacedCall>,
     input: ChannelIdentityProvisionRequest,
 ) -> Listed<ChannelIdentityLifecycleReceipt> {
-    as_owner(
+    as_owner_paced(
         server,
         auth,
         "vault.channel_identities.provision",
+        paced,
         move |memory, owner| memory.channel_identity_provision_as(owner, input),
     )
     .await
@@ -28,12 +30,14 @@ pub(crate) async fn vault_channel_identities_provision(
 pub(crate) async fn vault_channel_identities_bind(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    paced: Option<super::FacadePacedCall>,
     input: ChannelIdentityBindRequest,
 ) -> Listed<ChannelIdentityLifecycleReceipt> {
-    as_owner(
+    as_owner_paced(
         server,
         auth,
         "vault.channel_identities.bind",
+        paced,
         move |memory, owner| memory.channel_identity_bind_as(owner, input),
     )
     .await
@@ -56,12 +60,14 @@ pub(crate) async fn vault_channel_identities_fulfill(
 pub(crate) async fn vault_channel_identities_rotate(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    paced: Option<super::FacadePacedCall>,
     input: ChannelIdentityRequest,
 ) -> Listed<ChannelIdentityLifecycleReceipt> {
-    as_owner(
+    as_owner_paced(
         server,
         auth,
         "vault.channel_identities.rotate",
+        paced,
         move |memory, owner| memory.channel_identity_rotate_as(owner, input),
     )
     .await
@@ -70,12 +76,14 @@ pub(crate) async fn vault_channel_identities_rotate(
 pub(crate) async fn vault_channel_identities_release(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    paced: Option<super::FacadePacedCall>,
     input: ChannelIdentityReleaseRequest,
 ) -> Listed<ChannelIdentityLifecycleReceipt> {
-    as_owner(
+    as_owner_paced(
         server,
         auth,
         "vault.channel_identities.release",
+        paced,
         move |memory, owner| memory.channel_identity_release_as(owner, input),
     )
     .await
@@ -84,12 +92,14 @@ pub(crate) async fn vault_channel_identities_release(
 pub(crate) async fn vault_channel_identities_route_inbound(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    paced: Option<super::FacadePacedCall>,
     input: ChannelIdentityRequest,
 ) -> Listed<ChannelIdentityLifecycleReceipt> {
-    as_owner(
+    as_owner_paced(
         server,
         auth,
         "vault.channel_identities.route_inbound",
+        paced,
         move |memory, owner| memory.channel_identity_route_inbound_as(owner, input),
     )
     .await

@@ -51,9 +51,11 @@ pub(super) fn put_passport_claim(
     // Observed: a passport records what a provider event did, not a belief the
     // engine inferred.
     body.source = Some(ClaimSource::Observed);
+    let claim_id = vault.store.clock.entity_id()?;
+    body.scope_facet = vault.default_facet_in_txn(wtxn)?;
     vault.put_claim_in_txn(
         wtxn,
-        &vault.store.clock.entity_id()?,
+        &claim_id,
         &body,
         TimeRange {
             start: passport.observed_at,
@@ -81,9 +83,11 @@ pub(super) fn put_alias_claim(
     )?;
     body.valid_from = Some(observed_at);
     body.source = Some(ClaimSource::Observed);
+    let claim_id = vault.store.clock.entity_id()?;
+    body.scope_facet = vault.default_facet_in_txn(wtxn)?;
     vault.put_claim_in_txn(
         wtxn,
-        &vault.store.clock.entity_id()?,
+        &claim_id,
         &body,
         TimeRange {
             start: observed_at,

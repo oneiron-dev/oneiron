@@ -62,7 +62,7 @@ mod process;
 use job::{JobDir, Verified};
 
 /// Who parks a night while its version trains, and alone resumes it.
-pub(super) const DRAFTER_PARK_OWNER: &str = "coach.drafter_retrain";
+pub(super) const DRAFTER_PARK_OWNER: &str = oneiron::dreamer_runner::DRAFTER_RETRAIN_PARK_OWNER;
 /// The parked row's reason.
 const DRAFTER_PARK_REASON: &str = "drafter.training: the night's version trains";
 /// How often a running job reads whether its version may still train.
@@ -568,9 +568,9 @@ fn recover_all(server: &SyncServer, now: u64) -> oneiron::Result<()> {
         if waiters().contains(&mark.version) {
             continue;
         }
-        let parked = store
-            .parked_attempt(attempt)?
-            .is_some_and(|park| park.park_owner == DRAFTER_PARK_OWNER);
+        let parked = store.parked_attempt(attempt)?.is_some_and(|park| {
+            park.resumable_by(oneiron::dreamer_runner::ParkResumer::DrafterTrained)
+        });
         if parked {
             store.resume_parked(attempt, DRAFTER_PARK_OWNER, now)?;
         }

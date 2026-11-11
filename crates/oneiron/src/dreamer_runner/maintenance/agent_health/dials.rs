@@ -15,6 +15,7 @@ use crate::attempt_queue::AttemptId;
 use crate::learning_setting::{
     SettingSpec, setting_value_in_scope_in_txn, setting_value_in_scope_sourced_in_txn,
 };
+use crate::skill_optimize::union_source_rows;
 use crate::{EntityId, Result, Vault};
 
 /// The dials in force for one project and task type.
@@ -25,6 +26,9 @@ pub(super) struct Dials {
     pub(super) wait_share: f64,
     pub(super) wait_secs: u64,
     pub(super) silent_secs: u64,
+    /// The raw `health.silent.minutes` reading `silent_secs` was adapted
+    /// from, kept for the finding's exact dial.
+    pub(super) silent_minutes: f64,
     pub(super) widen_denials: u64,
     pub(super) cost_spike: f64,
     pub(super) ttl_secs: u64,
@@ -39,6 +43,9 @@ pub(super) struct Dials {
     /// Each dial the reviewer revision's seed decided, and that revision
     /// (`policy`): none an owner row, a fit or a compiled seed decided.
     pub(super) seeded: BTreeMap<&'static str, EntityId>,
+    /// Review, loop threshold, window and floor inputs. Reviewer-seeded and
+    /// otherwise unwitnessed settings leave the whole union unknown.
+    pub(super) loop_rows: Option<Vec<EntityId>>,
 }
 
 impl Dials {
@@ -148,9 +155,34 @@ fn dials_in(
         tree_version: 0,
     });
     let mut seeded = BTreeMap::new();
+    let mut loop_rows = Some(Vec::new());
     let mut value = |spec: &SettingSpec| -> Result<f64> {
+        let loop_input = [
+            HEALTH_REVIEW.key,
+            HEALTH_LOOP_REPEATS.key,
+            HEALTH_REVIEW_WINDOW_HOURS.key,
+            HEALTH_CARD_FLOOR.key,
+        ]
+        .contains(&spec.key);
         let Some((revision_spec, revision)) = policy.seed(spec) else {
-            return setting_value_in_scope_in_txn(vault, rtxn, spec, project, type_ref.as_ref());
+            if !loop_input {
+                return setting_value_in_scope_in_txn(
+                    vault,
+                    rtxn,
+                    spec,
+                    project,
+                    type_ref.as_ref(),
+                );
+            }
+            let (read, rows) = setting_value_in_scope_sourced_in_txn(
+                vault,
+                rtxn,
+                spec,
+                project,
+                type_ref.as_ref(),
+            )?;
+            loop_rows = union_source_rows([loop_rows.take(), rows]);
+            return Ok(read);
         };
         let (read, rows) = setting_value_in_scope_sourced_in_txn(
             vault,
@@ -160,18 +192,27 @@ fn dials_in(
             type_ref.as_ref(),
         )?;
         // No rows: the seed decided, so the revision's own did.
-        if rows.is_some_and(|rows| rows.is_empty()) {
+        let revision_seeded = rows.as_ref().is_some_and(Vec::is_empty);
+        if revision_seeded {
             seeded.insert(spec.key, revision);
+        }
+        if loop_input {
+            loop_rows =
+                union_source_rows([loop_rows.take(), if revision_seeded { None } else { rows }]);
         }
         Ok(read)
     };
+    // One read of the silent dial: the raw minutes and the adapted seconds
+    // below come from this same value.
+    let silent_minutes = value(&HEALTH_SILENT_MINUTES)?;
     Ok(Dials {
         review: value(&HEALTH_REVIEW)? >= 0.5,
         loop_repeats: value(&HEALTH_LOOP_REPEATS)?.round() as u64,
         check_fails: value(&HEALTH_CHECK_FAILS)?.round() as u64,
         wait_share: value(&HEALTH_WAIT_SHARE)?,
         wait_secs: (value(&HEALTH_WAIT_MINUTES)? * 60.0).round() as u64,
-        silent_secs: (value(&HEALTH_SILENT_MINUTES)? * 60.0).round() as u64,
+        silent_secs: (silent_minutes * 60.0).round() as u64,
+        silent_minutes,
         widen_denials: value(&HEALTH_WIDEN_DENIALS)?.round() as u64,
         cost_spike: value(&HEALTH_COST_SPIKE)?,
         ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
@@ -181,5 +222,6 @@ fn dials_in(
         window_secs: (value(&HEALTH_REVIEW_WINDOW_HOURS)? * 3600.0).round() as u64,
         cost_min_runs: (value(&HEALTH_COST_MIN_RUNS)?.round() as usize).max(1),
         seeded,
+        loop_rows,
     })
 }

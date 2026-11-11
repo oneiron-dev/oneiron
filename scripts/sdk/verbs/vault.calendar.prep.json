@@ -1,0 +1,14 @@
+{
+  "name": "vault.calendar.prep",
+  "description": "Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack.",
+  "input": "crate::calendar::meeting::CalendarMeetingRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::calendar::PrepPack>>",
+  "call": "memory.calendar_prep(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

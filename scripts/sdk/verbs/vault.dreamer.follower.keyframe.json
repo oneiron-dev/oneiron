@@ -1,0 +1,16 @@
+{
+  "name": "vault.dreamer.follower.keyframe",
+  "description": "The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::task_verb::sdk::DreamerFollowerKeyframeResult",
+  "call": "crate::task_verb::sdk::dreamer_follower_keyframe_as(memory.vault(), &memory.embedded_owner(\"vault.dreamer.follower.keyframe\")?, input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

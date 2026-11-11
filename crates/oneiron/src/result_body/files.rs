@@ -7,8 +7,7 @@ use std::time::{Duration, SystemTime};
 use rustix::fs::{AtFlags, Dir, Mode, OFlags, fsync, openat, unlinkat};
 use rustix::io::Errno;
 
-use super::BODY_GRACE;
-use super::pins::ResultBodyPins;
+use crate::store::result_body_pins::RetiringFile;
 use crate::store::{BodyDir, LINE_INDEX_SUFFIX, body_file_name, sealed_body_file_name};
 use crate::{Error, Result};
 
@@ -31,6 +30,24 @@ impl BodyEntry {
         match &self.instance {
             None => body_file_name(&self.digest),
             Some(instance) => sealed_body_file_name(&self.digest, instance),
+        }
+    }
+
+    /// The name of this entry's own file: the body, or its line index.
+    fn file_name(&self) -> String {
+        let body = self.body_name();
+        if self.index {
+            format!("{body}{LINE_INDEX_SUFFIX}")
+        } else {
+            body
+        }
+    }
+
+    /// This entry as the collector notes it (FIX 22101).
+    pub(super) fn retiring(&self) -> RetiringFile {
+        RetiringFile::Entry {
+            instance: self.instance,
+            index: self.index,
         }
     }
 }
@@ -130,97 +147,57 @@ pub(super) fn unlink_body(
     }
 }
 
-/// What removing one unnamed body came to (FIX 12248): it went, a reader's
-/// pin kept it, or it was not this entry's to remove yet. One result, read
-/// once: a pin taken and released between two probes would be counted by
-/// neither.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RemoveOutcome {
-    Removed,
-    Pinned,
-    Skipped,
-}
-
-/// Removes the body of `entry`, which nothing names, with its line index,
-/// or the line index alone once its body is gone: only past [`BODY_GRACE`]
-/// and while no reader in `pins` holds it.
-pub(super) fn remove_unnamed(
-    dir: &BodyDir,
-    entry: &BodyEntry,
-    now: SystemTime,
-    pins: &ResultBodyPins,
-) -> Result<RemoveOutcome> {
-    remove_unnamed_with_floor(dir, entry, now, Some(BODY_GRACE), pins)
-}
-
-/// Removes the body of `entry`, which nothing names, with its line index,
-/// or the line index alone once its body is gone (FIX 588): the import's
-/// post-error cleanup, with no [`BODY_GRACE`] age floor — a just-staged
-/// body is still debris once its writer aborted. The body/index and pin
-/// rules are [`remove_unnamed`]'s: an index whose body exists stays for
-/// the body's own entry, a missing or non-regular file stays, and a body
-/// a reader in `pins` holds stays for a later pass.
-pub(super) fn remove_unnamed_entry_now(
-    dir: &BodyDir,
-    entry: &BodyEntry,
-    pins: &ResultBodyPins,
-) -> Result<RemoveOutcome> {
-    remove_unnamed_with_floor(dir, entry, SystemTime::now(), None, pins)
-}
-
-/// Shared removal for [`remove_unnamed`] and [`remove_unnamed_entry_now`]: past
-/// `floor`, when one is set, and while no reader in `pins` holds the
-/// entry.
-fn remove_unnamed_with_floor(
+/// Whether `entry`, which nothing names, may be noted to go (FIX 22101):
+/// its file is there, past `floor` when one is set, and a line index only
+/// once its body is gone (the body's own entry decides for both).
+pub(super) fn entry_retirable(
     dir: &BodyDir,
     entry: &BodyEntry,
     now: SystemTime,
     floor: Option<Duration>,
-    pins: &ResultBodyPins,
-) -> Result<RemoveOutcome> {
-    let body = entry.body_name();
-    if entry.index && file_age(dir, &body, now)?.is_some() {
-        // Its body is there: the body's own entry decides for both.
-        return Ok(RemoveOutcome::Skipped);
-    }
-    let name = if entry.index {
-        format!("{body}{LINE_INDEX_SUFFIX}")
-    } else {
-        body.clone()
-    };
-    match (file_age(dir, &name, now)?, floor) {
-        (None, _) => return Ok(RemoveOutcome::Skipped),
-        (Some(age), Some(floor)) if age < floor => return Ok(RemoveOutcome::Skipped),
-        (Some(_), _) => {}
-    }
-    let remove = || {
-        if entry.index {
-            unlink_name(dir, &name)
-        } else {
-            unlink_named(dir, &body)
-        }
-    };
-    Ok(
-        match pins.unless_pinned(&entry.digest, remove).transpose()? {
-            Some(()) => RemoveOutcome::Removed,
-            None => RemoveOutcome::Pinned,
-        },
-    )
-}
-
-/// Removes the body of `entry` with its line index at once, while no reader
-/// in `pins` holds it: a body its own writer found nothing names, so no
-/// grace is owed (FIX 3633). `true` when it went.
-pub(super) fn remove_unnamed_now(
-    dir: &BodyDir,
-    entry: &BodyEntry,
-    pins: &ResultBodyPins,
 ) -> Result<bool> {
     let body = entry.body_name();
-    Ok(pins
-        .unless_pinned(&entry.digest, || unlink_named(dir, &body))
-        .transpose()?
-        .is_some())
+    if entry.index && file_age(dir, &body, now)?.is_some() {
+        return Ok(false);
+    }
+    Ok(match (file_age(dir, &entry.file_name(), now)?, floor) {
+        (None, _) => false,
+        (Some(age), Some(floor)) => age >= floor,
+        (Some(_), None) => true,
+    })
+}
+
+/// Unlinks the noted `file` of `digest` (FIX 22101): a released body's
+/// files, a body file with its line index, or a line index whose body is
+/// still gone; any already gone is fine. `false` when a line index stays
+/// because its body is back.
+pub(super) fn unlink_retiring(
+    dir: &BodyDir,
+    digest: &[u8; 32],
+    file: RetiringFile,
+) -> Result<bool> {
+    let (instance, index) = match file {
+        RetiringFile::Released(instance) => {
+            unlink_body(dir, digest, instance.as_ref())?;
+            return Ok(true);
+        }
+        RetiringFile::Entry { instance, index } => (instance, index),
+    };
+    let entry = BodyEntry {
+        digest: *digest,
+        instance,
+        index,
+    };
+    let body = entry.body_name();
+    if !index {
+        unlink_named(dir, &body)?;
+        return Ok(true);
+    }
+    if file_age(dir, &body, SystemTime::now())?.is_some() {
+        return Ok(false);
+    }
+    unlink_name(dir, &entry.file_name())?;
+    Ok(true)
 }
 
 /// Syncs `dir`, so the unlinks in it last.

@@ -12,6 +12,24 @@ use crate::{EntityId, Error, Result, TimeRange};
 
 use super::SelfAgentDefinitionPutCall;
 
+/// `vault.agents.put`'s row input: the new definition's id and the guest's
+/// draft, which [`parse_agent_put_request`] reads.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPutInput {
+    pub id: String,
+    pub definition: serde_json::Value,
+}
+
+/// `vault.agents.put`'s row reply: the id written, and `active` or
+/// `proposed`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPutOutput {
+    pub id: String,
+    pub disposition: String,
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -64,7 +82,7 @@ enum DraftScope {
 
 /// The guest may request composition and self-limits, not authorship,
 /// provenance, a parent attempt, an approval stamp, or a system logical id.
-pub(crate) fn parse_agent_put_request(
+pub fn parse_agent_put_request(
     id: &str,
     definition: JsonValue,
     now: u64,

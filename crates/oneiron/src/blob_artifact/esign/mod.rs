@@ -20,6 +20,7 @@ pub(crate) use notice_send_act::erase_notice_send_act_actor_in_txn;
 pub use notice_unattended::{EsignNoticeGroup, EsignUnattendedNotices};
 #[cfg(test)]
 mod tests;
+pub(crate) use lane_scope::bounded_by_whole_vault;
 pub use ledger::PROJECT_MEMBERS_ONLY;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use ledger::mark_sent_for_test;
@@ -32,6 +33,8 @@ pub use model::{
 
 mod capability;
 mod ceremony;
+mod claim_dependencies;
+pub(crate) use claim_dependencies::{EsignClaimDependencies, esign_claim_dependencies_in};
 mod delivery_capability;
 pub use delivery_capability::{EsignDeliveryLink, EsignDeliveryMint, EsignDeliveryWait};
 mod delivery_settlement;
@@ -48,7 +51,9 @@ pub use door::{
     EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView, EsignSealAttemptView,
     EsignSealGetRequest, EsignSealView, EsignSealedItemView, EsignSealedView,
     EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest, EsignSigningPdfView,
-    EsignSigningRequest, EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
+    EsignSigningPreviewRequest, EsignSigningPreviewView, EsignSigningRequest,
+    EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
+    layout_esign_preview,
 };
 mod escalation;
 pub(crate) use escalation::erase_held_signing_actor_in_txn;
@@ -61,6 +66,7 @@ pub use capability::EsignCapability;
 pub(crate) use capability::recipient_capability_unrevoked_in;
 pub use ceremony::{
     ESIGN_SEAL_ATTEMPT_KIND, SigningAction, SigningCaller, SigningOutcome, SigningPage,
+    SigningSealedItem,
 };
 pub use principals::{SigningAutonomy, SigningPrincipal};
 pub(crate) use principals::{automated_outbound_allowed, automated_signing_allowed};
@@ -77,14 +83,20 @@ pub use rate::{EsignRateCheck, EsignRateReceipt};
 pub mod render;
 mod seal;
 pub use seal::{EsignSealError, SealedDocument, SealedItem};
+pub(in crate::blob_artifact) use seal::{SealJobAutoPermit, SealJobWrite};
 mod seal_run;
 pub use seal_run::EsignSealRun;
+mod input_producer;
+mod producer_input;
+pub use producer_input::EsignInputBudget;
 mod sealer;
 pub use sealer::{
-    EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,
-    EsignSignatureRevision, EsignVerdict, SealDegrade, SealDegradeReason, SealProfile,
-    SealProfileEvidence, SealVerdict,
+    EsignSealInput, EsignSealProducer, EsignSealRequest, EsignSealed, EsignSealer,
+    EsignSealerError, EsignSignatureRevision, EsignVerdict, SealActiveContentFacts, SealDegrade,
+    SealDegradeReason, SealProfile, SealProfileEvidence, SealVerdict,
 };
+mod page_inspector;
+pub use page_inspector::EsignPageInspector;
 mod signature_revision;
 pub use signature_revision::SEAL_CONTENTS_LADDER;
 
@@ -94,6 +106,6 @@ mod public_read;
 pub use public_read::EsignLeasedReadError;
 
 mod artifact_actor;
-pub(crate) use artifact_actor::actor as artifact_machine;
+pub(crate) use artifact_actor::{actor as artifact_machine, seal_actor as seal_machine};
 
 pub mod template;

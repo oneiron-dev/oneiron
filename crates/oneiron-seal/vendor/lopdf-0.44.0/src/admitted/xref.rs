@@ -12,7 +12,7 @@ pub(crate) fn admit_entry(admission: &dyn DecodeAdmission, first: bool) -> Resul
     if first {
         admit_table(admission)?;
     }
-    admission.admit(decode_admission::btree_entry_bytes::<u32, XrefEntry>())
+    admission.admit_estimate(decode_admission::btree_entry_bytes::<u32, XrefEntry>(), 0)
 }
 
 /// Admit every entry a `/Prev` or hybrid merge adds, before any of them allocates.

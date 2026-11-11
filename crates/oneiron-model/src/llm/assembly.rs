@@ -8,7 +8,10 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 enum PendingPart {
-    Text(String),
+    Text {
+        text: String,
+        signature: Option<String>,
+    },
     Reasoning {
         text: String,
         signature: Option<String>,
@@ -19,6 +22,7 @@ enum PendingPart {
         call_id: String,
         name: String,
         json: String,
+        signature: Option<String>,
     },
 }
 
@@ -38,14 +42,36 @@ impl StreamAssembly {
     }
 
     pub fn text(&mut self, id: &str, text: &str) -> LlmResult<Vec<LlmStreamEvent>> {
+        self.text_with_signature(id, text, None)
+    }
+
+    pub fn text_with_signature(
+        &mut self,
+        id: &str,
+        text: &str,
+        signature: Option<String>,
+    ) -> LlmResult<Vec<LlmStreamEvent>> {
         let mut events = Vec::new();
         if !self.pending.contains_key(id) {
-            self.start(id, PendingPart::Text(String::new()))?;
+            self.start(
+                id,
+                PendingPart::Text {
+                    text: String::new(),
+                    signature: None,
+                },
+            )?;
             events.push(LlmStreamEvent::TextStart { part_id: id.into() });
         }
-        let Some(PendingPart::Text(value)) = self.pending.get_mut(id) else {
+        let Some(PendingPart::Text {
+            text: value,
+            signature: stored,
+        }) = self.pending.get_mut(id)
+        else {
             return Err(FatalLlmError::InvalidRequest.into());
         };
+        if signature.is_some() {
+            *stored = signature;
+        }
         if !text.is_empty() {
             value.push_str(text);
             events.push(LlmStreamEvent::TextDelta {
@@ -123,6 +149,17 @@ impl StreamAssembly {
         name: &str,
         fragment: &str,
     ) -> LlmResult<Vec<LlmStreamEvent>> {
+        self.tool_with_signature(id, call_id, name, fragment, None)
+    }
+
+    pub fn tool_with_signature(
+        &mut self,
+        id: &str,
+        call_id: &str,
+        name: &str,
+        fragment: &str,
+        signature: Option<String>,
+    ) -> LlmResult<Vec<LlmStreamEvent>> {
         let mut events = Vec::new();
         if !self.pending.contains_key(id) {
             if call_id.is_empty() || name.is_empty() {
@@ -134,6 +171,7 @@ impl StreamAssembly {
                     call_id: call_id.into(),
                     name: name.into(),
                     json: String::new(),
+                    signature: signature.clone(),
                 },
             )?;
             events.push(LlmStreamEvent::ToolCallStart {
@@ -146,12 +184,16 @@ impl StreamAssembly {
             call_id: stored_id,
             name: stored_name,
             json,
+            signature: stored,
         }) = self.pending.get_mut(id)
         else {
             return Err(FatalLlmError::InvalidRequest.into());
         };
         if stored_id != call_id || stored_name != name {
             return Err(FatalLlmError::InvalidRequest.into());
+        }
+        if signature.is_some() {
+            *stored = signature;
         }
         if !fragment.is_empty() {
             json.push_str(fragment);
@@ -178,9 +220,15 @@ impl StreamAssembly {
             .remove(id)
             .ok_or(FatalLlmError::InvalidRequest)?;
         let (content, event) = match part {
-            PendingPart::Text(text) => (
-                ContentPart::Text { text },
-                LlmStreamEvent::TextEnd { part_id: id.into() },
+            PendingPart::Text { text, signature } => (
+                ContentPart::Text {
+                    text,
+                    signature: signature.clone(),
+                },
+                LlmStreamEvent::TextEnd {
+                    part_id: id.into(),
+                    signature,
+                },
             ),
             PendingPart::Reasoning {
                 text,
@@ -203,6 +251,7 @@ impl StreamAssembly {
                 call_id,
                 name,
                 json,
+                signature,
             } => {
                 let input: serde_json::Value =
                     serde_json::from_str(&json).map_err(|_| FatalLlmError::InvalidRequest)?;
@@ -214,12 +263,14 @@ impl StreamAssembly {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     input: input.clone(),
+                    signature: signature.clone(),
                 };
                 (
                     ContentPart::ToolCall {
                         call_id,
                         name,
                         input,
+                        signature,
                     },
                     event,
                 )
@@ -246,7 +297,7 @@ impl StreamAssembly {
         let content = self.content();
         if content.is_empty()
             || content.iter().all(|p| match p {
-                ContentPart::Text { text } => text.is_empty(),
+                ContentPart::Text { text, signature } => text.is_empty() && signature.is_none(),
                 ContentPart::Reasoning {
                     text,
                     signature,
@@ -286,7 +337,7 @@ impl StreamAssembly {
         for id in self.order.clone() {
             if matches!(
                 self.pending.get(&id),
-                Some(PendingPart::Text(_) | PendingPart::Reasoning { .. })
+                Some(PendingPart::Text { .. } | PendingPart::Reasoning { .. })
             ) && let Ok(event) = self.end(&id)
             {
                 events.push(event);

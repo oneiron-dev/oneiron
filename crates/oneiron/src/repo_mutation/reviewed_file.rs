@@ -25,6 +25,8 @@ pub(super) struct StackMemberHold {
 /// operation, bound to no stack (or, with `bound_here`, to `batch`
 /// itself), whose masked copy holds no uncleared cause, that met the
 /// review the one policy point holds it to. The review it met, or why not.
+/// That review point also holds a removed public name no person decided
+/// yet (FIX 4365).
 ///
 /// # Errors
 /// A store failure, a review policy or a masked copy that does not read.

@@ -21,6 +21,7 @@ impl crate::vault::Vault {
             own_owner_authority: false,
             records_cover: Default::default(),
             judged_at: None,
+            read_filter: None,
         }
     }
 
@@ -57,6 +58,7 @@ impl crate::vault::Vault {
             own_owner_authority: false,
             records_cover: Default::default(),
             judged_at: None,
+            read_filter: None,
         }
     }
 }
@@ -234,6 +236,21 @@ impl<'a> ScopedRead<'a> {
             })
     }
 
+    /// Whether this read's credential still holds in `txn`, with its owner
+    /// binding where it reads as the owner, asking nothing of any row's grant:
+    /// a door that reaches only the reader's own state (its change feed
+    /// subscriptions, untangle slice 6.8a) checks it in that state's own
+    /// transaction, so a key revoked or lapsed since it was made reaches
+    /// nothing (review #6897).
+    ///
+    /// # Errors
+    ///
+    /// The owner binding's refusal ([`Self::owner_live_in`]), or the read.
+    pub(crate) fn credential_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        self.owner_live_in(txn)?;
+        self.proof_live_in(txn)
+    }
+
     pub(crate) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
         // A host action's key reads nothing once its root, its owner binding
         // or its owner lapses, whichever door asks (FIX 2222).
@@ -262,6 +279,15 @@ impl<'a> ScopedRead<'a> {
         let now = self.vault.instant_in_txn(txn)?.secs();
         if now < claims.issued_at || now >= claims.expires_at {
             return Ok(false);
+        }
+        if let Some(share) = &claims.share_ref {
+            let share = EntityId::from_hex(share)?;
+            let holder = EntityId::from_hex(&claims.holder_ref)?;
+            if crate::share::live_share_for_holder_in_txn(self.vault, txn, &share, &holder, now)?
+                .is_none()
+            {
+                return Ok(false);
+            }
         }
         // The shared view of this snapshot's fold: a copy of the fold costs
         // as much as the vault has agents, and this runs once per candidate.
@@ -480,6 +506,7 @@ impl ScopedRead<'_> {
             && !self.outside_credential_task_position_in(txn, id, &row)?
             && !self.outside_credential_facets_in(txn, id, &row)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
+            && crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, id)?.is_none()
         {
             Ok(ReadAdmission::Suppressed)
         } else {
@@ -582,7 +609,7 @@ impl ScopedRead<'_> {
     /// this read's own store (`record_scope::record_world_in`), as a read
     /// under the world ceiling `ceiling` holds it: a NOTE at its world
     /// witness there (FIX-LIST 9433). `None` where the row cannot prove one.
-    fn world_record_in(
+    pub(super) fn world_record_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,

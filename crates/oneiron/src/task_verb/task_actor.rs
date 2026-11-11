@@ -119,6 +119,9 @@ pub(crate) fn erase_launch_actor_in_txn(
     }
     // FIX 4699: recipient pass over the launches the launcher pass kept.
     super::fanout_launch::erase_launch_recipient_in_txn(vault, wtxn, actor)?;
+    // RUN-HOLD: a generic Resume `actor` made of a launch's held planner
+    // stays released and names no erased person.
+    super::fanout_launch::erase_launch_override_actor_in_txn(vault, wtxn, &hex)?;
     super::consult_fanout_store::erase_fanout_run_recipient_in_txn(vault, wtxn, actor)?;
     super::wave_port::scrub_wave_index_copies_in_txn(vault, wtxn, actor)?;
     Ok(())

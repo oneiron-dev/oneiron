@@ -1,7 +1,5 @@
 //! Native standing consent for a tool's explicit stop-asking answer.
 
-use serde::{Deserialize, Serialize};
-
 use super::record::ConnectorKeyRecord;
 use super::slate::SlateDisposition;
 use super::slate_setting::{connector_tool_setting_in_txn, governing_slate_in_txn};
@@ -13,15 +11,8 @@ use crate::store::Store;
 
 const TOOL_REMEMBER_CLASS: &str = "outbound.connector_tool";
 
-/// Engine-resolved scope of the call, frozen with its request. `None` project
-/// means this call has no project; it is not a vault-wide selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ConnectorToolRememberContext {
-    /// Filled only by preparation against the current native connector key.
-    pub(crate) connection: Option<EntityId>,
-    pub(crate) project: Option<EntityId>,
-    pub(crate) lineage: Option<[u8; 32]>,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_consent_state::connector_key::tool_remember::ConnectorToolRememberContext;
 
 /// The native connection whose settings a key meets, not a display name or
 /// an execution principal. A derived per-grant key retains its catalog parent.

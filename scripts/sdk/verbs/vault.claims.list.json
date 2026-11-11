@@ -1,0 +1,24 @@
+{
+  "name": "vault.claims.list",
+  "description": "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt.",
+  "uniffi": {
+    "args": {
+      "filter": "ClaimListFilter"
+    },
+    "output": "ClaimViews"
+  },
+  "input": "crate::memory::ClaimListFilter",
+  "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
+  "call": "memory.claim_list(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered"
+}

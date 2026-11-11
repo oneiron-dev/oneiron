@@ -22,6 +22,7 @@ mod peer_origins;
 mod rebuild;
 mod row_births;
 mod snapshot_ops;
+mod source_audiences;
 mod validation_work;
 mod vocabulary;
 mod withdrawn_cutoffs;
@@ -40,6 +41,7 @@ pub use rebuild::rebuild_vault_window_from_canonical;
 #[cfg(feature = "sync")]
 pub(crate) use rebuild::{RebuildAt, rebuild_page, rebuild_start};
 pub use row_births::CanonicalRowBirth;
+pub use source_audiences::CanonicalSourceAudience;
 pub(crate) use validation_work::CanonicalValidation;
 pub use vocabulary::{
     CanonicalBaseEdge, CanonicalContainerManifest, CanonicalCustodyTransition,
@@ -77,6 +79,9 @@ impl CanonicalEntityDocument {
             + metadata_size(&self.metadata)
             + self.record_fields.iter().map(String::len).sum::<usize>()
             + self.birth_actor.map_or(0, |actor| actor.len())
+            + self.origin.as_ref().map_or(0, |origin| {
+                origin.incarnation.len() + 12 * origin.version.len()
+            })
             + self.history.as_ref().map_or(0, |history| {
                 let versions = history.versions.iter().map(|version| {
                     16 + 4 * version.parents.len()
@@ -104,7 +109,7 @@ impl CanonicalEntityDocument {
     }
 }
 
-fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
+pub(super) fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
     fields
         .iter()
         .map(|(field, value)| field.len() + value.len())
@@ -123,6 +128,13 @@ impl CanonicalSnapshot {
 
     /// Encode the same immutable source whose validation groups just completed.
     pub(super) fn encode_validated_within(&self, limit: usize) -> Result<Vec<u8>> {
+        let mut bytes = self.encode_validated_payload_within(limit)?;
+        seal_recovery_artifact(CANONICAL_SNAPSHOT_ARTIFACT_TYPE, &mut bytes);
+        Ok(bytes)
+    }
+
+    /// The same bounded encoding, with its reserved header left for the checksum page.
+    pub(super) fn encode_validated_payload_within(&self, limit: usize) -> Result<Vec<u8>> {
         let mut out = BoundedWriter {
             bytes: Vec::new(),
             budget: ByteBudget::new(limit.min(CANONICAL_SNAPSHOT_MAX_BYTES)),
@@ -131,7 +143,6 @@ impl CanonicalSnapshot {
         // Room for the envelope header, sealed once the payload is written.
         std::io::Write::write_all(&mut out, &[0; super::HEADER_LEN]).map_err(|_| out.refusal())?;
         rmp_serde::encode::write_named(&mut out, self).map_err(|_| out.refusal())?;
-        seal_recovery_artifact(CANONICAL_SNAPSHOT_ARTIFACT_TYPE, &mut out.bytes);
         Ok(out.bytes)
     }
 

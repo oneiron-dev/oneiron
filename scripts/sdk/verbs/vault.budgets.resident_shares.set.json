@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.resident_shares.set",
+  "description": "The owner sets one resident's share of the host-paid allocation: its units or the default split, soft or pinned. Its depletion stays as it stands.",
+  "input": "crate::llm::run_admission::resident_doors::SetResidentShareRequest",
+  "output": "crate::llm::run_admission::resident_doors::ResidentSharesView",
+  "call": "crate::llm::run_admission::resident_doors::set_resident_share_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.resident_shares.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

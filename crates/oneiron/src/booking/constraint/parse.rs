@@ -141,7 +141,7 @@ fn response_text(message: &LlmMessage) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -180,6 +180,7 @@ fn constraint_parse_llm_request(
             },
             locality: config.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: vec![
             system_message(format!(
@@ -190,6 +191,7 @@ fn constraint_parse_llm_request(
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
                     text: constraint_user_section(request, free_text),
+                    signature: None,
                 }],
             },
         ],
@@ -205,7 +207,10 @@ fn constraint_parse_llm_request(
 fn system_message(text: String) -> LlmMessage {
     LlmMessage {
         role: LlmMessageRole::System,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }
 
@@ -234,7 +239,7 @@ fn constraint_response_schema() -> JsonValue {
         "additionalProperties": false,
         "required": ["object"],
         "properties": {
-            "visitor_tz_override": { "type": ["string", "null"], "maxLength": MAX_VISITOR_TZ_BYTES },
+            "visitor_tz_override": { "type": ["string", "null"] },
             "object": {
                 "type": "object",
                 "additionalProperties": false,
@@ -253,7 +258,6 @@ fn constraint_response_schema() -> JsonValue {
                     },
                     "local_time_windows": {
                         "type": "array",
-                        "maxItems": MAX_LOCAL_TIME_WINDOWS,
                         "items": {
                             "type": "object",
                             "additionalProperties": false,

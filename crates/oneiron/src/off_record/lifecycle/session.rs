@@ -6,9 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::{ReceiptRecord, SessionLocalReceiptLog};
-use crate::session_overlay::{
-    OverlayKeyspace, RouteTarget, SessionOverlay, SessionWriteRoute, SnapshotLookup,
-};
+use crate::session_overlay::{RouteTarget, SessionOverlay, SessionWriteRoute};
 use crate::side_table::{SideCodec, SideKey, SideTable};
 use crate::vault::VaultId;
 use oneiron_retrieval::pipeline::ScoredEntity;
@@ -23,6 +21,8 @@ use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
 use crate::error::OffRecordError;
 
 mod checkpoint;
+mod counters;
+mod reader_txn;
 mod routed_side;
 mod type_feedback;
 mod vector_search;
@@ -150,7 +150,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
         let entry = self.vault.enter_off_record_session_entry(
             session_ref,
             backend,
-            self.vault.config.off_record_overlay_budget_bytes,
+            self.vault.runtime().off_record_overlay_budget_bytes(),
             None,
         )?;
         Ok(self.handle(session_ref.to_owned(), entry))
@@ -839,39 +839,6 @@ impl OffRecordSession<'_> {
                 Ok(total)
             },
         )
-    }
-
-    /// This room's overlay-local contribution to an additive counter row;
-    /// `None` when the overlay holds no row for it.
-    fn overlay_counter_delta<K: SideKey, V, C: SideCodec<V>>(
-        &self,
-        counter: &SideTable<K, V, C>,
-        key: &K,
-    ) -> Result<Option<V>> {
-        match self
-            .entry
-            .overlay
-            .snapshot()?
-            .lookup_single(OverlayKeyspace::VaultMeta, &counter.key_bytes(key))
-        {
-            SnapshotLookup::Present(value) => counter.decode_value(&value).map(Some),
-            SnapshotLookup::Passthrough | SnapshotLookup::Tombstone => Ok(None),
-        }
-    }
-
-    /// The base and room-overlay components of an additive side-table
-    /// counter. Ordinary composed reads intentionally keep shadow semantics;
-    /// only additive counters opt into this explicit merge.
-    #[cfg(test)]
-    pub(crate) fn side_table_counter_components<K: SideKey, V, C: SideCodec<V>>(
-        &self,
-        counter: &SideTable<K, V, C>,
-        key: &K,
-    ) -> Result<(Option<V>, Option<V>)> {
-        let overlay = self.overlay_counter_delta(counter, key)?;
-        let rtxn = self.vault.store.env.read_txn()?;
-        self.participant_in_txn(&rtxn)?;
-        Ok((counter.get(&self.vault.store, &rtxn, key)?, overlay))
     }
 
     /// Composed side-table read over overlay ∪ base. A run's handle reads

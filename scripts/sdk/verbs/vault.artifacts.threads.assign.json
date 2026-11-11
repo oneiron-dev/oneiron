@@ -1,0 +1,21 @@
+{
+  "name": "vault.artifacts.threads.assign",
+  "description": "Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine.",
+  "refs": [
+    "/artifact_ref",
+    "/assignee_ref"
+  ],
+  "input": "crate::anchored_annotation::AnnotationAssignRequest",
+  "output": "crate::anchored_annotation::AnnotationBriefView",
+  "call": "memory.artifacts_threads_assign(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref",
+      "assignee_ref"
+    ]
+  },
+  "section": false,
+  "openapi": true
+}

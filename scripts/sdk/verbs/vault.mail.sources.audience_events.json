@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.sources.audience_events",
+  "description": "Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins.",
+  "input": "crate::mail_pack::MailSourceRef",
+  "output": "Vec<crate::mail_pack::SourceAudienceEventView>",
+  "call": "memory.mail_sources_audience_events(&input)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

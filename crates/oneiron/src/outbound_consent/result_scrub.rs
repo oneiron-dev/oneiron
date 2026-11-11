@@ -4,9 +4,11 @@ use std::fmt;
 
 use crate::outbound_intent_ledger::{FrozenOutboundCall, OutboundSendOutcome};
 
+use super::RawOutboundBody;
+
 /// Raw provider result. Diagnostics redact every provider-controlled field.
 pub struct RawOutboundResult {
-    body: Option<Vec<u8>>,
+    body: Option<RawOutboundBody>,
     error: Option<String>,
     stderr: Option<Vec<u8>>,
     url: Option<String>,
@@ -20,18 +22,23 @@ impl RawOutboundResult {
         stderr: Option<Vec<u8>>,
         url: Option<String>,
     ) -> Self {
+        Self::with_body(body.map(RawOutboundBody::from_bytes), error, stderr, url)
+    }
+
+    /// An already owned body, including a spool, from the same send.
+    #[must_use]
+    pub fn with_body(
+        body: Option<RawOutboundBody>,
+        error: Option<String>,
+        stderr: Option<Vec<u8>>,
+        url: Option<String>,
+    ) -> Self {
         Self {
             body,
             error,
             stderr,
             url,
         }
-    }
-
-    /// The body the transport returned, for the send's own terminal bridge
-    /// alone (DOOR-141 PR2): it is never logged or scrubbed into a count.
-    pub(crate) fn body(&self) -> Option<&[u8]> {
-        self.body.as_deref()
     }
 
     #[must_use]
@@ -46,7 +53,7 @@ impl RawOutboundResult {
 impl fmt::Debug for RawOutboundResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawOutboundResult")
-            .field("body", &self.body.as_ref().map(std::vec::Vec::len))
+            .field("body", &self.body.as_ref().map(RawOutboundBody::byte_len))
             .field("error", &self.error.as_ref().map(|_| "[redacted]"))
             .field("stderr", &self.stderr.as_ref().map(std::vec::Vec::len))
             .field("url", &self.url.as_ref().map(|_| "[redacted]"))
@@ -87,14 +94,24 @@ impl QuarantinedOutboundResult {
 /// Destructive result-scrub fence at the transport boundary.
 #[must_use]
 pub fn scrub_outbound_result(raw: RawOutboundResult) -> QuarantinedOutboundResult {
-    QuarantinedOutboundResult {
+    scrub_outbound_result_with_body(raw).1
+}
+
+/// Moves the body to this send's terminal bridge while scrubbing every other
+/// raw field. The scrub receipt still counts the body, as the borrowed-copy
+/// bridge did, without allocating that copy.
+pub(super) fn scrub_outbound_result_with_body(
+    raw: RawOutboundResult,
+) -> (Option<RawOutboundBody>, QuarantinedOutboundResult) {
+    let scrubbed = QuarantinedOutboundResult {
         scrubbed: ScrubbedOutboundResult {
             body: raw.body.is_some(),
             error: raw.error.is_some(),
             stderr: raw.stderr.is_some(),
             url: raw.url.is_some(),
         },
-    }
+    };
+    (raw.body, scrubbed)
 }
 
 /// Result-carrying transport response before adaptation to the intent ledger.

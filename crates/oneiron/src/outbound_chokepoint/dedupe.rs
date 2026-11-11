@@ -225,6 +225,31 @@ pub(crate) fn delivered_in_txn(
     Ok(())
 }
 
+/// Drops row `id`'s dedupe binding, and the reservation its key holds while
+/// that still names `id`, in the caller's writer (FIX 4747 slice 4): the
+/// row is a stood-down send that certainly never went, superseded as its
+/// lease comes back, and the send that takes its place reserves the floor
+/// afresh at its own admission. A reservation another send took over stays.
+pub(crate) fn forget_superseded_intent_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &IntentId,
+) -> Result<(), IntentLedgerError> {
+    let Some(key) = intent_key(vault, &*txn, id)? else {
+        return Ok(());
+    };
+    let hash = reservation_key(&key)?;
+    let reserved_here = RESERVATION
+        .get(&vault.store, &*txn, &hash)
+        .map_err(|error| malformed(error, "invalid dedupe reservation"))?
+        .is_some_and(|reservation| reservation.id == *id);
+    if reserved_here {
+        RESERVATION.delete(&vault.store, txn, &hash)?;
+    }
+    INTENT_BINDING.delete(&vault.store, txn, id)?;
+    Ok(())
+}
+
 /// After retry governance, refresh the conservative wire-start time before
 /// transport. A later definite failure cannot erase an older ambiguous send.
 pub(crate) fn touch_inflight(vault: &Vault, id: &IntentId) -> Result<(), IntentLedgerError> {

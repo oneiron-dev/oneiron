@@ -334,7 +334,7 @@ fn code_sandbox_microvm_allowlist_defaults_to_deny() {
 #[test]
 fn code_sandbox_microvm_isolating_tiers_never_fall_through_silently() {
     for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
-        match select_backend_for_tier(tier) {
+        match select_backend_for_tier(&crate::code_sandbox::SANDBOX_BACKENDS, tier) {
             Ok(selected) => {
                 let backend = selected.expect("isolating tier requires a backend");
                 assert_eq!(backend.name(), "firecracker");

@@ -12,6 +12,8 @@ use crate::provenance::made_by::MadeBy;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingProposalKind {
+    /// Paid decisions are retained; no proposed workbook bytes exist yet.
+    NeedsStaging,
     Edit,
     Output,
 }
@@ -26,7 +28,8 @@ pub struct PendingProposalView {
     pub proposal_ref: String,
     pub kind: PendingProposalKind,
     pub base_version: Option<u64>,
-    /// BLAKE3 of the proposed bytes, hex.
+    /// BLAKE3 of the proposed bytes, hex; empty for `NeedsStaging`, which
+    /// has no proposed bytes.
     pub content_hash: String,
     pub byte_len: usize,
     pub retained_by: EntityId,
@@ -42,7 +45,12 @@ pub struct PendingProposalView {
 
 impl PendingRow {
     pub(super) fn view(&self, artifact_id: EntityId) -> PendingProposalView {
-        let summary = match &self.body {
+        let mut summary = match &self.body {
+            PendingBody::SheetAnswers { bundle } => serde_json::json!({
+                "format": "xlsx",
+                "status": "needs_staging",
+                "answers": bundle.answers.iter().filter(|answer| answer.value.is_some()).count(),
+            }),
             PendingBody::Edit {
                 format, manifest, ..
             } => {
@@ -64,6 +72,7 @@ impl PendingRow {
                 name,
                 media_type,
                 report,
+                ..
             } => serde_json::json!({
                 "name": name,
                 "media_type": media_type,
@@ -71,6 +80,9 @@ impl PendingRow {
                     .unwrap_or(serde_json::Value::Null),
             }),
         };
+        if let Some(next) = self.next_sheet_row {
+            summary["next_sheet_row"] = serde_json::json!(next);
+        }
         PendingProposalView {
             artifact_id,
             artifact: crate::lens::RecordRef::from_id(
@@ -80,12 +92,22 @@ impl PendingRow {
             ),
             proposal_ref: self.proposal_ref.clone(),
             kind: match self.body {
+                PendingBody::SheetAnswers { .. } => PendingProposalKind::NeedsStaging,
                 PendingBody::Edit { .. } => PendingProposalKind::Edit,
                 PendingBody::Output { .. } => PendingProposalKind::Output,
             },
             base_version: self.base_version,
-            content_hash: hash_hex(blake3::hash(&self.new_bytes).as_bytes()),
-            byte_len: self.new_bytes.len(),
+            content_hash: if matches!(&self.body, PendingBody::SheetAnswers { .. }) {
+                String::new()
+            } else {
+                // An output waiting in its body file is listed from its
+                // descriptor, never read (FIX 20812).
+                match &self.new_file {
+                    Some(file) => hash_hex(&file.body.blake3),
+                    None => hash_hex(blake3::hash(&self.new_bytes).as_bytes()),
+                }
+            },
+            byte_len: usize::try_from(self.payload_len()).unwrap_or(usize::MAX),
             retained_by: self.retained_by,
             retained_by_record: self
                 .retained_by_kind

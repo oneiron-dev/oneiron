@@ -147,11 +147,8 @@ fn scratch_root_io_detail(root: &Path, operation: &str, error: &std::io::Error) 
     )
 }
 
-/// Maximum bytes the base-mount read door returns for one file. Proposal
-/// export spools overlay files instead and bounds none of them by size.
-pub(super) const MAX_OVERLAY_FILE_BYTES: u64 = 64 * 1024 * 1024;
-
 /// Collects an overlay upper directory into typed review proposals.
+/// Proposal export spools overlay files without a per-file size bound.
 /// A whiteout is a deletion; an opaque marker is a directory hide request.
 /// A whiteout paired with a new file does not prove a rename of one document:
 /// explicit rename intent must come from the guest protocol.
@@ -391,10 +388,7 @@ fn is_opaque(_dir: &Path) -> Result<bool> {
 
 /// Reclaim crash leftovers when an isolating backend starts, before it accepts VMs.
 #[cfg(all(unix, any(test, feature = "microvm-firecracker")))]
-pub(in crate::code_sandbox) fn reap_overlay_scratch(
-    root: &Path,
-    backend: &'static str,
-) -> Result<()> {
+pub fn reap_overlay_scratch(root: &Path, backend: &'static str) -> Result<()> {
     ensure_private_scratch_root(root, backend)?;
     super::scratch::reap(root, backend)
 }

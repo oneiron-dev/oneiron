@@ -14,12 +14,15 @@
 //! sweep also retries a bounded number of files a revoke or an expiry could
 //! not remove then. The found-key drain raises one write's share of due
 //! notices a page, each page its own write, and stops between pages at the
-//! deadline.
+//! deadline. The OAuth row sweep removes at most one clients table's bound of
+//! lapsed rows a page, each page its own write, and stops between pages at
+//! the deadline.
 
 use super::{Deadline, HardEraseWork, HousekeepingSweep, SecretLiftWork, SweepWork};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::llm::model_pack::AccessSnapshot;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, Vault};
 
@@ -74,7 +77,9 @@ impl Run {
 
 /// Runs one sweep from `cursor`, the point an unfinished walk of the same
 /// sweep stopped at. `owner_asked` when the owner asked for this run rather
-/// than its schedule making it due.
+/// than its schedule making it due. `access` is what the host's offers hold,
+/// against which the model pack retirement sweep resolves the active pack's
+/// roles.
 pub(super) fn run(
     vault: &Vault,
     sweep: HousekeepingSweep,
@@ -82,6 +87,7 @@ pub(super) fn run(
     deadline: &Deadline,
     cursor: Option<&[u8]>,
     owner_asked: bool,
+    access: &AccessSnapshot,
 ) -> Result<Run> {
     let work = match sweep {
         HousekeepingSweep::SecretLeaseExpiry => {
@@ -169,6 +175,14 @@ pub(super) fn run(
         HousekeepingSweep::DrafterCorpusSweep => SweepWork::DrafterCorpora {
             removed: vault.sweep_drafter_corpora()?,
         },
+        HousekeepingSweep::ModelPackRetirement => {
+            let report = vault.run_model_pack_retirement(access)?;
+            SweepWork::ModelPackRetirement {
+                notices: u64::from(report.notices),
+                migrated: report.migrated,
+            }
+        }
+        HousekeepingSweep::OAuthExpiry => return oauth_rows(vault, now, deadline),
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
@@ -355,6 +369,30 @@ fn found_key_notices(vault: &Vault, deadline: &Deadline) -> Result<Run> {
             });
         }
     }
+}
+
+/// Drops the OAuth server's rows past their lifetime (FIX 4902) a page at a
+/// time, each page its own short write, until none is left or the deadline
+/// passes, with the owner agent grant of each sign-in that lapsed before its
+/// client held a token (FIX 22142). First it ends each sign-in whose token
+/// family's first access slip never stood and whose own end write failed
+/// (FIX 22226). The lapsed rows are the queue, so the schedule keeps no
+/// cursor.
+fn oauth_rows(vault: &Vault, now: u64, deadline: &Deadline) -> Result<Run> {
+    let (swept, complete) = vault.sweep_lapsed_oauth_rows(now, || deadline.passed())?;
+    Ok(Run {
+        work: SweepWork::OAuthRows {
+            requests: swept.requests,
+            codes: swept.codes,
+            tokens: swept.tokens,
+            families: swept.families,
+            clients: swept.clients,
+            grants: swept.grants,
+        },
+        complete,
+        cursor: None,
+        covered_until: None,
+    })
 }
 
 /// Rebuilds whole-body line indexes reads found missing or short (FIX 1186b):

@@ -1,0 +1,12 @@
+{
+  "name": "vault.mail.compliance.log",
+  "description": "The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::mail_pack::MailComplianceEventView>",
+  "call": "memory.mail_compliance_log()?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

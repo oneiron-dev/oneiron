@@ -14,6 +14,7 @@
 
 mod arm;
 mod chunks;
+mod facets;
 mod outside;
 mod query;
 mod run_body;
@@ -22,6 +23,7 @@ mod shape;
 mod slice;
 mod unplaced;
 
+pub(crate) use self::facets::DeliveredRanges;
 pub(crate) use self::outside::{read_result_in, result_cards_in};
 use self::run_body::{LiveCutoff, RunBody};
 pub(crate) use self::unplaced::unplaced_answer;
@@ -32,13 +34,12 @@ use crate::code_run::{
     ScopedCallControl,
 };
 use crate::engine_executor::{
-    JsResultRef, JsResultTarget, RESULT_REPLY_INLINE_BYTES, is_result_output_path,
-    result_handle_json,
+    JsResultRef, JsResultTarget, is_result_output_path, result_handle_json,
 };
 use crate::entity_id::EntityId;
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::secret_rotation::ArtifactTaintState;
-use crate::store::{BodySink, LINE_INDEX_BLOCK_BYTES};
+use crate::store::LINE_INDEX_BLOCK_BYTES;
 use crate::{Error, Result, Vault};
 use serde_json::{Value, json};
 
@@ -338,70 +339,6 @@ impl ResultRead {
             "kind": kind_word(self.output.kind),
             "taint": {"state": taint_word(state), "secret": secret},
             "reason": withheld_reason(secret),
-        })
-    }
-
-    /// One facet of the result, read from `input`. A selection past one
-    /// reply streams into `spill` when there is one; without one it pages.
-    pub(crate) fn read(
-        &self,
-        storage: &ExecutorStorage<'_>,
-        facet: ResultFacet,
-        input: Value,
-        spill: Option<&mut BodySink>,
-    ) -> Result<Reply> {
-        let body = RunBody::of(self, storage);
-        self.read_of(&body, storage.limit_watch(), facet, input, spill)
-    }
-
-    /// [`Self::read`] over `body`, under the `[limits]` rows of `watch`.
-    fn read_of(
-        &self,
-        body: &dyn ResultBody,
-        watch: &LimitWatch,
-        facet: ResultFacet,
-        input: Value,
-        spill: Option<&mut BodySink>,
-    ) -> Result<Reply> {
-        if self.state.is_tainted() {
-            return Ok(Reply::Output(self.withheld()));
-        }
-        let bounds = ReadBounds {
-            reply_bytes: RESULT_REPLY_INLINE_BYTES,
-            watch,
-        };
-        let reference = self.reference();
-        // Chunk and page refs name the same parent the ref above names: the
-        // owner's immutable occurrence, so a page of a renamed result still
-        // reparses to its occurrence, not to the first result with its
-        // bytes. Only a named delegated source keeps the caller's name,
-        // as its ref does.
-        let parent = if self.caller_named() {
-            self.name
-                .clone()
-                .unwrap_or_else(|| self.output.handle.clone())
-        } else {
-            occurrence_ref(self.owner, &self.output.path).unwrap_or_else(|| {
-                self.name
-                    .clone()
-                    .unwrap_or_else(|| self.output.handle.clone())
-            })
-        };
-        let reply = match facet {
-            ResultFacet::Slice => slice::slice(body, &reference, input, &bounds),
-            ResultFacet::Search => search::search(body, &reference, input, &bounds),
-            ResultFacet::Query => query::query(body, &reference, &parent, input, &bounds, spill),
-            ResultFacet::Chunks => chunks::chunks(body, &reference, &parent, input, &bounds),
-        }?;
-        // A spilled selection is a new body, which its own sink's scan marks.
-        Ok(match reply {
-            Reply::Output(answer) => match unmarked_secret(&answer) {
-                None => Reply::Output(answer),
-                Some(reason) => {
-                    Reply::Output(self.withheld_as(ArtifactTaintState::TaintedLive, Some(reason)))
-                }
-            },
-            other => other,
         })
     }
 

@@ -166,6 +166,23 @@ pub(super) fn put_block_in_txn(
     BLOCKS.put(vault, txn, &id, block)
 }
 
+/// Whether `block` names a row a permanent erase fenced in this write's
+/// snapshot. Such a block lands expired and cleared, as that erase's scrub
+/// leaves one ([`scrub_blocks_in_txn`]), so the erase's id is never
+/// scrubbed from blocks again (FIX 22191).
+pub(super) fn names_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    block: &HookBlock,
+) -> Result<bool> {
+    for id in &block.refs {
+        if super::store::source_erased_in_txn(vault, txn, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Whether any live block waits on a predicate.
 pub(super) fn any_until_predicate(vault: &Vault) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
@@ -214,13 +231,13 @@ pub(in crate::runtime_hooks) fn scrub_block_payload(block: &mut HookBlock, at: u
     block.expired_at = Some(at);
 }
 
-/// Expires and clears source-dependent blocks left by affected runs. Their
-/// identity and expired status stay; refs, routing text and predicate globs do
-/// not survive the source's erasure.
+/// Expires and clears the blocks that name one of the erased `ids` or that
+/// affected runs left. Their identity and expired status stay; refs,
+/// routing text and predicate globs do not survive the source's erasure.
 pub(in crate::runtime_hooks) fn scrub_blocks_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
+    ids: &BTreeSet<EntityId>,
     affected_runs: &BTreeSet<super::store::RunKey>,
     at: u64,
 ) -> Result<()> {
@@ -231,7 +248,7 @@ pub(in crate::runtime_hooks) fn scrub_blocks_in_txn(
     let mut matched = Vec::new();
     for row in BLOCKS.iter_from(&vault.store, txn, &[])? {
         let (block_id, block) = row?;
-        if block.refs.contains(id) || run_keys.contains(&block.run_key) {
+        if block.refs.iter().any(|id| ids.contains(id)) || run_keys.contains(&block.run_key) {
             matched.push((block_id, block));
         }
     }

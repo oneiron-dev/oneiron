@@ -92,11 +92,14 @@ pub(crate) async fn vault_agents_spawn(
     input: SpawnIntentRequest,
 ) -> MaybeListed<SpawnIntentReply> {
     const VERB: &str = "vault.agents.spawn";
+    let caller_origin = oneiron::agent_dispatch::CallerOrigin::Connection {
+        locality: auth.locality(),
+    };
     as_person_naming(
         server,
         VERB,
         owner_proof(auth, server, VERB),
-        move |server, owner| served_spawn(server, &owner, input),
+        move |server, owner| served_spawn(server, &owner, input, caller_origin),
         spawn_intent_rows,
     )
     .await
@@ -113,6 +116,7 @@ fn served_spawn(
     server: &Arc<SyncServer>,
     owner: &AuthenticatedOwner,
     input: SpawnIntentRequest,
+    caller_origin: oneiron::agent_dispatch::CallerOrigin,
 ) -> MemoryResult<SpawnIntentReply> {
     let vault = server.vault();
     let at = vault.now_recorded_at();
@@ -153,6 +157,7 @@ fn served_spawn(
             deadline,
         });
     let host = PlannedSpawnHost {
+        caller_origin,
         seats: &planner.seats,
         skills: &planner.skills,
         executor: &planner.executor,

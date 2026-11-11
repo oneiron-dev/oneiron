@@ -171,7 +171,7 @@ pub(crate) async fn classify_request(
         return Ok((request, None));
     }
     let (parts, body) = request.into_parts();
-    let limit = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
+    let limit = crate::api::request_floor::request_floor(server);
     let bytes = axum::body::to_bytes(body, limit)
         .await
         .map_err(|_| clock_corrupt_refusal())?;
@@ -184,7 +184,12 @@ pub(crate) async fn classify_request(
     }
     // This door runs outside the body codec, so a content-encoded body is
     // classified on a decoded copy (FIX 11520) and handed back raw.
-    let decoded = crate::api::body_codec::decode_copy(&parts.headers, parts.uri.path(), &bytes);
+    let decoded = crate::api::body_codec::decode_copy(
+        &parts.headers,
+        parts.uri.path(),
+        &bytes,
+        crate::api::request_floor::request_floor(server),
+    );
     let probe: &[u8] = decoded.as_deref().unwrap_or(bytes.as_ref());
     let call = serde_json::from_slice::<Value>(probe)
         .ok()
@@ -220,9 +225,18 @@ fn clock_corrupt_refusal() -> Response {
 
 /// Whether `verb` is never restriction-only (FIX 11666): the table lists
 /// only revoke/erase rows, so a call of either needs no input to classify
-/// and its secret's plaintext copies nowhere here.
+/// and its secret's plaintext copies nowhere here. An artifact write is
+/// none either, and its content, of any length, is never read whole here
+/// (FIX 22074).
 fn never_restrictive_verb(verb: &str) -> bool {
-    matches!(verb, "vault.secrets.register" | "vault.secrets.rotate")
+    matches!(
+        verb,
+        "vault.secrets.register"
+            | "vault.secrets.rotate"
+            | "vault.artifacts.create"
+            | "vault.artifacts.append"
+            | "vault.artifacts.propose_output"
+    )
 }
 
 /// Whether an MCP call's body names a verb that is never restriction-only
@@ -407,6 +421,8 @@ impl<F: Future> Future for RestrictionPolls<F> {
 /// restriction-only clock on its own thread; anywhere else it runs as it is.
 /// A call made for a leased run writes for it on that thread too (FIX 10748),
 /// and a keyed request's route writes under its intent there (FIX 10379).
+/// The serving call's admission observer rides there as well, so a task the
+/// closure spawns reports its waits on the call's receipt (FIX 4735).
 pub(crate) fn run_blocking<F, R>(work: F) -> tokio::task::JoinHandle<R>
 where
     F: FnOnce() -> R + Send + 'static,
@@ -414,8 +430,28 @@ where
 {
     let restrictive = RESTRICTION_ONLY.try_with(|_| ()).is_ok();
     let run_writes = super::host_doors::support::calling_run_writes();
+    let observer = super::admission_observer();
     let work = oneiron::store::carry_idempotency_intent(work);
     tokio::task::spawn_blocking(move || {
+        let _clock = restrictive.then(oneiron::authority::restriction_only_clock);
+        super::with_admission_observer_sync(observer, || {
+            oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), work)
+        })
+    })
+}
+
+/// A door's untimed memory admission on a dedicated transfer worker,
+/// carrying the same clock, run-write and idempotency context as
+/// [`run_blocking`] without occupying the runtime's shared blocking pool.
+pub(crate) fn run_transfer_worker<F, R>(work: F) -> tokio::sync::oneshot::Receiver<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let restrictive = RESTRICTION_ONLY.try_with(|_| ()).is_ok();
+    let run_writes = super::host_doors::support::calling_run_writes();
+    let work = oneiron::store::carry_idempotency_intent(work);
+    crate::api::transfer::spawn_worker(move || {
         let _clock = restrictive.then(oneiron::authority::restriction_only_clock);
         oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), work)
     })

@@ -15,7 +15,10 @@ use crate::federation::{
     SharedEraseAsk, SharedInvitation,
 };
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
-use crate::task_verb::sdk::{InvitationSlip, SharedActRequest, SharedVaultRequest};
+use crate::task_verb::sdk::{
+    InvitationSlip, MemberSlip, SharedActRequest, SharedInvitationAcceptedWithCredential,
+    SharedVaultRequest,
+};
 use crate::{EntityId, Vault};
 
 /// One of the caller's own invitations, by the id its `MemberInvited`
@@ -27,6 +30,19 @@ pub struct SharedInvitationRequest {
     #[schemars(with = "String")]
     pub vault_id: u64,
     pub invitation: String,
+}
+
+/// `vault.members.accept_with_credential`'s input: the invitee's own invitation
+/// and the regular credential's required expiry (Unix seconds). The device key
+/// comes only from the verified invitation request, never from this input.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedInvitationAcceptWithCredentialRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    pub invitation: String,
+    pub expires_at: u64,
 }
 
 /// `vault.members.withdraw_invitation`'s input: the invitee's PERSON id, hex,
@@ -80,6 +96,42 @@ pub fn accept_shared_invitation_as(
     input: SharedInvitationRequest,
 ) -> MemoryResult<SharedActExecutionReceipt> {
     Ok(vault.accept_shared_invitation(invitee, input.vault_id, &input.invitation)?)
+}
+
+/// `vault.members.accept_with_credential`: accepts the invitation and mints a
+/// regular member credential in the same writer under the host's `issuer`.
+/// A failed composite leaves the invitation unspent; plain acceptance is unchanged.
+pub fn accept_shared_invitation_with_credential_as(
+    vault: &Vault,
+    invitee: &AuthenticatedOwner,
+    issuer: &HostSlipIssuer,
+    input: SharedInvitationAcceptWithCredentialRequest,
+) -> MemoryResult<SharedInvitationAcceptedWithCredential> {
+    let (receipt, slip) = vault.accept_shared_invitation_with_credential(
+        invitee,
+        input.vault_id,
+        &input.invitation,
+        issuer,
+        input.expires_at,
+    )?;
+    Ok(SharedInvitationAcceptedWithCredential {
+        receipt,
+        credential: MemberSlip::from_slip(slip)?,
+    })
+}
+
+/// The raw embedded handle holds no host signing key or invitation-bound
+/// request proof. The served door supplies both to the same core composite.
+pub fn accept_shared_invitation_with_credential_embedded(
+    memory: &Memory<'_>,
+    _input: SharedInvitationAcceptWithCredentialRequest,
+) -> MemoryResult<SharedInvitationAcceptedWithCredential> {
+    let _owner = memory.embedded_owner("vault.members.accept_with_credential")?;
+    Err(MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "vault.members.accept_with_credential signs the member's credential with the host's own key; an embedded vault holds none",
+        &[super::host::SERVED_CLIENT_HINT],
+    ))
 }
 
 /// `vault.members.decline`: the invitee declines; nothing is granted.

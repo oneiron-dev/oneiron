@@ -1,9 +1,9 @@
 //! The recall door: when a recall's clock starts, what it answers when its
 //! door stops waiting, and how it serves high, xhigh and max.
-use super::sdk::VAULT_RECALL_LIMIT_DEFAULT;
 use crate::memory::RecallRequest;
 use crate::memory::{Memory, MemoryResult};
 use crate::retrieval_depth::RecallQueryVectors;
+use crate::verb_names::VAULT_RECALL_LIMIT_DEFAULT;
 
 /// When a recall's clock started and what its door does if it stops waiting.
 /// A door that can stop waiting at the deadline (an async server door) starts
@@ -121,7 +121,10 @@ pub fn recall_at_door_seeded(
     // Every stage of this recall shares the deletion states it reads in one
     // committed snapshot (L15 recall speed).
     let _deletion_memo = crate::ports::deletion_memo_scope();
-    recall_with_whole_limit(memory, input, embed, door)
+    // The caller's own filter binds this recall's handle once (FIX 3977):
+    // its cut, ready, paid and final packs and every lane they read meet it.
+    let memory = memory.with_read_filter(input.filter.as_ref());
+    recall_with_whole_limit(&memory, input, embed, door)
 }
 
 /// [`recall_at_door`] for the whole requested limit.
@@ -139,7 +142,6 @@ fn recall_with_whole_limit(
     )?;
     let scope = input.scope.clone().unwrap_or_default();
     let limit = input.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT);
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(limit)?;
     // Refused before the query embeds, as every free check is.
     let query_affect = input

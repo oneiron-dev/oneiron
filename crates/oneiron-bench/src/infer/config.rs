@@ -118,7 +118,7 @@ pub(super) fn load(path: &Path, model: &str) -> Result<Models, String> {
 /// `text` as a `[models]` section body: unchanged when no header names
 /// `models`, else the lines under `[models]` and `[models.*]` with that prefix
 /// taken off the headers.
-fn section_body(text: &str) -> String {
+pub(crate) fn section_body(text: &str) -> String {
     let in_models = |path: &str| path == "models" || path.starts_with("models.");
     if !text
         .lines()

@@ -1,0 +1,29 @@
+{
+  "name": "vault.kv.namespaces",
+  "description": "The caller's distinct live namespaces, with exact segment prefix and suffix matching.",
+  "input": "crate::memory::KeyValueNamespaces",
+  "output": "Vec<Vec<String>>",
+  "call": "memory.key_value_namespaces(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "input_fields": {
+      "maxDepth": "max_depth"
+    },
+    "docs": {
+      "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+      "ts": "/** Exact segment namespace enumeration. Empty namespaces are not retained. */",
+      "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+    }
+  }
+}

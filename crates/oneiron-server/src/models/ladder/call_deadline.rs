@@ -152,7 +152,7 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         deadline: CallDeadline,
     ) -> LlmResult<LlmResponse> {
-        self.generate_from(run, request, selector, may_send, deadline, true, None)
+        self.generate_from(run, request, selector, may_send, deadline, true, None, None)
             .await
             .map(|(response, _)| response)
     }
@@ -184,7 +184,7 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         deadline: CallDeadline,
     ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
-        self.generate_from(run, request, selector, may_send, deadline, true, None)
+        self.generate_from(run, request, selector, may_send, deadline, true, None, None)
             .await
     }
 
@@ -227,6 +227,33 @@ impl OfferLadder {
             .await
     }
 
+    /// The exact picked call with a host observer of each finalized physical
+    /// request. The observer also rechecks the held attachment at the send.
+    pub(crate) async fn generate_exact_observed_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        observer: &(dyn Fn(&LlmRequest) -> bool + Send + Sync),
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
+        if !self.picked || self.rungs.len() != 1 {
+            return Err(oneiron::FatalLlmError::InvalidRequest.into());
+        }
+        self.generate_from_streamed(
+            run,
+            request,
+            selector,
+            may_send,
+            self.host_wait(),
+            false,
+            None,
+            Some(observer),
+            true,
+        )
+        .await
+    }
+
     /// [`Self::generate_exact_within`] on `deadline` (FIX 7792): only a
     /// ladder that is one picked model takes the call.
     pub async fn generate_exact_by(
@@ -256,8 +283,10 @@ impl OfferLadder {
         if !self.picked || self.rungs.len() != 1 {
             return Err(oneiron::FatalLlmError::InvalidRequest.into());
         }
-        self.generate_from(run, request, selector, may_send, deadline, false, None)
-            .await
+        self.generate_from(
+            run, request, selector, may_send, deadline, false, None, None,
+        )
+        .await
     }
 
     /// [`Self::stream`] on `deadline` (FIX 8213).

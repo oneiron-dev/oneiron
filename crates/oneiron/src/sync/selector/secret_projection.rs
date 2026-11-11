@@ -60,6 +60,10 @@ pub(crate) use crate::origin::secret_projection::selector_release::{
     BlobCopy, CopyRow, GENERATION_CONTEXT, ItemCopy, RepoSyncProjectionId, SyncSecretProjection,
 };
 
+pub(crate) use documents::device::{
+    CopyReply, CopyStream, acknowledge_home_copy, copy_stream_in_txn, import_home_copy,
+    release_device_copy, request_vector,
+};
 pub use documents::settlement::RepoCopyEditReview;
 pub(crate) use documents::settlement::{
     begin_repo_copy_settlement_in_txn, finish_repo_copy_settlement_in_txn,
