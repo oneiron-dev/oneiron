@@ -696,6 +696,13 @@ fn extra_rooms_f_project_delete_drops_links() -> TestResult {
         .expect("link R to P1");
     let members_before = stored_members(&fixture, room_id)?;
 
+    // A delete signs its receipt with this install's key, so it loads that
+    // key before its first write; a host installs its keystore after each
+    // open, as this does.
+    fixture.vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+
     // The public project delete drops P1's links: its list answers empty
     // (the live check fails even though the effective record survives), the
     // owner's served body of R drops the stale key with the room's members
