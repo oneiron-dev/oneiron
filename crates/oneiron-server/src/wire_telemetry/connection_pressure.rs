@@ -367,7 +367,7 @@ impl PoolPressure {
             PoolKind::Listener => (
                 episode.bound,
                 REMEDY,
-                oneiron::code_sandbox::egress::guest_network_permits(),
+                oneiron::host_net_floor::guest_network_permits(),
             ),
             PoolKind::RelayLocker => (0, RELAY_LOCKER_REMEDY, 0),
             PoolKind::Mesh => (0, MESH_REMEDY, 0),

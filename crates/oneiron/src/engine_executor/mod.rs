@@ -60,12 +60,13 @@ pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_o
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
 // FIX 4414: the owner's per-run step evidence.
 pub(crate) use self::step_evidence::step_evidence_page;
+pub use self::store::{RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES};
 pub(crate) use self::store::{
-    RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, bridge_result_output_path, clean_for_context,
-    holds_reply_content, is_result_output_path, mask_known_text, observation_output_path,
-    parse_result_read_path, result_handle_json, result_read_path_for, resumed_output_wait,
-    script_output_path, store_agent_verb_write_answer, store_ordinal_base,
-    store_result_output_path, terminal_output_seq, write_receipt_result_output_path,
+    bridge_result_output_path, clean_for_context, holds_reply_content, is_result_output_path,
+    mask_known_text, observation_output_path, parse_result_read_path, result_handle_json,
+    result_read_path_for, resumed_output_wait, script_output_path, store_agent_verb_write_answer,
+    store_ordinal_base, store_result_output_path, terminal_output_seq,
+    write_receipt_result_output_path,
 };
 pub use self::types::{
     CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
@@ -76,6 +77,9 @@ pub use self::types::{
     JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse, StoreReceiptInput,
     StoreReceiptTree, guest_response_with_budget,
 };
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::wire::{HealedExecutorReply, heal_executor_text_tracking_repairs};
 
 #[cfg(test)]
 mod tests;

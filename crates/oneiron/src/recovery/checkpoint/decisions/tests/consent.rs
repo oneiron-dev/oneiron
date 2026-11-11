@@ -13,9 +13,10 @@ use crate::booking::{
     BookingLifecycleTurn, BookingPagePublication, BookingVerbReceipt, BookingVerbRequest,
     CancelSpec, ConfirmReceipt, ConfirmSpec, ConstraintFieldConfig, EventTypeCard, EventTypeConfig,
     EventTypeKey, HoldLeaseSpec, HoldSpec, HostAvailabilityConfig, PublicBookingAvailability,
-    RankedSlot, RoutingMode, SessionKey, SlotHostBinding, SlotOracle, SolveRequest, SolveResult,
-    ThemeTokens, WeeklyWallWindow, booking_config_hash, encode_event_type_claim_value,
-    enqueue_booking_verb, run_booking_lifecycle_once,
+    PublishBookingPageGrantRequest, RankedSlot, RoutingMode, SessionKey, SlotHostBinding,
+    SlotOracle, SolveRequest, SolveResult, ThemeTokens, WeeklyWallWindow, booking_config_hash,
+    encode_event_type_claim_value, enqueue_booking_verb, mint_publish_page_invite_grant,
+    run_booking_lifecycle_once,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -33,7 +34,6 @@ use crate::identity_reputation::{
 use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
 };
-use crate::outbound_grant::BookingPageInviteGrantMintIntent;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use crate::test_util::entity;
 use crate::write_envelope::WriteActor;
@@ -289,6 +289,7 @@ pub(super) fn booking_publications() -> Result<Case> {
             enabled: false,
             placeholder: String::new(),
         },
+        constraint_front: None,
         theme: ThemeTokens(serde_json::Value::Null),
         landing: BookingLandingContent::default(),
         initial_availability: PublicBookingAvailability {
@@ -297,6 +298,7 @@ pub(super) fn booking_publications() -> Result<Case> {
             window_secs: 3_600,
             visitor_tz: "UTC".to_owned(),
         },
+        sponsor: None,
     };
     vault
         .memory(owner, EdgeActorClass::Human)
@@ -315,6 +317,7 @@ pub(super) fn booking_publications() -> Result<Case> {
             occurred_at: None,
             learned_at: None,
             salience: None,
+            confidence_details: None,
         })
         .map_err(invalid)?;
     Case::after_backup(
@@ -409,6 +412,7 @@ pub(super) fn esign_ceremonies() -> Result<Case> {
             title: "Agreement".into(),
             sequential: true,
             expires_at: 1_000,
+            token_expires_at: None,
             items: vec![EsignItem {
                 artifact_ref: document.to_hex(),
                 original_version: 1,
@@ -422,10 +426,12 @@ pub(super) fn esign_ceremonies() -> Result<Case> {
                 expires_at: 1_000,
                 principal_ref: None,
                 automated: false,
+                natural_person: None,
             }],
             fields: Vec::new(),
             full_trail_appendix: true,
             lifecycle: None,
+            project: None,
         },
         EsignAuditActor {
             actor: "owner".into(),
@@ -596,14 +602,15 @@ pub(super) fn calendar_invitation_consent() -> Result<Case> {
     let spare = book(&vault, granted, ada, NOW + 7_200)?;
     let elsewhere = book(&vault, ungranted, ben, NOW + 10_800)?;
     // Minted after the bookings, so no confirm sends an invitation.
-    vault.mint_booking_page_invite_outbound_grant(
-        &entity(0xB7),
-        &BookingPageInviteGrantMintIntent {
+    mint_publish_page_invite_grant(
+        &vault,
+        &PublishBookingPageGrantRequest {
             page_ref: granted,
             publisher_principal: owner,
+            issued_at: NOW,
         },
-        NOW,
-    )?;
+    )
+    .map_err(invalid)?;
     invitable(&vault, ADA, true)?;
     invitable(&vault, BEN, false)?;
     Case::after_backup(
@@ -653,16 +660,18 @@ fn unreadable_booking() -> Result<Case> {
     }
     let ada = booker(&vault, entity(0xB5), ADA)?;
     book(&vault, page, ada, NOW + 3_600)?;
-    vault.mint_booking_page_invite_outbound_grant(
-        &entity(0xB7),
-        &BookingPageInviteGrantMintIntent {
+    mint_publish_page_invite_grant(
+        &vault,
+        &PublishBookingPageGrantRequest {
             page_ref: page,
             publisher_principal: owner,
+            issued_at: NOW,
         },
-        NOW,
-    )?;
+    )
+    .map_err(invalid)?;
     vault.mint_standing_outbound_grant(
-        &entity(0xB8),
+        &crate::test_util::embedded_owner_proof(&vault),
+        entity(0xB8),
         &crate::genui::GrantMintIntent {
             principal_ref: owner.to_hex(),
             origin_component_id: "census".to_owned(),
@@ -672,7 +681,6 @@ fn unreadable_booking() -> Result<Case> {
                 channel: crate::calendar::invite::CALENDAR_INVITE_CHANNEL.to_owned(),
             },
         },
-        NOW,
     )?;
     // Booking EVENT ids come from the clock, so this one reads after them.
     let later = entity(0xFE);

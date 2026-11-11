@@ -46,7 +46,9 @@ fn edit_path_oracle_separates_success_and_caught_regressions_per_arm() -> BeamRe
     assert_eq!(report.arms["sdk"].successes, 5);
     assert_eq!(report.arms["sdk"].regressions, 0);
     assert_eq!(report.arms["files"].successes, 0);
-    assert_eq!(report.arms["files"].regressions, 2);
+    assert_eq!(report.arms["files"].regressions, 1);
+    // Ruled (254be443903): the uncompilable cross_file_refactor candidate counts as a failure, not a regression.
+    assert_eq!(report.arms["files"].failures, 1);
     let cleanup = report.results.last().unwrap();
     assert!(cleanup.tests_pass);
     assert!(!cleanup.contracts_pass);

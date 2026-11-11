@@ -146,7 +146,7 @@ pub const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_IDS_PAR
 /// ever gets to throw it away. An answer that far out is not verbose, it is
 /// unusable — so this REFUSES rather than truncating, and an unreadable answer
 /// is a case every plane already knows how to handle.
-pub(super) const POLICY_MODEL_RULE_IDS_PARSE_MAX: usize = 2_560;
+pub const POLICY_MODEL_RULE_IDS_PARSE_MAX: usize = 2_560;
 
 /// The rationale contract's audit fields, asked apart from its verdict once
 /// the verdict is decided.

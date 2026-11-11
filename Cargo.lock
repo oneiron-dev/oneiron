@@ -8009,7 +8009,7 @@ dependencies = [
  "lzma-rust2 0.16.2",
  "memmap2",
  "ocrs",
- "oneiron",
+ "oneiron-agent-runtime",
  "oneiron-authority",
  "oneiron-base",
  "oneiron-browser",
@@ -8034,6 +8034,7 @@ dependencies = [
  "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
+ "oneiron-testkit",
  "oneiron-vault-contract",
  "oneiron-wake-contract",
  "oneiron-web-fetch",
@@ -8093,6 +8094,29 @@ dependencies = [
  "zeroize",
  "zip 0.6.6",
  "zstd 0.13.3",
+]
+
+[[package]]
+name = "oneiron-agent-runtime"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "blake3",
+ "libc",
+ "oneiron",
+ "oneiron-container",
+ "oneiron-contracts",
+ "oneiron-sandbox-contract",
+ "oneiron-spawn",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "wasmtime",
 ]
 
 [[package]]
@@ -8485,6 +8509,7 @@ dependencies = [
  "blake3",
  "chrono",
  "oneiron",
+ "oneiron-keystore",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
@@ -8809,6 +8834,7 @@ dependencies = [
  "ipnet",
  "lopdf",
  "oneiron",
+ "oneiron-keystore",
  "oneiron-organ-host",
  "oneiron-organ-protocol",
  "p256",
@@ -8866,6 +8892,7 @@ dependencies = [
  "objc2-core-ml",
  "objc2-foundation",
  "oneiron",
+ "oneiron-agent-runtime",
  "oneiron-broker",
  "oneiron-browser",
  "oneiron-code-check",
@@ -8986,6 +9013,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-testkit"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "futures-core",
+ "libc",
+ "oneiron",
+ "oneiron-spawn",
+ "serde_json",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "oneiron-uniffi"
 version = "0.1.0"
 dependencies = [
@@ -9016,6 +9057,13 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-vm-outbox"
+version = "0.1.0"
+dependencies = [
+ "oneiron-server",
 ]
 
 [[package]]

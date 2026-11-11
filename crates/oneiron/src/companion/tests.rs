@@ -7,8 +7,20 @@ use crate::{
 
 use crate::test_util::entity;
 
-fn companion_task(kind: CompanionTaskKind, key: CompanionRecordKey) -> Result<CompanionTask> {
+fn companion_task(kind: CompanionTaskKind, key: CompanionTaskKey) -> Result<CompanionTask> {
     CompanionTask::new(kind, key)
+}
+
+/// A PERSON-targeted task is admitted only for a live PERSON
+/// (`queue.rs::check_task_target`, dd28b00714d), so the fixture writes one.
+fn put_live_person(vault: &crate::Vault, person: crate::EntityId) -> Result<()> {
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"companion person",
+    )
 }
 
 #[test]
@@ -19,6 +31,9 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let companion_queue = CompanionQueue::new(&vault);
     let generic_queue = AttemptQueue::new(&vault);
+    clock.set(1);
+    put_live_person(&vault, entity(0x34))?;
+    put_live_person(&vault, entity(0x35))?;
 
     let EnqueueOutcome::Enqueued(generic) = generic_queue.enqueue(EnqueueAttempt {
         kind: "claim_extraction".to_owned(),
@@ -37,7 +52,7 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     let personal = CompanionScope::personal(entity(0x31));
     let context_task = companion_task(
         CompanionTaskKind::Context,
-        CompanionRecordKey::relationship(personal.clone(), entity(0x32), entity(0x33)),
+        CompanionTaskKey::relationship(personal.clone(), entity(0x32), entity(0x33)),
     )?;
     let context_dedupe_key = context_task.dedupe_key();
     let EnqueueCompanionTaskOutcome::Enqueued(context_status) =
@@ -122,7 +137,7 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
 
     let profile_task = companion_task(
         CompanionTaskKind::Profile,
-        CompanionRecordKey::persona(personal, entity(0x34)),
+        CompanionTaskKey::person(personal, entity(0x34)),
     )?;
     let EnqueueCompanionTaskOutcome::Enqueued(profile_status) =
         companion_queue.enqueue(EnqueueCompanionTask {
@@ -223,7 +238,7 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
 
     let memory_task = companion_task(
         CompanionTaskKind::Memory,
-        CompanionRecordKey::persona(CompanionScope::neutral(), entity(0x35)),
+        CompanionTaskKey::person(CompanionScope::neutral(), entity(0x35)),
     )?;
     let EnqueueCompanionTaskOutcome::Enqueued(memory_status) =
         companion_queue.enqueue(EnqueueCompanionTask {

@@ -8,16 +8,17 @@ pub(crate) mod tests {
     use der::{Decode, Encode};
 
     use super::super::super::{cms, engine, pdf, profile};
-    use super::super::verify_sig_pipeline::{Checks, SigEntry, verify_doc_ts};
+    use super::super::verify_sig_pipeline::{Checks, SigEntry, SigHandler, verify_doc_ts};
     use super::super::verify_tests_dss_b::tests::*;
     use super::super::verify_tests_fixtures_dss_a::tests::*;
     use super::super::*;
     use crate::api::{
         BackendError, BackendSignature, FetchError, FetchPolicy, FetchRequest, FetchResponse,
-        PadesProfile, PdfSealEngine, SealBackend, SealClock, SealConfig, SealFetcher,
-        SealResourceLimits, Sha256Digest, SignDigestRequest, SignatureAlgorithm, SigningIdentity,
-        VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
+        PadesProfile, PdfSealEngine, SealBackend, SealClock, SealConfig, SealFetcher, Sha256Digest,
+        SignDigestRequest, SignatureAlgorithm, SigningIdentity, VerifyCheckKind, VerifyCheckStatus,
+        VerifyFindingCode,
     };
+    use crate::memory::testing::{grant_all_limits, operation_limits, shared_bytes};
 
     #[test]
     fn dss_crl_issuer_key_usage_without_crl_sign_fails() {
@@ -63,7 +64,7 @@ pub(crate) mod tests {
         let bytes = b"%PDF-fake-body-for-hash";
         let entry = SigEntry {
             field_name: "test".into(),
-            is_doc_ts: true,
+            handler: SigHandler::DocTs,
             byte_range: [4, 2, 10, 4], // s1 != 0: ByteRange check fails
             contents: {
                 // Token over the (well-formed) span digest: it WOULD
@@ -74,7 +75,9 @@ pub(crate) mod tests {
                 mint_token(&tsa, &cms::sha256(&spans), AT_UNIX)
             },
         };
-        let mut checks = Checks::new();
+        let limits = operation_limits();
+        let memory = limits.memory.ledger().unwrap();
+        let mut checks = Checks::new(&limits);
         let mut covered: Vec<EmbeddedCert> = Vec::new();
         let got = verify_doc_ts(
             bytes,
@@ -84,7 +87,9 @@ pub(crate) mod tests {
             false,
             &mut covered,
             AT_UNIX * 1000,
-        );
+            &memory,
+        )
+        .unwrap();
         assert!(
             got.trusted.is_none(),
             "bad ByteRange rejects the DocTimeStamp"
@@ -248,10 +253,11 @@ pub(crate) mod tests {
         tsa: Option<&TestCa>,
         gen_time: u64,
     ) -> Vec<u8> {
-        let state = pdf::reparse_revision(bytes, &SealResourceLimits::default()).unwrap();
+        let limits = operation_limits();
+        let state = pdf::reparse_revision(bytes, &limits).unwrap();
         let kind = pdf::RevisionKind::Signature {
-            field_name: pdf::field_name_for(op),
-            date_str: pdf::pdf_date(AT_UNIX * 1000),
+            field_name: pdf::field_name_for(op, &limits).unwrap(),
+            date_str: pdf::pdf_date(AT_UNIX * 1000, &limits).unwrap(),
         };
         let mut draft = pdf::append_revision(bytes, &state, &kind, 64 * 1024).unwrap();
         let br = draft.byte_range.unwrap();
@@ -277,7 +283,7 @@ pub(crate) mod tests {
             chain_ders: &[],
         };
         let cms_der = cms::build_signed_data(&material, &wire, &sig, &unsigned);
-        pdf::patch_contents(&mut draft, &cms_der).unwrap();
+        pdf::patch_contents(&mut draft, &cms_der, &limits).unwrap();
         draft.bytes
     }
 
@@ -287,13 +293,15 @@ pub(crate) mod tests {
         certs: Vec<Vec<u8>>,
         crls: Vec<Vec<u8>>,
     ) -> Vec<u8> {
-        let state = pdf::reparse_revision(bytes, &SealResourceLimits::default()).unwrap();
+        let limits = operation_limits();
+        let state = pdf::reparse_revision(bytes, &limits).unwrap();
         let material = profile::DssMaterial {
             certs_der: certs,
             ocsps_der: Vec::new(),
-            crls_der: crls,
+            crls_der: crls.iter().map(|crl| shared_bytes(crl)).collect(),
         };
-        let (objs, dss_num) = profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
+        let (objs, dss_num) =
+            profile::build_dss_objects(&material, state.max_obj + 1, &limits).unwrap();
         let draft = pdf::append_revision(
             bytes,
             &state,
@@ -309,7 +317,8 @@ pub(crate) mod tests {
 
     /// Append a DocTimeStamp revision minted at `gen_time` (B-LTA shape).
     pub(crate) fn append_doc_ts_revision(bytes: &[u8], tsa: &TestCa, gen_time: u64) -> Vec<u8> {
-        let state = pdf::reparse_revision(bytes, &SealResourceLimits::default()).unwrap();
+        let limits = operation_limits();
+        let state = pdf::reparse_revision(bytes, &limits).unwrap();
         let mut draft = pdf::append_revision(
             bytes,
             &state,
@@ -320,7 +329,7 @@ pub(crate) mod tests {
         let br = draft.byte_range.unwrap();
         let imprint = pdf::hash_byte_range(&draft.bytes, br).unwrap();
         let token = mint_token(tsa, &imprint, gen_time);
-        pdf::patch_contents(&mut draft, &token).unwrap();
+        pdf::patch_contents(&mut draft, &token, &limits).unwrap();
         draft.bytes
     }
 
@@ -370,7 +379,7 @@ pub(crate) mod tests {
                 trust_anchors_der: anchors,
                 timestamp_authorities: Vec::new(),
                 fetch_policy: FetchPolicy::default(),
-                resource_limits: SealResourceLimits::default(),
+                resource_limits: grant_all_limits(),
             },
             Arc::new(NoopBackend),
             Arc::new(NoopFetcher),

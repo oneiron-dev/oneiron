@@ -263,8 +263,6 @@ fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
             device: authority_test_device(key.clone()),
             genesis_nonce: [seed.wrapping_add(1); 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: crate::authority::AuthorityTier::Software,
-            pending_widen_delay_secs: 86_400,
         },
         signer: crate::authority::AuthoritySignature {
             suite: key.suite(),
@@ -666,6 +664,7 @@ fn an_authority_row_replayed_over_a_planted_fence_reads_live() -> Result<()> {
             occurred: TimeRange { start: 2, end: 2 },
             learned_at: 2,
             body: &crate::authority::encode_authority_log_entry_body(&bind)?,
+            row_version: 0,
         },
         crate::sync::client::ImportTier::OwnDevice,
     )?;
@@ -709,6 +708,7 @@ fn a_window_holding_an_authority_row_over_a_planted_fence_snapshots_and_recovers
             occurred: TimeRange { start: 2, end: 2 },
             learned_at: 2,
             body: &crate::authority::encode_authority_log_entry_body(&bind)?,
+            row_version: 0,
         },
         crate::sync::client::ImportTier::OwnDevice,
     )?;
@@ -2454,12 +2454,13 @@ fn observer_b_materializes_remote_edge_provenance_claim() {
     let actor = EntityId::now();
     let claim_id = EntityId::now();
 
-    let record = crate::provenance::EdgeProvenanceClaimBody::new(
+    let mut record = crate::provenance::EdgeProvenanceClaimBody::new(
         actor,
         0.9,
         crate::provenance::SupersessionStatus::Confirmed,
     );
-    let mut body = crate::claim::ClaimBody::new(
+    record.actor_class = Some(crate::edge::EdgeActorClass::Human);
+    let body = crate::claim::ClaimBody::new(
         "edge.provenance",
         crate::claim::ClaimSubject::Edge {
             source: src,
@@ -2472,9 +2473,6 @@ fn observer_b_materializes_remote_edge_provenance_claim() {
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
-    body.evidence = Some(crate::provenance::encode_actor_class_evidence(
-        crate::edge::EdgeActorClass::Human,
-    ));
     let body_bytes = crate::claim::encode_claim_body(&body).unwrap();
     let claim_blob = entity_blob(
         crate::registry::ENTITY_TYPE_CLAIM,
@@ -3524,6 +3522,7 @@ fn observer_b_rejects_type_76_merge_with_nonstructural_participant() {
                     crate::registry::ENTITY_TYPE_CLAIM,
                     TimeRange { start: 1, end: 1 },
                     2,
+                    None,
                     &claim_body,
                 )
                 .apply(wtxn)

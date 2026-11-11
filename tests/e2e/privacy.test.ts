@@ -327,7 +327,7 @@ async function mcpRead(mcp: McpClient, tools: McpTools, name: string, spec: unkn
 const receiptKinds = [
   "outbound", "gate", "identity_lifecycle", "scoped_read", "share", "artifact_settle",
   "proposal_outcome", "commitment_lifecycle", "extraction", "served_form", "hook",
-  "reference_refusal", "task_lifecycle",
+  "reference_refusal", "task_lifecycle", "run_hold_override",
 ];
 async function allReceipts(client: PublicHttpClient) {
   const rows: FacadeResult<"vault.receipts">["receipts"] = [];

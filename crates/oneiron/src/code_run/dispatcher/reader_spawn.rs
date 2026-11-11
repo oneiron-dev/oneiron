@@ -473,7 +473,8 @@ impl HostSelfDispatcher<'_> {
     ///
     /// The wait keeps the `tasks.wait` marker a parked step records, as a
     /// verb hook's ask does, its prompt naming the set. One naming a
-    /// world-privacy request waits on it instead (FIX 4706).
+    /// world-privacy request waits on it instead (FIX 4706), and one naming
+    /// AGENT children waits on them (slice 6.5b).
     pub(super) fn dispatch_task_wait_set(
         &self,
         call: TaskWaitSetCall,
@@ -487,6 +488,12 @@ impl HostSelfDispatcher<'_> {
                 disk_floor: None,
             })
         };
+        // Slice 6.5b: a wait over AGENT children of the run. An executor's
+        // step parks on it; a call from no executor site is answered the
+        // reduction as it stands.
+        if let Some(agents) = &call.agents {
+            return self.dispatch_agent_wait(&call, agents, site.is_some());
+        }
         // FIX 4706: a wait on a world-privacy request, no children.
         if let Some(request) = &call.request {
             return self.dispatch_world_privacy_wait(&call, request);
