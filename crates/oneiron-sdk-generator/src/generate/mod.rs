@@ -14,7 +14,7 @@ mod emit_py;
 pub(crate) mod emit_remote;
 pub(crate) mod emit_server;
 mod emit_ts;
-mod outputs;
+pub(crate) mod outputs;
 mod row_access;
 mod rows;
 pub(crate) mod uniffi;
@@ -24,8 +24,6 @@ use std::path::PathBuf;
 
 use crate::facade_types::Inventory;
 use crate::py::value::{Dict, Value};
-
-pub(crate) use outputs::write_out_dir;
 
 /// Port of generate.py:66 (SESSION_READS).
 pub(crate) const SESSION_READS: &[&str] =
