@@ -159,6 +159,11 @@
   margin-left: 0;
 }
 
+/* A composed card opened here drops its title line the same way. */
+.sl-split-thing-item .sl-composed-card-head {
+  display: none;
+}
+
 .sl-split-thing-note {
   max-width: 60ch;
   padding: 10px 0 2px;

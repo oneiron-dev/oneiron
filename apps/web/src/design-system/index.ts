@@ -85,6 +85,19 @@ export {
 } from './patterns/NeedsYou'
 export { formatAnswerTime } from './patterns/answer-time'
 export {
+  ComposedCard,
+  type ComposedCardProps,
+  type ComposedCardTableProps,
+  type ComposedCardHeadProps,
+  type ComposedCardRowProps,
+  type ComposedCardCellProps,
+  type ComposedCardPickCellProps,
+  type ComposedCardFootProps,
+  type ComposedCardPicksProps,
+  type ComposedCardReadingProps,
+  type ComposedCardFiguresProps,
+} from './patterns/ComposedCard'
+export {
   settleReducer,
   SETTLE_OPEN,
   type SettleState,

@@ -32,6 +32,7 @@
 @import './overlays/Menu.css';
 
 @import './patterns/NeedsYou.css';
+@import './patterns/ComposedCard.css';
 @import './patterns/MessageRow.css';
 @import './patterns/HoverBar.css';
 @import './patterns/DayDivider.css';
