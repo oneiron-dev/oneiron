@@ -168,6 +168,16 @@ impl ParkResume {
     /// | FeedbackTriage | any | FeedbackTriage |
     /// | OwnerRelease | ExecutorError, Other | DreamerServer, AgentRuns, Workflows, Other |
     /// | BudgetTopUp | none here: only [`Self::admits_wait`] admits it, for a Budget wait on a Trap park | none |
+    ///
+    /// Typed waits narrow these rows through [`Self::admits_wait`]:
+    ///
+    /// | wait | resumers for every cause | owners |
+    /// |---|---|---|
+    /// | Budget | BudgetTopUp, TrapConsume | Trap |
+    /// | Consent, Peer, Human | TrapConsume through the wait's own delivery | Trap; none for other owners |
+    ///
+    /// No later pass, boot recovery, outage sweep, provider recovery, owner release, program restart,
+    /// payer funding or budget top-up resumes a Consent, Peer or Human delivery wait (constraint C5).
     #[must_use]
     pub const fn admits(
         cause: DreamerParkCause,
@@ -231,6 +241,10 @@ impl ParkResume {
     /// provider recovery must never blind-retry a park that waits on a scope refill (constraint
     /// C5). The narrowing holds for every cause: [`Self::admits`] still admits a Checkpoint trap
     /// park to a later pass or a boot recovery, but not once it carries a Budget wait.
+    /// With a `Consent`, `Peer` or `Human` wait, only `TrapConsume` under a `Trap` owner admits:
+    /// the wait's own delivery wakes its bound trap. Every other owner fails closed. No later
+    /// pass, boot recovery, outage sweep, provider recovery, owner release, program restart,
+    /// payer funding or budget top-up resumes these delivery waits, for any cause (constraint C5).
     #[must_use]
     pub const fn admits_wait(
         cause: DreamerParkCause,
@@ -248,6 +262,13 @@ impl ParkResume {
                 } else {
                     Self::admits(cause, owner, resumer)
                 }
+            }
+            Some(
+                DreamerParkWaitClass::Consent
+                | DreamerParkWaitClass::Peer
+                | DreamerParkWaitClass::Human,
+            ) => {
+                matches!(owner, ParkOwnerClass::Trap) && matches!(resumer, ParkResumer::TrapConsume)
             }
         }
     }
@@ -905,6 +926,17 @@ mod tests {
                         ParkResume::admits(cause, owner, resumer)
                     };
                     assert_eq!(typed, admitted, "{cause:?} {owner:?} {resumer:?}");
+                    for class in [
+                        DreamerParkWaitClass::Consent,
+                        DreamerParkWaitClass::Peer,
+                        DreamerParkWaitClass::Human,
+                    ] {
+                        assert_eq!(
+                            ParkResume::admits_wait(cause, owner, Some(class), resumer),
+                            owner == ParkOwnerClass::Trap && resumer == ParkResumer::TrapConsume,
+                            "{cause:?} {owner:?} {class:?} {resumer:?}"
+                        );
+                    }
                 }
             }
         }
