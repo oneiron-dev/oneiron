@@ -135,6 +135,10 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     // (OF-372). Derived the same way, so a moved domain fails closed too.
     let conversation_mirror_actor_ref =
         crate::claim::reaction_record::conversation_mirror_actor_id()?.to_hex();
+    // The scope summary landing MACHINE writes a summary's merge header and
+    // trunk reply (SUMMARY-AS-RECORD-PERMIT-SHAPE = A). Derived the same way,
+    // so a moved domain fails closed too.
+    let scope_summary_landing_ref = crate::scope_summary::landing_writer_id()?.to_hex();
     let policy_values: serde_json::Value =
         serde_json::from_str(include_str!("policy_value_defaults.json"))
             .expect("valid shipped policy values");
@@ -660,6 +664,24 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                     ),
                     (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
                 ]),
+                // SUMMARY-AS-RECORD-PERMIT-SHAPE = A: a scope summary's merge
+                // header and trunk reply land under their own engine writer,
+                // which only `scope_summary::land_in_txn` writes as. Keyed to
+                // that ONE derived actor; class `system` as a whole keeps
+                // default-deny.
+                //
+                // Reversal: when slice 6.7 lands, the summary commits through
+                // vault.derive.commit by the generating agent under its
+                // Steward derive grant; delete this row and the landing
+                // writer's `generated` source-trust row below.
+                Value::Map(vec![
+                    (Value::from(ACTOR_CLASS_KEY), Value::from("system")),
+                    (
+                        Value::from(ACTOR_REF_KEY),
+                        Value::from(scope_summary_landing_ref.clone()),
+                    ),
+                    (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+                ]),
             ]),
         ),
         (
@@ -737,6 +759,28 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                                 Value::from(super::constants::POLICY_AUTO_CHECKER_KEY),
                                 Value::from(super::NativeAutoChecker::SealJob.as_str()),
                             ),
+                        ]),
+                        // SUMMARY-AS-RECORD-PERMIT-SHAPE = A: the landing
+                        // writer's header and reply hold the Dreamer's words,
+                        // so they are generated (ARCH-0040), and only this
+                        // writer's are trusted: the requester's other
+                        // `generated` writes keep pending on source trust.
+                        // Same cap and surfacing as the projector's row.
+                        // Reversal: as the landing writer's ceiling row above.
+                        Value::Map(vec![
+                            (
+                                Value::from(ACTOR_REF_KEY),
+                                Value::from(scope_summary_landing_ref),
+                            ),
+                            (
+                                Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                                Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                            ),
+                            (
+                                Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                                Value::Boolean(true),
+                            ),
+                            (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
                         ]),
                     ]),
                 ),
