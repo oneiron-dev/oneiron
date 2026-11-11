@@ -458,7 +458,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/model_manifest_doors.rs` | src | m | 7 crate-vis | — | Typed owner doors over the existing manifest, route and provider seams |
 | `src/api/facade/model_pack_doors.rs` | src | s | 3 crate-vis | — | Typed owner doors over the vault's model pack setting (FIX 5367) and the pack change revert (FIX 5369) |
 | `src/api/facade/model_setting_doors.rs` | src | s | 2 crate-vis | — | Field-specific owner doors for the host's Responses store setting |
-| `src/api/facade/model_step_doors.rs` | src | s | 2 crate-vis | — | Owner-proof model steps; HTTP, SDK and MCP reach the same typed door |
+| `src/api/facade/model_step_doors.rs` | src | m | 3 crate-vis | — | Model steps on the owner's proof, or on a live run's own actor (slice 6.5c); HTTP, SDK and MCP reach the… |
 | `src/api/facade/model_stream_doors.rs` | src | m | 8 crate-vis | — | Owner-proof shared model streams: subscriptions can attach before one admitted producer opens |
 | `src/api/facade/note_doors.rs` | src | s | 5 crate-vis | — | Host-held NOTE editor bindings beside the ordinary scoped NOTE reads |
 | `src/api/facade/oauth_authorization_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's answer to an outside app's OAuth sign-in request (FIX 4902)… |
@@ -572,7 +572,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/lease.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/legal_hold_schema.rs` | src | s | 5 crate-vis | — | OpenAPI and raw JSON-schema shape for the engine-owned legal-hold notice |
 | `src/api/linear_push.rs` | src | s | 3 crate-vis | — | `POST /v1/core/linear/push`: a caller's own push of one TASK to Linear now (FIX 8788, FIX 9382) |
-| `src/api/llm.rs` | src | m | 7 crate-vis | — | Owner-authenticated raw inference |
+| `src/api/llm.rs` | src | m | 8 crate-vis | — | Owner-authenticated raw inference |
 | `src/api/llm/decision_read.rs` | src | m | 3 crate-vis | — | `POST /v1/llm/decision_read`: the owner's probe of the house model's decision read |
 | `src/api/llm/decision_read/tests.rs` | test | s | 1 crate-vis | — | The owner's decision-read probe: owner-only, one read admitted and settled once on its meter, a failed check… |
 | `src/api/llm/defaults_submit.rs` | src | s | 4 crate-vis | — | `PUT /v1/llm/defaults` under the vault's policy power (FIX 8211) |
@@ -1587,7 +1587,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder/rung.rs` | src | s | 3 crate-vis | — | One rung's own work: its route id, the call as it binds it, and its note as the rung that answered a… |
 | `src/models/ladder/sends.rs` | src | m | 2 crate-vis | — | The send to one rung: a generated call's (`OfferLadder::send`) and a stream's (`OfferLadder::stream_rung`)… |
 | `src/models/ladder/shadow_capture.rs` | src | s | 4 crate-vis | — | The route a step replay capsule's answering rung went out on (PR-S1): noted beside the rung itself when a… |
-| `src/models/ladder/step_attempt.rs` | src | s | 1 crate-vis | — | The durable step executor owns retries; this door sends one gated attempt |
+| `src/models/ladder/step_attempt.rs` | src | s | 2 crate-vis | — | The durable step executor owns retries; this door sends one gated attempt |
 | `src/models/ladder/step_quota.rs` | src | s | 3 crate-vis | — | A durable attempt's offer under the state every call shares (FIX 9510) |
 | `src/models/ladder/stream_health.rs` | src | s | 1 crate-vis | — | A media stream's end, reported to its offer's health (FIX 1743, OF-305) |
 | `src/models/ladder/streamed_generation.rs` | src | s | 4 crate-vis | — | Stream-capable step replies on the generated-call walk |
@@ -1846,7 +1846,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/lifecycle.rs` | src | m | 17 crate-vis | — | Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass |
 | `src/server/live_rows_tests.rs` | test | s | 2 crate-vis | — | Rule five at the vault's live rows as this server sets them from `[limits]` (census rows 45 and 57): past a… |
 | `src/server/live_runs.rs` | src | m | 41 crate-vis | — | The live agent runs a harness may act for over HTTP (OF-181) |
-| `src/server/live_runs/model_request.rs` | src | s | 2 crate-vis | — | Real model requests served on one held credential attachment (FIX 7176) |
+| `src/server/live_runs/model_request.rs` | src | s | 6 crate-vis | — | Real model requests served on one held credential attachment (FIX 7176) |
 | `src/server/live_runs/pattern_action.rs` | src | s | 1 crate-vis | — | A live run's own pattern runner for an action between its entries (OF-181, DOOR-111 S4c-4) |
 | `src/server/media_door.rs` | src | m | 1 struct · 9 crate-vis | MediaDoor | The vault-bound media door (FIX-LIST 467): the one door engine code makes a media call through |
 | `src/server/media_embedding.rs` | src | L | 10 crate-vis | — | The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same… |

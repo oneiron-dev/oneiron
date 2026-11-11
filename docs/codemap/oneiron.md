@@ -4133,7 +4133,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/step/media_step.rs` | src | s | 1 enum · 2 fn | MediaStepOutcome | The media sibling of `call_as_step` (FIX 465, FIX 2245): a durable step's media call keyed by its attempt… |
 | `src/llm/step/mod.rs` | src | s | 1 mod · 7 re-export · 13 crate-vis | — | LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record… |
 | `src/llm/step/peer_wait.rs` | src | m | 1 struct · 3 fn · 6 crate-vis | PeerResultWaitBinding | Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile |
-| `src/llm/step/public.rs` | src | m | 2 struct · 4 fn · 4 re-export · 4 crate-vis | ModelStepReceipt, ModelStepReceiptRequest | Owner-submitted durable model steps over the engine's existing step executor |
+| `src/llm/step/public.rs` | src | L | 4 struct · 8 fn · 4 re-export · 4 crate-vis | ModelStepReceipt, ModelStepReceiptRequest, ModelStepSubmitRequest, RunStepCaller | Durable model steps a caller submits over the engine's existing step executor: the vault owner on their… |
 | `src/llm/step/recovery.rs` | src | s | 3 crate-vis | — | A durable step's recovery from its saved work, moved out of `execute` for FIX 4816: the memo or saved… |
 | `src/llm/step/response_bodies.rs` | src | s | 2 crate-vis | — | A terminal `dreamer.step` claim's inline response under body custody (KS-2B1, FIX 5683 part B1): an LLM… |
 | `src/llm/step/response_pins.rs` | src | m | 6 crate-vis | — | The exact artifact version a terminal `dreamer.step` claim's oversize response lives in, held by the claim… |
@@ -8059,6 +8059,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/build_cache.rs` | test | s | — | — | Public cache boundary: real vaults and BLOB_ARTIFACT versions only |
 | `tests/cb_oracle_common/mod.rs` | test | s | — | — | Shared fixtures for the split Context Board oracle files |
 | `tests/claim_approval_recall.rs` | test | s | — | — | Approval publishes a Generated claim without changing corroboration eligibility |
+| `tests/claim_declared_cardinality.rs` | test | s | — | — | E2E MUSE-RECALL-03: a declared multi-cardinality predicate keeps each distinct value standing |
 | `tests/code_memory.rs` | test | XL | — | — | ARCH-0050 R6 L2 memory-over-code attachment mechanics — public contract suite (ONE-1608) |
 | `tests/code_reply_healer.rs` | test | m | — | — | CR02-T0: CODE-RUNTIME-02 repair-format checks through the library test door |
 | `tests/code_run_restricted_actor_answer.rs` | test | m | — | — | OPUS-E2E-1: a code run whose actor may not witness a companion MESSAGE completes anyway, and `execute_code`… |
@@ -8156,12 +8157,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/live_run_claim_put.rs` | test | s | — | — | Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker… |
 | `tests/machine_peer_binding_facet.rs` | test | s | — | — | A MACHINE's actor bookkeeping lands in the vault default facet (FIX 23050, PRIVACY-02's Dreamer summary… |
 | `tests/microvm_intermediate_symlink.rs` | test | s | — | — | [MICROVM-INTERMEDIATE-SYMLINK-NOTFOUND]: a base-mount read whose path crosses a symlinked directory is… |
+| `tests/origin_register_host_git.rs` | test | s | — | — | Origin registration on the host's Git (E2E CODE-CUSTODY-06, `origin.register`) |
 | `tests/owner_reason.rs` | test | s | — | — | Public confirm → unsure re-ask → reconfirm → undo contract |
 | `tests/owner_reverts_dreamer_claim.rs` | test | s | — | — | The owner takes back what the Dreamer landed (owner ruling 18 Oct: "autoapply + revert rather than holdout"… |
 | `tests/policy_row_verbs.rs` | test | s | — | — | Public-door policy-row proof independent of unrelated lib-test compilation |
 | `tests/primitive_a_evidence_spans.rs` | test | s | — | — | Primitive A, slice 6.4a (SLICE6-MAP row A): `vault.evidence.spans` serves the exact bytes of a TURN's text… |
 | `tests/provisional_confirm_source_label.rs` | test | m | — | — | A provisional entity named only in a relationship-scoped MESSAGE, once confirmed, stays inside that… |
 | `tests/raw_replay_compilefail/a_put_replicated_private_with_sync.rs` | test | s | — | — | — |
+| `tests/recall_light_render_text.rs` | test | s | — | — | E2E MUSE-RECALL-08: light recall must return witnessed message text in both structured items and every… |
+| `tests/recall_zero_match_returns_no_memory.rs` | test | s | — | — | E2E MUSE-RECALL-04: recall without query evidence returns no memory and records an empty serving run… |
 | `tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs` | test | s | — | — | (a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor… |
 | `tests/relay_attestation_compilefail/a_witness_struct_literal_private_field.rs` | test | s | — | — | (a.1) Out-of-boundary construction of `AttestedRelayDomain` must fail: BOTH fields are private — the trust… |
 | `tests/relay_attestation_compilefail/b_identity_construction_outside_edge_auth.rs` | test | s | — | — | (b) `AuthenticatedConnectionIdentity` must not be constructible outside the edge-auth path: both fields are… |
@@ -8175,6 +8179,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/run_hold_release.rs` | test | m | — | — | Who releases a held run, keyed on the hold and the caller (Fable 5.2 item 2; lead 06:5x; Engine calls… |
 | `tests/run_lifecycle.rs` | test | m | — | — | The run lifecycle (untangle slice 5.0c): the interventions, the budget hold and lease reclaim move an… |
 | `tests/run_state.rs` | test | s | — | — | The run state (untangle slice 5.0c): [`RunState::of`] derives the state a run reports from its attempt row… |
+| `tests/run_steps.rs` | test | m | — | — | Primitive D, slice 6.5c: a live agent run submits model steps under its own lease (`ai.steps.submit`… |
 | `tests/run_wait_agents.rs` | test | m | — | — | Primitive D, slice 6.5b (SLICE6-MAP row D; ENGINE CALL S65-NAMES = A): `tasks.wait` keeps its name and gains… |
 | `tests/sandbox_backend_selection.rs` | test | s | — | — | Slice 5b.1 (the SandboxBackends inversion): a sandbox run selects its backend through the `SandboxBackends`… |
 | `tests/sandbox_backends_per_vault.rs` | test | s | — | — | F1-6 (lead, Tue 10 Nov 06:5x): the isolating backends ride on the vault, read through its `RuntimeHandle`… |
