@@ -1,4 +1,6 @@
-//! Consent-bound held-out admission, using the existing host scorer and lifecycle write door.
+//! Held-out admission, using the existing host scorer and lifecycle write door.
+//! The fit rung (the held-out win) activates; the owner answers only a
+//! permission widening (ARCH-0053 #r4b-hubs-h, owner 2026-09-22).
 use super::{HubActivationAsk, admission_view::AdmissionSnapshot, package_codec::invalid};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
@@ -126,7 +128,17 @@ impl Vault {
     }
     /// Scores real held-out local outcomes outside all transactions. No built-in
     /// scorer, trust shortcut, caller score, or optimizer-origin marker exists.
+    /// The held-out win is the fit rung: a candidate that asks for no
+    /// permission lands Active on it, from any source and trust tier, new or
+    /// not; the tier shapes only how the ask reads (ARCH-0053 #r4b-hubs-h,
+    /// #promise-gate-22). A candidate that declares a capability widens the
+    /// empty surface a fresh import holds, so it still waits for the owner's
+    /// answer ([`HubAdmissionDisposition::PendingConsent`]).
     /// A rejection consumes this decision; new content/evidence needs a fresh ask.
+    /// Without an owner answer to spend, the refusal is read from the
+    /// append-only history by candidate and binding, before scoring and again
+    /// in the committing transaction, so another baseline's later ruling on the
+    /// same candidate does not reopen it.
     pub fn admit_marketplace_skill(
         &self,
         ask: &HubActivationAsk,
@@ -137,10 +149,18 @@ impl Vault {
         let snapshot = {
             let txn = self.store.env.read_txn()?;
             let snapshot = self.check_hub_ask_in_txn(&txn, ask)?;
-            if crate::consent::approve_once_authorization_in_txn(&self.store, &txn, &ask.effect)?
+            if admission_needs_owner(&snapshot) {
+                if crate::consent::approve_once_authorization_in_txn(
+                    &self.store,
+                    &txn,
+                    &ask.effect,
+                )?
                 .is_none()
-            {
-                return Ok(HubAdmissionDisposition::PendingConsent);
+                {
+                    return Ok(HubAdmissionDisposition::PendingConsent);
+                }
+            } else {
+                self.check_hub_admission_not_refused_in_txn(&txn, ask)?;
             }
             snapshot
         };
@@ -173,10 +193,22 @@ impl Vault {
         }
         self.with_write_txn_grouped(|txn| {
             crate::skill_optimize::ensure_current_judge_in_txn(self, txn, &judge_revision)?;
-            self.check_hub_ask_in_txn(txn, ask)?;
-            let authorization =
-                crate::consent::approve_once_authorization_in_txn(&self.store, txn, &ask.effect)?
-                    .ok_or_else(|| invalid("human install consent is missing"))?;
+            let current = self.check_hub_ask_in_txn(txn, ask)?;
+            let authorization = if admission_needs_owner(&current) {
+                Some(
+                    crate::consent::approve_once_authorization_in_txn(
+                        &self.store,
+                        txn,
+                        &ask.effect,
+                    )?
+                    .ok_or_else(|| {
+                        invalid("the owner's answer on the requested permissions is missing")
+                    })?,
+                )
+            } else {
+                self.check_hub_admission_not_refused_in_txn(txn, ask)?;
+                None
+            };
             let receipt =
                 admission_receipt(ask, &snapshot, before, after, &judge_revision, learned_at)?;
             if receipt.accepted {
@@ -186,11 +218,10 @@ impl Vault {
                     &snapshot.record,
                     occurred,
                     learned_at,
-                    &authorization,
+                    authorization.as_ref(),
                 )?;
-            }
-            if !receipt.accepted {
-                crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
+            } else if let Some(authorization) = &authorization {
+                crate::consent::spend_approve_once_in_txn(&self.store, txn, authorization)?;
             }
             ADMISSION_HISTORY.put(&self.store, txn, &receipt.receipt_id, &receipt)?;
             ADMISSION_RECEIPT.put(&self.store, txn, &ask.candidate, &receipt)?;
@@ -204,7 +235,7 @@ impl Vault {
         record: &crate::skill::SkillRecord,
         occurred: TimeRange,
         learned_at: u64,
-        authorization: &crate::consent::ApproveOnceAuthorization,
+        authorization: Option<&crate::consent::ApproveOnceAuthorization>,
     ) -> Result<()> {
         let mut admitted = record.clone();
         admitted.approval_status = ClaimApprovalStatus::Approved;
@@ -265,6 +296,26 @@ impl Vault {
             })
             .transpose()
     }
+    /// Refuses an ask the held-out admission already refused: any scored
+    /// refusal in the append-only history for this candidate and binding, not
+    /// only the latest receipt, which another baseline's ruling replaces.
+    fn check_hub_admission_not_refused_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ask: &HubActivationAsk,
+    ) -> Result<()> {
+        let candidate = ask.candidate.to_hex();
+        for row in ADMISSION_HISTORY.iter_from(&self.store, txn, &[])? {
+            let (_, receipt) = row?;
+            if !receipt.accepted && receipt.candidate == candidate && receipt.binding == ask.binding
+            {
+                return Err(invalid(
+                    "the held-out admission refused this ask; new content or evidence needs a fresh ask",
+                ));
+            }
+        }
+        Ok(())
+    }
     pub(super) fn check_hub_ask_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -284,6 +335,17 @@ impl Vault {
         }
         Ok(current)
     }
+}
+/// Whether the owner must answer this admission: only where the candidate
+/// declares a capability. A hub import holds no admitted surface, so any
+/// declared capability widens it (as [`Vault::merge_shared_skill_delta`]
+/// reads a widening). Newness, trust tier and a scanner flag add no hold
+/// (ARCH-0053 #promise-gate-22, #promise-gate-23).
+fn admission_needs_owner(snapshot: &AdmissionSnapshot) -> bool {
+    !snapshot
+        .package
+        .capabilities
+        .is_same_or_narrower_than(&super::SkillCapabilitySurface::default())
 }
 fn score(
     scorer: &dyn HeldOutReplayNotes,
