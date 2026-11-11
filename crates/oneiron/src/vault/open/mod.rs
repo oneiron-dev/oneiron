@@ -651,6 +651,7 @@ impl Vault {
             host_legal_captures: Default::default(),
             live_rows: Default::default(),
             attempt_activity: Default::default(),
+            inquiry_answers: Default::default(),
             task_work: WorkLine::new(None, TASK_WORK_BOUND, TASK_WORK_WAIT),
             linear_rate_line: WorkLine::exclusive(TASK_WORK_WAIT),
             world_keys: Default::default(),
