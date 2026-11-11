@@ -111,6 +111,7 @@ export {
   type BarRing,
   type BarLabel,
 } from './patterns/bar-chart-layout'
+export { TaskFlow, type TaskFlowProps, type TaskFlowTaskProps } from './patterns/TaskFlow'
 export {
   settleReducer,
   SETTLE_OPEN,
