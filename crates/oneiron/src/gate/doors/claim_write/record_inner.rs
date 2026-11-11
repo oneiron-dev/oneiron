@@ -90,8 +90,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
     // The derivation floors (GATE-12, GATE-13, the checker) hold every
     // derivation-class write: a Dreamer run's or a `vault.derive` commit's.
-    let dreamer_candidate =
-        envelope.is_some_and(derivation_class_write) && !operation_effect_body;
+    let dreamer_candidate = envelope.is_some_and(derivation_class_write) && !operation_effect_body;
     // FIX 3983 (review 6881 P1): a caller's live-run claim put is the other Generated producer the
     // host's auto checker reviews. It is not a Dreamer write, so the GATE-12 pre-commit floor above stays
     // Dreamer-only; only the checker consult below reads this.
