@@ -161,7 +161,7 @@ fn export_through(
     rmpv::encode::write_value(
         &mut person_body,
         &Value::Map(vec![
-            (Value::from("name"), Value::from("Ada")),
+            (Value::from("name"), Value::from("Yuki")),
             (
                 Value::from("source_audience"),
                 Value::Map(vec![
