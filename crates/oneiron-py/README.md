@@ -4,7 +4,7 @@ Memory Wire is the Oneiron developer profile. Start with `vault.witness`,
 `vault.recall`, and `vault.receipts`. The same package also ships
 `vault.claims.upsert` (the same path in JS) and the other facade verbs listed
 under [API](#api). The verb set is generated from
-`scripts/sdk/verbs/` by `scripts/sdk/generate.py`; the shipped stubs
+`scripts/sdk/verbs/` by the SDK generator (`crates/oneiron-sdk-generator`); the shipped stubs
 (`oneiron/__init__.pyi`) carry the typed signatures.
 There is no separate lite SDK and no alternate mutation path.
 
@@ -134,7 +134,7 @@ rendered again through the connected handle. Their dicts keep the wire's camelCa
 Every other verb in the SDK verb table sits at its SDK path on the handle and
 takes its whole input as one dict. The stubs type that dict and the result as
 TypedDicts from `oneiron.facade_types` (imported in the stubs as `Facade`),
-which `scripts/sdk/generate.py` reads from the Rust types each row names, and
+which the SDK generator reads from the Rust types each row names, and
 each method's docstring is its row's description. Of the table's 153 facade
 rows, 131 inputs and 127 results are fully typed; the rest are typed down to a
 leaf that is opaque JSON by design (`Any`), and none is left untyped. The
