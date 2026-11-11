@@ -152,6 +152,30 @@ fn seed_dirty_turn_without_edge(vault: &Vault, learned_at: u64) -> EntityId {
     turn
 }
 
+/// Completes the close's Micro summary before observing its pending hint.
+fn complete_micro_attempts(vault: &Vault, owner: &str, now: u64) {
+    let queue = AttemptQueue::new(vault);
+    while let ClaimOutcome::Claimed(record) = queue
+        .claim_kind(
+            oneiron::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: owner.to_owned(),
+                now,
+            },
+        )
+        .expect("claim micro attempt")
+    {
+        queue
+            .complete(CompleteAttempt {
+                id: record.id,
+                lease_owner: owner.to_owned(),
+                attempt_count: record.attempt_count,
+                now,
+            })
+            .expect("complete micro attempt");
+    }
+}
+
 /// Claims and completes every claimable Meso row: the one pending SessionEnd
 /// partition attempt (asserted) plus any ED-04 mine passenger, leaving the
 /// Meso deadline surface exactly as it was before ONE-1760 made every close
@@ -721,6 +745,7 @@ async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
         "A's ready meso deadline keeps inner priority, got {deadline:?}"
     );
     complete_one_meso_attempt(&vault, "end-reopen", 1_000_001);
+    complete_micro_attempts(&vault, "end-reopen", clock() / 1_000);
 
     let tick = ticks.next_tick().await.expect("reopen hint");
     assert_eq!(
@@ -1003,6 +1028,7 @@ async fn ready_meso_deadline_beats_an_applied_pending_hint() {
     assert_eq!(meso_attempt_count(&vault), 1);
 
     complete_one_meso_attempt(&vault, "deadline-priority", 1_000_001);
+    complete_micro_attempts(&vault, "deadline-priority", clock() / 1_000);
     assert_eq!(
         ticks.next_tick().await,
         Some(Tick::Hint(crate::tick::HintSignal {

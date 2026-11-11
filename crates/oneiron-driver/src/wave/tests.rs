@@ -88,7 +88,7 @@ fn fixture(vault: &Vault, owner: EntityId) -> oneiron::Result<EntityId> {
 fn planning_attempt_applies_cut_and_dispatch_reads_live_completion() -> WaveResult<()> {
     let dir = tempfile::tempdir().map_err(oneiron::Error::from)?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
     let epic = fixture(&vault, owner)?;
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
