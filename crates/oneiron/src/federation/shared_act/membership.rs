@@ -162,6 +162,22 @@ impl Vault {
         }
         Ok(grants)
     }
+    /// Every live membership grant record over `vault_id`, delegates
+    /// included: [`Self::vault_grants_in_txn`] without a base agent's Steward
+    /// grant. That row is the engine's actor's reach, not a membership
+    /// (untangle 6.3; review of #6913): the host mints it by default, and
+    /// only the owner moves it, through its own door, which shows what
+    /// breaks and waits for his confirm. So no membership door reads it as a
+    /// role, lists it on the roster, re-roles it or drops it.
+    fn member_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+    ) -> Result<Vec<(EntityId, FederationGrant)>> {
+        let mut grants = self.vault_grants_in_txn(txn, vault_id)?;
+        grants.retain(|(_, grant)| !crate::federation::holds_system_agent_grant(grant.member_ref));
+        Ok(grants)
+    }
     /// `member`'s one membership role in the vault, delegate grants aside.
     fn member_role_in_txn(
         &self,
@@ -170,7 +186,7 @@ impl Vault {
         member: EntityId,
     ) -> Result<Option<Role>> {
         let mut roles = self
-            .vault_grants_in_txn(txn, vault_id)?
+            .member_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| grant.member_ref == member && grant.role != Role::Delegate)
             .map(|(_, grant)| grant.role);
@@ -188,7 +204,7 @@ impl Vault {
         vault_id: u64,
     ) -> Result<Vec<(EntityId, Role)>> {
         let mut members = std::collections::BTreeMap::new();
-        for (_, grant) in self.vault_grants_in_txn(txn, vault_id)? {
+        for (_, grant) in self.member_grants_in_txn(txn, vault_id)? {
             if !matches!(grant.role, Role::Delegate | Role::Guest) {
                 members.insert(grant.member_ref, grant.role);
             }
@@ -219,8 +235,12 @@ impl Vault {
         role: Role,
         now: u64,
     ) -> Result<Vec<EntityId>> {
+        // A base agent's grant is no membership: no role is set on it here.
+        if crate::federation::holds_system_agent_grant(member) {
+            return Err(invalid());
+        }
         let mut ids: Vec<EntityId> = self
-            .vault_grants_in_txn(txn, vault_id)?
+            .member_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| grant.member_ref == member && grant.role != Role::Delegate)
             .map(|(id, _)| id)
@@ -280,7 +300,7 @@ impl Vault {
         receipt: &str,
     ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
         let dropped: Vec<(EntityId, bool)> = self
-            .vault_grants_in_txn(txn, vault_id)?
+            .member_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| {
                 (leaves && grant.member_ref == member) || grant.delegated_by == Some(member)
