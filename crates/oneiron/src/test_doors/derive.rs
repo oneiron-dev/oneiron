@@ -180,6 +180,119 @@ pub fn grant_core_read_of_kinds(vault: &Vault, reader: EntityId, kinds: &[u8]) -
     super::consolidation::shipped_policy_with_read_scope(vault, &reader.to_hex(), &scope)
 }
 
+/// The version of `id` as `actor` of `class` reads it now, as a caller's
+/// read serves a source it cites; `None` when the actor does not read it.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn source_version(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    id: EntityId,
+) -> Result<Option<crate::snapshot_read::SourceVersion>> {
+    let key = crate::claim::ScopedReadActorKey::for_engine_actor(WriteActor::new(actor, class))
+        .ok_or(crate::error::Error::InvalidClaimBody(
+            "an actor with no read",
+        ))?;
+    let read = vault.scoped_read(key);
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::snapshot_read::source_version_in_txn(&read, &txn, &id)?.map(|(version, _)| version))
+}
+
+/// The versions of the stored sources `items` cite, as `actor` reads them
+/// now. A source it does not read gets the version it would have read
+/// before it lost the row (no revision the store holds), which the commit's
+/// recheck answers withheld.
+fn versions_of(
+    vault: &Vault,
+    actor: WriteActor,
+    items: &[Derived],
+) -> Result<Vec<crate::snapshot_read::SourceVersion>> {
+    let mut cited = Vec::new();
+    for item in items {
+        let named = match item {
+            Derived::Claim(claim) => &claim.evidence,
+            Derived::Evidence(evidence) => &evidence.sources,
+            _ => continue,
+        };
+        for source in named {
+            if let Named::Stored(id) = source
+                && !cited.contains(id)
+            {
+                cited.push(*id);
+            }
+        }
+    }
+    cited
+        .into_iter()
+        .map(|id| {
+            Ok(
+                source_version(vault, actor.entity_ref(), actor.actor_class(), id)?.unwrap_or(
+                    crate::snapshot_read::SourceVersion {
+                        entity: id,
+                        entity_type: 0,
+                        learned_at: 0,
+                        revision: format!("blake3:{}", "0".repeat(64)),
+                        projection: None,
+                    },
+                ),
+            )
+        })
+        .collect()
+}
+
+/// Commits `items` with exactly the source versions `sources`, as `actor`
+/// of `class` in run `run`: what it committed, or the reason tokens of a
+/// refusal that aborted the whole batch.
+///
+/// # Errors
+///
+/// The commit's, other than the gate's refusal.
+pub fn commit_with_sources(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    run: &str,
+    items: &[Derived],
+    sources: Vec<crate::snapshot_read::SourceVersion>,
+) -> Result<std::result::Result<EntityId, Vec<String>>> {
+    let stamp = DerivationStamp {
+        actor: WriteActor::new(actor, class),
+        run: Some(run.to_owned()),
+        attempt: None,
+        lineage: SourceLineage::of(ClaimSource::Generated),
+    };
+    let items = items
+        .iter()
+        .map(|item| match item {
+            Derived::Claim(claim) => Ok(DerivationItem::Claim(DerivedClaim {
+                local: claim.local.to_owned(),
+                predicate: claim.predicate.to_owned(),
+                subject: named(&claim.subject),
+                value: claim.value.clone(),
+                confidence: 0.9,
+                evidence: claim.evidence.iter().map(named).collect(),
+            })),
+            _ => Err(crate::error::Error::InvalidClaimBody(
+                "this door commits claim items only",
+            )),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    match vault.derive_commit(&stamp, &DerivationBatch { items, sources }) {
+        Ok(receipt) => Ok(Ok(receipt.batch)),
+        Err(crate::error::Error::Gate(crate::error::GateError::GateWriteRejected {
+            reason_codes,
+            ..
+        })) => Ok(Err(reason_codes
+            .iter()
+            .map(|code| (*code).to_owned())
+            .collect())),
+        Err(error) => Err(error),
+    }
+}
+
 /// Writes a minimal human-authored agent definition with an Auto ceiling,
 /// as the owner's own agent whose claims the policy rows alone bound; its
 /// id. ([`super::derivation_floor::define_agent`] writes one held to
@@ -361,7 +474,9 @@ pub fn commit_in_attempt(
         attempt,
         lineage: SourceLineage::of(ClaimSource::Generated),
     };
+    let sources = versions_of(vault, stamp.actor, items)?;
     let batch = DerivationBatch {
+        sources,
         items: items
             .iter()
             .map(|item| -> Result<DerivationItem> {

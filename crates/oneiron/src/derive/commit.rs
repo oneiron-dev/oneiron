@@ -58,12 +58,12 @@ pub(super) struct ItemContext<'s> {
     pub(super) stamp: &'s DerivationStamp,
     /// The write's recorded clock, Unix seconds.
     pub(super) now: u64,
-    /// The row each landed item of the batch so far landed, by local name.
+    /// The row each landed item of the batch so far created, by local name.
     landed: BTreeMap<String, EntityId>,
 }
 
 impl ItemContext<'_> {
-    /// The row `named` is: a stored row, or the row an earlier item landed.
+    /// The row `named` is: a stored row, or the row an earlier item created.
     /// [`DerivationBatch::validate`] checked that a local name is an earlier
     /// item's, and the commit refuses an item naming a refused one before it
     /// stages.
@@ -99,6 +99,7 @@ impl Vault {
         batch: &DerivationBatch,
     ) -> Result<DerivationReceipt> {
         batch.validate()?;
+        super::sources::recheck_in_txn(self, txn, stamp, batch)?;
         let mut context = ItemContext {
             batch: EntityId::now(),
             stamp,
@@ -169,7 +170,10 @@ impl Vault {
             };
             match &outcome {
                 ItemOutcome::Landed { rows, .. } => {
-                    if let Some(row) = rows.first() {
+                    // A name stands only for a row its item created.
+                    if item.creates_row()
+                        && let Some(row) = rows.first()
+                    {
                         context.landed.insert(item.local().to_owned(), *row);
                     }
                 }
