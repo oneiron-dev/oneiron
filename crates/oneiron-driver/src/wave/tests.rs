@@ -38,6 +38,33 @@ impl WavePlanner for AgentPlanner {
     }
 }
 
+/// The host a planning pass runs under here: it builds no Dreamer executor
+/// and staffs no fan-out decision ladder, so the factory's default lends no
+/// decisions to a cut (FIX 8599).
+struct NoLadderHost;
+
+impl PassExecutorFactory for NoLadderHost {
+    type Exec<'p> = NoExecutor;
+
+    fn executor<'p>(&'p mut self, _guard: &'p oneiron::BudgetGuard) -> oneiron::Result<NoExecutor> {
+        Err(oneiron::Error::InvalidConfig(
+            "the wave host tests run no Dreamer pass".into(),
+        ))
+    }
+}
+
+struct NoExecutor;
+
+impl oneiron::DreamerAttemptExecutor for NoExecutor {
+    async fn execute(
+        &mut self,
+        _attempt: &oneiron::DreamerAdmittedAttempt,
+        _ctx: &mut oneiron::WakeAttemptContext<'_>,
+    ) -> oneiron::Result<oneiron::DreamerAttemptExecution> {
+        unreachable!("the wave host tests run no Dreamer pass")
+    }
+}
+
 fn fixture(vault: &Vault, owner: EntityId) -> oneiron::Result<EntityId> {
     vault.put_entity(
         &owner,
@@ -61,22 +88,50 @@ fn fixture(vault: &Vault, owner: EntityId) -> oneiron::Result<EntityId> {
 fn planning_attempt_applies_cut_and_dispatch_reads_live_completion() -> WaveResult<()> {
     let dir = tempfile::tempdir().map_err(oneiron::Error::from)?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
     let epic = fixture(&vault, owner)?;
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    let owner_proof = vault.authenticate_owner(
+        owner,
+        "principal:wave-plan",
+        true,
+        oneiron::store::GateDecisionId::now(),
+    )?;
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .set_consult_fanout_policy(
+            &owner_proof,
+            &oneiron::task_verb::ConsultFanOutPolicy {
+                mode: oneiron::task_verb::ConsultFanOutMode::FullAccess,
+                ..Default::default()
+            },
+        )
+        .expect("owner permits the planned cut to launch without a decision ladder");
     vault.enqueue_wave_plan(epic, "do work", serde_json::json!({"budget":2}), 100)?;
     let planner = AgentPlanner {
         seen: RefCell::new(Vec::new()),
         bad: false,
     };
     let host = WaveHost::new(&vault, planner, owner, EdgeActorClass::Human);
-    let landed = host.run_plan_once("planner-1", 100)?.expect("claimed");
+    // FIX 8599 (#4104): the cut goes through the fan-out launch door, which
+    // either applies it or holds it for the owner.
+    let oneiron::wave_orchestration::WaveApplyOutcome::Applied(landed) = host
+        .run_plan_once(&NoLadderHost, "planner-1", 100)?
+        .expect("claimed")
+    else {
+        panic!("the cut must apply, not be held for the owner");
+    };
     let first = landed.task_refs["first"];
     let second = landed.task_refs["second"];
     assert_eq!(landed.blocked_by_edges, 1);
     assert_eq!(host.planner.seen.borrow()[0].epic_task_ref, epic);
     assert_eq!(host.planner.seen.borrow()[0].objective, "do work");
     assert_eq!(host.ready_to_dispatch(&[first, second])?, vec![first]);
-    assert!(host.run_plan_once("planner-1", 101)?.is_none());
+    assert!(
+        host.run_plan_once(&NoLadderHost, "planner-1", 101)?
+            .is_none()
+    );
     vault
         .memory(owner, EdgeActorClass::Human)
         .land_task_result(
@@ -108,7 +163,7 @@ fn invalid_agent_cut_does_not_complete_attempt_or_land_tasks() -> WaveResult<()>
         owner,
         EdgeActorClass::Human,
     );
-    assert!(host.run_plan_once("planner-1", 100).is_err());
+    assert!(host.run_plan_once(&NoLadderHost, "planner-1", 100).is_err());
     let request = host.planner.seen.borrow();
     let attempt = AttemptQueue::new(&vault)
         .get(request[0].planner_attempt_ref)?
@@ -209,7 +264,10 @@ fn completed_cut_survives_restart_and_reclaim_without_a_second_plan() -> WaveRes
         owner,
         EdgeActorClass::Human,
     );
-    assert!(host.run_plan_once("restarted-host", 100_001)?.is_none());
+    assert!(
+        host.run_plan_once(&NoLadderHost, "restarted-host", 100_001)?
+            .is_none()
+    );
     assert_eq!(
         host.planner.0.get(),
         0,

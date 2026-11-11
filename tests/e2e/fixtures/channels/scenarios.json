@@ -36,7 +36,7 @@
     ],
     "registry": {
       "uri": "/registry/oneiron/",
-      "path": "/Users/olety/Desktop/code/oneiron-docs/registry/oneiron.json",
+      "path": "<workspace>/oneiron-docs/registry/oneiron.json",
       "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
       "rows": [
         "OF-188",
@@ -60,11 +60,11 @@
       ]
     },
     "plan": {
-      "path": "/Users/olety/Desktop/temp/vibe-build-20261017/e2e-plan.json",
+      "path": "<workspace>/vibe-build-20261017/e2e-plan.json",
       "sha256": "133dc98326022c9e01452abdbc42a78e067fd59b9cf9f142496d3bc50c6c3ba2"
     },
     "rulings": {
-      "path": "/Users/olety/Desktop/temp/vibe-build-20261017/e2e-rulings.md",
+      "path": "<workspace>/vibe-build-20261017/e2e-rulings.md",
       "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df",
       "G01": "A designed verb waits for typed HTTP and SDK calls. No generic escape hatch."
     }
