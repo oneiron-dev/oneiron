@@ -18556,7 +18556,7 @@
      "path": "src/code_run/dispatcher/read_worlds.rs",
      "purpose": "A run's read-world capture as its host serves it (FIX 6130)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -18684,26 +18684,6 @@
      "purpose": "`self.team.submit` (OF-540): a team's leader submits one pinned output of its team for the owner's…",
      "surface": {
       "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_run/dispatcher/team_submit_entity.rs",
-     "purpose": "FIX 2783 (OF-540): a `self.team.submit` output that is one exact revision of a CLAIM…",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_run/dispatcher/team_submit_output.rs",
-     "purpose": "The output a `self.team.submit` names (OF-540), as one snapshot reads it: proven to exist as pinned, and the…",
-     "surface": {
-      "crate-vis": 10
      }
     },
     {
@@ -20564,7 +20544,7 @@
      "path": "src/code_run/team_submit.rs",
      "purpose": "`self.team.submit` (OF-540): what a team's leader submits for the owner's review, and what the host answers",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 1,
       "struct": 2
      }
     },
@@ -43451,7 +43431,7 @@
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -45771,7 +45751,7 @@
      "path": "src/identity_topology/reassignment_map.rs",
      "purpose": "The ONE-1745 reassignment projection end to end: the typed map model, its canonical wire codec, and the…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -89549,7 +89529,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 69,
+      "crate-vis": 71,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -89908,6 +89888,96 @@
       "enum": 3,
       "fn": 5,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/consult_result.rs",
+     "purpose": "Reference admission for the existing `tasks.consult.result` run row",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/mod.rs",
+     "purpose": "Native scoped-read implementations of existing run rows",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/search.rs",
+     "purpose": "Canonical search for the existing `vault.search` run row",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/task_refusal.rs",
+     "purpose": "Released-reason projection for the existing `tasks.refuse` run row",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/team_submit/entity.rs",
+     "purpose": "FIX 2783 (OF-540): a `self.team.submit` output that is one exact revision of a CLAIM…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/team_submit/mod.rs",
+     "purpose": "Exact-revision output admission for the existing `self.team.submit` run row",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/team_submit/output.rs",
+     "purpose": "The output a `self.team.submit` names (OF-540), as one snapshot reads it: proven to exist as pinned, and the…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/team_submit/revision.rs",
+     "purpose": "One pinned output a submit names",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/workflow_dispatch.rs",
+     "purpose": "Reference preflight for the existing `self.workflows.dispatch_bound` run row",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -90914,6 +90984,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
+      "fn": 1,
       "mod": 26
      }
     },
@@ -100269,6 +100340,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/run_row_scoped_read_ownership.rs",
+     "purpose": "Keeps scoped-read implementation ownership out of the run adapters",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/run_state.rs",
      "purpose": "The run state (untangle slice 5.0c): [`RunState::of`] derives the state a run reports from its attempt row…",
      "surface": {}
@@ -100351,6 +100430,22 @@
      "notable": [],
      "path": "tests/source_audience_unresolved_binding.rs",
      "purpose": "FIX 22346: an image binding whose live policy is absent reads to no one and never travels",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/split_assignments_after_merge_undo.rs",
+     "purpose": "Undoing a merge leaves a split of the survivor the assignments a replica derives from the same history…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/split_reads_through_merges.rs",
+     "purpose": "A split reads its entity's claims through the merges into it (ARCH-0055 §3 and §4; E2E MEMORY-07): a claim a…",
      "surface": {}
     },
     {
@@ -100831,7 +100926,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 268,
+     "files": 266,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102021,7 +102116,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 171,
+     "files": 180,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102226,8 +102321,8 @@
    },
    "over_bar": 246,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7308,
-   "test_files": 976
+   "source_files": 7315,
+   "test_files": 979
   },
   "oneiron-agent-runtime": {
    "files": [
