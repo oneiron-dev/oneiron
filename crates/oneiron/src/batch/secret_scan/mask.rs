@@ -441,9 +441,13 @@ impl Masker {
                         .then(|| (**candidate).clone());
                     // The door read the claim's encoded body, not each value
                     // as a text: each value is read by the text rules.
+                    // A phrase split over a value's parts, which the door
+                    // read in that encoded body, takes its handle as it does
+                    // in a body (LABEL-04).
                     let shapes_read = std::mem::take(&mut self.shapes_read);
                     for value in candidate.values_mut() {
                         self.mask_value(value)?;
+                        self.mask_encoded_phrases(value)?;
                     }
                     self.shapes_read = shapes_read;
                     if let Some(before) = before
