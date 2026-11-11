@@ -166,3 +166,39 @@ pub fn withhold_turn(vault: &Vault, turn: EntityId) -> Result<bool> {
         )
     })
 }
+
+/// Plants a one-shot timer, sealing the verified slip's authority at arming.
+///
+/// # Errors
+///
+/// A slip that seals no turn program authority; a store failure.
+pub fn plant_timer_arming(
+    vault: &Vault,
+    actor: EntityId,
+    proof: &VerifiedSlip,
+    binding: &InvocationSlipBinding,
+    armed_at: u64,
+    first_at: u64,
+) -> Result<EntityId> {
+    crate::dreamer_runner::turn_program_test_hooks::plant_timer_arming(
+        vault, actor, proof, binding, armed_at, first_at,
+    )
+}
+
+/// Whether this machine keeps a disarm row for the registration.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn disarm_kept_here(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<bool> {
+    crate::dreamer_runner::turn_program_test_hooks::disarm_kept_here(vault, actor, registration)
+}
+
+/// Encodes an armed row as the window mirror does, bypassing its outbound filter.
+///
+/// # Errors
+///
+/// No such arming, a store failure, or a row that cannot encode.
+pub fn arming_row_bytes(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<Vec<u8>> {
+    crate::dreamer_runner::turn_program_test_hooks::arming_row_bytes(vault, actor, registration)
+}

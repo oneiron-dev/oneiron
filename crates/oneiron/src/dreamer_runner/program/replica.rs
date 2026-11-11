@@ -160,18 +160,23 @@ pub(crate) fn wake_key_ids(map_key: &str) -> Option<(EntityId, EntityId)> {
     (ids.0.to_hex() == turn && ids.1.to_hex() == registration).then_some(ids)
 }
 
-/// Whether `arming` rides the window plane: its pinned arguments name no
-/// custody handle and its row fits a window.
+/// Whether `arming` rides the window plane: a turn wakes it, its pinned
+/// arguments name no custody handle and its row fits a window. An arming a
+/// due time, an idle host or a change feed wakes (untangle slice 6.8c) stays
+/// on the machine that armed it: that machine releases its occurrences, and
+/// the authority it sealed stands there.
 fn arming_rides(arming: &TurnProgramArming) -> bool {
-    !LiftedKeys::names_a_handle(&arming.definition.args)
+    arming.trigger.is_turn()
+        && !LiftedKeys::names_a_handle(&arming.definition.args)
         && encode(&ArmingRow::Armed(arming.clone())).is_ok_and(|row| row.len() <= MAX_ROW_BYTES)
 }
 
-/// Whether `wake` rides to the elected home: its authority verifies on any
-/// machine, its arming held here rides, and its TURN can pack into a base
-/// window in this snapshot.
+/// Whether `wake` rides to the elected home: a turn owes it, its authority
+/// verifies on any machine, its arming held here rides, and its TURN can
+/// pack into a base window in this snapshot. An occurrence's wake names no
+/// TURN and is admitted where it was recorded.
 fn wake_rides_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, wake: &TurnProgramWake) -> Result<bool> {
-    if !wake.authority.rides_to_home() {
+    if wake.occurrence.is_some() || !wake.authority.rides_to_home() {
         return Ok(false);
     }
     if !ARM
@@ -224,8 +229,8 @@ pub(super) fn wake_is_the_homes_in_txn(
 }
 
 /// The checks every carried arming row passes, by its bytes alone: whole,
-/// filed under its own registration, an `Armed` row's revision its pin's and
-/// its arguments naming no custody handle.
+/// filed under its own registration, an `Armed` row's revision its pin's,
+/// its arguments naming no custody handle and a turn its trigger.
 pub(crate) fn admit_arming_row(map_key: &str, bytes: &[u8]) -> Result<()> {
     let row = decode_arming(bytes)?;
     if arming_key(row.registration()) != map_key {
@@ -233,7 +238,10 @@ pub(crate) fn admit_arming_row(map_key: &str, bytes: &[u8]) -> Result<()> {
     }
     if let ArmingRow::Armed(arming) = &row
         && (arming.revision != arming.definition.revision()
-            || LiftedKeys::names_a_handle(&arming.definition.args))
+            || LiftedKeys::names_a_handle(&arming.definition.args)
+            || !arming.trigger.is_turn()
+            || arming.sealed.is_some()
+            || arming.next_due.is_some())
     {
         return Err(refused("an arming that does not ride"));
     }
@@ -241,15 +249,15 @@ pub(crate) fn admit_arming_row(map_key: &str, bytes: &[u8]) -> Result<()> {
 }
 
 /// The checks every carried wake row passes, by its bytes alone: whole and
-/// filed under its own turn and registration; an `Owed` row sealed by an
-/// authority that rides and holding no owed status.
+/// filed under its own turn and registration; an `Owed` row a turn's,
+/// sealed by an authority that rides and holding no owed status.
 pub(crate) fn admit_wake_row(map_key: &str, bytes: &[u8]) -> Result<()> {
     let row = decode_wake(bytes)?;
     if wake_key(row.key()) != map_key {
         return Err(refused("filed under another wake"));
     }
     if let WakeRow::Owed(wake) = &row {
-        if !wake.authority.rides_to_home() {
+        if wake.occurrence.is_some() || !wake.authority.rides_to_home() {
             return Err(refused("a wake that does not ride"));
         }
         // A wake held on its lapsed slip rides with its hold (a home that
@@ -294,7 +302,8 @@ pub(crate) enum RowMerge {
 /// caller's writer: it takes its registration when it comes later in the
 /// registration's intent order than the intent held here, an `Armed` row
 /// as the arming, a `Disarmed` row as the disarm this machine keeps. An
-/// earlier row changes nothing. A row of an actor erased here is refused.
+/// earlier row changes nothing. A row of an actor erased here is refused,
+/// and so is a row whose key names an arming held here that does not ride.
 pub(crate) fn merge_arming_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -309,6 +318,13 @@ pub(crate) fn merge_arming_row_in_txn(
         return Ok(RowMerge::Refused("names an actor erased here"));
     }
     let key = (row.actor(), row.registration());
+    // An arming that never rode is no carried row's to replace or end.
+    if ARM
+        .get(vault, &*txn, &key)?
+        .is_some_and(|arming| !arming.trigger.is_turn())
+    {
+        return Ok(RowMerge::Refused("names an arming that does not ride"));
+    }
     if let Some(held) = held_intent_in_txn(vault, txn, key)?
         && held.order()? >= row.order()?
     {
