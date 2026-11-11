@@ -140,6 +140,17 @@ impl StewardReach {
             .then(|| self.scope.meet(&super::scope_codec::read_preset()))
     }
 
+    /// Whether the reach is already the default grant of `verbs`: every
+    /// standing row gives exactly those verbs, and none narrows a data axis
+    /// (review of #7057: the verbs alone decided, so a grant back left the
+    /// narrower worlds, facets, record kinds, audience or sensitivity of a
+    /// standing row in force).
+    fn is_default_of(&self, verbs: &BTreeSet<String>) -> bool {
+        let mut whole = grant_scope::membership_preset(FederationGrantRole::Steward);
+        whole.verbs = self.scope.verbs.clone();
+        self.verbs == *verbs && self.scope == whole
+    }
+
     /// The state the rows give: opted out when no verb is left.
     pub(crate) fn state(&self) -> SystemAgentGrantState {
         if self.verbs.is_empty() {
@@ -524,16 +535,18 @@ impl Vault {
 
     /// The owner's act (`oneiron dreamer grant`): the Dreamer holds the
     /// whole Steward default from now on. Mints it unless its standing rows
-    /// already give every Steward verb (`false` then). Every row that stands
-    /// is revoked first, an opt-out's record among them, by the owner's
-    /// signed act in the same writer, so the Dreamer holds one Steward grant.
+    /// already give every Steward verb with every data axis whole (`false`
+    /// then). Every row that stands is revoked first, an opt-out's record
+    /// among them, by the owner's signed act in the same writer, so the
+    /// Dreamer holds one Steward grant.
     pub(crate) fn grant_dreamer_steward(&self, owner: &AuthenticatedOwner) -> Result<bool> {
         self.grant_system_agent_default(owner, SystemAgent::Dreamer)
     }
 
     /// The owner's act: the Coach holds its default grant (`read`,
     /// the four `engine.controls` classes) from now on, the way back after he narrowed or
-    /// revoked it (6.6). `false` when its standing rows already give it.
+    /// revoked it (6.6). `false` when its standing rows already give it with
+    /// every data axis whole.
     ///
     /// # Errors
     ///
@@ -544,7 +557,9 @@ impl Vault {
     }
 
     /// Mints `agent`'s default Steward grant as `owner`'s act unless its
-    /// standing rows already give every default verb.
+    /// standing rows already give it ([`StewardReach::is_default_of`]): a
+    /// row that holds a narrower data axis is revoked with the rest, so the
+    /// grant back restores the records as well as the verbs.
     fn grant_system_agent_default(
         &self,
         owner: &AuthenticatedOwner,
@@ -557,7 +572,8 @@ impl Vault {
         let full = agent.default_verbs();
         let minted = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
-            if steward_reach_in(&self.store, &*txn, actor)?.is_some_and(|reach| reach.verbs == full)
+            if steward_reach_in(&self.store, &*txn, actor)?
+                .is_some_and(|reach| reach.is_default_of(&full))
             {
                 return Ok(false);
             }

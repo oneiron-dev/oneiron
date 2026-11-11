@@ -272,6 +272,67 @@ fn a_narrowing_keeps_the_data_axes_the_standing_rows_hold() {
     assert_eq!(opted_out.bands, claims_alone);
 }
 
+/// Review round 2 of #7057: the owner's grant back took the standing rows for
+/// the whole default once they gave every default verb, whatever records
+/// they were held to. A row held to one record kind kept the Dreamer to that
+/// kind, and granting back changed nothing, however often he did it.
+#[test]
+fn a_grant_back_restores_the_data_axes_a_standing_row_took() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    let owner = owner(&vault).expect("owner proof");
+    // Two rows stand, each with every Steward verb: one held to claims
+    // alone, and the whole default another machine stood.
+    stand_steward_grant_in_bands(&vault, dreamer, &STEWARD_VERBS, &[ENTITY_TYPE_CLAIM])
+        .expect("the grant held to one record kind");
+    receive_steward_grant_row(&vault, dreamer, &STEWARD_VERBS).expect("the whole default's row");
+    let claims_alone: ScopeAxis<u8> = [ENTITY_TYPE_CLAIM].into_iter().collect();
+    let held = || {
+        steward_reach_scope(&vault, dreamer)
+            .expect("the rows' scope")
+            .expect("a row stands")
+    };
+    assert_eq!(
+        held().bands,
+        claims_alone,
+        "the reach is the narrowest any row holds: claims alone"
+    );
+
+    assert!(
+        vault
+            .grant_dreamer_weave(&owner, 1)
+            .expect("the owner's grant back"),
+        "the rows give every verb but not every record kind: the grant back mints the whole default"
+    );
+    let rows = steward_grant_rows(&vault, dreamer).expect("rows");
+    assert_eq!(
+        rows.iter()
+            .map(|(_, verbs)| verbs.len())
+            .collect::<Vec<_>>(),
+        [STEWARD_VERBS.len()],
+        "both rows are revoked: one row stands, with the whole default"
+    );
+    assert_eq!(
+        held().bands,
+        ScopeAxis::All,
+        "the grant back gives every record kind back"
+    );
+
+    // The whole default stands now: a second grant back changes nothing.
+    assert!(
+        !vault
+            .grant_dreamer_weave(&owner, 2)
+            .expect("a second grant back"),
+        "the whole default already stands"
+    );
+    assert_eq!(
+        steward_grant_rows(&vault, dreamer).expect("rows"),
+        rows,
+        "the row the grant back minted still stands, and no other"
+    );
+}
+
 #[test]
 fn the_first_mint_records_an_opt_out_as_a_row() {
     let dir = tempfile::tempdir().expect("tempdir");
