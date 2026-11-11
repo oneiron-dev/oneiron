@@ -40,6 +40,22 @@ impl Vault {
     /// paths take back with `?` (FIX 6474): the claim preflight's, a missing
     /// key's, a body landing's frame check and the final receipt scan's; any
     /// other is typed by its kind.
+    ///
+    /// Restore admission is the managed supervisor's contract, not an engine
+    /// fence (FIX 22399, ruling RESTORE-ADMISSION = B). The drop order above
+    /// is the only interruption rule the engine holds: a caller that rebinds
+    /// or moves these values must still close the copy before the forked
+    /// custody and the made directory go. Only the supervisor opens a restore
+    /// destination: oneiron-server's `serve --restore` requires
+    /// `managed_by_hypnos` (`config/serve_args.rs`), and only its
+    /// `managed/restore/commit_marker.rs` writes the commit marker
+    /// `.oneiron-restore-commit.json`
+    /// (`oneiron_vault_contract::restore::RESTORE_COMMIT_MARKER_FILE`) once
+    /// every keep is done. The engine's ordinary open never reads that
+    /// marker, so it does not refuse a directory whose restore a crash
+    /// interrupted. An engine-owned destination lifecycle, under which an
+    /// ordinary open refuses an unsettled restore, is backlog until a host
+    /// other than the supervisor gains a directory restore.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn restore_image(
         mut image: CheckpointImage,
@@ -53,6 +69,7 @@ impl Vault {
         erased: &BTreeSet<EntityId>,
         budget: &dyn RecoveryWriteBudget,
         mut archives: Option<super::removal_files::LiveArchives>,
+        refused: Option<super::authority_plane::RefusedFamilies<'_>>,
     ) -> std::result::Result<(MadeDestination, ForkedCustody, Self, RestoreReport), Rejected> {
         validate_image_rows_before_destination(&image)?;
         // The compartments its payload is sealed in, carried apart from the
@@ -99,6 +116,20 @@ impl Vault {
             .unwrap_or_default();
         for (_, blob) in &opened_entities {
             validate_checkpoint_entity_row(blob)?;
+        }
+        if let Some(refused) = refused {
+            let mut rows = opened
+                .as_ref()
+                .map(super::payload::OpenedPayload::exact_rows)
+                .unwrap_or_default();
+            rows.insert(
+                "entities",
+                opened_entities
+                    .iter()
+                    .map(|(key, value)| (key.as_slice(), value.as_slice()))
+                    .collect(),
+            );
+            refused.refuse_changes(rows)?;
         }
         // An owner that did not open was erased since the cut: it goes as
         // the source's erasures do.
