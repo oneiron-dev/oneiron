@@ -214,8 +214,8 @@ impl CapturedEdgeSetter {
             value,
         } = self;
         store.port_stage_edge_rows(wtxn, &src, kind, &tgt, &value)?;
-        crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
-        Ok(())
+        crate::conversation_dag::pin_membership(store, store, wtxn, &src, kind, &tgt)?;
+        crate::feeds::record_edge_change_in_txn(store, wtxn, &src, kind, &tgt, true)
     }
 }
 
@@ -286,11 +286,12 @@ impl PreparedEdgePut {
             tgt,
             value,
         } = self;
-        stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)?;
+        stage_edge_rows(store, store, wtxn, &src, kind, &tgt, &value)?;
         if matches!(kind, EdgeKind::RepliesTo | EdgeKind::Parent) {
             crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
         }
-        crate::conversation::pin_room_message_edge(store, wtxn, src, kind, tgt)
+        crate::conversation::pin_room_message_edge(store, wtxn, src, kind, tgt)?;
+        crate::feeds::record_edge_change_in_txn(store, wtxn, &src, kind, &tgt, true)
     }
 }
 
@@ -341,5 +342,9 @@ pub(super) fn apply_delete_edge(
     if matches!(kind, EdgeKind::RepliesTo | EdgeKind::Parent) {
         crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
     }
-    store.port_remove_edge_rows(wtxn, &src, kind, &tgt)
+    let removed = store.port_remove_edge_rows(wtxn, &src, kind, &tgt)?;
+    if removed {
+        crate::feeds::record_edge_change_in_txn(store, wtxn, &src, kind, &tgt, false)?;
+    }
+    Ok(removed)
 }

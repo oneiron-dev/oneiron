@@ -423,7 +423,7 @@ camelCase.
 Every other verb in the SDK verb table sits at its SDK path on the handle
 (`handle.vault.people.list(input)`, `handle.self.memory.diary(input)`, ...).
 Its input and result are typed by `Facade`, the wire declarations
-`scripts/sdk/generate.py` reads from the Rust types each row names, and its
+the SDK generator reads from the Rust types each row names, and its
 JSDoc is the row's own description. The keys are the engine's wire spelling
 (snake_case). Inputs and results are fully typed or typed down to a leaf
 that is opaque JSON by design (a claim's `value`, an entity `body`); none is
