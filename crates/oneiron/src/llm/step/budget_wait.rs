@@ -12,7 +12,8 @@ use super::trap::{TrapConsumePrecheck, trap_consume_precheck_in_txn, wake_trap_i
 use super::trap_binding::trap_binding_read_in_txn;
 use super::types::{DreamerTrapKind, TrapRef};
 
-/// Signals and consumes budget traps whose named scope now covers their reservation.
+/// Signals and consumes budget traps whose named scope now covers the units their reservation
+/// asked of it.
 pub(crate) fn wake_budget_traps_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

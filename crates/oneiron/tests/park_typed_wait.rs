@@ -179,6 +179,206 @@ fn leased_try(vault: &Vault, tag: &str, now: u64) -> oneiron::Result<AttemptReco
     Ok(row)
 }
 
+/// 6.5d-1 review: a soft child scope's step that its hard root refuses parks on the root, asking
+/// the root only for what the child's own hold cannot cover; a root top-up short of that deficit
+/// wakes nothing, and one that covers it wakes the child, though the root alone still holds less
+/// than the whole reservation.
+#[test]
+fn a_soft_childs_budget_wait_asks_its_hard_root_only_for_the_deficit()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_dir, vault) = open_vault()?;
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let proof = embedded_owner_proof(&vault);
+    let dispatcher = AgentDispatcher::new(&vault);
+    let store = DreamerRunnerStore::new(&vault);
+
+    // The child holds half of the default reserve from its hard root; the root keeps a sliver.
+    let reserve = llm::BudgetGuard::new(
+        "park-typed-wait-reserve",
+        0,
+        llm::BudgetExhaustionPolicy::Suspend,
+    )
+    .reserve_units();
+    let hold = reserve / 2;
+    let deficit = reserve - hold;
+    let sliver = 10;
+    assert!(
+        0 < hold && sliver < deficit,
+        "the root's sliver cannot cover the child's deficit"
+    );
+    let root = SpendScopeId::launch("owen-root")?;
+    let opened = dispatcher
+        .open_root_spend_scope(
+            root.clone(),
+            DeclaredMaximum {
+                units: hold + sliver,
+                unit: LeaseUnit::tokens(),
+            },
+            Some(MaximumShown { at_ms: 12_000 }),
+            12,
+        )
+        .expect("the hard root opens");
+    assert!(opened.hard, "the root is a hard cap");
+    assert_eq!(opened.state, SpendState::Open, "the root opens open");
+
+    let row = leased_try(&vault, "park-typed-wait-child", 23)?;
+    assert_eq!(
+        row.state.as_str(),
+        "leased",
+        "the child's try holds its lease before its step"
+    );
+    let child = doors::reserve_child_hold_scope(&vault, &root, &row.id, hold, 24)?;
+    assert!(!child.hard, "the child's hold is soft");
+    assert_eq!(
+        child.state,
+        SpendState::Open,
+        "the child's scope opens open"
+    );
+    assert_eq!(
+        child.parent.as_ref(),
+        Some(&root),
+        "the child's scope sits under the root"
+    );
+    assert_eq!(child.cap_units, hold, "the child holds half the reserve");
+    assert_eq!(
+        dispatcher.available_units(&child.scope)?,
+        hold + sliver,
+        "the child may spend its hold and the root's sliver"
+    );
+    let guard = dispatcher.guard_for_scope(&child.scope)?;
+    assert_eq!(
+        guard.reserve_units(),
+        reserve,
+        "the child's guard reserves the default"
+    );
+
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let ctx = llm::DurableStepContext {
+        vault: &vault,
+        attempt_id: row.id,
+        run_id: None,
+        envelope_actor: actor,
+        subject: owner,
+        deadline: None,
+        now_ms: 43_000,
+        spend_scope: Some(child.scope.clone()),
+    };
+    let backend = NeverBackend::new();
+    let outcome = block_on_ready(llm::call_as_step(
+        &ctx,
+        &backend,
+        &guard,
+        paid_step_request("park typed wait child"),
+    ))
+    .expect("the child's step answers");
+    let llm::StepOutcome::Trapped { trap, .. } = outcome else {
+        panic!("the child's spent budget traps its step");
+    };
+    assert_eq!(
+        trap.kind,
+        llm::DreamerTrapKind::Budget,
+        "the child's trap is a budget trap"
+    );
+    assert_eq!(
+        llm::register_wait(&vault, &trap, 53_000)?,
+        llm::DreamerTrapState::Waiting,
+        "the child's trap waits for its signal"
+    );
+    let park = store.parked_attempt(row.id)?.expect("the child's park");
+    let Some(wait) = park.wait.clone() else {
+        panic!("the child's park carries a typed wait");
+    };
+    assert!(
+        matches!(&wait.wait, DreamerParkWait::Budget { scope, .. } if scope == &root),
+        "the child's wait names its hard root, whose own cap refused"
+    );
+    assert_eq!(
+        wait.lease_generation, row.attempt_count,
+        "the child's wait stamps its queue generation"
+    );
+
+    // A root top-up one unit short of the deficit wakes nothing.
+    let short_cap = hold + deficit - 1;
+    let raised = dispatcher.top_up_spend_scope_as_owner(
+        &proof,
+        &root,
+        hold + sliver,
+        DeclaredMaximum {
+            units: short_cap,
+            unit: LeaseUnit::tokens(),
+        },
+        MaximumShown { at_ms: 80_000 },
+    )?;
+    assert_eq!(raised.cap_units, short_cap, "the root's short top-up lands");
+    assert!(
+        store.parked_attempt(row.id)?.is_some(),
+        "a root top-up short of the deficit leaves the child parked"
+    );
+    assert_eq!(
+        doors::trap_state(&vault, &trap)?,
+        llm::DreamerTrapState::Waiting,
+        "a root top-up short of the deficit leaves the child's trap waiting"
+    );
+
+    // A root top-up that covers the deficit wakes the child, though the root alone still holds less
+    // than the whole reservation.
+    let deficit_cap = hold + deficit;
+    let raised = dispatcher.top_up_spend_scope_as_owner(
+        &proof,
+        &root,
+        short_cap,
+        DeclaredMaximum {
+            units: deficit_cap,
+            unit: LeaseUnit::tokens(),
+        },
+        MaximumShown { at_ms: 90_000 },
+    )?;
+    assert_eq!(
+        raised.cap_units, deficit_cap,
+        "the root's deficit top-up lands"
+    );
+    assert_eq!(
+        dispatcher.available_units(&child.scope)?,
+        reserve,
+        "the child may now spend the whole reservation"
+    );
+    assert!(
+        dispatcher.available_units(&root)? < reserve,
+        "the root alone still holds less than the whole reservation"
+    );
+    assert!(
+        store.parked_attempt(row.id)?.is_none(),
+        "a root top-up that covers the child's deficit wakes the child's try"
+    );
+    assert_eq!(
+        doors::trap_state(&vault, &trap)?,
+        llm::DreamerTrapState::Consumed,
+        "the woken child's trap is consumed"
+    );
+    let status = store
+        .status(row.id)?
+        .expect("the child's row after the wake");
+    assert_eq!(
+        status.attempt.state.as_str(),
+        "queued",
+        "the woken child queues again"
+    );
+    assert_eq!(
+        wait.wait,
+        DreamerParkWait::Budget {
+            scope: root.clone(),
+            asked_units: deficit,
+        },
+        "the child's wait asked its root only for the deficit"
+    );
+    assert_eq!(
+        backend.calls(),
+        0,
+        "the refused step never called its backend"
+    );
+    Ok(())
+}
+
 /// 6.5d-1: the two scoped tries park typed on their own scopes with their queue generation, the
 /// scopeless try parks untyped, a short top-up wakes nothing, and a room-leaving top-up of A wakes
 /// only A, as the same queued try with its trap consumed.
