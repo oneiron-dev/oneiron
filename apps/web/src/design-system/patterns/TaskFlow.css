@@ -15,13 +15,18 @@
   align-items: center;
 }
 
-/* The line from the task before. */
-.sl-task-flow-item + .sl-task-flow-item::before {
+/* The line to the next task. At the end of a row that wraps it keeps its
+   room but draws nothing, so no line hangs off the row. */
+.sl-task-flow-item:not(:last-child)::after {
   content: "";
   flex: none;
   width: 22px;
   height: 1px;
   background: var(--sl-ink-4);
+}
+
+.sl-task-flow-item[data-row-end]::after {
+  background: transparent;
 }
 
 .sl-task-flow-task {
