@@ -21,7 +21,7 @@
       "file": "boot.test.ts",
       "area": "Boot and public clients",
       "slots": 1,
-      "estimatedSeconds": 35,
+      "estimatedSeconds": 85,
       "tests": [
         {
           "id": "BOOT-01",

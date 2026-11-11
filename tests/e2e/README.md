@@ -24,7 +24,7 @@ Under `tests/e2e/`:
 - `support/clients.ts`: signed HTTP, MCP JSON-RPC, WS app protocol, CLI, SDK processes.
 - `support/providers.ts`: scripted external HTTP protocols, streams and barriers.
 - `support/fixtures.ts`: fixture fragments, independent facts, checked archives and build pins.
-- `support/run.ts`: file declarations, resource ownership, deadlines, four-slot scheduler/report.
+- `support/run.ts`: file declarations, resource ownership, deadlines, six-slot scheduler/report.
 - `fixtures/manifest.json`: shared assets and binary requirements only.
 - `fixtures/suite-plan.json`: immutable planned IDs, source pins and registry coverage.
 - `fixtures/observatory.md` and `fixtures/notes-bundle.zip`: tiny owner-authored corpus.
@@ -334,10 +334,13 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 4
 ```
 
 `E2E_REPORT_DIR` optionally selects a protected absolute output directory.
-Otherwise the runner allocates one. The scheduler uses longest-estimated-file
-first, ties by name, with up to four slots and two CPU credits/4 GiB per slot.
-The default reference total is 8 threads and 16 GiB. `--workers` accepts one
-through four slots and must fit the heaviest selected file.
+Otherwise the runner allocates one. The runner starts one child Bun process per
+selected case ID. Each case runs alone; there is no concurrency inside a process.
+The scheduler starts the longest per-case estimate first (file estimate divided
+by its planned case count), then sorts by file name and case plan order.
+Each child uses its file's slots. Up to six slots fit 12 CPU credits and 24 GiB.
+The default remains four slots, 8 CPU credits and 16 GiB. `--workers` accepts one
+through six slots and must fit the heaviest selected file.
 
 For wave 1 on a four-thread fleet booking, select the four files explicitly and
 use two slots (four CPU credits):
@@ -365,13 +368,13 @@ coverage still requires passing evidence for all 242 IDs. Partial and optional-p
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
-Bun 1.3.4 writes JUnit to a real per-file `.junit.xml` outfile under the protected
+Bun 1.3.4 writes JUnit to a real per-case `<file>.<id>.junit.xml` outfile under the protected
 report directory. The runner reads that file and checks it against registered IDs;
 subprocess stdout is not a JUnit outfile. A separate `.junit.json` artifact carries a
-redacted XML copy for export. The original XML stays local to the fleet job. Owned file
+redacted XML copy for export. The original XML stays local to the fleet job. Owned case
 process artifacts retain bounded, redacted stdout/stderr separately. `fileDiagnostics`
-in the aggregate records JUnit presence, case/match/unknown/duplicate counts, file
-exit/signal, and registration errors. A harness error remains a FAIL but does not replace an existing
+in the aggregate has one entry per child with its file, `caseId`, JUnit presence,
+case/match/unknown/duplicate counts, exit/signal, and registration errors. A harness error remains a FAIL but does not replace an existing
 per-file reason; it is recorded separately as `harnessError`. Wrapper cleanup errors are
 recorded separately as `cleanupError`, preserving an earlier reason.
 
@@ -398,7 +401,7 @@ Providers, sockets and engines register end-of-flow cleanup automatically.
 `ownResource(close)` covers additional fixture services; `ManagedProcess` and
 `runProcess` own real subprocess groups and journal group IDs for the scheduler.
 On failure/deadline/interruption the runner kills owned groups, including groups
-left by an exited file process. Temp vaults are removed unless a test explicitly
+left by an exited case process. Temp vaults are removed unless a test explicitly
 calls `engine.close({retainVault:true})`; retained private roots stay local,
 are listed in a redacted retention artifact, and are never uploaded. For the
 MEMORY project-question diagnostic only, `E2E_MEMORY_RETAIN_VAULT=1` makes those
@@ -406,7 +409,7 @@ five cases retain their vaults, including a setup barrier failure.
 
 No engine constants changed. Harness constants are 10s health/readiness and
 normal request bounds, 30s normal flow budget, 2s stop grace, 25ms bounded
-public-observation cadence, four slots, two CPU credits and 4 GiB per slot,
+public-observation cadence, six slots, two CPU credits and 4 GiB per slot,
 and 600s whole-suite deadline. They are not new product laws. Zero automatic
 mutation retries, zero model downloads, no private clocks or queue ticks.
 
