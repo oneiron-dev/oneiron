@@ -46,6 +46,18 @@ export {
   type StepsBarCell,
   type StepsBarLayout,
 } from './marks/steps-bar-cells'
+export { ProgressDonut, type ProgressDonutProps } from './marks/ProgressDonut'
+export {
+  donutSegments,
+  donutCentre,
+  donutLabel,
+  arcPath,
+  DONUT_MAX_ARCS,
+  type DonutArc,
+  type DonutSize,
+  type DonutSegment,
+  type DonutGeometry,
+} from './marks/donut-segments'
 export { Glyph, type GlyphProps, type GlyphState, type GlyphShape, type GlyphForm } from './marks/Glyph'
 export { Portrait, type PortraitProps } from './marks/Portrait'
 
@@ -80,6 +92,7 @@ export {
   type MessageRowAttachmentProps,
   type MessageRowFoldProps,
   type MessageRowThreadLineProps,
+  type MessageRowTaskLineProps,
   type MessageRowReactionsProps,
   type MessageRowReactionProps,
 } from './patterns/MessageRow'
@@ -99,6 +112,8 @@ export { snapToMagnet, SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, type MagnetSnap } fr
 export {
   Composer,
   type ComposerProps,
+  type ComposerSendDetails,
+  type ComposerAddProps,
   type ComposerCarryProps,
   type ComposerPointerProps,
   type ComposerChipProps,
@@ -118,6 +133,33 @@ export {
 } from './patterns/LedgerTable'
 export { ClaimText, type ClaimTextProps } from './patterns/ClaimText'
 export { claimInk, type ClaimInk } from './patterns/claim-ink'
+export { findBoostWord } from './patterns/find-boost-word'
+export { TaskList, type TaskListProps } from './patterns/TaskList'
+export {
+  TaskRow,
+  type TaskRowProps,
+  type TaskRowBodyProps,
+  type TaskRowLastProps,
+  type TaskRowQuestionProps,
+  type TaskRowWriteProps,
+  type TaskRowOwnProps,
+} from './patterns/TaskRow'
+export {
+  taskGroup,
+  groupTasks,
+  taskCountWords,
+  TASK_GROUPS,
+  TASK_DONE_FOLD_AFTER,
+  type TaskGroup,
+} from './patterns/task-group'
+export { VersionSwitch, type VersionSwitchProps } from './patterns/VersionSwitch'
+export {
+  SettledCard,
+  type SettledCardProps,
+  type SettledCardMissedProps,
+  type SettledCardDetailProps,
+  type SettledState,
+} from './patterns/SettledCard'
 
 export {
   Sidebar,
@@ -126,6 +168,16 @@ export {
   type SidebarGroupProps,
   type SidebarRowProps,
 } from './frame/Sidebar'
+export {
+  MicroSidebar,
+  type MicroSidebarProps,
+  type MicroSidebarItemProps,
+  type MicroSidebarDividerProps,
+  type MicroSidebarPinnedProps,
+  type MicroSidebarFootProps,
+} from './frame/MicroSidebar'
+export { AppFrame, type AppFrameProps, type AppFrameFoldProps } from './frame/AppFrame'
+export { peekReducer, PEEK_CLOSED, PEEK_DELAY_MS, type PeekState, type PeekAction } from './frame/frame-peek'
 export { moveItem, dropIndex, leadingEdge, shiftFor } from './frame/reorder'
 export { VaultSwitch, type VaultSwitchProps, type VaultSwitchVault } from './frame/VaultSwitch'
 export {
