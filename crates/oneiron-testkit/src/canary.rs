@@ -567,6 +567,21 @@ impl CanaryVault {
         self.canaries.iter().find(|canary| canary.class == class)
     }
 
+    /// Adds rows derived from `class`'s canary, such as a claim a Dreamer
+    /// pass landed from it, to the refs every scan point-reads: the scans
+    /// then hold each derived row to its source's audience.
+    ///
+    /// # Panics
+    /// When the fixture seeded no canary of `class`.
+    pub fn add_derived_refs(&mut self, class: CanaryClass, refs: impl IntoIterator<Item = String>) {
+        let canary = self
+            .canaries
+            .iter_mut()
+            .find(|canary| canary.class == class)
+            .unwrap_or_else(|| panic!("the fixture seeded no {class} canary"));
+        canary.refs.extend(refs);
+    }
+
     /// `actor`'s entity id: the owner PERSON or the agent's definition.
     #[must_use]
     pub fn actor_id(&self, actor: CanaryActor) -> EntityId {
