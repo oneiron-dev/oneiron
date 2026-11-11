@@ -373,7 +373,7 @@ impl LiftedKeys {
     /// `shown` that splits none of them names no part of a value.
     pub(crate) fn handle_ranges(&self, shown: &str) -> Vec<Range<usize>> {
         let mut ranges: Vec<Range<usize>> = self
-            .0
+            .keys
             .iter()
             .flat_map(|(_, handle)| {
                 shown

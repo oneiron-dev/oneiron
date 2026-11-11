@@ -166,6 +166,8 @@ impl RecoveryRoot {
     }
 }
 
+// FIX [LIBTEST-STACK-PROBE-TIER]: move to a crypto-side probe in oneiron-crypto; stack_probe is configured out here since the dev-dependency lost feature stack-probe (1d4e005d213)
+#[cfg(any())]
 #[cfg(all(
     test,
     any(target_arch = "x86_64", target_arch = "aarch64"),
