@@ -78,6 +78,7 @@ mod repo_copy_edit;
 #[cfg(feature = "sync")]
 mod repo_manifest_conflict;
 mod research;
+mod research_root;
 mod reservoir_sources;
 mod residence;
 mod retrieval;
@@ -527,6 +528,7 @@ pub use self::repo_copy_edit::*;
 #[cfg(feature = "sync")]
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
+pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
 pub use self::retrieval::*;
