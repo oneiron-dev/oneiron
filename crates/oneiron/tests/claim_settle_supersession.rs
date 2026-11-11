@@ -338,3 +338,49 @@ fn an_approval_with_no_head_supersedes_nothing() {
     assert_eq!(f.body(new).approval, ClaimApprovalStatus::Approved);
     assert!(f.supersedes(new).is_empty());
 }
+
+/// A head in another facet is another audience's (review P1 of #6930): the
+/// approval closes only a head born in its proposal's facet and project. The
+/// owner's head lands while a second facet is the default; the agent's
+/// proposal on the same key, with no opaque scope on either, lands in the
+/// first.
+#[test]
+fn an_approval_supersedes_no_head_in_another_facet() {
+    let f = Fixture::new();
+    let owner = oneiron::WriteActor::new(f.owner, EdgeActorClass::Human);
+    let other = f
+        .vault
+        .create_facet(
+            &f.owner_proof,
+            f.owner,
+            "settlement-second-facet",
+            f.vault.now_recorded_at(),
+        )
+        .expect("a second facet");
+    let mut input = f.input("profile.name", "Ada", None);
+    input.scope = None;
+    f.vault
+        .set_default_facet(other, owner)
+        .expect("the second facet is the default");
+    let old = f.head(&input);
+    f.vault
+        .set_default_facet(f.facet, owner)
+        .expect("the first facet is the default again");
+    input.value = json!("Ada Lovelace");
+    let new = f.propose(&input);
+    assert_eq!(f.body(old).scope_facet, other);
+    assert_eq!(f.body(new).scope_facet, f.facet);
+
+    let settled = f.settle(new, ClaimSettleDecision::Approve);
+
+    assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
+    let old_body = f.body(old);
+    assert_eq!(
+        old_body.lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the head in the other facet stands"
+    );
+    assert_eq!(old_body.valid_to, None);
+    assert_eq!(f.body(new).approval, ClaimApprovalStatus::Approved);
+    assert!(f.supersedes(new).is_empty());
+}
