@@ -53,7 +53,9 @@ crate::side_table::side_tables! {
     /// receipt the owner reads on first open: the agent, the verbs, the origin ("engine default
     /// at vault creation") and when. Key: id16 (the grant).
     FEDERATION_ENGINE_DEFAULT_GRANT: VaultMeta b"federation:engine_default_grant:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        // Restore class: a receipt names a Steward grant row the engine stood, and those rows
+        // stay as the live vault holds them: the receipts stay with them.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// An administrative ruling's admission, kept before the grant row that admitted it was
     /// rewritten or deleted (FIX 8740): the grant and the hash of that row. Immutable. Key: id16
     /// (the ruling).
