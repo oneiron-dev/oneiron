@@ -119,6 +119,7 @@ export function Field({ ref, className, ...props }: FieldProps) {
     const canvas = canvasRef.current
     if (!scheme || !canvas) return
     let alive = true
+    let painted = false
     let cancel = () => {}
     let timer: ReturnType<typeof setTimeout> | undefined
 
@@ -127,6 +128,7 @@ export function Field({ ref, className, ...props }: FieldProps) {
       loadImage(scheme === 'dark' ? FIELD_ART.night : FIELD_ART.day)
         .then((img) => {
           if (!alive) return
+          painted = true
           cancel()
           cancel =
             scheme === 'dark'
@@ -151,6 +153,9 @@ export function Field({ ref, className, ...props }: FieldProps) {
       cancel()
       clearTimeout(timer)
       removeEventListener('resize', onResize)
+      /* Torn down before anything printed (an effect run twice in a row):
+         the develop is still owed to the next run. */
+      if (!painted) developed.current = false
     }
   }, [scheme])
 
