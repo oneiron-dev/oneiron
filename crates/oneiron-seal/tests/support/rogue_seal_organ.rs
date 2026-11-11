@@ -3,7 +3,8 @@
 //! protocol 1.1, and serves `seal.verify` at schema 1 and `seal.pdf` at
 //! schema 2, or, with `schema-1` as its second argument, at the old schema
 //! 1 (one PDF, bare prehash signing), so the same attacks run against the
-//! adapter before the binding and after it. It does what a seal organ
+//! adapter before the binding and after it. `seal.prepare` and `seal.inspect`
+//! are the real organ's, so the engine's PDF work reaches the attacks. It does what a seal organ
 //! compromised by a hostile PDF could. Its first argument picks how:
 //! - `forge-signs`: asks the key to sign an unrelated prehash under the
 //!   call's operation (Astra's witness on #1379), then the prehash of a
@@ -35,15 +36,21 @@ mod rogue {
 
     use async_trait::async_trait;
     use der::{Decode, Encode};
+    use oneiron_organ_protocol::seal::{SealModifications, SealRevisionClassification};
     use oneiron_organ_protocol::{
         Answer, Asker, ByteBuf, CallContext, ErrorCode, Organ, OrganError, OrganIdentity,
         OutputBytes, Value, VerbSpec,
     };
+    use oneiron_seal::ActiveContentFacts;
+    use oneiron_seal::organ::{
+        INSPECT_SCHEMA, PREPARE_SCHEMA, SealOrgan, VERB_INSPECT, VERB_PREPARE,
+    };
     use oneiron_seal::{
         BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchPolicy,
         NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine, PreparedRevision,
-        SealBackend, SealClock, SealConfig, SealRequest, SealResourceLimits, SignDigestRequest,
-        SignRevisionRequest, SignatureAlgorithm, SigningIdentity,
+        SealBackend, SealClock, SealConfig, SealMemory, SealMemoryProvider, SealMemoryRefusal,
+        SealRequest, SealResourceLimits, SignDigestRequest, SignRevisionRequest,
+        SignatureAlgorithm, SigningIdentity,
     };
     use serde::{Deserialize, Serialize};
     use sha2::{Digest, Sha256};
@@ -122,6 +129,9 @@ mod rogue {
         byte_range: [u64; 4],
     }
 
+    /// A verdict in today's wire shape, which also carries the active-content
+    /// facts and the revision classification (#3372, 7de2f0302b4); the host
+    /// refuses a reply without them before it reaches the binding.
     #[derive(Serialize)]
     struct Verdict {
         verdict: &'static str,
@@ -129,6 +139,8 @@ mod rogue {
         achieved: Option<PadesProfile>,
         self_verify_ok: bool,
         report_json: ByteBuf,
+        active_content: ActiveContentFacts,
+        classification: SealRevisionClassification,
     }
 
     #[derive(Serialize)]
@@ -177,14 +189,24 @@ mod rogue {
         signature: ByteBuf,
     }
 
-    /// A forged pass, of the given profile.
-    fn passed(achieved: PadesProfile) -> Verdict {
+    /// A forged pass of `pdf`, of the given profile. Its classification is
+    /// well formed and proves nothing: no revision chain, no signature, nothing
+    /// classified through.
+    fn passed(achieved: PadesProfile, pdf: &[u8]) -> Verdict {
         Verdict {
             verdict: "passed",
             reasons: Vec::new(),
             achieved: Some(achieved),
             self_verify_ok: true,
             report_json: ByteBuf::from(b"{}".to_vec()),
+            active_content: ActiveContentFacts::default(),
+            classification: SealRevisionClassification {
+                artifact_sha256: ByteBuf::from(Sha256::digest(pdf).to_vec()),
+                classified_through: None,
+                modifications: SealModifications::NotRun,
+                revisions: Vec::new(),
+                signatures: Vec::new(),
+            },
         }
     }
 
@@ -197,19 +219,35 @@ mod rogue {
         }
 
         fn verbs(&self) -> Vec<VerbSpec> {
-            [("seal.pdf", self.1), ("seal.verify", 1)]
-                .map(|(name, schema)| VerbSpec {
-                    name: name.into(),
-                    schema,
-                    kinds: Vec::new(),
-                })
-                .into()
+            [
+                ("seal.pdf", self.1),
+                ("seal.verify", 1),
+                (VERB_INSPECT, INSPECT_SCHEMA),
+                (VERB_PREPARE, PREPARE_SCHEMA),
+            ]
+            .map(|(name, schema)| VerbSpec {
+                name: name.into(),
+                schema,
+                kinds: Vec::new(),
+            })
+            .into()
         }
 
         fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
+            // The engine prepares and inspects the PDF before it seals
+            // (seal.prepare, seal.inspect; the install spec requires every PDF
+            // work verb, 13080826f10): the real organ's own code serves both, so
+            // every attack below starts from the input an honest organ would
+            // have prepared.
+            if call.verb == VERB_PREPARE || call.verb == VERB_INSPECT {
+                return SealOrgan.call(call);
+            }
             if call.verb == "seal.verify" {
+                let [pdf] = call.inputs else {
+                    return Err(bad("inputs"));
+                };
                 return answer(
-                    &VerifyReport::Verified(passed(PadesProfile::BaselineB)),
+                    &VerifyReport::Verified(passed(PadesProfile::BaselineB, pdf)),
                     None,
                 );
             }
@@ -282,7 +320,7 @@ mod rogue {
                 requested: args.profile,
                 achieved,
                 degraded: Vec::new(),
-                self_verify: passed(achieved),
+                self_verify: passed(achieved, &bytes),
             };
             answer(&report, Some(bytes))
         }
@@ -309,6 +347,19 @@ mod rogue {
             .collect()
     }
 
+    /// Grants every reservation and holds nothing. A native engine refuses
+    /// to start without a memory service (FIX 7654); the real organ asks its
+    /// host through `memory.grow`, and a hostile organ's own accounting is
+    /// nothing the binding relies on. (A bin target cannot include the
+    /// dev-dependency fixtures in `tests/support/mod.rs`.)
+    struct GrantAllMemory;
+
+    impl SealMemory for GrantAllMemory {
+        fn reserve(&self, _bytes: u64) -> Result<Box<dyn Send>, SealMemoryRefusal> {
+            Ok(Box::new(()))
+        }
+    }
+
     /// The organ's own seal engine over `backend`, as the real organ builds
     /// it for a call.
     fn native(
@@ -321,7 +372,10 @@ mod rogue {
                 trust_anchors_der: anchors.iter().map(|anchor| anchor.to_vec()).collect(),
                 timestamp_authorities: Vec::new(),
                 fetch_policy: FetchPolicy::default(),
-                resource_limits: SealResourceLimits::default(),
+                resource_limits: SealResourceLimits {
+                    memory: SealMemoryProvider::new(Arc::new(GrantAllMemory)),
+                    ..SealResourceLimits::default()
+                },
             },
             backend,
             Arc::new(OfflineFetcher),

@@ -89,6 +89,11 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     // candidate door, still clears the full evidence floor.
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
     let dreamer_candidate = dreamer_run_id.is_some() && !operation_effect_body;
+    // FIX 3983 (review 6881 P1): a caller's live-run claim put is the other Generated producer the
+    // host's auto checker reviews. It is not a Dreamer write, so the GATE-12 pre-commit floor above stays
+    // Dreamer-only; only the checker consult below reads this.
+    let checked_producer =
+        dreamer_candidate || envelope.is_some_and(live_run_claim_put_from_write_envelope);
     let precommit_denial = if dreamer_candidate && !skip_precommit {
         dreamer_precommit_denial(store, &*wtxn, body)
     } else {
@@ -149,6 +154,16 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             // rather than guess at defaults that would silently auto-run.
             None,
         );
+        // FIX 8655: an exact close by its verified closer admits nothing
+        // new, so the stored body's source and its Auto approval are
+        // history, not a request. `claim_gate_input` keeps the source of
+        // every Auto body; left in, the evaluator asks the closer for the
+        // birth source's Auto permit, and an owner who never held the
+        // Dreamer's `generated` permit cannot retract the Dreamer's claim.
+        if verified_close {
+            input.source = None;
+            input.sensitivity_band = None;
+        }
         // A pre-commit failure REPLACES the policy verdict: the recording,
         // pending and enforcement paths below then run unchanged, and the
         // Deny aborts the caller's batch op before any claim-side write lands.
@@ -262,7 +277,9 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // checker can only NARROW a verdict, never widen one.
         //
         // The consult is EXACTLY: a manifest names a checker, the ordinary
-        // decision is Auto, the write is an agent-class Dreamer write, and its
+        // decision is Auto, the write is an agent-class Dreamer write or a
+        // caller's live-run claim put (FIX 3983; its Proposed resubmission
+        // too, so a hold parks it with a pending review, review 6908 P1), and its
         // source is one that requires an explicit auto permit. Human and owner
         // writes therefore never reach a checker at all. A door that injects
         // no checker for a write the manifest wants checked gets no verdict,
@@ -284,7 +301,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         let mut checker_receipt_reasons: Vec<String> = Vec::new();
         if decision.outcome() == GateOutcome::Allow
             && !attach_critical_confirm
-            && dreamer_candidate
+            && checked_producer
             && (policy.auto_checker().is_some() || verdict_binding.is_some())
             && preflight_decision_id.is_none()
             && let Some(source) = body.source.filter(|source| {

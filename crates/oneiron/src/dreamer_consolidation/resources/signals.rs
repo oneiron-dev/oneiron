@@ -211,11 +211,39 @@ impl BranchResources<'_> {
     }
 }
 
+/// The scope keys that carry a CLAIM's facet axis. The Dreamer's own claims
+/// write `facet_ref` as 16 raw bytes; the facade's claim admission writes
+/// `facet` as a hex string (memory/claim_admission.rs). The scoped-read gate
+/// reads all three spellings (gate/grants.rs), so this reader does too:
+/// otherwise a facade claim's own facet reads as absent, and a root pin that
+/// names it is refused as crossing its bucket axes.
+const CLAIM_SCOPE_FACET_KEYS: [&str; 3] = [TURN_BODY_FACET_REF_KEY, "facet", "facetRef"];
+
 pub(crate) fn facet(scope: Option<&Value>) -> Result<Option<EntityId>> {
     let Some(Value::Map(entries)) = scope else {
         return Ok(None);
     };
-    axis(entries, TURN_BODY_FACET_REF_KEY)
+    let mut found = None;
+    for (key, value) in entries {
+        if key
+            .as_str()
+            .is_some_and(|key| CLAIM_SCOPE_FACET_KEYS.contains(&key))
+        {
+            if found.is_some() {
+                return Err(invalid_consolidation("duplicate graph source axis"));
+            }
+            found = Some(
+                claim_scope_entity_id(value)
+                    .ok_or_else(|| invalid_consolidation("invalid graph source axis"))?,
+            );
+        }
+    }
+    Ok(found)
+}
+
+/// A claim scope id: 16 raw bytes, or the 32-hex string the facade writes.
+fn claim_scope_entity_id(value: &Value) -> Option<EntityId> {
+    entity_ref_from_value(value).or_else(|| EntityId::from_hex(value.as_str()?).ok())
 }
 
 fn turn_axes(bytes: &[u8]) -> Result<(Option<EntityId>, Option<EntityId>)> {

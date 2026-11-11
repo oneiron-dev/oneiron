@@ -326,10 +326,11 @@ fn skip_value<'a>(
     result
 }
 
-/// [`table_prev_work`] without its token count.
+/// [`table_prev_work`] without its token count, under one test operation's
+/// limits.
 #[cfg(test)]
 pub(super) fn table_prev(section: &[u8]) -> Result<Option<usize>, LexError> {
-    table_prev_work(section).map(|(prev, _)| prev)
+    table_prev_work(section, &crate::memory::testing::operation_limits()).map(|(prev, _)| prev)
 }
 
 /// Parse the actual classic-xref trailer dictionary using the same token

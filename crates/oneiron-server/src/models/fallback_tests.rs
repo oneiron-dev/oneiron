@@ -175,6 +175,11 @@ async fn a_quota_refusal_answers_from_the_next_offer_which_serves_until_the_rese
         .expect("the next offer answers the same call");
     assert_eq!(text_of(&answer.message), "from second");
     let receipt = &answer.usage.raw_provider;
+    // CORRECTION-MODEL-2: the receipt names the serving rung's engine id.
+    let rungs = seat.rung_models();
+    assert_eq!(rungs.len(), 2, "the seat holds both rungs");
+    assert_eq!(receipt["model_id"], json!(rungs[1].0.as_str()));
+    assert_ne!(receipt["model_id"], json!(rungs[0].0.as_str()));
     assert_eq!(receipt["provider"], json!("second"));
     assert_eq!(receipt["requested_model"], json!("big"));
     assert_eq!(receipt["failed_rungs"], json!(1));
@@ -829,4 +834,26 @@ async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_
     let error = ask(seat).await.expect_err("nothing is back");
     assert_eq!(error, limited(1, T0 + 602));
     assert_eq!((first.seen().len(), second.seen().len()), (9, 8));
+}
+
+/// CORRECTION-MODEL-2: a `PendingReceipt` persisted before `model_id`
+/// existed (the pre-change stored shape, no `model_id` key) still
+/// deserializes, serializes back with no `model_id` key, and stamps a
+/// receipt with no `model_id` key.
+#[test]
+fn a_receipt_persisted_before_model_id_stamps_no_model_id_key() {
+    let stored = json!({
+        "provider": "first",
+        "requested": "small",
+        "rung": 0,
+        "failed": 0,
+        "passed_over": [],
+    });
+    let receipt: ladder::PendingReceipt =
+        serde_json::from_value(stored).expect("the pre-change shape deserializes");
+    let written = serde_json::to_value(&receipt).expect("the receipt serializes");
+    assert_eq!(written.get("model_id"), None);
+    let stamped = receipt.stamp(json!({}));
+    assert_eq!(stamped["provider"], json!("first"));
+    assert_eq!(stamped.get("model_id"), None);
 }

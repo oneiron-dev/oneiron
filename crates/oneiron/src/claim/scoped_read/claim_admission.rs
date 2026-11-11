@@ -3,6 +3,9 @@
 
 use super::access_gate::HeldAuthority;
 use super::*;
+use crate::blob_artifact::esign::{
+    EsignClaimDependencies, bounded_by_whole_vault, esign_claim_dependencies_in,
+};
 
 pub(crate) use crate::ports::ClaimReadStatus;
 
@@ -11,7 +14,7 @@ pub(crate) trait ClaimReadStatusExt {
     fn admits_status(
         self,
         filter: &ResolvedRetrievalFilter,
-        generic_readable: bool,
+        predicate_class: (bool, bool),
         approval: ClaimApprovalStatus,
         lifecycle: ClaimLifecycleStatus,
         stale: bool,
@@ -23,7 +26,10 @@ impl ClaimReadStatusExt for ClaimReadStatus {
     fn admits(self, filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
         self.admits_status(
             filter,
-            crate::claim::claim_generic_readable(body),
+            (
+                crate::claim::claim_generic_readable(body),
+                crate::claim::claim_exact_store(body),
+            ),
             body.approval,
             body.lifecycle,
             body.stale,
@@ -31,30 +37,33 @@ impl ClaimReadStatusExt for ClaimReadStatus {
     }
 
     /// [`Self::admits`] over the status a claim's access class carries
-    /// (FIX 11915): whether its predicate reads generically, its approval,
-    /// its lifecycle and its staleness.
+    /// (FIX 11915): its predicate class (whether it reads generically, and
+    /// whether it is an exact-store claim), its approval, its lifecycle and
+    /// its staleness.
     fn admits_status(
         self,
         filter: &ResolvedRetrievalFilter,
-        generic_readable: bool,
+        (generic_readable, exact_store): (bool, bool),
         approval: ClaimApprovalStatus,
         lifecycle: ClaimLifecycleStatus,
         stale: bool,
     ) -> bool {
-        generic_readable
-            && match self {
-                Self::Surfaceable => {
-                    matches!(
-                        approval,
-                        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                    ) && lifecycle == ClaimLifecycleStatus::Active
-                        && (filter.include_stale || !stale)
-                }
-                // Every approval and lifecycle status, and stale claims
-                // whatever the floor says; the caller's own exclusion of
-                // stale claims binds here too (FIX 3977).
-                Self::Recorded => !(stale && filter.caller_excludes_stale),
+        let surfaceable = matches!(
+            approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) && lifecycle == ClaimLifecycleStatus::Active;
+        match self {
+            Self::Surfaceable => {
+                generic_readable && surfaceable && (filter.include_stale || !stale)
             }
+            // Every approval and lifecycle status, and stale claims
+            // whatever the floor says; the caller's own exclusion of
+            // stale claims binds here too (FIX 3977).
+            Self::Recorded => generic_readable && !(stale && filter.caller_excludes_stale),
+            // The keyed reader takes the heads its own scan takes: active,
+            // auto or approved, and not stale ([E2E-KV-GET-PREFILTER]).
+            Self::ExactStore => exact_store && surfaceable && !stale,
+        }
     }
 }
 
@@ -222,14 +231,17 @@ impl ScopedRead<'_> {
                 Some(grant),
             ),
         };
-        Ok(allowed && self.provenance_cited_readable_in(rtxn, policy, body, authority)?)
+        Ok(allowed
+            && self.provenance_cited_readable_in(rtxn, policy, body, authority)?
+            && self.esign_document_readable_in(rtxn, policy, body)?)
     }
 
     /// Whether this lane reads every record the claim `body` names when it is
     /// an `edge.provenance` Claim (FIX 3959): its edge, under the endpoint and
     /// exact-pair admission the typed audit gives it, its actor, and the
-    /// record its `source_revision_ref` cites, at that revision. The last
-    /// conjunct of every CLAIM's admission, on the row path and the class
+    /// record its `source_revision_ref` cites, at that revision. One of the
+    /// two trailing conjuncts of every CLAIM's admission, beside
+    /// [`Self::esign_document_readable_in`], on the row path and the class
     /// path alike, and never a class's: what it reads is the row's own. One
     /// named record this lane may not read withholds the Claim whole, as any
     /// withheld row is, and a body that does not decode as a provenance
@@ -314,6 +326,57 @@ impl ScopedRead<'_> {
         match readable {
             Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
             readable => readable,
+        }
+    }
+
+    /// Whether this lane reads the `esign.*` claim `body` beside its signing
+    /// document (FIX 6945 A): the claim is admitted on the generic claim
+    /// reads only when the reader is also admitted to the live signing
+    /// document the claim's subject names and to every original artifact
+    /// that document's trail names, the same gate `vault.esign.get`
+    /// applies. One of the two trailing conjuncts of every CLAIM's
+    /// admission, beside [`Self::provenance_cited_readable_in`], on the row
+    /// path and the class path alike, and never a class's: what it reads is
+    /// the row's own. Every other predicate passes before it reads
+    /// anything, and so does a reader with no proof or with a whole-vault
+    /// proof whose guest view still stands, exactly the callers
+    /// `Memory::esign_scope` (`blob_artifact::esign::lane_scope`) leaves
+    /// unjudged. A claim whose document or originals do not resolve, and one
+    /// naming a record this lane may not read with its policy, withholds
+    /// the Claim whole, as any withheld row is. Each record is judged as a
+    /// ref this lane's caller names resolves, stopping at the first false.
+    /// # Errors
+    /// The read's own failure, or the dependency list's.
+    pub(super) fn esign_document_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        body: &ClaimBody,
+    ) -> Result<bool> {
+        if !body.predicate.starts_with("esign.") {
+            return Ok(true);
+        }
+        match self.actor_key.proof.as_ref() {
+            None => return Ok(true),
+            Some(proof)
+                if bounded_by_whole_vault(proof)
+                    && self.vault.guest_view_current_in_txn(rtxn, proof.claims()) =>
+            {
+                return Ok(true);
+            }
+            Some(_) => {}
+        }
+        match esign_claim_dependencies_in(self.vault, rtxn, body)? {
+            EsignClaimDependencies::NotEsign => Ok(true),
+            EsignClaimDependencies::Unresolved => Ok(false),
+            EsignClaimDependencies::Records(records) => {
+                for record in &records {
+                    if !self.is_ref_readable_with_policy_in(rtxn, policy, record)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
         }
     }
 
