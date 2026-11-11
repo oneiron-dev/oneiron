@@ -213,6 +213,7 @@ mod slim_doors;
 pub(crate) use slim_doors::is_slim_lifecycle_observation;
 mod snapshot_read_settings_doors;
 mod standing_doors;
+mod steward_doors;
 // FIX 11694: a person's passkey step-up on their own credential (MFA-1 A).
 pub(super) mod step_up_doors;
 mod stream_recovery_doors;

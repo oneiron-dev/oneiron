@@ -73,6 +73,7 @@ pub(crate) use membership_gate::authenticated_grant_membership_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use membership_gate::grant_allows_content_write;
 pub(crate) mod grant_scope;
+pub use grant_scope::STEWARD_ROLE_NOTE;
 mod ruling_integrity;
 mod rulings;
 pub(crate) use ruling_integrity::{
