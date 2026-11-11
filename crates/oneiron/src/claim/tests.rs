@@ -635,8 +635,7 @@ fn public_skill_claim_lifecycle_is_reserved_and_edge_stays_provenance_owned() ->
 fn write_door_validates_edge_provenance_claim_structure() {
     use crate::edge::EdgeActorClass;
     use crate::provenance::{
-        EVIDENCE_KEY_ACTOR_CLASS, EdgeProvenanceClaimBody, SupersessionStatus,
-        encode_actor_class_evidence, encode_edge_provenance_value,
+        EdgeProvenanceClaimBody, SupersessionStatus, encode_edge_provenance_value,
     };
 
     let actor = EntityId::from_bytes([0x62; 16]).expect("valid id");
@@ -649,13 +648,28 @@ fn write_door_validates_edge_provenance_claim_structure() {
     // `conf` value never weakens them.
     let confidence = 0.75_f32;
     let valid_value = || {
+        let mut body =
+            EdgeProvenanceClaimBody::new(actor, confidence, SupersessionStatus::Confirmed);
+        body.actor_class = Some(EdgeActorClass::Human);
+        encode_edge_provenance_value(&body)
+    };
+    // A value record with NO actor_class body key: pairs with `None` evid
+    // for the missing-everywhere case, and with the legacy evid map for the
+    // both-places ambiguity case.
+    let classless_value = || {
         encode_edge_provenance_value(&EdgeProvenanceClaimBody::new(
             actor,
             confidence,
             SupersessionStatus::Confirmed,
         ))
     };
-    let evid = encode_actor_class_evidence(EdgeActorClass::Human);
+    // The legacy engine-owned evid map {"actor_class": <u8>} (Human = 0),
+    // inlined: the pre-ONE-1138 codec that built it is deleted, and any
+    // wrapper evid beside a body key is now the ambiguous shape.
+    let evid = Value::Map(vec![(
+        Value::from("actor_class"),
+        Value::from(EdgeActorClass::Human as u8),
+    )]);
     let subject = ClaimSubject::Edge {
         source: EntityId::from_bytes([0x60; 16]).expect("valid id"),
         kind: EdgeKind::Mentions,
@@ -675,13 +689,10 @@ fn write_door_validates_edge_provenance_claim_structure() {
         encode_claim_body(&body).expect("encode")
     };
 
-    // Fully-valid legacy shape (value record + engine-owned evid map):
-    // accepted through the reserved door.
-    validate_claim_body_bytes(
-        &encode("edge.provenance", valid_value(), Some(evid.clone())),
-        true,
-    )
-    .expect("valid edge.provenance claim must pass the write door");
+    // Fully-valid new shape (actor_class in the value record, wrapper
+    // evid absent): accepted through the reserved door.
+    validate_claim_body_bytes(&encode("edge.provenance", valid_value(), None), true)
+        .expect("valid edge.provenance claim must pass the write door");
 
     let missing_actor = {
         let Value::Map(mut entries) = valid_value() else {
@@ -698,10 +709,10 @@ fn write_door_validates_edge_provenance_claim_structure() {
         Value::Map(entries)
     };
     let class_in_value_record = {
-        let Value::Map(mut entries) = valid_value() else {
+        let Value::Map(mut entries) = classless_value() else {
             unreachable!("encoder emits a map");
         };
-        entries.push((Value::from(EVIDENCE_KEY_ACTOR_CLASS), Value::from(0_u8)));
+        entries.push((Value::from("actor_class"), Value::from(0_u8)));
         Value::Map(entries)
     };
 
@@ -720,16 +731,15 @@ fn write_door_validates_edge_provenance_claim_structure() {
         ),
         (
             "missing actor_class evidence entirely",
-            encode("edge.provenance", valid_value(), None),
+            encode("edge.provenance", classless_value(), None),
         ),
         (
             "malformed actor_class evidence (non-map evid)",
             encode("edge.provenance", valid_value(), Some(Value::from(7_u8))),
         ),
-        // Rejected under BOTH vocabularies: today `actor_class` is not a
-        // value-record key (unknown-key reject); once the vocabulary
-        // carries it, body-key + evid together are the ambiguous
-        // two-sources-of-truth shape (both-present reject).
+        // Both-places shape: the body key decodes, and any wrapper evid
+        // beside it is the ambiguous two-sources-of-truth shape
+        // (both-present reject).
         (
             "actor_class in both the value record and evid",
             encode("edge.provenance", class_in_value_record, Some(evid)),
@@ -4085,7 +4095,10 @@ fn lineage_guard_exempts_engine_reserved_predicates() -> Result<()> {
     // from the generic public Claim API, so the shape is not a laundering
     // path — and rejecting it would break the attribution projector and sync
     // convergence for already-replicated rows.
-    for predicate in [PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST] {
+    for predicate in [
+        PREDICATE_ACTOR_PEER_BINDING,
+        crate::skill_hub::PREDICATE_SKILL_SCAN_VERDICT,
+    ] {
         let body = lineage_body(
             predicate,
             ClaimSource::Observed,

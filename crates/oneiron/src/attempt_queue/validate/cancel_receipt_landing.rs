@@ -5,7 +5,8 @@ use crate::attempt_queue::cancel::{
     CancelStanding, ForceCancelGrounds, LandingTrigger,
 };
 use crate::attempt_queue::types::{
-    AttemptEvent, AttemptInterventionKind, AttemptRecord, MAX_ATTEMPT_EVENTS_PER_RECORD,
+    AttemptEvent, AttemptInterventionKind, AttemptRecord, AttemptState,
+    MAX_ATTEMPT_EVENTS_PER_RECORD,
 };
 use crate::error::{Error, Result};
 use crate::limit_ask::{EngineLimit, LimitWatch};
@@ -117,7 +118,29 @@ pub(in crate::attempt_queue) fn append_attempt_event(
     });
     if record.events.len() > MAX_ATTEMPT_EVENTS_PER_RECORD {
         let excess = record.events.len() - MAX_ATTEMPT_EVENTS_PER_RECORD;
-        record.events.drain(0..excess);
+        // A paused row keeps the event of the pause it stands under, however
+        // many later events follow it: who placed the pause decides who
+        // resumes it, and that event is the only record of the pauser
+        // (review 6974 P1). It stays first, so the sequences still rise.
+        let standing_pause = (record.state == AttemptState::Paused)
+            .then(|| {
+                record
+                    .events
+                    .iter()
+                    .rposition(|event| event.kind == AttemptInterventionKind::Pause)
+            })
+            .flatten()
+            .filter(|at| *at < excess);
+        match standing_pause {
+            Some(at) => {
+                let pause = record.events.remove(at);
+                record.events.drain(0..excess);
+                record.events.insert(0, pause);
+            }
+            None => {
+                record.events.drain(0..excess);
+            }
+        }
     }
     Ok(())
 }

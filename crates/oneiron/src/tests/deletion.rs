@@ -404,6 +404,7 @@ fn hard_delete_sweep_sequence_self_heals_stale_cursor_on_collision() -> Result<(
         RedactionScope::entity(&EntityId::now()),
         HardEraseSweepExtras::default(),
         1_772_000_000,
+        1_772_000_000,
     )?;
 
     vault.with_write_txn(|wtxn| {

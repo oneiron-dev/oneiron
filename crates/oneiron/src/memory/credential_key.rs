@@ -16,6 +16,16 @@ use crate::error::{ClaimError, Error, Result};
 /// no entity, so no grant can name it.
 const HOST_HOLDER: &str = "host";
 
+/// What a credential's key is built for. A read key binds the owner's agent
+/// Grants that name its holder (FIX AGENT-GRAPHFS-GRANT-WORLDS,
+/// `Vault::agent_grant_read_bound_in_txn`); a write target's key keeps its
+/// credential's bounds alone, as before.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyUse {
+    Read,
+    WriteTarget,
+}
+
 impl Vault {
     /// The read key `proof` reads under, judged in one snapshot: the owner
     /// check judges its holder, then `Self::credential_read_key_in_txn`
@@ -56,6 +66,7 @@ impl Vault {
             &txn,
             proof,
             ScopedReadActorKey::from_verified_slip_as_target,
+            KeyUse::WriteTarget,
         )
     }
 
@@ -65,7 +76,12 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         proof: &VerifiedSlip,
     ) -> Result<Option<ScopedReadActorKey>> {
-        self.credential_key_in_with(txn, proof, ScopedReadActorKey::from_verified_slip_as_target)
+        self.credential_key_in_with(
+            txn,
+            proof,
+            ScopedReadActorKey::from_verified_slip_as_target,
+            KeyUse::WriteTarget,
+        )
     }
 
     /// Whether `proof`'s facet bounds leave its holder unbound (owner ruling
@@ -99,6 +115,7 @@ impl Vault {
             &txn,
             proof,
             ScopedReadActorKey::from_verified_slip_as_target,
+            KeyUse::WriteTarget,
         )? {
             Some(key) => key.facets_owner_exempt_in(self, &txn),
             None => Ok(false),
@@ -111,15 +128,22 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         proof: &VerifiedSlip,
     ) -> Result<Option<ScopedReadActorKey>> {
-        self.credential_key_in_with(txn, proof, ScopedReadActorKey::from_verified_slip)
+        self.credential_key_in_with(
+            txn,
+            proof,
+            ScopedReadActorKey::from_verified_slip,
+            KeyUse::Read,
+        )
     }
 
-    /// [`Self::credential_read_key_in`], its proof-backed key built by `base`.
+    /// [`Self::credential_read_key_in`], its proof-backed key built by `base`
+    /// for `key_use`.
     fn credential_key_in_with(
         &self,
         txn: &heed::RoTxn<'_>,
         proof: &VerifiedSlip,
         base: fn(&VerifiedSlip) -> Option<ScopedReadActorKey>,
+        key_use: KeyUse,
     ) -> Result<Option<ScopedReadActorKey>> {
         let claims = proof.claims();
         if claims.holder_ref == HOST_HOLDER {
@@ -166,7 +190,7 @@ impl Vault {
             }
             None => false,
         };
-        self.credential_key_in_txn_with(txn, proof, holder, owner, base)
+        self.credential_key_in_txn_with(txn, proof, holder, owner, base, key_use)
     }
 
     /// The one rule for a proof-backed read key, once the owner check
@@ -200,11 +224,12 @@ impl Vault {
             holder,
             owner,
             ScopedReadActorKey::from_verified_slip,
+            KeyUse::Read,
         )
     }
 
     /// [`Self::credential_read_key_in_txn`], its proof-backed key built by
-    /// `base`.
+    /// `base` for `key_use`.
     fn credential_key_in_txn_with(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -212,27 +237,42 @@ impl Vault {
         holder: EntityId,
         owner: bool,
         base: fn(&VerifiedSlip) -> Option<ScopedReadActorKey>,
+        key_use: KeyUse,
     ) -> Result<Option<ScopedReadActorKey>> {
         if proof.claims().holder_ref != holder.to_hex() {
             return Ok(None);
         }
         let proof = self.member_bounded_slip_view_in_txn(txn, proof.clone())?;
-        let proof = &proof;
-        let claims = proof.claims();
-        let Some(key) = base(proof) else {
-            return Ok(None);
-        };
         // A handle bound as a person (the campaign surface binds every
         // caller so) may carry an agent's credential on the owner's PERSON:
         // that credential is not the owner's (CodeRabbit on #1413). Nor is
         // one the owner handed to another key: its holder is a delegate, so
         // every bound the owner set on it binds (Astra on #1432).
         if !owner
-            || !matches!(claims.actor_class.as_deref(), None | Some("human"))
+            || !matches!(proof.claims().actor_class.as_deref(), None | Some("human"))
             || proof.is_transferred()
         {
+            let Some(key) = base(&proof) else {
+                return Ok(None);
+            };
+            // A delegate's read also stays inside the owner's agent Grants
+            // that name its holder, each alone (FIX AGENT-GRAPHFS-GRANT-WORLDS).
+            let key = match key_use {
+                KeyUse::Read => {
+                    match self.agent_grant_read_bound_in_txn(txn, proof.scope(), holder)? {
+                        Some(bound) => key.within_agent_grants(bound.envelope, &bound.alternatives),
+                        None => key,
+                    }
+                }
+                KeyUse::WriteTarget => key,
+            };
             return Ok(Some(key.require_relationship_grants(Some(holder))));
         }
+        let proof = &proof;
+        let claims = proof.claims();
+        let Some(key) = base(proof) else {
+            return Ok(None);
+        };
         if proof.is_full_vault_owner_grade()
             && claims.actor_class.as_deref() == Some(EdgeActorClass::Human.gate_actor_class())
             && self.capability_slip_is_live_in_txn(txn, proof)?
