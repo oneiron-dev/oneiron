@@ -23,7 +23,9 @@ use crate::{EntityId, Error, Result, Vault};
 use super::{filter, store};
 
 pub(super) use schedule::TickDetails;
-pub(crate) use schedule::{index_task_due_in_txn, next_tick_release_at, release_due_ticks};
+pub(crate) use schedule::{
+    index_task_due_in_txn, next_tick_release_at, release_due_ticks, releases_here,
+};
 pub(super) use settlement::{SettledRow, prepare_settlement_in_txn, settlement_fact_in_txn};
 pub(crate) use settlement::{record_settlement_in_txn, record_timeout_demotion_in_txn};
 pub(super) use surface_inbound::SurfaceInboundRow;

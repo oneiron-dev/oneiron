@@ -145,7 +145,7 @@ pub(crate) fn index_task_due_in_txn(
 /// dials, or the owner picks one) releases each, late, once. A roster this
 /// snapshot cannot read (history the vault lacks, conflicting vault roots)
 /// releases nothing, as it elects nothing.
-fn releases_here(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+pub(crate) fn releases_here(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     let home =
         crate::dreamer_runner::DreamerRunnerStore::new(vault).home_node_designation_in_txn(txn)?;
     if let Some(home) = home {
