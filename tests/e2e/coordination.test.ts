@@ -2671,7 +2671,7 @@ suite.test(test, "MUSE-LOOP-02", "A graduation offer gives go auto, not now and 
 });
 
 // ---- MUSE-LOOP-03 (Muse Wonder Full, ported 10 Nov) ----
-async function museLoopGrantAskCeiling(
+async function museLoopGrantAskAuthority(
   owner: PublicHttpClient,
   actorRef: string,
 ): Promise<void> {
@@ -2679,18 +2679,33 @@ async function museLoopGrantAskCeiling(
   const current = policy.manifests.find(row => row.manifest_ref === policy.default_manifest_ref);
   if (!current) throw new Error("Default policy manifest is absent");
   const actorCeiling = { actor_class: "agent", actor_ref: actorRef, ceiling: "auto" as const };
+  // Ask admission and answer intake check each party's own read authority,
+  // independently of the credential on the current HTTP call.
+  const askRead: Facade.PolicyScopedGrantRow = {
+    actor_ref: actorRef,
+    effector: "core:read",
+    scope: {
+      worlds: { kind: "all" }, facets: { kind: "all" },
+      bands: { kind: "some", values: [1, 101] }, // TURN evidence and TASKs.
+      audience: { kind: "all" }, verbs: { kind: "some", values: ["read"] },
+      sensitivity: { kind: "all" },
+    },
+    receipt_required: false,
+  };
   const granted = await owner.call("vault.gate.policy.put", {
     manifest_ref: current.manifest_ref,
     expected_body_hash: current.body_hash,
     manifest: {
       ...current.manifest,
       actor_ceilings: [...(current.manifest.actor_ceilings ?? []), actorCeiling],
+      scoped_grants: [...(current.manifest.scoped_grants ?? []), askRead],
     },
   } satisfies FacadeInput<"vault.gate.policy.put">);
   expect(granted.receipt_ref.length).toBeGreaterThan(0);
   const saved = await owner.call("vault.gate.policy.get", {});
-  expect(saved.manifests.find(row => row.manifest_ref === current.manifest_ref)
-    ?.manifest.actor_ceilings).toContainEqual(actorCeiling);
+  const savedManifest = saved.manifests.find(row => row.manifest_ref === current.manifest_ref)?.manifest;
+  expect(savedManifest?.actor_ceilings).toContainEqual(actorCeiling);
+  expect(savedManifest?.scoped_grants).toContainEqual(askRead);
 }
 
 type MuseLoop03AskSpec = Extract<FacadeInput<"ask">, { intent_key: string }>;
@@ -2817,7 +2832,7 @@ suite.test(test, "MUSE-LOOP-03", "An unsure agent asks the owner up through ask,
     actorClass: "agent",
     scope: ["core:read", "core:write"],
   });
-  await museLoopGrantAskCeiling(engine.client, agent.principalRef);
+  await museLoopGrantAskAuthority(engine.client, agent.principalRef);
   const agentSelf = await agent.client.call("self.actor", {});
   const ownerIds = museLoop03Ids([
     engine.pairedActor.principalRef,
@@ -3977,7 +3992,7 @@ suite.test(test, "MUSE-LOOP-05", "A human-time ask survives restart and resumes 
     const asker = await engine.pairActor({
       principalRef: askerRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
     });
-    await museLoopGrantAskCeiling(engine.client, asker.principalRef);
+    await museLoopGrantAskAuthority(engine.client, asker.principalRef);
     const askerSlip = museLoop05MintedSlip(
       beforeAskerPair, await museLoop05AuditRows(engine.client), askerRecord.id_hex,
     );

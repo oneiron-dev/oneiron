@@ -522,7 +522,7 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
 
   // P-LOOP-024: the agent's work lands beside the live version, never on it.
   const museLoop07ProposalOutcome = await museLoop07Agent.client.call("vault.artifacts.append", {
-    artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07AgentV2), occurred_at: museLoop07T0 + 3,
+    artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07AgentV2), run_ref: `muse-loop-07-${museLoop07Marker}-keep`, occurred_at: museLoop07T0 + 3,
   });
   expect("proposed" in museLoop07ProposalOutcome).toBe(true);
   if (!("proposed" in museLoop07ProposalOutcome)) throw new Error("Machine work overwrote the live artifact instead of proposing beside it");
@@ -552,7 +552,7 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
   // proposal (canon: the proposer's lineage never settles its proposal).
   const museLoop07NoWriteRefusal = await museLoop07FacadeRefusal(
     () => museLoop07ReadOnly.client.call("vault.artifacts.append", {
-      artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07NoWrite), occurred_at: museLoop07T0 + 4,
+      artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07NoWrite), run_ref: `muse-loop-07-${museLoop07Marker}-read-only`, occurred_at: museLoop07T0 + 4,
     }),
     "Read-only agent append",
   );
@@ -583,6 +583,7 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
     throw new Error("The proposer's refused Keep left a call receipt that is not a refusal");
   }
   expect(museLoop07RefusedOutcome.refused.code.length > 0).toBe(true);
+  expect(museLoop07RefusedOutcome.refused.code).toBe(museLoop07ProposerKeepRefusal.error?.code);
   expect(await engine.client.call("vault.artifacts.proposals", { artifact_ref: museLoop07ArtifactRef })).toHaveLength(1);
   expect((await museLoop07View(engine.client, museLoop07ArtifactRef)).head).toBe(1);
 
@@ -645,7 +646,7 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
   // P-LOOP-026: a second agent proposal, Discarded by the owner, never
   // replaces the live version.
   const museLoop07DiscardOutcome = await museLoop07Agent.client.call("vault.artifacts.append", {
-    artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07Discarded), occurred_at: museLoop07T0 + 6,
+    artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07Discarded), run_ref: `muse-loop-07-${museLoop07Marker}-discard`, occurred_at: museLoop07T0 + 6,
   });
   expect("proposed" in museLoop07DiscardOutcome).toBe(true);
   if (!("proposed" in museLoop07DiscardOutcome)) throw new Error("The second machine proposal did not wait beside the live artifact");
@@ -711,7 +712,7 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
   expect(museLoop07Revoked.body.revoked).toBe(true);
   const museLoop07PostRevokeRefusal = await museLoop07FacadeRefusal(
     () => museLoop07Agent.client.call("vault.artifacts.append", {
-      artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07PostRevoke), occurred_at: museLoop07T0 + 7,
+      artifact_ref: museLoop07ArtifactRef, content_base64: museLoop07B64(museLoop07PostRevoke), run_ref: `muse-loop-07-${museLoop07Marker}-revoked`, occurred_at: museLoop07T0 + 7,
     }),
     "Revoked agent append",
   );
