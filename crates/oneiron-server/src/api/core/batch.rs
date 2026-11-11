@@ -196,7 +196,7 @@ pub(crate) async fn core_batch(
 }
 
 impl CoreBatchEntityInput {
-    fn into_row(self) -> oneiron::core_write::CoreBatchEntityInput {
+    pub(crate) fn into_row(self) -> oneiron::core_write::CoreBatchEntityInput {
         oneiron::core_write::CoreBatchEntityInput {
             id: self.id,
             entity_type: self.entity_type,

@@ -90,11 +90,12 @@ pub(in crate::workspace_roster) use history::index_task_bindings;
 pub(crate) use history::task_binding_turns_in;
 pub(in crate::workspace_roster) use history::thread_turns_in;
 pub(crate) use hosting::erase_host_pin_actor_in_txn;
+pub(crate) use hosting::room_group_project_in;
 pub(in crate::workspace_roster) use hosting::room_host_in;
 pub(crate) use hosting::room_project_in;
 pub use hosting::{
-    ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting,
-    RoomSpeakingRole, RoomStanding,
+    ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin,
+    RoomHosting, RoomSpeakingRole, RoomStanding,
 };
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
