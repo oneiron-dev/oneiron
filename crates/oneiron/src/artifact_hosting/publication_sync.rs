@@ -149,8 +149,17 @@ fn write_publication(out: &mut impl std::io::Write, wire: &PublicationWire) -> R
         .map_err(|_| Error::InvariantViolation("artifact publication encode"))
 }
 
+/// A receipt that does not read: the sync protocol's admission refusal.
+#[cfg(feature = "sync")]
 fn denied() -> Error {
     Error::sync_protocol(crate::error::SyncProtocolValidation::DocumentAdmissionDenied)
+}
+
+/// A receipt that does not read. A build without sync has no sync peer to
+/// send one, so the bytes refuse as malformed.
+#[cfg(not(feature = "sync"))]
+fn denied() -> Error {
+    Error::InvalidKey
 }
 
 /// An outbox row that reads as a marker, or `None` for one that does not
