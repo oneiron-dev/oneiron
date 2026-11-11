@@ -60,13 +60,6 @@ pub struct InquiryLogEntry {
 ///
 /// An invalid inquiry; a repeat whose content differs from the logged
 /// inquiry; storage errors.
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(
-        dead_code,
-        reason = "the member-side answer path (INQUIRE-1 PR 3) calls it; until then only test_doors::inquiry does"
-    )
-)]
 pub(crate) fn log_inquiry_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -104,13 +97,6 @@ pub(crate) fn log_inquiry_in_txn(
 /// No such row; a row already settled; an answer that is neither
 /// `answered` nor `no_answer`, or that answers another inquiry or keep;
 /// storage errors.
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(
-        dead_code,
-        reason = "the member-side answer path (INQUIRE-1 PR 3) calls it; until then only test_doors::inquiry does"
-    )
-)]
 pub(crate) fn settle_inquiry_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -145,6 +131,20 @@ pub(crate) fn settle_inquiry_in_txn(
     Ok(entry)
 }
 
+/// The logged inquiry `inquiry_id` over `edge`, as it stands in `txn`.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn inquiry_log_entry_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    edge: EntityId,
+    inquiry_id: EntityId,
+) -> Result<Option<InquiryLogEntry>> {
+    LOG.get(store, txn, &(edge, inquiry_id))
+}
+
 impl Vault {
     /// "Asked about you": every logged inquiry, newest first.
     ///
@@ -175,7 +175,7 @@ impl Vault {
         inquiry_id: &EntityId,
     ) -> Result<Option<InquiryLogEntry>> {
         let txn = self.store.env.read_txn()?;
-        LOG.get(&self.store, &txn, &(*edge, *inquiry_id))
+        inquiry_log_entry_in_txn(&self.store, &txn, *edge, *inquiry_id)
     }
 }
 
