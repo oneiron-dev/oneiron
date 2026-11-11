@@ -42,7 +42,7 @@
 @import './patterns/LedgerTable.css';
 @import './patterns/ClaimText.css';
 
-@import './frame/Rail.css';
+@import './frame/Sidebar.css';
 @import './frame/VaultSwitch.css';
 @import './frame/ActivityList.css';
 @import './frame/SortCycle.css';

@@ -71,7 +71,7 @@
     0 0 2px light-dark(transparent, #131110),
     0 0 1px light-dark(transparent, #131110),
     0 1px 3px light-dark(rgba(10, 38, 62, 0.42), transparent);
-  /* The rail bare on the field: resting words (white by day, silver-2 by
+  /* The sidebar bare on the field: resting words (white by day, silver-2 by
      night), the quieter caption, the hover and current tone steps, the
      badge figure, and the shadow colour under a symbol by day. */
   --sl-on-field-word: light-dark(#FFFDF8, #C0B9AC);
@@ -80,7 +80,7 @@
   --sl-on-field-lit: light-dark(rgba(10, 38, 62, 0.2) /* provisional */, rgba(221, 214, 201, 0.07));
   --sl-on-field-badge-ink: light-dark(#1E2226, #131110);
   --sl-on-field-drop: light-dark(rgba(10, 38, 62, 0.42), transparent);
-  /* Words and symbols that cross every part of the field (the rail runs
+  /* Words and symbols that cross every part of the field (the sidebar runs
      over the pale day clouds) carry a halo: the ground's tone by night, a
      deep sky tone by day, under the soft day shadow. */
   --sl-on-field-halo: light-dark(rgba(10, 38, 62, 0.62) /* provisional */, #131110);
@@ -93,7 +93,7 @@
     drop-shadow(0 0 1px var(--sl-on-field-halo))
     drop-shadow(0 0 3px var(--sl-on-field-halo))
     drop-shadow(0 1px 2px var(--sl-on-field-drop));
-  /* The rail on paper: a near-opaque strip of the ground. */
+  /* The sidebar on paper: a near-opaque strip of the ground. */
   --sl-paper: color-mix(in srgb, var(--sl-bg) 92%, transparent);
 
   /* The only shadow in the system sits under a popover. */
