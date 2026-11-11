@@ -106,7 +106,7 @@ const WIRE: Wire[] = [
     time: '16:22',
     chan: 'slack',
     by: (
-      <span className="seal seal-human" title="y · Yuki">
+      <span className="seal seal-human" title="y · yuki">
         y
       </span>
     ),
@@ -115,10 +115,10 @@ const WIRE: Wire[] = [
     title: 'Yuki in #ops',
     ctxBy: (
       <>
-        <span className="seal seal-human" title="y · Yuki">
+        <span className="seal seal-human" title="y · yuki">
           y
         </span>
-        <span>Yuki</span>
+        <span>yuki</span>
       </>
     ),
     body:

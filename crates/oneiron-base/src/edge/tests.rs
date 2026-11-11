@@ -43,7 +43,7 @@ fn same_as_is_byte_20_structural_unweighted_and_never_traversed() {
     assert_eq!(EdgeKind::SameAs as u8, 20);
     assert_eq!(EdgeKind::try_from_u8(20), Some(EdgeKind::SameAs));
     assert_eq!(EdgeKind::SameAs.default_weight(), None);
-    assert_eq!(crate::ppr::lambda_for_kind(EdgeKind::SameAs), None);
+    assert_eq!(super::kind_tables::lambda_for_kind(EdgeKind::SameAs), None);
 
     // Byte 20 is the ONLY byte this ticket allocates: 21/22 keep their
     // reserved identity-topology meaning untouched.
@@ -68,7 +68,7 @@ fn fulfillment_pair_is_structural_unweighted_and_reserved() {
 
     for kind in [EdgeKind::Fulfills, EdgeKind::DischargedBy] {
         assert_eq!(kind.default_weight(), None);
-        assert_eq!(crate::ppr::lambda_for_kind(kind), None);
+        assert_eq!(super::kind_tables::lambda_for_kind(kind), None);
         assert!(matches!(
             super::validate_public_edge_kind(kind),
             Err(crate::error::Error::Registry(

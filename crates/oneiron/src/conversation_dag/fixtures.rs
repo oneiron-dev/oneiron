@@ -51,16 +51,19 @@ pub(crate) fn input(
         conversation: conv,
         parent,
         reply_to: None,
+        quote: None,
         address: crate::conversation_dag::AddressMode::Broadcast,
         recipients: vec![],
         advance,
         kind: crate::registry::ENTITY_TYPE_TURN,
+        containing_turn: None,
         occurred: time(20),
         learned_at: 20,
         body: body("record"),
         text: vec![],
         session: None,
         actor,
+        thread_audience: None,
     }
 }
 

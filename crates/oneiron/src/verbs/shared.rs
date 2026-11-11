@@ -11,8 +11,9 @@ use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::federation::{
-    FederationGrantRole as Role, PendingAuthorityAct, RemovalExportDelivery, SharedActExecution,
-    SharedActExecutionReceipt, SharedActKind, SharedActOutcome, SharedVaultDeletion,
+    FederationGrantRole as Role, MemberAskChange, PendingAuthorityAct, RemovalExportDelivery,
+    SharedActExecution, SharedActExecutionReceipt, SharedActKind, SharedActOutcome,
+    SharedMemberAsk, SharedVaultDeletion,
 };
 use crate::memory::{MemoryError, MemoryResult, ProducerRows};
 use crate::{EntityId, Vault};
@@ -198,6 +199,46 @@ pub struct SharedMemberRequest {
     pub vault_id: u64,
     /// PERSON id, hex.
     pub member: String,
+}
+
+/// The member change a Steward asks for (`vault.members.ask`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SharedMemberAskKind {
+    /// Invite `member` at `role`, or at the preset's default member role.
+    Add,
+    /// Remove `member`.
+    Remove,
+    /// Move `member` to `role`.
+    AssignRole,
+}
+
+/// A Steward's ask for one member change in a shared vault.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedMemberAskRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    pub kind: SharedMemberAskKind,
+    /// PERSON id, hex.
+    pub member: String,
+    /// `admin`, `member` or `viewer`: optional for `add`, required for
+    /// `assign_role`, none for `remove`.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub role: Option<Role>,
+}
+
+/// One member ask in a shared vault, by its id.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedMemberAskIdRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    /// The ask's id, hex.
+    pub ask: String,
 }
 
 /// A saved handoff alarm, by its retired key (`suite:hex`, as the alarm
@@ -445,6 +486,93 @@ pub fn remove_shared_member_as(
 ) -> MemoryResult<SharedActExecutionReceipt> {
     let member = person_id("member", &input.member)?;
     Ok(vault.remove_shared_member(admin, input.vault_id, member, slips)?)
+}
+
+/// `vault.members.ask`: a Steward suggests one member change. It writes one
+/// ask, which every live Owner and Admin gets in the inbox, and changes no
+/// membership (ARCH-0043 Steward, propose-only).
+pub fn ask_shared_member_as(
+    vault: &Vault,
+    steward: &AuthenticatedOwner,
+    input: SharedMemberAskRequest,
+) -> MemoryResult<SharedMemberAsk> {
+    person_id("member", &input.member)?;
+    let change = match (input.kind, input.role) {
+        (SharedMemberAskKind::Add, role) => MemberAskChange::Add {
+            member: input.member,
+            role,
+        },
+        (SharedMemberAskKind::Remove, None) => MemberAskChange::Remove {
+            member: input.member,
+        },
+        (SharedMemberAskKind::AssignRole, Some(role)) => MemberAskChange::AssignRole {
+            member: input.member,
+            role,
+        },
+        (SharedMemberAskKind::Remove, Some(_)) => {
+            return Err(MemoryError::bad_request("a remove ask names no role"));
+        }
+        (SharedMemberAskKind::AssignRole, None) => {
+            return Err(MemoryError::bad_request(
+                "an assign_role ask names its role",
+            ));
+        }
+    };
+    Ok(vault.ask_shared_member_change(steward, input.vault_id, change)?)
+}
+
+/// `vault.members.asks`: the member asks the caller may see in a shared
+/// vault: every ask for a live Owner or Admin, a Steward's own asks.
+pub fn read_shared_member_asks(
+    vault: &Vault,
+    reader: &AuthenticatedOwner,
+    input: SharedVaultRequest,
+) -> MemoryResult<Vec<SharedMemberAsk>> {
+    Ok(vault.shared_member_asks(reader, input.vault_id)?)
+}
+
+/// Refuses an ask id the caller cannot see in the named shared vault, so a
+/// request answers for the vault it names.
+fn ask_in_vault(
+    vault: &Vault,
+    caller: &AuthenticatedOwner,
+    input: &SharedMemberAskIdRequest,
+) -> MemoryResult<()> {
+    if vault
+        .shared_member_asks(caller, input.vault_id)?
+        .iter()
+        .any(|ask| ask.id.eq_ignore_ascii_case(&input.ask))
+    {
+        Ok(())
+    } else {
+        Err(MemoryError::bad_request(
+            "no such member ask in this shared vault",
+        ))
+    }
+}
+
+/// `vault.members.asks.apply`: a live Admin or Owner applies an open ask
+/// through the membership door its change names; the receipt names the
+/// Steward as its proposer.
+pub fn apply_shared_member_ask_as(
+    vault: &Vault,
+    applier: &AuthenticatedOwner,
+    slips: Option<&HostSlipIssuer>,
+    input: SharedMemberAskIdRequest,
+) -> MemoryResult<SharedActExecutionReceipt> {
+    ask_in_vault(vault, applier, &input)?;
+    Ok(vault.apply_shared_member_ask(applier, &input.ask, slips)?)
+}
+
+/// `vault.members.asks.decline`: a live Admin or Owner declines an open
+/// ask; no membership changes.
+pub fn decline_shared_member_ask_as(
+    vault: &Vault,
+    applier: &AuthenticatedOwner,
+    input: SharedMemberAskIdRequest,
+) -> MemoryResult<SharedMemberAsk> {
+    ask_in_vault(vault, applier, &input)?;
+    Ok(vault.decline_shared_member_ask(applier, &input.ask)?)
 }
 
 /// `vault.members.leave`: a member who is not an Owner leaves.

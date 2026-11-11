@@ -39,6 +39,19 @@ fn msgpack_map(entries: Vec<(&'static str, Value)>) -> Vec<u8> {
     out
 }
 
+/// `ids` framed as the body's source revision pages: full pages of
+/// `PSYCH_PROFILE_SOURCE_IDS_PER_CODEC_PAGE`, the last holding the rest. The
+/// store's pager (`encode_pages` in
+/// `crates/oneiron-store/src/write_envelope/profile_snapshot/codec/source_pages.rs`)
+/// is private to its codec; the flat id list became pages in 7272b335f78.
+fn source_revision_pages(ids: &[EntityId]) -> Value {
+    Value::Array(
+        ids.chunks(PSYCH_PROFILE_SOURCE_IDS_PER_CODEC_PAGE)
+            .map(|page| Value::Array(page.iter().map(|id| Value::from(id.to_hex())).collect()))
+            .collect(),
+    )
+}
+
 #[test]
 fn psych_profile_decoder_rejects_unknown_keys() {
     let profile = test_profile();
@@ -52,11 +65,12 @@ fn psych_profile_decoder_rejects_unknown_keys() {
         (KEY_TEXT, Value::from(profile.text.as_str())),
         (KEY_NARRATIVE, Value::from(profile.narrative.as_str())),
         (
-            KEY_SOURCE_REVISION_IDS,
-            encode_source_revision_ids(&profile.source_revision_ids),
+            KEY_SOURCE_REVISION_PAGES,
+            source_revision_pages(&profile.source_revision_ids),
         ),
         (KEY_CONFIDENCE, encode_confidence(profile.confidence)),
         (KEY_STATUS, Value::from(profile.status.as_code())),
+        (KEY_SOURCE_PAGES, Value::Array(Vec::new())),
     ];
     entries.push(("unexpected", Value::from(true)));
 
@@ -78,14 +92,15 @@ fn psych_profile_decoder_rejects_noncanonical_source_revisions() {
         (KEY_TEXT, Value::from(profile.text.as_str())),
         (KEY_NARRATIVE, Value::from(profile.narrative.as_str())),
         (
-            KEY_SOURCE_REVISION_IDS,
-            Value::Array(vec![
+            KEY_SOURCE_REVISION_PAGES,
+            Value::Array(vec![Value::Array(vec![
                 Value::from(entity(0xC2).to_hex()),
                 Value::from(entity(0xC1).to_hex()),
-            ]),
+            ])]),
         ),
         (KEY_CONFIDENCE, encode_confidence(profile.confidence)),
         (KEY_STATUS, Value::from(profile.status.as_code())),
+        (KEY_SOURCE_PAGES, Value::Array(Vec::new())),
     ];
 
     let err = decode_psych_profile_body(&msgpack_map(entries))
@@ -117,11 +132,12 @@ fn psych_profile_status_persists_as_typed_code_and_rejects_strings() -> Result<(
         (KEY_TEXT, Value::from(profile.text.as_str())),
         (KEY_NARRATIVE, Value::from(profile.narrative.as_str())),
         (
-            KEY_SOURCE_REVISION_IDS,
-            encode_source_revision_ids(&profile.source_revision_ids),
+            KEY_SOURCE_REVISION_PAGES,
+            source_revision_pages(&profile.source_revision_ids),
         ),
         (KEY_CONFIDENCE, encode_confidence(profile.confidence)),
         (KEY_STATUS, Value::from("fresh")),
+        (KEY_SOURCE_PAGES, Value::Array(Vec::new())),
     ]);
 
     let err = decode_psych_profile_body(&string_status_body)

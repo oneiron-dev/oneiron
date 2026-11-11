@@ -45,7 +45,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 use super::machine_standing::{InstallCounted, Standing, StandingView};
-use super::world_strength::{full_strength, read_under, world_meet};
+use super::world_strength::{FrontierEdit, frontier_meet, frontier_read, full_strength};
 use super::*;
 
 pub use crate::machine_destination::EffectiveRead;
@@ -445,22 +445,39 @@ pub(super) fn folded_worlds(
     state
         .worlds
         .iter()
-        .map(|(world, frontier)| (*world, folded_world(&standing, *world, frontier)))
+        .map(|(world, frontier)| (*world, folded_world(&standing, frontier)))
         .collect()
 }
 
 /// One world of [`folded_worlds`], `frontier` being its edits in
 /// `standing`'s state.
-pub(super) fn folded_world(
-    standing: &Standing<'_>,
-    world: EntityId,
+pub(super) fn folded_world(standing: &Standing<'_>, frontier: &WorldFrontier) -> FoldedWorld {
+    judged_world(frontier, standing.local(), |hash, edit, view| {
+        full_strength(standing, hash, edit, view)
+    })
+}
+
+/// [`folded_world`] of `frontier`, where `strong` says whether an edit
+/// counts at full strength under a view and `local` is this install's own
+/// trust: the fold asks its standing; a view that holds agent edits refused
+/// asks the verdicts the fold kept ([`super::agent_world_undo`], FIX 22381).
+pub(super) fn judged_world(
     frontier: &WorldFrontier,
+    local: MachineAdmitter,
+    mut strong: impl FnMut(&AuthorityEntryHash, &FrontierEdit, StandingView) -> bool,
 ) -> FoldedWorld {
-    let roster_read = read_under(standing, world, MachineAdmitter::Roster);
-    let local_read = match standing.local() {
+    let roster = StandingView::Under(MachineAdmitter::Roster);
+    let roster_read = frontier_read(frontier, |hash, edit| strong(hash, edit, roster));
+    let local_read = match local {
         MachineAdmitter::Roster => roster_read.clone(),
-        local => read_under(standing, world, local),
+        local => frontier_read(frontier, |hash, edit| {
+            strong(hash, edit, StandingView::Under(local))
+        }),
     };
+    let effective = frontier_meet(frontier, |hash, edit| {
+        strong(hash, edit, StandingView::Install)
+    })
+    .effective();
     FoldedWorld {
         live: frontier
             .live
@@ -472,7 +489,7 @@ pub(super) fn folded_world(
             .iter()
             .map(|(hash, edit)| (*hash, edit.settings.clone()))
             .collect(),
-        effective: world_meet(standing, world, StandingView::Install).effective(),
+        effective,
         roster_read,
         local_read,
     }

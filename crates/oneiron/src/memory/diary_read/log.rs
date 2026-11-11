@@ -60,9 +60,10 @@ impl Memory<'_> {
     /// read through a logged access step, and the companion's owner sees the
     /// log (ARCH-0032 #private-reads). The caller is a person with their
     /// authentication, and the companion's owner: the PERSON `agent`'s
-    /// subject anchor names, or, for an agent anchored to no person (an
-    /// ORG's, the vault's own), a live owner of the vault. Anyone else is
-    /// refused. The agent sees the same rows in its own log.
+    /// subject anchor names, or, for an agent anchored to no person or only
+    /// to its own model PERSON (an ORG's, the vault's own), a live owner of
+    /// the vault. Anyone else is refused. The agent sees the same rows in its
+    /// own log.
     pub fn admin_pad_reads(
         &self,
         owner: &AuthenticatedOwner,

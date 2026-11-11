@@ -10,12 +10,13 @@ use std::time::{Duration, Instant};
 
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::secret_custody::SecretSight;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_organ_host::{
     BudgetConfig, CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec,
-    OrganState, Unavailable,
+    OrganState, SightedInput, Unavailable,
 };
-use oneiron_organ_protocol::{FrameError, Hash32, MAX_FRAME_DEPTH, MAX_FRAME_VALUES, touch_fold};
+use oneiron_organ_protocol::{Hash32, Value, touch_fold};
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
 const BIN: &str = "application/octet-stream";
@@ -85,28 +86,35 @@ fn host() -> OrganHost {
     host
 }
 
-fn call(verb: &str, args: rmpv::Value, inputs: Vec<OrganInput>, grant: &str) -> OrganCall {
+fn call(verb: &str, args: Value, inputs: Vec<OrganInput>, grant: &str) -> OrganCall {
     OrganCall {
         organ: "probe".into(),
         verb: verb.into(),
         schema: 1,
         args,
         body: None,
-        inputs,
+        // The test's vault holds no secret marks, so every sight reads the stored bytes.
+        inputs: inputs
+            .into_iter()
+            .map(|input| SightedInput {
+                input,
+                sight: SecretSight::Owner,
+            })
+            .collect(),
         class: CallClass::Agent,
         deadline: Duration::from_secs(10),
         grant: grant.into(),
     }
 }
 
-fn sleep_args(ms: u64, obey_cancel: bool) -> rmpv::Value {
-    rmpv::Value::Map(vec![
+fn sleep_args(ms: u64, obey_cancel: bool) -> Value {
+    Value::Map(vec![
         ("ms".into(), ms.into()),
         ("obey_cancel".into(), obey_cancel.into()),
     ])
 }
 
-fn report_u64(report: &rmpv::Value, key: &str) -> Option<u64> {
+fn report_u64(report: &Value, key: &str) -> Option<u64> {
     report
         .as_map()?
         .iter()
@@ -126,10 +134,7 @@ fn inputs_cross_as_regions_and_the_engine_hashes_them() {
     let host = host();
     for _ in 0..2 {
         let outcome = host
-            .call(
-                &vault,
-                call("organ.touch", rmpv::Value::Nil, inputs.clone(), "g"),
-            )
+            .call(&vault, call("organ.touch", Value::Nil, inputs.clone(), "g"))
             .expect("touch");
         assert_eq!(
             report_u64(&outcome.report, "fold"),
@@ -167,7 +172,7 @@ fn a_missed_deadline_cancels_then_kills_and_the_next_call_starts_clean() {
     let echoed = host
         .call(&vault, call("organ.echo", "after".into(), Vec::new(), "g"))
         .expect("a fresh process answers");
-    assert_eq!(echoed.report, rmpv::Value::from("after"));
+    assert_eq!(echoed.report, Value::from("after"));
     let status = host.status("probe").expect("installed");
     assert_eq!(status.spawns, 2);
     assert_eq!(status.recent_crashes, 0, "a deadline kill is not a crash");
@@ -182,7 +187,7 @@ fn a_deadline_past_the_clock_is_answered_not_a_panic() {
     let mut patient = call("organ.echo", "patient".into(), Vec::new(), "g");
     patient.deadline = Duration::MAX;
     let echoed = host.call(&vault, patient).expect("a far deadline answers");
-    assert_eq!(echoed.report, rmpv::Value::from("patient"));
+    assert_eq!(echoed.report, Value::from("patient"));
 }
 
 #[test]
@@ -222,10 +227,7 @@ fn crashes_back_off_then_quarantine() {
     let mut crashes = 0;
     let deadline = Instant::now() + Duration::from_secs(60);
     while crashes < 5 && Instant::now() < deadline {
-        match host.call(
-            &vault,
-            call("probe.crash", rmpv::Value::Nil, Vec::new(), "g"),
-        ) {
+        match host.call(&vault, call("probe.crash", Value::Nil, Vec::new(), "g")) {
             Err(HostError::Crashed(_)) => crashes += 1,
             Err(HostError::Backoff { retry_after, .. }) => thread::sleep(retry_after),
             other => panic!("unexpected {other:?}"),
@@ -248,10 +250,7 @@ fn the_grant_refuses_what_it_does_not_name() {
     let (_dir, vault) = vault();
     let host = host();
     let png = put_blob(&vault, b"not granted", "image/png");
-    let refused = host.call(
-        &vault,
-        call("organ.touch", rmpv::Value::Nil, vec![png], "g"),
-    );
+    let refused = host.call(&vault, call("organ.touch", Value::Nil, vec![png], "g"));
     assert!(
         matches!(refused, Err(HostError::MediaTypeNotGranted(_))),
         "{refused:?}"
@@ -380,36 +379,40 @@ fn a_call_too_large_to_send_leaves_the_organ_unharmed() {
     host.install(spec);
     let small = || call("organ.echo", 1.into(), Vec::new(), "g");
     host.call(&vault, small()).expect("small call");
+    // Ruled (Rule 5, 7de2f0302b4: "The install's frame sizes are
+    // `organ_call_frame_bytes` and `organ_reply_frame_bytes`"; protocol 2.0,
+    // 5b61e287afc: "protocol 2.0 framing" which "remove[s] typed caps"): the
+    // frame limit paces a longer message across more frames instead of
+    // refusing it (frame.rs: "a longer message takes more frames").
     for _ in 0..6 {
         let big = call("organ.echo", "x".repeat(8192).into(), Vec::new(), "g");
-        let err = host.call(&vault, big).expect_err("too large");
-        assert!(
-            matches!(err, HostError::Frame(FrameError::TooLarge { .. })),
-            "{err:?}"
-        );
+        let echoed = host.call(&vault, big).expect("carried across frames");
+        assert_eq!(echoed.report, Value::from("x".repeat(8192)));
     }
-    // Small on the wire but past what the organ decodes: deeper than the
-    // depth limit, or more values than the value limit.
-    let deep: fn() -> rmpv::Value =
-        || (0..MAX_FRAME_DEPTH).fold(rmpv::Value::Nil, |inner, _| rmpv::Value::Array(vec![inner]));
-    let wide: fn() -> rmpv::Value = || {
-        let count = usize::try_from(MAX_FRAME_VALUES).expect("fits");
-        rmpv::Value::Array(vec![rmpv::Value::Nil; count])
+    // Small on the wire but past what the organ once decoded: deeper than the
+    // old depth limit, or more values than the old value limit. Protocol 2.0
+    // (5b61e287afc) removed MAX_FRAME_DEPTH (64) and MAX_FRAME_VALUES (2^21);
+    // the limits are gone, so the values they held now cross whole and echo.
+    let deep: fn() -> Value = || (0..64).fold(Value::Nil, |inner, _| Value::Array(vec![inner]));
+    let wide: fn() -> Value = || {
+        let count = 1_usize << 21;
+        Value::Array(vec![Value::Nil; count])
     };
+    // Ruled (protocol 2.0, 5b61e287afc: "the iterative codec", "drop
+    // TYPED_DEPTH"): depth and value count no longer refuse; deep and wide
+    // values cross whole and echo.
     for args in [deep, deep, deep, wide, wide, wide] {
-        let err = host
-            .call(&vault, call("organ.echo", args(), Vec::new(), "g"))
-            .expect_err("refused");
-        assert!(
-            matches!(err, HostError::Frame(FrameError::Refused(_))),
-            "{err:?}"
-        );
+        let made = args();
+        let echoed = host
+            .call(&vault, call("organ.echo", made.clone(), Vec::new(), "g"))
+            .expect("carried whole");
+        assert_eq!(echoed.report, made);
     }
     let status = host.status("probe").expect("installed");
     assert_eq!(
         (status.spawns, status.recent_crashes),
         (1, 0),
-        "refused calls neither kill nor count"
+        "carried calls neither kill nor count"
     );
     host.call(&vault, small()).expect("still warm");
 }
@@ -463,16 +466,22 @@ fn an_answer_with_too_many_regions_is_refused_and_the_organ_lives() {
     // frame carries at most 16.
     let (_dir, vault) = vault();
     let host = host();
-    let args = rmpv::Value::Map(vec![
+    let args = Value::Map(vec![
         ("count".into(), 17.into()),
         ("bytes".into(), (70 * 1024).into()),
     ]);
-    let err = host
+    // Ruled (protocol 2.0, 5b61e287afc): "no 16-input/output caps"; a frame
+    // still carries at most 16 descriptors, and the message's 17 cross on
+    // the frames that follow.
+    let outcome = host
         .call(&vault, call("probe.outputs", args, Vec::new(), "g"))
-        .expect_err("too many regions");
+        .expect("17 regions are carried across frames");
+    assert_eq!(outcome.outputs.len(), 17);
     assert!(
-        matches!(&err, HostError::Organ(error) if matches!(error.code, oneiron_organ_protocol::ErrorCode::TooLarge)),
-        "{err:?}"
+        outcome
+            .outputs
+            .iter()
+            .all(|output| output.len() == 70 * 1024)
     );
     let status = host.status("probe").expect("installed");
     assert_eq!((status.spawns, status.recent_crashes), (1, 0));
@@ -480,14 +489,15 @@ fn an_answer_with_too_many_regions_is_refused_and_the_organ_lives() {
 
 #[test]
 fn outputs_a_caller_keeps_stay_booked_until_they_drop() {
-    // A 64 MiB budget, 16 MiB booked per call, 12 MiB of output each: five
-    // kept outcomes hold 60 MiB, so a sixth call cannot be admitted until
+    // A 72 MiB budget, 16 MiB booked per call, 12 MiB of output each: five
+    // kept outcomes hold 60 MiB and their decoded replies' room (booked since
+    // e1383fe4188, FIX 6195/7890), so a sixth call cannot be admitted until
     // they are dropped.
     let (_dir, vault) = vault();
     let host = OrganHost::new(HostConfig {
         budget: BudgetConfig {
             threads: 4,
-            memory_bytes: 64 * 1024 * 1024,
+            memory_bytes: 72 * 1024 * 1024,
             max_inflight: 8,
         },
         ..HostConfig::default()
@@ -498,7 +508,7 @@ fn outputs_a_caller_keeps_stay_booked_until_they_drop() {
     spec.max_output_bytes = 16 * 1024 * 1024;
     host.install(spec);
     let twelve = || {
-        let args = rmpv::Value::Map(vec![
+        let args = Value::Map(vec![
             ("count".into(), 1.into()),
             ("bytes".into(), (12 * 1024 * 1024).into()),
         ]);
@@ -533,10 +543,7 @@ fn stopping_an_organ_kills_what_it_forked() {
     let (_dir, vault) = vault();
     let host = host();
     let forked = host
-        .call(
-            &vault,
-            call("probe.fork", rmpv::Value::Nil, Vec::new(), "g"),
-        )
+        .call(&vault, call("probe.fork", Value::Nil, Vec::new(), "g"))
         .expect("fork");
     let pid = forked.report.as_i64().expect("the child's pid");
     assert!(pid > 0 && running(pid));

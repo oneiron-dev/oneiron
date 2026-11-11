@@ -3,8 +3,6 @@
 use crate::agent_dispatch::FanoutStatement;
 use std::collections::BTreeMap;
 
-pub use crate::outbound_chokepoint::FanoutApprovalMode as ConsultFanOutMode;
-
 pub use crate::gate::consult_fanout_values::{ConsultFanOutPolicy, ConsultFanOutRate};
 
 /// A ruling on the exact digest the human saw. Denial parks; it never cancels.
