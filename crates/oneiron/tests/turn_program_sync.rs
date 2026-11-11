@@ -289,15 +289,12 @@ fn a_held_wake_rides_to_the_home_elected_after_it_was_held() {
     assert!(doors::hold_wake_on_lapsed_slip(&a.vault, turn, registration, now).unwrap());
     put_row(&a, registration);
 
-    // B is elected home. The arming rides its own month, separately from
-    // the TURN's March window; both must reach B before its pass.
+    // B is elected home, and the window opens on both machines.
     elect(&[&a, &b], home_b);
     put_row(&b, registration);
-    for window in [WindowKey::new(WINDOW), WindowKey::from_timestamp(now - 60)] {
-        let doc_a = a.manager.open_window(&window).unwrap().doc.clone();
-        let doc_b = b.manager.open_window(&window).unwrap().doc.clone();
-        exchange(&doc_a, &doc_b);
-    }
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
     b.housekeeping();
 
     // The held wake rode to B with its hold: B owes it, and decides nothing
@@ -463,5 +460,80 @@ fn one_definition_armed_on_two_machines_wakes_once_for_a_turn() {
     assert_eq!(
         doors::record_slip_turn_wakes(&a.vault, actor, &slip, &instrument, landed).unwrap(),
         0
+    );
+}
+
+#[test]
+fn a_wake_rides_with_an_arming_of_an_older_month() {
+    let a = Machine::open("machine-a");
+    let b = Machine::open("machine-b");
+    let home = doors::node_id(&a.vault).unwrap();
+    doors::node_id(&b.vault).unwrap();
+    elect(&[&a, &b], home);
+
+    // B: a TURN lands and owes the program B's agent armed under its slip.
+    let (agent, slip, instrument) = agent_slip(&b);
+    let turn = put_turn(&b);
+    let conversation = EntityId::from_bytes([0x62; 16]).unwrap();
+    let registration = doors::plant_slip_wake(
+        &b.vault,
+        agent,
+        &slip,
+        &instrument,
+        conversation,
+        turn,
+        T0 - 100 * 86_400,
+        T0,
+    )
+    .unwrap();
+    assert!(doors::wake_owed_here(&b.vault, turn, registration).unwrap());
+    assert_ne!(
+        WindowKey::from_timestamp(T0 - 100 * 86_400),
+        WindowKey::new(WINDOW)
+    );
+
+    // The window opens on both machines and carries the rows across.
+    let doc_b = b.doc();
+    let doc_a = a.doc();
+    exchange(&doc_a, &doc_b);
+
+    // B is not the home: its own pass leaves the riding wake to the home.
+    b.housekeeping();
+    assert_eq!(
+        doors::wake_decisions_here(&b.vault, turn, registration).unwrap(),
+        0,
+        "a machine that is not the home decided a riding wake"
+    );
+
+    // The pinned row is present before A's first pass: only the arming
+    // could keep the carried wake waiting. It is no callable SKILL, so a
+    // refusal decides the wake all the same.
+    put_row(&a, registration);
+    a.housekeeping();
+    assert!(doors::program_armed_here(&a.vault, agent, registration).unwrap());
+    assert_eq!(
+        doors::wake_decisions_here(&a.vault, turn, registration).unwrap(),
+        1,
+        "the home did not decide the wake another machine carried to it"
+    );
+    assert!(!doors::wake_owed_here(&a.vault, turn, registration).unwrap());
+
+    // A's decision rides back: B no longer owes the wake and never decides it.
+    exchange(&doc_a, &doc_b);
+    b.housekeeping();
+    assert!(
+        !doors::wake_owed_here(&b.vault, turn, registration).unwrap(),
+        "the machine that recorded the wake still owes it after the home decided it"
+    );
+    assert_eq!(
+        doors::wake_decisions_here(&b.vault, turn, registration).unwrap(),
+        0
+    );
+
+    // A second pass on the home decides nothing new: one decision.
+    a.housekeeping();
+    assert_eq!(
+        doors::wake_decisions_here(&a.vault, turn, registration).unwrap(),
+        1
     );
 }

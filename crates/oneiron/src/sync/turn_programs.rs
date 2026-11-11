@@ -5,8 +5,8 @@
 //! (`dreamer_runner::turn_program_replica`); this carries the rows.
 //!
 //! - `turn_program_arms` rides base windows only: each arming in the window
-//!   of the month it was armed in, each disarm in the window of its own
-//!   month, under its registration.
+//!   of its armed month and beside each riding wake in its TURN's window,
+//!   each disarm in the window of its own month, under its registration.
 //! - `turn_program_wakes` rides the base window of the wake's TURN, under
 //!   the turn and the registration.
 //! - Admission refuses every insert into either map, in a world window or
@@ -166,6 +166,17 @@ pub(crate) fn mirror_turn_program_armings(
     doc: &LoroDoc,
     key: &WindowKey,
 ) -> Result<bool> {
+    mirror_arming_rows(vault, doc, key, &[])
+}
+
+/// Mirrors the month's intents and the armings of wakes emitted beside them,
+/// keeping the same intent order and cleanup in every base window.
+fn mirror_arming_rows(
+    vault: &Vault,
+    doc: &LoroDoc,
+    key: &WindowKey,
+    wake_armings: &[(String, Vec<u8>)],
+) -> Result<bool> {
     if key.world().is_some() {
         return Ok(false);
     }
@@ -180,6 +191,7 @@ pub(crate) fn mirror_turn_program_armings(
         let rtxn = vault.store.env.read_txn()?;
         let rows: Vec<(String, Vec<u8>)> = replica::month_arming_rows_in_txn(vault, &rtxn, key)?
             .into_iter()
+            .chain(wake_armings.iter().cloned())
             .filter(|(map_key, ours)| {
                 carried
                     .get(map_key)
@@ -222,7 +234,8 @@ pub(crate) fn mirror_turn_program_armings(
 /// Writes into `doc`, base window `key`'s, the wake rows this vault owes for
 /// TURN `turn` that ride to the home, except over a carried row the home
 /// decided, and writes as decided each carried wake of the turn this vault
-/// admitted. Returns whether it wrote; the caller commits.
+/// admitted. Each emitted `Owed` row's arming is mirrored first into the same
+/// window. Returns whether it wrote; the caller commits.
 pub(crate) fn mirror_turn_program_wakes(
     vault: &Vault,
     doc: &LoroDoc,
@@ -241,7 +254,7 @@ pub(crate) fn mirror_turn_program_wakes(
     } else {
         BTreeMap::new()
     };
-    let rows = {
+    let (rows, armings) = {
         let rtxn = vault.store.env.read_txn()?;
         let mut rows: Vec<(String, Vec<u8>)> = replica::turn_wake_rows_in_txn(vault, &rtxn, turn)?
             .into_iter()
@@ -269,12 +282,21 @@ pub(crate) fn mirror_turn_program_wakes(
             rows.retain(|(written, _)| *written != map_key);
             rows.push((map_key, decided));
         }
-        rows
+        let mut armings = Vec::new();
+        for (map_key, bytes) in &rows {
+            if !replica::wake_row_decided(bytes)
+                && let Some(arming) = replica::owed_wake_arming_row_in_txn(vault, &rtxn, map_key)?
+            {
+                armings.push(arming);
+            }
+        }
+        (rows, armings)
     };
     if rows.is_empty() {
         return Ok(false);
     }
-    write_rows(&doc.get_map(TURN_PROGRAM_WAKES_MAP), &rows)
+    let wrote_armings = !armings.is_empty() && mirror_arming_rows(vault, doc, key, &armings)?;
+    Ok(write_rows(&doc.get_map(TURN_PROGRAM_WAKES_MAP), &rows)? || wrote_armings)
 }
 
 /// Merges every row window `key`'s document holds into this vault's, as a
