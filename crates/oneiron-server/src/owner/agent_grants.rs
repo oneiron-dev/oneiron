@@ -1,7 +1,7 @@
 //! The serve start's backfill of default agent Grants (FIX
 //! AGENT-GRANTLESS-VISIBLE; Engine RULING GRANTLESS-SHAPE Q6 = A, 12 Nov
-//! 03:02). Once the server is built (this install's profile enrolled, no
-//! listener or worker started), the host of a self-hosted vault acts as its
+//! 03:02). Once the server is built (this install's profile enrolled, the
+//! listener not yet bound), the host of a self-hosted vault acts as its
 //! owner ([`super::host_owner`]) and mints each agent paired before Grants
 //! its default read Grant, once per vault
 //! ([`oneiron::Vault::backfill_default_agent_grants`]). Any other posture is

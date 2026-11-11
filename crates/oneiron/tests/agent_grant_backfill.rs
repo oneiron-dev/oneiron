@@ -57,7 +57,7 @@ fn fixture(profiled: bool) -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let keystore = Arc::new(MemoryKeystore::default());
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
-    vault.install_device_keystore(Arc::clone(&keystore));
+    vault.install_device_keystore(Arc::<MemoryKeystore>::clone(&keystore));
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     let (owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
     let base_path = if profiled {
@@ -91,7 +91,7 @@ fn reopen(fixture: Fixture) -> Fixture {
     } = fixture;
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopened vault");
-    vault.install_device_keystore(Arc::clone(&keystore));
+    vault.install_device_keystore(Arc::<MemoryKeystore>::clone(&keystore));
     let (owner, owner_proof) = embedded_owner(&vault).expect("owner proof after the reopen");
     Fixture {
         vault,
