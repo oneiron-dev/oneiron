@@ -53,7 +53,7 @@ pub(super) fn split_phrases(leaf: &[u8]) -> Vec<SplitPhrase> {
 /// drops.
 pub(super) struct ArrayText {
     text: Zeroizing<String>,
-    pieces: Vec<Piece>,
+    pieces: Vec<ArrayPiece>,
     /// Whether the text reads every item: no number, map or nil sits beside
     /// the text items.
     every_item: bool,
@@ -62,7 +62,7 @@ pub(super) struct ArrayText {
 /// One piece of an array's text: the item it reads (`None`: the array's own
 /// byte values, all of them), whether that item is a string, its bytes, and
 /// where its text sits.
-struct Piece {
+struct ArrayPiece {
     item: Option<usize>,
     string: bool,
     bytes: Zeroizing<Vec<u8>>,
@@ -96,7 +96,7 @@ impl ArrayText {
         if let Some(bytes) = byte_values(items.iter().map(Value::as_u64)) {
             let bytes = Zeroizing::new(bytes);
             let text = lossy(&bytes);
-            let piece = Piece {
+            let piece = ArrayPiece {
                 item: None,
                 string: false,
                 bytes,
@@ -113,7 +113,7 @@ impl ArrayText {
         for (at, item) in items.iter().enumerate() {
             if let Some(bytes) = item_bytes(item) {
                 texts.push(lossy(&bytes));
-                pieces.push(Piece {
+                pieces.push(ArrayPiece {
                     item: Some(at),
                     string: matches!(item, Value::String(_)),
                     bytes,
@@ -223,7 +223,7 @@ impl ArrayText {
     }
 }
 
-impl Piece {
+impl ArrayPiece {
     /// The bytes that write the run `text` of the array's text in this piece:
     /// `None` when its ends sit inside a replacement character, or a string's
     /// run would be no UTF-8.
