@@ -143,7 +143,8 @@ pub(crate) mod tests {
         // every evaluated evidence byte but stop before its own revision's
         // xref/trailer. That is insufficient for archival profile credit:
         // the timestamp must cover its entire structural revision. The
-        // first signer retains only its independently verified B-T rung.
+        // first signer retains only the rung its own signature timestamp and
+        // the material give it, never an archival one.
         let (bytes, anchors, br_end, rev_xref, newest_dss) = span_craft_fixture();
         assert!(
             br_end < rev_xref,
@@ -163,10 +164,15 @@ pub(crate) mod tests {
         // The span-crafted timestamp attests the DSS bytes, but ends before
         // its own revision EOF. It cannot own a structural revision, so the
         // modification classifier must not claim Clean. The first signer's
-        // signature timestamp still supports its B-T profile independently.
+        // signature timestamp still supports its own rung independently,
+        // never an archival one. Engine call Q-C = A (10 Nov 07:23; Engine
+        // 08:32 on SEAL-QC-PROBE-A-PROFILE): every covered certificate is a
+        // trust anchor, so the stale CRL their own key signed claims nothing
+        // about the chains (ETSI EN 319 102-1 §5.2.6 checks no trust anchor's
+        // revocation status); the material passes, and that rung is B-LT.
         assert_eq!(report.modifications, crate::api::Modifications::NotRun);
         assert!(!report.valid());
-        assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
+        assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineLt));
     }
 
     #[test]
@@ -269,13 +275,14 @@ pub(crate) mod tests {
             .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
-        assert_eq!(
-            (vm.status, vm.finding),
-            (
-                VerifyCheckStatus::Fail,
-                Some(VerifyFindingCode::ValidationMaterialInvalid)
-            )
-        );
+        // Engine call Q-C = A (10 Nov 07:23; Engine 07:54 on
+        // SEAL-QC-ANCHOR-SIGNED-PROBES): the signers are self-signed trust
+        // anchors, so every covered certificate is an anchor, and a stale CRL
+        // their own key signed claims nothing about the chains. ETSI EN 319
+        // 102-1 §5.2.6 checks the revocation status of the certificates the
+        // trust anchor certifies, never of the trust anchor itself. The
+        // material passes; the archival-credit assertions above stand.
+        assert_eq!(vm.status, VerifyCheckStatus::Pass);
     }
 
     /// Probe B2 (dormant staging, activation by trailer /Root switch): the
@@ -407,13 +414,14 @@ pub(crate) mod tests {
             .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
-        assert_eq!(
-            (vm.status, vm.finding),
-            (
-                VerifyCheckStatus::Fail,
-                Some(VerifyFindingCode::ValidationMaterialInvalid)
-            )
-        );
+        // Engine call Q-C = A (10 Nov 07:23; Engine 07:54 on
+        // SEAL-QC-ANCHOR-SIGNED-PROBES): the signers are self-signed trust
+        // anchors, so every covered certificate is an anchor, and a stale CRL
+        // their own key signed claims nothing about the chains. ETSI EN 319
+        // 102-1 §5.2.6 checks the revocation status of the certificates the
+        // trust anchor certifies, never of the trust anchor itself. The
+        // material passes; the archival-credit assertions above stand.
+        assert_eq!(vm.status, VerifyCheckStatus::Pass);
     }
 
     #[test]
@@ -479,16 +487,15 @@ pub(crate) mod tests {
                 .filter(|c| c.kind == VerifyCheckKind::ValidationMaterial)
                 .map(|c| (c.status, c.finding))
                 .collect();
+            // Lead ruling F with its Q3: the cycle makes the OCSP array
+            // malformed presented material, which is discarded. Every covered
+            // certificate here is a trust anchor, so coverage is complete
+            // without it and the material passes; the cycle still grants no
+            // archival authority (below).
             assert!(
-                material.iter().any(|(status, finding)| if valid_material {
-                    *status == VerifyCheckStatus::Pass
-                } else {
-                    (*status, *finding)
-                        == (
-                            VerifyCheckStatus::Fail,
-                            Some(VerifyFindingCode::ValidationMaterialInvalid),
-                        )
-                }),
+                material
+                    .iter()
+                    .any(|(status, _)| *status == VerifyCheckStatus::Pass),
                 "{mode}: {material:?}"
             );
             if valid_material {
@@ -583,7 +590,13 @@ pub(crate) mod tests {
         let doc = dss_doc_flate_crl(std::slice::from_ref(&ca.cert_der), b"not zlib".to_vec());
         let covered = covered_of(&[&ca.cert_der]);
         let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50; Engine reading
+        // 07:02): forged or unverifiable presented material is NotRun with
+        // the visible sub-indication ValidationMaterialPossibleTampering.
+        assert_material_unresolved(
+            &checks,
+            crate::api::VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
     }
 
     /// Signature dictionary body with patchable /ByteRange and /Contents,
