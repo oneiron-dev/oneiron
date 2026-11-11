@@ -9,7 +9,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::skill_attribution::{LateCreditReceipt, late_credit_receipt_for_outcome};
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 use super::cell::{LearningCell, LearningPredicate, TypeRef};
 use super::estimate::{Estimate, EstimateLabels, EstimateValue, PriorOrigin, Window};
@@ -294,6 +294,50 @@ pub fn read_learning_as_owner(
     input: &LearningReadRequest,
 ) -> Result<LearningCellView> {
     owner.revalidate(vault)?;
+    read_learning(vault, input)
+}
+
+/// [`read_learning_as_owner`] for an agent or person holding a live Steward
+/// grant that names `read` (untangle 6.6c), checked at this read.
+///
+/// # Errors
+///
+/// A caller who holds no such grant; as [`read_learning_as_owner`].
+pub fn read_learning_as_reader(
+    vault: &Vault,
+    reader: WriteActor,
+    input: &LearningReadRequest,
+) -> crate::memory::MemoryResult<LearningCellView> {
+    crate::federation::admit_substrate_read_by(
+        vault,
+        reader,
+        "vault.learning.read",
+        crate::federation::SubstrateRead::Evidence,
+    )?;
+    Ok(read_learning(vault, input)?)
+}
+
+/// `vault.learning.read` on a bound handle: the embedded owner reads under
+/// its own proof, any other caller as a reader.
+///
+/// # Errors
+///
+/// As [`read_learning_as_owner`] and [`read_learning_as_reader`].
+pub fn read_learning_embedded(
+    memory: &crate::memory::Memory<'_>,
+    input: &LearningReadRequest,
+) -> crate::memory::MemoryResult<LearningCellView> {
+    match memory.embedded_owner("vault.learning.read") {
+        Ok(owner) => Ok(read_learning_as_owner(memory.vault(), &owner, input)?),
+        Err(_) => read_learning_as_reader(
+            memory.vault(),
+            WriteActor::new(memory.actor(), memory.actor_class()),
+            input,
+        ),
+    }
+}
+
+fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningCellView> {
     let cell = input.cell.engine()?;
     let project = input.project_ref.as_deref().map(entity_id).transpose()?;
     // One scope steers the cell and its tree (FIX 6038).

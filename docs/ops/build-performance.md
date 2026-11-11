@@ -393,6 +393,6 @@ reproduction, so no Linux or universal speedup is claimed.
   (`-fuse-ld=lld`). The mold comparison was interrupted and is inconclusive.
 
 The machine-local evidence archive is
-`<workspace>/.local/share/oneiron-build-ci-evidence/2026-09-17-aa35e5ce/followups/`
+`<host-home>/.local/share/oneiron-build-ci-evidence/2026-09-17-aa35e5ce/followups/`
 (`cgu-result-mini.json`, `trybuild-result-mini.json`, cache/featureless
 reports, raw commands). It is outside the public repository.

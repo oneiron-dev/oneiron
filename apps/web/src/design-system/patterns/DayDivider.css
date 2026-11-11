@@ -1,0 +1,18 @@
+/* The day at the left edge, then a hairline to the end of the list. */
+.sl-day-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 0 6px;
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--sl-ink-1);
+}
+
+.sl-day-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--sl-rule);
+}

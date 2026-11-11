@@ -36,9 +36,9 @@
 use heed::RoTxn;
 use rmpv::Value;
 
-use super::team_submit_output::{OUTPUT_MISSING, OUTPUT_UNSCOPED, OutputScope, Read};
+use super::output::{OUTPUT_MISSING, OUTPUT_UNSCOPED, OutputScope, Read};
+use super::revision::OutputRevision;
 use crate::claim::{ClaimReadStatus, RelationshipRead, ScopedRead, ScopedReadActorKey};
-use crate::code_run::team_submit::OutputRevision;
 use crate::error::{Error, Result};
 use crate::federation::{ScopeAxis, ScopeId, SensitivityCeiling};
 use crate::registry::{
@@ -56,7 +56,7 @@ const PRIVATE_SCOPE_KEY: &str = "private";
 
 /// How a submit reads its output: a blob or code output on the vault alone,
 /// a CLAIM or document revision on the run's read lane.
-pub(super) struct OutputReader<'v> {
+pub(crate) struct OutputReader<'v> {
     vault: &'v Vault,
     /// The run's read key, and the hold on every result body a lane read in
     /// an open transaction may find; only a CLAIM or document output has one.
@@ -66,7 +66,7 @@ pub(super) struct OutputReader<'v> {
 impl<'v> OutputReader<'v> {
     /// The reader for `output`; `key` is asked only for a CLAIM or document
     /// output.
-    pub(super) fn new(
+    pub(crate) fn new(
         vault: &'v Vault,
         output: OutputRevision,
         key: impl FnOnce() -> ScopedReadActorKey,
@@ -82,7 +82,7 @@ impl<'v> OutputReader<'v> {
 
     /// A fresh lane for one transaction, its grant clock prepared: taken
     /// before that transaction opens. `None` for a blob or code output.
-    pub(super) fn lane(&self) -> Result<Option<ScopedRead<'v>>> {
+    fn lane(&self) -> Result<Option<ScopedRead<'v>>> {
         let Some((key, _)) = &self.lane else {
             return Ok(None);
         };
@@ -92,6 +92,15 @@ impl<'v> OutputReader<'v> {
             .with_claim_status(ClaimReadStatus::Recorded);
         lane.persist_grant_clock()?;
         Ok(Some(lane))
+    }
+
+    /// A prepared output read for one transaction, its grant clock
+    /// prepared before that transaction opens.
+    pub(crate) fn prepare(&self) -> Result<super::PreparedOutput<'v>> {
+        Ok(super::PreparedOutput {
+            vault: self.vault,
+            lane: self.lane()?,
+        })
     }
 }
 

@@ -208,8 +208,9 @@ pub struct AuthorityFold {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) agent_carried_acts:
         BTreeMap<AuthorityEntryHash, super::carried_act::AgentCarriedAct>,
-    /// Each live agent world edit's world as read had it no effect, for a
-    /// view that holds its Grant refused (FIX 11426).
+    /// Each world an agent edited, with its edits as the fold judged them,
+    /// read without the edits whose Grants a view holds refused (FIX 11426,
+    /// FIX 22381).
     #[serde(
         default,
         skip_serializing_if = "super::agent_world_undo::AgentWorldUndo::is_empty"
