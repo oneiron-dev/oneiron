@@ -447,124 +447,155 @@ function deniedWrite(run: ExecuteRun, actor: PairedActor): void {
   expect(run.actor.gate_actor_class).toBe("agent");
 }
 suite.test(test, "BOOT-06", "MCP execute-mode session should work", async () => {
-  const data = await corpus();
-  const journey = data.execute;
-  const design = await (await loadFixtures()).readJson<{
-    readInput: FacadeInput<"vault.recall">;
-    proposalInput: { predicate: string; value: Journey["value"]; confidence: number; source: "user_stated" };
-  }>("boot-execute-mode-design");
-  const providers = await ScriptedProviders.start({ id: "BOOT-06", origins: ["boot-code"], steps: [] });
-  const engine = await EngineFixture.start({ id: "BOOT-06", profile, serverConfig: executeModels(providers) });
-  const witnessed = await engine.client.call("vault.witness", witness(journey, data.occurredAt));
-  const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
-  const [reader, proposer] = await registerAgents(engine, [
-    { name: "boot-execute-reader", tier: "read-only" }, { name: "boot-execute-proposer", tier: "propose-only" },
-  ]);
-  expect(new Set([reader!.principalRef, proposer!.principalRef, engine.pairedActor.principalRef]).size).toBe(3);
-  const readerMcp = new McpClient(reader!.client, "primary");
-  const proposerMcp = new McpClient(proposer!.client, "primary");
-  await readerMcp.initialize();
-  await proposerMcp.initialize();
-  const tools = await readerMcp.request<Tools>("tools/list");
-  expect(tools.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(["setup_oneiron", "execute_code", "read_result"]));
-  expect(await proposerMcp.request<Tools>("tools/list")).toEqual(tools);
-  const setup = await readerMcp.callTool("setup_oneiron", toolArguments(tools, "setup_oneiron", { consent: EXECUTE_CONSENT })) as ToolResult<{
-    instructions: string; actor: McpActor; meta: McpMeta;
-  }>;
-  expect(setup.isError).toBe(false);
-  expect(setup.structuredContent.instructions.length).toBeGreaterThan(0);
-  expect(setup.structuredContent.actor.actor_ref).toBe(reader!.principalRef);
-  expect(setup.structuredContent.meta.ttlMs).toBe(0);
-  expect(setup.structuredContent.meta.cacheScope).toBe("private");
-  expect(providers.seenFixtureCalls).toHaveLength(0);
+  let stage = "fixture and engine setup";
+  try {
+    const data = await corpus();
+    const journey = data.execute;
+    const design = await (await loadFixtures()).readJson<{
+      readInput: FacadeInput<"vault.recall">;
+      proposalInput: { predicate: string; value: Journey["value"]; confidence: number; source: "user_stated" };
+    }>("boot-execute-mode-design");
+    const providers = await ScriptedProviders.start({ id: "BOOT-06", origins: ["boot-code"], steps: [] });
+    const engine = await EngineFixture.start({ id: "BOOT-06", profile, serverConfig: executeModels(providers) });
+    stage = "witness and agent credential setup";
+    const witnessed = await engine.client.call("vault.witness", witness(journey, data.occurredAt));
+    const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
+    const [reader, proposer] = await registerAgents(engine, [
+      { name: "boot-execute-reader", tier: "read-only" }, { name: "boot-execute-proposer", tier: "propose-only" },
+    ]);
+    expect(new Set([reader!.principalRef, proposer!.principalRef, engine.pairedActor.principalRef]).size).toBe(3);
+    const readerMcp = new McpClient(reader!.client, "primary");
+    const proposerMcp = new McpClient(proposer!.client, "primary");
+    stage = "MCP initialization and setup";
+    await readerMcp.initialize();
+    await proposerMcp.initialize();
+    const tools = await readerMcp.request<Tools>("tools/list");
+    expect(tools.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(["setup_oneiron", "execute_code", "read_result"]));
+    expect(await proposerMcp.request<Tools>("tools/list")).toEqual(tools);
+    const setup = await readerMcp.callTool("setup_oneiron", toolArguments(tools, "setup_oneiron", { consent: EXECUTE_CONSENT })) as ToolResult<{
+      instructions: string; actor: McpActor; meta: McpMeta;
+    }>;
+    expect(setup.isError).toBe(false);
+    expect(setup.structuredContent.instructions.length).toBeGreaterThan(0);
+    expect(setup.structuredContent.actor.actor_ref).toBe(reader!.principalRef);
+    expect(setup.structuredContent.meta.ttlMs).toBe(0);
+    expect(setup.structuredContent.meta.cacheScope).toBe("private");
+    expect(providers.seenFixtureCalls).toHaveLength(0);
 
-  // 1. The read-only agent's program reads the authored preference.
-  scriptProgram(providers, "boot06-read", "reader recalls the authored preference",
-    `const answer = await vault.recall(${JSON.stringify(design.readInput)});\nfinish("recalled");`);
-  const read = await executeCode(readerMcp, tools, "boot-reader", "Read cobalt-execute-preference using vault.recall at light effort.");
-  expect(read.actor.actor_ref).toBe(reader!.principalRef);
-  expect(read.actor.gate_actor_ref).toBe(reader!.principalRef);
-  expect(read.actor.actor_class).toBe("agent");
-  expect(read.meta.cacheScope).toBe("private");
-  const recall = onlyVerbStep(read);
-  expect(recall.kind).toBe("agent_verb");
-  const pack = JSON.parse(recall.output!) as Facade.MemoryPack;
-  recalledTurn(pack, witnessed, journey);
-  // Entering the finished run again replays it: no new program, no new step.
-  const replay = await executeCode(readerMcp, tools, "boot-reader", "Read cobalt-execute-preference using vault.recall at light effort.");
-  expect(replay.run_id).toBe(read.run_id);
-  expect(providers.seenFixtureCalls).toHaveLength(1);
+    // 1. The read-only agent's program reads the authored preference.
+    stage = "step 1 reader recall";
+    scriptProgram(providers, "boot06-read", "reader recalls the authored preference",
+      `const answer = await vault.recall(${JSON.stringify(design.readInput)});\nfinish("recalled");`);
+    const read = await executeCode(readerMcp, tools, "boot-reader", "Read cobalt-execute-preference using vault.recall at light effort.");
+    expect(read.actor.actor_ref).toBe(reader!.principalRef);
+    expect(read.actor.gate_actor_ref).toBe(reader!.principalRef);
+    expect(read.actor.actor_class).toBe("agent");
+    expect(read.meta.cacheScope).toBe("private");
+    const recall = onlyVerbStep(read);
+    expect(recall.kind).toBe("agent_verb");
+    const pack = JSON.parse(recall.output!) as Facade.MemoryPack;
+    recalledTurn(pack, witnessed, journey);
+    // Entering the finished run again replays it: no new program, no new step.
+    stage = "step 1 finished-run replay";
+    const replay = await executeCode(readerMcp, tools, "boot-reader", "Read cobalt-execute-preference using vault.recall at light effort.");
+    expect(replay.run_id).toBe(read.run_id);
+    expect(providers.seenFixtureCalls).toHaveLength(1);
 
-  // 2. The propose-only agent's program proposes a claim. The declared user_stated source is
-  // false for generated code: the host stamps `generated`, and the write waits for review.
-  const proposal = { ...design.proposalInput, scope, subject_ref: journey.turnId };
-  scriptProgram(providers, "boot06-proposal", "proposer offers a reviewable claim with a false declared source",
-    `const answer = await vault.claims.upsert(${JSON.stringify(proposal)});\nfinish("proposed");`);
-  const proposed = await executeCode(proposerMcp, tools, "boot-proposer",
-    "Offer a reviewable cobalt-execute-proposal claim about the witnessed preference using vault.claims.upsert.");
-  expect(proposed.actor.actor_ref).toBe(proposer!.principalRef);
-  expect(proposed.actor.gate_actor_class).toBe("agent");
-  const upsert = onlyVerbStep(proposed);
-  expect(upsert.kind).toBe("agent_verb");
-  const commit = JSON.parse(upsert.output!) as Facade.CommitReceipt;
-  expect(commit.approval).toBe("proposed");
-  const stored = await engine.client.call("vault.claims.list", { subject_ref: journey.turnId, limit: 100 });
-  const row = stored.value.find(item => item.short_ref === commit.claim_short_id);
-  expect(row).toBeDefined();
-  expect(row!.value).toEqual(journey.value);
-  expect(row!.source).toBe("generated");
-  expect(row!.approval).toBe("proposed");
-  const receipts = await engine.client.call("vault.receipts", { limit: 100 });
-  expect(receipts.receipts).toEqual(expect.arrayContaining([expect.objectContaining({
-    receipt_ref: commit.receipt_ref, outcome: "pending", actor_ref: proposer!.principalRef, actor_class: "agent",
-  })]));
+    // 2. The propose-only agent's program proposes a claim. The declared user_stated source is
+    // false for generated code: the host stamps `generated`, and the write waits for review.
+    // A generated claim must name the readable TURN it was made from.
+    const proposal = { ...design.proposalInput, scope, subject_ref: journey.turnId,
+      evidence_turn_refs: [journey.turnId] };
+    stage = "step 2 generated proposal with witnessed TURN evidence";
+    scriptProgram(providers, "boot06-proposal", "proposer offers a reviewable claim with a false declared source",
+      `const answer = await vault.claims.upsert(${JSON.stringify(proposal)});\nfinish("proposed");`);
+    const proposed = await executeCode(proposerMcp, tools, "boot-proposer",
+      "Offer a reviewable cobalt-execute-proposal claim about the witnessed preference using vault.claims.upsert.");
+    expect(proposed.actor.actor_ref).toBe(proposer!.principalRef);
+    expect(proposed.actor.gate_actor_class).toBe("agent");
+    const upsert = onlyVerbStep(proposed);
+    expect(upsert.kind).toBe("agent_verb");
+    const commit = JSON.parse(upsert.output!) as Facade.CommitReceipt;
+    expect(commit.approval).toBe("proposed");
+    stage = "step 2 proposal and receipt readback";
+    const stored = await engine.client.call("vault.claims.list", { subject_ref: journey.turnId, limit: 100 });
+    const row = stored.value.find(item => item.short_ref === commit.claim_short_id);
+    expect(row).toBeDefined();
+    expect(row!.value).toEqual(journey.value);
+    expect(row!.source).toBe("generated");
+    expect(row!.approval).toBe("proposed");
+    const receipts = await engine.client.call("vault.receipts", { limit: 100 });
+    expect(receipts.receipts).toEqual(expect.arrayContaining([expect.objectContaining({
+      receipt_ref: commit.receipt_ref, outcome: "pending", actor_ref: proposer!.principalRef, actor_class: "agent",
+    })]));
 
-  // 3. A caller-supplied actor naming another principal is refused before any program is written.
-  mcpRefusal(await readerMcp.rpc("tools/call", { name: "execute_code", arguments: toolArguments(tools, "execute_code", {
-    consent: EXECUTE_CONSENT, run_ref: "boot-forged-actor", task: "Read cobalt-execute-preference using vault.recall at light effort.",
-    actor: { actor_ref: proposer!.principalRef, gate_actor_ref: proposer!.principalRef,
-      actor_class: "agent", gate_actor_class: "agent", scope: {} },
-  }) }), "mcp_actor_mismatch");
-  expect(providers.seenFixtureCalls).toHaveLength(2);
+    // 3. A caller-supplied actor naming another principal is refused before any program is written.
+    stage = "step 3 forged actor refusal";
+    mcpRefusal(await readerMcp.rpc("tools/call", { name: "execute_code", arguments: toolArguments(tools, "execute_code", {
+      consent: EXECUTE_CONSENT, run_ref: "boot-forged-actor", task: "Read cobalt-execute-preference using vault.recall at light effort.",
+      actor: { actor_ref: proposer!.principalRef, gate_actor_ref: proposer!.principalRef,
+        actor_class: "agent", gate_actor_class: "agent", scope: {} },
+    }) }), "mcp_actor_mismatch");
+    expect(providers.seenFixtureCalls).toHaveLength(2);
 
-  // 4. Neither tier exceeds its grant inside a run: the reader cannot propose, and neither
-  // agent can make an immediate claim write. A refused verb rejects its promise in the guest,
-  // so each program catches it and finishes; the run completes and its write step is denied.
-  const deniedProposal = { ...proposal, value: { seat: "aisle", marker: "cobalt-execute-denied-upsert" } };
-  scriptProgram(providers, "boot06-reader-upsert", "reader cannot propose a claim",
-    `let outcome = "written";\ntry { await vault.claims.upsert(${JSON.stringify(deniedProposal)}); } catch (refusal) { outcome = "refused"; }\nfinish(outcome);`);
-  deniedWrite(await executeCode(readerMcp, tools, "boot-reader-upsert",
-    "Attempt cobalt-execute-denied-upsert with vault.claims.upsert and report the refusal."), reader!);
-  const immediate = (id: string, marker: string) => ({ id, predicate: journey.predicate, subject: journey.turnId,
-    value: { seat: "aisle", marker }, confidence: 1 });
-  const readerPut = immediate("06424242424242424242424242424242", "cobalt-execute-denied-automatic-reader");
-  scriptProgram(providers, "boot06-reader-put", "reader cannot write a claim at once",
-    `let outcome = "written";\ntry { await vault.claims.put(${JSON.stringify(readerPut)}); } catch (refusal) { outcome = "refused"; }\nfinish(outcome);`);
-  deniedWrite(await executeCode(readerMcp, tools, "boot-reader-put",
-    "Attempt cobalt-execute-denied-automatic-reader using vault.claims.put and report the refusal."), reader!);
-  const proposerPut = immediate("06434343434343434343434343434343", "cobalt-execute-denied-automatic-proposer");
-  scriptProgram(providers, "boot06-proposer-put", "proposer cannot write a claim at once",
-    `let outcome = "written";\ntry { await vault.claims.put(${JSON.stringify(proposerPut)}); } catch (refusal) { outcome = "refused"; }\nfinish(outcome);`);
-  deniedWrite(await executeCode(proposerMcp, tools, "boot-proposer-put",
-    "Attempt cobalt-execute-denied-automatic-proposer using vault.claims.put and report the refusal."), proposer!);
+    // 4. Neither tier exceeds its grant inside a run: the reader cannot propose, and neither
+    // agent can make an immediate claim write. A refused verb rejects its promise in the guest,
+    // so each program catches it and finishes; the run completes and its write step is denied.
+    const deniedProposal = { ...proposal, value: { seat: "aisle", marker: "cobalt-execute-denied-upsert" } };
+    stage = "step 4 reader upsert denial";
+    scriptProgram(providers, "boot06-reader-upsert", "reader cannot propose a claim",
+      `let outcome = "written";\ntry { await vault.claims.upsert(${JSON.stringify(deniedProposal)}); } catch (refusal) { outcome = "refused"; }\nfinish(outcome);`);
+    deniedWrite(await executeCode(readerMcp, tools, "boot-reader-upsert",
+      "Attempt cobalt-execute-denied-upsert with vault.claims.upsert and report the refusal."), reader!);
+    const immediate = (id: string, marker: string) => ({ id, predicate: journey.predicate, subject: journey.turnId,
+      value: { seat: "aisle", marker }, confidence: 1 });
+    const readerPut = immediate("06424242424242424242424242424242", "cobalt-execute-denied-automatic-reader");
+    stage = "step 4 reader immediate-write denial";
+    scriptProgram(providers, "boot06-reader-put", "reader cannot write a claim at once",
+      `let outcome = "written";\ntry { await vault.claims.put(${JSON.stringify(readerPut)}); } catch (refusal) { outcome = "refused"; }\nfinish(outcome);`);
+    deniedWrite(await executeCode(readerMcp, tools, "boot-reader-put",
+      "Attempt cobalt-execute-denied-automatic-reader using vault.claims.put and report the refusal."), reader!);
+    const proposerPut = immediate("06434343434343434343434343434343", "cobalt-execute-denied-automatic-proposer");
+    stage = "step 4 proposer immediate-write denial";
+    scriptProgram(providers, "boot06-proposer-put", "proposer cannot write a claim at once",
+      `let outcome = "written";\ntry { await vault.claims.put(${JSON.stringify(proposerPut)}); } catch (refusal) { outcome = "refused"; }\nfinish(outcome);`);
+    deniedWrite(await executeCode(proposerMcp, tools, "boot-proposer-put",
+      "Attempt cobalt-execute-denied-automatic-proposer using vault.claims.put and report the refusal."), proposer!);
 
-  // 5. Public reads confirm the outcome: one generated proposal, no denied write, the original
-  // witnessed preference unchanged, and the unapproved proposal outside owner recall.
-  const after = await engine.client.call("vault.claims.list", { subject_ref: journey.turnId, limit: 100 });
-  expect(after.value.filter(item => JSON.stringify(item.value).includes("cobalt-execute"))).toHaveLength(1);
-  expect(JSON.stringify(after.value)).not.toContain("cobalt-execute-denied");
-  for (const id of [readerPut.id, proposerPut.id])
-    expect((await engine.client.call("vault.get", { entity_ref: id })).value).toBeNull();
-  recalledTurn(await engine.client.call("vault.recall", { query: journey.marker, effort: "light", limit: 10 }), witnessed, journey);
-  const unapproved = await engine.client.call("vault.recall", {
-    query: journey.value.marker, effort: "light", scope: { kinds: ["CLAIM"] },
-  });
-  expect(unapproved.items.some(item => item.short_id === commit.claim_short_id)).toBe(false);
-  expect(providers.seenFixtureCalls.map(call => call.fixtureId)).toEqual([
-    "boot06-read", "boot06-proposal", "boot06-reader-upsert", "boot06-reader-put", "boot06-proposer-put",
-  ]);
-  await engine.close();
-  await providers.close();
+    // 5. Public reads confirm the outcome: one generated proposal, no denied write, the original
+    // witnessed preference unchanged, and the unapproved proposal outside owner recall.
+    stage = "step 5 proposal and denied-write readback";
+    const after = await engine.client.call("vault.claims.list", { subject_ref: journey.turnId, limit: 100 });
+    expect(after.value.filter(item => JSON.stringify(item.value).includes("cobalt-execute"))).toHaveLength(1);
+    expect(JSON.stringify(after.value)).not.toContain("cobalt-execute-denied");
+    for (const id of [readerPut.id, proposerPut.id])
+      expect((await engine.client.call("vault.get", { entity_ref: id })).value).toBeNull();
+    stage = "step 5 witnessed preference and unapproved recall";
+    recalledTurn(await engine.client.call("vault.recall", { query: journey.marker, effort: "light", limit: 10 }), witnessed, journey);
+    const unapproved = await engine.client.call("vault.recall", {
+      query: journey.value.marker, effort: "light", scope: { kinds: ["CLAIM"] },
+    });
+    expect(unapproved.items.some(item => item.short_id === commit.claim_short_id)).toBe(false);
+    stage = "scripted provider call accounting";
+    expect(providers.seenFixtureCalls.map(call => call.fixtureId)).toEqual([
+      "boot06-read", "boot06-proposal", "boot06-reader-upsert", "boot06-reader-put", "boot06-proposer-put",
+    ]);
+    stage = "engine cleanup";
+    await engine.close();
+    stage = "provider cleanup and unexpected-call check";
+    await providers.close();
+  } catch (error) {
+    const failure = error as {
+      reply?: { status: number };
+      error?: { code: string; message: string; suggestions?: readonly string[] };
+      response?: JsonRpcReply<unknown>;
+    };
+    const rpc = failure.response && "error" in failure.response ? failure.response.error : undefined;
+    const detail = rpc?.data as {
+      error_code?: string; kind?: string; recovery_suggestions?: readonly string[];
+    } | undefined;
+    throw new Error(`BOOT-06 ${stage}: status=${failure.reply?.status ?? (rpc ? "2xx" : "<none>")} rpc=${rpc?.code ?? "<none>"} code=${failure.error?.code ?? detail?.error_code ?? detail?.kind ?? "<none>"} message=${failure.error?.message ?? rpc?.message ?? (error instanceof Error ? error.message : String(error))} suggestion=${failure.error?.suggestions?.[0] ?? detail?.recovery_suggestions?.[0] ?? "<none>"}`, { cause: error });
+  }
 });
 
 suite.test(test, "BOOT-07", "MCP tool-first operator registration should work", async () => {
