@@ -69,6 +69,9 @@ fn rooted_vault() -> Fixture {
     let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
     vault.ensure_host_root_slip(&issuer).expect("host root");
     vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("engine machine identities");
+    vault
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
         .expect("serving install profile");
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
