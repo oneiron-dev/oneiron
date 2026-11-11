@@ -16028,7 +16028,7 @@
      "path": "src/claim/scoped_read/edge_admission.rs",
      "purpose": "The one scoped graph projection: exact relation + both endpoints, then limits",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -90941,6 +90941,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/graph_ask_centre.rs",
+     "purpose": "Exact graph-neighbourhood controls for the standing graph owner read regression",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/label_writers.rs",
      "purpose": "Fixture vaults for the label-writer tests (OPUS-LEAKS, lead call G): the shipped policy plus a `core:read`…",
      "surface": {
@@ -90985,7 +90995,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 26
+      "mod": 27
      }
     },
     {
@@ -99423,6 +99433,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/graph_ask_centre_owner_read.rs",
+     "purpose": "STANDING-GRAPH-OWNER-CENTRE-READ: a manual refresh admits its centre and peers under the same request as its…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -102144,7 +102162,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102321,8 +102339,8 @@
    },
    "over_bar": 246,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7315,
-   "test_files": 979
+   "source_files": 7316,
+   "test_files": 980
   },
   "oneiron-agent-runtime": {
    "files": [
