@@ -253,7 +253,7 @@ pub(crate) use rooms::erase_room_side_rows;
 pub(crate) use rooms::erased_side_row_here;
 pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
-pub(crate) use rooms::task_binding_turns_in;
+pub(crate) use rooms::{task_binding_turns_in, task_thread_room_in, turn_room_in};
 pub use rooms::{ACTOR_ERASE_OFFER_BINDING, ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(crate) use rooms::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,

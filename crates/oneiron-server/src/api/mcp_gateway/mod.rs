@@ -51,6 +51,8 @@ pub(crate) use self::board_setup::{
     McpBoardOmissions, execute_mcp_setup, mcp_brief_pins, ride_run_carrier,
     run_brief_people_budget, run_brief_pins,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::board_setup::run_board_pins_for_test;
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
