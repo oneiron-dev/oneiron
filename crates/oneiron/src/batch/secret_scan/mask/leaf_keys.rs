@@ -1,5 +1,6 @@
 //! The keys a file's leaf holds (OF-560, owner ruling G04 binary = C2): what
-//! the door's text rules and its field reading place, and each value custody
+//! the door's text rules and its field reading place, a recovery phrase split
+//! over the leaf's parts word by word (LABEL-04), and each value custody
 //! already holds, at its span in the file's own bytes or in one member's.
 
 use std::ops::Range;
@@ -7,8 +8,9 @@ use std::ops::Range;
 use zeroize::Zeroizing;
 
 use super::super::container::{MAX_FILE_KEYS, REASON_OVER_BUDGET};
-use super::super::secret_scan_error;
+use super::super::{REASON_MNEMONIC, secret_scan_error};
 use super::body::reads_as_text;
+use super::split_phrase;
 use super::text_log::{TextLog, TextSpans};
 use super::{FileKey, Masker, REASON_KNOWN_VALUE, escaped_span, file_spans, merged, occurrences};
 use crate::entity_id::EntityId;
@@ -96,6 +98,11 @@ impl Masker {
                 custody: None,
             });
         }
+        // A clean scan read every part of the leaf too: no phrase split over
+        // them is sought again (speed). The switch off seeks none (FIX 8644).
+        if !self.known_only && !self.shapes_read {
+            self.place_split_phrases(path, leaf, &known, &mut placed)?;
+        }
         for (span, custody) in known {
             let value = Zeroizing::new(
                 leaf.get(span.clone())
@@ -117,6 +124,63 @@ impl Masker {
         keys.extend(placed);
         if keys.len() > MAX_FILE_KEYS {
             return Err(secret_scan_error(REASON_OVER_BUDGET));
+        }
+        Ok(())
+    }
+
+    /// Each recovery phrase split over `leaf`'s parts (LABEL-04): one
+    /// custody record holds the phrase (the record that holds it already,
+    /// if one does), and each of its words no span covers yet is marked
+    /// with it. The file's bytes stay as stored.
+    fn place_split_phrases(
+        &mut self,
+        path: &[MemberStep],
+        leaf: &[u8],
+        known: &[(Range<usize>, EntityId)],
+        placed: &mut Vec<FileKey>,
+    ) -> Result<()> {
+        for phrase in split_phrase::split_phrases(leaf) {
+            let words: Vec<Range<usize>> = phrase
+                .words
+                .iter()
+                .filter(|word| {
+                    !known
+                        .iter()
+                        .map(|(held, _)| held)
+                        .chain(placed.iter().map(|key| &key.span))
+                        .any(|held| held.start < word.end && word.start < held.end)
+                })
+                .cloned()
+                .collect();
+            if words.is_empty() || self.is_kept(&phrase.value) {
+                continue;
+            }
+            let held =
+                self.known
+                    .as_ref()
+                    .and_then(|index| match index.spans(&phrase.value).as_slice() {
+                        [hit] if hit.span == (0..phrase.value.len()) => Some(hit.custody),
+                        _ => None,
+                    });
+            let (reason, custody) = match held {
+                Some(custody) => {
+                    self.placed_known = true;
+                    (REASON_KNOWN_VALUE, Some(custody))
+                }
+                None => {
+                    self.handle(&phrase.value, REASON_MNEMONIC)?;
+                    (REASON_MNEMONIC, None)
+                }
+            };
+            for span in words {
+                placed.push(FileKey {
+                    path: path.to_vec(),
+                    span,
+                    reason,
+                    value: phrase.value.clone(),
+                    custody,
+                });
+            }
         }
         Ok(())
     }
