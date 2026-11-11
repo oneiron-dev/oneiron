@@ -1,24 +1,27 @@
 //! The one judge of a derivation that is not a claim (untangle 6.7a): may an
-//! actor settle, link, publish an artifact or archive over a target record
-//! now? `vault.derive.commit` asks it for every such item in its own write,
-//! and `vault.policy.preflight` asks it to show the same answer before a
-//! commit (S64E-JUDGE = A). A claim item asks the shared claim gate instead.
+//! actor settle, link, publish an artifact or archive now? Existing records
+//! the item changes are its targets. `vault.derive.commit` asks it for every
+//! such item in its own write, and `vault.policy.preflight` asks it to show
+//! the same answer before a commit (S64E-JUDGE = A). A claim item asks the
+//! shared claim gate instead.
 //!
 //! The answer reads the actor's live reach, never a frozen copy:
 //! - its policy rows must land `Generated` at Auto (the actor ceiling and the
 //!   actor-bound `Generated` permit), as [`super::dreamer_landing_verdict_in_txn`]
 //!   asks of the Dreamer's archive (X02);
 //! - once a host minted its Steward grant, that grant must still stand, name
-//!   the verb the item needs (`derive`, or `archive`), and reach the target
-//!   record's position. A narrowed or revoked grant refuses from its next
-//!   item on. Before a first mint a base agent's policy rows decide alone, as
-//!   before;
+//!   the verb the item needs (`derive`, or `archive`), and reach any target
+//!   record the item changes. A revoked grant refuses from its next item on;
+//!   a narrowed grant bounds each verb and target. Before a first mint a base
+//!   agent's policy rows decide alone, as before;
 //! - any other actor holds no Steward grant, so no stored record is in its
-//!   reach: it lands what it derives, and an item of its that names a target
-//!   is refused. The doors that settle, supersede or archive a record under
-//!   a named Grant of its own stay those doors. A topology judgment is such
-//!   a door: it asks this judge with no target and stands on the actor's own
-//!   `topology_seal` Grant.
+//!   reach: it lands what it derives, and an item of its that changes an
+//!   existing target is refused. The doors that settle, supersede or archive
+//!   a record under a named Grant of its own stay those doors. A topology
+//!   judgment is such a door: it asks this judge with no target and stands on
+//!   the actor's own `topology_seal` Grant. A SameAs proposal changes neither
+//!   of its two claims, so it asks this judge with no target as well, and the
+//!   actor's own read decides both ends.
 //!
 //! Each refusal carries a stable reason token in the gate's style
 //! ([`DeriveRefusal::token`]).
@@ -103,7 +106,7 @@ pub(crate) struct DeriveAllowance {
 /// Judges whether `actor` may do `capability` to `target` in `txn` now.
 /// `target` is the record the item changes (the claim it settles or
 /// archives, the person an artifact is about); `None` for an item with no
-/// existing target.
+/// existing target to change.
 ///
 /// # Errors
 ///
