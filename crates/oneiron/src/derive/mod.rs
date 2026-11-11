@@ -19,6 +19,11 @@
 //!
 //! Every item kind is one arm of [`DerivationItem`] with a stager of its
 //! own: a new kind adds an arm and touches no other (S69-C-ITEMS).
+//!
+//! The verbs `vault.derive.commit` and `vault.derive.revert` (6.7d) carry a
+//! batch and a revert on the wire ([`DeriveCommitInput`],
+//! [`DeriveRevertInput`]); the host stamps who commits from the caller's
+//! held live run.
 
 mod archive;
 mod artifact;
@@ -33,6 +38,7 @@ mod settle;
 mod sources;
 mod supersede;
 pub(crate) mod tables;
+mod wire;
 
 pub use archive::{ARCHIVE_NEEDS_ATTEMPT, ARCHIVE_NOT_A_CLAIM, ARCHIVE_SCORE_NOT_BELOW_POLICY};
 pub use artifact::{
@@ -55,6 +61,12 @@ pub use settle::{SETTLE_IMPORT_REVIEW, SETTLE_OWNER_HOLD, SETTLE_REFUSED};
 pub use sources::{SOURCE_MOVED, SOURCE_WITHHELD};
 pub use supersede::{
     SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE, SUPERSEDE_REPLACEMENT_UNSETTLED,
+};
+pub use wire::{
+    DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput, DeriveCommitView, DeriveEvidenceInput,
+    DeriveItemInput, DeriveItemView, DeriveLeftItemView, DeriveRef, DeriveRevertInput,
+    DeriveRevertView, DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput,
+    DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
 };
 
 /// The provenance `surface` a derivation commit stamps on every row it
