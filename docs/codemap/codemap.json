@@ -77729,6 +77729,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/source_audience/binding_door.rs",
+     "purpose": "Test-only deletion of a live policy row without touching its restored binding",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/source_audience/carried.rs",
      "purpose": "The carried form of a binding and a policy revision (Engine A, 6 Nov 03:46): the keys and the bytes a…",
      "surface": {
@@ -77755,7 +77765,7 @@
      "path": "src/source_audience/mod.rs",
      "purpose": "Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A…",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "enum": 1,
       "struct": 1
      }
@@ -90388,7 +90398,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 12
+      "mod": 13
      }
     },
     {
@@ -90419,6 +90429,16 @@
      "purpose": "Doors for `tests/summary_as_record_permit.rs` (SUMMARY-AS-RECORD-PERMIT): a summary minted as the Dreamer…",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/source_audience_binding.rs",
+     "purpose": "Test doors for a restored source-audience binding whose live policy is absent",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -98431,6 +98451,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_append_provenance.rs",
+     "purpose": "Blob append provenance follows the bound writer class",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -99536,6 +99564,14 @@
      "notable": [],
      "path": "tests/skill_call_caller_sandbox.rs",
      "purpose": "Pins callable execution in the caller's sandbox and lease",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/source_audience_unresolved_binding.rs",
+     "purpose": "FIX 22346: an image binding whose live policy is absent reads to no one and never travels",
      "surface": {}
     },
     {
@@ -101065,7 +101101,7 @@
      "purpose": "Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of…"
     },
     "source_audience": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101163,7 +101199,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101333,8 +101369,8 @@
    },
    "over_bar": 244,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7261,
-   "test_files": 942
+   "source_files": 7263,
+   "test_files": 944
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -153426,7 +153462,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "Baseline",
@@ -153682,7 +153718,7 @@
     "lint": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3…"
     },
@@ -153722,7 +153758,7 @@
      "purpose": "A server process on a free port, started and stopped by the test"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
    "source_files": 20,
    "test_files": 7
