@@ -26,7 +26,7 @@
 //! let mut vault = std::ptr::null_mut();
 //! // SAFETY: a null path is refused before any read, and `vault` is writable.
 //! let status = unsafe {
-//!     oneiron_ffi::oneiron_vault_open(std::ptr::null(), 0, 0, std::ptr::null(), 0, &mut vault)
+//!     oneiron_ffi::oneiron_vault_open(std::ptr::null(), 0, 0, std::ptr::null(), 0, 0, &mut vault)
 //! };
 //! assert_eq!(status, oneiron_ffi::OneironStatus::NullArg);
 //! ```
@@ -35,7 +35,7 @@
 //!
 //! ```compile_fail,E0133
 //! let mut vault = std::ptr::null_mut();
-//! oneiron_ffi::oneiron_vault_open(std::ptr::null(), 0, 0, std::ptr::null(), 0, &mut vault);
+//! oneiron_ffi::oneiron_vault_open(std::ptr::null(), 0, 0, std::ptr::null(), 0, 0, &mut vault);
 //! ```
 //!
 //! The owning descriptors move rather than copy, so one value reaches its
@@ -123,7 +123,7 @@ pub use self::types::{
 // and std imports the tests name bare. After the directory split the seam
 // re-imports them so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::types::{ENTITY_ID_LEN, MAX_FFI_QUERY_BYTES};
+use self::types::ENTITY_ID_LEN;
 #[cfg(test)]
 use oneiron::EdgeKind;
 #[cfg(test)]
