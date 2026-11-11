@@ -215,11 +215,23 @@ fn a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary() {
     let timer_report = timer_pass.unwrap_or_else(|error| panic!("{error}"));
     for report in [&turn_report, &timer_report] {
         println!(
-            "## DREAMER {:?} wake: {} claim(s) landed; queue after it: {:?}",
+            "## DREAMER {:?} wake: {} claim(s) landed in {} ms; queue after it: {:?}",
             report.wake,
             report.landed().len(),
+            report.wall_ms,
             report.queue
         );
+        for attempt in &report.attempts {
+            println!(
+                "## DREAMER {:?} wake ran {} {} in {} ms (unlent: {}): {:?}",
+                report.wake,
+                attempt.attempt_type,
+                attempt.attempt_id,
+                attempt.wall_ms,
+                attempt.unlent,
+                attempt.execution
+            );
+        }
     }
 
     // The Dreamer's model speaks for the owner, so a prompt may carry what
