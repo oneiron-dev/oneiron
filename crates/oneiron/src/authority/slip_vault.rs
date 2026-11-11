@@ -776,7 +776,7 @@ pub(super) fn next_entry(
         now,
     )
 }
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
 impl Vault {
     /// Binds a test owner person as the human owner under the host root, so
     /// owner verbs keep working once a fixture roots its vault.
