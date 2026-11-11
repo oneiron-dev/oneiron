@@ -8833,6 +8833,7 @@ dependencies = [
  "ipnet",
  "lopdf",
  "oneiron",
+ "oneiron-keystore",
  "oneiron-organ-host",
  "oneiron-organ-protocol",
  "p256",
