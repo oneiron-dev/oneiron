@@ -234,6 +234,7 @@ pub(crate) use rooms::{
 };
 
 pub(crate) use rooms::RoomThreadTask;
+pub(crate) use rooms::stored_room_pins_in;
 pub use rooms::{ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, RoomHostHand, RoomHostPin};
 pub use rooms::{
     OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferReopenRequest, OfferSettlement,
