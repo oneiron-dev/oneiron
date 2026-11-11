@@ -14,8 +14,7 @@ mod field_validators;
 use super::types;
 
 pub(super) use self::cancel_receipt_landing::{
-    CancelReceiptDraft, append_attempt_event, append_cancel_receipt, count_cancel_rejection,
-    count_cancel_request, validate_cancel_state,
+    CancelReceiptDraft, append_attempt_event, validate_cancel_state,
 };
 pub(crate) use self::field_validators::validate_lease_owner;
 
