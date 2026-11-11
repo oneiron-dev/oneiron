@@ -5,7 +5,10 @@
 //! The set is the key an Auto write replaces on: subject, predicate, world,
 //! relationship and exact scope, with `value.question_id` for the declared
 //! multi-cardinality predicates. Scopes compare by their canonical bytes, so
-//! two binary facet or project ids never read as one. A set-cardinality
+//! two binary facet or project ids never read as one. The head must also
+//! carry the proposal's scope stamps, the facet and project each was born
+//! in, as an OF-023 conflict marker's peer must: a head in another facet is
+//! another audience's, and an approval here never closes it. A set-cardinality
 //! predicate keys on the question its scoped `topic_key` names, never on its
 //! answer, so a changed answer to the same question replaces the old one and
 //! an answer to another question stands beside it. Without a `topic_key` it
@@ -33,7 +36,8 @@ pub(super) struct ConflictHead {
 }
 
 /// The newest standing claim other than `id` on the conflict set of
-/// `proposal`, the body stored at `id`, in `txn`. A head the proposal may not
+/// `proposal`, the body stored at `id`, in `txn`, born in the proposal's facet
+/// and project. A head the proposal may not
 /// close is passed over: a stated one beside an observed preference (OF-023),
 /// and user-stated truth beside a generated claim.
 pub(super) fn conflict_head_in_txn(
@@ -76,6 +80,8 @@ pub(super) fn conflict_head_in_txn(
             || body.world != proposal.world
             || body.rel != proposal.rel
             || canonical_scope(body.scope.as_ref())? != scope
+            || body.scope_facet != proposal.scope_facet
+            || body.scope_project != proposal.scope_project
             || question
                 .as_ref()
                 .is_some_and(|question| *question != question_id(&body.value))
