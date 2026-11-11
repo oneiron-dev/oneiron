@@ -167,6 +167,55 @@ pub(crate) fn seal_whole_part_in_txn(
         ))
 }
 
+/// Test door (`test_doors::lifted_text`): marks each place the stored `text`
+/// holds `value` as a lifted key under the text's hash, as
+/// [`carrier::mark_carrier_text_in_txn`] marks a key the door's rules place,
+/// with `value` in its own custody record (`record` and `place` name where it
+/// was found). The text keeps its bytes. Returns the handle a reader other
+/// than the owner reads in the value's place (`[secret sc12]`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn mark_text_value_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    record: EntityId,
+    place: &str,
+    text: &str,
+    value: &str,
+) -> Result<String> {
+    let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    let mut plan = Masker::default();
+    plan.found.push(Found {
+        value: Zeroizing::new(value.as_bytes().to_vec()),
+        reason: REASON_KNOWN_VALUE,
+        record,
+        place: place.to_owned(),
+    });
+    let keys = text
+        .match_indices(value)
+        .map(|(start, found)| FileKey {
+            path: Vec::new(),
+            span: start..start + found.len(),
+            reason: REASON_KNOWN_VALUE,
+            value: Zeroizing::new(value.as_bytes().to_vec()),
+            custody: None,
+        })
+        .collect();
+    let files = vec![FoundFile {
+        hash: *blake3::hash(text.as_bytes()).as_bytes(),
+        keys,
+        record,
+    }];
+    let minted = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
+    let handle = minted
+        .get(value.as_bytes())
+        .map(|(handle, _)| handle.clone())
+        .ok_or(Error::InvariantViolation(
+            "a seeded key's custody record has no handle",
+        ))?;
+    put_file_marks_in_txn(&vault.store, wtxn, files, &minted, at)?;
+    Ok(format!("{HANDLE_OPEN}{handle}]"))
+}
+
 /// Records each file `files` marks: each key's span, in the file's bytes or
 /// in the member that holds it, with the custody record `minted` holds it in
 /// or the record custody held it in before, and the file's band.

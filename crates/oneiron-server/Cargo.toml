@@ -35,14 +35,6 @@ name = "oneiron-vm-init"
 path = "src/bin/oneiron-vm-init.rs"
 doc = false
 
-# A vault VM's root outbox companion (FIX 5235): oneiron-vm-init starts it
-# beside the server; it lays out the vault disk's outbox and carries every
-# outbox kind to and from the host over vsock port 1030.
-[[bin]]
-name = "oneiron-vm-outbox"
-path = "src/bin/oneiron-vm-outbox.rs"
-doc = false
-
 [lib]
 # No doc-comment code fences in this crate (audited 2026-08-19); skip the
 # doctest compile pass entirely.
@@ -248,18 +240,32 @@ oneiron-remote = { path = "../oneiron-remote" }
 tower = { version = "0.5", features = ["util"] }
 # `start_paused` for the drain's tick row: that row must not poll the send
 # itself (a re-poll is a free re-consult a park-only drain would ride to a
-# pass), so it waits out the guard's own interval instead. Virtual time makes
-# that wait cost no wall clock and no flakiness. Test-only: dev-dependency
-# features are not unified into the normal build.
-tokio = { version = "1", features = ["full", "test-util"] }
+# pass), so it waits out the guard's own interval instead. The rolling-tier
+# lib-test build enables tokio/test-util explicitly for virtual time.
+tokio = { version = "1", features = ["full"] }
 # Lease-registrar tests sign proof-of-possession transcripts themselves
-# (contract-grounded, ONE-1140). `test-hooks` compiles in the lease
-# mirror-failure injection seam used by the root-snapshot/`ls:`-mirror
-# atomicity test (ONE-1140); no production effect. `test-support` compiles in
-# the fixture that mints a foreign principal's Grant through the owner verb.
-oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "test-hooks", "test-support"] }
-# The paid-leg fixture's local TLS fake provider.
-oneiron-broker = { version = "0.1.0", path = "../oneiron-broker", features = ["test-support"] }
+# (contract-grounded, ONE-1140). The rolling tier enables `test-hooks` for
+# lease mirror-failure injection and `test-support` for owner-verb fixtures;
+# neither feature is added to the PR tier through this dev-dependency.
+oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
+# The rolling tier enables test-support for the paid-leg TLS fake provider.
+oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
+
+# Test-only constructors and fault-injection seams stay out of the shipped graph.
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+[[test]]
+name = "it_esign_public"
+path = "tests/it_esign_public.rs"
+required-features = ["oneiron/test-hooks"]
+
+[[test]]
+name = "managed_mode"
+path = "tests/managed_mode.rs"
+required-features = ["oneiron/test-hooks"]
 
 [lints]
 workspace = true

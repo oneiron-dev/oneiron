@@ -602,6 +602,12 @@ fn retry_child_of_row(
     if absent {
         return Ok(None);
     }
+    // A landing reply whose signed landing has not arrived yet waits: the
+    // ChildOf stays owed in its pending ledger with its replay marker,
+    // never a terminal quarantine.
+    if crate::conversation_dag::landing_reply_waits_in(&vault.store, &vault.store, txn, &src)? {
+        return Ok(None);
+    }
     let op = BatchOp::EdgeWithCreatedAt {
         src,
         kind: EdgeKind::ChildOf,

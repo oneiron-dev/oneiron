@@ -1,0 +1,54 @@
+/* Horizontal rules only: no outer box, no vertical lines. */
+.sl-ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--sl-t-do);
+}
+
+.sl-ledger-cell {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--sl-rule);
+  color: var(--sl-ink-2);
+  text-align: left;
+  white-space: nowrap;
+}
+
+th.sl-ledger-cell {
+  padding: 6px 10px;
+  font-weight: 400;
+}
+
+.sl-ledger-cell[data-numeric] {
+  font-family: var(--sl-mono);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--sl-t-figure);
+  letter-spacing: 0.02em;
+  text-align: right;
+}
+
+td.sl-ledger-cell[data-numeric] {
+  color: var(--sl-ink-3);
+}
+
+th.sl-ledger-cell[data-numeric] {
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-do);
+  letter-spacing: 0;
+}
+
+/* A claim wraps; everything else stays on one line. */
+.sl-ledger-cell:has(> .sl-claim-text) {
+  min-width: 34ch;
+  white-space: normal;
+}
+
+.sl-ledger-row[data-interactive] {
+  cursor: pointer;
+}
+
+.sl-ledger-row[data-interactive]:hover,
+.sl-ledger-row[data-interactive]:focus-visible {
+  background: var(--sl-hover);
+  outline: none;
+}

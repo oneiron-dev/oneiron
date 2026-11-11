@@ -103,6 +103,10 @@ pub(super) fn test_server_with_config(
     vault_config.retrieval_telemetry_capture = true;
     let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
     assert_default_policy_manifest_fixture(vault.as_ref());
+    crate::test_credentials::install_fixture_keystore(
+        &vault,
+        config.auth_secret.as_deref().unwrap_or_default().as_bytes(),
+    );
     let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
     (dir, server)
 }
@@ -1072,6 +1076,10 @@ fn memory_reason_server_inner(
         .commit()
         .expect("seed reasoning evidence");
 
+    crate::test_credentials::install_fixture_keystore(
+        &vault,
+        auth_secret.as_deref().unwrap_or_default().as_bytes(),
+    );
     let allow_unauthenticated = auth_secret.is_none();
     let server = SyncServer::new(
         vault,

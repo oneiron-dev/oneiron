@@ -19,43 +19,43 @@
   },
   "canon": {
     "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle": {
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1.md#r4-lifecycle",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1.md#r4-lifecycle",
       "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
     },
     "/oneiron/agents/oneiron-arch-0067-context-board-v1/#room": {
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md#room",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md#room",
       "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
     },
     "/oneiron/agents/oneiron-arch-0067-context-board-v1/#what": {
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md#what",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md#what",
       "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
     },
     "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work": {
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0079-agent-coordination-v1.md#work",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0079-agent-coordination-v1.md#work",
       "sha256": "d9261a0833eab70dfde34cd7195a6fd268ea34054c1f5c8f966e92dfea65cade"
     },
     "/oneiron/core/oneiron-arch-0003-semantic-memory/#learning": {
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0003-semantic-memory.md#learning",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0003-semantic-memory.md#learning",
       "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
     },
     "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings": {
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md#mcp-actor-ceilings",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md#mcp-actor-ceilings",
       "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
     },
     "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#access": {
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/retrieval/oneiron-arch-0004-retrieval-graph.md#access",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/retrieval/oneiron-arch-0004-retrieval-graph.md#access",
       "sha256": "b214b7c1dd31851c0feae51a9c79a3e913ff7aab3f7ddd5021f46b36be7ae740"
     },
     "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#part-a": {
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0044-public-surface-ws.md#part-a",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0044-public-surface-ws.md#part-a",
       "sha256": "e29ef93a3f343377411b6226964f0e9d3da0ca7b85df4a8845f859bf1af0b48b"
     },
     "/oneiron/surfaces/oneiron-arch-0048-genui-protocol/#g3": {
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0048-genui-protocol.md#g3",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0048-genui-protocol.md#g3",
       "sha256": "ef38b61eae6c9c329f84679069f5f9dbcb0ee807eea15f57e586784b491cbd66"
     },
     "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract": {
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1.md#contract",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1.md#contract",
       "sha256": "b3bb0a5ee003e3baf6cd3b43bccc30bd26571b6af3c5ab40a403378db29d4538"
     }
   },

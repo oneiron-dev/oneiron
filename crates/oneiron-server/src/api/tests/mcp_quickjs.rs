@@ -6,7 +6,7 @@ use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial,
     DecisionProvider, DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
 };
-use oneiron::llm::manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot};
+use oneiron::llm::manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelRole, ModelSlot};
 use oneiron::llm::registry::{ModelRegistryRow, ModelWireFormat};
 use oneiron::llm::seat::{ModelDescription, SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
@@ -173,17 +173,30 @@ pub(super) fn code_mode_server_with(
 ) -> CodeMode {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     let seat_model = ModelId::new("fixture/code-seat@v2").unwrap();
+    // The extraction encoder binds the Oneironer slot, alone, to a model no
+    // generative role serves (ARCH-0036, OF-138; `validate_families`).
+    let encoder_model = ModelId::new("fixture/code-encoder@v2").unwrap();
     let manifest = ModelManifest {
         version: 2,
         roles: MODEL_ROLES
             .into_iter()
             .map(|role| {
+                let encoder = role == ModelRole::ExtractionEncoder;
                 (
                     role,
                     ModelBinding {
-                        model: seat_model.clone(),
-                        slot: ModelSlot::Llm,
+                        model: if encoder {
+                            encoder_model.clone()
+                        } else {
+                            seat_model.clone()
+                        },
+                        slot: if encoder {
+                            ModelSlot::Oneironer
+                        } else {
+                            ModelSlot::Llm
+                        },
                         tier: Tier("legacy".into()),
                         route_models: BTreeMap::new(),
                         disposition: None,
@@ -1145,6 +1158,7 @@ async fn serve_with_models(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     let server = SyncServer::new(
         vault.clone(),
         SyncServerConfig {

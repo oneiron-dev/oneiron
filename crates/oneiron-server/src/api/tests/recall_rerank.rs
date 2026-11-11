@@ -165,6 +165,7 @@ async fn served_with(
 ) -> (tempfile::TempDir, Arc<SyncServer>, AiHost) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -1064,6 +1065,7 @@ async fn every_effort_through_mcp_on_the_local_embedder_and_a_loopback_reranker(
     vault_config.dimensions = 1024;
     vault_config.embedding_model = Some(model_id.clone());
     let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config.clone()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     let receipts = Arc::new(MemoryReceipts::default());
     let server = SyncServer::new(
         vault,
