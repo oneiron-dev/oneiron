@@ -161,6 +161,35 @@ fn a_batch_holds_one_about_item_for_a_person() {
 }
 
 #[test]
+fn an_about_item_never_names_a_person_by_another_about_items_name() {
+    let fixture = fixture();
+    let (digest, bands) = facts(&fixture);
+    assert!(!bands.is_empty(), "the person has a fact");
+    // An `about` item creates no row: the row it lands on is the PERSON,
+    // which stood before the batch. So its name stands for nothing, and a
+    // second `about` item cannot reach the same person through it.
+    let through_the_first = Derived::About(About {
+        local: "about_again",
+        person: Named::Local("about"),
+        written_from: digest,
+        lines: bands.iter().map(|band| (*band, LINE)).collect(),
+    });
+    commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-about-by-name",
+        &[about(&fixture, digest, &bands), through_the_first],
+    )
+    .expect_err("a name of an item that creates no row is a malformed reference");
+    assert_eq!(
+        about_line(&fixture),
+        None,
+        "the malformed batch lands nothing"
+    );
+}
+
+#[test]
 fn the_dreamer_publishes_a_persons_about_lines() {
     let fixture = fixture();
     let (digest, bands) = facts(&fixture);
