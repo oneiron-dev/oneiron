@@ -506,11 +506,11 @@ pub(super) fn standing_reach_out_in_txn(
 /// The Dreamer's read: a relationship's rows and private rows pass only on
 /// its own live grants.
 fn dreamer_reader(vault: &Vault) -> Result<ScopedRead<'_>> {
-    let actor = vault.dreamer_authority()?.entity_ref();
+    let dreamer = vault.dreamer_authority()?;
     Ok(vault.scoped_read(
-        ScopedReadActorKey::with_actor_class(actor.to_hex(), "system")
+        ScopedReadActorKey::for_engine_actor(dreamer)
             .ok_or_else(invalid)?
-            .require_relationship_grants(Some(actor)),
+            .require_relationship_grants(Some(dreamer.entity_ref())),
     ))
 }
 

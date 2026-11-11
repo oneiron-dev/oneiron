@@ -13,7 +13,8 @@ mod agent_grant;
 mod agent_verb_class;
 pub(crate) use agent_grant::{
     AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, SelectedOwnerAgentFundingGrant,
-    agent_grants_for_store_in_txn,
+    agent_grants_for_store_in_txn, backfill_agent_grant_member_index,
+    index_agent_grant_member_in_txn,
 };
 pub(crate) use agent_verb_class::AgentVerbClasses;
 // The self brief's GRANT producer (FIX 17594).
@@ -201,6 +202,15 @@ use self::stale::register_foreign_world_for_pact;
 
 #[cfg(test)]
 mod membership_gate_tests;
+mod system_agent_grant;
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use system_agent_grant::SystemAgentGrantState;
+pub(crate) use system_agent_grant::is_system_agent_steward_grant;
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use system_agent_grant::standing_steward_verbs_in;
+pub(crate) use system_agent_grant::{
+    holds_system_agent_grant, standing_steward_grant_in, steward_grant_of_in, steward_rows_rewrite,
+};
 #[cfg(test)]
 mod shared_creation_tests;
 #[cfg(test)]

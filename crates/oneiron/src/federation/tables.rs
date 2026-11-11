@@ -36,6 +36,17 @@ crate::side_table::side_tables! {
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Every agent a signed owner-agent Grant mint of the authority log has ever named, revoked
+    /// Grants included (Engine RULING PAIR-GRANT-DESIGN Q2 = A): written as each authority-log
+    /// row is staged, never removed, rebuilt from the log at open and after a restore. One posting
+    /// per signed mint, so a reader counts a posting only while the authority fold counts its mint.
+    /// Key: id16 (member) + id16 (grant) + hash32 (the mint's entry hash). Value: empty.
+    FEDERATION_AGENT_GRANT_MEMBER: VaultMeta b"federation:agent-grant-member:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Schema-version byte gating the agent Grant member index's rebuild from the authority log.
+    /// Key: ().
+    FEDERATION_AGENT_GRANT_MEMBER_SCHEMA_VERSION: VaultMeta b"federation:agent-grant-member-schema-version" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// A Connect guest's proposal in its pact's review inbox (FIX 3684): the proposer, the world
     /// and record it names, the text update as sent until the owner decides, then the decision.
     /// Never a vault write. Key: id16(grant) + id16(proposal).
@@ -47,6 +58,16 @@ crate::side_table::side_tables! {
     /// (the ruling).
     FEDERATION_RULING_WITNESS: VaultMeta b"federation:ruling_witness:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Each base agent's Steward grant as the first mint left it (untangle 6.3): `minted` with
+    /// the grant's id, or `opted_out` when the owner had removed every policy row the grant
+    /// replaces. While a row stands, the policy fold reads the agent's reach from that grant and
+    /// no longer from manifest rows that name it, and the agent's read keys are held to it. Local
+    /// to this vault. Key: id16 (the agent's principal).
+    FEDERATION_SYSTEM_AGENT_GRANT: VaultMeta b"federation:system_agent_grant:v1:" Named
+        // Restore class: the marker names a Steward grant row, and those rows stay as the live
+        // vault holds them: the marker stays with them, never naming a grant the restored vault
+        // does not hold.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The facet a verified Connect origin position names for an imported ASSET or ASSET_TEXT. This
     /// vault holds no edge to the sender's FACET, so the facet is kept here, written beside the
     /// record-scope stamp and retired with it (FIX 22223). Key: id16 (record). Value: id16 (facet).
