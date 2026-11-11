@@ -141,6 +141,7 @@ pub(crate) fn commit_core_batch_in_lane(
     auth: &CoreAuth,
     batch: oneiron::BatchBuilder<'_>,
     lane: &oneiron::core_write::CoreWriteLane<'_>,
+    door: &'static str,
 ) -> oneiron::Result<()> {
     if let Some(action) = crate::api::host_action::host_action_of(server.vault(), auth) {
         action?;
@@ -149,6 +150,13 @@ pub(crate) fn commit_core_batch_in_lane(
         oneiron::core_write::CoreBatchCommit::Owner
     } else {
         oneiron::core_write::CoreBatchCommit::BelowOwner
+    };
+    // The actor `auth` binds is the batch's writer, as it is for the served
+    // `vault.batch`: an agent's credential holds each AGENT_DEF the batch
+    // puts to that agent's own slice (ARCH-0053:20).
+    let batch = match crate::api::facade::host_doors::credential_writer(server, auth) {
+        Some(writer) => batch.authored_through(&writer, door, lane.actor_key()),
+        None => batch,
     };
     batch.commit_in_core_lane(lane, commit)
 }
