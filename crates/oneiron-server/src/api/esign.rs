@@ -477,19 +477,195 @@ mod tests {
             assert!(!String::from_utf8_lossy(&bytes).contains(&"11".repeat(32)));
         }
     }
+    /// A sent signing request with an admitted recipient capability.
+    fn signing_transport_fixture() -> (tempfile::TempDir, Arc<SyncServer>, String) {
+        use oneiron::blob_artifact::esign::{
+            DocumentKind, EsignAuditActor, EsignDocument, EsignField, EsignItem, EsignOutboundCommand,
+            EsignOutboundVerb, EsignRecipient, FieldGeometry, FieldMeta, RecipientRole,
+        };
+        use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+        use oneiron::federation::{Scope, ScopeAxis};
+        use oneiron::outbound::{
+            OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
+            OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft, OutboundIntentSource,
+            OutboundIntentTrigger,
+        };
+        use oneiron::{EdgeActorClass, EntityId, TimeRange, WriteActor};
+
+        let dir = tempfile::tempdir().expect("create signing fixture directory");
+        let vault = Arc::new(
+            oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device())
+                .expect("open signing fixture vault"),
+        );
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .expect("create embedded owner actor");
+        let artifact = EntityId::now();
+        let when = TimeRange { start: 1, end: 1 };
+        vault
+            .put_blob_artifact(
+                &artifact,
+                &BlobArtifactBody::new("agreement.pdf", "application/pdf"),
+                when,
+                1,
+            )
+            .expect("store signing PDF artifact");
+        vault
+            .append_blob_artifact_version(
+                &artifact,
+                include_bytes!("../../../oneiron-seal/tests/fixtures/pdf-input/classic_1page.pdf"),
+                &BlobVersionProvenance::UserUpload,
+                WriteActor::new(owner, EdgeActorClass::Human),
+                when,
+                1,
+            )
+            .expect("append signing PDF version");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("read system time after Unix epoch")
+            .as_secs();
+        let recipient = EntityId::now().to_hex();
+        let field = EntityId::now().to_hex();
+        let document = EsignDocument {
+            schema_version: 1,
+            kind: DocumentKind::Document,
+            title: "Agreement".into(),
+            sequential: true,
+            expires_at: now + 3600,
+            items: vec![EsignItem {
+                artifact_ref: artifact.to_hex(),
+                original_version: 1,
+            }],
+            recipients: vec![EsignRecipient {
+                id: recipient.clone(),
+                email: "signer@example.test".into(),
+                name: "Signer".into(),
+                role: RecipientRole::Signer,
+                order: 0,
+                expires_at: now + 3600,
+                principal_ref: None,
+                automated: false,
+                natural_person: None,
+            }],
+            fields: vec![EsignField {
+                id: field,
+                item: 0,
+                recipient,
+                required: true,
+                geometry: FieldGeometry {
+                    page: 1,
+                    x_percent: 10.0,
+                    y_percent: 10.0,
+                    width_percent: 50.0,
+                    height_percent: 20.0,
+                },
+                meta: FieldMeta::Text { max_bytes: 50 },
+            }],
+            full_trail_appendix: false,
+            lifecycle: None,
+            token_expires_at: None,
+            project: None,
+        };
+        vault
+            .create_esign_document(
+                artifact,
+                &document,
+                EsignAuditActor {
+                    actor: owner.to_hex(),
+                    ip: None,
+                    user_agent: None,
+                },
+                now,
+            )
+            .expect("create signing document");
+        let mut effect = Scope::top();
+        effect.verbs = ScopeAxis::Some(["effect".to_owned()].into());
+        oneiron::conversation_dag::test_support::put_test_policy_manifest(
+            &vault,
+            WriteActor::new(owner, EdgeActorClass::Human),
+            EntityId::now(),
+            &serde_json::json!({
+                "schema_version":"1.2", "pack_id":"esign-http-test", "pack_version":"v1",
+                "min_engine_version":"0.0.0",
+                "defaults":{"criticality":"normal","sensitivity":"normal"},
+                "rules":[],
+                "actor_ceilings":[{"actor_class":"human","actor_ref":owner.to_hex(),"ceiling":"auto"}],
+                "scoped_grants":[{"actor_ref":owner.to_hex(),"effector":"external:send_for_signature",
+                    "scope":effect,"selectors":{"channel":"esign"}}]
+            }),
+        )
+        .expect("install signing policy manifest");
+        let authenticated = vault
+            .authenticate_owner(
+                owner,
+                &owner.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .expect("authenticate signing owner");
+        let token = vault
+            .issue_esign_capabilities(&authenticated, artifact)
+            .expect("issue signer capability")
+            .remove(0)
+            .1
+            .expose_for_delivery()
+            .to_owned();
+        let verb = EsignOutboundVerb::SendForSignature;
+        let command = EsignOutboundCommand {
+            document: artifact.to_hex(),
+            recipient_count: 1,
+            verb,
+            reason: None,
+        };
+        let request = OutboundDispatchRequest::new(
+            "receipt:public-sign",
+            "public-sign",
+            OutboundIntent::from_trigger(
+                OutboundIntentDraft {
+                    actor: owner.to_hex(),
+                    on_behalf_of: None,
+                    verb: verb.as_str().into(),
+                    channel: "esign".into(),
+                    target: artifact.to_hex(),
+                    content_ref: None,
+                    idempotency_key: Some("public-sign".into()),
+                    dedupe_key: Some("public-sign".into()),
+                    mention: None,
+                },
+                OutboundIntentTrigger {
+                    source: OutboundIntentSource::AgentImmediate,
+                    trigger_ref: "public-sign".into(),
+                    job_ref: None,
+                },
+            ),
+            OutboundDispatchActor {
+                actor_class: "human".into(),
+                actor_ref: Some(owner.to_hex()),
+                actor_entity_ref: Some(owner),
+            },
+            OutboundDispatchGate::allow_when_policy_grants(),
+            now,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        );
+        vault
+            .dispatch_esign(request, &command, None, None)
+            .expect("dispatch signing request");
+        let server = Arc::new(
+            SyncServer::new(vault, crate::config::SyncServerConfig::default())
+                .expect("create signing sync server"),
+        );
+        (dir, server, token)
+    }
+
     #[tokio::test]
     async fn forwarded_headers_cannot_replace_the_signing_transport_peer() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault =
-            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-        let server =
-            Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
+        let (_dir, server, token) = signing_transport_fixture();
         let app = public_routes().with_state(server);
         for path in ["/sign/action", "/sign/pdf", "/sign/preview"] {
             let body = if path == "/sign/action" {
-                serde_json::json!({"token":"11".repeat(32), "action":{"action":"load"}})
+                serde_json::json!({"action":{"action":"load"}})
             } else {
-                serde_json::json!({"token":"11".repeat(32), "item":0})
+                serde_json::json!({"item":0})
             };
             let response = app
                 .clone()
@@ -498,6 +674,7 @@ mod tests {
                         .method("POST")
                         .uri(path)
                         .header(header::CONTENT_TYPE, "application/json")
+                        .header("x-oneiron-esign-capability", token.as_str())
                         .header("x-forwarded-for", "192.0.2.7")
                         .header("forwarded", "for=192.0.2.7")
                         .body(Body::from(body.to_string()))
