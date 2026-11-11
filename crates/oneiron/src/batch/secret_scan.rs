@@ -554,13 +554,29 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     // Every member is read, a repeated JSON key and every map key included,
     // and a framed carrier's body as a body too.
     for body in std::iter::once(data).chain(framed_payload(data)) {
-        if read_members(body)?
-            .is_some_and(|mut value| sanitize_messagepack(&mut value, false, Door::Write))
-        {
+        let Some(mut value) = read_members(body)? else {
+            continue;
+        };
+        if sanitize_messagepack(&mut value, false, Door::Write) {
             return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
+        }
+        // A secret spread over parts the walk keeps apart (a phrase one word
+        // per nested item) reads whole, as the release doors read it
+        // (`whole_read`; LABEL-04).
+        if let Some(reason) = whole_hit(&value) {
+            return Err(secret_scan_error(reason));
         }
     }
     Ok(secrets_nulled)
+}
+
+/// The write door's text rules over every text a decoded body carries, one
+/// per line, at any depth (`whole_read::messagepack_leaves`).
+fn whole_hit(value: &rmpv::Value) -> Option<&'static str> {
+    // The joined text is wiped on drop (FIX 12047).
+    let mut text = Zeroizing::new(String::new());
+    whole_read::messagepack_leaves(value, &mut text);
+    detect(&text, Door::Write)
 }
 
 fn secret_scan_error(reason: &'static str) -> Error {

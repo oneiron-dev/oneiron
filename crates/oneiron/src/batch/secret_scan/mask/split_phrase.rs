@@ -1,12 +1,14 @@
 //! A recovery phrase split over a file's parts (LABEL-04; ARCH-0038
-//! #promise-label-04): one word per MessagePack item or JSON byte array, or
-//! between the bytes that frame those items. The door reads it whole, in the
-//! leaf's decoded parts joined or in its lossy text, where no run of valid
-//! text holds it, so no text span places it. Each word is found at its bytes
+//! #promise-label-04): one word per MessagePack item or JSON byte array, at
+//! any depth, or between the bytes that frame those items. The door reads it
+//! whole, in the leaf's decoded parts joined or in its lossy text, where no
+//! run of valid text holds it, so no text span places it. Each word is found
+//! at its bytes
 //! in the leaf: one custody record holds the phrase, and the file's mark
 //! covers each word (owner ruling G04 binary = C2). In a body that is no
-//! file, [`array_phrase`] and [`encoded_phrase_part`] name the smallest value
-//! that reads as the phrase, which takes the handle whole.
+//! file, [`array_phrase`], [`leaves_phrase_part`] and [`encoded_phrase_part`]
+//! name the smallest value that reads as the phrase, which takes the handle
+//! whole.
 
 use std::ops::Range;
 
@@ -32,6 +34,11 @@ pub(super) fn split_phrases(leaf: &[u8]) -> Vec<SplitPhrase> {
     let mut phrases = Vec::new();
     if let Some((tree, node)) = decoded(leaf) {
         read_part(&tree.0, &node, &mut phrases);
+        // The whole read: every text the leaf carries, one per line.
+        read_text(&mut phrases, |text| {
+            text.push_leaves(&tree.0, &node);
+            true
+        });
     }
     // Valid UTF-8 is one run of text to the text rules, which placed what
     // it holds.
@@ -64,10 +71,27 @@ pub(super) fn array_phrase(items: &[Value]) -> Option<Zeroizing<Vec<u8>>> {
 
 /// The smallest part of `value` whose MessagePack encoding holds a recovery
 /// phrase in its lossy text, as the text rules read a body's raw bytes: its
-/// path (an array item by its index, a map's key at `2i` and its member at
-/// `2i + 1`), and the phrase's words, one space between them.
+/// path (see [`smallest_part`]) and the phrase's words, one space between
+/// them.
 pub(super) fn encoded_phrase_part(value: &Value) -> Option<(Vec<usize>, Zeroizing<Vec<u8>>)> {
-    let mut phrase = encoded_phrase(value)?;
+    smallest_part(value, encoded_phrase)
+}
+
+/// The smallest part of `value` whose texts, one per line at any depth, hold
+/// a recovery phrase, as the door's whole read reads a body (one word per
+/// nested item): its path and the phrase.
+pub(super) fn leaves_phrase_part(value: &Value) -> Option<(Vec<usize>, Zeroizing<Vec<u8>>)> {
+    smallest_part(value, leaves_phrase)
+}
+
+/// The smallest part of `value` that `read` finds a phrase in, by its path
+/// (an array item by its index, a map's key at `2i` and its member at
+/// `2i + 1`), with the phrase: `value` when no part of it holds one alone.
+fn smallest_part(
+    value: &Value,
+    read: impl Fn(&Value) -> Option<Zeroizing<Vec<u8>>>,
+) -> Option<(Vec<usize>, Zeroizing<Vec<u8>>)> {
+    let mut phrase = read(value)?;
     let mut path = Vec::new();
     let mut part = value;
     'descend: loop {
@@ -80,7 +104,7 @@ pub(super) fn encoded_phrase_part(value: &Value) -> Option<(Vec<usize>, Zeroizin
             _ => break,
         };
         for (at, child) in children.into_iter().enumerate() {
-            if let Some(found) = encoded_phrase(child) {
+            if let Some(found) = read(child) {
                 phrase = found;
                 path.push(at);
                 part = child;
@@ -90,6 +114,13 @@ pub(super) fn encoded_phrase_part(value: &Value) -> Option<(Vec<usize>, Zeroizin
         break;
     }
     Some((path, phrase))
+}
+
+/// The recovery phrase `value`'s texts hold, one per line at any depth.
+fn leaves_phrase(value: &Value) -> Option<Zeroizing<Vec<u8>>> {
+    let mut text = Zeroizing::new(String::new());
+    super::super::whole_read::messagepack_leaves(value, &mut text);
+    phrase_words(&text)
 }
 
 /// The recovery phrase `value`'s MessagePack encoding holds in its lossy
@@ -366,6 +397,34 @@ impl MappedText {
             self.push_part(item, node);
         }
         true
+    }
+
+    /// Every text `value` carries, each on a line of its own, in order, at
+    /// any depth, as the door's whole read joins them
+    /// (`whole_read::messagepack_leaves`).
+    fn push_leaves(&mut self, value: &Value, node: &Node) {
+        match (value, node) {
+            (Value::String(_) | Value::Binary(_) | Value::Ext(..), Node::Bytes { .. }) => {
+                self.push_part(value, node);
+                self.text.push('\n');
+            }
+            (Value::Array(items), Node::Array(nodes)) if items.len() == nodes.len() => {
+                if !items.is_empty() && self.push_byte_values(items, nodes) {
+                    self.text.push('\n');
+                    return;
+                }
+                for (item, node) in items.iter().zip(nodes) {
+                    self.push_leaves(item, node);
+                }
+            }
+            (Value::Map(fields), Node::Map(nodes)) if fields.len() == nodes.len() => {
+                for ((key, member), (key_node, member_node)) in fields.iter().zip(nodes) {
+                    self.push_leaves(key, key_node);
+                    self.push_leaves(member, member_node);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// An array of byte values as the text those bytes read as, each
