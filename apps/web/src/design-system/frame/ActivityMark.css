@@ -1,0 +1,21 @@
+/* An activity mark: a ring waits on you, half-tone is working, a symbol
+   for the rest. Inside an activity row it takes the row's ink. */
+.sl-activity-mark {
+  display: grid;
+  place-items: center;
+  color: var(--sl-activity-ink, var(--sl-ink-2));
+}
+
+.sl-activity-mark[data-kind="running"] svg {
+  display: block;
+  fill: var(--sl-ink-2);
+}
+
+.sl-activity-mark[data-kind="done"] {
+  color: var(--sl-ink-3);
+}
+
+.sl-status-dot.sl-activity-mark,
+.sl-guest-ring.sl-activity-mark {
+  display: inline-block;
+}

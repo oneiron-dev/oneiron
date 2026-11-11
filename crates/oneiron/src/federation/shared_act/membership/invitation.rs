@@ -269,6 +269,22 @@ impl Vault {
         Ok(invitation)
     }
 
+    /// Whether `member` holds an open invitation to `vault_id`: pending and
+    /// not expired at `now`. The `add_member` effect refuses while one
+    /// stands, and so does a Steward's ask to add them (review of #6917).
+    pub(in crate::federation::shared_act) fn open_invitation_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        member: EntityId,
+        now: u64,
+    ) -> Result<bool> {
+        Ok(self
+            .invitations_of_in_txn(txn, member, vault_id)?
+            .iter()
+            .any(|open| open.state == SharedInvitationState::Pending && now < open.expires_at))
+    }
+
     /// The `add_member` effect: one pending invitation of `member` at `role`,
     /// refused while another of theirs to this vault is still open. `founding`
     /// marks the creation writer's own invitations. It names no key: the
@@ -283,11 +299,7 @@ impl Vault {
         founding: bool,
         now: u64,
     ) -> Result<Effect> {
-        if self
-            .invitations_of_in_txn(txn, member, vault_id)?
-            .iter()
-            .any(|open| open.state == SharedInvitationState::Pending && now < open.expires_at)
-        {
+        if self.open_invitation_stands_in_txn(txn, vault_id, member, now)? {
             return Err(invalid());
         }
         let invitation = SharedInvitation {

@@ -231,9 +231,12 @@ constant and a bare verb a function, so a row named by a reserved word
 (`vault.export`) is a valid method. Each row has its typed input and its typed
 reply, `Promise<T | StoredResult>`: the guest's verb import resolves with the
 output itself (`typed.rs` `self.verbs.call`), or with runtime.d.ts's
-`StoredResult` card past 512 KiB. A refusal throws its JSON text as a string,
-and a parked call throws `missing_host_response_field`; the fragment's header
-says so. Every type the rows reach is written out once in the `Sdk` namespace,
+`StoredResult` card past 512 KiB. A refusal throws its JSON text as a string.
+A parked `wait`, or `tasks.wait` on a world-privacy request, resolves with its
+row's `Park` output, and a callable that finishes on that park fails as
+unfinished; any other parked call throws `missing_host_response_field`. The
+fragment's header says so.
+Every type the rows reach is written out once in the `Sdk` namespace,
 nested types included. A row's reply is its `output`, or `Promise<unknown>`
 when the table names none. `outputs_by_input` maps an input field (its wire name)
 to the reply code mode answers when that field is present

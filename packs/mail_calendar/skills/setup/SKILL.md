@@ -11,7 +11,7 @@ sources first (`vault.mail.sources.list`); never connect a source twice.
 
 ## Which kind of source
 
-- **A personal mailbox** (`oleksii@antevon.com`): the person connects it
+- **A personal mailbox** (`owen@example.com`): the person connects it
   themselves, and it reads to them alone. Never connect someone else's
   personal mailbox for them.
 - **A group address** (`hello@`, `legal@`, `billing@`, `team@`): an Owner or

@@ -8,21 +8,26 @@ use oneiron::task_verb::sdk;
 
 use super::FacadeApiError;
 use super::host_doors::support::{Listed, credential_listing, owner_proof};
+use super::substrate_read_doors::substrate_reader;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
+/// `vault.retrieval.runs`: the owner under its proof, or a holder of a
+/// Steward grant naming `read` (untangle 6.6c), which the engine checks at
+/// the read.
 pub(crate) async fn vault_retrieval_runs(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::task_verb::sdk::RetrievalRunsRequest,
 ) -> Listed<Vec<oneiron::task_verb::sdk::RetrievalRunEvidence>> {
+    const VERB: &str = "vault.retrieval.runs";
     let admitted = || -> MemoryResult<_> {
-        let owner = owner_proof(auth, server, "vault.retrieval.runs")?;
+        let reader = substrate_reader(server, auth, VERB)?;
         let caller =
             super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-        Ok((owner, caller))
+        Ok((reader, caller))
     };
-    let (owner, caller) = match admitted() {
+    let (reader, caller) = match admitted() {
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
@@ -30,8 +35,11 @@ pub(crate) async fn vault_retrieval_runs(
         server,
         auth,
         caller,
-        "vault.retrieval.runs",
-        move |_, _, memory| sdk::retrieval_runs_as_owner(&memory, &owner, input),
+        VERB,
+        move |_, _, memory| match &reader {
+            Some(owner) => sdk::retrieval_runs_as_owner(&memory, owner, input),
+            None => sdk::retrieval_runs_as_reader(&memory, input),
+        },
     )
     .await
 }

@@ -1,0 +1,14 @@
+{
+  "name": "vault.diagnostics.evidence",
+  "description": "Reads one attempt's failure evidence: the attribution causes its pack receipt names, its spend scope and its run's completed check diagnostics. The vault owner, or a holder of a Steward grant naming read, checked at each call.",
+  "input": "crate::dreamer_runner::maintenance::agent_health::DiagnosticEvidenceRequest",
+  "output": "crate::dreamer_runner::maintenance::agent_health::DiagnosticEvidence",
+  "call": "crate::dreamer_runner::maintenance::agent_health::diagnostic_evidence(memory, &input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -1,0 +1,14 @@
+{
+  "name": "vault.agent_health.cards",
+  "description": "Reads the agent health cards opened, updated or settled in a period, most impact first: the vault owner, or a holder of a Steward grant naming read, checked at each call.",
+  "input": "crate::dreamer_runner::maintenance::agent_health::AgentHealthCardsRequest",
+  "output": "Vec<crate::dreamer_runner::maintenance::agent_health::AgentHealthCard>",
+  "call": "crate::dreamer_runner::maintenance::agent_health::agent_health_cards(memory, &input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}
