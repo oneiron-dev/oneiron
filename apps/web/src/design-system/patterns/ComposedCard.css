@@ -16,6 +16,11 @@
   --sl-mark-ground: var(--sl-sunk);
 }
 
+/* Under a message's text, a framed card keeps a little air. */
+.sl-message-body > .sl-composed-card[data-ground="well"] {
+  margin-top: 10px;
+}
+
 /* The title line: the title, then the information mark at the right. */
 .sl-composed-card-head {
   display: flex;

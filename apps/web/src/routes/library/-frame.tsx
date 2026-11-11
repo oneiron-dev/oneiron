@@ -45,6 +45,7 @@ import { Section, Specimen } from './-gallery-frame'
 import { ANTEVON, EIRI, METRYON, TORY, type Resident } from './-identity'
 import { formatAnswerTime } from '~/design-system'
 import { GALLERY_THEMES } from './-themes'
+import { RoomHeadSection } from './-room'
 
 /* Frame sections of the /library gallery: the sidebar, the microsidebar,
    the app frame on each theme, the vault switch, the activity list, the
@@ -1333,6 +1334,8 @@ export function FieldSections() {
         <FrameDemo theme={GALLERY_THEMES[0]} startAt="notes" specimen="frame-no-sidebar" caption="a lens: no sidebar, the sheet is the work area alone" />
       </section>
 
+      <RoomHeadSection />
+
       <section className="lib-field-section" aria-labelledby="lib-beside">
         <h2 id="lib-beside" className="lib-field-head">
           SplitPane.Thing: one thing opened beside the room
@@ -1351,8 +1354,14 @@ export function FieldSections() {
           specimen="beside-1440-thread"
           caption="1440 wide, with a thread: the write box now says reply; the ask in the talk carries the thread line"
         />
-        <BesideDemo width={1100} height={680} withThread={false} specimen="beside-1100" caption="1100 wide: the pane holds its 380 px floor" />
-        <BesideDemo width={1100} height={680} withThread specimen="beside-1100-thread" caption="1100 wide, with a thread" />
+        <BesideDemo
+          width={1100}
+          height={680}
+          withThread={false}
+          specimen="beside-1100"
+          caption="1100 wide: the work area cannot hold the column and the pane’s 380 px floor, so the pane lies over the room from the right edge; the room keeps its column; close or Escape returns to it"
+        />
+        <BesideDemo width={1100} height={680} withThread specimen="beside-1100-thread" caption="1100 wide, with a thread: over the room" />
       </section>
     </div>
   )
