@@ -108,7 +108,7 @@ fn seed(vault_path: &Path) -> (EntityId, EntityId) {
             ENTITY_TYPE_TURN,
             when,
             at,
-            &encode(serde_json::json!({"txt": "call me Oleksii", "spkr": "user", "at": at})),
+            &encode(serde_json::json!({"txt": "call me Owen", "spkr": "user", "at": at})),
         )
         .edge_checked(&turn, &conversation, 1.0)
         .commit()
@@ -120,7 +120,7 @@ fn seed(vault_path: &Path) -> (EntityId, EntityId) {
             oneiron::registry::ENTITY_TYPE_PERSON,
             TimeRange { start: 1, end: 1 },
             1,
-            &rmp_serde::to_vec_named(&serde_json::json!({"name": "Oleksii"})).unwrap(),
+            &rmp_serde::to_vec_named(&serde_json::json!({"name": "Owen"})).unwrap(),
         )
         .unwrap();
     let scope = DreamerConsolidationScope::Micro;
@@ -140,22 +140,22 @@ fn extraction(request: &serde_json::Value) -> String {
         .find_map(|line| {
             let (label, name) = line.strip_prefix("entity ")?.split_once(' ')?;
             (serde_json::from_str::<serde_json::Value>(name).ok()
-                == Some(serde_json::json!("Oleksii")))
+                == Some(serde_json::json!("Owen")))
                 .then_some(label)
         })
-        .expect("the call lists the seeded Oleksii subject");
+        .expect("the call lists the seeded Owen subject");
     let (turn, quote) = input
         .lines()
         .find_map(|line| {
             let (head, quote) = line.strip_prefix('[')?.split_once("] ")?;
             let label = head.split_whitespace().next()?;
-            (label.starts_with('T') && quote == "call me Oleksii").then_some((label, quote))
+            (label.starts_with('T') && quote == "call me Owen").then_some((label, quote))
         })
         .expect("the call lists the captured turn");
     serde_json::json!({"candidates": [{
         "subject": subject,
         "predicate": "profile.name",
-        "value": "Oleksii",
+        "value": "Owen",
         "confidence": 0.9,
         "evidence_refs": [{"source": turn, "quote": quote}],
     }]})
