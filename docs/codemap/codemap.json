@@ -9443,6 +9443,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/claim_dependencies.rs",
+     "purpose": "The records an `esign.*` claim reads beside (FIX 6945 A): its signing document and every original artifact…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -9689,7 +9699,7 @@
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "mod": 2,
       "re-export": 25
      }
@@ -15965,7 +15975,7 @@
      "path": "src/claim/scoped_read/claim_admission.rs",
      "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -42697,6 +42707,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/house_grant.rs",
+     "purpose": "The house mind's read of a person's turn for its project question (OF-501, ARCH-0067)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -42767,7 +42787,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 92,
+      "crate-vis": 93,
       "mod": 2,
       "re-export": 8
      }
@@ -96441,7 +96461,7 @@
      "purpose": "The project card a conversation proposes (OF-501, ARCH-0067)",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 7,
       "re-export": 1,
@@ -98509,6 +98529,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/esign_audit_document_admission.rs",
+     "purpose": "`ESIGN-AUDIT-CLAIM-FACET`: an `esign.*` claim reads only with its document",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -98538,6 +98566,14 @@
      "notable": [],
      "path": "tests/git_smart_http.rs",
      "purpose": "Stock-git end-to-end coverage for the vault-as-origin serve wire (ARCH-0068 Phase A, ONE-1908)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_source_read.rs",
+     "purpose": "HOUSE-SOURCE-READ (OF-501; FIX 22357, #6857): the house mind's project question reads the person's turn it…",
      "surface": {}
     },
     {
@@ -99684,7 +99720,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 88,
+     "files": 89,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100251,7 +100287,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 208,
+     "files": 209,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101233,8 +101269,8 @@
    },
    "over_bar": 242,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7255,
-   "test_files": 937
+   "source_files": 7257,
+   "test_files": 939
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -105173,6 +105209,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/e2e_approved_manifest_fixture.rs",
+     "purpose": "Runs the shipped bench flow to produce and check the approved E2E manifest fixture",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/teacher_probe_cli.rs",
      "purpose": "Run the shipped binary, not only its Rust scoring function, against CI fixtures",
      "surface": {}
@@ -105288,7 +105332,7 @@
    "over_bar": 1,
    "purpose": "oneiron-bench — benchmark harness drivers",
    "source_files": 159,
-   "test_files": 18
+   "test_files": 19
   },
   "oneiron-broker": {
    "files": [
@@ -139443,11 +139487,17 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ManualClockFile",
+      "RuntimeClock"
+     ],
      "path": "src/runtime/clock.rs",
-     "purpose": "Shared wall-clock time in Unix milliseconds",
+     "purpose": "Shared wall-clock time in Unix milliseconds, and `[runtime] clock`: the clock this server's vault reads",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -139459,8 +139509,8 @@
      "path": "src/runtime/config.rs",
      "purpose": "Resolved runtime config including the 163-line resolution impl",
      "surface": {
-      "crate-vis": 3,
-      "fn": 7,
+      "crate-vis": 4,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -139528,7 +139578,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 2,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -141961,6 +142011,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/runtime_clock.rs",
+     "purpose": "The server's `[runtime] clock`, checked through public paths only: the shipped binaries, `build_app`, and…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/support/fake_llm.rs",
      "purpose": "A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and…",
      "surface": {
@@ -142556,7 +142614,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1827,
-   "test_files": 186
+   "test_files": 187
   },
   "oneiron-skill-attribution": {
    "files": [

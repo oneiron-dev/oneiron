@@ -270,7 +270,10 @@ fn the_seeded_houses_own_grant_still_reads_a_claim() -> TestResult {
             wallet_ref: None,
         },
     )?;
-    assert_eq!(minted.grant.agent, house, "the owner grants the seeded house");
+    assert_eq!(
+        minted.grant.agent, house,
+        "the owner grants the seeded house"
+    );
     assert!(minted.grant.confers, "the owner-minted read Grant is live");
 
     let read = vault
