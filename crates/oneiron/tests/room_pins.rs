@@ -783,6 +783,9 @@ fn each_room_shows_only_its_own_pins() -> TestResult {
         WriteActor::new(fx.owner, EdgeActorClass::Human),
         fx.vault.now_recorded_at(),
     )?;
+    // The ordinary room is its own conversation: the home room's grants do
+    // not reach it.
+    grant_room_messages(&fx.vault, room, &[fx.leader, fx.member])?;
     let said = speak_trunk(&fx.vault, fx.leader, room)?;
     let in_ordinary = person(&fx, fx.member).rooms_pins_pin(&pin(room, said))?.pin;
     let in_home = person(&fx, fx.member)
