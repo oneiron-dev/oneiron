@@ -104,9 +104,13 @@ export class PublicHttpClient {
   }
   /** Only catalogued, typed calls. 202 PENDING_ASK is retained as an error, never cast to success. */
   async call<V extends FacadeVerb>(verb: V, input: FacadeInput<V>): Promise<FacadeResult<V>> {
+    return (await this.callWithReceipt(verb,input)).value;
+  }
+  /** call(), keeping the x-oneiron-receipt-ref header the server sets on the reply (null when it sets none). */
+  async callWithReceipt<V extends FacadeVerb>(verb: V, input: FacadeInput<V>): Promise<{ readonly value: FacadeResult<V>; readonly receiptRef: string | null }> {
     const reply = await this.request<FacadeResult<V>>("POST",`/v1/core/facade/${verb}`,input,{"x-oneiron-invocation":secretHex(16)});
     if (reply.status === 202 && typeof reply.body === "object" && reply.body && "error" in reply.body) throw new PublicHttpError(reply);
-    return reply.body;
+    return {value:reply.body,receiptRef:reply.headers.get("x-oneiron-receipt-ref")};
   }
 }
 export interface JsonRpcError { readonly code: number; readonly message: string; readonly data?: unknown }
