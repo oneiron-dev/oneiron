@@ -265,11 +265,16 @@ pub(super) fn landing_at_receipt_cap(
     queue: &AttemptQueue<'_>,
     dedupe_key: &str,
 ) -> Result<AttemptRecord> {
+    // Ruled refusal removed (Rule 5, counts never refuse; fb7481d2e6f
+    // #3167): non-terminal receipts no longer refuse at the old cap, so the
+    // helper freezes its historical value (256 minus the one reserved
+    // terminal slot) to keep the same input size.
+    const OLD_MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS: usize = 255;
     let leased = leased_attempt(queue, dedupe_key)?;
     queue.request_cancel(soft_request(leased.id, "peer-1", CancelStanding::PeerAgent))?;
     let mut record = accept_landing_at(queue, &leased, LandingTrigger::CancelRequest, 13)?;
     let mut marker = 0_u64;
-    while record.cancel_receipts().len() < MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS {
+    while record.cancel_receipts().len() < OLD_MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS {
         marker += 1;
         record = queue.record_resume_point(RecordAttemptResumePoint {
             id: leased.id,
@@ -281,7 +286,7 @@ pub(super) fn landing_at_receipt_cap(
     }
     assert_eq!(
         record.cancel_receipts().len(),
-        MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS
+        OLD_MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS
     );
     Ok(record)
 }

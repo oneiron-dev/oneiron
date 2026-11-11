@@ -1,14 +1,22 @@
 //! Imported Active fixtures traverse the same consent and held-out doors as a host.
+use super::tests::ladder_fixture::{
+    FixtureNotes, FixtureProvider, choice_answer, fixture_notes, noul_answer, score_answer,
+};
 use super::*;
 use crate::{
     Vault,
     claim::{ClaimApprovalStatus, ClaimSource},
     entity_id::EntityId,
     error::Result,
+    llm::decision::{DecisionQuestion, DecisionRung, ProviderPin, TypedDecision},
     skill::{SkillLifecycle, SkillRecord},
-    skill_optimize::{BlindPreference, HeldOutReplayCase, HeldOutReplayScorer, PreferredResponse},
+    skill_optimize::{
+        GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplay, SkillOptimizeDecisions,
+        SkillReplayResponses,
+    },
     temporal::TimeRange,
 };
+use serde_json::Value as Json;
 fn at(time: u64) -> TimeRange {
     TimeRange {
         start: time,
@@ -101,7 +109,7 @@ pub(crate) fn admit_installed(vault: &Vault, id: &EntityId, source: &HubRef) -> 
         .approve_marketplace_activation(&ask, &owner)
         .expect("human consent");
     let HubAdmissionDisposition::Ruled(receipt) = vault
-        .admit_marketplace_skill(&ask, &FixtureReplay, at(12), 13)
+        .admit_marketplace_skill(&ask, &FixtureReplay::new(), at(12), 13)
         .expect("held-out")
     else {
         panic!("consented fixture")
@@ -109,37 +117,85 @@ pub(crate) fn admit_installed(vault: &Vault, id: &EntityId, source: &HubRef) -> 
     assert!(receipt.accepted);
     vault.get_skill_record(id).expect("read").expect("admitted")
 }
-struct FixtureReplay;
-impl HeldOutReplayScorer for FixtureReplay {
+/// Fixture replay answers as typed ladder judgments.
+///
+/// The removed `HeldOutReplayScorer` fake (c2a4a506975) returned fixed values;
+/// this provider answers the same values per judgment kind: `score` is 0.9
+/// when the instructions carry the fixture marker, else 0.2; `structural`,
+/// `contrastive`, `task_success` and `response_score` are 0.5; `preference`
+/// picks the first response; `honesty` is false. Any other kind panics: the
+/// fixture sets no answer for it.
+struct FixtureReplay {
+    notes: FixtureNotes<'static>,
+}
+impl FixtureReplay {
+    fn new() -> Self {
+        let provider = FixtureProvider::new(
+            ProviderPin {
+                rung: DecisionRung::SystemOne,
+                model: "fixture-judge".to_owned(),
+                version: "1".to_owned(),
+            },
+            "fixture-judge@1",
+            move |kind, _, state| match kind.as_deref() {
+                Some("score") => {
+                    let held = state
+                        .get("held_out_receipts")
+                        .and_then(Json::as_array)
+                        .map(|receipts| receipts.len())
+                        .unwrap_or_default();
+                    assert!(held > 0);
+                    let instructions = state
+                        .get("instructions")
+                        .and_then(Json::as_str)
+                        .unwrap_or_default();
+                    Ok(score_answer(
+                        if instructions.contains("Check the fixture result.") {
+                            0.9
+                        } else {
+                            0.2
+                        },
+                    ))
+                }
+                Some("structural" | "contrastive" | "task_success" | "response_score") => {
+                    Ok(score_answer(0.5))
+                }
+                Some("preference") => Ok(choice_answer("first")),
+                Some("honesty") => Ok(noul_answer(false)),
+                other => panic!("FixtureReplay asked an unexpected kind: {other:?}"),
+            },
+        );
+        Self {
+            notes: fixture_notes("fixture-judge@1", provider),
+        }
+    }
+}
+impl HeldOutReplayNotes for FixtureReplay {
     fn judge_revision(&self) -> &str {
-        "fixture-judge@1"
+        self.notes.judge_revision()
     }
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-        assert!(!case.held_out_receipts.is_empty());
-        Ok(if case.instructions.contains("Check the fixture result.") {
-            0.9
-        } else {
-            0.2
-        })
+    fn decisions(&self) -> SkillOptimizeDecisions<'_> {
+        self.notes.decisions()
     }
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-        Ok(0.5)
+    fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<Json> {
+        self.notes.replay_state(case)
     }
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
+    fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+        self.notes.replay_responses(receipts)
     }
-    fn contrastive_audit(
+    fn record_decision(
         &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> Result<f32> {
-        Ok(0.5)
+        question: &DecisionQuestion,
+        decision: &TypedDecision,
+        state: &Json,
+    ) -> Result<()> {
+        self.notes.record_decision(question, decision, state)
     }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
+    fn honesty_replays(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
+        self.notes.honesty_replays(case)
+    }
+    fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+        self.notes.goal_axes(case)
     }
 }
 /// Real terminal attempt receipts, attributed through the production reliability door.

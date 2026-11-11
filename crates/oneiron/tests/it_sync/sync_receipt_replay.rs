@@ -31,6 +31,8 @@
 
 use std::sync::Arc;
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
 use oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT;
@@ -63,22 +65,23 @@ fn test_config() -> VaultConfig {
 
 fn test_vault_with_dir() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), test_config()));
     (dir, vault)
 }
 
 const TEST_LEASE_VAULT_ID: u64 = 0;
 const OTHER_TEST_LEASE_VAULT_ID: u64 = 0x1110_0f0e_0d0c_0b0a;
 
-/// 25-byte pinned envelope: type u8 + occurred_start/end + learned_at u64 BE.
-/// Receipts are point events (`occurred_start == occurred_end == learned_at`,
+/// The pinned metadata header: type u8 + occurred_start/end + learned_at +
+/// row_version u64 BE (zero on a receipt). Receipts are point events (`occurred_start == occurred_end == learned_at`,
 /// matching the engine's direct receipt writer).
 fn receipt_envelope(learned_at: u64, body: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + body.len());
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     blob.push(ENTITY_TYPE_REDACTION_AUDIT);
     blob.extend_from_slice(&learned_at.to_be_bytes());
     blob.extend_from_slice(&learned_at.to_be_bytes());
     blob.extend_from_slice(&learned_at.to_be_bytes());
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(body);
     blob
 }
@@ -106,6 +109,8 @@ fn receipt_body_entries(scope_entity_hex: &str) -> Vec<(Value, Value)> {
         ("sweep_queued_at".into(), Value::Nil),
         ("sweep_complete_at".into(), Value::Nil),
         ("affected_revision_ids".into(), Value::Array(vec![])),
+        ("erase_complete_at".into(), Value::Nil),
+        ("custody_retirements".into(), Value::Array(vec![])),
         ("verification".into(), Value::Map(vec![])),
     ]
 }
@@ -143,7 +148,7 @@ fn with_att_entries(
 
 /// Forges a fully-signed receipt envelope per the OD-6 transcript, entirely
 /// in the test (the contract, not the engine's signer): sign
-/// `b"oneiron/receipt-att/v1" || receipt_id || header(25) || body-with-
+/// `b"oneiron/receipt-att/v1" || receipt_id || header(33) || body-with-
 /// verification-empty`, then splice the four att_ entries in.
 fn signed_receipt_blob(
     signing_key: &SigningKey,
@@ -154,11 +159,12 @@ fn signed_receipt_blob(
 ) -> Vec<u8> {
     let body_unsigned = encode_map(receipt_body_entries(scope_hex));
     let header = {
-        let mut h = Vec::with_capacity(25);
+        let mut h = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN);
         h.push(ENTITY_TYPE_REDACTION_AUDIT);
         h.extend_from_slice(&learned_at.to_be_bytes());
         h.extend_from_slice(&learned_at.to_be_bytes());
         h.extend_from_slice(&learned_at.to_be_bytes());
+        h.extend_from_slice(&0_u64.to_be_bytes());
         h
     };
     let mut msg = Vec::new();
@@ -489,7 +495,8 @@ fn divergent_remote_receipt_bytes_quarantined_local_bytes_survive() {
     // body bytes under a shifted learned_at still diverge at the envelope
     // level and must quarantine, not overwrite (an implementation comparing
     // only bodies fails here).
-    let header_divergent = receipt_envelope(learned_at + 1, &receipt_raw[25..]);
+    let header_divergent =
+        receipt_envelope(learned_at + 1, &receipt_raw[ENTITY_METADATA_HEADER_LEN..]);
     assert_ne!(header_divergent, receipt_raw);
     let doc2 = create_window_doc("node-x", &window_key);
     insert_bytes(&doc2.get_map("entities"), &receipt_hex, &header_divergent);
