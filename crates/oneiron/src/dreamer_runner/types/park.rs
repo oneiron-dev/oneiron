@@ -1,8 +1,10 @@
 //! Parking a Dreamer attempt in local runner state.
 
 use crate::attempt_queue::AttemptId;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 
 use super::DreamerParkCause;
+use super::DreamerParkWaitClass;
 
 /// Input for parking a Dreamer attempt in local runner state.
 ///
@@ -18,4 +20,40 @@ pub struct ParkDreamerAttempt {
     pub park_owner: String,
     pub carried_spend: Option<u64>,
     pub now: u64,
+}
+
+/// What a parked attempt waits on: the typed refill that resumes it. A typed wait exists only on a
+/// trap park (the writer refuses it elsewhere): one resume route.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DreamerParkWait {
+    /// The hard cap of exactly this open spend scope refused the step's reservation, which asked
+    /// it for `asked_units`; a top-up of this scope that leaves room for them wakes the trap.
+    Budget {
+        /// The open hard spend scope whose own cap refused the reservation.
+        scope: SpendScopeId,
+        /// The units the reservation asked of that scope: the reservation less what the open
+        /// scopes below it could still cover when the step parked.
+        asked_units: u64,
+    },
+}
+
+impl DreamerParkWait {
+    /// The wait's class, as the park resume table reads it.
+    #[must_use]
+    pub fn class(&self) -> DreamerParkWaitClass {
+        match self {
+            Self::Budget { .. } => DreamerParkWaitClass::Budget,
+        }
+    }
+}
+
+/// A parked attempt's typed wait with its lease fence: the queue row's `attempt_count` the writer
+/// read in the park's own transaction. A resumer wakes the wait only while the row still carries
+/// this generation, so a retry's park never answers its source's refill.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DreamerParkedWait {
+    /// The condition that wakes the parked attempt's trap.
+    pub wait: DreamerParkWait,
+    /// The queue row's attempt count when this wait was parked.
+    pub lease_generation: u32,
 }

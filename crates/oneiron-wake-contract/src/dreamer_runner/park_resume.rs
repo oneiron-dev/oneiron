@@ -12,6 +12,7 @@
 //! waits for the owner's release, never a blind retry (constraint C5), boot included. It is the future park table
 //! of the generic run tree (slice 6.5, census B01): that slice extends it, it does not replace it.
 
+use crate::dreamer_runner::park_wait::DreamerParkWaitClass;
 use crate::dreamer_runner::types::DreamerParkCause;
 
 /// The park and lease owner of the server's Dreamer pass.
@@ -121,11 +122,13 @@ pub enum ParkResumer {
     FeedbackTriage,
     /// The vault's owner releases a park that waits on an owner act and that no other resumer frees (WAKE-D1).
     OwnerRelease,
+    /// A top-up of the spend scope a budget wait names; it wakes the park's trap.
+    BudgetTopUp,
 }
 
 impl ParkResumer {
     /// Every resumer, in table order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::LaterPass,
         Self::TrapConsume,
         Self::OutageSweep,
@@ -139,6 +142,7 @@ impl ParkResumer {
         Self::DrafterTrained,
         Self::FeedbackTriage,
         Self::OwnerRelease,
+        Self::BudgetTopUp,
     ];
 }
 
@@ -163,6 +167,7 @@ impl ParkResume {
     /// | DrafterTrained | any | DrafterRetrain |
     /// | FeedbackTriage | any | FeedbackTriage |
     /// | OwnerRelease | ExecutorError, Other | DreamerServer, AgentRuns, Workflows, Other |
+    /// | BudgetTopUp | none here: only [`Self::admits_wait`] admits it, for a Budget wait on a Trap park | none |
     #[must_use]
     pub const fn admits(
         cause: DreamerParkCause,
@@ -210,6 +215,39 @@ impl ParkResume {
                         owner,
                         Owner::DreamerServer | Owner::AgentRuns | Owner::Workflows | Owner::Other
                     )
+            }
+            // Only admits_wait can admit a top-up: the scope named by its typed wait is required.
+            ParkResumer::BudgetTopUp => false,
+        }
+    }
+
+    /// Whether `resumer` may resume a park of `cause` under an owner of class `owner` that carries
+    /// the typed wait `wait`. The resumer's other gates still apply.
+    ///
+    /// Without a wait (`None`) this is [`Self::admits`], except `BudgetTopUp`, which resumes
+    /// nothing: an untyped park waits on no scope. With a `Budget` wait under a `Trap` owner,
+    /// only `BudgetTopUp` and `TrapConsume` admit. Other owners keep the untyped rules; the writer
+    /// refuses typed waits on those owners. A later pass, a boot recovery, an outage sweep or a
+    /// provider recovery must never blind-retry a park that waits on a scope refill (constraint
+    /// C5). The narrowing holds for every cause: [`Self::admits`] still admits a Checkpoint trap
+    /// park to a later pass or a boot recovery, but not once it carries a Budget wait.
+    #[must_use]
+    pub const fn admits_wait(
+        cause: DreamerParkCause,
+        owner: ParkOwnerClass,
+        wait: Option<DreamerParkWaitClass>,
+        resumer: ParkResumer,
+    ) -> bool {
+        match wait {
+            None => {
+                !matches!(resumer, ParkResumer::BudgetTopUp) && Self::admits(cause, owner, resumer)
+            }
+            Some(DreamerParkWaitClass::Budget) => {
+                if matches!(owner, ParkOwnerClass::Trap) {
+                    matches!(resumer, ParkResumer::BudgetTopUp | ParkResumer::TrapConsume)
+                } else {
+                    Self::admits(cause, owner, resumer)
+                }
             }
         }
     }
@@ -836,6 +874,59 @@ mod tests {
         );
         for other in ["coach.host", "dreamer.step_wait:00ff", "worker-7", ""] {
             assert_eq!(ParkOwnerClass::of(other), ParkOwnerClass::Other, "{other}");
+        }
+    }
+
+    #[test]
+    fn a_typed_budget_wait_narrows_a_trap_park_to_its_top_up_and_trap_consume() {
+        assert_eq!(ParkResumer::ALL.len(), 14);
+        for cause in CAUSES {
+            for owner in ParkOwnerClass::ALL {
+                for resumer in ParkResumer::ALL {
+                    let untyped = ParkResume::admits_wait(cause, owner, None, resumer);
+                    if resumer == ParkResumer::BudgetTopUp {
+                        assert!(!untyped, "{cause:?} {owner:?} {resumer:?}");
+                    } else {
+                        assert_eq!(
+                            untyped,
+                            ParkResume::admits(cause, owner, resumer),
+                            "{cause:?} {owner:?} {resumer:?}"
+                        );
+                    }
+                    let typed = ParkResume::admits_wait(
+                        cause,
+                        owner,
+                        Some(DreamerParkWaitClass::Budget),
+                        resumer,
+                    );
+                    let admitted = if owner == ParkOwnerClass::Trap {
+                        matches!(resumer, ParkResumer::BudgetTopUp | ParkResumer::TrapConsume)
+                    } else {
+                        ParkResume::admits(cause, owner, resumer)
+                    };
+                    assert_eq!(typed, admitted, "{cause:?} {owner:?} {resumer:?}");
+                }
+            }
+        }
+        // The C5 spot check: no blind resumer frees a Budget wait on a trap park, whatever its
+        // cause, so a top-up is the wait's only timed route besides its own trap consume.
+        for cause in CAUSES {
+            for resumer in [
+                ParkResumer::LaterPass,
+                ParkResumer::BootRecovery,
+                ParkResumer::OutageSweep,
+                ParkResumer::ProviderRecovery,
+            ] {
+                assert!(
+                    !ParkResume::admits_wait(
+                        cause,
+                        ParkOwnerClass::Trap,
+                        Some(DreamerParkWaitClass::Budget),
+                        resumer
+                    ),
+                    "{cause:?} {resumer:?}"
+                );
+            }
         }
     }
 }
