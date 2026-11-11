@@ -81,12 +81,12 @@ fn the_strength_archive_is_judged_by_the_dreamers_landing_rows() -> Result<()> {
         doors::authorize_test_inference(&vault)?;
         let node_id = doors::load_or_mint_client_id(&vault)?;
         let conversation = doors::seed_session(&vault, 0x6e, 1);
-        let _turn = doors::seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
-        // The subject is named "Oleksii", so the turn's words list it to the
+        let _turn = doors::seed_turn(&vault, &conversation, "user", "call me Owen", 10);
+        // The subject is named "Owen", so the turn's words list it to the
         // extraction call as `P1`, the label the scripted reply names (FIX
         // 7506: a model reply names only what its call listed).
         let subject = EntityId::now();
-        doors::seed_named_person(&vault, &subject, "Oleksii", 1)?;
+        doors::seed_named_person(&vault, &subject, "Owen", 1)?;
         doors::enqueue_micro(&vault, "run-strength", 20)?;
         let report = doors::micro_wake_pass_with_extraction(&vault, node_id, 21)?;
         assert_eq!(report.completed, 1, "{report:?}");

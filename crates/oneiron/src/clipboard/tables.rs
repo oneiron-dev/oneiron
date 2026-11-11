@@ -4,5 +4,7 @@
 crate::side_table::side_tables! {
     /// Owner-selected ordinary Clipboard cleanup arms. Key: (). No clip text.
     CLIPBOARD_RETENTION: VaultMeta b"clipboard.retention.v1" Named
-        [restore: content] [family: unregistered] [tier: canonical];
+        // Restore class: The owner's cleanup policy stands as the live vault holds it: an image
+        // never brings back an older arm the owner has since switched off (ARCH-0038).
+        [restore: live] [family: unclassified] [tier: canonical];
 }

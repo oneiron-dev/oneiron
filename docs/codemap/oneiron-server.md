@@ -371,11 +371,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/connector_revision_doors.rs` | src | s | 5 crate-vis | — | FIX 988: the owner's doors onto proposed connector slate revisions, shared by HTTP, SDK and MCP: his ruling… |
 | `src/api/facade/connector_slate_doors.rs` | src | s | 2 crate-vis | — | FIX 987: the owner's slate re-draft and a key holder's own narrow, shared by HTTP, SDK and MCP |
 | `src/api/facade/connector_witness_read_doors.rs` | src | s | 2 crate-vis | — | The host doors of an agent's witness-read grant over a connector conversation… |
-| `src/api/facade/consent_doors.rs` | src | s | 15 crate-vis | — | Consent lifecycle host doors, on the same owner proof as Gate policy |
+| `src/api/facade/consent_doors.rs` | src | s | 15 crate-vis | — | Consent lifecycle host doors: owner-authorized acts and a grantee's own revoke |
 | `src/api/facade/consolidation_doors.rs` | src | s | 7 crate-vis | — | Owner-bound generated-claim promotion, vetting and evidence reads |
 | `src/api/facade/content_policy_doors.rs` | src | s | 5 crate-vis | — | Content-policy doors beside the Gate policy doors, on each caller's own credential |
 | `src/api/facade/coordination_doors.rs` | src | m | 11 crate-vis | — | The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open… |
-| `src/api/facade/core_write_doors.rs` | src | s | 7 crate-vis | — | The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`… |
+| `src/api/facade/core_write_doors.rs` | src | s | 8 crate-vis | — | The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`… |
 | `src/api/facade/coreference_doors.rs` | src | s | 4 crate-vis | — | Owner coreference doors: every transport reaches the engine's typed operations |
 | `src/api/facade/courtesy_delete_doors.rs` | src | s | 4 crate-vis | — | The host doors of the owner's courtesy delete rows (OF-273): `vault.courtesy_delete.send`, `.sent`… |
 | `src/api/facade/craft_candidate_doors.rs` | src | s | 2 crate-vis | — | The host doors of the owner's review of residents' craft candidates (OF-490): `vault.craft_candidates` and… |
@@ -391,6 +391,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/disclosure_doors.rs` | src | s | 5 crate-vis | — | Owner registry and reveal-settlement doors, shared by HTTP and MCP |
 | `src/api/facade/drafter_doors.rs` | src | s | 6 crate-vis | — | The drafter host doors (FIX 12569): the owner's `vault.drafters.list`, `.status`, `.policy.set` and… |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
+| `src/api/facade/engine_control_doors.rs` | src | s | 11 crate-vis | — | The host doors of the engine-control knob verbs (untangle 6.6d; owner 9 Nov 22:47, every substrate control… |
 | `src/api/facade/errors.rs` | src | m | 11 crate-vis | — | The facade's error envelope: an engine `MemoryError` or an `ApiError` as one HTTP reply |
 | `src/api/facade/eval_doors.rs` | src | s | 12 crate-vis | — | Typed eval doors under the caller's own verified owner credential |
 | `src/api/facade/export_transfer.rs` | src | m | 6 crate-vis | — | Whole-vault exports kept on the server for their caller to read (FIX 3676) |
@@ -421,7 +422,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hook_regen_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
 | `src/api/facade/hooks.rs` | src | m | 12 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
-| `src/api/facade/host_doors.rs` | src | m | 186 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 189 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_doors/admission.rs` | src | s | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/authority_clock.rs` | src | s | 1 crate-vis | — | The owner's authority clock repair door (FIX 10106) |
@@ -447,7 +448,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/legal_hold_doors.rs` | src | s | 9 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`… |
 | `src/api/facade/lens_selection_doors.rs` | src | s | 3 crate-vis | — | Frame-bound selections and result-set actions on a held card |
 | `src/api/facade/linear_doors.rs` | src | s | 1 crate-vis | — | The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6) |
-| `src/api/facade/live_run_doors.rs` | src | m | 9 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
+| `src/api/facade/live_run_doors.rs` | src | m | 11 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/live_voice_doors.rs` | src | s | 8 crate-vis | — | Typed public live media doors |
 | `src/api/facade/live_voice_settlement.rs` | src | s | 2 crate-vis | — | Observes an already admitted connector call; never resends or answers it |
 | `src/api/facade/mail_pack_doors.rs` | src | s | 4 crate-vis | — | `vault.mail.pack.install`, `vault.mail.sources.sync`, `vault.mail.sources.search` and… |
@@ -493,7 +494,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/retrieval_doors.rs` | src | m | 15 crate-vis | — | Typed owner-only retrieval diagnostics |
 | `src/api/facade/role_picks.rs` | src | s | 2 crate-vis | — | OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/root_request_doors.rs` | src | s | 4 crate-vis | — | The owner's root-request doors: the cancel (FIX 5586), `vault.roots.requests.cancel`, over the same engine… |
-| `src/api/facade/run_read_doors.rs` | src | s | 2 crate-vis | — | Owner-only reads of committed run state (DOOR-141 A/B): a settled model step and a code run's checkpoints… |
+| `src/api/facade/run_read_doors.rs` | src | s | 3 crate-vis | — | Reads of committed run state (DOOR-141 A/B): a settled model step and a code run's checkpoints, over the… |
 | `src/api/facade/run_review_doors.rs` | src | s | 4 crate-vis | — | The owner's cross-kind review and run compensation, on the caller's own credential handle |
 | `src/api/facade/run_write_polls.rs` | src | s | 1 crate-vis | — | A leased run's write envelope across the polls of an async row (FIX 11698) |
 | `src/api/facade/runner_seat_doors.rs` | src | s | 3 crate-vis | — | The owner's runner seat doors (FIX 7451, FIX 11067): `vault.runners.seats.quotas`… |
@@ -508,7 +509,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/self_actor_doors.rs` | src | s | 1 crate-vis | — | `self.actor` (FIX 1047): the actor the caller's credential binds, as the facade binds every write of his… |
 | `src/api/facade/setting_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's learned-setting rows: `vault.settings.learning`, `.put` and `.clear` |
 | `src/api/facade/share_doors.rs` | src | s | 5 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
-| `src/api/facade/shared_act_doors.rs` | src | m | 20 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
+| `src/api/facade/shared_act_doors.rs` | src | m | 21 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/shared_admin_doors.rs` | src | s | 3 crate-vis | — | Typed named Admin policy/powers and the one-hop scoped Delegate mint |
 | `src/api/facade/shared_member_doors.rs` | src | m | 18 crate-vis | — | The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee… |
 | `src/api/facade/shared_policy_doors.rs` | src | s | 5 crate-vis | — | The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every… |
@@ -516,14 +517,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/sieve_observation_doors.rs` | src | s | 5 crate-vis | — | The owner's evidence replay and recorded shared-scheduler observations |
 | `src/api/facade/skill_attribution_doors.rs` | src | s | 7 crate-vis | — | Proposal-delta settlement and skill attribution evidence, owner-only |
 | `src/api/facade/skill_default_doors.rs` | src | s | 4 crate-vis | — | The owner's first-hub and bootstrap reads and explicit defaults re-import |
-| `src/api/facade/skill_doors.rs` | src | m | 15 crate-vis | — | Selected-message conversion and the owner's skill library, through the same facade and MCP doors |
+| `src/api/facade/skill_doors.rs` | src | m | 16 crate-vis | — | Selected-message conversion and the skill library, through the same facade and MCP doors: the owner reads… |
 | `src/api/facade/skill_execution_doors.rs` | src | m | 5 crate-vis | — | Skill calls on the caller's attached run and owner-anchored pack outcomes |
 | `src/api/facade/slim_doors.rs` | src | s | 6 crate-vis | — | Owner-bound lifecycle doors; each transport reaches the same engine transaction |
+| `src/api/facade/snapshot_read_settings_doors.rs` | src | s | 2 crate-vis | — | Typed doors over the snapshot handles' bounds (primitive A, slice 6.4b) |
 | `src/api/facade/standing_doors.rs` | src | s | 6 crate-vis | — | Standing-block configuration and per-agent dreaming choice, with the caller's own proof (BOARD-04) |
 | `src/api/facade/step_up_doors.rs` | src | s | 3 crate-vis | — | FIX 11694: a person's MFA step-up on their own credential (MFA-1 A: a passkey first) |
 | `src/api/facade/step_up_doors/totp.rs` | src | s | 2 crate-vis | — | Authenticator-app ceremonies on the same admitted own-person slip |
+| `src/api/facade/steward_doors.rs` | src | s | 7 crate-vis | — | The host doors of the Steward rows (untangle 6.3 and 6.6, after 4.2): the member asks a shared vault's… |
 | `src/api/facade/stream_recovery_doors.rs` | src | s | 1 crate-vis | — | The stream seeds the vault's open could not replay (FIX 11933), read under the caller's own owner credential |
 | `src/api/facade/streamed_claims.rs` | src | s | 1 crate-vis | — | A door's invocation claim held through a streamed reply (FIX 2004): the reply is saved for each duplicate… |
+| `src/api/facade/substrate_read_doors.rs` | src | s | 2 crate-vis | — | Who reads engine substrate rows through a host door (untangle 6.6c): the vault owner under its proof, or a… |
 | `src/api/facade/summary_doors.rs` | src | s | 8 crate-vis | — | SUMMARY writes on the caller's own credential |
 | `src/api/facade/support_grant_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's support grant rows (OF-606): `vault.support_grants.mint`, `.list` and `.revoke` |
 | `src/api/facade/sync_quarantine_doors.rs` | src | s | 1 crate-vis | — | The owner's retained sync held-edit evidence, with no settlement act |
@@ -1786,12 +1790,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/replay_judge/replays.rs` | src | m | 4 crate-vis | — | The serve judge's replay evidence: each reserved receipt's task and response, read whole from its attempt… |
 | `src/residence_machines.rs` | src | s | 2 crate-vis | — | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
 | `src/runtime/artifact_backend.rs` | src | s | 2 crate-vis | — | Host-configured concurrency custody for artifact backend requests |
-| `src/runtime/clock.rs` | src | s | 1 crate-vis | — | Shared wall-clock time in Unix milliseconds |
-| `src/runtime/config.rs` | src | m | 1 struct · 7 fn · 3 crate-vis | RuntimeConfig | Resolved runtime config including the 163-line resolution impl |
+| `src/runtime/clock.rs` | src | s | 1 struct · 1 enum · 5 fn · 1 crate-vis | ManualClockFile, RuntimeClock | Shared wall-clock time in Unix milliseconds, and `[runtime] clock`: the clock this server's vault reads |
+| `src/runtime/config.rs` | src | m | 1 struct · 8 fn · 4 crate-vis | RuntimeConfig | Resolved runtime config including the 163-line resolution impl |
 | `src/runtime/defaults.rs` | src | m | 5 struct · 11 fn · 6 crate-vis | RuntimeConfigOverride, RuntimeRoleDefaultOverrides, RuntimeRoleDefaults, RuntimeRoleTarget, RuntimeRoleTargetOverride | Per-role default targets, explicitness tracking, and the full override-merge cluster |
 | `src/runtime/gpu.rs` | src | s | 4 struct · 1 enum · 12 fn · 2 const | GpuDerivationLease, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError | Per-region single-writer GPU registry, suitable for a Durable Object owner |
 | `src/runtime/gpu_pool.rs` | src | m | 5 struct · 13 fn · 5 crate-vis | GpuDerivationJob, GpuLeaseGuard, GpuPodConfig, GpuPool, GpuPoolConfig | The serve host's owner of the per-region GPU registry |
-| `src/runtime/mod.rs` | src | s | 2 mod · 10 re-export · 3 crate-vis | — | Runtime configuration, host services, and shared time helpers |
+| `src/runtime/mod.rs` | src | s | 2 mod · 11 re-export · 3 crate-vis | — | Runtime configuration, host services, and shared time helpers |
 | `src/runtime/mode.rs` | src | s | 3 enum · 6 fn · 1 const · 2 crate-vis | RuntimeMode, RuntimeProviderKind, RuntimeRole | Runtime mode, provider-kind, and role taxonomies with string conversions |
 | `src/runtime/routes.rs` | src | s | 4 struct · 3 enum · 2 fn | RuntimeHealthStatus, RuntimeRoute, RuntimeRouteProvenance, RuntimeRouteReason, RuntimeRouteSource, RuntimeRouteState, RuntimeStatus | Resolved route decisions and redacted/full status views for health and discovery |
 | `src/runtime/seat_helpers.rs` | src | m | 7 struct · 16 fn · 5 const · 1 crate-vis | HelperDestination, HelperReplyDelivery, HelperRunEnd, SeatHelperEnv, SeatHelperRun, SeatHelperRuns, SeatModelDoor | The credential-helper destinations of a seat run (FIX 10624 step 2; ARCH-0069 T1, the credential-helper shim) |
@@ -1985,7 +1989,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/wire_telemetry/rows.rs` | src | s | 1 enum · 1 fn · 1 const | LimitRow | The `[limits]` rows this server's questions name (moved out of `wire_telemetry.rs` whole, so the telemetry… |
 | `src/wire_telemetry/tests.rs` | test | s | — | — | — |
 | `src/xlsx_recalc.rs` | src | m | 1 crate-vis | — | The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless… |
+| `tests/agent_definition_served_batch.rs` | test | m | — | — | The served row doors follow ARCH-0053:20 on their credential's agent slice: `vault.batch`, and the… |
 | `tests/big_rung_written_reply.rs` | test | s | — | — | FIX 22368: the Big rung's written reply (`reply = "json"` or `"lines"`, the path without token scores)… |
+| `tests/consent_revoke_grantee_renounce.rs` | test | m | — | — | A grantee may renounce its own standing consent grant (P-GATE-010, DEC-0006) |
 | `tests/facade_live_run_status.rs` | test | s | — | — | Live-run guard refusals keep their status through the real facade router |
 | `tests/inference_defaults.rs` | test | s | — | — | Owner-grade HTTP edit/read proof for resident inference policy rows |
 | `tests/inference_egress.rs` | test | s | — | — | Extraction default changes require a host gate at storage and dispatch |
@@ -2021,6 +2027,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/managed_mode.rs` | test | XL | — | — | — |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
 | `tests/openapi_off_record_rooms.rs` | test | s | — | — | The participants' off-record room routes (`/v1/core/off-record`) are in the served OpenAPI document, with… |
+| `tests/run_reader_record_scope.rs` | test | s | — | — | The HTTP facade refuses facet-limited credentials before reading run branches or spend leases, while an… |
+| `tests/runtime_clock.rs` | test | m | — | — | The server's `[runtime] clock`, checked through public paths only: the shipped binaries, `build_app`, and… |
 | `tests/support/fake_llm.rs` | test | m | 11 crate-vis | — | A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and… |
 | `tests/token_agent_own_vault_agent.rs` | test | s | — | — | `oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07) |
 | `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |

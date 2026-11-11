@@ -28,9 +28,9 @@
   "runs": [
     {
       "jobId": "W7-C11-after-merge-tests-v1-83dc0fbadbb3",
-      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v1-83dc0fbadbb3.terminal.json",
+      "terminalPath": "<host-home>/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v1-83dc0fbadbb3.terminal.json",
       "terminalSha256": "4198a0086828b76e87c5a622f3a5e8b16d19a6dc0484023142a0183a056aef6e",
-      "logPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v1-83dc0fbadbb3.log",
+      "logPath": "<host-home>/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v1-83dc0fbadbb3.log",
       "logSha256": "3f59ebb73bc17057c986c78a2b7ef34c4e0b74b81f21d803a93f005d7e0879f2",
       "exitCode": 101,
       "commands": [
@@ -67,9 +67,9 @@
     },
     {
       "jobId": "W7-C11-after-merge-tests-v2-442b363c84f9",
-      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v2-442b363c84f9.terminal.json",
+      "terminalPath": "<host-home>/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v2-442b363c84f9.terminal.json",
       "terminalSha256": "b4f79e63bb2e25301b9b461774a430f2d29a4a86557a1cf47908d2ee5b406caf",
-      "logPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v2-442b363c84f9.log",
+      "logPath": "<host-home>/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v2-442b363c84f9.log",
       "logSha256": "1d0640bbcf57921f488f3509382012c2055e4075fc7de8ce0322395186a77f96",
       "exitCode": 1,
       "commands": [
@@ -92,9 +92,9 @@
     },
     {
       "jobId": "W7-C11-after-merge-tests-v3-3eaea9477ee3",
-      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v3-3eaea9477ee3.terminal.json",
+      "terminalPath": "<host-home>/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v3-3eaea9477ee3.terminal.json",
       "terminalSha256": "68cef69d60742c8fc098f7b3d86cd4ab7b2c5223b918139dfdeaf36ad33fc3cd",
-      "logPath": "/home/lexi/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v3-3eaea9477ee3.log",
+      "logPath": "<host-home>/w7-build/tickets/W7-C11/after-merge-test-validation/W7-C11-after-merge-tests-v3-3eaea9477ee3.log",
       "logSha256": "a8b938936b94b97459109672b52ba5266a72099d3b8334bcd66c05c27c7944a7",
       "exitCode": 0,
       "commands": [

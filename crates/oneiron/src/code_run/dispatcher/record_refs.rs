@@ -7,13 +7,12 @@
 //! ([`crate::gate::record_references`]). A missing record and one the
 //! writer may not read give the same refusal.
 
-use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
+use crate::claim::ScopedReadActorKey;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{SelfDispatchOutcome, SelfEffect, SelfFailedResult};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::MemoryError;
-use crate::receipt::{ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals};
 
 use super::HostSelfDispatcher;
 
@@ -42,49 +41,14 @@ impl HostSelfDispatcher<'_> {
             return Ok(None);
         }
         let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
-        let key = match read_as {
-            Some(key) => key.clone(),
-            None => match memory.read_key() {
-                Ok(key) => key,
-                Err(error) => return Ok(Some(refused(effect, &error))),
-            },
-        };
-        let slip_key = match self.program_proof() {
-            Some(proof) => Some(vault.credential_target_key(proof)?),
-            None => None,
-        };
-        // A record resolves on the recorded lane, as a facade row's ref does
-        // (`Memory::get_entity`): a superseded claim the writer may read is
-        // history it may name (REVIEW-6389).
-        let reads = |key: &ScopedReadActorKey, id: EntityId| {
-            vault
-                .scoped_read(key.clone())
-                .with_claim_status(ClaimReadStatus::Recorded)
-                .all_refs_readable(&[id])
-        };
-        for (pointer, id) in refs {
-            let resolves = reads(&key, *id)?
-                && match &slip_key {
-                    Some(Some(slip_key)) => reads(slip_key, *id)?,
-                    Some(None) => false,
-                    None => true,
-                };
-            if !resolves {
-                let recorded = receipt_reference_refusals(
-                    &memory,
-                    &[ReferenceRefusalFacts {
-                        actor: memory.actor(),
-                        actor_class: memory.actor_class(),
-                        row,
-                        field: (*pointer).to_owned(),
-                        outcome: ReferenceOutcome::Refused,
-                    }],
-                )?;
-                let error = crate::gate::record_references::invented_reference(pointer, recorded);
-                return Ok(Some(refused(effect, &error)));
-            }
-        }
-        Ok(None)
+        let refusal = crate::gate::record_references::admit_run_row_references(
+            &memory,
+            row,
+            read_as,
+            self.program_proof(),
+            refs,
+        )?;
+        Ok(refusal.map(|error| refused(effect, &error)))
     }
 }
 

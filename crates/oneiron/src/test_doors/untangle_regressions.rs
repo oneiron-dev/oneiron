@@ -4,8 +4,10 @@
 //! fixtures, so the ruled behaviour tests of X01, X02, CONSENT-RAMP and the
 //! repeat revoke (#6874) run from an integration target while the lib test
 //! target does not compile. Compiled only under `--cfg oneiron_test_support`
-//! (`test_doors`); the existing `test_support` doors they call are on in every
-//! test build through the crate's self dev-dependency. Hidden; never API.
+//! (`test_doors`); the shared fixture writes they call are in `test_fixtures`
+//! and the process-memory keystore is `oneiron_keystore::MemoryKeystore`, both
+//! compiled under the same cfg, so no `test-support` feature is needed.
+//! Hidden; never API.
 //! Every assertion stays in the test file: these return plain values.
 
 use std::collections::VecDeque;
@@ -63,7 +65,7 @@ pub fn embedding_test_config() -> VaultConfig {
 #[must_use]
 pub fn open_dreamer_vault() -> (tempfile::TempDir, Vault) {
     let (dir, vault) = open_test_vault_with(VaultConfig::device());
-    let _issuer = crate::test_support::provision_engine_machines(&vault);
+    let _issuer = crate::test_fixtures::provision_engine_machines(&vault);
     authorize_test_inference(&vault).expect("owner-pinned test egress");
     install_shipped_policy(&vault).expect("shipped policy");
     (dir, vault)
@@ -76,7 +78,7 @@ pub fn open_dreamer_vault() -> (tempfile::TempDir, Vault) {
 /// The store's.
 #[doc(hidden)]
 pub fn install_shipped_policy(vault: &Vault) -> Result<()> {
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &crate::gate::default_policy_manifest()?,
@@ -229,7 +231,7 @@ pub fn withhold_dreamer_read(vault: &Vault) -> Result<()> {
     });
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("encode policy");
-    crate::test_support::put_policy_manifest_bytes(vault, id, &data)
+    crate::test_fixtures::put_policy_manifest_bytes(vault, id, &data)
 }
 
 /// One of the two rows that let the Dreamer land Auto (X02).
@@ -286,7 +288,7 @@ pub fn seeded_without_dreamer_landing_row(vault: &Vault, row: DreamerLandingRow)
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("encode");
     let id = crate::gate::default_policy_manifest_id()?;
-    crate::test_support::put_policy_manifest_bytes(vault, id, &data)?;
+    crate::test_fixtures::put_policy_manifest_bytes(vault, id, &data)?;
     vault.with_write_txn(|txn| {
         vault.store.sync_state.put(
             txn,
@@ -389,7 +391,7 @@ impl crate::LlmBackend for ScriptedBackend {
 }
 
 /// One extraction reply: the listed entity `P1` has `profile.name`
-/// `Oleksii`, quoted from the turn `T1`. The Dreamer tests'
+/// `Owen`, quoted from the turn `T1`. The Dreamer tests'
 /// `extraction_response` named the subject by its 32-hex id and cited a
 /// byte range of the turn's id; since FIX 7506 (call-local labels) a model
 /// reply names only what its call listed, and that shape is refused at
@@ -398,8 +400,8 @@ impl crate::LlmBackend for ScriptedBackend {
 /// wire.
 fn extraction_response() -> crate::LlmResponse {
     let json = "{\"candidates\": [{\"subject\": \"P1\", \"predicate\": \"profile.name\", \
-                \"value\": \"Oleksii\", \"confidence\": 0.8, \
-                \"evidence_refs\": [{\"source\": \"T1\", \"quote\": \"Oleksii\"}]}]}"
+                \"value\": \"Owen\", \"confidence\": 0.8, \
+                \"evidence_refs\": [{\"source\": \"T1\", \"quote\": \"Owen\"}]}]}"
         .to_owned();
     crate::LlmResponse {
         message: crate::LlmMessage {

@@ -46,6 +46,27 @@ impl CoreWriteLane<'_> {
             Self::Unbound => CoreWriteLaneRef::Unbound,
         }
     }
+
+    /// The key of the read this lane holds its caller to; `None` for an
+    /// unbound lane.
+    #[must_use]
+    pub fn actor_key(&self) -> Option<&crate::claim::ScopedReadActorKey> {
+        match self {
+            Self::Read(reader) | Self::Target(reader) => Some(reader.actor_key()),
+            Self::Unbound => None,
+        }
+    }
+}
+
+impl<'v> CoreWriteLaneRef<'v> {
+    /// The key of the read this lane holds its caller to; `None` for an
+    /// unbound lane.
+    pub(crate) fn actor_key(self) -> Option<&'v crate::claim::ScopedReadActorKey> {
+        match self {
+            Self::Read(reader) | Self::Target(reader) => Some(reader.actor_key()),
+            Self::Unbound => None,
+        }
+    }
 }
 
 impl CoreWriteLane<'_> {
@@ -126,7 +147,32 @@ impl Vault {
         announcement: AnnouncementAuthority,
         lane: &CoreWriteLane<'_>,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
-        let (batch, entities) = self.stage_core_batch(input, announcement)?;
+        self.write_core_batch_in_lane_as(input, commit, announcement, lane, None)
+    }
+
+    /// [`Self::write_core_batch_in_lane`] for the actor `writer` its caller
+    /// is bound to: a `Memory`'s, or a served credential's. An agent's batch
+    /// holds each AGENT_DEF it puts to that agent's slice (ARCH-0053:20;
+    /// [`BatchBuilder::authored_through`]): a new definition inside the slice
+    /// is active and a wider one is a proposal, and a put that grants a
+    /// stored definition more than the slice holds leaves it a proposal.
+    /// With no `writer`, or one that is no agent, every body is written as
+    /// staged.
+    /// # Errors
+    /// As [`Self::write_core_batch_in_lane`], and the author writer's
+    /// refusal of a definition it would refuse at `vault.agents.put`.
+    pub fn write_core_batch_in_lane_as(
+        &self,
+        input: &CoreBatchWriteInput,
+        commit: CoreBatchCommit,
+        announcement: AnnouncementAuthority,
+        lane: &CoreWriteLane<'_>,
+        writer: Option<&crate::WriteActor>,
+    ) -> MemoryResult<CoreBatchWriteReceipt> {
+        let (mut batch, entities) = self.stage_core_batch(input, announcement)?;
+        if let Some(writer) = writer {
+            batch = batch.authored_through(writer, "vault.batch", lane.actor_key());
+        }
         batch.commit_in_core_lane(lane, commit)?;
         Ok(CoreBatchWriteReceipt {
             count: entities.len(),
