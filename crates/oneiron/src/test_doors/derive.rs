@@ -159,6 +159,137 @@ pub fn grant_core_read_of_kinds(vault: &Vault, reader: EntityId, kinds: &[u8]) -
     super::consolidation::shipped_policy_with_read_scope(vault, &reader.to_hex(), &scope)
 }
 
+/// Writes a minimal human-authored agent definition with an Auto ceiling,
+/// as the owner's own agent whose claims the policy rows alone bound; its
+/// id. ([`super::derivation_floor::define_agent`] writes one held to
+/// proposals.)
+///
+/// # Errors
+///
+/// The vault's.
+pub fn define_auto_agent(vault: &Vault) -> Result<EntityId> {
+    use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+    let definition = AgentDefinition::new(
+        "oneiron.agent.derive-landing-fixture",
+        "Derivation landing fixture agent",
+        "1",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        AgentScope::All,
+        AgentCeiling::Auto,
+        None,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("definedVia"),
+            rmpv::Value::from("define_auto_agent"),
+        )]),
+        None,
+        true,
+        None,
+    );
+    let id = EntityId::now();
+    vault.put_agent_definition(&id, &definition, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    Ok(id)
+}
+
+/// Writes the shipped policy with, for each of `agents`, the rows an
+/// owner's policy gives an ordinary agent that derives: its `core:read`
+/// grant, an `agent` Auto ceiling and the actor-bound `generated` permit.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn grant_derive_rows(vault: &Vault, agents: &[EntityId]) -> Result<()> {
+    let mut body = crate::gate::default_policy_manifest()?;
+    for agent in agents {
+        body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
+    }
+    crate::test_support::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &body,
+    )
+}
+
+/// Writes a user's TURN stamped as imported words (ARCH-0027), as an import
+/// lands one; its id.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn imported_turn(vault: &Vault) -> Result<EntityId> {
+    let body = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([
+        ("role", "user"),
+        (crate::memory::IMPORTED_SOURCE_KEY, "transcript"),
+    ]))
+    .map_err(|_| crate::error::Error::InvalidClaimBody("a TURN body does not encode"))?;
+    let id = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault.put_entity(
+        &id,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::TimeRange { start: at, end: at },
+        at,
+        &body,
+    )?;
+    Ok(id)
+}
+
+/// Writes the shipped policy with an Auto permit for `imported` writes
+/// bound to `actor`, as the `generated` permit of the Dreamer's rows is
+/// written: an owner's policy that trusts that writer's imported claims.
+///
+/// # Errors
+///
+/// The vault's, and a shipped policy with no source trust map.
+pub fn permit_imported_auto(vault: &Vault, actor: EntityId) -> Result<()> {
+    use rmpv::Value;
+    let invalid = |what: &str| crate::error::Error::InvalidConfig(what.into());
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
+            .map_err(|_| invalid("default policy"))?
+    else {
+        return Err(invalid("default policy is not a map"));
+    };
+    let Some((_, Value::Map(sources))) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("source_trust"))
+    else {
+        return Err(invalid("the shipped policy has no source trust map"));
+    };
+    let imported = ClaimSource::Imported.as_str();
+    sources.retain(|(key, _)| key.as_str() != Some(imported));
+    sources.push((
+        Value::from(imported),
+        Value::Array(vec![Value::Map(vec![
+            (Value::from("actor_ref"), Value::from(actor.to_hex())),
+            (
+                Value::from("max_auto_sensitivity"),
+                Value::from(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+            ),
+            (Value::from("receipted"), Value::Boolean(true)),
+            (Value::from("warned"), Value::Boolean(true)),
+        ])]),
+    ));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
+        .map_err(|_| invalid("encode policy"))?;
+    crate::test_support::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
+
 /// Commits `claims` as one batch by `actor` of `class`, in run `run`.
 ///
 /// # Errors
