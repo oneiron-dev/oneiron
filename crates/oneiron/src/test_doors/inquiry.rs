@@ -1,0 +1,82 @@
+//! Door for `tests/inquiry_records.rs` (INQUIRE-1 PR 1): the writers of the
+//! member's log and the asking side's receipt, each in one write transaction
+//! at the vault's store clock. Until PR 3 and PR 4 call them, only this door
+//! does.
+
+use crate::error::Result;
+use crate::inquiry::{
+    Inquiry, InquiryAnswer, InquiryDecider, InquiryLogEntry, InquiryOutcome, log_inquiry_in_txn,
+    settle_inquiry_in_txn, write_inquiry_receipt_in_txn,
+};
+use crate::receipt::ReceiptRecord;
+use crate::{EntityId, Vault};
+
+/// Logs `inquiry`, received over `edge`, in the member's vault.
+///
+/// # Errors
+///
+/// As `log_inquiry_in_txn`.
+pub fn receive(vault: &Vault, edge: EntityId, inquiry: &Inquiry) -> Result<InquiryLogEntry> {
+    vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        log_inquiry_in_txn(&vault.store, txn, edge, inquiry, now)
+    })
+}
+
+/// Settles the logged inquiry `inquiry_id` over `edge` with `answer`.
+///
+/// # Errors
+///
+/// As `settle_inquiry_in_txn`.
+pub fn settle(
+    vault: &Vault,
+    edge: EntityId,
+    inquiry_id: EntityId,
+    answer: InquiryAnswer,
+    decided_by: InquiryDecider,
+) -> Result<InquiryLogEntry> {
+    vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        settle_inquiry_in_txn(&vault.store, txn, edge, inquiry_id, answer, decided_by, now)
+    })
+}
+
+/// The asking side's receipt of one send of `inquiry` about `member`.
+///
+/// # Errors
+///
+/// As `write_inquiry_receipt_in_txn`.
+pub fn record_send(
+    vault: &Vault,
+    inquiry: &Inquiry,
+    member: &EntityId,
+    outcome: InquiryOutcome,
+) -> Result<ReceiptRecord> {
+    vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        write_inquiry_receipt_in_txn(&vault.store, txn, inquiry, member, outcome, now)
+    })
+}
+
+/// The tables whose actor scrub [`erase_actor_in_inquiry_tables`] runs.
+const INQUIRY_TABLES: [&str; 2] = ["INQUIRY_LOG", "INQUIRY_RECEIPT"];
+
+/// The part of `actor`'s erase that runs over the inquiry tables: the actor
+/// scrub each of [`INQUIRY_TABLES`] registers, as an erase and a restore's
+/// rerun run it. Returns how many of those tables registered one.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn erase_actor_in_inquiry_tables(vault: &Vault, actor: &EntityId) -> Result<usize> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut ran = 0;
+    for (decl, scrub) in crate::side_table::actor_scrubs() {
+        if INQUIRY_TABLES.contains(&decl.name) {
+            scrub(vault, &mut wtxn, actor)?;
+            ran += 1;
+        }
+    }
+    wtxn.commit()?;
+    Ok(ran)
+}

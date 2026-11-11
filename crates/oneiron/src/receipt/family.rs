@@ -392,6 +392,11 @@ pub(super) fn collect_receipt_records(
     if query.includes_kind(ReceiptKind::CheckIn) {
         records.extend(crate::check_in::check_in_receipts(vault, query)?);
     }
+    // INQUIRE-1: each send of an inquiry on the asking vault, kept in the
+    // send's own transaction. Its own kind and store; its own read txn.
+    if query.includes_kind(ReceiptKind::Inquiry) {
+        records.extend(crate::inquiry::inquiry_receipts(vault, query)?);
+    }
 
     // The settle projection opens its own read txn, so it runs before the shared
     // `rtxn` below to avoid a nested read transaction on this thread. It applies
