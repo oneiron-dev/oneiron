@@ -206,6 +206,34 @@
   padding: 10px 14px;
 }
 
+.lib-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 14px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lib-icon {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--sl-ink-2);
+}
+
+.lib-icon > .sl-icon {
+  flex: none;
+}
+
+.lib-icon-name {
+  overflow: hidden;
+  font-size: var(--sl-t-figure);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .lib-tabs {
   display: flex;
   flex-direction: column;

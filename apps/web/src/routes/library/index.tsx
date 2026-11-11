@@ -7,6 +7,7 @@ import {
   Figure,
   GuestRing,
   Glyph,
+  ICON_NAMES,
   Icon,
   IconAction,
   Island,
@@ -271,6 +272,19 @@ function LibraryPage() {
           </Specimen>
           <Specimen name="badge">
             <Figure size="badge">20</Figure>
+          </Specimen>
+        </Section>
+
+        <Section title="Icon">
+          <Specimen name="every symbol, by name" full>
+            <ul className="lib-icons" data-specimen="icons">
+              {ICON_NAMES.map((name) => (
+                <li key={name} className="lib-icon">
+                  <Icon name={name} size={18} />
+                  <span className="lib-icon-name">{name}</span>
+                </li>
+              ))}
+            </ul>
           </Specimen>
         </Section>
 
