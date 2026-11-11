@@ -14,6 +14,7 @@ export { Verb, type VerbProps } from './primitives/Verb'
 export { IconAction, type IconActionProps } from './primitives/IconAction'
 export { InfoMark, type InfoMarkProps } from './primitives/InfoMark'
 export { PrimaryButton, type PrimaryButtonProps } from './primitives/PrimaryButton'
+export { ToneButton, type ToneButtonProps } from './primitives/ToneButton'
 export { Figure, type FigureProps } from './primitives/Figure'
 export {
   Tabs,
