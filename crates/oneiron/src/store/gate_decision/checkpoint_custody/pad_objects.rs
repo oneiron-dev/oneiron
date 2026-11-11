@@ -25,6 +25,7 @@ use heed::types::Bytes;
 
 use crate::error::{Error, Result};
 use crate::side_table;
+#[cfg(feature = "sync")]
 use crate::store::pad_object_membership::PadObjectMembership;
 use crate::store::{PairedIdentityRows, PairedSourceAsk, PairedSyncRows, Store};
 #[cfg(feature = "sync")]
