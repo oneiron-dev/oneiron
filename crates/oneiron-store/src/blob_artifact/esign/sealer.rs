@@ -113,7 +113,8 @@ pub struct SealActiveContentFacts {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EsignVerdict {
     pub verdict: SealVerdict,
-    /// The failed findings, by code.
+    /// Native finding and sub-indication codes, including
+    /// `validation_material_possible_tampering`, not only failed findings.
     pub reasons: Vec<String>,
     /// The lowest profile any ordinary signature reached.
     pub achieved: Option<SealProfile>,

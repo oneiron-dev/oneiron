@@ -35,3 +35,13 @@ The printed `kill <pid>` command stops the server without deleting the memory.
 The demo disables device keystore access in its fresh config to avoid OS
 keychain prompts. It does not disable HTTP auth or loosen claim policy.
 Private-world keys and device-signing doors are not part of this example.
+
+## Credential names
+
+The private `agent.cred` file holds the paired `v2.cred.<slip hex>.<seed hex>`
+credential. For HTTP, the script splits that value into the CLI's real defaults:
+`ONEIRON_SECRET` is the `v2.slip.*` bearer and `ONEIRON_BINDING_KEY` is its
+64-hex holder seed. `ONEIRON_URL` is the server origin, not a credential.
+The SDK/client docs use those same names. `ONEIRON_LINK` is only the one-use
+pairing link in the SDK pairing example. No request uses the host issuer secret.
+The script ignores inherited `ONEIRON_*` values and makes its own connection.

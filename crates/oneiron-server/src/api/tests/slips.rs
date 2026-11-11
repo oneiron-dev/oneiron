@@ -41,7 +41,7 @@ async fn descriptor_is_unauthenticated_and_pairing_link_is_one_use() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["slip_version"], 2);
     let actor = seed_turn(&server, "pairing fixture actor").to_hex();
-    let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let link = server
         .vault()
         .issue_pairing_link(&issuer, Scope::top(), 600)
@@ -77,7 +77,7 @@ async fn descriptor_is_unauthenticated_and_pairing_link_is_one_use() {
 #[tokio::test]
 async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
     let (_dir, server) = server();
-    let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let holder = SigningKey::from_bytes(&[82; 32]);
     let mut claims = server
         .vault()
@@ -514,6 +514,7 @@ async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
     vault_config.retrieval_telemetry_capture = true;
     vault_config.store_clock = clock.bundle();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, SLIP_SECRET.as_bytes());
     assert_default_policy_manifest_fixture(vault.as_ref());
     let server = Arc::new(
         SyncServer::new(
@@ -525,7 +526,7 @@ async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
         )
         .unwrap(),
     );
-    let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let holder = SigningKey::from_bytes(&[89; 32]);
     let mut claims = server
         .vault()
@@ -572,7 +573,7 @@ async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
 #[tokio::test]
 async fn narrowed_read_slips_can_read_static_capabilities_but_not_unscoped_records() {
     let (_dir, server) = server();
-    let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let holder = SigningKey::from_bytes(&[90; 32]);
     let actor = seed_turn(&server, "static capability holder");
     let mut claims = server

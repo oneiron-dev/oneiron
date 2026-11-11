@@ -20,6 +20,8 @@ tempfile = "3"
 [dev-dependencies]
 rmp-serde = { workspace = true }
 rmpv = { workspace = true }
+# The process-memory keystore the linear door tests share; never a host's adapter.
+oneiron-keystore = { path = "../oneiron-keystore", features = ["test-keystore"] }
 
 [lints]
 workspace = true

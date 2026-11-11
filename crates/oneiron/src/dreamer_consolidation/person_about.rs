@@ -71,7 +71,8 @@ const PERSON_ABOUT: SideTable<EntityId, PersonAbout, Named> =
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PersonAbout {
-    /// Digest of the facts the newest queued attempt writes from.
+    /// Digest of the facts the newest queued attempt writes from, or of the
+    /// facts a validated publish read in its own write.
     asked: [u8; 32],
     /// Digest of the facts `lines` were written from. Lines whose digest is
     /// not `asked` stand on facts that moved, and the board shows none.
@@ -210,6 +211,129 @@ fn facts_digest(facts: &[Fact], band: u8) -> [u8; 32] {
         hasher.update(&fact.version);
     }
     *hasher.finalize().as_bytes()
+}
+
+/// Why a publish of `about` lines wrote nothing (untangle 6.7a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AboutRefusal {
+    /// The PERSON is erased or gone.
+    PersonGone,
+    /// The facts moved since the lines were written from them.
+    FactsMoved,
+    /// The lines are not one plain line for each band that has facts.
+    Malformed,
+}
+
+impl AboutRefusal {
+    /// The refusal's stable reason token.
+    pub(crate) const fn token(self) -> &'static str {
+        match self {
+            Self::PersonGone => "gate.deny.derive.about_person_gone",
+            Self::FactsMoved => "gate.deny.derive.about_facts_moved",
+            Self::Malformed => "gate.deny.derive.about_malformed",
+        }
+    }
+}
+
+/// The bands that take an `about` line: each band with facts at or below
+/// it, lowest first.
+fn about_bands(facts: &[Fact]) -> Vec<u8> {
+    (0..=TOP_BAND)
+        .filter(|band| facts.iter().any(|fact| fact.band <= *band))
+        .collect()
+}
+
+/// The digest of the facts about `person` that `read` reads, and the bands
+/// that take a line: what an `about` writer names and writes.
+pub(crate) fn about_facts_in(
+    vault: &Vault,
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+) -> Result<([u8; 32], Vec<u8>)> {
+    let facts = person_facts(vault, read, txn, person)?;
+    Ok((facts_digest(&facts, TOP_BAND), about_bands(&facts)))
+}
+
+/// The revision of `person`'s `about` row in `txn`: a digest of the row as
+/// stored, all zeros when it has none. A revert undoes an `about` landing
+/// only while the row still stands at the revision the landing left
+/// (untangle 6.7c).
+pub(crate) fn about_revision_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+) -> Result<[u8; 32]> {
+    let Some(row) = PERSON_ABOUT.get(&vault.store, txn, &person)? else {
+        return Ok([0; 32]);
+    };
+    let bytes = rmp_serde::to_vec_named(&row)
+        .map_err(|_| Error::InvariantViolation("an about row does not encode"))?;
+    Ok(*blake3::hash(&bytes).as_bytes())
+}
+
+/// Publishes `lines`, each a band and its text, as `person`'s `about` lines
+/// in `txn` (the validated publish, untangle 6.7a, X03). The writer names the
+/// facts digest it wrote from; the PERSON must be live and the facts `read`
+/// reads now must hash to it (FIX 8697), and there is exactly one plain line
+/// for each band that has facts at or below it. Each line stands on exactly
+/// those facts. The lines replaced are kept for the owner's revert.
+pub(crate) fn publish_person_about_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    read: &ScopedRead<'_>,
+    person: EntityId,
+    written_from: [u8; 32],
+    lines: &[(u8, String)],
+    at: u64,
+) -> Result<std::result::Result<(), AboutRefusal>> {
+    if !crate::consent::person_is_live_in_txn(vault, txn, &person)? {
+        return Ok(Err(AboutRefusal::PersonGone));
+    }
+    let facts = person_facts(vault, read, txn, person)?;
+    if facts_digest(&facts, TOP_BAND) != written_from {
+        return Ok(Err(AboutRefusal::FactsMoved));
+    }
+    let bands = about_bands(&facts);
+    let plain = |text: &str| !text.is_empty() && one_line(text, usize::MAX) == text;
+    if bands.is_empty()
+        || lines.len() != bands.len()
+        || lines
+            .iter()
+            .zip(&bands)
+            .any(|((band, text), expected)| band != expected || !plain(text))
+    {
+        return Ok(Err(AboutRefusal::Malformed));
+    }
+    let lines = lines
+        .iter()
+        .map(|(band, text)| AboutLine {
+            band: *band,
+            text: text.clone(),
+            fact_claim_ids: facts
+                .iter()
+                .filter(|fact| fact.band <= *band)
+                .map(|fact| fact.claim)
+                .collect(),
+        })
+        .collect();
+    let mut row = PERSON_ABOUT
+        .get(&vault.store, txn, &person)?
+        .unwrap_or_default();
+    row.previous = Some(PriorAbout {
+        written: row.written,
+        lines: std::mem::replace(&mut row.lines, lines),
+        at: row.at,
+    });
+    row.written = written_from;
+    row.at = at;
+    // The facts were read in this write and hash to `written_from`, so the
+    // lines stand on the facts a reader would be asked with now: they read
+    // back at once, with no wake pass in between.
+    row.asked = written_from;
+    row.moved = false;
+    PERSON_ABOUT.put(&vault.store, txn, &person, &row)?;
+    Ok(Ok(()))
 }
 
 fn one_line(text: &str, max_chars: usize) -> String {
@@ -703,42 +827,51 @@ impl<E> PersonAboutExecutor<'_, E> {
                 step_bindings: charges.step_bindings.clone(),
             });
         }
-        let at = ctx.now_ms.div_ceil(1_000);
-        let landed = match ctx.vault.with_write_txn(|txn| {
-            // FIX 8697: an erase that lands between the snapshot above and
-            // this write must not have its text put back. The PERSON and the
-            // exact facts the lines stand on are read again through this
-            // write's own snapshot; a stale landing writes nothing, and the
-            // next pass rebuilds from the facts left.
-            if !crate::consent::person_is_live_in_txn(ctx.vault, txn, &person)? {
-                return Ok(false);
-            }
-            let now_facts = person_facts(ctx.vault, &read, txn, person)?;
-            if facts_digest(&now_facts, TOP_BAND) != digest {
-                return Ok(false);
-            }
-            let mut row = PERSON_ABOUT
-                .get(&ctx.vault.store, txn, &person)?
-                .unwrap_or_default();
-            row.previous = Some(PriorAbout {
-                written: row.written,
-                lines: std::mem::replace(&mut row.lines, lines),
-                at: row.at,
-            });
-            row.written = digest;
-            row.at = at;
-            PERSON_ABOUT.put(&ctx.vault.store, txn, &person, &row)?;
-            Ok(true)
-        }) {
-            Ok(landed) => landed,
+        // The lines land as one derivation item (untangle 6.7a, X03): the
+        // Dreamer's live `derive` grant is judged over the PERSON and the
+        // landing keeps a receipt. The publish reads the PERSON and the exact
+        // facts the lines stand on again in the write (FIX 8697): an erase
+        // that lands between the snapshot above and the write, or a fact
+        // that moved, writes nothing, and the next pass rebuilds from the
+        // facts left.
+        let stamp = crate::derive::DerivationStamp {
+            actor: self.actor,
+            run: None,
+            attempt: Some(attempt_id),
+            lineage: crate::write_envelope::SourceLineage::of(crate::claim::ClaimSource::Generated),
+        };
+        let batch = crate::derive::DerivationBatch {
+            items: vec![crate::derive::DerivationItem::PersonAbout(
+                crate::derive::DerivedPersonAbout {
+                    local: "about".to_owned(),
+                    person: crate::derive::ItemRef::Stored(person),
+                    written_from: digest,
+                    lines: lines
+                        .into_iter()
+                        .map(|line| crate::derive::DerivedAboutLine {
+                            band: line.band,
+                            text: line.text,
+                        })
+                        .collect(),
+                },
+            )],
+            // The lines cite no stored source: the publish reads the facts
+            // again in its own write.
+            sources: Vec::new(),
+        };
+        let receipt = match ctx.vault.derive_commit(&stamp, &batch) {
+            Ok(receipt) => receipt,
             Err(error) => return spent_or_deferred(error, ctx, &charges),
         };
-        if !landed {
+        if let Some(crate::derive::ItemOutcome::Refused { reasons, .. }) =
+            receipt.items.first().map(|item| &item.outcome)
+        {
             tracing::warn!(
                 target: "oneiron::dreamer",
-                code = "person_about_stale_landing",
+                code = "person_about_refused_landing",
                 person = %person.to_hex(),
-                "a stale person about landing wrote nothing; the next pass rebuilds"
+                reasons = ?reasons,
+                "a person about landing was refused and wrote nothing; the next pass rebuilds"
             );
         }
         Ok(DreamerAttemptExecution::Completed {

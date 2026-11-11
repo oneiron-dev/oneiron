@@ -173,6 +173,9 @@ impl CodeRunBridgeCall {
             // A run repo row's answer is its door's output, as a verb answer
             // (FIX 6867).
             SelfDispatchOutcome::AgentVerb(_) if self.effect.is_repo() => Ok(()),
+            // `tasks.wait({agents, ...})`'s answer is the reduction over the
+            // run's AGENT children, as a verb answer (slice 6.5b).
+            SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::TasksWaitSet => Ok(()),
             SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
                 invalid_code_run_replay("agent verb result belongs to another effect"),
             ),

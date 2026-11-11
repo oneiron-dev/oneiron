@@ -232,8 +232,10 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
 /// when the build does not carry it or the host does not have it. Which
 /// backend a guest tier takes is decided here, in
 /// [`select_backend_for_tier`] and [`select_backend_for_session`], never by
-/// an implementation, so core names no backend. The build's one
-/// implementation is `code_sandbox::compiled_backends::SANDBOX_BACKENDS`.
+/// an implementation, so core names no backend. Each vault carries the set
+/// the binary that built it installed ([`crate::Vault::install_sandbox_backends`]),
+/// read through [`crate::RuntimeHandle::sandbox_backends`]; the server
+/// installs `oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends`.
 pub trait SandboxBackends: Send + Sync {
     /// The Firecracker backend, when this build carries it and the host has
     /// the VMM installed. Asked only on a host with KVM.
@@ -252,6 +254,30 @@ pub trait SandboxBackends: Send + Sync {
         runtime: std::path::PathBuf,
         image: &str,
     ) -> Option<Result<Box<dyn MicroVmBackend>>>;
+}
+
+/// The backends of a vault whose host installed none: it carries no
+/// isolating backend, so every tier that needs isolation is refused and
+/// first-party code runs in-process as before.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoSandboxBackends;
+
+impl SandboxBackends for NoSandboxBackends {
+    fn firecracker(&self) -> Option<Box<dyn MicroVmBackend>> {
+        None
+    }
+
+    fn container(&self) -> Option<Box<dyn MicroVmBackend>> {
+        None
+    }
+
+    fn session_container(
+        &self,
+        _runtime: std::path::PathBuf,
+        _image: &str,
+    ) -> Option<Result<Box<dyn MicroVmBackend>>> {
+        None
+    }
 }
 
 /// Routes one guest tier to its execution backend.

@@ -673,6 +673,7 @@ impl Vault {
             lfs_read_room: Default::default(),
             host_net_floor: Default::default(),
             proposal_spool: Default::default(),
+            sandbox_backends: Default::default(),
             result_body_pins,
             verb_hook_state: Default::default(),
             skill_invocations: Default::default(),
@@ -709,6 +710,9 @@ impl Vault {
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::store::skill_content_index::backfill_content_hash_index_if_needed(&vault)?;
+        // The agents owner-agent Grant mints have ever named, for a vault
+        // older than their index (PAIR-GRANT-DESIGN Q2 = A).
+        crate::federation::backfill_agent_grant_member_index(&vault, false)?;
         vault.backfill_widen_contact_verdict_index(false)?;
         crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
         vault.backfill_row_deletion_fences_on_open()?;

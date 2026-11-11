@@ -440,7 +440,11 @@ impl Memory<'_> {
                 MemoryError::not_found("regeneration reference not found")
             }
         })?;
-        crate::conversation_dag::append_at_in_txn(vault, txn, &input, None, thread, turn_id)?;
+        // The reply's words are the model's, whoever answers: the TURN is
+        // checked as generated (ARCH-0040).
+        crate::conversation_dag::append_composed_at_in_txn(
+            vault, txn, &input, None, thread, turn_id,
+        )?;
         Ok(None)
     }
 

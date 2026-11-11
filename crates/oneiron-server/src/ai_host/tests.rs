@@ -99,10 +99,10 @@ async fn captured_turns_dream_on_session_end_and_land_through_the_promotion_writ
             b"person",
         )
         .unwrap();
-    fake.push(extraction_reply(subject, "Oleksii"));
+    fake.push(extraction_reply(subject, "Owen"));
     let sitting = local_sitting(&vault);
     handle.session_hint(sitting, SessionHint::AppOpen, None);
-    capture_user_turn(&vault, "call me Oleksii");
+    capture_user_turn(&vault, "call me Owen");
     // No call is made while the sitting is open: the end is the trigger.
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(fake.seen().is_empty());
@@ -166,10 +166,10 @@ async fn a_vault_model_manifest_names_the_model_the_dreamer_extracts_with() {
             b"person",
         )
         .unwrap();
-    fake.push(extraction_reply(subject, "Oleksii"));
+    fake.push(extraction_reply(subject, "Owen"));
     let sitting = local_sitting(&vault);
     handle.session_hint(sitting, SessionHint::AppOpen, None);
-    capture_user_turn(&vault, "call me Oleksii");
+    capture_user_turn(&vault, "call me Owen");
     handle.session_hint(sitting, SessionHint::ExplicitEnd, None);
     assert!(
         eventually(Duration::from_secs(30), || !name_claims(&vault, &subject)
@@ -237,10 +237,10 @@ rungs = [{{ model = "local:teacher", prompt = "teacher rung rules" }}]
             b"person",
         )
         .unwrap();
-    local.push(extraction_reply(subject, "Oleksii"));
+    local.push(extraction_reply(subject, "Owen"));
     let sitting = local_sitting(&vault);
     handle.session_hint(sitting, SessionHint::AppOpen, None);
-    capture_user_turn(&vault, "call me Oleksii");
+    capture_user_turn(&vault, "call me Owen");
     handle.session_hint(sitting, SessionHint::ExplicitEnd, None);
     assert!(
         eventually(Duration::from_secs(30), || !name_claims(&vault, &subject)
@@ -552,7 +552,7 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     let sitting = local_sitting(&vault);
     host.handle()
         .session_hint(sitting, SessionHint::AppOpen, None);
-    capture_user_turn(&vault, "call me Oleksii");
+    capture_user_turn(&vault, "call me Owen");
     host.handle()
         .session_hint(sitting, SessionHint::ExplicitEnd, None);
     let runner = oneiron::DreamerRunnerStore::new(&vault);
@@ -584,7 +584,7 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     // passes may spend then: one still queued at the shutdown, or one the
     // restarted Dreamer schedules for the same turns. A pass parked on its
     // trap stays as it was: leased, on the same trap, never claimed again.
-    fake.push(extraction_reply(subject, "Oleksii"));
+    fake.push(extraction_reply(subject, "Owen"));
     let roomy = metered_models(models(
         &fake.base_url,
         "[dreamer]\nidle_floor_secs = 600\n[workflows]\nenabled = false",
