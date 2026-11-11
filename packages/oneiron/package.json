@@ -30,7 +30,7 @@
   "scripts": {
     "build:native": "bunx --bun @napi-rs/cli build --platform --release --manifest-path ../../crates/oneiron-napi/Cargo.toml --output-dir native --js index.cjs",
     "build:ts": "bunx --bun tsc --project tsconfig.json",
-    "generate": "python3 ../../scripts/sdk/generate.py --package oneiron",
+    "generate": "cargo run --locked --release -p oneiron-sdk-generator -- --package oneiron",
     "build": "bun run generate && bun run build:native && bun run build:ts",
     "check:snippets": "bun run scripts/check-readme-snippets.mjs",
     "check:sdk-major": "bun run scripts/assert-sdk-major.mjs",

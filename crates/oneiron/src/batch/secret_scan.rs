@@ -38,6 +38,8 @@ pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mask::mark_text_value_in_txn;
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::retained_repo::read::{
     RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,

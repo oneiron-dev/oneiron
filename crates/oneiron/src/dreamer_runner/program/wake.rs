@@ -56,6 +56,7 @@ pub(crate) fn record_turn_program_wakes_in_txn(
             revision: arming.revision,
             authority: authority.clone(),
             turn: *turn,
+            occurrence: None,
             held: None,
         };
         if WAKE.contains(vault, &*txn, &wake.key())?
