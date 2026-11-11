@@ -1,6 +1,6 @@
 #![cfg(oneiron_test_support)]
-//! MCP-CAVEATED-READER (RETRIEVAL-04): a paired reader's `core:read` slip,
-//! narrowed by its holder to one world, reaches the MCP gateway as itself.
+//! MCP-CAVEATED-READER (RETRIEVAL-04): a reader's `core:read` slip, narrowed
+//! by its holder to one world, reaches the MCP gateway as itself.
 //! The gateway records it by the paired rule over its verified (narrowed)
 //! claims, held to its registered mint, and it reads only within its
 //! caveat. A widened actor echo is refused, a shape the adapter cannot hold
@@ -17,8 +17,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    CapabilitySlip, HostSlipIssuer, MachineRole, PairingPrincipal, SlipCaveat,
-    holder_proof_challenge, pairing_binding_transcript,
+    CapabilitySlip, HostSlipIssuer, MachineRole, SlipCaveat, holder_proof_challenge,
 };
 use oneiron::claim::{base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
@@ -51,6 +50,7 @@ struct Fixture {
     app: Router,
     vault: Arc<Vault>,
     issuer: HostSlipIssuer,
+    root: CapabilitySlip,
     readable: EntityId,
     hidden: EntityId,
     hidden_world: EntityId,
@@ -69,6 +69,7 @@ impl Fixture {
         let readable =
             write_owner_claim(&vault, owner, &owner_proof, base_world_id(), READABLE_TEXT)?;
         let hidden = write_owner_claim(&vault, owner, &owner_proof, hidden_world, HIDDEN_TEXT)?;
+        let root = vault.ensure_host_root_slip(&issuer)?;
         let server = Arc::new(SyncServer::new(
             vault.clone(),
             SyncServerConfig {
@@ -80,6 +81,7 @@ impl Fixture {
             app: build_app(server),
             vault,
             issuer,
+            root,
             readable,
             hidden,
             hidden_world,
@@ -87,10 +89,10 @@ impl Fixture {
         })
     }
 
-    /// A distinct person paired over the public redeem door with a
-    /// `core:read` link: the redeemed (uncaveated) slip, which redeem
-    /// registers with the MCP gateway.
-    async fn pair_reader(&self) -> TestResult<Holder> {
+    /// A distinct person's `core:read` slip, minted under the vault's logged
+    /// issuer as pairing mints one: the mint itself, uncaveated. The
+    /// gateway records it at its first use (the paired fallback).
+    fn mint_reader(&self) -> TestResult<Holder> {
         let person = EntityId::now();
         self.vault.put_entity(
             &person,
@@ -100,42 +102,16 @@ impl Fixture {
             b"a distinct reader",
         )?;
         let key = SigningKey::from_bytes(&[0x61; 32]);
-        let binding_key = key.verifying_key().to_bytes();
-        let mut scope = Scope::top();
-        scope.verbs = ScopeAxis::Some(BTreeSet::from(["core:read".to_owned()]));
-        let link = self.vault.issue_pairing_link_for_principal(
-            &self.issuer,
-            scope,
-            3600,
-            PairingPrincipal {
-                holder_ref: Some(person.to_hex()),
-                actor_class: Some("human".to_owned()),
-                org_ref: None,
-                write_facet: None,
-                ..Default::default()
-            },
-        )?;
-        let transcript = pairing_binding_transcript(&link.code, &binding_key, &person.to_hex())?;
-        let request = Request::post("/v1/core/pairing/redeem")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                json!({
-                    "code": link.code,
-                    "holder_ref": person.to_hex(),
-                    "binding_key": hex(&binding_key),
-                    "signature": hex(&key.sign(&transcript).to_bytes()),
-                })
-                .to_string(),
-            ))?;
-        let response = self.app.clone().oneshot(request).await?;
-        let status = response.status().as_u16();
-        let body: Value =
-            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
-        assert_eq!(status, 200, "pairing redeem: {body}");
-        let token = body["token"].as_str().ok_or("redeem returns a token")?;
-        let slip = CapabilitySlip::from_token(token)?;
-        assert_eq!(slip.claims.holder_ref, person.to_hex());
-        assert!(slip.caveats.is_empty(), "redeem returns the mint itself");
+        let mut claims = self.root.claims.clone();
+        claims.parent_id = None;
+        claims.slip_id = [0x61; 32];
+        claims.holder_ref = person.to_hex();
+        claims.binding_key = key.verifying_key().to_bytes();
+        claims.actor_class = Some("human".to_owned());
+        claims.scope = Scope::top();
+        claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["core:read".to_owned()]));
+        let slip = self.vault.mint_capability_slip(&self.issuer, claims)?;
+        assert!(slip.caveats.is_empty(), "a mint carries no caveat");
         Ok(Holder { slip, key })
     }
 
@@ -325,8 +301,8 @@ async fn caveated_slip_and_the_mcp_gateway() -> TestResult {
     let base_world = base_world_id().to_hex();
     let hidden_world = fixture.hidden_world.to_hex();
 
-    // The redeemed slip itself reaches the gateway (the control).
-    let mint = fixture.pair_reader().await?;
+    // The mint itself reaches the gateway, which records it (the control).
+    let mint = fixture.mint_reader()?;
     let person = mint.slip.claims.holder_ref.clone();
     let (status, reply) = fixture.initialize(&mint, 1).await?;
     assert_eq!(status, 200, "the mint initializes: {reply}");
