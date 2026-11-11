@@ -70,9 +70,10 @@ pub(crate) struct DocumentWriter<'v> {
     attaches_files: bool,
     /// Whether this export's serializer nulls credentials (every export but
     /// one) or keeps them (the Owner's whole-vault archive with secrets
-    /// included). Entity bodies and SKILL and pack-source trees follow it;
-    /// agent facets, derivations, edges, runs, side rows, births, embedding
-    /// setup, epoch floors and the manifest's own pass stay nulled.
+    /// included). Entity bodies, SKILL and pack-source trees and a claim's
+    /// derivation evidence follow it; agent facets, derivation receipt
+    /// sources, edges, runs, side rows, births, embedding setup, epoch floors
+    /// and the manifest's own pass stay nulled.
     secrets: ExportSecrets,
     groups: BTreeMap<String, RecordSpool>,
     files: FileSpool,
@@ -189,7 +190,7 @@ impl<'v> DocumentWriter<'v> {
                     raw.archived_receipts.as_ref(),
                 )?,
             };
-            self.push_nulled(ArchiveRecordKind::DerivationEnvelope, &envelope, 2)?;
+            self.push_derivation_envelope(&envelope)?;
         }
         let entity = ExportEntity {
             id,
@@ -731,6 +732,22 @@ impl<'v> DocumentWriter<'v> {
             ));
         }
         self.push(kind, &row)
+    }
+
+    /// A claim's derivation envelope at depth 2: its id and receipt sources
+    /// through the document pass, its evidence under this writer's policy, as
+    /// the claim's own `evid` member goes out. The reader requires the two
+    /// equal, and under Included the pass would null a kept credential text
+    /// to a node no reader decodes.
+    fn push_derivation_envelope(&mut self, envelope: &ExportDerivationEnvelope) -> Result<()> {
+        let typed = serde_json::to_value(envelope).map_err(|_| encode_failed())?;
+        let mut row = null_document_member("", &typed, 2);
+        if self.secrets == ExportSecrets::Included
+            && let (Some(kept), Some(evidence)) = (typed.get("evidence"), row.get_mut("evidence"))
+        {
+            *evidence = kept.clone();
+        }
+        self.push(ArchiveRecordKind::DerivationEnvelope, &row)
     }
 
     fn push_nulled(
