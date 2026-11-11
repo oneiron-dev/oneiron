@@ -678,6 +678,24 @@
   box-shadow: 0 0 0 1px var(--sl-rule);
 }
 
+/* A frame at a set width and height (given inline) for one thing beside a room. */
+.lib-beside-root {
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  box-shadow: 0 0 0 1px var(--sl-rule);
+}
+
+.lib-beside-split {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.lib-beside-room {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .lib-frame {
   height: 100%;
 }

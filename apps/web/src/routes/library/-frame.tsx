@@ -25,6 +25,7 @@ import {
   RolePicker,
   RoleWord,
   SortCycle,
+  SplitPane,
   StatusDot,
   VaultSwitch,
   Verb,
@@ -32,6 +33,7 @@ import {
   Figure,
   type ActivityAge,
   type ActivityKind,
+  type NeedsYouAnswerRecord,
   type IconName,
   type RoleAct,
   type RoleOption,
@@ -41,6 +43,7 @@ import {
 } from '~/design-system'
 import { Section, Specimen } from './-gallery-frame'
 import { ANTEVON, EIRI, METRYON, TORY, type Resident } from './-identity'
+import { formatAnswerTime } from '~/design-system'
 import { GALLERY_THEMES } from './-themes'
 
 /* Frame sections of the /library gallery: the sidebar, the microsidebar,
@@ -1031,6 +1034,161 @@ function FrameDemo({
   )
 }
 
+/* ── a thing opened beside the room ──────────────────────────────────── */
+
+const PROMO_QUESTION = 'Should the fit treat weeks 44 to 46 as promo weeks?'
+const PROMO_NOTE =
+  'Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline; as normal weeks, it keeps the dip in.'
+
+interface ThreadLine {
+  who: 'Owen' | 'Metryon'
+  text: string
+  time: string
+}
+
+const THREAD_AT_START: ThreadLine[] = [
+  { who: 'Owen', text: 'Keep the promo weeks. Show week 44 on its own too.', time: '14:16' },
+  { who: 'Metryon', text: 'Noted. I will add week 44 as its own reading.', time: '14:16' },
+]
+
+const threadAuthor = (who: ThreadLine['who']) =>
+  who === 'Owen' ? <Glyph initial="o" label="Owen" size={24} /> : <Glyph glyph="ruler" label="Metryon" size={24} />
+
+/* The ask, as the room and the pane both show it: the same answer in both. */
+function PromoAsk({ id, answer, onAnswerChange, onOpen }: { id: string; answer: NeedsYouAnswerRecord | null; onAnswerChange: (a: NeedsYouAnswerRecord | null) => void; onOpen?: () => void }) {
+  return (
+    <NeedsYou.Ask
+      id={id}
+      asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
+      question={PROMO_QUESTION}
+      note={onOpen ? PROMO_NOTE : undefined}
+      onOpen={onOpen}
+      answer={answer}
+      onAnswerChange={onAnswerChange}
+    >
+      <NeedsYou.Picks>
+        <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
+        <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
+        <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
+        <NeedsYou.OwnAnswer />
+      </NeedsYou.Picks>
+    </NeedsYou.Ask>
+  )
+}
+
+/* A room with an ask in the talk; its information mark opens the ask
+   beside the room as one thing (SplitPane.Thing), with its note and its
+   thread. Writing in the pane starts the thread, and the ask in the talk
+   then carries a thread line. */
+function BesideDemo({ width, height, withThread, specimen, caption }: { width: number; height: number; withThread: boolean; specimen: string; caption: string }) {
+  const [current, setCurrent] = React.useState('home')
+  const [sidebarOpen, setSidebarOpen] = React.useState(true)
+  const [open, setOpen] = React.useState(true)
+  const [answer, setAnswer] = React.useState<NeedsYouAnswerRecord | null>(null)
+  const [thread, setThread] = React.useState<ThreadLine[]>(withThread ? THREAD_AT_START : [])
+  const send = (text: string) => {
+    const first = thread.length === 0
+    setThread((t) => [...t, { who: 'Owen', text, time: formatAnswerTime(new Date()) }])
+    /* The fixture's agent answers the first message after a moment. */
+    if (first) {
+      setTimeout(() => setThread((t) => [...t, { who: 'Metryon', text: 'Noted. I will add week 44 as its own reading.', time: formatAnswerTime(new Date()) }]), 1300)
+    }
+  }
+  const room = (
+    <div className="lib-room" data-specimen={`${specimen}-room`}>
+      <PlaceHead icon={<Icon name="hash" />} title="acme-forecast" />
+      <div className="lib-room-trunk">
+        <div className="lib-room-messages">
+          <DayDivider>Today</DayDivider>
+          <MessageRow author={<Glyph initial="y" label="Yuki" size={24} guest />} name="Yuki" time="13:50">
+            <MessageRow.Text>Can we have the Q4 view by Friday?</MessageRow.Text>
+          </MessageRow>
+          <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={24} />} name="Metryon" time="14:02">
+            <MessageRow.Text>Before I fit the quarter, one answer from you.</MessageRow.Text>
+            <NeedsYou aria-label="needs you" className="lib-room-asks">
+              <PromoAsk id={`${specimen}-promo`} answer={answer} onAnswerChange={setAnswer} onOpen={() => setOpen(true)} />
+            </NeedsYou>
+            {thread.length ? (
+              <MessageRow.ThreadLine
+                replies={thread.length}
+                lastReply={thread[thread.length - 1].time}
+                participants={
+                  <>
+                    <Glyph initial="o" label="Owen" size={18} />
+                    <Glyph glyph="ruler" label="Metryon" size={18} />
+                  </>
+                }
+                onClick={() => setOpen(true)}
+              />
+            ) : null}
+          </MessageRow>
+        </div>
+      </div>
+      <Composer
+        placeholder="Write to acme-forecast"
+        persona={<Composer.Persona initial="o" note="You write as Owen. Saved in Antevon’s vault." aria-label="Owen" />}
+        onVoice={() => {}}
+        onDictate={() => {}}
+      >
+        <Composer.Add label="Add to the message">
+          <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
+          <Menu.Item icon={<Icon name="tool" />}>model and effort</Menu.Item>
+        </Composer.Add>
+      </Composer>
+    </div>
+  )
+  return (
+    <figure className="lib-frame-specimen">
+      <div className="lib-frame-scroller">
+        <SafelightRoot theme={GALLERY_THEMES[0]} className="lib-beside-root" style={{ width, height }}>
+          <AppFrame
+            className="lib-frame"
+            data-specimen={specimen}
+            microSidebar={<MicroSidebarDemo current={current} onCurrent={setCurrent} inFrame />}
+            sidebar={<HomeSidebar specimen={`${specimen}-home`} />}
+            sidebarOpen={sidebarOpen}
+            onSidebarOpenChange={setSidebarOpen}
+          >
+            {open ? (
+              <SplitPane pane="thing" className="lib-beside-split" data-specimen={`${specimen}-split`}>
+                <SplitPane.Pane className="lib-beside-room">{room}</SplitPane.Pane>
+                <SplitPane.Handle aria-label="resize the pane" />
+                <SplitPane.Thing
+                  title={PROMO_QUESTION}
+                  onClose={() => setOpen(false)}
+                  note={PROMO_NOTE}
+                  onSend={send}
+                  data-specimen={`${specimen}-thing`}
+                  thread={thread.map((m, i) => (
+                    <MessageRow key={i} author={threadAuthor(m.who)} name={m.who} time={m.time}>
+                      <MessageRow.Text>{m.text}</MessageRow.Text>
+                    </MessageRow>
+                  ))}
+                >
+                  <NeedsYou ground="bare" aria-label="the ask">
+                    <PromoAsk id={`${specimen}-promo-beside`} answer={answer} onAnswerChange={setAnswer} />
+                  </NeedsYou>
+                </SplitPane.Thing>
+              </SplitPane>
+            ) : (
+              room
+            )}
+          </AppFrame>
+        </SafelightRoot>
+      </div>
+      <figcaption className="lib-field-caption">{caption}</figcaption>
+      <p className="lib-field-readout" data-specimen={`${specimen}-state`}>
+        pane {open ? 'open' : 'closed'}, thread {thread.length}, answer {answer ? answer.word : 'none'}
+        {open ? null : (
+          <button type="button" className="lib-pick lib-field-pick" onClick={() => setOpen(true)}>
+            open it beside again
+          </button>
+        )}
+      </p>
+    </figure>
+  )
+}
+
 /* ── sections ─────────────────────────────────────────────────────────── */
 
 /* In the island: the parts that sit inside a well. */
@@ -1177,6 +1335,28 @@ export function FieldSections() {
           caption="folded: rest the pointer on a place to see its sidebar raised over the sheet; move to the next place to switch"
         />
         <FrameDemo theme={GALLERY_THEMES[0]} startAt="notes" specimen="frame-no-sidebar" caption="a lens: no sidebar, the sheet is the work area alone" />
+      </section>
+
+      <section className="lib-field-section" aria-labelledby="lib-beside">
+        <h2 id="lib-beside" className="lib-field-head">
+          SplitPane.Thing: one thing opened beside the room
+        </h2>
+        <BesideDemo
+          width={1440}
+          height={760}
+          withThread={false}
+          specimen="beside-1440"
+          caption="1440 wide: the pane takes what the messages column leaves; write in it to start the thread"
+        />
+        <BesideDemo
+          width={1440}
+          height={760}
+          withThread
+          specimen="beside-1440-thread"
+          caption="1440 wide, with a thread: the write box now says reply; the ask in the talk carries the thread line"
+        />
+        <BesideDemo width={1100} height={680} withThread={false} specimen="beside-1100" caption="1100 wide: the pane holds its 380 px floor" />
+        <BesideDemo width={1100} height={680} withThread specimen="beside-1100-thread" caption="1100 wide, with a thread" />
       </section>
     </div>
   )
