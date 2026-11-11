@@ -2,13 +2,13 @@ import * as React from 'react'
 import { cx } from '../lib/react-utils'
 
 export interface WellProps extends React.ComponentPropsWithRef<'div'> {
-  /* `sunk` is a well inside the island (one step deeper); `island` is the
-     island's own tone, for a well set on a sunk ground. */
-  tone?: 'sunk' | 'island'
+  /* `well` is a recess, one step darker than the ground it is carved in;
+     `island` is the island's own tone, for a well set on another tone. */
+  tone?: 'well' | 'island'
 }
 
-/* A tone step inside the island: the well's ground and the radius, nothing
-   else. Padding and layout belong to the caller. */
-export function Well({ className, tone = 'sunk', ...props }: WellProps) {
+/* A recess: the well's tone and the radius, nothing else. No ring, no
+   shadow, no outline. Padding and layout belong to the caller. */
+export function Well({ className, tone = 'well', ...props }: WellProps) {
   return <div className={cx('sl-well', className)} data-tone={tone} {...props} />
 }
