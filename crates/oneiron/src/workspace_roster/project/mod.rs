@@ -64,12 +64,19 @@ pub(crate) use fork_evidence::ProjectForks;
 pub use fork_evidence::{ProjectForkEvidence, ProjectForkOutcome};
 pub(crate) use goal::GoalLimits;
 pub use goal::{
-    GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
-    ProjectGoalInterviewContext,
+    GoalAxis, GoalAxisChange, GoalAxisChanges, GoalBudgetChange, GoalExplorationBudget,
+    GoalInterviewTurns, GoalPreference, GoalPreferenceChange, GoalPreferenceChanges, GoalRecord,
+    GoalRecordDiff, GoalTextChange, ProjectGoalBase, ProjectGoalInterviewContext,
+    ProjectGoalProposal, ProjectGoalProposalDismissal, ProjectGoalProposalEvidence,
+    ProjectGoalProposalImprovement, ProjectGoalProposalRate, ProjectGoalProposalReasons,
+    ProjectGoalProposalStatus, ProjectGoalProposalView, ProjectGoalProposeRequest,
+    ProjectGoalProposer, ProjectGoalRevisionsView, project_goal_propose,
 };
 pub(crate) use goal::{
-    admitted_claim_of_project, guard_claim_put as guard_goal_claim_put, guard_goal_delete,
-    guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, retire_goal_for_delete,
+    admitted_claim_of_project, dismiss_project_goal_proposal,
+    guard_claim_put as guard_goal_claim_put, guard_goal_delete,
+    guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, project_goal_base_in_txn,
+    project_goal_proposals_in_txn, reads_goal_proposals_in_txn, retire_goal_for_delete,
 };
 pub use history_policy::{
     DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
