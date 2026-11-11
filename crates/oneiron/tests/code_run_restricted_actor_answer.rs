@@ -117,15 +117,21 @@ impl AgentVerbDoor for TierDoor {
         let request: RecallRequest = serde_json::from_value(call.input.clone())
             .map_err(|error| Error::InvalidConfig(format!("tier door recall input: {error}")))?;
         // The row's own admission, as vault.recall.json spells it.
-        check_limit_nonzero(request.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT))
-            .map_err(|error| Error::InvalidConfig(format!("tier door recall: {}", error.message)))?;
-        check_as_of(request.as_of)
-            .map_err(|error| Error::InvalidConfig(format!("tier door recall: {}", error.message)))?;
-        check_deadline_ms(request.deadline_ms)
-            .map_err(|error| Error::InvalidConfig(format!("tier door recall: {}", error.message)))?;
+        check_limit_nonzero(request.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT)).map_err(
+            |error| Error::InvalidConfig(format!("tier door recall: {}", error.message)),
+        )?;
+        check_as_of(request.as_of).map_err(|error| {
+            Error::InvalidConfig(format!("tier door recall: {}", error.message))
+        })?;
+        check_deadline_ms(request.deadline_ms).map_err(|error| {
+            Error::InvalidConfig(format!("tier door recall: {}", error.message))
+        })?;
         let memory = self.vault.memory(self.actor, EdgeActorClass::Agent);
         let pack = recall_unembedded(&memory, request).map_err(|error| {
-            Error::InvalidConfig(format!("tier door recall: {}: {}", error.code, error.message))
+            Error::InvalidConfig(format!(
+                "tier door recall: {}: {}",
+                error.code, error.message
+            ))
         })?;
         let output = serde_json::to_value(pack)
             .map_err(|error| Error::InvalidConfig(format!("tier door recall pack: {error}")))?;
@@ -315,8 +321,7 @@ fn write_program(claim: &EntityId, subject: &EntityId) -> String {
 
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let vault =
-        Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("a vault opens"));
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("a vault opens"));
     (dir, vault)
 }
 
@@ -562,14 +567,26 @@ fn full_access_recall_run_returns_its_answer_and_witnesses_its_message() {
         .expect("the companion MESSAGE body decodes");
     let fields = body.as_map().expect("the MESSAGE body is a map");
     let field = |name: &str| {
-        fields.iter().find_map(|(key, value)| {
-            (key.as_str() == Some(name)).then_some(value)
-        })
+        fields
+            .iter()
+            .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
     };
-    assert_eq!(field("author").and_then(rmpv::Value::as_str), Some("companion"));
-    assert_eq!(field("type").and_then(rmpv::Value::as_str), Some("executor.speak"));
-    assert_eq!(field("content").and_then(rmpv::Value::as_str), Some("recalled"));
-    assert_eq!(field("is_visible").and_then(rmpv::Value::as_bool), Some(true));
+    assert_eq!(
+        field("author").and_then(rmpv::Value::as_str),
+        Some("companion")
+    );
+    assert_eq!(
+        field("type").and_then(rmpv::Value::as_str),
+        Some("executor.speak")
+    );
+    assert_eq!(
+        field("content").and_then(rmpv::Value::as_str),
+        Some("recalled")
+    );
+    assert_eq!(
+        field("is_visible").and_then(rmpv::Value::as_bool),
+        Some(true)
+    );
 
     let (retry, retry_calls) = execute_run(
         &vault,
@@ -636,10 +653,7 @@ fn read_only_write_run_catches_its_denied_and_witnesses_no_message() {
         "no companion MESSAGE lands"
     );
     assert!(
-        vault
-            .get_claim(&claim)
-            .expect("a claim read")
-            .is_none(),
+        vault.get_claim(&claim).expect("a claim read").is_none(),
         "the refused write lands nothing"
     );
 

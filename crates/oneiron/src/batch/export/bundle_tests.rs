@@ -887,7 +887,10 @@ fn owner_whole_vault_keeps_source_credentials_that_scoped_and_contact_exports_nu
         130,
         &carrier_bytes,
     )?;
-    assert_eq!(vault.get(&carrier)?.as_deref(), Some(carrier_bytes.as_slice()));
+    assert_eq!(
+        vault.get(&carrier)?.as_deref(),
+        Some(carrier_bytes.as_slice())
+    );
     let mut selected = vec![id, carrier];
     let mut source_files = Vec::new();
     for file in &tainted.files {
@@ -899,7 +902,10 @@ fn owner_whole_vault_keeps_source_credentials_that_scoped_and_contact_exports_nu
             130,
             &file.content,
         )?;
-        assert_eq!(vault.get(&file_id)?.as_deref(), Some(file.content.as_slice()));
+        assert_eq!(
+            vault.get(&file_id)?.as_deref(),
+            Some(file.content.as_slice())
+        );
         selected.push(file_id);
         source_files.push((file_id, file.path.as_str()));
     }
