@@ -214,8 +214,8 @@ pub use system_agent_grant::{
     SystemAgentGrantNarrowing, SystemAgentNarrowing, SystemFunction,
 };
 pub(crate) use system_agent_grant::{
-    StewardRows, SystemAgent, holds_system_agent_grant, standing_steward_verbs_in,
-    steward_grant_of_in, steward_rows_rewrite,
+    StewardRows, SystemAgent, holds_system_agent_grant, standing_steward_grant_in,
+    standing_steward_verbs_in, steward_grant_of_in, steward_rows_rewrite,
 };
 mod engine_controls;
 mod substrate_reads;
