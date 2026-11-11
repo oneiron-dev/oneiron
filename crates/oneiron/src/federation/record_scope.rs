@@ -923,4 +923,50 @@ impl Vault {
         })?;
         Ok(admitted.unwrap_or(true))
     }
+
+    /// The e-sign gate at a scoped door (ESIGN-AUDIT-CLAIM-FACET): an
+    /// `esign.*` claim is admitted only while this door, under its own
+    /// selector, slip and channel, also admits the live signing document
+    /// and every original artifact the document's trail names, the same
+    /// gate `vault.esign.get` applies. A row that is no CLAIM, or whose
+    /// body does not decode, is not judged here: the row's own admission
+    /// judges it, as it does today. Each dependency's raw row is read in
+    /// `txn` and judged by `admit`, this door's one-row judgement at this
+    /// door and snapshot; an absent row, or a header that does not parse,
+    /// refuses the claim.
+    fn esign_dependencies_admitted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity_type: u8,
+        raw: &[u8],
+        mut admit: impl FnMut(EntityId, u8, &[u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        if entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+            return Ok(true);
+        }
+        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            return Ok(true);
+        };
+        match crate::blob_artifact::esign::esign_claim_dependencies_in(self, txn, &body)? {
+            crate::blob_artifact::esign::EsignClaimDependencies::NotEsign => Ok(true),
+            crate::blob_artifact::esign::EsignClaimDependencies::Unresolved => Ok(false),
+            crate::blob_artifact::esign::EsignClaimDependencies::Records(records) => {
+                for record in records {
+                    let Some(raw_dep) =
+                        crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &record)?
+                    else {
+                        return Ok(false);
+                    };
+                    let Some(header) = EntityMetadataHeader::parse(&raw_dep) else {
+                        return Ok(false);
+                    };
+                    if !admit(record, header.entity_type, &raw_dep)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+        }
+    }
 }

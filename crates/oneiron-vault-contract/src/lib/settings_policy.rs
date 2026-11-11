@@ -26,7 +26,9 @@
 /// `--mesh-relays`, `--shared-model-root`, `--container-home`,
 /// `--container-runtime-dir`, `--guest-runtime-fact` and
 /// `--hosted-private-origin`. An owner's `[browser] runtime` and
-/// `[desktop] runtime` stay his, inside the vault's own storage.
+/// `[desktop] runtime` stay his, inside the vault's own storage. The vault's
+/// clock (`[runtime] clock` and `clock_file`) is never the settings file's:
+/// a managed vault reads its host's clock.
 pub const SUPERVISOR_OWNED: &[&str] = &[
     "vault_path",
     "host",
@@ -65,6 +67,8 @@ pub const SUPERVISOR_OWNED: &[&str] = &[
     "container_runtime_dir",
     "guest_runtime_fact",
     "hosted_private_origins",
+    "runtime.clock",
+    "runtime.clock_file",
 ];
 
 /// The leaves that name a key by the environment variable holding it.
