@@ -1,8 +1,10 @@
 import * as React from 'react'
 import { applyTheme, readTheme, type Theme } from '~/components/safelight/hooks'
 import {
+  ACTIVITY_KIND_LABEL,
   ActivityDay,
   ActivityList,
+  ActivityMark,
   ActivityRow,
   AppFrame,
   Glyph,
@@ -782,6 +784,14 @@ export function FrameSections() {
         <Specimen name="open: vaults, a new vault, then the account" tall={6} wide={1}>
           <VaultSwitchDemo defaultOpen specimen="vault-switch" />
         </Specimen>
+      </Section>
+
+      <Section title="ActivityMark">
+        {(['needs-you', 'running', 'mention', 'outside', 'done', 'reaction'] as const).map((kind) => (
+          <Specimen key={kind} name={`${kind}: ${ACTIVITY_KIND_LABEL[kind]}`}>
+            <ActivityMark kind={kind} data-specimen={`activity-mark-${kind}`} />
+          </Specimen>
+        ))}
       </Section>
 
       <Section title="ActivityList, ActivityRow, ActivityDay">
