@@ -13,8 +13,9 @@ use crate::memory::repo_doors::{
     RepoCheckoutBindInput, RepoExportInput, RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput,
     RepoProposalResolveInput, RepoProposalSubmitInput, RepoSnapshotsGetInput,
     RepoSnapshotsIngestInput, RepoSnapshotsReadInput, RepoSymbolsDeclareInput,
-    RepoSymbolsDefinitionsInput, RepoSymbolsNeighborsInput, RepoSymbolsReleaseInput,
-    RepoSymbolsRenewInput, RepoViewsGetInput, RepoViewsReadInput, RepoWorkOpenInput,
+    RepoSymbolsDefinitionsInput, RepoSymbolsNeighborsInput, RepoSymbolsObserveInput,
+    RepoSymbolsReleaseInput, RepoSymbolsRenewInput, RepoViewsGetInput, RepoViewsReadInput,
+    RepoWorkOpenInput,
 };
 use crate::task_verb::sdk::RunVerb;
 
@@ -57,6 +58,8 @@ pub enum RepoRunCall {
     CheckoutBind(RepoCheckoutBindInput),
     /// `self.code.export` (PR3b).
     Export(RepoExportInput),
+    /// `self.code.symbols.observe` (NO-DOOR SYMBOL-LEASE-OBSERVATION).
+    SymbolsObserve(RepoSymbolsObserveInput),
 }
 
 impl RepoRunCall {
@@ -81,6 +84,7 @@ impl RepoRunCall {
             Self::MergeQueueEnqueue(_) => SelfEffect::RepoMergeQueueEnqueue,
             Self::CheckoutBind(_) => SelfEffect::RepoCheckoutBind,
             Self::Export(_) => SelfEffect::RepoExport,
+            Self::SymbolsObserve(_) => SelfEffect::RepoSymbolsObserve,
         }
     }
 
@@ -103,7 +107,8 @@ impl RepoRunCall {
             | Self::SymbolsRelease(RepoSymbolsReleaseInput { work, .. })
             | Self::ProposalSubmit(RepoProposalSubmitInput { work, .. })
             | Self::ProposalResolve(RepoProposalResolveInput { work, .. })
-            | Self::MergeQueueEnqueue(RepoMergeQueueEnqueueInput { work, .. }) => Some(*work),
+            | Self::MergeQueueEnqueue(RepoMergeQueueEnqueueInput { work, .. })
+            | Self::SymbolsObserve(RepoSymbolsObserveInput { work }) => Some(*work),
             Self::SnapshotsGet(_)
             | Self::SnapshotsRead(_)
             | Self::SymbolsDefinitions(_)
@@ -136,6 +141,7 @@ impl RepoRunCall {
             RunVerb::SelfCodeMergeQueueEnqueue => Self::MergeQueueEnqueue(typed(input)?),
             RunVerb::SelfCodeCheckoutBind => Self::CheckoutBind(typed(input)?),
             RunVerb::SelfCodeExport => Self::Export(typed(input)?),
+            RunVerb::SelfCodeSymbolsObserve => Self::SymbolsObserve(typed(input)?),
             _ => return Ok(None),
         }))
     }
@@ -162,12 +168,13 @@ impl RepoRunCall {
             Self::MergeQueueEnqueue(_) => Self::MergeQueueEnqueue(retyped(args)?),
             Self::CheckoutBind(_) => Self::CheckoutBind(retyped(args)?),
             Self::Export(_) => Self::Export(retyped(args)?),
+            Self::SymbolsObserve(_) => Self::SymbolsObserve(retyped(args)?),
         })
     }
 }
 
 /// Every run repo effect, in row order.
-const REPO_EFFECTS: [SelfEffect; 17] = [
+const REPO_EFFECTS: [SelfEffect; 18] = [
     SelfEffect::RepoSnapshotsGet,
     SelfEffect::RepoSnapshotsRead,
     SelfEffect::RepoSymbolsDefinitions,
@@ -185,6 +192,7 @@ const REPO_EFFECTS: [SelfEffect; 17] = [
     SelfEffect::RepoMergeQueueEnqueue,
     SelfEffect::RepoCheckoutBind,
     SelfEffect::RepoExport,
+    SelfEffect::RepoSymbolsObserve,
 ];
 
 impl SelfEffect {
@@ -210,6 +218,7 @@ impl SelfEffect {
                 | Self::RepoMergeQueueEnqueue
                 | Self::RepoCheckoutBind
                 | Self::RepoExport
+                | Self::RepoSymbolsObserve
         )
     }
 
