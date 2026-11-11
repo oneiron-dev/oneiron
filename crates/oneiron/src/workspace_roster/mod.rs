@@ -227,7 +227,9 @@ pub(crate) use rooms::{
     thread_turn_readable_with_read_in, turn_held_back_for_in, validate_private_audience_in,
 };
 pub use rooms::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
-pub(crate) use rooms::{VaultStanding, private_root_of_room_in, vault_standing_in};
+pub(crate) use rooms::{
+    VaultStanding, private_root_of_room_in, room_thread_source_in, vault_standing_in,
+};
 #[cfg(feature = "sync")]
 pub(crate) use rooms::{
     audience_edit_unlink_refusal, carried_audience_edit_in_txn, scrub_audience_edits,
