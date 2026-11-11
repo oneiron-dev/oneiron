@@ -1,4 +1,4 @@
-{"stage": "setup", "status": "complete", "unix_time": 1789839548.7520251, "e1_e3_qualified": false, "mode": "japanese", "profile_sha256": "8e40caaa33020b874d94aee05a2ecc301d9b82217aa81c5d3ebd5e5c1e531e6f", "model_execution": false}
+{"stage": "setup", "status": "complete", "unix_time": 1789839548.7520251, "e1_e3_qualified": false, "mode": "japanese", "profile_sha256": "5e2b787e3a816fbd7dafbf43fcdbb2e32776c5fde61f250cc0a87701edaac0a2", "model_execution": false}
 {"stage": "synthetic-input", "status": "started", "unix_time": 1789839548.752289, "e1_e3_qualified": false, "voice": "Kyoko (Japanese (Japan))", "language": "ja_JP", "human_voice": false}
 {"stage": "synthetic-input", "status": "complete", "unix_time": 1789839549.9102259, "e1_e3_qualified": false, "bytes": 245038, "sha256": "9661da39f83a015b515f5a5704a309618639365b9e76e4375523b2c23c4c09df", "voice": "Kyoko (Japanese (Japan))", "language": "ja_JP"}
 {"stage": "decode", "status": "started", "unix_time": 1789839549.9108238, "e1_e3_qualified": false, "input_sha256": "9661da39f83a015b515f5a5704a309618639365b9e76e4375523b2c23c4c09df"}

@@ -43,9 +43,9 @@
   "runs": [
     {
       "jobId": "W7-C11-merge-validation-v3-3aded1c1399e",
-      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v3-3aded1c1399e.terminal.json",
+      "terminalPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v3-3aded1c1399e.terminal.json",
       "terminalSha256": "746e7f9752570daf9b3ac044f3a66a7d0a9375d4b71476b8b0158098dbda5c0b",
-      "logPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v3-3aded1c1399e.log",
+      "logPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v3-3aded1c1399e.log",
       "logSha256": "68dd34f1a3daa900c6e848f53e2c44eec0a5e64d03ea7a2983da0b3f7d951771",
       "exitCode": 100,
       "summaries": [
@@ -54,13 +54,13 @@
       "hosts": [
         "olety@100.124.216.116"
       ],
-      "specPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v3-3aded1c1399e.spec.json"
+      "specPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v3-3aded1c1399e.spec.json"
     },
     {
       "jobId": "W7-C11-merge-validation-v5-ecaa816709c7",
-      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v5-ecaa816709c7.terminal.json",
+      "terminalPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v5-ecaa816709c7.terminal.json",
       "terminalSha256": "cff7aab091a36ce4e432aca92443e3f13c9fb727ed2520f953488e0e216da0b8",
-      "logPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v5-ecaa816709c7.log",
+      "logPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v5-ecaa816709c7.log",
       "logSha256": "c057da4dfee03dca1f1eafbbdfbb1150358a5fa23a4dc01c1353915a9beb237b",
       "exitCode": 100,
       "summaries": [
@@ -69,13 +69,13 @@
       "hosts": [
         "arch"
       ],
-      "specPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v5-ecaa816709c7.spec.json"
+      "specPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v5-ecaa816709c7.spec.json"
     },
     {
       "jobId": "W7-C11-merge-validation-v7-f8049f6ae7a3",
-      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v7-f8049f6ae7a3.terminal.json",
+      "terminalPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v7-f8049f6ae7a3.terminal.json",
       "terminalSha256": "d22467674b586a2665b42e9490895f7e69c980f013a10382bc60fe5d961da128",
-      "logPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v7-f8049f6ae7a3.log",
+      "logPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v7-f8049f6ae7a3.log",
       "logSha256": "6135a5d1a8b65329414ac55f02ff1eff6951408d42c450203f9f8145ce1a24b3",
       "exitCode": 101,
       "summaries": [
@@ -84,13 +84,13 @@
       "hosts": [
         "arch"
       ],
-      "specPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v7-f8049f6ae7a3.spec.json"
+      "specPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v7-f8049f6ae7a3.spec.json"
     },
     {
       "jobId": "W7-C11-merge-validation-v9-0afcdd43c5ef",
-      "terminalPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v9-0afcdd43c5ef.terminal.json",
+      "terminalPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v9-0afcdd43c5ef.terminal.json",
       "terminalSha256": "fdd087c1bd56878d697b2def6cd60f42853f1b22c28e7ef5499466b0c8916d1e",
-      "logPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v9-0afcdd43c5ef.log",
+      "logPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v9-0afcdd43c5ef.log",
       "logSha256": "a5f72602f2df832533e6d4ed11070bad8c5990e9f05fcaa6a21cddfff25adcbb",
       "exitCode": 0,
       "summaries": [
@@ -100,7 +100,7 @@
       "hosts": [
         "arch"
       ],
-      "specPath": "/home/lexi/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v9-0afcdd43c5ef.spec.json"
+      "specPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v9-0afcdd43c5ef.spec.json"
     }
   ],
   "finalChecks": [
