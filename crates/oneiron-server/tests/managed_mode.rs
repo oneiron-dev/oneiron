@@ -1538,7 +1538,11 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
 
     let fixture = spawn_ctl_fixture();
     let issuer = oneiron::test_support::test_host_issuer();
-    let slip = fixture.server.vault().ensure_host_root_slip(&issuer).unwrap();
+    let slip = fixture
+        .server
+        .vault()
+        .ensure_host_root_slip(&issuer)
+        .unwrap();
     let timestamp = fixture.server.vault().now_recorded_at();
     let nonce = oneiron::EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
@@ -1568,7 +1572,10 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     let request = Request::builder()
         .method("POST")
         .uri("/v1/core/conversations")
-        .header("authorization", format!("Bearer {}", slip.to_token().unwrap()))
+        .header(
+            "authorization",
+            format!("Bearer {}", slip.to_token().unwrap()),
+        )
         .header("x-oneiron-binding", binding.to_string())
         .header("content-type", "application/json")
         .header("content-length", len)

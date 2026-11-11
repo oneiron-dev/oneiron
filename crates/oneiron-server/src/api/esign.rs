@@ -480,8 +480,9 @@ mod tests {
     /// A sent signing request with an admitted recipient capability.
     fn signing_transport_fixture() -> (tempfile::TempDir, Arc<SyncServer>, String) {
         use oneiron::blob_artifact::esign::{
-            DocumentKind, EsignAuditActor, EsignDocument, EsignField, EsignItem, EsignOutboundCommand,
-            EsignOutboundVerb, EsignRecipient, FieldGeometry, FieldMeta, RecipientRole,
+            DocumentKind, EsignAuditActor, EsignDocument, EsignField, EsignItem,
+            EsignOutboundCommand, EsignOutboundVerb, EsignRecipient, FieldGeometry, FieldMeta,
+            RecipientRole,
         };
         use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
         use oneiron::federation::{Scope, ScopeAxis};
