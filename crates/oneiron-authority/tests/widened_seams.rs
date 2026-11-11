@@ -7,14 +7,14 @@ use oneiron_authority::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityConfirmKind, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthoritySignatureSuite, AuthorityTier,
     CONFIRM_KIND_ACCEPT, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod,
-    DeviceAuthority, FederationLifecycleKind, FoldedDevice, GenesisRecoveryStep,
-    MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COSIGNS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
-    ROLE_RECOVERY, SlipClaims, SlipMintAction, authority_transcript, canonical_p256_key_bytes,
-    decode_entry_value, decode_hash, decode_hash_array, decode_key, decode_op,
-    decode_optional_hash, decode_signature_array, decode_slip_mint, decode_tier, entry_value,
-    folded_device_can_authority_consent, folded_host_device_can_consent,
-    folded_peer_device_is_consent_root, key_value, required, roster_has_live_owner,
-    slip_mint_value, validate_op, verify_entry_signatures,
+    DeviceAuthority, FederationLifecycleAction, FederationLifecycleKind, FoldedDevice,
+    GenesisRecoveryStep, MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COSIGNS, ROLE_ADMIN, ROLE_AGENT,
+    ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, SlipClaims, SlipMintAction, authority_transcript,
+    canonical_p256_key_bytes, decode_entry_value, decode_hash, decode_hash_array, decode_key,
+    decode_op, decode_optional_hash, decode_signature_array, decode_slip_mint, decode_tier,
+    entry_value, folded_device_can_authority_consent, folded_host_device_can_consent,
+    folded_peer_device_is_consent_root, is_terminal_federation_lifecycle, key_value, required,
+    roster_has_live_owner, slip_mint_value, validate_op, verify_entry_signatures,
 };
 use oneiron_authority::credential_door::{DOOR_ONE_SHOT_MAX_LIFETIME_SECS, names_a_floor};
 use oneiron_authority::federation::codec::{
@@ -573,4 +573,45 @@ fn federation_decoders_refuse_malformed_ids_scopes_and_foreign_worlds() {
     let encoded = federation_direction_scope_value(&foreign);
     assert!(decode_federation_direction_scope_value(&encoded).is_err());
     assert!(decode_federation_direction_scope_value(&Value::from(1)).is_err());
+}
+
+#[test]
+fn only_disconnect_dissolve_and_promote_are_terminal_lifecycle_shapes() {
+    let lifecycle = |kind| {
+        let mut entry = signed_entry(&[]);
+        entry.op = AuthorityOp::FederationLifecycle(FederationLifecycleAction {
+            kind,
+            pact_id: [1; 32],
+            grant_ref: EntityId::from_bytes([2; 16]).expect("a valid entity id"),
+            peer_vault_id: [3; 32],
+            pact_epoch: 1,
+            pact_scope: None,
+            effective_scope: None,
+            scope_digest: None,
+            gesture: None,
+            successor_vault_id: None,
+            pact_nonce: [4; 16],
+        });
+        entry
+    };
+    for kind in [
+        FederationLifecycleKind::Disconnect,
+        FederationLifecycleKind::Dissolve,
+        FederationLifecycleKind::Promote,
+    ] {
+        assert!(
+            is_terminal_federation_lifecycle(&lifecycle(kind)),
+            "{kind:?}"
+        );
+    }
+    for kind in [
+        FederationLifecycleKind::Connect,
+        FederationLifecycleKind::Rescope,
+    ] {
+        assert!(
+            !is_terminal_federation_lifecycle(&lifecycle(kind)),
+            "{kind:?}"
+        );
+    }
+    assert!(!is_terminal_federation_lifecycle(&signed_entry(&[])));
 }

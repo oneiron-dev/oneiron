@@ -26,6 +26,14 @@ fn open() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>> {
 
 /// The owner witnesses one TURN of one MESSAGE row.
 fn witnessed_turn(memory: &Memory<'_>) -> Result<EntityId, Box<dyn std::error::Error>> {
+    Ok(witnessed_turn_and_message(memory)?.0)
+}
+
+/// The owner witnesses one TURN of one MESSAGE row: the TURN and the
+/// MESSAGE row its text is read from.
+fn witnessed_turn_and_message(
+    memory: &Memory<'_>,
+) -> Result<(EntityId, EntityId), Box<dyn std::error::Error>> {
     let receipt = memory.witness(&WitnessTurn {
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: None,
@@ -44,7 +52,11 @@ fn witnessed_turn(memory: &Memory<'_>) -> Result<EntityId, Box<dyn std::error::E
         occurred_at: 900,
         assertions: WitnessAssertions::default(),
     })?;
-    Ok(receipt.turn_id)
+    let message = receipt
+        .messages
+        .first()
+        .ok_or("the witness writes one MESSAGE row")?;
+    Ok((receipt.turn_id, EntityId::from_hex(&message.id)?))
 }
 
 fn preflight(
@@ -138,4 +150,87 @@ fn a_preflight_names_between_one_and_a_hundred_refs() -> TestResult {
         100
     );
     Ok(())
+}
+
+/// Review of #6985 (round 1, policy_preflight.rs:119): a local row whose
+/// words came from a source's row reads under that source's policy, and its
+/// preflight names that policy, though the row has no binding and no
+/// carried policy of its own.
+#[cfg(oneiron_test_support)]
+mod lineage {
+    use std::collections::BTreeSet;
+
+    use oneiron::snapshot_read::PolicyPreflightRef;
+    use oneiron::test_doors::source_audience::land_source_bound_artifact;
+    use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange};
+
+    use super::{TestResult, open, preflight, witnessed_turn_and_message};
+
+    #[test]
+    fn a_derived_rows_audience_names_the_policy_its_source_reads_under() -> TestResult {
+        let (_dir, vault) = open()?;
+        let owner_actor = vault.ensure_embedded_owner_actor()?;
+        let owner = vault.memory(owner_actor, EdgeActorClass::Human);
+        // A source's row, under a policy open to the vault: the owner's read
+        // meets it.
+        let source = land_source_bound_artifact(&vault, BTreeSet::new(), true, owner_actor, 1)?;
+        // A local row written from it.
+        let derived = EntityId::now();
+        vault.put_entity(
+            &derived,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"a row written from the source's row",
+        )?;
+        vault.put_edge(&derived, EdgeKind::DerivedFrom, &source.row, 1.0)?;
+
+        let answer = preflight(&owner, vec![derived])?;
+        let [PolicyPreflightRef::Readable {
+            entity, audience, ..
+        }] = answer.refs.as_slice()
+        else {
+            return Err("the owner reads the derived row".into());
+        };
+        assert_eq!(*entity, derived);
+        assert_eq!(
+            audience,
+            &vec![source.policy],
+            "the derived row reads under its source's policy"
+        );
+        Ok(())
+    }
+
+    /// Review of #6985 (round 2, policy_preflight.rs:121): a witnessed
+    /// TURN's words are its MESSAGE rows', each read through the caller's
+    /// read, so a MESSAGE written from a source's row brings that source's
+    /// policy to the TURN's audience, though the TURN has no binding, no
+    /// carried policy and no word source of its own.
+    #[test]
+    fn a_turns_audience_names_the_policy_its_message_reads_under() -> TestResult {
+        let (_dir, vault) = open()?;
+        let owner_actor = vault.ensure_embedded_owner_actor()?;
+        let owner = vault.memory(owner_actor, EdgeActorClass::Human);
+        // A local TURN of one MESSAGE row, with no binding of its own.
+        let (turn, message) = witnessed_turn_and_message(&owner)?;
+        // A source's row, under a policy open to the vault: the owner's read
+        // meets it. The MESSAGE row was written from it.
+        let source = land_source_bound_artifact(&vault, BTreeSet::new(), true, owner_actor, 1)?;
+        vault.put_edge(&message, EdgeKind::DerivedFrom, &source.row, 1.0)?;
+
+        let answer = preflight(&owner, vec![turn])?;
+        let [PolicyPreflightRef::Readable {
+            entity, audience, ..
+        }] = answer.refs.as_slice()
+        else {
+            return Err("the owner reads its own TURN".into());
+        };
+        assert_eq!(*entity, turn);
+        assert_eq!(
+            audience,
+            &vec![source.policy],
+            "the TURN reads under its MESSAGE's source policy"
+        );
+        Ok(())
+    }
 }

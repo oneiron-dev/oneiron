@@ -66,7 +66,7 @@ mod wait_rows;
 
 pub(crate) use self::action_inputs::self_call_inputs;
 pub(crate) use self::agent_authoring::agent_put_draft;
-pub use self::agent_authoring::parse_agent_put_request;
+pub use self::agent_authoring::{AgentPutInput, AgentPutOutput, parse_agent_put_request};
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
@@ -327,8 +327,8 @@ pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,
     MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange,
     ReaderSpawnInput, ReportBlockedInput, SkillCallInput, SpawnCare, SpawnKnob, SpawnPattern,
-    SummarizeInput, SummarizeInputEffort, TaskRefuseDomain, TaskRefuseInput, TaskWaitInput,
-    TaskWaitSetRequest, TaskWaitWorldRequest,
+    SummarizeInput, SummarizeInputEffort, TaskRefuseDomain, TaskRefuseInput, TaskWaitAgentsRequest,
+    TaskWaitInput, TaskWaitSetRequest, TaskWaitWorldRequest,
 };
 pub use run_verbs::{
     AgentSpawnKind, AgentSpawnOutput, LeaderPatternFile, LeaderPatternOutput, LeaderSplitOutput,

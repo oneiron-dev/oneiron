@@ -46,7 +46,7 @@ pub(super) fn signed_over(
         id,
         &mut next,
         Some(signer),
-        Some(base.anchor()),
+        Some(base.anchor()?),
         None,
     )?;
     Ok(next)
