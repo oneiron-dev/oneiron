@@ -472,7 +472,7 @@ pub(crate) struct SummaryContent<'a> {
     pub(crate) notes: Vec<SummarySourceNote>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 impl<'a> SummaryContent<'a> {
     /// `text` over every source the scope resolves to, for a body written
     /// outside the Dreamer (test fixtures).
@@ -490,6 +490,31 @@ impl<'a> SummaryContent<'a> {
             notes: Vec::new(),
         })
     }
+}
+
+/// TEST-SUPPORT ONLY: mints a summary of `text` over every source `scope`
+/// resolves to, written as the Dreamer as its runner writes one, so an
+/// integration test lands a summary with no model
+/// (`tests/summary_as_record_permit.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn mint_scope_summary_for_test(
+    vault: &Vault,
+    scope: &ScopeSelector,
+    text: &str,
+) -> Result<EntityId> {
+    let dreamer = vault.dreamer_authority()?;
+    vault.with_write_txn_grouped(|txn| {
+        let content = SummaryContent::whole_scope(vault, txn, scope, text)?;
+        mint_in_txn(
+            vault,
+            txn,
+            vault.store.clock.entity_id()?,
+            Some(scope),
+            dreamer,
+            vault.store.clock.now_recorded_at(),
+            content,
+        )
+    })
 }
 
 /// Every source a summary's words came from: what erasing must reach.
@@ -659,9 +684,12 @@ fn header_refusal(error: MemoryError) -> Error {
     Error::InvalidConfig(format!("summary header refused: {}", error.message))
 }
 
-/// Lands `summary`'s merge header on `turn` as `actor`'s, and with `reply`,
-/// the requester's read lane, its trunk reply TURN, returned for
-/// [`settle_header`].
+/// Lands `summary`'s merge header on `turn` for the requester `actor`, and
+/// with `reply`, the requester's read lane, its trunk reply TURN, returned for
+/// [`settle_header`]. Both are written by the landing writer
+/// ([`super::landing_writer`]), since the Dreamer composed their words: the
+/// requester's actor never writes generated text, and the requester's lane
+/// still reads every ref the reply names.
 pub(super) fn land_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -679,14 +707,15 @@ pub(super) fn land_in_txn(
     };
     crate::conversation_dag::migrate_in_txn(vault, txn, &scope.conversation)?;
     validate_landing_in_txn(vault, txn, &scope, turn)?;
+    let writer = super::landing_writer(vault, txn, now)?;
     let source = Value::Map(vec![
         (Value::from("kind"), Value::from("scope_summary")),
         (Value::from("scope"), scope_value(&scope)),
     ]);
     // ClaimSource is the engine's fixed trust vocabulary. The more specific
     // source descriptor belongs in provenance, never a forged new enum value.
-    let envelope = WriteEnvelope::new(
-        actor,
+    let mut envelope = WriteEnvelope::new(
+        writer,
         ClaimSource::Generated,
         WriteProvenance::new(source)?,
         ClaimApprovalStatus::Auto,
@@ -704,9 +733,11 @@ pub(super) fn land_in_txn(
             .collect(),
     ));
     let claim = vault.store.clock.entity_id()?;
+    // A MACHINE claim carries the engine's signature for its writer.
+    vault.sign_retained_machine_claim_in_txn(txn, &claim, &candidate, &mut envelope)?;
     // Rule A: the header is concluded from the summary it lands.
     let birth = RowBirth::written(
-        actor,
+        writer,
         MadeByClass::Concluded,
         "scope_summary.header",
         &[*summary],
@@ -763,16 +794,31 @@ pub(super) fn land_in_txn(
             body: record_body,
             text: vec![("txt".to_owned(), body.text)],
             session: None,
-            actor,
+            actor: writer,
             thread_audience: None,
         };
-        // The reply is the requester's append: every ref it names reads for
+        // The reply lands for the requester: every ref it names reads for
         // them in this writer, as the public append doors check.
         let refs = append_references(&input, None);
         require_append_references_in_txn(vault, lane, txn, &input, &refs)?;
         // The reply's words are the summary's, which the Dreamer composed:
-        // checked as generated even under a person's actor (ARCH-0040).
+        // checked as generated (ARCH-0040), on the landing writer's permit,
+        // and admitted as this landing's own reply.
+        let landing =
+            super::landing_writer::admit_reply(&vault.store, *summary, *turn, scope.conversation);
         let appended = append_composed_in_txn(vault, txn, &input, Some(*summary), false)?;
+        drop(landing);
+        // The reply engages the room's offer cards for the requester, as it
+        // did when it was theirs (OF-530): the landing writer reads no room.
+        crate::workspace_roster::record_offer_append_in_txn(
+            vault,
+            txn,
+            &AppendRecord {
+                actor,
+                ..input.clone()
+            },
+            Some(*turn),
+        )?;
         for source in &sources {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, &appended.id, source)?;
         }
