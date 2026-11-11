@@ -28,7 +28,7 @@ mod hold_override_receipt;
 mod hook_hold;
 mod index;
 mod kind_payload_erase;
-mod lifecycle;
+pub(crate) mod lifecycle;
 pub mod maintenance_predicate;
 mod observe;
 mod payload_erase;
