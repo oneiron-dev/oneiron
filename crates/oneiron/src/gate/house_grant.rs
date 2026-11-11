@@ -24,9 +24,11 @@
 //! house leads. A default the owner has authored is left as it is: there
 //! the owner's own grant opens the bound house's read.
 //!
-//! The unchanged shipped row supplies only an uncredentialed read floor;
-//! reads carrying an explicit Scope leave it out. An owner edit makes it an
-//! ordinary policy row that also caps those reads.
+//! An unchanged engine-default row, the shipped one or a bound house's,
+//! supplies only an uncredentialed read floor; reads carrying an explicit
+//! Scope leave it out, so the house's own Grant or verified slip reads what
+//! it confers. An owner edit makes it an ordinary policy row that also caps
+//! those reads.
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
@@ -72,17 +74,26 @@ fn house_read_row(actor_ref: &str) -> Result<Value> {
     ]))
 }
 
-/// Whether this is the unchanged shipped row, compared after Scope decoding.
+/// Whether this is an unchanged engine-default house read row, compared
+/// after Scope decoding: the shipped row of the seeded house, or the row
+/// [`seeded_policy_manifest_in_txn`] adds for the house that leads the root
+/// in its place. Only a seeded AGENT_DEF can be a workspace's house
+/// (`workspace_roster::steps`), so the rows of the seeded system agents are
+/// every row the engine writes. An owner-edited row matches none of them.
 pub(crate) fn is_shipped_house_read_row(grant: &PolicyScopedGrant) -> bool {
-    static SHIPPED_HOUSE_READ_ROW: OnceLock<Option<PolicyScopedGrant>> = OnceLock::new();
-    SHIPPED_HOUSE_READ_ROW
+    static HOUSE_READ_ROWS: OnceLock<Vec<PolicyScopedGrant>> = OnceLock::new();
+    HOUSE_READ_ROWS
         .get_or_init(|| {
-            let house = crate::workspace_roster::seeded_house_agent().ok()??;
-            let row = house_read_row(&house.to_hex()).ok()?;
-            super::decode::decode_scoped_grant_table(&Value::Array(vec![row]))?.pop()
+            crate::agent_def::seeded_system_agent_ids()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|house| {
+                    let row = house_read_row(&house.to_hex()).ok()?;
+                    super::decode::decode_scoped_grant_table(&Value::Array(vec![row]))?.pop()
+                })
+                .collect()
         })
-        .as_ref()
-        .is_some_and(|expected| grant == expected)
+        .contains(grant)
 }
 
 /// `manifest` with the house read row for `actor_ref` joined to its one
