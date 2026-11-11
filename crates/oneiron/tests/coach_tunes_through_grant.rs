@@ -20,18 +20,18 @@ use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{EngineControlActor, EngineControlClass};
 use oneiron::learning_setting::{AUDIT_RATE, setting_value};
 use oneiron::learning_setting_doors::{
-    LearningSettingClear, LearningSettingMode, LearningSettingPut, clear_learning_setting_as_holder,
-    put_learning_setting_as_holder,
+    LearningSettingClear, LearningSettingMode, LearningSettingPut,
+    clear_learning_setting_as_holder, put_learning_setting_as_holder,
 };
 use oneiron::policy_setting_doors::{WakePolicySetRequest, wake_policy_set_as_holder};
 use oneiron::task_verb::sdk::{
     ConsolidationSelectionTimingSetRequest, ConsolidationStrengthSetRequest,
     CuratorCadenceSetRequest, DreamerProjectorSetRequest, FreeTimeScheduleSetRequest,
     ProactivityPeriodSetRequest, RetuneThresholdsSetRequest, SieveBudgetsLowerRequest,
-    StewardshipRulePeriodSetRequest, lower_sieve_budgets_as,
-    set_consolidation_selection_timing_as, set_consolidation_strength_as,
-    set_curator_cadence_as, set_dreamer_projector_as, set_free_time_schedule_as,
-    set_proactivity_period_as, set_retune_thresholds_as, set_stewardship_rule_period_as,
+    StewardshipRulePeriodSetRequest, lower_sieve_budgets_as, set_consolidation_selection_timing_as,
+    set_consolidation_strength_as, set_curator_cadence_as, set_dreamer_projector_as,
+    set_free_time_schedule_as, set_proactivity_period_as, set_retune_thresholds_as,
+    set_stewardship_rule_period_as,
 };
 use oneiron::test_doors::coach::{coach, define_agent};
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
@@ -86,7 +86,10 @@ fn the_coach_tunes_each_knob_through_its_verb() {
         },
     )
     .expect("strength");
-    assert_eq!(strength.change.knob, "DREAMER_CONSOLIDATION_STRENGTH_POLICY");
+    assert_eq!(
+        strength.change.knob,
+        "DREAMER_CONSOLIDATION_STRENGTH_POLICY"
+    );
     assert_eq!(
         vault.consolidation_strength_policy().expect("strength"),
         ConsolidationStrengthPolicy {
@@ -106,7 +109,10 @@ fn the_coach_tunes_each_knob_through_its_verb() {
     .expect("curator cadence");
     assert_eq!(curator.change.knob, "DREAMER_CURATOR_RUBRIC");
     let rubric = vault.curator_rubric_as(&owner).expect("rubric");
-    assert_eq!((rubric.minimum_age_secs, rubric.cadence_secs), (3_600, 7_200));
+    assert_eq!(
+        (rubric.minimum_age_secs, rubric.cadence_secs),
+        (3_600, 7_200)
+    );
 
     let period = set_proactivity_period_as(
         &vault,
@@ -194,8 +200,7 @@ fn the_coach_tunes_each_knob_through_its_verb() {
     assert!(view.rows.iter().any(|row| row.key == AUDIT_RATE.key));
     assert_eq!(setting_value(&vault, &AUDIT_RATE).expect("value"), 0.25);
     assert!(
-        put_learning_setting_as_holder(&vault, reader, pin("health.card.owner_copy", 1.0))
-            .is_err(),
+        put_learning_setting_as_holder(&vault, reader, pin("health.card.owner_copy", 1.0)).is_err(),
         "a dial the owner keeps"
     );
     clear_learning_setting_as_holder(
@@ -234,7 +239,14 @@ fn the_coach_tunes_each_knob_through_its_verb() {
             .iter()
             .all(|(_, change)| change.by == coach && !change.owner)
     );
-    for answer in [&selection, &strength, &curator, &period, &thresholds, &projector] {
+    for answer in [
+        &selection,
+        &strength,
+        &curator,
+        &period,
+        &thresholds,
+        &projector,
+    ] {
         assert!(changes.iter().any(|(id, _)| *id == answer.id));
     }
 }
@@ -260,7 +272,10 @@ fn an_agent_without_engine_controls_is_refused() {
         )
         .is_err()
     );
-    assert_eq!(vault.dreamer_projector_policy().expect("projector"), projector);
+    assert_eq!(
+        vault.dreamer_projector_policy().expect("projector"),
+        projector
+    );
     assert!(
         set_proactivity_period_as(
             &vault,

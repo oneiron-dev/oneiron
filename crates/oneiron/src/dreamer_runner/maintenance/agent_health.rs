@@ -40,8 +40,8 @@ mod dials;
 mod doors;
 mod duplicate;
 mod environment;
-mod grant_reads;
 mod erase;
+mod grant_reads;
 mod loaded;
 mod moves;
 mod outcomes;
@@ -81,12 +81,12 @@ pub use doors::{
 pub(crate) use doors::{agent_health_card_in_txn, agent_health_cards_in_txn};
 use doors::{forbidden, may_read, settle};
 pub use environment::HealthCauseSource;
+pub(crate) use erase::{
+    erase_actor_sources_in_txn, erase_sources_in_txn, live_coach_draft_erased_in_txn,
+};
 pub use grant_reads::{
     AgentCallReceipt, AgentHealthCallsRequest, AgentHealthCardsRequest, DiagnosticEvidence,
     DiagnosticEvidenceRequest, agent_health_calls, agent_health_cards, diagnostic_evidence,
-};
-pub(crate) use erase::{
-    erase_actor_sources_in_txn, erase_sources_in_txn, live_coach_draft_erased_in_txn,
 };
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
 pub use moves::{

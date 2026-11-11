@@ -161,8 +161,11 @@ pub fn set_consolidation_selection_timing_as(
     actor: EngineControlActor<'_>,
     input: ConsolidationSelectionTimingSetRequest,
 ) -> Result<EngineControlChangeEntry> {
-    let id =
-        vault.set_consolidation_selection_timing_by(actor, input.soak_ms, input.recency_window_ms)?;
+    let id = vault.set_consolidation_selection_timing_by(
+        actor,
+        input.soak_ms,
+        input.recency_window_ms,
+    )?;
     receipt(vault, id)
 }
 
@@ -212,9 +215,11 @@ pub fn set_consolidation_strength_embedded(
     memory: &Memory<'_>,
     input: ConsolidationStrengthSetRequest,
 ) -> MemoryResult<EngineControlChangeEntry> {
-    as_controller(memory, "vault.consolidation.strength.set", |vault, actor| {
-        set_consolidation_strength_as(vault, actor, input)
-    })
+    as_controller(
+        memory,
+        "vault.consolidation.strength.set",
+        |vault, actor| set_consolidation_strength_as(vault, actor, input),
+    )
 }
 
 /// `vault.curator.cadence.set` as `actor`.
@@ -337,9 +342,11 @@ pub fn set_stewardship_rule_period_embedded(
     memory: &Memory<'_>,
     input: StewardshipRulePeriodSetRequest,
 ) -> MemoryResult<EngineControlChangeEntry> {
-    as_controller(memory, "vault.stewardship.rules.period.set", |vault, actor| {
-        set_stewardship_rule_period_as(vault, actor, input)
-    })
+    as_controller(
+        memory,
+        "vault.stewardship.rules.period.set",
+        |vault, actor| set_stewardship_rule_period_as(vault, actor, input),
+    )
 }
 
 /// `vault.dreamer.projector.set` as `actor`.
