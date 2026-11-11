@@ -56,6 +56,25 @@ fn urls_to_real_hosts_and_fixed_ports_are_found_but_loopback_and_reserved_names_
 }
 
 #[test]
+fn xml_namespaces_and_schema_identifiers_are_not_network() {
+    let source = concat!(
+        "const P: &str = \"",
+        "http://",
+        "schemas.openxmlformats.org/presentationml/2006/main\";\n",
+        "let s = \"{$schema:'",
+        "http://",
+        "json-schema.org/draft-07/schema#'}\";\n",
+        "let x = \"",
+        "http://",
+        "www.w3.org/2000/svg\";\n",
+        "let d = \"",
+        "https://",
+        "schemas.openxmlformats.org.cdn.net/x\";\n",
+    );
+    assert_eq!(rules(TEST_FILE, source), [(4, Rule::Network)]);
+}
+
+#[test]
 fn real_model_keys_hosts_and_files_are_found() {
     let source = concat!(
         "env::var(\"",
