@@ -15,10 +15,16 @@
 //! server's `dreamer partition stages` and `dreamer wake pass` lines) and of
 //! each recall.
 //!
+//! For an `http://` gateway the server calls the model through a timing
+//! proxy (FIX 21929): each call's start, first byte, end, status and sizes
+//! go to `calls.jsonl` in the vault's directory and to the report's
+//! `calls`, never a header or a body.
+//!
 //! The model key is read from a file and reaches the server's environment
 //! only. The report holds ids, counts, ms and the recall query strings (the
 //! corpus is synthetic test data), never the key.
 
+mod call_proxy;
 mod cycle;
 mod proof;
 mod report;
@@ -51,6 +57,8 @@ const USAGE: &str = "usage: oneiron-bench load dream --server <oneiron-server> -
 /// The server's log level: the Dreamer's stage and pass lines are info.
 const RUST_LOG: &str = "warn,oneiron::dreamer::stages=info";
 const LOG_NAME: &str = "serve.log";
+/// The timing proxy's call records, one JSON line each.
+const CALLS_NAME: &str = "calls.jsonl";
 /// Recalls before the cycle, and the most queries the loop rotates over.
 const BASELINE: usize = 20;
 const QUERY_CAP: usize = 40;
@@ -173,9 +181,16 @@ fn execute(plan: &Plan) -> Result<(), String> {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("clear {}: {e}", dir.display()))?;
     }
     let vault = Vault::init(&plan.server, &dir, &Embedding::None, &[])?;
+    let calls_log = dir.join(CALLS_NAME);
+    let proxy = call_proxy::CallProxy::start(&plan.model_base_url, origin, calls_log.clone())?;
+    if let Some(proxy) = &proxy {
+        say(&format!("model calls through the timing proxy {}", proxy.base_url));
+    }
     setup::write_models(
         &vault,
-        &plan.model_base_url,
+        proxy
+            .as_ref()
+            .map_or(plan.model_base_url.as_str(), |proxy| proxy.base_url.as_str()),
         &plan.model,
         plan.model_context_tokens,
     )?;
@@ -222,11 +237,36 @@ fn execute(plan: &Plan) -> Result<(), String> {
         "context_tokens": plan.model_context_tokens,
     });
     report["grant"] = grant;
+    report["calls"] = calls_json(&report, proxy.as_ref(), &calls_log);
+    drop(proxy);
     let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
     std::fs::write(&plan.out, text).map_err(|e| format!("{}: {e}", plan.out.display()))?;
     let _ = writeln!(std::io::stdout().lock(), "{}", summary(&report));
     say(&format!("serve exit: {exit}; wrote {}", plan.out.display()));
     Ok(())
+}
+
+/// The report's `calls` part: the proxy's records and their spread before
+/// t0, during the cycle and after it.
+fn calls_json(
+    report: &Value,
+    proxy: Option<&call_proxy::CallProxy>,
+    log: &std::path::Path,
+) -> Value {
+    let Some(proxy) = proxy else {
+        return json!({ "proxy": "off: the gateway is not plain http" });
+    };
+    let calls = proxy.calls();
+    let t0 = report["t0_ms_since_start"].as_f64().unwrap_or(0.0);
+    let end = t0 + report["cycle"]["wall_ms"].as_f64().unwrap_or(0.0);
+    json!({
+        "proxy": proxy.base_url,
+        "log": log.display().to_string(),
+        "before_t0": call_proxy::summary(&calls, 0.0, t0),
+        "during": call_proxy::summary(&calls, t0, end),
+        "after": call_proxy::summary(&calls, end, f64::INFINITY),
+        "records": calls,
+    })
 }
 
 /// What one run measures with.
