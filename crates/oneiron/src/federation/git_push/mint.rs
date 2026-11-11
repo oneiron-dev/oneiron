@@ -117,6 +117,7 @@ impl Vault {
                 detach_on_member_leave: None,
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
+                inquiry_terms: None,
             };
             // Encoding validates: nothing is signed for a grant that cannot stand.
             let data = encode_federation_grant_body(&grant)?;
