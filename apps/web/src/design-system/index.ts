@@ -97,6 +97,20 @@ export {
   type ComposedCardReadingProps,
   type ComposedCardFiguresProps,
 } from './patterns/ComposedCard'
+export { BarChart, BAR_SCREEN_MASK_ID, type BarChartProps } from './patterns/BarChart'
+export {
+  barChartLayout,
+  highestIndex,
+  valueLabelBaseline,
+  BAR_CHART_ASPECT,
+  type BarPeriod,
+  type BarRange,
+  type BarChartInput,
+  type BarChartLayout,
+  type BarMark,
+  type BarRing,
+  type BarLabel,
+} from './patterns/bar-chart-layout'
 export {
   settleReducer,
   SETTLE_OPEN,
