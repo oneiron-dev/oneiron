@@ -348,7 +348,7 @@ function Mint() {
                         )}
                       </div>
                       <div className="receipt">
-                        <span className="seal seal-human" title="o · Owen · owner">
+                        <span className="seal seal-human" title="o · owen · owner">
                           o
                         </span>
                         <span className="meta-line">minted {mintedAt}</span>

@@ -38,8 +38,8 @@ type Claim = {
 }
 
 const ACTORS: Record<ActorKey, { mark: string; name: string; cls: string; title: string }> = {
-  o: { mark: 'o', name: 'Owen', cls: 'seal-human', title: 'o · Owen · owner' },
-  y: { mark: 'y', name: 'Yuki', cls: 'seal-human', title: 'y · Yuki' },
+  o: { mark: 'o', name: 'owen', cls: 'seal-human', title: 'o · owen · owner' },
+  y: { mark: 'y', name: 'yuki', cls: 'seal-human', title: 'y · yuki' },
   m: { mark: 'm', name: 'Mika Tanaka', cls: 'seal-human', title: 'm · Mika Tanaka · contact' },
   e: { mark: 'e', name: 'eiri', cls: 'seal-agent', title: 'e · eiri · agent · via kimi-k2.6' },
   t: { mark: 't', name: 'tory', cls: 'seal-agent', title: 't · tory · agent · research' },
