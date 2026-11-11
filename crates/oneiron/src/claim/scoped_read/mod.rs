@@ -90,10 +90,14 @@ pub use weave_trigger::WeaveDigestRendered;
 
 mod access_class;
 mod access_gate;
-pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
+pub(crate) use access_gate::{
+    IDENTITY_SOURCE_AUDIENCE_KEY, RelationshipRead, claim_access_axes,
+    identity_put_moves_source_audience_in_txn, owner_only_audience_change, relationship_read,
+};
 mod actor_key;
 mod agent_grants;
 mod authority_fingerprint;
+mod grant_alternatives;
 mod guest_bound;
 mod owner_authority;
 mod records_cover;
