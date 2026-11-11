@@ -60,15 +60,18 @@ pub struct ExportSourceVault {
 }
 
 impl WholeVaultDocumentManifest {
-    /// Validate the versioned manifest of a whole-vault archive.
+    /// Validate the versioned manifest of a whole-vault archive. A keeping
+    /// archive (`secrets_nulled` false) is valid only with secrets included
+    /// in the archive format and with both storage nulling claims false;
+    /// every other archive keeps the historical nulling claims.
     pub fn validate(&self) -> Result<()> {
         if self.source_boundaries != [ExportSourceBoundary::BuiltinAdapterCodeNotStored]
             || self.manifest_version != WHOLE_VAULT_DOCUMENT_VERSION
             || self.format != VAULT_ARCHIVE_FORMAT
             || self.serializer != ExportSerializerManifest::current()
-            || !self.secrets_nulled
-            || !self.storage.redacted()
-            || !self.storage.structurally_secret_nulled()
+            || self.storage.redacted() != self.secrets_nulled
+            || self.storage.structurally_secret_nulled() != self.secrets_nulled
+            || (!self.secrets_nulled && !self.secrets_included)
             || self.source_vault.vault_id.as_deref()
                 != self
                     .storage

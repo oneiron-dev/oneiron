@@ -463,7 +463,8 @@ The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per reco
 record file and attached file with its length and BLAKE3, and an import refuses an archive whose
 members disagree with it. It is plaintext and re-imports into a fresh vault
 (`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
-Credentials inside records are nulled by the serializer. Result bodies go through the release
+The Owner's whole-vault export keeps credentials, those in skill source files and in JSON bodies
+included; scoped and contact exports null them. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
 and credential-bearing bodies are withheld and named in `result_body.jsonl`.
 `epoch_floor.jsonl` has a row `{session, conversation, epoch, turn_end}` for each epoch lineage
