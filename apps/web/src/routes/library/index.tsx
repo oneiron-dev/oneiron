@@ -3,6 +3,7 @@ import * as React from 'react'
 import { applyTheme, readTheme, type Theme } from '~/components/safelight/hooks'
 import designSystemCss from '~/design-system/design-system.css?url'
 import {
+  BrandMark,
   Field,
   Figure,
   GuestRing,
@@ -709,6 +710,23 @@ function LibraryPage() {
           <Specimen name="stack, guest">
             <Portrait initial="y" label="Yuki" size="stack" guest />
           </Specimen>
+        </Section>
+
+        <Section title="BrandMark">
+          {([16, 24, 32] as const).map((size) => (
+            <Specimen key={size} name={`${size}`}>
+              <span className="lib-brand" data-specimen={`brand-${size}`}>
+                <BrandMark size={size} />
+              </span>
+            </Specimen>
+          ))}
+          {([16, 24, 32] as const).map((size) => (
+            <Specimen key={`word-${size}`} name={`${size}, with the word`}>
+              <span className="lib-brand" data-specimen={`brand-word-${size}`}>
+                <BrandMark size={size} word />
+              </span>
+            </Specimen>
+          ))}
         </Section>
 
         <PatternSections />

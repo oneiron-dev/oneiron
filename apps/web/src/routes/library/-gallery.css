@@ -233,6 +233,11 @@
   padding: 10px 14px;
 }
 
+/* The mark prints in the strongest ink. */
+.lib-brand {
+  color: var(--sl-ink-1);
+}
+
 /* A theme's window ground on a stage of its own. */
 .lib-ground-stage {
   display: flex;

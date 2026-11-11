@@ -63,6 +63,7 @@ export {
 } from './marks/donut-segments'
 export { Glyph, type GlyphProps, type GlyphState, type GlyphShape, type GlyphForm } from './marks/Glyph'
 export { Portrait, type PortraitProps } from './marks/Portrait'
+export { BrandMark, type BrandMarkProps } from './marks/BrandMark'
 
 export {
   NeedsYou,
