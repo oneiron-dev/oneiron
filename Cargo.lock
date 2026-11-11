@@ -8820,6 +8820,14 @@ name = "oneiron-sdk-build"
 version = "0.1.0"
 
 [[package]]
+name = "oneiron-sdk-generator"
+version = "0.1.0"
+dependencies = [
+ "indexmap 2.14.2",
+ "regex",
+]
+
+[[package]]
 name = "oneiron-seal"
 version = "0.1.0"
 dependencies = [
