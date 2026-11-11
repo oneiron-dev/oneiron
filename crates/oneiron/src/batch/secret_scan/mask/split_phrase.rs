@@ -4,7 +4,9 @@
 //! leaf's decoded parts joined or in its lossy text, where no run of valid
 //! text holds it, so no text span places it. Each word is found at its bytes
 //! in the leaf: one custody record holds the phrase, and the file's mark
-//! covers each word (owner ruling G04 binary = C2).
+//! covers each word (owner ruling G04 binary = C2). In a body that is no
+//! file, [`array_phrase`] and [`encoded_phrase_part`] name the smallest value
+//! that reads as the phrase, which takes the handle whole.
 
 use std::ops::Range;
 
@@ -40,6 +42,94 @@ pub(super) fn split_phrases(leaf: &[u8]) -> Vec<SplitPhrase> {
         });
     }
     phrases
+}
+
+/// The recovery phrase `items` hold read as one text, as the field walk reads
+/// an array before its items (its byte values, or its text items one per
+/// line, two at least): its words, one space between them.
+pub(super) fn array_phrase(items: &[Value]) -> Option<Zeroizing<Vec<u8>>> {
+    let text = match byte_values(items.iter().map(Value::as_u64)) {
+        Some(bytes) => lossy(&Zeroizing::new(bytes)),
+        None => {
+            let texts: Vec<Zeroizing<String>> = items.iter().filter_map(item_text).collect();
+            if texts.len() < 2 {
+                return None;
+            }
+            let joined: Vec<&str> = texts.iter().map(|text| text.as_str()).collect();
+            Zeroizing::new(joined.join("\n"))
+        }
+    };
+    phrase_words(&text)
+}
+
+/// The smallest part of `value` whose MessagePack encoding holds a recovery
+/// phrase in its lossy text, as the text rules read a body's raw bytes: its
+/// path (an array item by its index, a map's key at `2i` and its member at
+/// `2i + 1`), and the phrase's words, one space between them.
+pub(super) fn encoded_phrase_part(value: &Value) -> Option<(Vec<usize>, Zeroizing<Vec<u8>>)> {
+    let mut phrase = encoded_phrase(value)?;
+    let mut path = Vec::new();
+    let mut part = value;
+    'descend: loop {
+        let children: Vec<&Value> = match part {
+            Value::Array(items) => items.iter().collect(),
+            Value::Map(fields) => fields
+                .iter()
+                .flat_map(|(key, member)| [key, member])
+                .collect(),
+            _ => break,
+        };
+        for (at, child) in children.into_iter().enumerate() {
+            if let Some(found) = encoded_phrase(child) {
+                phrase = found;
+                path.push(at);
+                part = child;
+                continue 'descend;
+            }
+        }
+        break;
+    }
+    Some((path, phrase))
+}
+
+/// The recovery phrase `value`'s MessagePack encoding holds in its lossy
+/// text.
+fn encoded_phrase(value: &Value) -> Option<Zeroizing<Vec<u8>>> {
+    let mut bytes = Zeroizing::new(Vec::new());
+    rmpv::encode::write_value(&mut *bytes, value).ok()?;
+    phrase_words(&lossy(&bytes))
+}
+
+/// An array item's text as the field walk joins it: a string, binary or
+/// extension value, or an array of byte values.
+fn item_text(item: &Value) -> Option<Zeroizing<String>> {
+    match item {
+        Value::String(text) => Some(lossy(text.as_bytes())),
+        Value::Binary(bytes) | Value::Ext(_, bytes) => Some(lossy(bytes)),
+        Value::Array(values) => {
+            byte_values(values.iter().map(Value::as_u64)).map(|bytes| lossy(&Zeroizing::new(bytes)))
+        }
+        _ => None,
+    }
+}
+
+fn lossy(bytes: &[u8]) -> Zeroizing<String> {
+    Zeroizing::new(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// The first recovery phrase `text` holds: its words, one space between
+/// them.
+fn phrase_words(text: &str) -> Option<Zeroizing<Vec<u8>>> {
+    let span = shapes::mnemonic_spans(text).into_iter().next()?;
+    let words = words_in(text.as_bytes(), &span);
+    let mut value = Zeroizing::new(Vec::with_capacity(span.len()));
+    for word in words {
+        if !value.is_empty() {
+            value.push(b' ');
+        }
+        value.extend_from_slice(text.as_bytes().get(word)?);
+    }
+    Some(value)
 }
 
 /// `leaf` decoded as the door decodes a body (`decode_members`: JSON, else

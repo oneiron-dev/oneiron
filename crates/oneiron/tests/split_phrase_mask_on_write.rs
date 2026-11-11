@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SECRET_CUSTODY};
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
@@ -26,18 +26,24 @@ fn open_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>
 }
 
 fn put_asset(vault: &Vault, body: &[u8]) -> oneiron::Result<EntityId> {
+    put(vault, ENTITY_TYPE_ASSET, body)
+}
+
+fn put(vault: &Vault, entity_type: u8, body: &[u8]) -> oneiron::Result<EntityId> {
     let id = EntityId::now();
     vault
         .batch()
-        .put(
-            &id,
-            ENTITY_TYPE_ASSET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            body,
-        )
+        .put(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, body)
         .commit()?;
     Ok(id)
+}
+
+/// Whether `bytes` carry a custody handle (`sc` plus digits), as mask on
+/// write leaves it where the secret was.
+fn carries_handle(bytes: &[u8]) -> bool {
+    bytes
+        .windows(3)
+        .any(|window| window[0] == b's' && window[1] == b'c' && window[2].is_ascii_digit())
 }
 
 fn encode(value: &rmpv::Value) -> Vec<u8> {
@@ -212,5 +218,34 @@ fn a_split_phrase_custody_holds_keeps_its_record() -> TestResult {
         before + 1,
         "one custody record holds the phrase across files"
     );
+    Ok(())
+}
+
+/// LABEL-04 for a body that is no file (ARCH-0069 #handles-in-fields): the
+/// smallest value that reads as the phrase (the array whose items are its
+/// words, or the part whose MessagePack encoding holds them) takes the
+/// handle whole in the stored body, as a credential field's value does.
+#[test]
+fn a_split_phrase_in_a_body_lands_with_its_handle() -> TestResult {
+    for (name, body) in bodies() {
+        let (_dir, vault) = open_vault()?;
+        let before = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
+        let id = put(&vault, ENTITY_TYPE_PERSON, &body)
+            .unwrap_or_else(|error| panic!("{name}: a split-phrase body lands: {error:?}"));
+        assert_eq!(
+            vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
+            before + 1,
+            "{name}: one custody record holds the phrase"
+        );
+        let stored = vault.get(&id)?.expect("stored body");
+        assert!(
+            !carries_a_word(&stored),
+            "{name}: the stored body carries no word of the phrase: {stored:?}"
+        );
+        assert!(
+            carries_handle(&stored),
+            "{name}: the stored body carries the handle: {stored:?}"
+        );
+    }
     Ok(())
 }
