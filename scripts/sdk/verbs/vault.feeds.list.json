@@ -1,0 +1,10 @@
+{
+  "name": "vault.feeds.list",
+  "description": "Lists the caller's change feed subscriptions with their cursors.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::feeds::FeedSubscription>",
+  "call": "memory.feed_subscriptions()?",
+  "scope": "Read",
+  "openapi": true,
+  "section": false
+}
