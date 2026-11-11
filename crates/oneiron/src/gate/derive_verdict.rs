@@ -8,11 +8,13 @@
 //! - its policy rows must land `Generated` at Auto (the actor ceiling and the
 //!   actor-bound `Generated` permit), as [`super::dreamer_landing_verdict_in_txn`]
 //!   asks of the Dreamer's archive (X02);
-//! - once a host minted its Steward grant, that grant must still stand, name
-//!   the verb the item needs (`derive`, or `archive`), and reach the target
-//!   record's position. A narrowed or revoked grant refuses from its next
-//!   item on. Before a first mint a base agent's policy rows decide alone, as
-//!   before;
+//! - once a Steward grant row stands naming it, every standing row decides
+//!   ([`crate::federation::steward_reach_in`]): each must name the verb the
+//!   item needs (`derive`, or `archive`), and the meet of their scopes must
+//!   reach the target record's position. A row another of the owner's
+//!   machines stood can only narrow that, and a narrowed or revoked grant
+//!   refuses from its next item on. While no row stands a base agent's
+//!   policy rows decide alone, as before;
 //! - any other actor holds no Steward grant, so no stored record is in its
 //!   reach: it lands what it derives, and an item of its that names a target
 //!   is refused. The doors that settle, supersede or archive a record under
@@ -54,13 +56,12 @@ impl DeriveCapability {
 pub(crate) enum DeriveRefusal {
     /// The actor's policy rows do not land `Generated` at Auto.
     NoLandingRows,
-    /// The owner opted the actor out of its Steward grant.
+    /// The owner opted the actor out of its Steward grant: its standing
+    /// rows leave it no verb.
     OptedOut,
-    /// Its Steward grant no longer stands (revoked, withdrawn or rewritten).
-    GrantGone,
-    /// Its Steward grant does not name `derive`.
+    /// A standing Steward grant row of its does not name `derive`.
     GrantLacksDerive,
-    /// Its Steward grant does not name `archive`.
+    /// A standing Steward grant row of its does not name `archive`.
     GrantLacksArchive,
     /// The target record is gone, or lies outside the grant's reach: every
     /// record does, for an actor that holds no Steward grant.
@@ -73,7 +74,6 @@ impl DeriveRefusal {
         match self {
             Self::NoLandingRows => "gate.deny.derive.no_landing_rows",
             Self::OptedOut => "gate.deny.derive.opted_out",
-            Self::GrantGone => "gate.deny.derive.grant_gone",
             Self::GrantLacksDerive => "gate.deny.derive.grant_lacks_derive",
             Self::GrantLacksArchive => "gate.deny.derive.grant_lacks_archive",
             Self::OutsideGrant => "gate.deny.derive.outside_grant",
@@ -93,7 +93,7 @@ impl DeriveRefusal {
 pub(crate) struct DeriveAllowance {
     /// The policy frontier hash it was judged under.
     pub(crate) frontier: [u8; 32],
-    /// The Steward grant's id once a host minted it, else
+    /// The newest standing Steward grant row's id once one stands, else
     /// [`super::dreamer_grant::DREAMER_LANDING_ROWS_REF`] (the policy rows).
     pub(crate) grant_ref: String,
 }
@@ -118,41 +118,33 @@ pub(crate) fn derive_verdict_in_txn(
         actor.actor_class().gate_actor_class(),
         &actor.entity_ref().to_hex(),
     );
-    let grant_ref = match crate::federation::steward_grant_of_in(store, txn, actor.entity_ref())? {
+    let grant_ref = match crate::federation::steward_reach_in(store, txn, actor.entity_ref())? {
         // The Steward role alone reaches the vault's stored records. A base
-        // agent holds it by default, and before its first mint its policy
-        // rows stand for it; any other actor with no grant reaches none.
+        // agent holds it by default, and while no grant row stands for it its
+        // policy rows stand for it; any other actor with no grant reaches none.
         None if target.is_some()
             && !crate::federation::holds_system_agent_grant(actor.entity_ref()) =>
         {
             return Ok(Err(DeriveRefusal::OutsideGrant));
         }
         None => super::dreamer_grant::DREAMER_LANDING_ROWS_REF.to_owned(),
-        Some(None) => return Ok(Err(DeriveRefusal::OptedOut)),
-        Some(Some(grant)) => {
-            let Some(row) = crate::federation::standing_steward_grant_in(
-                store,
-                txn,
-                grant,
-                actor.entity_ref(),
-            )?
-            else {
-                return Ok(Err(DeriveRefusal::GrantGone));
-            };
+        // Every standing row decides, never the newest alone: the verbs are
+        // those each row gives, the scope is the meet of the rows' scopes,
+        // and the receipt names the newest row.
+        Some(reach) => {
+            if reach.verbs.is_empty() {
+                return Ok(Err(DeriveRefusal::OptedOut));
+            }
             let verb = capability.verb();
-            let names_verb = matches!(
-                &row.authority_scope.verbs,
-                ScopeAxis::Some(verbs) if verbs.contains(verb)
-            );
-            if !names_verb {
+            if !reach.verbs.contains(verb) {
                 return Ok(Err(DeriveRefusal::lacks(capability)));
             }
             if let Some(target) = target
-                && !reaches_target(store, txn, &row.authority_scope, verb, target)?
+                && !reaches_target(store, txn, &reach.scope, verb, target)?
             {
                 return Ok(Err(DeriveRefusal::OutsideGrant));
             }
-            grant.to_hex()
+            reach.grant.to_hex()
         }
     };
     // What the actor derives lands as `Generated`: its rows (from a minted
