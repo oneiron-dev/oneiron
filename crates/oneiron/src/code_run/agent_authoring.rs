@@ -30,6 +30,8 @@ pub struct AgentPutOutput {
     pub disposition: String,
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

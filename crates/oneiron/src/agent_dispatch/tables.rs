@@ -39,7 +39,7 @@ crate::side_table::side_tables! {
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
     AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical]
-        => crate::agent_dispatch::spend_handoff::erase_spend_scope_actor_in_txn;
+        => crate::agent_dispatch::erase_spend_scope_actor_in_txn;
     /// Index from a widen proposal's public content-hash id to its intent row key. Key: hex64.
     AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX: VaultMeta b"agent.dispatch.widen_id.v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];

@@ -253,8 +253,14 @@ impl HeldOutReplayNotes for NoReplay {
         panic!("replay must not run before consent or usefulness");
     }
 }
+/// GATE-22 (ARCH-0053 #r4b-hubs-h, #promise-gate-22; owner 2026-09-22):
+/// "Trust tier shapes how the card reads, never whether an object may
+/// install." Every tier's ask keeps its surface. A candidate that asks for
+/// no permission lands Active on its held-out win with no owner answer; one
+/// that declares a capability still waits for the owner's answer before any
+/// replay, as the old test pinned for every candidate.
 #[test]
-fn every_hub_tier_requires_human_consent_before_replay_and_activation() -> Result<()> {
+fn every_hub_tier_installs_on_fit_and_only_a_permission_widening_asks() -> Result<()> {
     for (tier, surface) in [
         (SkillHubTrustTier::Verified, HubAskSurface::OneTap),
         (
@@ -273,22 +279,14 @@ fn every_hub_tier_requires_human_consent_before_replay_and_activation() -> Resul
             fixture.baseline,
         )?;
         assert_eq!(ask.surface(), surface);
+        assert_eq!(ask.capabilities(), &SkillCapabilitySurface::default());
         let scorer = Replay::new(true);
-        assert_eq!(
-            fixture
-                .vault
-                .admit_marketplace_skill(&ask, &NoReplay, at(30), 30)?,
-            HubAdmissionDisposition::PendingConsent
-        );
-        fixture
-            .vault
-            .approve_marketplace_activation(&ask, &fixture.owner)?;
         let HubAdmissionDisposition::Ruled(receipt) =
             fixture
                 .vault
                 .admit_marketplace_skill(&ask, &scorer, at(31), 31)?
         else {
-            panic!("consented");
+            panic!("a candidate that asks for no permission needs no owner answer");
         };
         assert!(receipt.accepted);
         assert_eq!(receipt.judge_revision, "fixture-judge@1");
@@ -304,6 +302,54 @@ fn every_hub_tier_requires_human_consent_before_replay_and_activation() -> Resul
             SkillLifecycle::Active
         );
         assert_eq!(fixture.vault.hub_admission_receipt(&id)?, Some(*receipt));
+
+        // A permission widening still asks, on every tier, before replay.
+        let widened = super::folder::package_from_files(vec![HubFile::new(
+            "SKILL.md",
+            b"---\nname: fixture.widened\ndescription: fixture\nversion: 1\nallowed-tools: [\"read_file\"]\n---\ncheck result\n"
+                .to_vec(),
+        )])?;
+        let widened_source = HubRef::new(
+            source.hub_id,
+            "widened",
+            HubPin::ContentHash(widened.content_hash()?.to_hex()),
+        )?;
+        let widened_id =
+            fixture
+                .vault
+                .import_skill_from_hub(&widened_source, &widened, at(32), 32)?;
+        let ask = fixture.vault.prepare_marketplace_activation(
+            widened_id,
+            &widened_source,
+            &publisher,
+            fixture.baseline,
+        )?;
+        assert_ne!(ask.capabilities(), &SkillCapabilitySurface::default());
+        assert_eq!(
+            fixture
+                .vault
+                .admit_marketplace_skill(&ask, &NoReplay, at(33), 33)?,
+            HubAdmissionDisposition::PendingConsent
+        );
+        fixture
+            .vault
+            .approve_marketplace_activation(&ask, &fixture.owner)?;
+        let HubAdmissionDisposition::Ruled(receipt) =
+            fixture
+                .vault
+                .admit_marketplace_skill(&ask, &scorer, at(34), 34)?
+        else {
+            panic!("the owner answered the widening");
+        };
+        assert!(receipt.accepted);
+        assert_eq!(
+            fixture
+                .vault
+                .get_skill_record(&widened_id)?
+                .expect("widened skill")
+                .lifecycle_status,
+            SkillLifecycle::Active
+        );
     }
     Ok(())
 }

@@ -316,3 +316,219 @@ fn the_strength_archive_is_judged_by_the_dreamers_landing_rows() -> Result<()> {
     }
     Ok(())
 }
+
+/// Untangle 6.3 (S63-RULED, lead 9 Nov 18:0x): once the Dreamer holds its
+/// Steward grant, the policy fold reads its rows from that grant and no
+/// longer from the manifest rows that name it. The full default reads as the
+/// three shipped rows did; `read` alone gives the read row; `derive` gives
+/// the two landing rows; an opt-out gives none, though the shipped rows stay
+/// in the manifest throughout.
+#[test]
+fn the_dreamers_steward_grant_replaces_its_three_rows() -> Result<()> {
+    use crate::federation::grant_scope::{
+        STEWARD_ARCHIVE_VERB, STEWARD_DERIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS,
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    crate::test_util::provision_engine_machines(&vault);
+    let dreamer = vault.dreamer_authority()?.entity_ref();
+    // No grant yet: the shipped rows decide.
+    assert!(vault.dreamer_weave_reach()?.ready());
+
+    vault.stand_steward_grant_for_test(dreamer, &STEWARD_VERBS)?;
+    assert!(vault.dreamer_weave_reach()?.ready());
+
+    vault.stand_steward_grant_for_test(dreamer, &[STEWARD_READ_VERB])?;
+    let reach = vault.dreamer_weave_reach()?;
+    assert!(reach.reads && !reach.lands_auto, "{reach:?}");
+
+    vault.stand_steward_grant_for_test(dreamer, &[STEWARD_DERIVE_VERB, STEWARD_ARCHIVE_VERB])?;
+    let reach = vault.dreamer_weave_reach()?;
+    assert!(!reach.reads && reach.lands_auto, "{reach:?}");
+
+    vault.mark_steward_opt_out_for_test(dreamer)?;
+    let reach = vault.dreamer_weave_reach()?;
+    assert!(!reach.reads && !reach.lands_auto, "{reach:?}");
+    Ok(())
+}
+
+/// Untangle 6.3, census X04: the Dreamer's read key is held to its Steward
+/// grant and its live MACHINE binding, as an ordinary agent's slip is held
+/// to its issuance and revocation. Before any grant the key reads by the
+/// rows; with the grant it reads; once the grant gives no `read` (or the
+/// owner opted out) the same key reads nothing.
+#[test]
+fn the_dreamers_read_key_is_held_to_its_live_grant() -> Result<()> {
+    use crate::federation::grant_scope::{STEWARD_DERIVE_VERB, STEWARD_VERBS};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    crate::test_util::provision_engine_machines(&vault);
+    let dreamer = vault.dreamer_authority()?;
+    let conversation = seed_session(&vault, 0x6f, 1);
+    let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
+    let key = crate::claim::ScopedReadActorKey::for_engine_actor(dreamer).expect("dreamer key");
+    assert_eq!(key.system_agent_guard(), Some(dreamer.entity_ref()));
+    let reads = |vault: &Vault| -> Result<bool> {
+        let read = vault.scoped_read(key.clone());
+        let txn = vault.store.env.read_txn()?;
+        Ok(read.entity_raw_live_in(&txn, &turn)?.is_some())
+    };
+    assert!(reads(&vault)?, "before any grant the rows let it read");
+
+    vault.stand_steward_grant_for_test(dreamer.entity_ref(), &STEWARD_VERBS)?;
+    assert!(reads(&vault)?, "the grant and the live binding let it read");
+
+    vault.stand_steward_grant_for_test(dreamer.entity_ref(), &[STEWARD_DERIVE_VERB])?;
+    assert!(!reads(&vault)?, "a grant without read reads nothing");
+
+    vault.mark_steward_opt_out_for_test(dreamer.entity_ref())?;
+    assert!(!reads(&vault)?, "an opt-out reads nothing");
+    Ok(())
+}
+
+/// X02's test, pointed at a narrowed Steward grant (untangle 6.3; the X02
+/// verdict, Engine and lead 16:5x). With the full grant the archive lands
+/// and its receipt names the grant; with the grant narrowed to drop
+/// `derive` (the `Generated` permit and the Auto ceiling it yields) nothing
+/// is archived and no receipt is written.
+#[test]
+fn the_strength_archive_is_judged_by_a_narrowed_steward_grant() -> Result<()> {
+    use crate::dreamer_consolidation::strength::{
+        ConsolidationStrengthPolicy, archive_quiet_claims,
+    };
+    use crate::federation::grant_scope::{STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS};
+    for narrowed in [false, true] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = std::sync::Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
+        crate::test_util::provision_engine_machines(&vault);
+        authorize_test_inference(&vault)?;
+        let dreamer = vault.dreamer_authority()?.entity_ref();
+        let full = vault.stand_steward_grant_for_test(dreamer, &STEWARD_VERBS)?;
+        let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+        let conversation = seed_session(&vault, 0x70, 1);
+        let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
+        let subject = EntityId::now();
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+        enqueue_micro(&vault, "run-steward-strength", 20)?;
+        let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turn))]);
+        let report = pass(&vault, &backend, node_id, 21)?;
+        assert_eq!(report.completed, 1, "{report:?}");
+        let [claim] = name_claim_ids(&vault, &subject)?.as_slice() else {
+            panic!("one landed claim");
+        };
+        let claim = *claim;
+        let attempt = AttemptQueue::new(&vault)
+            .list()?
+            .into_iter()
+            .find(|row| row.kind == crate::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND)
+            .expect("the micro attempt")
+            .id;
+        vault.set_consolidation_strength_policy(&ConsolidationStrengthPolicy {
+            archive_below: 1.0,
+            quiet_ms: 1,
+        })?;
+        if narrowed {
+            vault.stand_steward_grant_for_test(
+                dreamer,
+                &[STEWARD_READ_VERB, STEWARD_ARCHIVE_VERB],
+            )?;
+            let reach = vault.dreamer_weave_reach()?;
+            assert!(
+                reach.reads && !reach.lands_auto,
+                "only the landing is narrowed"
+            );
+        }
+        let now_ms = (vault.now_recorded_at() + 30 * 86_400).saturating_mul(1_000);
+        let archived = archive_quiet_claims(&vault, attempt, now_ms)?;
+        let receipts: Vec<_> = {
+            let txn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .gate_decisions_for_claim_in_txn(&txn, claim.as_bytes())?
+        }
+        .into_iter()
+        .filter(|record| record.content_kind == "dreamer_strength_archive")
+        .collect();
+        if narrowed {
+            assert_eq!(archived, 0, "nothing is archived");
+            assert!(receipts.is_empty(), "no receipt is written");
+        } else {
+            assert_eq!(archived, 1, "the full grant lets the archive land");
+            let [receipt] = receipts.as_slice() else {
+                panic!("one archive receipt, found {}", receipts.len());
+            };
+            assert_eq!(receipt.grant_ref.as_deref(), Some(full.to_hex().as_str()));
+            assert_ne!(receipt.read_frontier_hash, [0; 32]);
+        }
+    }
+    Ok(())
+}
+
+/// Untangle 6.3, S63-2 = A: the host's first mint copies the live rows one
+/// to one, signed as the embedded owner's act; a policy with none of them
+/// records the opt-out and mints nothing; a second open changes nothing.
+/// The fixture must carry an owner act (an install machine profile), as the
+/// owner's agent-grant door needs.
+#[test]
+fn the_first_mint_copies_the_dreamers_rows() -> Result<()> {
+    use crate::federation::SystemAgentGrantState;
+    use crate::federation::grant_scope::STEWARD_VERBS;
+    for rows in [true, false] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(dir.path(), VaultConfig::device())?;
+        crate::test_util::provision_engine_machines(&vault);
+        vault.ensure_embedded_owner_actor().expect("embedded owner");
+        if !rows {
+            seeded_without_dreamer_rows(&vault)?;
+        }
+        let dreamer = vault.dreamer_authority()?.entity_ref();
+        vault.provision_system_agent_grants()?;
+        let state = {
+            let txn = vault.store.env.read_txn()?;
+            vault.system_agent_grant_state_in(&txn, dreamer)?
+        };
+        match (rows, state) {
+            (true, Some(SystemAgentGrantState::Minted { grant })) => {
+                let txn = vault.store.env.read_txn()?;
+                let verbs = crate::federation::standing_steward_verbs_in(
+                    &vault.store,
+                    &txn,
+                    grant,
+                    dreamer,
+                )?;
+                let expected: std::collections::BTreeSet<String> = STEWARD_VERBS
+                    .iter()
+                    .map(|verb| (*verb).to_owned())
+                    .collect();
+                assert_eq!(verbs, expected);
+                assert!(vault.dreamer_weave_reach()?.ready());
+            }
+            (false, Some(SystemAgentGrantState::OptedOut)) => {
+                let reach = vault.dreamer_weave_reach()?;
+                assert!(!reach.reads && !reach.lands_auto);
+            }
+            other => panic!("unexpected first mint: {other:?}"),
+        }
+        vault.provision_system_agent_grants()?;
+        let again = {
+            let txn = vault.store.env.read_txn()?;
+            vault.system_agent_grant_state_in(&txn, dreamer)?
+        };
+        assert_eq!(again, state, "a second open mints nothing");
+    }
+    Ok(())
+}
+
+fn name_claim_ids(vault: &Vault, subject: &EntityId) -> Result<Vec<EntityId>> {
+    Ok(vault
+        .claims_for_subject(subject)?
+        .into_iter()
+        .filter(|id| {
+            vault
+                .get_claim(id)
+                .ok()
+                .flatten()
+                .is_some_and(|body| body.predicate == "profile.name")
+        })
+        .collect())
+}
