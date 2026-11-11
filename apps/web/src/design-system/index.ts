@@ -5,6 +5,9 @@ export { SafelightRoot, type SafelightRootProps } from './ground/SafelightRoot'
 export { Field, type FieldProps } from './ground/Field'
 export { Island, type IslandProps } from './ground/Island'
 export { Well, type WellProps } from './ground/Well'
+export { WindowGround, type WindowGroundProps } from './ground/WindowGround'
+export { useRootTheme, type RootTheme } from './ground/root-theme'
+export { readScene, type SceneReading } from './lib/scene'
 
 export { Verb, type VerbProps } from './primitives/Verb'
 export { IconAction, type IconActionProps } from './primitives/IconAction'
@@ -216,6 +219,7 @@ export { useResolvedScheme, resolveScheme, type Scheme } from './lib/scheme'
 export {
   THEMES,
   DEFAULT_THEME,
+  SCENE_STAND_IN_COLOUR,
   DAY_GROUND_INK,
   NIGHT_GROUND_INK,
   TONE_FLOOR,

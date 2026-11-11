@@ -15,23 +15,29 @@
 .sl-root {
   color-scheme: light dark;
 
+  /* The window ground around the sheet: its two print inks (equal for a
+     flat theme) and the ink of words and symbols set on it. SafelightRoot
+     sets all three from its theme. */
+
   /* Grounds. bg is the sidebar's tone in the sheet; island is the work
      area; well is one step darker than the sheet, for a recess; sunk is one
-     step lighter, for a raised card and a text field. */
-  --sl-bg: light-dark(#EFF0F2, #120F0D);
-  --sl-island: light-dark(#FAF9F5, #1B1815);
-  --sl-sunk: light-dark(#FDFCF9, #272421);
-  --sl-well: light-dark(#EFEEEB, #120F0D);
+     step lighter, for a raised card and a text field. At night a theme
+     turns the sheet's tones toward its hue: SafelightRoot sets the
+     --sl-night-* values, and without them the night value here holds. */
+  --sl-bg: light-dark(#EFF0F2, var(--sl-night-bg, #120F0D));
+  --sl-island: light-dark(#FAF9F5, var(--sl-night-island, #1B1815));
+  --sl-sunk: light-dark(#FDFCF9, var(--sl-night-sunk, #272421));
+  --sl-well: light-dark(#EFEEEB, var(--sl-night-well, #120F0D));
   /* The popover ground. */
-  --sl-pop: light-dark(#FEFDFB, #2C2926);
+  --sl-pop: light-dark(#FEFDFB, var(--sl-night-pop, #2C2926));
   /* The disc behind a person's initial and a filled person seal. */
-  --sl-disc: light-dark(#DBE0E6, #4C4741);
+  --sl-disc: light-dark(#DBE0E6, var(--sl-night-disc, #4C4741));
   /* The plate behind a dithered portrait. */
   --sl-plate: light-dark(#E8EBEE /* provisional */, #131110);
   /* A pressed or opened person disc. */
   --sl-disc-hover: light-dark(#CFD4DA /* provisional */, #58524C /* provisional */);
   /* The round plate under a resident in a crew stack, and its hover. */
-  --sl-chip: light-dark(#E4E6E9, #302D2A);
+  --sl-chip: light-dark(#E4E6E9, var(--sl-night-chip, #302D2A));
   --sl-chip-hover: light-dark(#DBDDE0 /* provisional */, #393633 /* provisional */);
   /* A text field while it holds focus (the write box, the write line). */
   --sl-sunk-focus: light-dark(#F7F6F3 /* provisional */, #292623 /* provisional */);
@@ -41,7 +47,7 @@
   --sl-ink-2: light-dark(#3A424B, #D6CEC1);
   --sl-ink-3: light-dark(#4E5862, #BAB3A4);
   --sl-ink-4: light-dark(#8A929B, #837C74);
-  --sl-rule: light-dark(#D5DADE, #3A3734);
+  --sl-rule: light-dark(#D5DADE, var(--sl-night-rule, #3A3734));
 
   /* Hover is one tone step; lit marks the selected row or the open item. */
   --sl-hover: light-dark(rgba(30, 34, 38, 0.04), rgba(232, 225, 213, 0.05));

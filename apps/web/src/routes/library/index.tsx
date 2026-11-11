@@ -33,6 +33,7 @@ import { RESIDENTS } from './-identity'
 import { FieldSections, FrameSections } from './-frame'
 import { PatternSections } from './-patterns'
 import { TaskSections } from './-tasks'
+import { WindowGroundSection } from './-themes'
 import galleryCss from './-gallery.css?url'
 
 export const Route = createFileRoute('/library/')({
@@ -245,6 +246,8 @@ function LibraryPage() {
             </Well>
           </Specimen>
         </Section>
+
+        <WindowGroundSection />
 
         <Section title="Verb">
           <Specimen name="plain">

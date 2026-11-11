@@ -233,6 +233,23 @@
   padding: 10px 14px;
 }
 
+/* A theme's window ground on a stage of its own. */
+.lib-ground-stage {
+  display: flex;
+  align-items: flex-end;
+  width: 240px;
+  height: 120px;
+  padding: 10px 12px;
+  border-radius: var(--sl-radius);
+  overflow: hidden;
+}
+
+.lib-ground-word {
+  position: relative;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ground-ink);
+}
+
 .lib-icons {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
