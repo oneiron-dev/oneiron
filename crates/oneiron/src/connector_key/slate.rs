@@ -647,7 +647,11 @@ fn elicitation_row_expands(old: &ConnectorGrantSlate, next: &ConnectorGrantSlate
 }
 
 /// Only a provable restriction carries consent. Anything unknown re-asks.
-fn schema_narrows(old: Option<&serde_json::Value>, next: Option<&serde_json::Value>) -> bool {
+/// Manifest drift reads the same judgment (FIX 2604).
+pub(in crate::connector_key) fn schema_narrows(
+    old: Option<&serde_json::Value>,
+    next: Option<&serde_json::Value>,
+) -> bool {
     let (Some(old), Some(next)) = (old, next) else {
         return old == next;
     };
@@ -1167,6 +1171,7 @@ impl Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connector_key::draft_connector_slate;
     #[test]
     fn typed_manifest_draft_floor_and_owner_override() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -1187,12 +1192,15 @@ mod tests {
                 spends: false,
                 sends_outward: name == "send",
                 legacy_ask: name == "legacy.ask",
+                read_only: false,
+                idempotent: false,
+                price: None,
             });
         }
         let rows = draft_connector_slate(&manifest);
         assert_eq!(rows[0].disposition, SlateDisposition::Auto);
         assert_eq!(rows[2].data_class, SlateDataClass::Header);
-        assert!(!rows[3].enabled);
+        assert_eq!(rows[3].disposition, SlateDisposition::NeverAllow);
         assert!(
             vault
                 .store_connector_slate(&manifest, "approve all tools")
@@ -1257,14 +1265,13 @@ mod tests {
                 "send".into(),
                 SlateOwnerOverride {
                     disposition: SlateDisposition::Auto,
-                    enabled: true,
                 },
             )]
             .into(),
         )?;
         assert_eq!(
             slate.rows()[1].draft.disposition,
-            SlateDisposition::ConfirmFirst
+            SlateDisposition::AlwaysAsk
         );
         assert_eq!(
             slate.rows()[1].effective_disposition(),
@@ -1278,6 +1285,7 @@ mod tests {
 #[cfg(test)]
 mod revision_tests {
     use super::*;
+    use crate::connector_key::draft_connector_slate;
     use serde_json::json;
 
     fn tool(name: &str) -> SlateToolManifest {
@@ -1292,23 +1300,35 @@ mod revision_tests {
             spends: false,
             sends_outward: false,
             legacy_ask: false,
+            read_only: false,
+            idempotent: false,
+            price: None,
         }
     }
     fn slate(manifest: Vec<SlateToolManifest>, rows: Vec<SlateDraftRow>) -> ConnectorGrantSlate {
+        let manifest = SlateManifest::new(manifest, false);
         validate(&manifest, &rows).expect("valid permuted slate");
         ConnectorGrantSlate {
             manifest,
             rows: rows
                 .into_iter()
                 .map(|draft| SlateRow {
+                    settings_act: EntityId::now(),
                     draft,
                     owner_override: None,
+                    holder_narrow: None,
                 })
                 .collect(),
             manifest_hash: [0; 32],
             revision: 0,
             owner_actor: None,
             owner_authentication: None,
+            facet_limit: None,
+            holder_facet_narrow: None,
+            prior: None,
+            reask: BTreeSet::new(),
+            cause: None,
+            stamped_aggregate: None,
         }
     }
     #[test]

@@ -29,6 +29,7 @@
 
 use std::collections::BTreeSet;
 
+use super::removal_answer::{RemovalExportFile, spool_digest};
 use super::removal_file::ArchiveFile;
 use super::{
     ArchiveRow, REMOVAL_EXPORT, RemovalExportCopy, RemovalExportDelivery, removal_export_key,
@@ -107,7 +108,7 @@ impl KeptRemovalCopy {
 
     /// The copy its holder receives: `archive`, the bytes it is answered,
     /// and their `digest`.
-    fn with_archive(self, archive: Vec<u8>, digest: String) -> RemovalExportCopy {
+    pub(super) fn with_archive(self, archive: Vec<u8>, digest: String) -> RemovalExportCopy {
         RemovalExportCopy {
             receipt_id: self.receipt_id,
             vault_id: self.vault_id,
@@ -119,6 +120,9 @@ impl KeptRemovalCopy {
                 archive,
                 digest,
                 holder_requests: self.holder_requests,
+                // A removal's records archive follows the world settings, so
+                // it names no world it carried past them.
+                notices: Vec::new(),
             },
         }
     }
@@ -165,6 +169,11 @@ impl StoredRemovalExport {
             spent_slips: BTreeSet::new(),
             pact_serves: Vec::new(),
         }
+    }
+
+    /// The file the archive's bytes are.
+    pub(super) const fn file(&self) -> &ArchiveFile {
+        &self.file
     }
 
     /// BLAKE3 of the archive as kept, lowercase hex.
@@ -254,11 +263,11 @@ fn unreadable_on_erase(
 /// [`ISOLATION_NEW_CHECK_ERROR_MODE`] for a projection whose `input` did not
 /// read: the stored copy, as every holder took it before projection
 /// existed. The warning names the removal receipt and the input only.
-fn keep_stored_copy(copy: RemovalExportCopy, input: &'static str) -> RemovalExportCopy {
+fn keep_stored_copy(copy: RemovalExportFile, input: &'static str) -> RemovalExportFile {
     match ISOLATION_NEW_CHECK_ERROR_MODE {
         NewCheckErrorMode::KeepExistingPath => {
             tracing::warn!(
-                receipt = %copy.receipt_id,
+                receipt = %copy.receipt_id(),
                 input,
                 policy = ?ISOLATION_NEW_CHECK_ERROR_MODE,
                 "a transferred removal archive did not project; its holder takes the stored copy \
@@ -295,7 +304,7 @@ impl Vault {
         member: EntityId,
         now: u64,
         admits: &dyn Fn(EntityId, Option<&Scope>) -> bool,
-    ) -> Result<Vec<RemovalExportCopy>> {
+    ) -> Result<Vec<RemovalExportFile>> {
         let prefix = removal_export_key(&member.to_hex(), "");
         let mut copies = Vec::new();
         for (_, stored) in REMOVAL_EXPORT.scan_from(&self.store, txn, prefix.as_bytes())? {
@@ -308,31 +317,32 @@ impl Vault {
         Ok(copies)
     }
 
-    /// The copy of `stored` its reader takes, its bytes read from the
-    /// archive's file in `txn` (FIX 3679): judged record by record on the
-    /// frozen positions, the stored archive when the reader takes every
+    /// The copy of `stored` its reader takes, its archive spooled from the
+    /// archive's file in `txn` (FIX 3679, 21529): judged record by record on
+    /// the frozen positions, the stored archive when the reader takes every
     /// record, none when it takes none, else the stored archive projected
-    /// onto those it takes. `admits` judges a holder the removed Owner
-    /// transferred the slip to; `None`, the removed Owner proving the mint's
-    /// own key, takes every record. No reader takes a record an erase took
-    /// that the file still holds. Positions or an archive that do not read
-    /// leave the stored copy ([`keep_stored_copy`]) while no erase is owed
-    /// on it, and none once one is.
+    /// onto those it takes, file to file. `admits` judges a holder the
+    /// removed Owner transferred the slip to; `None`, the removed Owner
+    /// proving the mint's own key, takes every record. No reader takes a
+    /// record an erase took that the file still holds. Positions or an
+    /// archive that do not read leave the stored copy ([`keep_stored_copy`])
+    /// while no erase is owed on it, and none once one is.
     ///
     /// # Errors
     ///
-    /// A file that does not open or match its descriptor; storage errors.
+    /// A file that does not open or match its descriptor; storage and spool
+    /// filesystem errors.
     pub(crate) fn removal_export_copy_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         stored: StoredRemovalExport,
         admits: Option<&dyn Fn(EntityId, Option<&Scope>) -> bool>,
-    ) -> Result<Option<RemovalExportCopy>> {
+    ) -> Result<Option<RemovalExportFile>> {
         let row = stored.copy.row()?;
-        let whole = |vault: &Self, stored: StoredRemovalExport| -> Result<RemovalExportCopy> {
-            let archive = vault.read_removal_archive_in_txn(txn, row, &stored.file)?;
+        let whole = |vault: &Self, stored: StoredRemovalExport| -> Result<RemovalExportFile> {
+            let archive = vault.spool_removal_archive_in_txn(txn, row, &stored.file)?;
             let digest = stored.digest();
-            Ok(stored.copy.with_archive(archive, digest))
+            Ok(RemovalExportFile::new(stored.copy, digest, archive))
         };
         // The removed Owner's own read never decodes the positions.
         if admits.is_none() && stored.erased.is_empty() {
@@ -364,17 +374,20 @@ impl Vault {
             return whole(self, stored).map(Some);
         }
         let TransferMode::ProjectStoredSnapshot = REMOVAL_ARCHIVE_TRANSFER_MODE;
-        let archive = self.read_removal_archive_in_txn(txn, row, &stored.file)?;
-        match crate::batch::export::project_stored_archive(&archive, &archived, &kept) {
-            Ok(bytes) => {
+        let mut archive = self.spool_removal_archive_in_txn(txn, row, &stored.file)?;
+        let sink = self.archive_spool_file()?;
+        match crate::batch::export::project_stored_archive(&mut archive, &archived, &kept, sink) {
+            Ok(mut out) => {
                 let ProjectedDigest::ProjectedBytes = REMOVAL_ARCHIVE_PROJECTED_DIGEST;
-                let digest = blake3::hash(&bytes).to_hex().to_string();
-                Ok(Some(stored.copy.with_archive(bytes, digest)))
+                let digest = spool_digest(&mut out)?;
+                Ok(Some(RemovalExportFile::new(stored.copy, digest, out)))
             }
             Err(_) if stored.erased.is_empty() => {
+                use std::io::{Seek, SeekFrom};
+                archive.seek(SeekFrom::Start(0))?;
                 let digest = stored.digest();
                 Ok(Some(keep_stored_copy(
-                    stored.copy.with_archive(archive, digest),
+                    RemovalExportFile::new(stored.copy, digest, archive),
                     "stored archive",
                 )))
             }
@@ -581,24 +594,27 @@ impl Vault {
             return Ok(None);
         }
         let kept: BTreeSet<EntityId> = left.iter().map(|record| record.id).collect();
+        // Read, projected and staged file to file (FIX 21529): no archive is
+        // held whole.
         let archive = {
             let _pin = self.pin_all_result_bodies();
             let _custody = self.store.gate_custody_read_guard()?;
             let txn = self.store.env.read_txn()?;
-            self.read_removal_archive_in_txn(&txn, row, &stored.file)
+            self.spool_removal_archive_in_txn(&txn, row, &stored.file)
         };
         let Ok(archive) = archive else {
             return unreadable("stored archive");
         };
-        let Ok(bytes) = crate::batch::export::project_stored_archive(&archive, &archived, &kept)
+        let sink = self.archive_spool_file()?;
+        let Ok(mut projected) =
+            crate::batch::export::project_stored_archive(archive, &archived, &kept, sink)
         else {
             return unreadable("stored archive");
         };
-        drop(archive);
         let Ok(positions) = rmp_serde::to_vec_named(&left) else {
             return unreadable("frozen positions");
         };
-        let staged = self.stage_removal_archive(&mut std::io::Cursor::new(bytes))?;
+        let staged = self.stage_removal_archive(&mut projected)?;
         Ok(Some((staged, positions)))
     }
 
@@ -648,13 +664,13 @@ impl Vault {
     pub(crate) fn log_removal_archive_pact_serve_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        served: &[RemovalExportCopy],
+        served: &[RemovalExportFile],
         grant: EntityId,
         slip_id: [u8; 32],
         now: u64,
     ) -> Result<()> {
         for copy in served {
-            let row_key = removal_export_key(&copy.member, &copy.receipt_id);
+            let row_key = removal_export_key(copy.member(), copy.receipt_id());
             if let Some(mut stored) = REMOVAL_EXPORT.get(&self.store, txn, &row_key)? {
                 stored.pact_serves.push(PactServe {
                     grant,
@@ -676,7 +692,7 @@ impl Vault {
         receipt_id: EntityId,
         now: u64,
         admits: &dyn Fn(EntityId, Option<&Scope>) -> bool,
-    ) -> Result<Option<RemovalExportCopy>> {
+    ) -> Result<Option<RemovalExportFile>> {
         let row_key = removal_export_key(&member.to_hex(), &receipt_id.to_hex());
         match REMOVAL_EXPORT.get(&self.store, txn, &row_key)? {
             Some(stored) if now < stored.copy.expires_at => {

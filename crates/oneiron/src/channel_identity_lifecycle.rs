@@ -782,5 +782,6 @@ impl Vault {
     }
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

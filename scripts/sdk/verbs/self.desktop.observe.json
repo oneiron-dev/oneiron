@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.observe",
+  "description": "Observes the desktop guest's window as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with next; a cut tree walk answers partial, and walk_next walks it longer.",
+  "input": "oneiron_browser::ObserveInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.observe_page(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

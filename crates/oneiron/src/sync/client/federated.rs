@@ -13,7 +13,7 @@ use crate::sync::asset_body::session::{AssetBodyLane, land_carried_body, with_ma
 use crate::sync::federation_burst::{
     FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
-use crate::sync::ingest::{Delivery, watch_births, with_delivery};
+use crate::sync::ingest::{Delivery, watch_births, with_delivery, with_placements};
 use crate::sync::selector::{
     AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update_as,
     encode_selector_vv_request, revalidate_admitted_facet_stamps,
@@ -206,9 +206,10 @@ impl SyncClient {
             FederationAdmissionRole::Member => WorkKind::MemberUpdate,
             FederationAdmissionRole::Guest => WorkKind::GuestUpdate,
         };
-        let identity = crate::sync::federation_burst::DeferredWork::new(&peer, &key, kind, update)
-            .map_err(map_federated_admission_err)?;
-        let batch_ref = blake3::Hash::from(identity.id).to_hex().to_string();
+        let (batch_id, _) =
+            crate::sync::federation_burst::DeferredWork::identity(&peer, &key, kind, update)
+                .map_err(map_federated_admission_err)?;
+        let batch_ref = blake3::Hash::from(batch_id).to_hex().to_string();
         match self.vault.federation_burst_disposition(&peer, &batch_ref) {
             Ok(receipt) if receipt.state.is_settled() => return Ok(receipt),
             Ok(_) | Err(crate::Error::EntityNotFound) => {}
@@ -627,9 +628,12 @@ impl SyncClient {
         }
         let window = self.ensure_window(window_key)?;
         let vault = std::sync::Arc::clone(&self.vault);
+        // FIX 3656: each row's carried birth placement lands with its row.
         let born = watch_births(&vault, part.births(), || {
             with_delivery(delivery, || {
-                self.import_accepted_window_update(window_key, &window, part.bytes())
+                with_placements(&vault, key, part.placements(), || {
+                    self.import_accepted_window_update(window_key, &window, part.bytes())
+                })
             })
         })?;
         part.keep_born_with(&self.vault)
@@ -745,34 +749,9 @@ pub(super) fn map_federated_admission_err(e: crate::error::Error) -> TransportEr
         crate::error::Error::Sync(crate::error::SyncError::SyncProtocolError {
             context: SyncProtocolValidation::FederatedTombstoneAdmission,
         }) => TransportError::InvalidPayload("federated tombstone update rejected"),
-        e if is_local_federated_admission_failure(&e) => {
+        e if transport::is_own_vault_fault(&e) => {
             TransportError::Storage(format!("federated admission failed: {e}"))
         }
         _ => TransportError::InvalidPayload("federated update admission failed"),
     }
-}
-
-fn is_local_federated_admission_failure(e: &crate::error::Error) -> bool {
-    // A fault reading this vault's own admission state is this device's,
-    // never the peer's refused update (FIX 5926).
-    if transport::is_window_admission_read_fault(e) {
-        return true;
-    }
-    matches!(
-        e,
-        crate::error::Error::Storage(_)
-            | crate::error::Error::Io(_)
-            | crate::error::Error::MapFull
-            | crate::error::Error::InvalidConfig(_)
-            | crate::error::Error::Store(crate::error::StoreError::EmbeddingModelChanged { .. })
-            | crate::error::Error::Store(crate::error::StoreError::HnswConfigChanged { .. })
-            | crate::error::Error::Store(crate::error::StoreError::StorageAbiVersionChanged { .. })
-            | crate::error::Error::Store(
-                crate::error::StoreError::StorageSchemaVersionChanged { .. }
-            )
-            | crate::error::Error::Store(crate::error::StoreError::DbManifestMismatch { .. })
-            | crate::error::Error::Store(crate::error::StoreError::VaultRootPreflight { .. })
-            | crate::error::Error::Sync(crate::error::SyncError::WindowNotFound { .. })
-            | crate::error::Error::Sync(crate::error::SyncError::WindowBusy { .. })
-    )
 }

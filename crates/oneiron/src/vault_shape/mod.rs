@@ -36,6 +36,7 @@ mod run;
 mod seed;
 mod shared_setup;
 mod skill;
+pub(crate) mod tables;
 mod visibility;
 mod wire;
 mod world_facet;
@@ -62,6 +63,7 @@ pub use run::{
     shape_item_ref_parts,
 };
 pub use seed::StoredShapeSeed;
+pub(crate) use seed::names_shape_seed;
 pub use shared_setup::{ShapeLearningOutcome, ShapeLearningSetting};
 pub use skill::ShapeSkillSource;
 

@@ -118,17 +118,38 @@ pub(super) fn stage_put_projections(
         .scope_stamps
         .stamp_put(store, wtxn, fixed.id, fixed.entity_type, data, row_put)?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_PERSON {
-        super::super::super::person_substrate::ensure_person_substrate(
+        if let Some(substrate) = fixed.prepared_person_substrate {
+            substrate.apply_at_person_projection(store, wtxn)?;
+        } else {
+            super::super::super::person_substrate::ensure_person_substrate(
+                store,
+                wtxn,
+                fixed.id,
+                fixed.occurred,
+                fixed.learned_at,
+            )?;
+        }
+    }
+    // An owning adapter's custody reads what a body file holds, never its
+    // manifest (FIX 22091).
+    let carrier = fixed.file_body.unwrap_or(data);
+    crate::agent_def::stage_birth_custody_put(write, wtxn, &fixed.id, fixed.entity_type, carrier)?;
+    crate::receipt::stage_receipt_archive_put(write, wtxn, &fixed.id, fixed.entity_type, carrier)?;
+    crate::receipt::stage_receipt_record_index(store, wtxn, &fixed.id, fixed.entity_type, data)?;
+    // A body file keeps what the compaction scrub reads in it, which its
+    // window will not hold (FIX 22091).
+    #[cfg(feature = "sync")]
+    if let Some(file) = fixed.options.storage.asset_file
+        && let Some(manifest) = crate::store::AssetFileManifest::decode(data)
+    {
+        crate::sweep::stage_carrier_scrub_facts_in_txn(
             store,
             wtxn,
-            fixed.id,
-            fixed.occurred,
-            fixed.learned_at,
+            &fixed.id,
+            (&file.blake3, manifest.kind),
+            fixed.file_body,
         )?;
     }
-    crate::agent_def::stage_birth_custody_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
-    crate::receipt::stage_receipt_archive_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
-    crate::receipt::stage_receipt_record_index(store, wtxn, &fixed.id, fixed.entity_type, data)?;
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &fixed.id, plan)?;

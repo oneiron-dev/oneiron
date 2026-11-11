@@ -350,12 +350,16 @@ pub(super) fn write_booking_event(
         ),
         (rmpv::Value::from("projector"), rmpv::Value::from("booking")),
     ]));
+    let origin_id = vault
+        .new_entity_id()
+        .map_err(|error| engine_failure("booking origin id", error))?;
+    origin.scope_facet = vault
+        .default_facet_in_txn(wtxn)
+        .map_err(|error| engine_failure("booking origin write", error))?;
     vault
         .put_reserved_claim_in_txn(
             wtxn,
-            &vault
-                .new_entity_id()
-                .map_err(|error| engine_failure("booking origin id", error))?,
+            &origin_id,
             &origin,
             inclusive_occurrence(hold.slot)?,
             now_utc,
@@ -435,6 +439,9 @@ pub(super) fn put_claim(
     .map_err(|error| engine_failure("booking claim body", error))?;
     body.source = Some(ClaimSource::Observed);
     body.valid_from = Some(now_utc);
+    body.scope_facet = vault
+        .default_facet_in_txn(wtxn)
+        .map_err(|error| engine_failure("booking claim write", error))?;
     vault
         .put_claim_in_txn(wtxn, &id, &body, at(now_utc), now_utc)
         .map_err(|error| engine_failure("booking claim write", error))?;

@@ -125,11 +125,12 @@ fn manifest_append_does_not_delay_expired_lease_reclaim() -> Result<()> {
     Ok(())
 }
 
-/// The cap REFUSES; it never drains. This is the deliberate divergence from
-/// `MAX_ATTEMPT_EVENTS_PER_RECORD`, whose drain would silently violate the
-/// append-only invariant.
+/// Past the old 4096 cap the manifest keeps every row; it never drains the
+/// oldest one (ruled refusal removed, Rule 5; 40a7911e26e #3145: the count
+/// became the `limits.attempt_manifest_entries` ask row).
 #[test]
 fn manifest_refuses_at_the_cap_instead_of_dropping_the_oldest_row() -> Result<()> {
+    const OLD_MAX_ATTEMPT_MANIFEST_ENTRIES: usize = 4096;
     let (_dir, vault) = open_queue();
     let queue = AttemptQueue::new(&vault);
     let attempt = enqueued(&queue, 10)?;
@@ -137,7 +138,7 @@ fn manifest_refuses_at_the_cap_instead_of_dropping_the_oldest_row() -> Result<()
     // Seed a full manifest through the record path (appending 4096 rows one
     // door call at a time is a needless minute of LMDB writes).
     let mut record = queue.get(attempt.id)?.expect("row persists");
-    record.manifest = (0..MAX_ATTEMPT_MANIFEST_ENTRIES)
+    record.manifest = (0..OLD_MAX_ATTEMPT_MANIFEST_ENTRIES)
         .map(|index| skill_entry(&format!("skill-{index}"), "1", 11))
         .collect();
     let first = record.manifest[0].clone();
@@ -150,24 +151,25 @@ fn manifest_refuses_at_the_cap_instead_of_dropping_the_oldest_row() -> Result<()
         Ok(())
     })?;
 
-    let error = queue
-        .append_manifest_entry(attempt.id, skill_entry("overflow", "1", 12))
-        .expect_err("a full manifest refuses");
-
-    assert!(matches!(
-        error,
-        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(ERR_MANIFEST_FULL))
-    ));
-    let after = queue.get(attempt.id)?.expect("row persists");
+    let after = queue.append_manifest_entry(attempt.id, skill_entry("overflow", "1", 12))?;
     assert_eq!(
         after.manifest().len(),
-        MAX_ATTEMPT_MANIFEST_ENTRIES,
-        "nothing was appended"
+        OLD_MAX_ATTEMPT_MANIFEST_ENTRIES + 1,
+        "the row past the old cap is kept"
     );
     assert_eq!(
         after.manifest()[0],
         first,
-        "and nothing was dropped: fail loud, never drain"
+        "and nothing was dropped: keep every row, never drain"
+    );
+    assert_eq!(
+        after.manifest()[OLD_MAX_ATTEMPT_MANIFEST_ENTRIES].wire_form(),
+        "overflow@1"
+    );
+    assert_eq!(
+        queue.get(attempt.id)?.expect("row persists").manifest(),
+        after.manifest(),
+        "the kept row is durable, not in-memory"
     );
     Ok(())
 }

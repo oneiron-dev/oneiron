@@ -58,12 +58,12 @@ use super::step::{StepFault, StepRunner, deliver_hold_notice};
 use super::step_failure::{FailedStep, held_leases, settle};
 use crate::decision_host::DecisionHost;
 
-const LEASE_OWNER: &str = "oneiron-server-workflows";
+const LEASE_OWNER: &str = oneiron::dreamer_runner::WORKFLOWS_PARK_OWNER;
 /// Project questions lease apart from workflow steps, so a failed step's
 /// settlement never reads one as its own.
 const DETECTION_LEASE_OWNER: &str = "oneiron-server-project-detection";
 /// How often waiting work no change signals is looked at again.
-const WAITING_RECHECK: Duration = Duration::from_secs(30);
+pub(super) const WAITING_RECHECK: Duration = Duration::from_secs(30);
 
 /// What the pump waits for after a pass, beside the attempt signal (FIX
 /// 9467): the next real scheduled or backoff instant, and whether some
@@ -444,6 +444,16 @@ fn pump_once(
                     }
                 }
             });
+            // FIX 11532: the solo leaf's team receipt, after its own settle;
+            // a receipt failure logs and the workflow goes on.
+            if let Some((leaf, _)) = claimed
+                && progress.is_ok()
+                && leaf_completed(vault, leaf)
+            {
+                if let Err(error) = oneiron::team::record_solo_receipt(vault, leaf, now_secs()) {
+                    tracing::warn!(kind = ?error.kind(), ?leaf, "a workflow leaf's solo receipt was not recorded");
+                }
+            }
             if hook_wait {
                 recheck = true;
                 break;
@@ -498,6 +508,13 @@ fn pump_once(
                             Ok(FailureLadderOutcome::Retried { .. }) => {}
                             Ok(_) => {
                                 runner.forget(step.leaf);
+                                // FIX 11532: the solo leaf's team receipt, after its
+                                // own end; a receipt failure logs and the stop stands.
+                                if let Err(error) =
+                                    oneiron::team::record_solo_receipt(vault, step.leaf, now_secs())
+                                {
+                                    tracing::warn!(kind = ?error.kind(), leaf = ?step.leaf, "a workflow leaf's solo receipt was not recorded");
+                                }
                                 tracing::warn!(?root, "a workflow step ended; its workflow stops");
                             }
                             Err(settlement) => {

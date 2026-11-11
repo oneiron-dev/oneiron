@@ -13,6 +13,11 @@ pub(crate) fn admits_preset(scope: &Scope, verb: &str) -> bool {
     scope.admits(verb, &record, &Scope::top())
 }
 
+/// The verbs a Steward's grant can carry, and the shipped default gives it:
+/// read and derive across its vault root, archive inside its grant, delete
+/// in scope.
+pub(crate) const STEWARD_VERBS: [&str; 4] = ["read", "derive", "archive", "delete"];
+
 pub(crate) fn membership_preset(role: super::FederationGrantRole) -> Scope {
     match role {
         super::FederationGrantRole::Owner => Scope::top(),
@@ -22,6 +27,20 @@ pub(crate) fn membership_preset(role: super::FederationGrantRole) -> Scope {
         // The non-vault Delegate constructor keeps its historical narrow
         // ceiling; the vault minting writer resolves the policy row instead.
         super::FederationGrantRole::Delegate => super::scope_codec::read_preset(),
+        // The Steward's ceiling (ARCH-0043, owner 9 Nov): read and derive
+        // across the vault root, archive inside its grant, delete in scope.
+        // It names no admin power and no `write`, so no vault or holder row
+        // can raise a Steward to membership acts or general content writes.
+        super::FederationGrantRole::Steward => {
+            let mut scope = Scope::top();
+            scope.verbs = ScopeAxis::Some(
+                STEWARD_VERBS
+                    .iter()
+                    .map(|verb| (*verb).to_owned())
+                    .collect(),
+            );
+            scope
+        }
         super::FederationGrantRole::Member => {
             let mut scope = Scope::top();
             scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "write".to_owned()]));

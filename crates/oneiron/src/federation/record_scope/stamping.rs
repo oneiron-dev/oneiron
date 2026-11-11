@@ -37,7 +37,9 @@ pub(crate) fn stamp_put(
         // A peer cannot mint a birth position for an opaque row merely by
         // picking its ID and bytes. Only an existing stamped row inherits.
         // A replicated NOTIFICATION stays unstamped through its recipient's
-        // local marks too (FIX 6552).
+        // local marks too (FIX 6552). A guest's TASK or SUMMARY whose
+        // sender's stamp admission validated takes it from
+        // `stamp_carried_placement`, in this put's transaction (FIX 3656).
         return Ok(());
     }
     let stamp = Stamp {
@@ -48,6 +50,36 @@ pub(crate) fn stamp_put(
     };
     SCOPE_RECORD.put(store, txn, &id, &stamp)?;
     Ok(())
+}
+
+/// Lands the birth position a guest's update carried for `id`, a TASK or
+/// SUMMARY whose replicated put landed it here first, in that put's
+/// transaction (FIX 3656): its sender's stamp, at the foreign WORLD copy
+/// admission remapped the sender's world to ([`GuestPlacement`]). It is the
+/// one door that stamps a replicated non-CLAIM row (`stamp_put`). A row
+/// already stamped keeps its stamp, and a row not stored here as the
+/// placement's kind takes none.
+#[cfg(feature = "sync")]
+pub(crate) fn stamp_carried_placement(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    placement: &GuestPlacement,
+) -> Result<()> {
+    if SCOPE_RECORD.get(store, txn, &id)?.is_some() {
+        return Ok(());
+    }
+    let stored = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?;
+    let kind = stored
+        .as_deref()
+        .and_then(EntityMetadataHeader::parse)
+        .map(|header| header.entity_type);
+    if kind != Some(placement.kind()) {
+        return Ok(());
+    }
+    let stamp = placement.stamp(id)?;
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(store, txn, &id, &stamp)
 }
 
 /// Whether `id` is stored here with a birth position.
@@ -225,18 +257,18 @@ pub(crate) fn room_row_placed(
 }
 
 /// Whether the base row `id` of `kind` sits in the same worlds in `view`'s
-/// room as on base: always for a row that is not a NOTE, whose world is
-/// stamped; for a NOTE, whose world its live `InWorld` edges name, only when
-/// the room's edges name the same worlds (review P1 #5926).
+/// room as on base: always for a row whose world is stamped; for a NOTE, an
+/// ASSET or a caption, whose worlds live edges give, only when the room's
+/// edges give the same worlds (review P1 #5926, FIX 22223).
 fn keeps_base_worlds(
     view: &crate::store::SessionStoreView<'_>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
 ) -> bool {
-    kind != crate::registry::ENTITY_TYPE_NOTE
-        || super::note_world::note_worlds_in(view, txn, id)
-            == super::note_world::note_worlds_in(view.read().base(), txn, id)
+    !super::note_world::takes_live_worlds(kind)
+        || super::note_world::live_worlds_in(view, txn, id, kind)
+            == super::note_world::live_worlds_in(view.read().base(), txn, id, kind)
 }
 
 /// Settles an epoch SUMMARY's birth position in its mint transaction: born

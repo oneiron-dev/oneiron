@@ -46,12 +46,12 @@ impl ConsolidationExecutor<'_> {
                 return self.run_sieve_window_audit(attempt, ctx, window).await;
             }
         };
-        if let Some((completed_units, step_hashes)) =
+        if let Some((completed_units, step_bindings)) =
             sieve::rung_result_units(ctx.vault, attempt.status.attempt.id)?
         {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units,
-                step_hashes,
+                step_bindings,
             });
         }
         if sieve::rung_superseded(ctx.vault, &input)?
@@ -59,7 +59,7 @@ impl ConsolidationExecutor<'_> {
         {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         // A queued rung over an excluded conversation parks for retry
@@ -80,7 +80,7 @@ impl ConsolidationExecutor<'_> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(input.policy.rung_retry_secs),
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         };
         let mut charges = StepChargeTally::default();
@@ -170,14 +170,31 @@ impl ConsolidationExecutor<'_> {
             // Every generation that finished is spent, whatever the rung's
             // outcome. A tally the record cannot take settles with that
             // error instead of leaving the attempt uncharged (FIX 11554).
-            for (index, (hash, usage, _)) in read.steps.iter().enumerate() {
-                if let Err(error) = charges.record_terminal(ctx.vault, attempt_id, *hash, usage) {
-                    for (_, usage, memoized) in &read.steps[index..] {
-                        if !*memoized {
+            for (index, (_, usage, binding, _)) in read.steps.iter().enumerate() {
+                if let Some(binding) = binding {
+                    if let Err(error) = charges.record_terminal(
+                        ctx.vault,
+                        binding.attempt_id,
+                        binding.step_hash,
+                        usage,
+                    ) {
+                        for (_, usage, _, memoized) in &read.steps[index..] {
+                            if !*memoized {
+                                charges.record_usage(usage);
+                            }
+                        }
+                        if let Some(usage) = read
+                            .outcome
+                            .as_ref()
+                            .err()
+                            .and_then(DurableStepError::spent_usage)
+                        {
                             charges.record_usage(usage);
                         }
+                        return super::residency::spent_or_deferred(error, ctx, &charges);
                     }
-                    return super::residency::spent_or_deferred(error, ctx, &charges);
+                } else {
+                    charges.record_usage(usage);
                 }
             }
             let decisions = match read.outcome {
@@ -216,9 +233,10 @@ impl ConsolidationExecutor<'_> {
                     {
                         charges.record_usage(usage);
                     }
-                    return Ok(
-                        charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error))
-                    );
+                    return Ok(charges.park_for(
+                        &error.to_string(),
+                        crate::dreamer_runner::dreamer_park_cause_of_step(&error),
+                    ));
                 }
             };
             // A question the decision clock cut keeps its memo: the attempt
@@ -241,16 +259,29 @@ impl ConsolidationExecutor<'_> {
                 None => {
                     let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
                     if let Err(error) = ctx.vault.with_write_txn_grouped(|wtxn| {
-                        for (hash, _, _) in &read.steps {
-                            store.forget_step_charge_in_txn(wtxn, attempt_id, hash)?;
-                            crate::llm::forget_step_memo_in_txn(ctx.vault, wtxn, attempt_id, hash)?;
+                        for (_, _, binding, _) in &read.steps {
+                            if let Some(binding) = binding {
+                                store.forget_step_charge_in_txn(
+                                    wtxn,
+                                    binding.attempt_id,
+                                    &binding.step_hash,
+                                )?;
+                                crate::llm::forget_step_memo_in_txn(
+                                    ctx.vault,
+                                    wtxn,
+                                    binding.attempt_id,
+                                    &binding.step_hash,
+                                )?;
+                            }
                         }
                         Ok(())
                     }) {
                         return super::residency::spent_or_deferred(error, ctx, &charges);
                     }
-                    for (hash, _, _) in &read.steps {
-                        charges.step_hashes.retain(|kept| *kept != *hash);
+                    for (_, _, binding, _) in &read.steps {
+                        if let Some(binding) = binding {
+                            charges.step_bindings.retain(|kept| kept != binding);
+                        }
                     }
                     return Ok(charges.park_for(SIEVE_UNREAD, DreamerParkCause::Retry));
                 }
@@ -304,13 +335,13 @@ impl ConsolidationExecutor<'_> {
             reading.confidence,
             typing_owed,
             charges.units,
-            charges.step_hashes.clone(),
+            charges.step_bindings.clone(),
             decisions,
             ctx.now_ms / 1_000,
         ) {
             Ok(true) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             Ok(false) => Ok(DreamerAttemptExecution::Deferred {
                 completed_units: charges.units,
@@ -318,7 +349,7 @@ impl ConsolidationExecutor<'_> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(input.policy.rung_retry_secs),
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             Err(error) => Ok(charges.park_on_error(&error)),
         }

@@ -1,4 +1,5 @@
-//! Fixed network-read profile for a private disposable hub object store.
+//! Fixed read profiles for a private disposable hub object store: the network
+//! profile, and the local-only profile of a local folder hub (FIX 21922).
 //! No caller-controlled config pairs, checkout, hooks or inherited credentials.
 use crate::git_wire::failure::invalid;
 use crate::git_wire::failure::uncertain;
@@ -35,26 +36,38 @@ pub fn stderr_head(stderr: &[u8]) -> String {
         .join(" ")
 }
 
+/// The network profile's config pairs, appended after the closed GitWire policy.
+const NETWORK_POLICY: &[(&str, &str)] = &[
+    ("protocol.https.allow", "always"),
+    ("protocol.http.allow", "always"),
+    ("protocol.file.allow", "always"),
+    ("http.followRedirects", "false"),
+    ("http.proxy", ""),
+    ("http.extraHeader", ""),
+    ("http.lowSpeedLimit", "1024"),
+    ("http.lowSpeedTime", "10"),
+    ("submodule.recurse", "false"),
+    ("fetch.writeCommitGraph", "false"),
+    ("uploadpack.allowFilter", "true"),
+    ("pack.threads", "1"),
+    ("pack.windowMemory", "16m"),
+    ("pack.deltaCacheSize", "16m"),
+    ("core.deltaBaseCacheLimit", "16m"),
+    ("fetch.unpackLimit", "1"),
+];
+
+/// The local-only profile's config pairs, appended after [`NETWORK_POLICY`]:
+/// later pairs win, so HTTP(S) is off, the file transport stays on, and every
+/// transferred object is checked.
+const LOCAL_POLICY: &[(&str, &str)] = &[
+    ("protocol.https.allow", "never"),
+    ("protocol.http.allow", "never"),
+    ("protocol.file.allow", "always"),
+    ("fetch.fsckObjects", "true"),
+];
+
 pub fn configure(command: &mut Command, root: &Path) -> Result<()> {
     // Append to the normal closed GitWire policy, never replace its hook/credential rules.
-    const POLICY: &[(&str, &str)] = &[
-        ("protocol.https.allow", "always"),
-        ("protocol.http.allow", "always"),
-        ("protocol.file.allow", "always"),
-        ("http.followRedirects", "false"),
-        ("http.proxy", ""),
-        ("http.extraHeader", ""),
-        ("http.lowSpeedLimit", "1024"),
-        ("http.lowSpeedTime", "10"),
-        ("submodule.recurse", "false"),
-        ("fetch.writeCommitGraph", "false"),
-        ("uploadpack.allowFilter", "true"),
-        ("pack.threads", "1"),
-        ("pack.windowMemory", "16m"),
-        ("pack.deltaCacheSize", "16m"),
-        ("core.deltaBaseCacheLimit", "16m"),
-        ("fetch.unpackLimit", "1"),
-    ];
     command
         .env("HOME", root)
         .env("XDG_CONFIG_HOME", root)
@@ -64,13 +77,37 @@ pub fn configure(command: &mut Command, root: &Path) -> Result<()> {
         .env("GIT_ALLOW_PROTOCOL", "https:http:file")
         .env("GIT_NO_LAZY_FETCH", "0");
     let offset = crate::git_wire::config::GIT_WIRE_CONFIG_POLICY.len();
-    command.env("GIT_CONFIG_COUNT", (offset + POLICY.len()).to_string());
-    for (i, (key, value)) in POLICY.iter().enumerate() {
+    command.env(
+        "GIT_CONFIG_COUNT",
+        (offset + NETWORK_POLICY.len()).to_string(),
+    );
+    for (i, (key, value)) in NETWORK_POLICY.iter().enumerate() {
         command
             .env(format!("GIT_CONFIG_KEY_{}", offset + i), key)
             .env(format!("GIT_CONFIG_VALUE_{}", offset + i), value);
     }
     limit_process(command)
+}
+
+/// The local-only profile of a local folder hub (FIX 21922): the network
+/// profile, then the file transport only and no lazy fetch, so an object the
+/// local repository lacks fails the read instead of being fetched.
+pub fn configure_local(command: &mut Command, root: &Path) -> Result<()> {
+    configure(command, root)?;
+    command
+        .env("GIT_ALLOW_PROTOCOL", "file")
+        .env("GIT_NO_LAZY_FETCH", "1");
+    let offset = crate::git_wire::config::GIT_WIRE_CONFIG_POLICY.len() + NETWORK_POLICY.len();
+    command.env(
+        "GIT_CONFIG_COUNT",
+        (offset + LOCAL_POLICY.len()).to_string(),
+    );
+    for (i, (key, value)) in LOCAL_POLICY.iter().enumerate() {
+        command
+            .env(format!("GIT_CONFIG_KEY_{}", offset + i), key)
+            .env(format!("GIT_CONFIG_VALUE_{}", offset + i), value);
+    }
+    Ok(())
 }
 pub fn check_budget(root: &Path, deadline: Instant) -> Result<()> {
     if tree_size(root, &root.join("repo"), deadline)? > DISK_LIMIT {

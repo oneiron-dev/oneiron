@@ -99,8 +99,12 @@ fn assert_distinct_in_txn(
             }
         }
     }
+    // The fact is derived from the ask's MESSAGE: it keeps that MESSAGE's
+    // audience (OPUS-LEAKS).
+    let (relationships, private) = message_audience_in_txn(vault, txn, &ask.message)?;
     let write = IdentityOpWrite::auto(source);
     for head in real {
+        let held = vault.distinct_claims_for_pair_in_txn(txn, &fresh, &head)?;
         vault.apply_identity_topology_op_as_in_txn(
             txn,
             &IdentityTopologyOp::AssertDistinct(AssertDistinctOp {
@@ -112,8 +116,47 @@ fn assert_distinct_in_txn(
             seal,
             now,
         )?;
+        for claim in vault.distinct_claims_for_pair_in_txn(txn, &fresh, &head)? {
+            if !held.contains(&claim) {
+                vault.narrow_distinct_claim_in_txn(txn, &claim, relationships.clone(), private)?;
+            }
+        }
     }
     Ok(())
+}
+
+/// The audience the words of `message` carry, as the read gate judges a
+/// MESSAGE: the relationships whose members read them (`None` for an open
+/// MESSAGE), and whether they are private. A MESSAGE whose audience does
+/// not resolve reads to no gated reader, so nothing is derived from it.
+/// A gated MESSAGE or SUMMARY that names no relationship reads only through
+/// a grant on its conversation, which a CLAIM never carries: its derived
+/// facts are private, so they reach no reader its words do not (OPUS-LEAKS,
+/// review round 2 of #6971).
+fn message_audience_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message: &EntityId,
+) -> Result<(crate::write_envelope::claim_body::RelationshipScope, bool)> {
+    let raw = vault
+        .get_raw_in(txn, message)?
+        .ok_or(crate::Error::EntityNotFound)?;
+    match crate::claim::relationship_read(&vault.store, txn, message, &raw)? {
+        crate::claim::RelationshipRead::Decided(true) => Ok((None, false)),
+        crate::claim::RelationshipRead::Decided(false) => Err(crate::Error::InvalidConfig(
+            "an identity ask's MESSAGE has no audience a reader resolves".into(),
+        )),
+        crate::claim::RelationshipRead::Gated {
+            kind, space: None, ..
+        } if matches!(
+            kind,
+            crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
+        ) =>
+        {
+            Ok((None, true))
+        }
+        crate::claim::RelationshipRead::Gated { space, private, .. } => Ok((space, private)),
+    }
 }
 
 /// Settles the ask's mention as `answer` and saves the hint: a chosen

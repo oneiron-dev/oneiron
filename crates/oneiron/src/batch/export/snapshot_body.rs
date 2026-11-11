@@ -91,7 +91,8 @@ impl RowBody<'_> {
 }
 
 /// Historical/archive-only NOTE rows may intentionally carry a different
-/// body. Only the NOTE codec's live rows use its editor.
+/// body. Only the NOTE codec's live rows, its stored cores, use its editor:
+/// each is exported as its core and its document's live text (FIX 7783).
 fn note_body<'b>(
     vault: &Vault,
     rtxn: &RoTxn<'_>,
@@ -100,7 +101,7 @@ fn note_body<'b>(
     body: &'b [u8],
 ) -> Result<Cow<'b, [u8]>> {
     if entity_type == ENTITY_TYPE_NOTE
-        && crate::store::note_body::decode_note_body_using(
+        && crate::store::note_body::decode_note_core_using(
             body,
             crate::store::note_body::NoteKind::wire,
         )
@@ -215,4 +216,26 @@ pub(super) fn row_live_in_txn(
 ) -> Result<bool> {
     let state = crate::ports::TombstoneStoreRead::port_deletion_state(store, rtxn, id)?;
     Ok(!state.deleted && !state.stale)
+}
+
+/// Whether row `id` goes out in the owner's whole-vault archive: live as
+/// [`row_live_in_txn`] reads it, or kept whole under a cleanup archive. A
+/// cleanup archive is not a removal (ARCH-0073 §2: the record "leaves active
+/// reads and recall; it does not leave the vault"), so the owner's archive
+/// carries the record with its retained body (FIX 21912). A removal or a
+/// stale mark still keeps the row home.
+///
+/// # Errors
+///
+/// The deletion state's and the removal markers' read errors.
+pub(super) fn row_exported_in_txn(
+    store: &crate::store::Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let state = crate::ports::TombstoneStoreRead::port_deletion_state(store, rtxn, id)?;
+    if state.stale {
+        return Ok(false);
+    }
+    Ok(!state.deleted || (state.archived && !crate::ports::removed_in_txn(store, rtxn, id)?))
 }

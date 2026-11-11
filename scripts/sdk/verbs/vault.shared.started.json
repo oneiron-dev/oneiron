@@ -1,0 +1,15 @@
+{
+  "name": "vault.shared.started",
+  "description": "The caller's own notices of shared acts started in the vault.",
+  "input": "crate::task_verb::sdk::SharedVaultRequest",
+  "output": "Vec<crate::federation::PendingActStarted>",
+  "call": "crate::task_verb::sdk::read_shared_act_started(memory.vault(), &memory.embedded_owner(\"vault.shared.started\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

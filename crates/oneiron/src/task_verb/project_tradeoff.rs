@@ -178,11 +178,11 @@ impl Memory<'_> {
         what.options = BTreeMap::from([
             (
                 TaskAskOptionId::new("approve")?,
-                preference(&ask.question.gains, &ask.question.losses),
+                TaskAskOption::new(preference(&ask.question.gains, &ask.question.losses)),
             ),
             (
                 TaskAskOptionId::new("reject")?,
-                preference(&ask.question.losses, &ask.question.gains),
+                TaskAskOption::new(preference(&ask.question.losses, &ask.question.gains)),
             ),
         ]);
         let mut spec = TaskAskSpec::shorthand(None, what, None, TaskAskDefault::Hold);

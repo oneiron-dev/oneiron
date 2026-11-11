@@ -9,8 +9,10 @@ use crate::{EntityId, Result, Vault};
 use sha2::{Digest, Sha256};
 
 /// A preview read's vault error or input-memory refusal. File-plane and plain
-/// inline ASSET bytes reserve memory before their output allocation; record-head
-/// bytes lease it after the read.
+/// inline ASSET bytes reserve memory before their output allocation. UTF-8
+/// record-head output reserves before its final text conversion; native loading
+/// and other record-head projections remain outside that preallocation admission.
+/// Other record-head bytes lease their returned capacity after the read.
 #[derive(Debug)]
 pub enum EsignLeasedReadError {
     Vault(crate::Error),
@@ -128,23 +130,64 @@ impl Vault {
         let bytes = self.esign_pdf_after_admission(token, item, &|_, _| Ok(true))?;
         Ok((page, bytes))
     }
+    /// [`Self::esign_preview_for_capability`] with no byte of the PDF read
+    /// (FIX 12304): the page, and the length of the PDF the item reads now,
+    /// measured without reading it, so its reader can admit that memory
+    /// before [`Self::esign_preview_pdf_within`] reads it.
+    pub fn esign_preview_page_for_capability_as(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<(super::SigningPage, u64)> {
+        let super::SigningOutcome::Page(page) = self.execute_signing_action_as(
+            token,
+            &SigningAction::Load,
+            caller,
+            verified_actor,
+            ip,
+            user_agent,
+        )?
+        else {
+            return Err(invalid("preview is unavailable"));
+        };
+        let txn = self.store.env.read_txn()?;
+        let pdf = self.pinned_pdf_in(&txn, token, item, &|_, _| Ok(true))?;
+        Ok((page, self.pinned_pdf_len_in(&txn, &pdf)?))
+    }
+    /// The preview's PDF (FIX 12304), found under the checks of
+    /// [`Self::esign_preview_for_capability`]'s read, in one snapshot, and
+    /// read only when its length is at most `admitted`, the bytes its reader
+    /// admitted. A longer one is `Err` with its length, unread.
+    pub fn esign_preview_pdf_within(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        admitted: u64,
+    ) -> Result<std::result::Result<Vec<u8>, u64>> {
+        let txn = self.store.env.read_txn()?;
+        let pdf = self.pinned_pdf_in(&txn, token, item, &|_, _| Ok(true))?;
+        let len = self.pinned_pdf_len_in(&txn, &pdf)?;
+        if len > admitted {
+            return Ok(Err(len));
+        }
+        self.pinned_pdf_bytes_in(&txn, &pdf).map(Ok)
+    }
     fn esign_pdf_after_admission(
         &self,
         token: &EsignCapability,
         item: usize,
         ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
     ) -> Result<Vec<u8>> {
-        self.esign_pdf_after_admission_with(token, item, ceiling, |txn, artifact, version| {
-            self.read_blob_artifact_version_in_txn(txn, artifact, version)
-                .map(|bytes| bytes.map(|bytes| (bytes, ())))
-        })
-        .map(|(bytes, _guard)| bytes)
+        let txn = self.store.env.read_txn()?;
+        let pdf = self.pinned_pdf_in(&txn, token, item, ceiling)?;
+        self.pinned_pdf_bytes_in(&txn, &pdf)
     }
-
-    /// [`Self::esign_pdf_after_admission`] with its bytes read by `read`: the
-    /// binding, ceiling, state, revocation, expiry, status, canonical and hash
-    /// gates stay, and the closure reads the admitted version in the same
-    /// snapshot. Its guard rides with the bytes through the hash check.
+    /// Reads the pinned version with the caller's reader in the same snapshot.
+    /// Its guard remains held through the sealed-output hash check.
     fn esign_pdf_after_admission_with<G, E>(
         &self,
         token: &EsignCapability,
@@ -159,12 +202,32 @@ impl Vault {
     where
         E: From<crate::Error>,
     {
-        let now = self.now_recorded_at();
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
-        let cap = binding(self, &txn, token)?;
-        super::lane_scope::ceiling_admits_in(ceiling, &txn, &cap.document)?;
-        let id = EntityId::from_hex(&cap.document).map_err(crate::Error::from)?;
-        let state = state_in(self, &txn, id)?;
+        let pdf = self.pinned_pdf_in(&txn, token, item, ceiling)?;
+        let pair = read(&txn, &pdf.artifact, pdf.version)?
+            .ok_or_else(|| E::from(invalid(pdf.missing())))?;
+        if let Some(sha256) = pdf.sealed_sha256
+            && <[u8; 32]>::from(Sha256::digest(&pair.0)) != sha256
+        {
+            return Err(E::from(invalid("sealed artifact hash mismatch")));
+        }
+        Ok(pair)
+    }
+
+    /// The PDF version `token`'s item reads in `txn`: during signing the
+    /// pinned original, after sealing the pinned output.
+    fn pinned_pdf_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        token: &EsignCapability,
+        item: usize,
+        ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+    ) -> Result<PinnedPdf> {
+        let now = self.now_recorded_at();
+        let cap = binding(self, txn, token)?;
+        super::lane_scope::ceiling_admits_in(ceiling, txn, &cap.document)?;
+        let id = EntityId::from_hex(&cap.document)?;
+        let state = state_in(self, txn, id)?;
         let recipient = state
             .recipients
             .get(&cap.recipient)
@@ -179,7 +242,7 @@ impl Vault {
                 DocumentStatus::Draft | DocumentStatus::Voided | DocumentStatus::Expired
             )
         {
-            return Err(E::from(invalid("PDF is unavailable")));
+            return Err(invalid("PDF is unavailable"));
         }
         if matches!(
             state.status,
@@ -187,41 +250,56 @@ impl Vault {
         ) {
             // Read the canonical swap in THIS snapshot, then the immutable version.
             let manifest = super::seal::CANONICAL
-                .get(&self.store, &txn, &id)?
+                .get(&self.store, txn, &id)?
                 .ok_or_else(|| invalid("sealed manifest missing"))?;
             let item = manifest
                 .items
                 .get(item)
                 .ok_or_else(|| invalid("item missing"))?;
-            let pair = read(
-                &txn,
-                &EntityId::from_hex(&item.sealed_artifact).map_err(crate::Error::from)?,
-                item.sealed_version,
-            )?
-            .ok_or_else(|| invalid("sealed artifact missing"))?;
-            if <[u8; 32]>::from(Sha256::digest(&pair.0)) != item.sha256 {
-                return Err(E::from(invalid("sealed artifact hash mismatch")));
-            }
-            Ok(pair)
+            Ok(PinnedPdf {
+                artifact: EntityId::from_hex(&item.sealed_artifact)?,
+                version: item.sealed_version,
+                sealed_sha256: Some(item.sha256),
+            })
         } else {
             let item = state
                 .document
                 .items
                 .get(item)
                 .ok_or_else(|| invalid("item missing"))?;
-            read(
-                &txn,
-                &EntityId::from_hex(&item.artifact_ref).map_err(crate::Error::from)?,
-                item.original_version,
-            )?
-            .ok_or_else(|| E::from(invalid("original missing")))
+            Ok(PinnedPdf {
+                artifact: EntityId::from_hex(&item.artifact_ref)?,
+                version: item.original_version,
+                sealed_sha256: None,
+            })
         }
+    }
+    /// `pdf`'s length, measured without reading its bytes.
+    fn pinned_pdf_len_in(&self, txn: &heed::RoTxn<'_>, pdf: &PinnedPdf) -> Result<u64> {
+        self.blob_artifact_version_len_in_txn(txn, &pdf.artifact, pdf.version)?
+            .ok_or_else(|| invalid(pdf.missing()))
+    }
+    /// `pdf`'s bytes; a sealed output's are checked against its hash.
+    fn pinned_pdf_bytes_in(&self, txn: &heed::RoTxn<'_>, pdf: &PinnedPdf) -> Result<Vec<u8>> {
+        let bytes = self
+            .read_blob_artifact_version_in_txn(txn, &pdf.artifact, pdf.version)?
+            .ok_or_else(|| invalid(pdf.missing()))?;
+        if let Some(sha256) = pdf.sealed_sha256
+            && <[u8; 32]>::from(Sha256::digest(&bytes)) != sha256
+        {
+            return Err(invalid("sealed artifact hash mismatch"));
+        }
+        Ok(bytes)
     }
 
     /// [`Self::esign_preview_for_capability_as`] with its PDF bytes leased
     /// from this machine's memory: file-plane and plain inline ASSET bodies
-    /// reserve their exact output length before allocating it. Record-head
-    /// bodies lease their length after reading. The lease rides through inspection.
+    /// reserve their exact output length before allocating it. UTF-8 record-head
+    /// output reserves before its final text conversion; native document loading
+    /// and other projections still allocate before admission. The lease then
+    /// names the returned buffer's reported capacity as allocated. Other record-head
+    /// projections lease that capacity after reading and name it allocated as well.
+    /// The lease rides through inspection.
     pub fn esign_preview_for_capability_leased_as(
         &self,
         token: &EsignCapability,
@@ -275,7 +353,7 @@ impl Vault {
                 })
             },
         )?;
-        let actual = u64::try_from(pair.0.len()).unwrap_or(u64::MAX);
+        let actual = u64::try_from(pair.0.capacity()).unwrap_or(u64::MAX);
         let (bytes, guard) = pair;
         match guard {
             Some((mut lease, reserved)) => {
@@ -283,11 +361,90 @@ impl Vault {
                 Ok((page, bytes, lease))
             }
             None => {
-                let lease = memory
+                let mut lease = memory
                     .lease(actual, deadline)
                     .map_err(EsignLeasedReadError::Refused)?;
+                lease.materialized(actual, actual);
                 Ok((page, bytes, lease))
             }
+        }
+    }
+
+    /// A typed preview on the engine's document-memory operation, under the
+    /// capability and the caller's existing credential ceiling. The same
+    /// canonical/hash snapshot reader admits actual FILE/inline ASSET bodies
+    /// before allocation; record-head bodies retain their post-read admission.
+    pub(super) fn esign_preview_for_capability_admitted_within(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+        resources: &oneiron_docedit::resource::Resources,
+        ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+    ) -> Result<(super::SigningPage, Vec<u8>, oneiron_docedit::resource::Hold)> {
+        use crate::entity_doc::document_resources::machine_memory_refused;
+        let super::SigningOutcome::Page(page) = self.execute_signing_action_within(
+            token,
+            &SigningAction::Load,
+            caller,
+            verified_actor,
+            None,
+            None,
+            ceiling,
+        )?
+        else {
+            return Err(invalid("preview is unavailable"));
+        };
+        let pair =
+            self.esign_pdf_after_admission_with(token, item, ceiling, |txn, artifact, version| {
+                self.read_blob_artifact_version_in_txn_with(txn, artifact, version, |txn, hash| {
+                    let admitted = self
+                        .blob_get_with_body_admission(txn, hash, |len| {
+                            resources
+                                .reserve(len)
+                                .map(|hold| (hold, len))
+                                .map_err(machine_memory_refused)
+                        })
+                        .map_err(|error| match error {
+                            crate::ports::BodyReadError::Store(error) => error,
+                            crate::ports::BodyReadError::Admission(error) => error,
+                        })?;
+                    admitted.ok_or(crate::Error::EntityNotFound)
+                })
+            })?;
+        let (buffered, guard) = pair;
+        let actual = u64::try_from(buffered.capacity()).unwrap_or(u64::MAX);
+        let (mut hold, reserved) = match guard {
+            Some(guard) => guard,
+            None => (
+                resources.reserve(actual).map_err(machine_memory_refused)?,
+                actual,
+            ),
+        };
+        // The bytes drop before their hold if capacity settlement is refused.
+        let bytes = buffered;
+        hold.take(actual.saturating_sub(reserved))
+            .map_err(machine_memory_refused)?;
+        Ok((page, bytes, hold))
+    }
+}
+
+/// The PDF version a capability's item reads, and, for a sealed output, the
+/// SHA-256 its bytes are checked against.
+struct PinnedPdf {
+    artifact: EntityId,
+    version: u64,
+    sealed_sha256: Option<[u8; 32]>,
+}
+
+impl PinnedPdf {
+    /// What a version no longer stored is refused as.
+    fn missing(&self) -> &'static str {
+        if self.sealed_sha256.is_some() {
+            "sealed artifact missing"
+        } else {
+            "original missing"
         }
     }
 }

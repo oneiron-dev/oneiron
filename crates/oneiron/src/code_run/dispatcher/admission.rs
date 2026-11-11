@@ -23,12 +23,21 @@ impl HostSelfDispatcher<'_> {
         if let RunCall::Bridge(effect) = call
             && let Some(code) = self.program_authority_refusal(effect.as_str())?
         {
-            return Ok(Err(AgentVerbRefusal { code }));
+            return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
+                code,
+            }));
         }
         let Some(door) = &self.agent_verbs else {
             return Ok(Ok(None));
         };
-        let admitted = door.admit_run_call(call);
+        // Speech is admitted with where this run's storage lands it.
+        let admitted = match call {
+            RunCall::Bridge(effect) if effect.is_speech() => {
+                door.admit_run_speech(effect, self.storage.speech_destination())
+            }
+            RunCall::Bridge(_) | RunCall::RecordedOutput => door.admit_run_call(call),
+        };
         if let Err(refusal) = &admitted
             && let Some(rejected) = gate_rejection(&refusal.code)
         {
@@ -67,6 +76,16 @@ impl HostSelfDispatcher<'_> {
         }
     }
 
+    /// Whether the guest reads again the answer a recorded call got, served
+    /// from `rows` (FIX 7703): a resumed pending step's call, answered from
+    /// its row. The bound door admits the read as it rules now, as at a
+    /// write's kept answer. The answer must also not stay on this device
+    /// for the door's caller now. A refusal of either withholds it.
+    pub(crate) fn releases_recorded_answer(&self, rows: Option<&[EntityId]>) -> bool {
+        admit_recorded_answer(self.agent_verbs.as_deref()).is_ok()
+            && matches!(self.withholds_retained(rows), Ok(false))
+    }
+
     pub(super) fn dispatch_bound(
         &self,
         call: SelfCall,
@@ -76,8 +95,11 @@ impl HostSelfDispatcher<'_> {
         // closes on every exit, and an outer call's frame stays as it was.
         let _seats = self.spawn_capture.open();
         // A hook's view of an earlier call is never this call's, nor is its
-        // read-world capture (FIX 6130).
+        // read-world capture (FIX 6130), nor the skill bodies its producer
+        // witnessed (FIX 3608).
         *self.hook_view.borrow_mut() = None;
+        *self.task_refusal_output.borrow_mut() = None;
+        *self.skill_bodies.borrow_mut() = None;
         self.uncover_read_worlds();
         // A leased run's writes in this call are its own derivations (OF-540).
         let _run_writes = self
@@ -95,8 +117,10 @@ impl HostSelfDispatcher<'_> {
         }
         // The halt rule and the door rule inside the bracket: a run whose
         // participant left the room hears `NotInRoom`, never their verdict.
+        // The off-record rule reads the whole call: an anonymous room tells
+        // its five room reads from every other verb by it (FIX 5166).
         self.storage.answered(|| {
-            self.enforce_off_record_effect_policy(call.effect())?;
+            self.enforce_off_record_effect_policy(&call)?;
             // A reader child reads its source and reports; a scoped child
             // also calls the ports its parent lent it (FIX 7507). Neither
             // makes any other call.
@@ -130,6 +154,7 @@ impl HostSelfDispatcher<'_> {
                     Err(refusal) => {
                         return Ok((
                             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                                hook_notice: None,
                                 effect: call.effect(),
                                 outcome: refusal.code,
                                 reason_codes: Vec::new(),
@@ -141,6 +166,19 @@ impl HostSelfDispatcher<'_> {
             };
             self.dispatch_hooked(call, site, read_as)
         })
+    }
+}
+
+/// Asks `door` whether the run reads back an answer it recorded, as the
+/// door rules now (FIX 7703): a write's kept answer, or the answer of a
+/// call that a resumed pending step's program already made. A run whose
+/// host binds no door reads its own.
+pub(super) fn admit_recorded_answer(
+    door: Option<&dyn crate::code_run::AgentVerbDoor>,
+) -> std::result::Result<(), AgentVerbRefusal> {
+    match door {
+        Some(door) => door.admit_run_call(RunCall::RecordedOutput).map(drop),
+        None => Ok(()),
     }
 }
 

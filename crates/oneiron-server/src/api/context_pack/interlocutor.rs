@@ -1,11 +1,10 @@
 //! Interlocutor-set resolution and third-party party inputs for context-pack requests.
 
 use super::super::{core_engine_error, parse_entity_id_param};
-use super::controls::{
-    CoreInterlocutorControls, CoreInterlocutorParty, MAX_INTERLOCUTOR_THIRD_PARTIES,
-};
+use super::controls::{CoreInterlocutorControls, CoreInterlocutorParty};
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
+use oneiron::limit_ask::EngineLimit;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Resolves the effective interlocutor set for a core context-pack request
@@ -45,18 +44,18 @@ pub(crate) fn resolve_core_interlocutor_set(
         if controls.owner_present == Some(true) && !auth.is_owner_grade() {
             return Err(ApiError::forbidden_scope("interlocutors.owner_present"));
         }
-        if controls.third_parties.len() > MAX_INTERLOCUTOR_THIRD_PARTIES {
-            return Err(ApiError::bad_request(
-                format!(
-                    "third_parties must contain at most {MAX_INTERLOCUTOR_THIRD_PARTIES} entries"
-                ),
-                Some("interlocutors.third_parties"),
-            ));
-        }
         owner_present = controls.owner_present;
         for (index, party) in controls.third_parties.iter().enumerate() {
             parties.push(core_interlocutor_party_input(party, index)?);
         }
+        // Physical65 ABC14: the submitted third parties whole, label-only
+        // parties included, measured once after their shape checks and
+        // before contact resolution. Ask-and-serve: the crossing asks, the
+        // set resolves whole.
+        vault.measure_limit(
+            EngineLimit::ContextThirdParties,
+            controls.third_parties.len() as u64,
+        );
         voice_session_ref = controls.voice_session_ref.clone();
     }
 
@@ -220,7 +219,7 @@ impl RoomAudience {
         let parties = vault
             .room_party_entries_under(read, members)
             .map_err(|error| core_engine_error("room contact resolution failed", error))?;
-        let owner = bound_room_owner(vault, auth, members)?;
+        let owner = bound_room_owner(vault, auth, members, &parties)?;
         let reader = owner.or_else(|| own_agent_reader(auth, members, &parties));
         Ok(Self {
             room: live.room(),
@@ -256,14 +255,15 @@ impl RoomAudience {
 
 /// The room member the caller is proven to be the vault owner as, if any.
 /// A bare host credential authenticates the caller but identifies no PERSON
-/// in the room. Only an identified, owner-grade human slip with a live
-/// owner-capable actor binding can exclude its exact holder from the
-/// non-owner meet. The presence flag and PROJECT leader are not identity
-/// evidence.
+/// in the room. An identified, owner-grade human slip excludes its exact
+/// holder when a live owner-capable actor binding or the room's native
+/// live-Owner entry proves it, co-Owners included. The presence flag and
+/// PROJECT leader are not identity evidence.
 fn bound_room_owner(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     members: &[oneiron::EntityId],
+    parties: &[oneiron::disclosure::RoomPartyEntry],
 ) -> Result<Option<oneiron::EntityId>, ApiError> {
     if !auth.is_owner_grade() || auth.actor_class() != Some("human") {
         return Ok(None);
@@ -281,7 +281,11 @@ fn bound_room_owner(
     let fold = vault
         .authority_fold()
         .map_err(|error| core_engine_error("room owner binding failed", error))?;
-    Ok(oneiron::authority::actor_binding_is_active(&fold, &id, "human").then_some(id))
+    let owner = oneiron::authority::actor_binding_is_active(&fold, &id, "human")
+        || members.iter().zip(parties).any(|(member, entry)| {
+            *member == id && matches!(entry.party, oneiron::disclosure::RoomParty::VaultOwner)
+        });
+    Ok(owner.then_some(id))
 }
 
 /// The room member an agent credential reads as, when it names one of the

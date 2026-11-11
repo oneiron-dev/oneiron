@@ -125,7 +125,7 @@ fn responses_items(message: &LlmMessage, wire: Option<&str>) -> Vec<JsonValue> {
     };
     for part in &message.content {
         match part {
-            ContentPart::Text { text } => {
+            ContentPart::Text { text, .. } => {
                 content.push(json!({ "type": text_type, "text": text }));
             }
             // Its summary stays out: the encrypted content is the reasoning,
@@ -168,6 +168,7 @@ fn responses_items(message: &LlmMessage, wire: Option<&str>) -> Vec<JsonValue> {
                 call_id,
                 name,
                 input,
+                ..
             } => {
                 flush(&mut content, &mut items);
                 items.push(json!({
@@ -242,6 +243,7 @@ fn parse_function_call(item: &JsonValue) -> Option<ContentPart> {
         call_id,
         name,
         input,
+        signature: None,
     })
 }
 
@@ -288,7 +290,7 @@ fn parse_responses_usage(usage: &JsonValue) -> LlmUsage {
     let reasoning = usage
         .get("output_tokens_details")
         .map_or(0, |details| field(details, "reasoning_tokens"));
-    LlmUsage {
+    let mut measured = LlmUsage {
         input: LlmInputUsage {
             total: input,
             cache_read: cached,
@@ -301,7 +303,12 @@ fn parse_responses_usage(usage: &JsonValue) -> LlmUsage {
         },
         raw_provider: usage.clone(),
         call_metadata: None,
-    }
+    };
+    measured.set_provider_token_measurement(oneiron::llm::ProviderTokenMeasurement {
+        input: usage.get("input_tokens").and_then(JsonValue::as_u64),
+        output: usage.get("output_tokens").and_then(JsonValue::as_u64),
+    });
+    measured
 }
 
 /// An `error` event or a failed response as the error a status would be.

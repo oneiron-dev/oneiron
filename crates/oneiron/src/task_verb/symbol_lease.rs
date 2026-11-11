@@ -6,6 +6,7 @@ pub use run::{SymbolLeaseFence, SymbolLeaseRun};
 pub(crate) use run::{
     declaration_holds_in_txn, declare_symbols_for_run_in_txn, release_symbols_for_run_in_txn,
     renew_symbols_for_run_in_txn, run_declaration_in_txn, symbol_blockers_in_txn,
+    task_declaration_holds_in_txn,
 };
 
 use crate::error::{Error, Result};
@@ -100,6 +101,13 @@ fn observe_declaration(
 fn load(store: &Store, txn: &heed::RoTxn<'_>, task: EntityId) -> Result<Option<SymbolLease>> {
     LEASES.get(store, txn, &task)
 }
+
+/// Whether `task`'s declaration is held and unexpired at `now`: one an
+/// accepted queue entry may wait behind, so ending it changes who blocks
+/// that entry (FIX 4338).
+fn holds_at(store: &Store, txn: &heed::RoTxn<'_>, task: EntityId, now: u64) -> Result<bool> {
+    Ok(load(store, txn, task)?.is_some_and(|lease| lease.held && lease.expires_at > now))
+}
 fn save(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -132,6 +140,8 @@ fn blockers(
 impl Vault {
     /// Trusted scheduler door. The holder is bound to the declaration and must
     /// match on renew/release. An overlap queues the declaration; it is not refused.
+    /// A fresh declaration that replaces a held one ends that one's id, so the
+    /// merge queue driver wakes once it commits (FIX 4338).
     pub fn declare_symbols(
         &self,
         task: EntityId,
@@ -141,44 +151,56 @@ impl Vault {
         now: u64,
     ) -> Result<SymbolLeaseOutcome> {
         validate_declaration(&symbols, ttl_seconds)?;
-        self.with_write_txn_grouped(|txn| {
-            if self.get_entity_type_in_txn(txn, &task)? != Some(crate::registry::ENTITY_TYPE_TASK)
-                || self.get_entity_type_in_txn(txn, &holder)?.is_none()
-            {
-                return Err(Error::EntityNotFound);
-            }
-            if let Some(prior) = load(&self.store, txn, task)?
-                && prior.expires_at > now
-                && (prior.holder_ref != holder.to_hex() || (prior.held && prior.symbols != symbols))
-            {
-                return Err(Error::ConcurrentWrite(
-                    "live symbol declaration cannot be replaced",
-                ));
-            }
-            let blockers = blockers(&self.store, txn, task, &symbols, now)?;
-            observe_declaration(&self.store, txn, task, &symbols);
-            let lease = SymbolLease {
-                task_ref: task.to_hex(),
-                holder_ref: holder.to_hex(),
-                symbols,
-                expires_at: now
-                    .checked_add(ttl_seconds)
-                    .ok_or(Error::ArithmeticOverflow("symbol lease expiry"))?,
-                held: blockers.is_empty(),
-                ttl_seconds,
-                declaration_id: EntityId::now(),
-                run: None,
-            };
-            save(&self.store, txn, task, &lease)?;
-            Ok(if blockers.is_empty() {
-                SymbolLeaseOutcome::Granted(lease)
-            } else {
-                SymbolLeaseOutcome::Waiting {
-                    declaration: lease,
-                    blockers,
+        self.with_write_txn_grouped_after_commit(
+            |txn| {
+                if self.get_entity_type_in_txn(txn, &task)?
+                    != Some(crate::registry::ENTITY_TYPE_TASK)
+                    || self.get_entity_type_in_txn(txn, &holder)?.is_none()
+                {
+                    return Err(Error::EntityNotFound);
                 }
-            })
-        })
+                let replaces = holds_at(&self.store, txn, task, now)?;
+                if let Some(prior) = load(&self.store, txn, task)?
+                    && prior.expires_at > now
+                    && (prior.holder_ref != holder.to_hex()
+                        || (prior.held && prior.symbols != symbols))
+                {
+                    return Err(Error::ConcurrentWrite(
+                        "live symbol declaration cannot be replaced",
+                    ));
+                }
+                let blockers = blockers(&self.store, txn, task, &symbols, now)?;
+                observe_declaration(&self.store, txn, task, &symbols);
+                let lease = SymbolLease {
+                    task_ref: task.to_hex(),
+                    holder_ref: holder.to_hex(),
+                    symbols,
+                    expires_at: now
+                        .checked_add(ttl_seconds)
+                        .ok_or(Error::ArithmeticOverflow("symbol lease expiry"))?,
+                    held: blockers.is_empty(),
+                    ttl_seconds,
+                    declaration_id: EntityId::now(),
+                    run: None,
+                };
+                save(&self.store, txn, task, &lease)?;
+                let outcome = if blockers.is_empty() {
+                    SymbolLeaseOutcome::Granted(lease)
+                } else {
+                    SymbolLeaseOutcome::Waiting {
+                        declaration: lease,
+                        blockers,
+                    }
+                };
+                Ok((outcome, replaces))
+            },
+            |(outcome, replaces)| {
+                if replaces {
+                    self.wake_merge_queue();
+                }
+                Ok(outcome)
+            },
+        )
     }
 
     pub fn renew_symbols(&self, task: EntityId, holder: EntityId, now: u64) -> Result<SymbolLease> {
@@ -205,35 +227,55 @@ impl Vault {
         Ok(lease)
     }
 
+    /// Removes `holder`'s declaration of `task`. A committed release wakes
+    /// the merge queue driver, so an accepted entry that waited behind it
+    /// stages on the driver's next pass (FIX 4338); a no-op wakes nothing.
     pub fn release_symbols(&self, task: EntityId, holder: EntityId) -> Result<bool> {
-        self.with_write_txn_grouped(|txn| {
-            let Some(lease) = load(&self.store, txn, task)? else {
-                return Ok(false);
-            };
-            if lease.holder_ref != holder.to_hex() {
-                return Err(Error::InvalidConfig(
-                    "symbol lease holder mismatch".to_owned(),
-                ));
-            }
-            LEASES.delete(&self.store, txn, &task)
-        })
+        self.with_write_txn_grouped_after_commit(
+            |txn| {
+                let Some(lease) = load(&self.store, txn, task)? else {
+                    return Ok(false);
+                };
+                if lease.holder_ref != holder.to_hex() {
+                    return Err(Error::InvalidConfig(
+                        "symbol lease holder mismatch".to_owned(),
+                    ));
+                }
+                LEASES.delete(&self.store, txn, &task)
+            },
+            |released| {
+                if released {
+                    self.wake_merge_queue();
+                }
+                Ok(released)
+            },
+        )
     }
 
     /// Expiry clears the hold, not its declared symbol set. A later dispatch
-    /// must reacquire the declaration before it can run.
+    /// must reacquire the declaration before it can run. A committed expiry
+    /// wakes the merge queue driver, as a release does (FIX 4338).
     pub fn expire_symbol_leases(&self, now: u64) -> Result<Vec<EntityId>> {
-        self.with_write_txn_grouped(|txn| {
-            let mut expired = Vec::new();
-            for (_, mut lease) in LEASES.scan(&self.store, txn)? {
-                if lease.held && lease.expires_at <= now {
-                    let task = EntityId::from_hex(&lease.task_ref)?;
-                    lease.held = false;
-                    save(&self.store, txn, task, &lease)?;
-                    expired.push(task);
+        self.with_write_txn_grouped_after_commit(
+            |txn| {
+                let mut expired = Vec::new();
+                for (_, mut lease) in LEASES.scan(&self.store, txn)? {
+                    if lease.held && lease.expires_at <= now {
+                        let task = EntityId::from_hex(&lease.task_ref)?;
+                        lease.held = false;
+                        save(&self.store, txn, task, &lease)?;
+                        expired.push(task);
+                    }
                 }
-            }
-            Ok(expired)
-        })
+                Ok(expired)
+            },
+            |expired| {
+                if !expired.is_empty() {
+                    self.wake_merge_queue();
+                }
+                Ok(expired)
+            },
+        )
     }
 }
 

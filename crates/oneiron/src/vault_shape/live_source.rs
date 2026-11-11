@@ -27,11 +27,6 @@ const SKILL_PUBLISHER_ACTOR_CLASS: &str = "foreign-publisher";
 /// The verb class a hub publisher's admission grant names.
 const SKILL_OFFER_CLASS: &str = "skill.offer";
 
-/// Most lifecycle receipts, newest first, the live read scans for the lane
-/// an active channel identity was fulfilled on. An identity whose last lane
-/// lies past them projects no provision.
-const SHAPE_LANE_RECEIPT_READ_MAX: usize = 4096;
-
 /// A live skill row, by its place in the read's rows, and its entity.
 pub(super) type LiveSkill = (usize, EntityId);
 
@@ -182,7 +177,9 @@ impl Vault {
     /// Gives each of `unlaned` among `rows` its provision, with the lane
     /// the newest lifecycle receipt naming the identity's fulfillment lane
     /// records; an active body holds none. The receipts are the vault's
-    /// lifecycle ledger, read after the live snapshot closes.
+    /// whole lifecycle ledger, read newest first after the live snapshot
+    /// closes, so an identity's lane is found however old its last lane
+    /// receipt is (FIX 11486).
     ///
     /// # Errors
     ///
@@ -196,10 +193,7 @@ impl Vault {
             return Ok(());
         }
         let mut lanes: BTreeMap<[u8; 16], ChannelIdentityFulfillment> = BTreeMap::new();
-        for receipt in self
-            .store
-            .channel_identity_lifecycle_receipts(SHAPE_LANE_RECEIPT_READ_MAX)?
-        {
+        for receipt in self.store.channel_identity_lifecycle_receipts(usize::MAX)? {
             if let Some(lane) = receipt
                 .fulfillment_mode
                 .as_deref()

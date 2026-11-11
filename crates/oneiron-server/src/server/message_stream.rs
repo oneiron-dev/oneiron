@@ -29,7 +29,6 @@ pub(super) fn spawn_message_stream_producer(
     let presence = Arc::downgrade(presence);
     let scopes = Arc::downgrade(scopes);
     let outgoing = outgoing.clone();
-    let payload_limit = config.max_ephemeral_payload_bytes;
     let ttl = config.ephemeral_timeout_ms;
     runtime.spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
@@ -54,7 +53,7 @@ pub(super) fn spawn_message_stream_producer(
                         Err(broadcast::error::RecvError::Closed) => break,
                     };
                     let (Some(hub), Some(presence), Some(scopes)) = (hub.upgrade(), presence.upgrade(), scopes.upgrade()) else { break; };
-                    if let Some(frame) = apply_bounded_partial(&hub, &presence, &scopes, &frame, payload_limit, ttl) {
+                    if let Some(frame) = apply_bounded_partial(&hub, &presence, &scopes, &frame, ttl) {
                         let _ = crate::broadcast::broadcast(&outgoing, 0, frame);
                     }
                 }
@@ -71,7 +70,6 @@ fn apply_bounded_partial(
     presence: &PresenceCharge,
     scopes: &MessageScopes,
     partial: &ScopedPresenceFrame,
-    payload_limit: usize,
     ttl: i64,
 ) -> Option<Vec<u8>> {
     let frame = &partial.frame;
@@ -79,9 +77,6 @@ fn apply_bounded_partial(
         return None;
     }
     let payload = &frame[1..];
-    if payload.len() > payload_limit {
-        return None;
-    }
     let states = decode_ephemeral_states(payload).ok()?;
     if states.len() != 1 {
         return None;

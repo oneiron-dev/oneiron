@@ -42,9 +42,13 @@ impl SyncClient {
                     .insert(frame.entity);
                 return Ok(Vec::new());
             }
+            // A publication's receipt is the home's to give (FIX 4748).
+            document_sub_tags::ARTIFACT_RECEIPT if self.peer_session.is_some() => {
+                return Ok(Vec::new());
+            }
             document_sub_tags::ARTIFACT_RECEIPT => {
                 self.accept_artifact_receipt(frame.entity, frame.payload)
-                    .map_err(storage)?;
+                    .map_err(|error| refused_frame(&error, "invalid artifact receipt"))?;
                 return Ok(Vec::new());
             }
             document_sub_tags::ARTIFACT_PUBLICATION => {
@@ -54,13 +58,24 @@ impl SyncClient {
             }
             _ => {}
         }
+        // FIX 10872: a frame under the copy id of a marked source held here is
+        // its copy lineage's; the source takes it, never a row under that id.
+        if let Some(stream) = self
+            .manager
+            .documents()
+            .copy_stream(frame.entity)
+            .map_err(storage)?
+            && stream.wire == frame.entity
+        {
+            return self.handle_copy_frame(stream, frame);
+        }
         // On a federation lane a document frame is a peer's text: its write is
         // admitted in the writer that lands it (FIX 8861), on a row this vault
         // already admitted through the window gate (OF-149).
         let federated = self.config.federation_peer.as_ref();
         let refused = |error: crate::Error| match federated {
             Some(_) => super::federated::map_federated_admission_err(error),
-            None => storage(error),
+            None => refused_frame(&error, "document frame refused"),
         };
         let doc = self
             .manager
@@ -68,6 +83,11 @@ impl SyncClient {
             .open(frame.entity)
             .map_err(refused)?;
         if doc.is_note().map_err(storage)? {
+            // The NOTE lane is its authority's, the home's: a peer's NOTE
+            // frame imports, receipts and answers nothing (FIX 4748).
+            if self.peer_session.is_some() {
+                return Ok(Vec::new());
+            }
             if self.config.note_session.is_none() || !self.note_session_bound {
                 return Err(TransportError::InvalidPayload(
                     "NOTE authority session is not bound",
@@ -81,7 +101,7 @@ impl SyncClient {
                         frame.kind,
                         frame.payload,
                     )
-                    .map_err(storage)?;
+                    .map_err(|error| refused_frame(&error, "invalid NOTE authority frame"))?;
                     self.report_note_document(frame.entity).map_err(storage)?;
                     let mut out = vec![
                         transport::encode_document(
@@ -89,7 +109,7 @@ impl SyncClient {
                             document_sub_tags::ACK,
                             &doc.version_vector().map_err(storage)?,
                         )
-                        .into_result()?,
+                        .into_own_frame()?,
                     ];
                     let pending = self
                         .manager
@@ -108,7 +128,7 @@ impl SyncClient {
                     self.manager
                         .documents()
                         .accept_note_receipt(frame.entity, &receipt)
-                        .map_err(storage)?;
+                        .map_err(|error| refused_frame(&error, "invalid NOTE receipt"))?;
                     return Ok(Vec::new());
                 }
                 document_sub_tags::NOTE_FORK_RECEIPT => {
@@ -117,7 +137,7 @@ impl SyncClient {
                     self.manager
                         .documents()
                         .accept_note_fork_receipt(frame.entity, &receipt)
-                        .map_err(storage)?;
+                        .map_err(|error| refused_frame(&error, "invalid NOTE fork receipt"))?;
                     return Ok(Vec::new());
                 }
                 // The authority's pending forks (FIX 12789). A fork this
@@ -157,9 +177,15 @@ impl SyncClient {
                 }
             }
         }
+        // FIX 2458: on the owner lane a typed body goes back to the home too.
+        let owner_lane = federated.is_none() && self.config.note_session.is_some();
         match frame.kind {
+            // A peer's acknowledgment clears no journal row: the rows stay
+            // until the home covers them (FIX 4748).
+            document_sub_tags::ACK if self.peer_session.is_some() => Ok(Vec::new()),
             document_sub_tags::ACK => {
-                doc.acknowledge(frame.payload).map_err(storage)?;
+                doc.acknowledge(frame.payload)
+                    .map_err(|error| refused_frame(&error, "invalid document ack"))?;
                 let settled = (|| -> Result<bool, TransportError> {
                     if !self
                         .document_retries
@@ -210,8 +236,16 @@ impl SyncClient {
                         document_sub_tags::ACK,
                         &doc.version_vector().map_err(storage)?,
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 ];
+                // The operations the home's typed body head lacks follow.
+                if owner_lane {
+                    out.extend(
+                        doc.owner_body_reply(frame.payload, self.home_peer)
+                            .map_err(storage)?
+                            .filter(|frame| !self.frame_withheld(frame)),
+                    );
+                }
                 // Text a device-only world keeps here, or a federation peer may
                 // not read now, stays journaled; each reply loop asks again
                 // right before its send.
@@ -228,6 +262,19 @@ impl SyncClient {
                 );
                 Ok(out)
             }
+            // A home that holds no typed body yet asks for this device's.
+            document_sub_tags::REQUEST if owner_lane => {
+                let remote_vv = frame
+                    .payload
+                    .strip_prefix(&[0_u8; 4])
+                    .ok_or(TransportError::InvalidPayload("invalid owner request"))?;
+                Ok(doc
+                    .owner_body_frame(remote_vv, self.home_peer)
+                    .map_err(storage)?
+                    .into_iter()
+                    .filter(|frame| !self.frame_withheld(frame))
+                    .collect())
+            }
             _ => Err(TransportError::InvalidPayload(
                 "server sent document request",
             )),
@@ -235,6 +282,110 @@ impl SyncClient {
     }
 }
 impl SyncClient {
+    /// The home's frame of a copy stream (FIX 10872): its STATE or UPDATE
+    /// lands on the source, admitted on the source on a federation lane; its
+    /// ACK raises the home floor. The reply acknowledges a taken frame and
+    /// carries the lineage's operations the home does not hold yet, judged
+    /// right before they go; a frame not taken owes a new request.
+    fn handle_copy_frame(
+        &self,
+        stream: crate::sync::selector::secret_projection::CopyStream,
+        frame: DocumentFrame<'_>,
+    ) -> Result<Vec<Vec<u8>>, TransportError> {
+        let documents = self.manager.documents();
+        let reply = match frame.kind {
+            document_sub_tags::ACK => documents
+                .copy_acknowledge(stream, frame.payload)
+                .map_err(|error| refused_frame(&error, "invalid document ack"))?,
+            document_sub_tags::STATE | document_sub_tags::UPDATE => {
+                let federated = self.config.federation_peer.as_ref();
+                documents
+                    .copy_import(stream, frame.kind, frame.payload, |txn| match federated {
+                        Some(peer) => peer.admit_document_write_in_txn(
+                            &self.vault,
+                            txn,
+                            stream.source,
+                            self.home_peer,
+                        ),
+                        None => Ok(()),
+                    })
+                    .map_err(|error| match federated {
+                        Some(_) => super::federated::map_federated_admission_err(error),
+                        None => refused_frame(&error, "document frame refused"),
+                    })?
+            }
+            _ => {
+                return Err(TransportError::InvalidPayload(
+                    "server sent document request",
+                ));
+            }
+        };
+        if reply.settled {
+            self.clear_document_retry(stream.wire)?;
+        }
+        if reply.retry {
+            self.document_retries
+                .lock()
+                .map_err(|_| TransportError::Storage("document retry state poisoned".into()))?
+                .insert(stream.wire);
+        }
+        let mut out = Vec::new();
+        if let Some(ack) = reply.ack {
+            out.push(
+                transport::encode_document(stream.wire, document_sub_tags::ACK, &ack)
+                    .into_own_frame()?,
+            );
+        }
+        if let Some(update) = reply.update {
+            let update =
+                transport::encode_document(stream.wire, document_sub_tags::UPDATE, &update)
+                    .into_own_frame()?;
+            if !self.frame_withheld(&update) {
+                out.push(update);
+            }
+        }
+        Ok(out)
+    }
+
+    /// A local edit of `id`, a marked source held here, as its copy stream's
+    /// release (FIX 10872): the lineage's operations the home does not hold
+    /// yet, under the copy id, once that stream is subscribed and its frame
+    /// may leave now. Empty for any other id.
+    pub(crate) fn copy_release_frames(&self, id: crate::EntityId) -> Vec<Vec<u8>> {
+        let released = (|| -> crate::Result<Option<Vec<u8>>> {
+            let documents = self.manager.documents();
+            let Some(stream) = documents.copy_stream(id)? else {
+                return Ok(None);
+            };
+            let subscribed = {
+                let txn = self.vault.store.env.read_txn()?;
+                crate::sync::documents::DS_E.contains(
+                    &self.vault.store,
+                    &txn,
+                    &crate::side_table::HexId(stream.wire),
+                )?
+            };
+            if stream.source != id || !subscribed {
+                return Ok(None);
+            }
+            let Some(update) = documents.copy_release(stream)? else {
+                return Ok(None);
+            };
+            transport::encode_document(stream.wire, document_sub_tags::UPDATE, &update)
+                .into_result()
+                .map(Some)
+                .map_err(|_| crate::Error::InvariantViolation("document edit exceeds wire limit"))
+        })();
+        match released {
+            Ok(Some(frame)) if !self.frame_withheld(&frame) => vec![frame],
+            Ok(_) => Vec::new(),
+            Err(error) => {
+                self.report_document_retry_error(&error);
+                Vec::new()
+            }
+        }
+    }
+
     fn clear_document_retry(&self, id: crate::EntityId) -> Result<(), TransportError> {
         self.document_retries
             .lock()
@@ -302,19 +453,51 @@ impl SyncClient {
     }
 
     /// An own device's NOTE client subscribes every NOTE row it holds on the
-    /// owner lane: at connect, then each row born here or materialized from
-    /// a window.
+    /// owner lane, and every typed body and office artifact (FIX 2458): at
+    /// connect, then each row born here or materialized from a window. A peer
+    /// session subscribes none: the NOTE lane is the home's (FIX 4748).
     pub(super) fn owner_note_requests(&self) -> Result<Vec<Vec<u8>>, TransportError> {
-        if self.config.federation_peer.is_some() || self.config.note_session.is_none() {
+        if self.config.federation_peer.is_some()
+            || self.config.note_session.is_none()
+            || self.peer_session.is_some()
+        {
             return Ok(Vec::new());
         }
-        self.manager
-            .documents()
-            .subscribe_owner_notes()
-            .map_err(storage)
+        let documents = self.manager.documents();
+        let mut requests = documents.subscribe_owner_notes().map_err(storage)?;
+        requests.extend(documents.subscribe_owner_typed_bodies().map_err(storage)?);
+        Ok(requests)
+    }
+
+    /// Whether `frame` is a document frame of a NOTE row; one whose row type
+    /// does not read counts as one. The NOTE lane is its authority's, the
+    /// home's: a peer session sends none (FIX 4748).
+    pub(super) fn note_document_frame(&self, frame: &[u8]) -> bool {
+        frame.first() == Some(&transport::TAG_DOCUMENT)
+            && frame
+                .get(1..)
+                .and_then(|payload| transport::decode_document(payload).ok())
+                .is_some_and(|doc| {
+                    !matches!(
+                        self.vault.get_entity_type(&doc.entity),
+                        Ok(Some(kind)) if kind != crate::registry::ENTITY_TYPE_NOTE
+                    )
+                })
     }
 }
 
 fn storage(error: crate::Error) -> TransportError {
     TransportError::Storage(error.to_string())
+}
+
+/// The transport error of the home's document frame that failed to apply
+/// with `error` (FIX 22153): a fault of this vault's own as
+/// [`TransportError::Storage`], any other as the home's frame refused,
+/// `refusal`, the cause logged.
+fn refused_frame(error: &crate::Error, refusal: &'static str) -> TransportError {
+    let refused = TransportError::from_applied(error, refusal);
+    if !matches!(refused, TransportError::Storage(_)) {
+        tracing::warn!(%error, refusal, "a document frame from the home did not apply");
+    }
+    refused
 }

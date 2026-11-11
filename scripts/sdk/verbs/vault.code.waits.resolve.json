@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.waits.resolve",
+  "description": "Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption.",
+  "input": "crate::memory::code_wait_doors::CodeWaitResolveRequest",
+  "output": "crate::memory::code_wait_doors::CodeWaitReceiptView",
+  "call": "memory.code_wait_resolve_as(&memory.embedded_owner(\"vault.code.waits.resolve\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "shared_person"
+}

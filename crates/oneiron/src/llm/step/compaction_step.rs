@@ -15,16 +15,22 @@
 //!
 //! The route is the run's own. A canonical run files in base. A room's run
 //! on a route that went on record files in base under the room's saver, as
-//! its other base writes do. An off-record room's run stages the claim in the
-//! room's overlay, where it drops at close; a room keeps no artifact
-//! versions, so there the answer stays inline whatever its size.
+//! its other base writes do. An off-record room's run stages the pass's
+//! claims in the room's overlay in one write segment, where they drop at
+//! close. There, as in base, an answer over the inline bound lives in a
+//! response artifact version the claim pins; the room keeps that version in
+//! its own overlay, never in base, and places each row it stages. A live
+//! ASSET with the answer's bytes holds its body, and the room stages none
+//! over it (FIX 4818).
 //!
 //! Each step carries the summary's own lineage (FIX 5977): its claim, and
 //! a response artifact when it has one, derive from every record the call's
 //! words were read from, in the write that files them, so withdrawing one
 //! withdraws the step as it withdraws the summary. A record already gone or
 //! withdrawn when the step files refuses the filing, which the pass's
-//! receipt names as unfiled; the compaction itself still answers.
+//! receipt names as unfiled; the compaction itself still answers. A base
+//! filing whose call read a live room row refuses as a tainted base write,
+//! as the base epoch mint does (FIX 6184), before any base liveness check.
 
 use rmpv::Value;
 
@@ -39,25 +45,29 @@ use super::types::{
     StepProgression,
 };
 use crate::attempt_queue::AttemptId;
-use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
+use crate::blob_artifact::{
+    BlobArtifactBody, BlobVersionProvenance, RoomResponseVersion, encode_blob_artifact_body,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::code_run::ExecutorStorage;
 use crate::compaction::{COMPACTION_STEP_RESPONSE_NAME, CompactionCall, CompactionStepRef};
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::{Error, Result};
-use crate::off_record::OffRecordSession;
+use crate::error::{Error, OffRecordError, Result};
+use crate::off_record::{OffRecordSession, PreparedSessionRows};
 use crate::ports::EntityStoreRead as _;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
-use crate::session_overlay::{RouteTarget, SessionWriteRoute};
-use crate::store::ManifestDbs;
+use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
+use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 use crate::{Vault, WriteActor};
 
 /// The refusal a step filing takes when a record its call was read from is
 /// already gone or withdrawn (FIX 5977): its words may not land past that
-/// record's withdrawal. The pass's receipt names the calls as unfiled.
+/// record's withdrawal. The pass's receipt names the calls as unfiled. A
+/// room step takes it too when base holds its answer's bytes as an ASSET
+/// the room does not read live (FIX 4818): no room row stages over it.
 const COMPACTION_STEP_SOURCE_WITHDRAWN: &str = "compaction_step_source_withdrawn";
 
 /// The refusal a step filing takes when the call's complete input was not
@@ -104,6 +114,27 @@ impl FiledCall {
         self.sources
             .as_deref()
             .ok_or(Error::InvalidClaimBody(COMPACTION_STEP_SOURCES_UNKNOWN))
+    }
+
+    /// Refuses a base filing whose call read a record that is still a live
+    /// room-overlay member (FIX 6184), with the taint refusal the base epoch
+    /// mint takes: no durable step derives from room content. It runs before
+    /// the base liveness check, so a room row never reads as missing.
+    fn refuse_overlay_sources(&self, store: &Store) -> Result<()> {
+        let rooms = &store.off_record_sessions;
+        if !rooms.has_overlay_entities()? {
+            return Ok(());
+        }
+        for source in self.sources()? {
+            if rooms.contains_entity(source)? {
+                return Err(Error::OffRecord(
+                    OffRecordError::OffRecordTaintedBaseWrite {
+                        entity_ref: source.to_hex(),
+                    },
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Refuses the filing when a record this call read is gone or withdrawn
@@ -246,6 +277,7 @@ impl StepFiling<'_> {
         let occurred = self.occurred();
         let mut filed = Vec::with_capacity(calls.len());
         for call in calls {
+            call.refuse_overlay_sources(&vault.store)?;
             call.sources_stand_in(&vault.store, wtxn)?;
             let sources = call.sources()?;
             let claim_id = vault.store.clock.entity_id()?;
@@ -311,37 +343,143 @@ impl StepFiling<'_> {
         Ok(filed)
     }
 
-    /// An off-record room: each claim stages in the room's overlay through
-    /// its gate, its answer inline, derived from each of the call's sources
-    /// in the same staged write, and drops with the room at close.
+    /// An off-record room: the pass's steps stage in the room's overlay in
+    /// one write segment, so all of them commit or none does, and drop with
+    /// the room at close. Each claim passes its gate before the segment
+    /// opens. An answer over the inline bound lives in a fresh response
+    /// artifact staged beside its claim, the exact version the claim pins,
+    /// as in base (FIX 4818); a smaller one stays inline. Each row the room
+    /// stages is placed, and none stages over a base row.
     fn stage_in_room(
         &self,
         session: &OffRecordSession<'_>,
         route: &SessionWriteRoute,
         calls: &[FiledCall],
     ) -> Result<Vec<CompactionStepRef>> {
-        let mut filed = Vec::with_capacity(calls.len());
-        for call in calls {
-            let claim_id = {
-                let view = session.read_view()?;
-                let txn = view.read().base().env.read_txn()?;
-                call.sources_stand_in(&view, &txn)?;
-                view.clock().entity_id()?
+        let conversation = session.overlay_conversation_shell()?;
+        let steps = calls
+            .iter()
+            .map(|call| self.prepare_room_step(session, call))
+            .collect::<Result<Vec<_>>>()?;
+        session.overlay_write_routed(route, |wtxn, apply| {
+            let mut filed = Vec::with_capacity(steps.len());
+            for step in steps {
+                filed.push(self.stage_room_step_in_txn(
+                    session,
+                    wtxn,
+                    apply,
+                    conversation,
+                    step,
+                )?);
+            }
+            Ok(filed)
+        })
+    }
+
+    /// One call's room step, built and judged by its gate before the
+    /// segment opens: its claim id, the response version an answer over the
+    /// inline bound takes, and its claim's rows.
+    fn prepare_room_step<'c>(
+        &self,
+        session: &OffRecordSession<'_>,
+        call: &'c FiledCall,
+    ) -> Result<RoomStep<'c>> {
+        let sources = call.sources()?;
+        let (claim_id, response) = {
+            let view = session.read_view()?;
+            let txn = view.read().base().env.read_txn()?;
+            let claim_id = view.clock().entity_id()?;
+            let response = if call.payload.len() <= DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES {
+                None
+            } else {
+                Some(RoomResponseVersion::prepare(
+                    &view,
+                    &txn,
+                    view.clock().entity_id()?,
+                    COMPACTION_STEP_RESPONSE_NAME,
+                    "application/json",
+                    &call.payload,
+                    sources,
+                    &BlobVersionProvenance::AgentRun {
+                        run_ref: self.run_ref.to_owned(),
+                    },
+                    self.writer,
+                    self.occurred(),
+                    self.now_ms,
+                )?)
             };
-            let sources = call.sources()?;
-            session.stage_session_derived_claim(
-                route,
-                claim_id,
-                self.candidate(call, None)?,
-                self.envelope,
+            (claim_id, response)
+        };
+        let response_ref = response.as_ref().map(|version| StepResponseRef {
+            artifact_id: version.artifact_id(),
+            version: version.version(),
+            content_hash: version.content_hash(),
+        });
+        let claim = session.prepare_session_derived_claim(
+            claim_id,
+            self.candidate(call, response_ref)?,
+            self.envelope,
+            self.occurred(),
+            self.now_ms,
+            sources,
+        )?;
+        Ok(RoomStep {
+            call,
+            claim_id,
+            response,
+            response_ref,
+            claim,
+        })
+    }
+
+    /// Stages one prepared step inside the pass's segment: its sources
+    /// rechecked as the segment reads them, then its response's rows in the
+    /// claim's journal scope, each placed, the claim with its lineage and
+    /// birth, and the pin of its response's exact version. A body base holds
+    /// as an ASSET the room does not read live refuses the step.
+    fn stage_room_step_in_txn(
+        &self,
+        session: &OffRecordSession<'_>,
+        wtxn: &mut heed::RwTxn<'_>,
+        apply: &dyn Fn(&mut heed::RwTxn<'_>, JournalEntry) -> Result<()>,
+        conversation: EntityId,
+        step: RoomStep<'_>,
+    ) -> Result<CompactionStepRef> {
+        step.call.sources_stand_in(&session.read_view()?, &*wtxn)?;
+        if let Some(mut version) = step.response {
+            let ops = version
+                .take_staging_ops_in_txn(&session.read_view()?, &*wtxn)?
+                .ok_or(Error::InvalidClaimBody(COMPACTION_STEP_SOURCE_WITHDRAWN))?;
+            session.stage_session_support_ops_in_txn(
+                wtxn,
+                apply,
+                conversation,
+                step.claim_id,
                 self.occurred(),
                 self.now_ms,
-                sources,
+                step.call.sources()?,
+                ops,
             )?;
-            filed.push(call.filed(claim_id));
+            version.stage_chain_rows_in_txn(&session.read_view()?, wtxn)?;
         }
-        Ok(filed)
+        session.stage_prepared_rows_in_txn(wtxn, apply, conversation, step.claim)?;
+        // The claim holds the exact version its answer lives in (FIX 6225).
+        if let Some(pin) = &step.response_ref {
+            register_step_response_pin_in_txn(&session.read_view()?, wtxn, &step.claim_id, pin)?;
+        }
+        Ok(step.call.filed(step.claim_id))
     }
+}
+
+/// One call's step in an off-record room, prepared before the pass's write
+/// segment opens (FIX 4818).
+struct RoomStep<'c> {
+    call: &'c FiledCall,
+    claim_id: EntityId,
+    /// The fresh artifact version an answer over the inline bound lives in.
+    response: Option<RoomResponseVersion>,
+    response_ref: Option<StepResponseRef>,
+    claim: PreparedSessionRows,
 }
 
 /// The write envelope every step of one run's compaction carries: the agent

@@ -1,0 +1,41 @@
+{
+  "name": "tasks.answer.forward",
+  "description": "Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here.",
+  "refs": [
+    "/act/word/provenance_refs/*/claim",
+    "/act/word/provenance_refs/*/turn"
+  ],
+  "refs_check": "crate::task_verb::admit_ask_references",
+  "input": "crate::task_verb::sdk::TaskAnswerForwardRequest",
+  "output": "crate::task_verb::AskForwardReceipt",
+  "mcp_served": "[input.handle.group_ref]",
+  "call": "memory.tasks_answer_forward(&input.handle, &input.intent_key, &input.act, &input.proof)?",
+  "scope": "Write",
+  "task_work": true,
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "handle",
+        "type": "crate::task_verb::TaskAskHandle"
+      },
+      {
+        "name": "intent_key",
+        "type": "String"
+      },
+      {
+        "name": "act",
+        "type": "crate::task_verb::AskForwardAct"
+      },
+      {
+        "name": "proof",
+        "type": "crate::task_verb::AskForwardHolderProof"
+      }
+    ]
+  }
+}

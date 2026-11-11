@@ -162,6 +162,14 @@ pub(super) fn require_docs_corpus_project(
 fn encoded(value: &Value) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid("docs encoding failed"))
 }
+/// Each prepared page's ASSET record, encoded, in page order.
+fn docs_asset_records(docs: &DocsExport, prepared: &[PreparedPage<'_>]) -> Result<Vec<Vec<u8>>> {
+    prepared
+        .iter()
+        .map(|(page, ..)| encoded(&docs_asset_record(docs, page)))
+        .collect()
+}
+
 /// The record one imported page's ASSET holds: its text beside the corpus,
 /// project and registry, and a blob reference to the exact source bytes.
 fn docs_asset_record(docs: &DocsExport, page: &DocsPage) -> Value {
@@ -344,14 +352,22 @@ impl Vault {
     ) -> Result<()> {
         let (docs, summary, classifier, now) = (run.docs, run.summary, run.classifier, run.now);
         let digest_hex = run.digest.to_hex();
-        // Held until the writer below commits or aborts.
-        let staged = self.stage_docs_assets(docs, &prepared)?;
+        let records = docs_asset_records(docs, &prepared)?;
+        // A body instance is minted outside every writer (KS-2A): one for
+        // each record past the inline bound, while the plane files bodies.
+        let mint = self.asset_body_mint(
+            records
+                .iter()
+                .map(|record| u64::try_from(record.len()).unwrap_or(u64::MAX)),
+        )?;
         let mut txn = self.store.env.write_txn()?;
         let actor = run.owner.revalidate_in_txn(self, &txn)?;
         require_docs_corpus_project(self, &txn, docs.project_id)?;
         let authorization =
             crate::consent::approve_once_authorization_in_txn(&self.store, &txn, &run.digest)?
                 .ok_or_else(|| invalid("docs consent already consumed"))?;
+        // Held until the writer commits or aborts.
+        let staged = self.stage_docs_assets_in_txn(&mut txn, &records, mint.as_ref())?;
         let mut ops = Vec::new();
         // Each new chunk is born under its page's facet (facet rule C).
         let mut text_births = HashMap::new();
@@ -657,31 +673,23 @@ impl Vault {
         Ok((segments, summaries, annotation, predicted))
     }
 
-    /// Stages each prepared page's ASSET record before its batch's writer
-    /// opens, in page order, for the writer to put through the asset body
-    /// plane: a record past the inline bound spills as it streams, and is a
-    /// body file only when the plane files it. Drop them once that writer
-    /// has committed or aborted.
-    fn stage_docs_assets(
+    /// Stages each page's ASSET record, in page order, in `txn`, the writer
+    /// that puts them through the asset body plane: a record past the inline
+    /// bound spills as it streams, under an instance of `mint` (reserved
+    /// before `txn` opened), and is a body file only when the plane files
+    /// it. Each is read against the values custody holds as `txn` holds
+    /// them, so a filed body carries its custody marks (FIX 5395, fix list
+    /// row 12151). Drop them once `txn` has committed or aborted.
+    fn stage_docs_assets_in_txn(
         &self,
-        docs: &DocsExport,
-        prepared: &[PreparedPage<'_>],
+        txn: &mut heed::RwTxn<'_>,
+        records: &[Vec<u8>],
+        mint: Option<&crate::store::BodyMint>,
     ) -> Result<Vec<StagedAssetBody>> {
-        // A body instance is minted outside every writer (KS-2A), and only
-        // while the plane files bodies.
-        let mint = if crate::store::ASSET_FILE_PLANE {
-            Some(self.store.body_mint()?)
-        } else {
-            None
-        };
-        prepared
+        let known = self.asset_stream_known_in_txn(txn)?;
+        records
             .iter()
-            .map(|(page, ..)| {
-                let record = encoded(&docs_asset_record(docs, page))?;
-                // The values custody holds load only inside a writer, and
-                // this stages before one: none is passed.
-                self.stage_asset_body(record.as_slice(), None, None, mint.as_ref())
-            })
+            .map(|record| self.stage_asset_body(record.as_slice(), None, known.clone(), mint))
             .collect()
     }
 

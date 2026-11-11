@@ -1,0 +1,15 @@
+{
+  "name": "vault.code.merge_queue.recover",
+  "description": "Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased.",
+  "input": "crate::memory::merge_queue_doors::MergeQueueRepoRequest",
+  "output": "crate::memory::merge_queue_doors::MergeQueuePointersView",
+  "call": "memory.merge_queue_recover_as(&memory.embedded_owner(\"vault.code.merge_queue.recover\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_proof": "owner"
+}

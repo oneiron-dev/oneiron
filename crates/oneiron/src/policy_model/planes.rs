@@ -96,6 +96,45 @@ impl HostedLegalAction {
     }
 }
 
+/// The kind of external bound the host says a row implements. This is not a
+/// category vocabulary, and the engine does not decide which bound applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostedLegalBasisKind {
+    Law,
+    ProviderTerms,
+    Capacity,
+}
+
+impl HostedLegalBasisKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Law => "law",
+            Self::ProviderTerms => "provider_terms",
+            Self::Capacity => "capacity",
+        }
+    }
+}
+
+/// The host's actual reference for one row: a jurisdiction, provider or
+/// resource, and its law, term or capacity reference. A reference may be a
+/// human-readable citation or resource identifier; it need not be a URL.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HostedLegalBasis {
+    pub kind: HostedLegalBasisKind,
+    pub subject: String,
+    pub reference: String,
+}
+
+/// A configured row and its external bound. On an outage this identifies a
+/// check that could not finish, not a row the classifier found to apply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostedLegalRowBound {
+    pub row_ref: String,
+    pub basis: HostedLegalBasis,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedLegalRow {
     pub row_ref: String,
@@ -116,6 +155,18 @@ pub struct HostedLegalRow {
     pub category: String,
     pub action: HostedLegalAction,
     pub text: String,
+    /// Supplied by the host, never inferred from the row text or its category.
+    pub basis: HostedLegalBasis,
+}
+
+impl HostedLegalRow {
+    #[must_use]
+    pub fn bound(&self) -> HostedLegalRowBound {
+        HostedLegalRowBound {
+            row_ref: self.row_ref.clone(),
+            basis: self.basis.clone(),
+        }
+    }
 }
 
 /// A hosted relay service's legal policy: the document it enforces, the rows a
@@ -142,7 +193,8 @@ pub struct HostedLegalRow {
 /// The registry DERIVES `policy_hash` at registration and replaces whatever the
 /// caller set. It is a SHA-256 over, in order: the jurisdiction, the version,
 /// the declared output contract, the policy document, every row
-/// (`row_ref`, category, action, text) and every pattern rule (`id`, pattern,
+/// (`row_ref`, category, action, text, basis kind, subject and reference) and
+/// every pattern rule (`id`, pattern,
 /// category, role). It therefore covers the ENFORCED TEXT — a receipt that
 /// attests this hash attests that this exact policy document was in force, and
 /// changing one byte of the document produces a hash no earlier receipt can
@@ -174,7 +226,7 @@ impl HostedLegalPolicy {
     #[must_use]
     pub fn derive_policy_hash(&self) -> String {
         let mut hasher = Sha256::new();
-        hasher.update(b"oneiron.policy_model.hosted_legal.policy.v2");
+        hasher.update(b"oneiron.policy_model.hosted_legal.policy.v3");
         hash_field(&mut hasher, "jurisdiction", &self.jurisdiction);
         hash_field(&mut hasher, "version", &self.version);
         hash_field(
@@ -190,6 +242,9 @@ impl HostedLegalPolicy {
             hash_field(&mut hasher, "row_category", &row.category);
             hash_field(&mut hasher, "row_action", row.action.decision().as_str());
             hash_field(&mut hasher, "row_text", &row.text);
+            hash_field(&mut hasher, "row_basis_kind", row.basis.kind.as_str());
+            hash_field(&mut hasher, "row_basis_subject", &row.basis.subject);
+            hash_field(&mut hasher, "row_basis_reference", &row.basis.reference);
         }
         hash_len(&mut hasher, "pattern_rules", self.pattern_rules.len());
         for rule in &self.pattern_rules {

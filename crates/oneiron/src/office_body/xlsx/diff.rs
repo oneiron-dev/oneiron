@@ -326,6 +326,7 @@ pub(in crate::office_body) fn diff(
                 conflicts.push(BodyConflict {
                     block: unit.clone(),
                     kind: ConflictKind::DeleteEdit,
+                    scope: None,
                 });
             }
         }
@@ -345,6 +346,7 @@ pub(in crate::office_body) fn diff(
                     conflicts.push(BodyConflict {
                         block: unit.clone(),
                         kind: ConflictKind::BothSet,
+                        scope: None,
                     });
                 }
             }
@@ -353,7 +355,11 @@ pub(in crate::office_body) fn diff(
     let list = |changes: Units<'_>| {
         changes
             .into_iter()
-            .map(|(block, (kind, _))| BlockChange { block, kind })
+            .map(|(block, (kind, _))| BlockChange {
+                block,
+                kind,
+                scope: None,
+            })
             .collect()
     };
     OfficeBodyDiff {
@@ -386,6 +392,7 @@ fn both_set(ours: &Units<'_>, theirs: &Units<'_>) -> Vec<BodyConflict> {
             } else {
                 ConflictKind::BothSet
             },
+            scope: None,
         });
     }
     conflicts
@@ -459,6 +466,7 @@ fn moved_conflicts(
             conflicts.push(BodyConflict {
                 block: unit,
                 kind: ConflictKind::DeleteEdit,
+                scope: None,
             });
         }
     }

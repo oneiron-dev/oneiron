@@ -360,7 +360,9 @@ impl AssetBodySession {
     /// # Errors
     ///
     /// [`TransportError::UnknownTag`] for any frame while the file plane is
-    /// off, as before it; a frame that does not decode.
+    /// off, as before it; a frame that does not decode;
+    /// [`TransportError::Storage`] for a reply of this side's own that does
+    /// not encode (FIX 22179).
     pub fn handle_frame(
         &mut self,
         peer: &AssetBodyPeer<'_>,
@@ -539,7 +541,7 @@ impl AssetBodySession {
             body: address(&window, &body),
             committed,
         });
-        Ok(vec![receipt.into_result()?])
+        Ok(vec![receipt.into_own_frame()?])
     }
 
     /// The Want for the first owed body whose ask is due, its spool open.
@@ -592,7 +594,7 @@ impl AssetBodySession {
                 max_frame_bytes: asset_body_frame_bytes(ASSET_BODY_FRAME_BYTES as u32, socket_max)
                     as u32,
             })
-            .into_result()?;
+            .into_own_frame()?;
             self.receiving = Some(Receiving {
                 attempt,
                 window,
@@ -653,9 +655,10 @@ fn address(window: &WindowKey, body: &AssetBodyRef) -> AssetBodyAddress {
     }
 }
 
-/// An End for `attempt`.
+/// An End for `attempt`. An End, a Receipt and a Want this side encodes are
+/// its own frames: one that does not encode is its own fault (FIX 22179).
 fn end(attempt: [u8; 16], complete: bool) -> Result<Vec<u8>, TransportError> {
-    encode_asset_body_end(AssetBodyEnd { attempt, complete }).into_result()
+    encode_asset_body_end(AssetBodyEnd { attempt, complete }).into_own_frame()
 }
 
 fn storage(error: crate::error::Error) -> TransportError {

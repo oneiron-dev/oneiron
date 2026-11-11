@@ -60,11 +60,7 @@ impl Vault {
         request_id: Option<&[u8; 16]>,
         erase: bool,
         act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
-    ) -> Result<(
-        bool,
-        Vec<EntityId>,
-        Vec<(crate::attempt_queue::AttemptId, u32)>,
-    )> {
+    ) -> Result<(bool, Vec<EntityId>, crate::deletion::ErasureEffects)> {
         // A held record keeps its bytes on every door that purges it, and a
         // held world keeps its pads (OF-470).
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
@@ -92,6 +88,12 @@ impl Vault {
             // An erased world takes its keys with it (fix 7); a deleted one
             // keeps them, so it restores from old bundles.
             if erase {
+                // A reply job naming the row takes its witnessed exchange with
+                // its event, before the provenance pass below clears that
+                // event (FIX 10897).
+                super::super::connector_witness::erase_connector_witness_of_in_txn(
+                    self, wtxn, id, act,
+                )?;
                 self.destroy_world_keys_for_delete_in_txn(
                     wtxn,
                     *id,
@@ -170,6 +172,11 @@ impl Vault {
                 crate::batch::deindex_entity(&write, txn, id)
             })?;
             crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, erase)?;
+            if erase {
+                crate::dreamer_consolidation::root_evidence::erase_source_bridges_in_txn(
+                    self, wtxn, id,
+                )?;
+            }
             // Saved tags read the turn's messages through their PartOf edges, so
             // they go before the graph is torn down.
             let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
@@ -190,9 +197,13 @@ impl Vault {
             self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
             // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
             // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
-            let mut cancelled = Vec::new();
+            let mut effects = crate::deletion::ErasureEffects::default();
             if erase {
-                cancelled = crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                // FIX 11030: an erased PERSON's late sends are linked while its
+                // body still holds its party key, so the actor scrub below
+                // takes them.
+                crate::outbound_intent_ledger::link_late_recipients_in_txn(&self.store, wtxn, id)?;
+                effects = crate::deletion::actor_fields::erase_actor_fields_in_txn(
                     crate::deletion::ActorErasureWriter::for_hard_purge(self, wtxn, *id),
                     act,
                 )?;
@@ -262,7 +273,7 @@ impl Vault {
                     || had_tags
                     || had_missing,
                 citing,
-                cancelled,
+                effects,
             ))
         })();
         if erase {
@@ -294,8 +305,13 @@ impl Vault {
         // it (FIX 6034, 6086).
         self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
         // An erased custody record is fenced before its body is scrubbed (KS-6
-        // part 2).
+        // part 2). A reply job naming the row takes its witnessed exchange
+        // with its event first, before the provenance pass below clears that
+        // event (FIX 10897).
         if erase {
+            super::super::connector_witness::erase_connector_witness_of_in_txn(
+                self, wtxn, id, act,
+            )?;
             self.fence_erased_credential_in_txn(wtxn, id)?;
             crate::runtime_hooks::scrub_hook_source_in_txn(
                 self,
@@ -361,6 +377,11 @@ impl Vault {
             crate::batch::deindex_entity(&write, txn, id)
         })?;
         crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, erase)?;
+        if erase {
+            crate::dreamer_consolidation::root_evidence::erase_source_bridges_in_txn(
+                self, wtxn, id,
+            )?;
+        }
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
             wtxn,

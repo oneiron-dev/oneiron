@@ -1,7 +1,8 @@
 //! The paired-machine mesh listener (OF-535). Off unless the host names a bind
 //! address (`ONEIRON_MESH_BIND`), and refused in a build without the `mesh`
 //! feature. It binds this install's transport key, admits a connection only
-//! from the paired machine its endpoint key names (`PairedMachineGrants`), and
+//! from the paired machine its endpoint key names (`PairedMachineGrants`), or
+//! on sync from the home this install enrolled with ([`home_pin`]), and
 //! routes each connection by its ALPN ([`mesh_routes`]).
 //!
 //! Sync (`oneiron/sync/1`) serves the very router the TCP listener serves, one
@@ -25,9 +26,13 @@ use axum::Router;
 use crate::http_listener::ConnectionLimits;
 
 #[cfg(feature = "mesh")]
+mod home_pin;
+#[cfg(feature = "mesh")]
 mod pressure;
 #[cfg(feature = "mesh")]
 mod shutdown;
+#[cfg(feature = "mesh")]
+pub(crate) use home_pin::pin_home;
 
 /// Where the mesh listener binds; unset leaves it off.
 const BIND_ENV: &str = "ONEIRON_MESH_BIND";
@@ -55,6 +60,11 @@ impl MeshConfig {
         Self { bind, relays }
     }
 
+    #[cfg(feature = "mesh")]
+    pub(crate) fn outbound_settings(&self) -> Option<(SocketAddr, &[String])> {
+        self.bind.map(|bind| (bind, self.relays.as_slice()))
+    }
+
     pub(crate) fn from_env() -> anyhow::Result<Self> {
         let bind = match std::env::var(BIND_ENV) {
             Ok(raw) if !raw.trim().is_empty() => Some(
@@ -78,7 +88,9 @@ impl MeshConfig {
 }
 
 /// Starts the mesh listener when `config` names a bind address, serving
-/// `app` for sync. `None` when it is off.
+/// `app` for sync. `None` when it is off; then the vault's rows of the
+/// models the owner's other nodes offered go stale, since no mesh catalog
+/// refresh keeps them current (FIX 22227).
 pub(crate) async fn start(
     server: Arc<crate::server::SyncServer>,
     config: &MeshConfig,
@@ -86,6 +98,8 @@ pub(crate) async fn start(
     limits: ConnectionLimits,
 ) -> anyhow::Result<Option<MeshHost>> {
     let Some(bind) = config.bind else {
+        #[cfg(feature = "mesh")]
+        crate::models::withdraw_discovered(server.vault());
         return Ok(None);
     };
     host::start(server, bind, &config.relays, app, limits).await
@@ -149,6 +163,7 @@ mod host {
     use tokio::task::{JoinHandle, JoinSet};
 
     use super::MeshProvedMachine;
+    use super::home_pin::{PinnedGrants, PinnedRoster};
     use super::pressure::{self, MeshFloor};
     use super::shutdown::{self, MeshShutdown};
     use crate::http_listener::ConnectionLimits;
@@ -359,6 +374,8 @@ mod host {
     /// The running mesh listener.
     pub(crate) struct MeshHost {
         transport: Arc<IrohTransport>,
+        /// This install's MACHINE, whose enrolled home the listener pins.
+        machine: oneiron::EntityId,
         stopping: Arc<MeshStop>,
         /// The accept loop, which owns each connection it admitted.
         accepts: JoinHandle<()>,
@@ -371,6 +388,12 @@ mod host {
         /// endpoint rather than binding a second ([`crate::device_sync`]).
         pub(crate) fn transport(&self) -> Arc<dyn MeshTransport> {
             Arc::clone(&self.transport) as Arc<dyn MeshTransport>
+        }
+
+        /// Whether the listener admits `home` on sync as the home this
+        /// install enrolled with ([`super::home_pin`], FIX 3374).
+        pub(crate) fn pins_home(&self, home: oneiron::EntityId) -> bool {
+            super::home_pin::pinned_home(self.machine).is_some_and(|(pinned, _)| pinned == home)
         }
 
         /// Takes no more connections or sync streams, and returns once each
@@ -433,8 +456,14 @@ mod host {
         let stopping = Arc::new(MeshStop::new());
         let routes = Arc::new(mesh_routes(app, limits, &server, &stopping));
         let policy = AcceptPolicy {
-            roster: Arc::new(VaultMachineRoster(Arc::clone(&vault))),
-            grants: Arc::new(PairedMachineGrants(Arc::clone(&vault))),
+            roster: Arc::new(PinnedRoster {
+                local: machine,
+                vault: VaultMachineRoster(Arc::clone(&vault)),
+            }),
+            grants: Arc::new(PinnedGrants {
+                local: machine,
+                vault: PairedMachineGrants(Arc::clone(&vault)),
+            }),
         };
         let relays =
             private_relay_map(relays).map_err(|_| anyhow::anyhow!("mesh relay URL refused"))?;
@@ -468,6 +497,7 @@ mod host {
         });
         Ok(Some(MeshHost {
             transport,
+            machine,
             stopping,
             accepts,
             ticks,

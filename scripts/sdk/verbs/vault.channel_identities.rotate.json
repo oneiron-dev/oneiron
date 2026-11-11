@@ -1,0 +1,17 @@
+{
+  "name": "vault.channel_identities.rotate",
+  "description": "Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate.",
+  "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+  "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+  "call": "memory.channel_identity_rotate_as(&memory.embedded_owner(\"vault.channel_identities.rotate\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_paced": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

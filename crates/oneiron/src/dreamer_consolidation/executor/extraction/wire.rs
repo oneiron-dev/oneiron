@@ -79,7 +79,7 @@ pub(in crate::dreamer_consolidation) fn reply_json(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

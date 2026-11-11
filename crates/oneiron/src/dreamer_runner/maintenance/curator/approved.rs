@@ -106,6 +106,9 @@ impl Vault {
         let value: serde_json::Value =
             serde_json::from_str(finding.value.as_str().ok_or_else(invalid)?)
                 .map_err(|_| invalid())?;
+        if !crate::mail_pack::claim_recheck_current_in(self, &*txn, value.get("recheck"))? {
+            return Ok(None);
+        }
         let target = EntityId::from_hex(value["target"].as_str().ok_or_else(invalid)?)?;
         let source_hash = value["source_hash"].as_str().ok_or_else(invalid)?;
         // The target revision the owner approved, consumed once: a body that

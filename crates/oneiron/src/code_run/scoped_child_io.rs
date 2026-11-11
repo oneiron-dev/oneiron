@@ -50,6 +50,8 @@ pub struct HostInput {
 /// writer; separate inputs may commit separately. Each input's source rows
 /// are frozen with its first stored occurrence;
 /// a reused path lends that occurrence's sources, never a new label for it.
+/// An input's origins are unknown (FIX 7084): the host wrote its bytes, and
+/// no run's read-world ledger proves the worlds they came from.
 ///
 /// # Errors
 ///
@@ -80,6 +82,7 @@ pub fn commit_host_inputs(
                 handle: output.handle,
                 range: (0, output.raw_len),
                 rows: output.input_rows,
+                origins: None,
             },
         );
     }
@@ -247,6 +250,9 @@ pub struct ScopedChildProfile {
     pub locality: ModelLocality,
     pub ports: Arc<dyn ScopedChildPorts>,
     pub stop: ScopedChildStop,
+    /// The host's original generation admission and settlement. Without it
+    /// the standard compaction factory cannot represent this profile's calls.
+    pub generation: Option<Arc<dyn super::ScopedChildGeneration>>,
 }
 
 impl ScopedChildProfile {

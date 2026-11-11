@@ -10,6 +10,8 @@ use oneiron::sync::{
     transport::{self, document_sub_tags},
 };
 
+mod owner_body;
+
 pub(super) fn handle_document(
     server: &SyncServer,
     conn_id: u32,
@@ -19,7 +21,51 @@ pub(super) fn handle_document(
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
-    match handle_document_inner(server, conn_id, entity, kind, payload, direct, state) {
+    let joined = if kind == document_sub_tags::PART {
+        if payload.len() > server.config.max_update_payload {
+            return Err(ProtocolError::FrameTooLarge {
+                size: payload.len(),
+                max: server.config.max_update_payload,
+            });
+        }
+        if payload.first() != Some(&document_sub_tags::NOTE_OPS) {
+            return Err(ProtocolError::InvalidPayload(
+                "upload parts require NOTE operations",
+            ));
+        }
+        require_note_upload(server, state, entity)?;
+        let joined = state
+            .document_parts
+            .accept(transport::DocumentFrame {
+                entity,
+                kind,
+                payload,
+            })
+            .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE operation part"))?;
+        let Some(joined) = joined else {
+            return Ok(());
+        };
+        Some(joined)
+    } else {
+        None
+    };
+    let (kind, payload) = match &joined {
+        Some(joined) => {
+            let frame = joined.frame();
+            (frame.kind, frame.payload)
+        }
+        None => (kind, payload),
+    };
+    match handle_document_inner(
+        server,
+        conn_id,
+        entity,
+        kind,
+        payload,
+        direct,
+        state,
+        joined.is_some(),
+    ) {
         Err(ProtocolError::WaitedOut) => {
             let waited = transport::DocumentWaitedOut::try_from(kind)
                 .map_err(|_| ProtocolError::WaitedOut)?;
@@ -33,6 +79,27 @@ pub(super) fn handle_document(
     }
 }
 
+fn require_note_upload(
+    server: &SyncServer,
+    state: &ConnState,
+    entity: EntityId,
+) -> Result<(), ProtocolError> {
+    let principal = document_principal(server, state)?;
+    if state.owner_documents.contains_key(&entity) {
+        owner_auth(server, state, true)?;
+    } else {
+        let request = state
+            .documents
+            .get(&entity)
+            .ok_or(ProtocolError::InvalidPayload("document not admitted"))?;
+        if request.selector.member_ref != principal {
+            return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
+        }
+        require_note_auth(server, state, &request.selector, true)?;
+    }
+    Ok(())
+}
+
 fn handle_document_inner(
     server: &SyncServer,
     conn_id: u32,
@@ -41,6 +108,7 @@ fn handle_document_inner(
     payload: &[u8],
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
+    logical_command: bool,
 ) -> Result<(), ProtocolError> {
     if state.protocol_version != transport::PROTOCOL_VERSION
         && !transport::is_owner_window_version(state.protocol_version)
@@ -50,7 +118,7 @@ fn handle_document_inner(
             "document sync requires a document-capable protocol",
         ));
     }
-    if payload.len() > server.config.max_update_payload {
+    if !logical_command && payload.len() > server.config.max_update_payload {
         return Err(ProtocolError::FrameTooLarge {
             size: payload.len(),
             max: server.config.max_update_payload,
@@ -65,7 +133,7 @@ fn handle_document_inner(
         return owner_request(server, state, entity, &payload[4..], direct);
     }
     if state.owner_documents.contains_key(&entity) {
-        return owner_document(server, state, entity, kind, payload, direct);
+        return owner_document(server, conn_id, state, entity, kind, payload, direct);
     }
     if kind == document_sub_tags::UPDATE {
         require_bound_app_auth(server, state)?
@@ -120,6 +188,8 @@ fn handle_document_inner(
             Ok(())
         }
         document_sub_tags::NOTE_OPS => {
+            // FIX 4748: the NOTE authority is the home, never a peer.
+            super::peer_serve::refuse_note_authority(state)?;
             let request = state
                 .documents
                 .get(&entity)
@@ -252,7 +322,9 @@ fn handle_document_inner(
 /// An own device's owner REQUEST: a v11 connection that is not
 /// selector-scoped, with a bound NOTE session whose principal is the vault
 /// owner. The connection is then an owner connection for good. A REQUEST for
-/// a NOTE this server does not hold yet waits for the NOTE's next notice.
+/// a NOTE this server does not hold yet waits for the NOTE's next notice. For
+/// an office artifact whose typed body it does not hold yet, the server asks
+/// the device for the device's own (FIX 2458).
 fn owner_request(
     server: &SyncServer,
     state: &mut ConnState,
@@ -271,25 +343,36 @@ fn owner_request(
         .vault
         .get_raw(&entity)
         .map_err(storage_error)?
-        .is_some()
+        .is_none()
     {
-        let frame = crate::server::blocking(|| {
+        return Ok(());
+    }
+    let held = server
+        .reassert_manager
+        .owner_document_held(entity)
+        .map_err(storage_error)?;
+    let frame = if held {
+        crate::server::blocking(|| {
             server
                 .reassert_manager
                 .export_owner_document_for(entity, remote_vv, peer)
         })
-        .map_err(storage_error)?;
-        let _ = direct.send(frame);
-        // The NOTE's pending forks follow its text (FIX 12789). A denial
-        // withholds them as it withholds the text.
-        if let Ok(forks) = crate::server::blocking(|| {
+    } else {
+        crate::server::blocking(|| server.reassert_manager.owner_document_request(entity))
+    }
+    .map_err(storage_error)?;
+    let _ = direct.send(frame);
+    // The NOTE's pending forks follow its text (FIX 12789). A denial
+    // withholds them as it withholds the text.
+    if held
+        && let Ok(forks) = crate::server::blocking(|| {
             server
                 .reassert_manager
                 .export_owner_note_forks_for(entity, peer)
-        }) {
-            for frame in forks {
-                let _ = direct.send(frame);
-            }
+        })
+    {
+        for frame in forks {
+            let _ = direct.send(frame);
         }
     }
     Ok(())
@@ -303,7 +386,9 @@ fn owner_request(
 /// publication. It applies the publication once every part is there and
 /// window sync has delivered every row it names. An owner-gate denial echoes
 /// only the supplied digest in a Refused receipt without keeping any part;
-/// admitted parts are answered once complete, on this socket alone.
+/// admitted parts are answered once complete, on this socket alone. A socket served as a peer
+/// applies none and keeps no part (FIX 4748): no receipt settles the device's outbox, which
+/// waits for the home.
 fn artifact_publication(
     server: &SyncServer,
     state: &mut ConnState,
@@ -311,6 +396,7 @@ fn artifact_publication(
     payload: &[u8],
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
+    super::peer_serve::refuse_note_authority(state)?;
     let receipt = match owner_auth_checked(server, state, true) {
         Ok(auth) => server
             .vault
@@ -340,9 +426,10 @@ fn ask_past_row(server: &SyncServer, state: &mut ConnState, held: usize) {
     }
 }
 
-/// ACK and NOTE_OPS on an owner subscription.
+/// ACK, NOTE_OPS and a typed body's UPDATE on an owner subscription.
 fn owner_document(
     server: &SyncServer,
+    conn_id: u32,
     state: &mut ConnState,
     entity: EntityId,
     kind: u8,
@@ -356,7 +443,12 @@ fn owner_document(
             state.owner_documents.insert(entity, payload.to_vec());
             Ok(())
         }
+        document_sub_tags::UPDATE => {
+            owner_body::owner_body_update(server, conn_id, state, entity, payload, direct)
+        }
         document_sub_tags::NOTE_OPS => {
+            // FIX 4748: the NOTE authority is the home, never a peer.
+            super::peer_serve::refuse_note_authority(state)?;
             let auth = owner_auth(server, state, true)?;
             let actor = EntityId::from_hex(
                 auth.require_registered_principal()
@@ -415,7 +507,7 @@ fn owner_document(
             Ok(())
         }
         _ => Err(ProtocolError::InvalidPayload(
-            "owner lane carries requests, acks, NOTE operations and NOTE forks",
+            "owner lane carries requests, acks, NOTE operations, NOTE forks and typed body updates",
         )),
     }
 }
@@ -576,6 +668,12 @@ pub(super) fn document_delivery_retrying(
         let doc = doc.map_err(|_| ProtocolError::InvalidPayload("invalid document notice"))?;
         if let Some(remote_vv) = state.owner_documents.get(&doc.entity) {
             if owner_auth(server, state, false).is_err() {
+                continue;
+            }
+            // FIX 2458: a home's request for a device's typed body goes as
+            // it is; it carries the home's version, no text.
+            if doc.kind == document_sub_tags::REQUEST {
+                out.extend(notice(&doc));
                 continue;
             }
             if doc.kind == document_sub_tags::NOTE_RECEIPT {
@@ -789,7 +887,11 @@ pub(super) fn retry_later(
 /// The notice of one document, to queue again.
 pub(super) fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
     match doc.kind {
-        document_sub_tags::STATE | document_sub_tags::UPDATE | document_sub_tags::NOTE_RECEIPT => {
+        document_sub_tags::STATE
+        | document_sub_tags::UPDATE
+        | document_sub_tags::NOTE_RECEIPT
+        | document_sub_tags::NOTE_FORK_STATE
+        | document_sub_tags::NOTE_FORK_SET => {
             transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload).ok()
         }
         _ => transport::encode_document(doc.entity, doc.kind, doc.payload)

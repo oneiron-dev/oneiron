@@ -1,12 +1,12 @@
 //! Chart edits applied by series and category identity; a whole chart
 //! written over the chart a node holds lowered to the edits that make it,
-//! before it is logged; and the series and category identities a writer
-//! names before an edit is logged, so every replay makes the same series
-//! and points.
+//! before it is logged; and the series, category and logical plot identities
+//! a writer names before an edit is logged, so every replay retains the
+//! same series, points and plot continuity.
 
 mod categories;
 
-use super::chart::{ChartCategories, ChartEdit, ChartPlot, ChartSeries};
+use super::chart::{ChartCategories, ChartEdit, ChartKind, ChartPlot, ChartSeries};
 use super::table_ops::order;
 use super::{LiveDeck, NodeId, NodePayload};
 use crate::live::LiveError;
@@ -116,6 +116,7 @@ impl ChartEdit {
                         x: x.clone(),
                         x_labels: x_labels.clone(),
                         plot: *plot,
+                        plot_id: None,
                         categories: own,
                         bubble_size: bubble_size.clone(),
                         bubble_3d: *bubble_3d,
@@ -205,7 +206,8 @@ impl ChartEdit {
             | Self::DeleteCategory { .. }
             | Self::MoveCategory { .. }
             | Self::SetCategoryLevels { .. }
-            | Self::ReserveCategories { .. } => {}
+            | Self::ReserveCategories { .. }
+            | Self::ReservePlots { .. } => {}
         }
         Ok(())
     }
@@ -232,8 +234,8 @@ fn slot(series: &[ChartSeries], after: Option<NodeId>) -> usize {
 
 /// Apply `edits` to the chart `node` holds, then settle it as a whole chart
 /// written over it settles, returning what that did PowerPoint's way. The
-/// points the settlement adds take the identities the edits reserve, in
-/// order, else the deck's next.
+/// category points and logical plots the settlement adds take the identities
+/// the edits reserve, in order, else the deck's next.
 pub(super) fn edit_chart(
     deck: &mut LiveDeck,
     node: NodeId,
@@ -260,6 +262,15 @@ pub(super) fn edit_chart(
         .flatten()
         .collect();
     settled.name_categories(&mut || reserved.pop_front().unwrap_or_else(|| deck.mint()));
+    let mut reserved_plots: VecDeque<NodeId> = edits
+        .iter()
+        .filter_map(|edit| match edit {
+            ChartEdit::ReservePlots { ids } => Some(ids.iter().copied()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    settled.name_plots(&mut || reserved_plots.pop_front().unwrap_or_else(|| deck.mint()));
     settled.check()?;
     deck.nodes
         .get_mut(&node)
@@ -624,8 +635,9 @@ impl LiveDeck {
     /// Reserve, at the end of `edits` to the chart `node` holds, the
     /// identities from `mint` the chart's settlement after them gives the
     /// points it adds (a set grown to its longest series, x values turned to
-    /// categories), so the logged edits name them and every replay makes the
-    /// same points. Nothing when it adds none, or when the edits refuse.
+    /// categories) and its new logical plots, so the logged edits name them
+    /// and every replay retains the same identities. Nothing when it adds
+    /// none, or when the edits refuse.
     pub(super) fn reserve_categories(
         &self,
         node: NodeId,
@@ -661,14 +673,45 @@ impl LiveDeck {
                 ids: (0..count).map(|_| mint()).collect(),
             });
         }
+        let plots = settled.unnamed_plots();
+        if plots > 0 {
+            edits.push(ChartEdit::ReservePlots {
+                ids: (0..plots).map(|_| mint()).collect(),
+            });
+        }
     }
+}
+
+/// Each drawn group and the logical identity its series retain. Automatic
+/// views may draw one logical plot more than once, without moving a series.
+fn plot_groups(family: ChartKind, series: &[ChartSeries]) -> Vec<(ChartKind, u32, Option<NodeId>)> {
+    let mut groups: Vec<(ChartKind, u32, Option<NodeId>)> = Vec::new();
+    for line in series {
+        let kind = line.family.unwrap_or(family);
+        let ordinal = line.plot.unwrap_or(0);
+        if groups
+            .iter()
+            .any(|&(held, at, _)| held == kind && at == ordinal)
+        {
+            continue;
+        }
+        let id = series
+            .iter()
+            .filter(|line| {
+                line.family.unwrap_or(family) == kind && line.plot.unwrap_or(0) == ordinal
+            })
+            .find_map(|line| line.plot_id);
+        groups.push((kind, ordinal, id));
+    }
+    groups
 }
 
 impl NodePayload {
     /// Name, from `mint` and in order, each series of a chart that names no
     /// identity or one an earlier series of it names (a writer's new
     /// series), then each category point its sets hold unnamed
-    /// ([`Self::name_categories`]). Any other payload names nothing.
+    /// ([`Self::name_categories`]) and each unnamed logical plot. Any other
+    /// payload names nothing.
     pub(crate) fn name_series(&mut self, mint: &mut impl FnMut() -> NodeId) {
         if let Self::Chart { series, .. } = self {
             let mut seen = BTreeSet::new();
@@ -684,6 +727,38 @@ impl NodePayload {
             }
         }
         self.name_categories(mint);
+        self.name_plots(mint);
+    }
+
+    fn name_plots(&mut self, mint: &mut impl FnMut() -> NodeId) {
+        let Self::Chart { family, series, .. } = self else {
+            return;
+        };
+        let groups: Vec<_> = plot_groups(*family, series)
+            .into_iter()
+            .map(|(kind, ordinal, id)| (kind, ordinal, id.unwrap_or_else(&mut *mint)))
+            .collect();
+        for line in series {
+            line.plot_id = groups
+                .iter()
+                .find(|&&(kind, ordinal, _)| {
+                    kind == line.family.unwrap_or(*family) && ordinal == line.plot.unwrap_or(0)
+                })
+                .map(|&(_, _, id)| id);
+        }
+    }
+
+    fn unnamed_plots(&self) -> u64 {
+        let Self::Chart { family, series, .. } = self else {
+            return 0;
+        };
+        u64::try_from(
+            plot_groups(*family, series)
+                .iter()
+                .filter(|group| group.2.is_none())
+                .count(),
+        )
+        .unwrap_or(u64::MAX)
     }
 
     /// How many identities [`Self::name_series`] mints.
@@ -699,5 +774,6 @@ impl NodePayload {
         u64::try_from(unnamed)
             .unwrap_or(u64::MAX)
             .saturating_add(self.unnamed_categories())
+            .saturating_add(self.unnamed_plots())
     }
 }

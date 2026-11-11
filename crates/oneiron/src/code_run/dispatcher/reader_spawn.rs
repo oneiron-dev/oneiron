@@ -33,8 +33,8 @@ use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Error, Result};
 
 /// The refusal a reader child meets at every call but its report,
-/// `self.context` and `self.think`: no verbs, writes, ambient reads or
-/// children of its own.
+/// `self.context` and `self.think`: no verbs, writes or ambient reads. A
+/// native reader-spawn seat also lends spawning and waiting on its own children.
 pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 
 /// What the wait a not-done `tasks.wait` parks on says, before its set's id.
@@ -133,8 +133,9 @@ impl HostSelfDispatcher<'_> {
 
     /// Binds this dispatcher to reader child `task`, as its runner claimed
     /// it at `generation`: the run reads its parent's source as `src`, and
-    /// makes no call but its report, `self.context` and `self.think`. The
-    /// job's run is the run it is bound to.
+    /// makes no call but its report, `self.context` and `self.think`, unless
+    /// its host also lends a reader-spawn seat. The job's run is the run it
+    /// is bound to.
     ///
     /// # Errors
     ///
@@ -285,9 +286,13 @@ impl HostSelfDispatcher<'_> {
         let admitted = matches!(
             effect,
             SelfEffect::ReaderReport | SelfEffect::Context | SelfEffect::Think
-        ) || (effect == SelfEffect::AgentVerb && self.scoped_child_spec().is_some());
+        ) || (effect == SelfEffect::AgentVerb && self.scoped_child_spec().is_some())
+            || (self.scoped_child_spec().is_none()
+                && self.reader_spawn_seat().is_some()
+                && matches!(effect, SelfEffect::ReaderSpawn | SelfEffect::TasksWaitSet));
         (self.reader_child.is_some() && !admitted).then(|| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect,
                 outcome: READER_CHILD_READ_ONLY.to_owned(),
                 reason_codes: Vec::new(),
@@ -305,6 +310,7 @@ impl HostSelfDispatcher<'_> {
         };
         (!scoped_child_call_allowed(spec, call.verb)).then(|| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: SelfEffect::AgentVerb,
                 outcome: SCOPED_CHILD_PORT_NOT_LENT.to_owned(),
                 reason_codes: Vec::new(),
@@ -467,7 +473,8 @@ impl HostSelfDispatcher<'_> {
     ///
     /// The wait keeps the `tasks.wait` marker a parked step records, as a
     /// verb hook's ask does, its prompt naming the set. One naming a
-    /// world-privacy request waits on it instead (FIX 4706).
+    /// world-privacy request waits on it instead (FIX 4706), and one naming
+    /// AGENT children waits on them (slice 6.5b).
     pub(super) fn dispatch_task_wait_set(
         &self,
         call: TaskWaitSetCall,
@@ -481,6 +488,12 @@ impl HostSelfDispatcher<'_> {
                 disk_floor: None,
             })
         };
+        // Slice 6.5b: a wait over AGENT children of the run. An executor's
+        // step parks on it; a call from no executor site is answered the
+        // reduction as it stands.
+        if let Some(agents) = &call.agents {
+            return self.dispatch_agent_wait(&call, agents, site.is_some());
+        }
         // FIX 4706: a wait on a world-privacy request, no children.
         if let Some(request) = &call.request {
             return self.dispatch_world_privacy_wait(&call, request);

@@ -86,9 +86,12 @@ pub(super) fn requeue_unacknowledged(
     run_id: Option<&str>,
     now: u64,
 ) -> Result<usize> {
+    // The open rows and the erased-evidence backstop's, not every handoff
+    // ever made (FIX 7550).
     let handoffs = {
         let txn = vault.store.env.read_txn()?;
-        HANDOFFS.scan(&vault.store, &txn)?
+        let keys = super::handoff_index::requeue_keys(vault, &txn)?;
+        super::handoff_index::rows(&vault.store, &txn, keys)?
     };
     let sweep_ref = attempt_ref(sweep)?;
     let queue = AttemptQueue::new(vault);
@@ -135,7 +138,7 @@ pub(super) fn requeue_unacknowledged(
             handoff.attempt =
                 enqueue_triage_in_txn(vault, txn, source_ref, evidence, sweep, run_id, now)?;
             handoff.queued_by = sweep_ref;
-            HANDOFFS.put(&vault.store, txn, &key, &handoff)?;
+            super::handoff_index::put_handoff_in_txn(&vault.store, txn, &key, &handoff)?;
             Ok(true)
         })?;
         requeued += usize::from(again);

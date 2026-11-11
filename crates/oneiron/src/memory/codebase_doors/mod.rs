@@ -1,13 +1,20 @@
-//! Typed code snapshot doors (DOOR-118): the import of one committed local
-//! Git tree, its pinned manifest, its frozen source bytes and exact-name Rust
-//! symbol definitions within it. Each projects an engine path that exists;
-//! none registers a repository, enforces an editable whitelist, grants repo
-//! membership, mints a receipt or answers a calls, imports or refs query.
+//! Typed code snapshot doors (DOOR-118): committed Git import and current-folder
+//! capture, pinned manifests, frozen source bytes, exact-name Rust symbol
+//! definitions and recorded one-hop relations within each snapshot. Each projects
+//! an engine path that exists; none registers a repository, enforces an editable
+//! whitelist or grants repo membership. An owner's import retains a capture
+//! receipt with its snapshot. A committed Git import may name the repository
+//! `vault.repo.anchor.bind` registered (FIX 4299): it then belongs to that
+//! anchor, whose whitelist binds edits. A current-folder capture names none.
 //!
 //! Authority is the owner's live proof alone (`Memory::codebase_owner`),
 //! checked before any id resolves, so a refusal is no existence oracle.
 //! Every read then goes through this credential-bound handle.
 
+mod neighbor_types;
+mod neighbors;
+pub use neighbor_types::*;
+pub(crate) use neighbors::{check_neighbor_manifest, neighbor_view};
 mod snapshots;
 mod symbols;
 mod types;

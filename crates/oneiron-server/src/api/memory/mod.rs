@@ -4,7 +4,6 @@
 use super::CoreBatchEntityInput;
 use super::CoreBatchEntityResult;
 use super::CoreHydrateDeletionMetadata;
-use super::ViewQuery;
 use super::commit_core_batch_in_lane;
 use super::core_engine_error;
 use super::core_entity_timestamps;
@@ -14,7 +13,7 @@ use super::hex_bytes;
 use super::json_payload;
 use super::parse_entity_id_param;
 use super::parse_optional_entity_id;
-use super::query_params;
+// memory/watch.rs reads it through `use super::*`.
 use super::scoped_read_for_core_auth;
 use super::stage_core_entity_put;
 use super::unix_seconds_now;
@@ -28,10 +27,8 @@ use crate::projection;
 use crate::projection::View;
 use crate::server::SyncServer;
 use axum::extract::Path;
-use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::rejection::QueryRejection;
 use axum::response::Json;
 use serde::Deserialize;
 use serde::Serialize;
@@ -232,69 +229,6 @@ pub(crate) enum CoreMemoryOperationKind {
     DeleteEntity,
 }
 
-/// Return renderer-ready supersession timeline data for one memory record.
-#[utoipa::path(
-    get,
-    path = "/v1/core/memory/{id}/timeline",
-    params(
-        (
-            "id" = String,
-            Path,
-            description = "Hex entity id whose supersession chain should be rendered.",
-            example = "0123456789abcdef0123456789abcdef"
-        ),
-        ViewQuery
-    ),
-    responses(
-        (status = 200, description = "Stable ordered memory supersession timeline.", body = CoreMemoryTimelineResponse, content_type = "application/json"),
-        (status = 400, description = "Malformed entity id or view.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "Anchor entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 500, description = "Timeline lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
-    )
-)]
-pub(crate) async fn core_memory_timeline(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    Path(id_hex): Path<String>,
-    query: Result<Query<ViewQuery>, QueryRejection>,
-) -> Result<Json<CoreMemoryTimelineResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Read)?;
-    let id = parse_entity_id_param(&id_hex, "id")?;
-    let params = query_params(query)?;
-    let view = params.view.unwrap_or(View::Summary);
-    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
-    let timeline = scoped_read.memory_timeline(&id).map_err(|error| {
-        tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory timeline failed");
-        core_engine_error("core memory timeline failed", error)
-    })?;
-
-    if timeline.records.is_empty()
-        || (timeline.records.len() == 1
-            && timeline.records[0].state == oneiron::MemoryTimelineRecordState::Missing)
-    {
-        return Err(
-            EnvelopedApiError::from(ApiError::not_found("entity", Some(&id.to_hex())))
-                .with_read_receipt(timeline.receipt),
-        );
-    }
-
-    let response = core_memory_timeline_response(
-        &scoped_read,
-        timeline,
-        view,
-        server.config.limits.projection_body_bytes,
-    )?;
-    if response.records.is_empty() {
-        return Err(
-            EnvelopedApiError::from(ApiError::not_found("entity", Some(&id.to_hex())))
-                .with_read_receipt(response.narrowing),
-        );
-    }
-    Ok(Json(response))
-}
-
 /// Owner-facing durable watch flag for one claim entry. The SAVED_QUERY
 /// definition, not the connection, is the flag's source of truth.
 #[derive(Debug, Serialize, ToSchema)]
@@ -307,8 +241,12 @@ pub(crate) struct CoreMemoryWatchResponse {
     health: Option<watch::CoreMemoryWatchHealth>,
 }
 
-mod owner_delete;
+mod timeline;
 mod watch;
+pub(crate) use self::timeline::{__path_core_memory_timeline, core_memory_timeline};
+// A timeline read that an ask stopped runs again through its route (FIX 1435).
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(crate) use self::timeline::core_memory_timeline_hooked;
 pub(crate) use self::watch::{
     __path_core_memory_watch_disable, __path_core_memory_watch_enable,
     __path_core_memory_watch_read, CoreMemoryWatchHealth,
@@ -456,22 +394,13 @@ pub(crate) async fn core_memory_verb(
                 tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
                 core_engine_error("core memory delete failed", error)
             };
-            // The proven owner's delete of a record only secret orders keep
-            // waits, accepted, instead of being refused (FIX 1465).
-            let pending =
-                owner_delete::owner_pending_delete(&server, &auth, &id, reason).map_err(failed)?;
-            let (outcome, state) = if pending {
-                let state = oneiron::memory::DeleteRequestState::CompletionPending;
-                ((true, None, None), state)
-            } else {
-                let outcome = server
-                    .vault
-                    .delete_entity_with_reason(&id, reason)
-                    .map_err(failed)?;
-                let applied = (outcome.existed, outcome.receipt_id, outcome.sweep_key);
-                (applied, oneiron::memory::DeleteRequestState::Applied)
-            };
-            let (existed, receipt_id, sweep_key) = outcome;
+            let outcome = server
+                .vault
+                .delete_entity_with_reason(&id, reason)
+                .map_err(failed)?;
+            let (existed, receipt_id, sweep_key) =
+                (outcome.existed, outcome.receipt_id, outcome.sweep_key);
+            let state = oneiron::memory::DeleteRequestState::Applied;
 
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),

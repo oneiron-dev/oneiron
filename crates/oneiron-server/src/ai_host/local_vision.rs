@@ -36,6 +36,9 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
+use crate::decision_verdict::model_call_context;
+use crate::models::CallDeadline;
+
 use super::AiHandle;
 
 /// The role whose seat answers.
@@ -121,7 +124,10 @@ impl LocalVisionModel {
             // names, as System One's state holds its asset's.
             let reference = format!("image:{}", image.name);
             state[image.name.as_str()] = json!(reference);
-            content.push(ContentPart::Text { text: reference });
+            content.push(ContentPart::Text {
+                text: reference,
+                signature: None,
+            });
             content.push(ContentPart::Image {
                 media_type: fitted.media_type.clone(),
                 image: ImageContent::Base64 {
@@ -132,15 +138,19 @@ impl LocalVisionModel {
         // The question's criteria triple, as the rubric its contract is
         // judged by (FIX 2181).
         if let Some(rubric) = QuestionCriteria::rubric_in(call.state, &call.question.contract) {
-            content.push(ContentPart::Text { text: rubric });
+            content.push(ContentPart::Text {
+                text: rubric,
+                signature: None,
+            });
         }
         content.push(ContentPart::Text {
-            text: json!({"question": call.question.text, "state": state}).to_string(),
+            text: json!({"question": call.question_text(), "state": state}).to_string(),
+            signature: None,
         });
         let purpose = CallPurpose::Other {
             name: PURPOSE.to_owned(),
         };
-        Ok(LlmRequest {
+        let mut request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -151,6 +161,7 @@ impl LocalVisionModel {
                 response_format: ResponseFormat::Json { schema },
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![LlmMessage {
                 role: LlmMessageRole::User,
@@ -160,7 +171,11 @@ impl LocalVisionModel {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
             host_segments: None,
-        })
+        };
+        if let Some(labels) = call.labels {
+            labels.bind(&mut request);
+        }
+        Ok(request)
     }
 }
 
@@ -217,21 +232,48 @@ impl DecisionModel for LocalVisionModel {
             Some(run) => run.sourced(Some(call.evidence.to_vec())),
             None => self.run.sourced(Some(call.evidence.to_vec())),
         };
+        let caller = model_call_context();
+        let no_record_at_arrival = caller.as_ref().is_some_and(|caller| {
+            self.vault
+                .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
+        });
+        let record_request = admitted.request.clone();
         // Cooling waits also keep the vault's limit; sends keep the full work time.
+        // Retain the actual answering binding through the same rung/fallback traversal.
         let wait_budget = admitted.ladder.cooling_wait_budget(time_left);
         let response = self.runtime.block_on(async {
             tokio::time::timeout(
                 time_left,
-                admitted.ladder.generate_within(
+                admitted.ladder.generate_recorded_by(
                     &run,
                     admitted.request,
                     None,
                     &|| true,
-                    wait_budget,
+                    CallDeadline::waits_within(wait_budget),
                 ),
             )
             .await
             .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+        });
+        let response = response.map(|(response, binding)| {
+            if let Some(caller) = caller {
+                let no_record = no_record_at_arrival
+                    || self.vault.model_call_keeps_no_record_for(
+                        caller.session.as_deref(),
+                        Some(caller.principal),
+                    );
+                let evidence = run.initiated_by(Some(caller.principal));
+                crate::api::record_raw_response(
+                    &self.vault,
+                    &admitted.ladder,
+                    &evidence,
+                    &record_request,
+                    &response,
+                    Some(&binding),
+                    no_record,
+                );
+            }
+            response
         });
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(
             response
@@ -246,7 +288,7 @@ impl DecisionModel for LocalVisionModel {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect::<String>();

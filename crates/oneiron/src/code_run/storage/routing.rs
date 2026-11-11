@@ -1,7 +1,5 @@
 //! Where one run's reads and writes land: the canonical vault or a bound off-record session.
 
-use std::borrow::Cow;
-
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::{MessageResultAttachment, WitnessAssertions, WitnessReceipt};
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
@@ -16,10 +14,8 @@ use super::super::replay::{
 use super::super::support::invalid_code_run_replay;
 use super::records::{
     RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output_sourced,
-    load_whole_body, read_body_row_range, replay_generation_matches,
+    load_whole_body, read_body_row_range,
 };
-use super::response_erase::fence_replay_in_txn;
-use super::response_owners::stamp_response_owner_in_txn;
 use super::speech_identity::{
     ResultSpeech, canonical_witness_executor_turn_sourced, executor_speech_message_id_for_run,
     executor_speech_turn_id,
@@ -30,15 +26,16 @@ use crate::secret_rotation::ArtifactTaintState;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
+mod output_progress;
 mod replay;
 mod type_feedback;
 
 pub(crate) use self::type_feedback::{FeedbackRoute, SessionInstanceBind};
 
 #[cfg(test)]
-use super::records::{CodeRunModelHealCount, MODEL_HEAL_COUNTS};
+use super::records::CodeRunModelHealCount;
 #[cfg(test)]
-use crate::Error;
+use super::session_heal_count::session_model_heal_count;
 
 /// The session half of an executor binding (ONE-1729/P4b).
 ///
@@ -132,16 +129,17 @@ impl SessionBinding<'_> {
         limit: usize,
         reader: ScopedReadActorKey,
         claims: ClaimReadStatus,
+        filter: Option<&crate::gate::RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
         self.answered(|| {
             self.session
                 .read_context(&self.route, reader)?
-                .search_text(query, limit, claims)
+                .search_text(query, limit, claims, filter)
         })
     }
 
     fn get_replay_record(&self, run_id: &EntityId) -> Result<Option<CodeRunReplayRecord>> {
-        self.answered(|| self.session.side_table_get(&REPLAY_RECORDS, run_id))
+        self.composed_replay_record(run_id)
     }
 
     /// Compare-and-set against the SAME composed view it will update, in the
@@ -152,7 +150,6 @@ impl SessionBinding<'_> {
     /// `expected` is the replay record's own generation protocol, a separate
     /// concern from the mode-flip route: the number says "no one else
     /// appended", the route says "the room is still the room you bound".
-    #[cfg(test)]
     fn put_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
@@ -177,60 +174,17 @@ impl SessionBinding<'_> {
         Ok(next_generation)
     }
 
-    /// [`Self::put_replay_record_if_generation_with_heal`] with no heal, as
-    /// `actor`'s run `run`. On an on-record stretch the record lands in base,
-    /// so the same transaction fences it and stamps its owner there, as the
-    /// vault's put does (FIX 5718, 7429): an erase of `actor` finds the run
-    /// by its owner row, and a write after that erase stays erased. An
-    /// overlay row stamps its owner in the overlay, in the same writer, so
-    /// the room's waits know whose run it is (FIX 6586).
-    pub(super) fn put_owned_replay_record_if_generation(
-        &self,
-        record: &CodeRunReplayRecord,
-        expected: Option<CodeRunReplayGeneration>,
-        run: EntityId,
-        actor: EntityId,
-    ) -> Result<CodeRunReplayGeneration> {
-        use crate::side_table::RoutedDbs;
-        REPLAY_RECORDS.encode_value(record)?;
-        let next_generation = record.generation()?;
-        self.answered(|| {
-            self.session
-                .routed_side_txn(&self.route, |wtxn, read, write| {
-                    let current = REPLAY_RECORDS.get(&read, wtxn, &record.run_id)?;
-                    replay_generation_matches(current.as_ref(), expected)?;
-                    match write {
-                        RoutedDbs::Base(vault) => {
-                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
-                            let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
-                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)
-                        }
-                        RoutedDbs::Session(_) => {
-                            stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
-                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)
-                        }
-                    }
-                })
-        })?;
-        Ok(next_generation)
-    }
-
+    /// The run's tally of `model` as its session reads it: the production
+    /// session read (FIX 4415), answered as the run's other calls are.
     #[cfg(test)]
     fn model_heal_count(&self, model: &ModelId) -> Result<CodeRunModelHealCount> {
-        let (base, overlay) = self.answered(|| {
-            self.session
-                .side_table_counter_components(&MODEL_HEAL_COUNTS, &model.as_str().to_owned())
-        })?;
-        let base = base.map_or(0, |count| count.0);
-        let overlay = overlay.map_or(0, |count| count.0);
-        let healed_turns = base
-            .checked_add(overlay)
-            .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
+        let count = self.answered(|| session_model_heal_count(&self.session, model))?;
         Ok(CodeRunModelHealCount {
-            model_id: model.as_str().to_owned(),
-            healed_turns,
+            model_id: count.model_id,
+            healed_turns: count.healed_turns,
         })
     }
+
     /// [`Vault::inherit_code_run_result_marks`] on the room's route: the
     /// marks of every occurrence in `from` join those of `owner`'s
     /// occurrence of `output`.
@@ -291,7 +245,13 @@ impl SessionBinding<'_> {
             self.session.read_composed(|view, txn| {
                 if let Some(owner) = owner {
                     let owned = super::response_owners::response_owner_in_txn(view, txn, &owner)?;
-                    if owned.is_some_and(|o| o.erased()) {
+                    // FIX 7366: a room's owner row the vault's erase did not
+                    // reach (a sealed overlay takes no sweep) reads erased
+                    // once the actor it names is gone in the vault.
+                    let gone = owned.as_ref().and_then(|o| o.actor()).is_some_and(|actor| {
+                        super::replay_capsule::actor_gone_in_store(view.read().base(), txn, &actor)
+                    });
+                    if owned.as_ref().is_some_and(|o| o.erased()) || gone {
                         return Ok((
                             ArtifactTaintState::TaintedLive,
                             Some(super::replay_bodies::RESPONSE_ERASED.to_owned()),
@@ -433,16 +393,27 @@ impl<'a> ExecutorStorage<'a> {
         limit: usize,
         reader: ScopedReadActorKey,
         claims: ClaimReadStatus,
+        filter: Option<&crate::gate::RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
         match self {
-            Self::Canonical(vault) => Ok(vault
-                .scoped_read(reader)
-                .with_claim_status(claims)
-                .filter_scored_entities(vault.search_text(query, limit)?)?
-                .value),
+            Self::Canonical(vault) => {
+                let lane = vault
+                    .scoped_read(reader)
+                    .with_claim_status(claims)
+                    .with_read_filter(filter);
+                // A caller filter is met inside the scan, before the rank and
+                // the cut (FIX 3977).
+                let hits = match filter {
+                    Some(_) => {
+                        vault.search_text_scoped_observed(&lane, query, limit, |_, _| {}, None)?
+                    }
+                    None => vault.search_text(query, limit)?,
+                };
+                Ok(lane.filter_scored_entities(hits)?.value)
+            }
             // A room's narrowed search reads the room's view on the key's
             // lane, each posting admitted in the scan (WILL L11-01).
-            Self::Session(binding) => binding.search_text_as(query, limit, reader, claims),
+            Self::Session(binding) => binding.search_text_as(query, limit, reader, claims, filter),
         }
     }
 
@@ -613,6 +584,16 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// Where `witness_executor_message` lands the run's speech: on
+    /// canonical storage the run's own derived conversation, on session
+    /// storage the session's room. Its door admits the speech by it.
+    pub(crate) const fn speech_destination(&self) -> crate::code_run::RunSpeechDestination {
+        match self {
+            Self::Canonical(_) => crate::code_run::RunSpeechDestination::OwnRunConversation,
+            Self::Session(_) => crate::code_run::RunSpeechDestination::SessionRoom,
+        }
+    }
+
     /// `request` is the model request the run's executor bound before the
     /// call, host-owned; the report keeps it for its code fix (FIX 2343), and
     /// its run's read worlds as `read_worlds` seals its ledger (FIX 6130).
@@ -670,7 +651,7 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    #[cfg(test)]
+    /// Compare-and-puts a replay append on the run's route, with no heal tally.
     pub(crate) fn put_code_run_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,

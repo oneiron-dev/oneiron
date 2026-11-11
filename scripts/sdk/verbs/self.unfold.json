@@ -1,0 +1,17 @@
+{
+  "name": "self.unfold",
+  "input": "crate::compaction::FoldUnfoldInput",
+  "output": "crate::compaction::FoldReply<crate::compaction::FoldUnfolded>",
+  "scope": "Write",
+  "context": "run",
+  "effect": "Fold",
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::code_run::fold_api::FoldUnfoldRequest",
+    "description": "Appends a fold of the attached run after its current tail, without replacing the earlier stub.",
+    "host_door_caller": true,
+    "host_door_session": false,
+    "host_door_lists": true
+  },
+  "run_surface": "live"
+}

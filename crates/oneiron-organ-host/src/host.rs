@@ -26,6 +26,7 @@ use crate::slot::{OrganStatus, Slot};
 use crate::spec::{HostConfig, LentInput, OrganCall, OrganInput, OrganSpec, SightedInput};
 
 mod outputs;
+pub(crate) mod producer;
 mod sized;
 
 use outputs::{Called, Replied, finish};
@@ -74,7 +75,7 @@ pub struct OrganHost {
     /// are retired (no call can start a process in them) and no process of
     /// theirs runs.
     retired: Mutex<Vec<Arc<Slot>>>,
-    revoked: Revocations,
+    revoked: Arc<Revocations>,
     /// The machine's memory floor organs' own buffers lease from
     /// (`memory.grow`, FIX 7654); none on a host built by [`Self::new`].
     floor: Option<SharedFloor>,
@@ -91,7 +92,7 @@ impl OrganHost {
             config,
             slots: Mutex::new(HashMap::new()),
             retired: Mutex::new(Vec::new()),
-            revoked: Revocations::default(),
+            revoked: Arc::new(Revocations::default()),
             floor: None,
         }
     }
@@ -432,6 +433,32 @@ impl OrganHost {
             .map_or(begun + call.deadline.min(longest), |until| {
                 until.min(begun + longest)
             });
+        let slot = self.checked_slot(&call)?;
+        let booking = how.booking(&slot.spec);
+        // The call's room: its booking, grown as its answers and outputs
+        // need (FIX 5284), and as the organ's own buffers lease the machine's
+        // floor (FIX 7654).
+        let permit = self.budget.admit(call.class, 1, booking, deadline)?;
+        let room = Arc::new(CallRoom::new(permit, self.floor.clone()));
+        self.run_in_room(
+            vault,
+            call,
+            lent,
+            asks,
+            how,
+            slot,
+            room,
+            begun,
+            deadline,
+            fixed_deadline,
+        )
+        .map(|(outcome, _)| outcome)
+    }
+
+    fn checked_slot(&self, call: &OrganCall) -> Result<Arc<Slot>, HostError> {
+        if in_handler() {
+            return Err(HostError::Reentrant);
+        }
         self.unload_idle();
         if self.grant_revoked(&call.grant) {
             return Err(HostError::Revoked);
@@ -452,12 +479,27 @@ impl OrganHost {
         {
             return Err(HostError::KindNotGranted(body.kind.clone()));
         }
-        let booking = how.booking(&slot.spec);
-        // The call's room: its booking, grown as its answers and outputs
-        // need (FIX 5284), and as the organ's own buffers lease the machine's
-        // floor (FIX 7654).
-        let permit = self.budget.admit(call.class, 1, booking, deadline)?;
-        let room = CallRoom::new(permit, self.floor.clone());
+        Ok(slot)
+    }
+
+    fn run_in_room(
+        &self,
+        vault: &Vault,
+        call: OrganCall,
+        lent: Vec<Lent>,
+        asks: &AskHandlers<'_>,
+        mut how: Run<'_>,
+        slot: Arc<Slot>,
+        room: Arc<CallRoom>,
+        begun: Instant,
+        deadline: Instant,
+        fixed_deadline: bool,
+    ) -> Result<(OrganOutcome, Instant), HostError> {
+        let unknown = || HostError::UnknownVerb {
+            organ: call.organ.clone(),
+            verb: call.verb.clone(),
+            schema: call.schema,
+        };
         let mut inputs = call
             .inputs
             .iter()
@@ -555,7 +597,12 @@ impl OrganHost {
             room: &room,
             revoked: &revoked,
         };
-        finish(&called, reply)
+        let waited = room.waits().waited();
+        let outcome = finish(&called, reply)?;
+        let final_deadline = moved
+            .checked_add(room.waits().waited().saturating_sub(waited))
+            .unwrap_or(moved);
+        Ok((outcome, final_deadline))
     }
 
     fn exchange(

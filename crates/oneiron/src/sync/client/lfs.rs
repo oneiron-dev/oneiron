@@ -99,7 +99,7 @@ impl SyncClient {
         }
         match transfer.accept_reply(&self.vault, reply, crate::unix_seconds_now()) {
             Ok(Some(next)) => {
-                let frame = transport::encode_lfs_chunk_sync(&next).into_result()?;
+                let frame = transport::encode_lfs_chunk_sync(&next).into_own_frame()?;
                 self.lfs_download = Some(transfer);
                 Ok(vec![frame])
             }
@@ -112,21 +112,25 @@ impl SyncClient {
     }
 
     /// A failed transfer ends as a cancelled one does: the next in line
-    /// starts. With none waiting, the failure is the reply's error.
+    /// starts. With none waiting, the failure is the reply's error: this
+    /// vault's own fault as storage, any other the reply refused (FIX 22153).
     fn lfs_download_failed(&mut self, error: crate::Error) -> Result<Vec<Vec<u8>>, TransportError> {
         match self.start_next_lfs_download()? {
             Some(frame) => {
                 tracing::warn!(%error, "lfs download failed; the next in line starts");
                 Ok(vec![frame])
             }
-            None => Err(storage(error)),
+            None => Err(TransportError::from_applied(
+                &error,
+                "lfs chunk reply refused",
+            )),
         }
     }
 
     fn start_lfs_download(&mut self, id: u64, oid: LfsOid) -> Result<Vec<u8>, TransportError> {
         let transfer = ChunkDownload::new(oid).map_err(storage)?.numbered(id);
         let frame = transport::encode_lfs_chunk_sync(&transfer.initial_request().map_err(storage)?)
-            .into_result()?;
+            .into_own_frame()?;
         self.lfs_download = Some(transfer);
         Ok(frame)
     }

@@ -37,7 +37,20 @@ mod transport;
 mod updates;
 mod wire;
 
+pub(super) use session_ops::{
+    AppendSourceCheck, AppendSourceFuture, ReleasedAppendFault,
+    append_source_released as session_append_source_released,
+};
+pub(super) use session_ops::{
+    ControlSourceFuture, ReleasedControlFault,
+    control_source_released as session_control_source_released,
+};
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
+pub(super) use session_ops::{
+    PrepareSourceCheck, PrepareSourceFuture, PrepareSourceMiss, ReleasedPrepareFault,
+    prepare_source_released as session_prepare_source_released,
+};
+pub(super) use session_ops::{ReleasedOpFault, send_released as session_send_released};
 // FIX 14975: the drafter evaluator's op, and the chat body split it sends.
 pub(super) use evaluator_ops::{
     advertised as evaluator_advertised, evaluate as evaluator_generate,
@@ -47,6 +60,10 @@ pub(super) use wire::split_request;
 // Codec v1.2's snapshot ops (R3), for the session coordinator's park and
 // restore paths.
 pub(super) use buffer::SnapshotRegion;
+pub(super) use session_ops::{
+    SnapshotImportFault, SnapshotSourceFuture, SnapshotSourceMiss,
+    import_released as session_import_released,
+};
 pub(super) use session_ops::{export as session_export, import as session_import};
 // The launch tie, shared with the HTTP routes (FIX 9296).
 pub(super) use super::exl3_evidence::Tie;
@@ -324,6 +341,7 @@ async fn begin(
     stream: bool,
     segments: Option<&SegmentManifest>,
     context: WorkContext,
+    dispatch_lease: &BudgetLease,
 ) -> Result<Begun, OpenAiCompatTransportError> {
     // The ticket precedes demand; an early exit cancels it without touching
     // the worker. Foreground arrival yields only update-capable background
@@ -382,18 +400,18 @@ async fn begin(
     let schedule = work.schedule(grant.as_ref());
     let (conversation, params) = wire::split_request(body);
     let session = match segments {
-        Some(manifest) => {
-            worker_host::open_turn(
-                route,
-                &launch,
-                &epoch,
-                lease.observed(),
-                manifest,
-                &conversation,
-                &params,
-            )
-            .await
-        }
+        Some(manifest) => worker_host::open_turn(
+            route,
+            &launch,
+            &epoch,
+            lease.observed(),
+            manifest,
+            &conversation,
+            &params,
+            dispatch_lease,
+        )
+        .await
+        .map_err(OpenAiCompatTransportError::DispatchRelease)?,
         None => None,
     };
     let plain = session.is_some().then(|| params.clone());
@@ -409,6 +427,7 @@ async fn begin(
         session,
         Some(&schedule),
         Some(&route.worker),
+        Some(dispatch_lease),
     )
     .await;
     let refused = matches!(
@@ -431,6 +450,7 @@ async fn begin(
             None,
             Some(&schedule),
             Some(&route.worker),
+            Some(dispatch_lease),
         )
         .await;
     }
@@ -476,6 +496,7 @@ async fn begin(
             }
         }
         Err(Start::NotSent(error) | Start::Cut(error)) => Err(error),
+        Err(Start::Release(error)) => Err(OpenAiCompatTransportError::DispatchRelease(error)),
     }
 }
 
@@ -499,7 +520,8 @@ async fn execute(
     // the wait below surfaces at the next wire event.
     let device_cancel = context.cancel.shared();
     let device_cancel_wake = context.cancel.shared_notify();
-    let mut sent = match begin(&route, &body, false, segments.as_deref(), context).await? {
+    let manifest = segments.as_deref();
+    let mut sent = match begin(&route, &body, false, manifest, context, lease).await? {
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
     };
@@ -816,11 +838,12 @@ pub(super) async fn qualify(
         None,
         None,
         None,
+        None,
     )
     .await
     .map_err(|start| match start {
         Start::Refused(_) => WorkerFailure::InvalidReply,
-        Start::NotSent(_) | Start::Cut(_) => WorkerFailure::Unreachable,
+        Start::NotSent(_) | Start::Cut(_) | Start::Release(_) => WorkerFailure::Unreachable,
     })?;
     let last = loop {
         match call.next().await {
@@ -886,7 +909,8 @@ impl Streaming {
                     .get("model")
                     .and_then(JsonValue::as_str)
                     .map(str::to_owned);
-                match begin(&route, &body, true, segments.as_deref(), context).await {
+                let manifest = segments.as_deref();
+                match begin(&route, &body, true, manifest, context, &lease).await {
                     Ok(Begun::Sent(sent)) => {
                         // One physical request, observed from its send (FIX 9297).
                         let publisher = InferencePublisher::begin(&lease);

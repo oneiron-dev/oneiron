@@ -2,8 +2,9 @@
 
 use super::super::{
     BudgetDenied, BudgetGuard, CallClass, FatalLlmError, LlmBackend, LlmError, LlmRequest,
-    LlmResponse,
+    LlmResponse, LlmUsage,
 };
+use super::source::StepSource;
 use super::step_claim::{
     decode_step_claim_value, load_step_response_in_txn, log_terminal_step, step_index_lookup_in_txn,
 };
@@ -14,7 +15,7 @@ use super::trap::{open_trap_in_txn, trap_park_owner};
 use super::trap_binding::TrapBindingScope;
 use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
-    DurableStepResult, ReplyCheck, StepOutcome, StepProgression,
+    DurableStepResult, ReplyCheck, StepEffectBinding, StepOutcome, StepProgression,
 };
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, StepCalls, current_legibility};
 use crate::error::Error;
@@ -136,8 +137,33 @@ pub async fn call_as_step_checked(
         &super::super::FallbackRegistry::standard(),
         Some(check),
         DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        None,
     )
     .await
+}
+
+/// A checked step with the actual usage of a fresh response that could not
+/// be saved. Errors and saved-response recovery keep their ordinary meaning.
+pub(crate) async fn call_as_step_checked_with_unsaved_usage(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    check: &ReplyCheck,
+) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>) {
+    let mut unsaved_usage = None;
+    let outcome = durable_step(
+        ctx,
+        backend,
+        guard,
+        request,
+        &super::super::FallbackRegistry::standard(),
+        Some(check),
+        DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        Some(&mut unsaved_usage),
+    )
+    .await;
+    (outcome, unsaved_usage)
 }
 
 /// Durable step with an explicitly owned deterministic runner registry.
@@ -169,7 +195,17 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
     fallbacks: &super::super::FallbackRegistry,
     max_retries: usize,
 ) -> DurableStepResult<StepOutcome> {
-    durable_step(ctx, backend, guard, request, fallbacks, None, max_retries).await
+    durable_step(
+        ctx,
+        backend,
+        guard,
+        request,
+        fallbacks,
+        None,
+        max_retries,
+        None,
+    )
+    .await
 }
 
 async fn durable_step(
@@ -180,6 +216,7 @@ async fn durable_step(
     fallbacks: &super::super::FallbackRegistry,
     check: Option<&ReplyCheck>,
     max_retries: usize,
+    mut unsaved_usage: Option<&mut Option<LlmUsage>>,
 ) -> DurableStepResult<StepOutcome> {
     let step_hash = request.canonical_hash()?;
 
@@ -188,7 +225,7 @@ async fn durable_step(
         recovery_in_txn(ctx.vault, &txn, ctx.attempt_id, &step_hash, &request)?
     };
     if let Some(recovery) = recovery {
-        return recover_step(ctx, &step_hash, &request, recovery, Some(guard));
+        return recover_step(ctx, &request, recovery, Some(guard));
     }
 
     // Graceful wrap (ONE-1305): once the finalize window opens, NEW steps
@@ -200,6 +237,8 @@ async fn durable_step(
         return Err(DurableStepError::FinalizeRefused);
     }
 
+    let source = StepSource::of(ctx);
+
     // An owner already gone keeps the row's erased skeleton (FIX 6226):
     // the step is over before it is admitted, asked or paid for.
     if step_state_write_owned(
@@ -208,6 +247,7 @@ async fn durable_step(
         &step_hash,
         StepProgression::Started,
         StepStateOwners::of(ctx),
+        None,
         None,
         ctx.now_ms,
     )? == StepStateDisposition::Erased
@@ -420,7 +460,11 @@ async fn durable_step(
     // a no-op once the guard is disarmed.
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
 
-    let payload = serde_json::to_vec(&response)?;
+    let payload = serde_json::to_vec(&response).inspect_err(|_| {
+        if let Some(usage) = unsaved_usage.as_deref_mut() {
+            *usage = Some(response.usage.clone());
+        }
+    })?;
     // A late answer for an owner its erase took is never kept (FIX 6226):
     // the row keeps its erased skeleton, nothing is filed, and the spend
     // settles as `lease_settle` drops; the call closes after it.
@@ -431,8 +475,14 @@ async fn durable_step(
         StepProgression::ResponseReceived,
         StepStateOwners::of(ctx),
         Some(&payload),
+        Some(&source),
         ctx.now_ms,
-    )? == StepStateDisposition::Erased
+    )
+    .inspect_err(|_| {
+        if let Some(usage) = unsaved_usage.as_deref_mut() {
+            *usage = Some(response.usage.clone());
+        }
+    })? == StepStateDisposition::Erased
     {
         return Err(erased_step());
     }
@@ -442,7 +492,12 @@ async fn durable_step(
     let failure_policy = failure_policy(ctx.vault, &response)?;
     let Some(claim_id) = log_terminal_step(
         ctx,
-        &step_hash,
+        StepEffectBinding {
+            attempt_id: ctx.attempt_id,
+            step_hash,
+        },
+        StepStateOwners::of(ctx),
+        &source,
         &request,
         &response,
         &payload,
@@ -467,6 +522,10 @@ async fn durable_step(
     ctx.vault.capture_tier1_executed_step(&witness)?;
 
     Ok(StepOutcome::Finished {
+        binding: StepEffectBinding {
+            attempt_id: ctx.attempt_id,
+            step_hash,
+        },
         response,
         memoized: false,
         legibility: step_legibility(ctx, guard),

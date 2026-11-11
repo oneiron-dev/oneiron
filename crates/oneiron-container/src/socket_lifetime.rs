@@ -14,6 +14,10 @@
 //! wherever it sits. A scan that cannot read a table, or that sees a table
 //! change under it or a task start during it, is incomplete: it is an
 //! error, never an empty inventory.
+//!
+//! A socket that waits in a native Unix socket's queue is in no table. The
+//! launcher holds it as a transfer while it waits, and adds every transfer
+//! hold to each complete inventory (FIX 6185).
 
 use std::collections::BTreeSet;
 use std::io;

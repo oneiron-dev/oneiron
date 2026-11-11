@@ -22,7 +22,8 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::Duration;
 
 use oneiron::code_sandbox::SandboxGuestTier;
-use oneiron::code_sandbox::microvm::{MicroVmBackend, select_backend_for_session};
+use oneiron::code_sandbox::microvm::{MicroVmBackend, SandboxBackends, select_backend_for_session};
+use oneiron::host_net_floor::ProcessDescriptorFloor;
 use oneiron::merge_queue::{
     QueueCheckEnvironment, QueueCheckExecution, QueueCheckHold, QueueCheckHoldReason,
     QueueCheckHost, QueueCheckInputs, QueueCheckInvocation, QueueCheckNeed, QueueCheckRun,
@@ -30,7 +31,7 @@ use oneiron::merge_queue::{
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, GuestSeccomp, GuestSpec, HostNetFloor, HttpRequest, HttpResponse,
-    ImageRef, SessionManifest, UnmeteredFloor,
+    ImageRef, SessionManifest,
 };
 use serde::{Deserialize, Serialize};
 
@@ -52,15 +53,19 @@ const STOP_POLL: Duration = Duration::from_millis(500);
 /// One check's executor, chosen by the operator's setting.
 pub(super) struct QueueCheckExecutor {
     config: MergeQueueCheckerConfig,
+    /// The isolating backends the checked vault carries (F1-6), which the
+    /// isolated executor selects its backend from.
+    backends: Arc<dyn SandboxBackends>,
     backend: Option<Box<dyn MicroVmBackend>>,
     /// Where each started guest is recorded until it ends (FIX 7233).
     guests: Option<PathBuf>,
 }
 
 impl QueueCheckExecutor {
-    pub(super) fn new(config: MergeQueueCheckerConfig) -> Self {
+    pub(super) fn new(config: MergeQueueCheckerConfig, backends: Arc<dyn SandboxBackends>) -> Self {
         Self {
             config,
+            backends,
             backend: None,
             guests: None,
         }
@@ -93,17 +98,21 @@ impl QueueCheckExecutor {
                 "the isolated checker needs the image's immutable toolchain identity",
             ));
         }
-        let backend =
-            select_backend_for_session(SandboxGuestTier::Untrusted, runtime.clone(), image)
-                .map_err(|error| {
-                    QueueCheckNeed::new(
-                        &["merge_queue.checker_backend"],
-                        format!(
-                            "no isolated check backend runs on this host ({error}); provision \
+        let backend = select_backend_for_session(
+            &*self.backends,
+            SandboxGuestTier::Untrusted,
+            runtime.clone(),
+            image,
+        )
+        .map_err(|error| {
+            QueueCheckNeed::new(
+                &["merge_queue.checker_backend"],
+                format!(
+                    "no isolated check backend runs on this host ({error}); provision \
                              one, or opt in with [merge_queue].checker_backend = \"host\""
-                        ),
-                    )
-                })?;
+                ),
+            )
+        })?;
         let executor = backend.name().to_owned();
         self.backend = Some(backend);
         Ok(QueueCheckEnvironment {
@@ -713,8 +722,10 @@ impl EgressRelay for QueueCheckRelay {
 
     fn transferred(&self, _target: SocketAddr, _content_hash: [u8; 32], _bytes: u64) {}
 
-    /// Every relay is refused at once, so nothing is charged to a floor.
+    /// Every relay is refused at once, but the guest's socket entries and
+    /// session-local loopback still hold host descriptors and threads: they
+    /// charge the process's descriptor line (FIX 6300).
     fn host_net_floor(&self) -> &dyn HostNetFloor {
-        &UnmeteredFloor
+        &ProcessDescriptorFloor
     }
 }

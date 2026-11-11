@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.runs",
+  "description": "The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first.",
+  "input": "crate::task_verb::sdk::RetrievalRunsRequest",
+  "output": "Vec<crate::task_verb::sdk::RetrievalRunEvidence>",
+  "call": "crate::task_verb::sdk::retrieval_runs_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.runs\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -28,9 +28,9 @@ fn wait_unavailable() -> MemoryError {
 
 impl Memory<'_> {
     /// `vault.code.waits.resolve`: answers one exact sealed code consent
-    /// wait through the unchanged `Vault::settle_code_consent_wait_as`,
-    /// which revalidates the owner in its writer, checks the target, the
-    /// opener's lineage and the owner's word, keeps the first answer, and
+    /// wait through `Vault::settle_code_consent_wait_as`, which revalidates
+    /// the Owner or holder's policy and power in its writer, checks the target,
+    /// the opener's lineage and the person's word, keeps the first answer, and
     /// lets the held effect meet its own current gate once. A later answer
     /// gets the first one back with `already_answered`.
     pub fn code_wait_resolve_as(
@@ -38,12 +38,12 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeWaitResolveRequest,
     ) -> MemoryResult<CodeWaitReceiptView> {
-        self.code_wait_owner(owner)?;
+        self.code_wait_person(owner)?;
         if self.writes_generated() {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 CODE_WAIT_GENERATED_ANSWER,
-                &["Ask the owner to answer through their own client."],
+                &["Ask an eligible person to answer through their own client."],
             ));
         }
         let target = input.target;
@@ -79,7 +79,7 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeWaitReceiptRequest,
     ) -> MemoryResult<Option<CodeWaitReceiptView>> {
-        self.code_wait_owner(owner)?;
+        self.code_wait_person(owner)?;
         match self
             .code_wait_view(owner, input.wait_id)?
             .filter(|view| view.run_id == input.run_id)
@@ -119,7 +119,7 @@ impl Memory<'_> {
 
 /// A 64-character lowercase hex digest a target names, checked against the
 /// stored wait by the engine (CALLS: resolve target).
-fn target_digest(field: &str, hex: &str) -> MemoryResult<[u8; 32]> {
+pub(super) fn target_digest(field: &str, hex: &str) -> MemoryResult<[u8; 32]> {
     blake3::Hash::from_hex(hex)
         .ok()
         .filter(|_| !hex.bytes().any(|byte| byte.is_ascii_uppercase()))
@@ -195,6 +195,8 @@ fn receipt_view(view: CodeConsentWaitView) -> Option<CodeWaitReceiptView> {
                 remembered_grant_ref: view.remembered,
                 decision_ref,
                 answered_at_ms,
+                standing_grant_ref: view.standing_grant_ref,
+                standing_receipt_ref: view.standing_receipt_ref,
             })
         }
         _ => None,
@@ -237,6 +239,7 @@ fn receipt_view(view: CodeConsentWaitView) -> Option<CodeWaitReceiptView> {
             effect_digest: bytes_to_hex_lower(&view.effect_digest),
         },
         state,
+        revision: view.revision,
         verb: view.verb,
         connector: view.connector,
         tool: view.tool,
@@ -252,10 +255,20 @@ fn receipt_view(view: CodeConsentWaitView) -> Option<CodeWaitReceiptView> {
         hold_reasons: view.hold_reasons,
         ask_ref: view.ask,
         allowed_answers: view.options.into_iter().map(wire_choice).collect(),
+        standing_offer: view.standing_offer,
         answer,
         settlement,
         consumption,
         already_answered: view.already_answered,
+        rebind_proposal: view
+            .rebind_proposal
+            .as_ref()
+            .map(super::rebind::prepared_view),
+        rebinds: view
+            .rebinds
+            .iter()
+            .map(|rebind| super::rebind::rebind_view(rebind, false))
+            .collect(),
     })
 }
 

@@ -53,13 +53,14 @@ fn outside(
         if run.is_empty() {
             continue;
         }
-        if super::classify(run).is_some() && hidden_member(run) {
+        if super::classify_with_pacing(run, &budget.pacing).is_some() && hidden_member(run, budget)
+        {
             each(OUTSIDE, run, budget)?;
         }
         for (local, head) in run.windows(LOCAL.len()).enumerate() {
             if head == LOCAL
                 && let Some(data) = local_entry(&run[local..], budget)?
-                && hidden_member(&data)
+                && hidden_member(&data, budget)
             {
                 each(OUTSIDE, &data, budget)?;
             }

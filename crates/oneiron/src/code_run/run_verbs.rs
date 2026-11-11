@@ -1,5 +1,5 @@
 //! The inputs and outputs of the verb-table rows a code run answers itself
-//! (`context: "run"` in `scripts/sdk/agent-verbs.json`).
+//! (`context: "run"` in `scripts/sdk/verbs/`).
 //!
 //! Each input is the object code mode's `vault.<row>(input)` takes. The guest
 //! bridge decodes it into the run's own typed `self.*` call, so a row keeps the
@@ -28,10 +28,14 @@ pub struct MemorySearchInput {
     pub query: String,
     #[schemars(range(max = "u32::MAX"))]
     pub limit: Option<u32>,
+    /// The caller's retrieval filter (FIX 3977): it only narrows what the
+    /// run's reader key admits.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 /// `vault.claims.put`: one claim candidate through the run's gate.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MemoryClaimInput {
     /// The claim's entity id, hex.
@@ -51,7 +55,7 @@ pub struct MemoryClaimInput {
 }
 
 /// A closed `[start, end]` span in unix seconds.
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryTimeRange {
     #[schemars(range(max = "JS_SAFE_INTEGER"))]
@@ -231,7 +235,7 @@ pub struct AgentSpawnInput {
 
 /// One spawn field as the parent sets it (ARCH-0079 #seed-pin): a seed is
 /// where the planner starts, weighted in runs; a pin is never overridden.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum SpawnKnob<T> {
     Seed { value: T, weight_runs: f64 },
@@ -266,7 +270,7 @@ pub enum SpawnCare {
 }
 
 /// A coordination pattern by its word.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpawnPattern {
     Solo,
@@ -466,13 +470,15 @@ pub struct TaskWaitSetRequest {
     pub step_key: String,
 }
 
-/// `tasks.wait`'s input: one wait over reader children the run spawned, or
-/// one on a world-privacy request the run's actor opened (FIX 4706).
+/// `tasks.wait`'s input: one wait over reader children the run spawned, one
+/// on a world-privacy request the run's actor opened (FIX 4706), or one over
+/// AGENT children the run spawned (slice 6.5b).
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum TaskWaitInput {
     Readers(TaskWaitSetRequest),
     WorldPrivacy(TaskWaitWorldRequest),
+    Agents(TaskWaitAgentsRequest),
 }
 
 /// `tasks.wait({request, step_key})`: a wait on one world-privacy request
@@ -488,13 +494,50 @@ pub struct TaskWaitWorldRequest {
     pub step_key: String,
 }
 
-/// What `tasks.wait` answers: the reduction over reader children, or a
-/// world-privacy request's terminal state (`WorldPrivacyReady`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// `tasks.wait({agents, all?, n_of?, step_key})`: one wait over AGENT
+/// children the run spawned with `self.agents.spawn` (slice 6.5b), answered
+/// once all of them have ended, or `n_of` of them have completed. It names
+/// no deadline: a child ends by its own run, its limits, a cancel or its
+/// spawner's kill, and each of those answers the wait.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWaitAgentsRequest {
+    /// The children's attempt ids, hex, as `self.agents.spawn` answered them.
+    pub agents: Vec<String>,
+    /// Wait for every child to end; the default.
+    pub all: Option<bool>,
+    /// Wait for this many children to complete.
+    #[schemars(range(min = 1, max = "u32::MAX"))]
+    pub n_of: Option<u32>,
+    /// The wait's key in the run: the same key answers as the same wait.
+    pub step_key: String,
+}
+
+impl TaskWaitAgentsRequest {
+    /// The wait call the run's dispatcher takes.
+    pub(crate) fn into_call(self) -> crate::code_run::TaskWaitSetCall {
+        crate::code_run::TaskWaitSetCall {
+            tasks: Vec::new(),
+            all: self.all,
+            n_of: self.n_of,
+            until: None,
+            step_key: self.step_key,
+            request: None,
+            agents: Some(self.agents),
+        }
+    }
+}
+
+/// What `tasks.wait` answers: the reduction over reader children, a
+/// world-privacy request's terminal state (`WorldPrivacyReady`), or the
+/// reduction over AGENT children. The host door's caller reads it back, so
+/// it decodes too.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TaskWaitOutput {
     Readers(crate::code_run::TaskWaitSetResult),
     WorldPrivacy(crate::task_verb::TaskAskWait),
+    Agents(crate::agent_dispatch::AgentWaitSetResult),
 }
 
 /// `vault.search`'s output: the hits, best first, and in an off-record room
@@ -552,7 +595,8 @@ pub struct ReportBlockedOutput {
 }
 
 /// `self.agents.spawn`'s output: the queued attempt, the widening its
-/// spawn proposed instead, or an erased target that launched nothing.
+/// spawn proposed instead, or an erase of its target or its asker that
+/// launched nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AgentSpawnOutput {
@@ -580,6 +624,9 @@ pub enum AgentSpawnOutput {
     /// An erase took the AGENT_DEF the planned spawn's plan seats: nothing
     /// launched (Engine 10-22).
     TargetErased { kind: AgentSpawnKind },
+    /// An erase of its asker took the planned spawn's intent: nothing
+    /// launched (FIX 9183).
+    AskerErased { kind: AgentSpawnKind },
 }
 
 /// The `kind` every `self.agents.spawn` output carries.
@@ -587,6 +634,37 @@ pub enum AgentSpawnOutput {
 #[serde(rename_all = "snake_case")]
 pub enum AgentSpawnKind {
     AgentSpawn,
+}
+
+/// The one projection of a spawn's answer onto `self.agents.spawn`'s
+/// output, for the guest's reply and the host door alike (FIX 9183).
+impl From<crate::code_run::SelfAgentSpawnResult> for AgentSpawnOutput {
+    fn from(result: crate::code_run::SelfAgentSpawnResult) -> Self {
+        use crate::code_run::SelfAgentSpawnResult;
+        let kind = AgentSpawnKind::AgentSpawn;
+        match result {
+            SelfAgentSpawnResult::Queued {
+                attempt_ref,
+                launch,
+                unapplied,
+            } => Self::Queued {
+                kind,
+                attempt: crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
+                launch,
+                unapplied,
+            },
+            SelfAgentSpawnResult::ProposedWiden {
+                proposal_ref,
+                unapplied,
+            } => Self::ProposedWiden {
+                kind,
+                proposal: proposal_ref,
+                unapplied,
+            },
+            SelfAgentSpawnResult::TargetErased => Self::TargetErased { kind },
+            SelfAgentSpawnResult::AskerErased => Self::AskerErased { kind },
+        }
+    }
 }
 
 /// `self.leader.pattern`'s output: the pattern loaded, as the leader reads

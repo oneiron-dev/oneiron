@@ -355,7 +355,8 @@ fn decode_basis(value: &Value) -> Result<VoiceConsentBasis> {
         }
         _ => return Err(corrupt_voice_row()),
     };
-    basis.validate().map_err(|_| corrupt_voice_row())?;
+    crate::verbs::voice_records::voice_consent_basis_validate(&basis)
+        .map_err(|_| corrupt_voice_row())?;
     Ok(basis)
 }
 

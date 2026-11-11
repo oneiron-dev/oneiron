@@ -114,8 +114,13 @@ pub(crate) fn retire_birth_source_holder_in_txn(
         if header.entity_type != ENTITY_TYPE_ASSET {
             return Err(Error::CorruptedIndex("agent source carrier type"));
         }
-        let source = decode_birth_source(&raw[ENTITY_METADATA_HEADER_LEN..])?
-            .ok_or(Error::CorruptedIndex("agent source carrier body"))?;
+        let source = decode_birth_source(&crate::store::asset_carrier_body_in_txn(
+            store,
+            txn,
+            &id,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )?)?
+        .ok_or(Error::CorruptedIndex("agent source carrier body"))?;
         if source.child()? != *child {
             return Err(Error::CorruptedIndex("agent source carrier holder"));
         }
@@ -139,9 +144,19 @@ pub(crate) fn remove_birth_custody_in_txn(
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("agent source delete header"))?;
-        if header.entity_type == ENTITY_TYPE_ASSET
-            && let Some(source) = decode_birth_source(&raw[ENTITY_METADATA_HEADER_LEN..])?
-        {
+        // A carrier is read for what it holds, from its body file when it
+        // has one (FIX 22091).
+        let carrier = if header.entity_type == ENTITY_TYPE_ASSET {
+            decode_birth_source(&crate::store::asset_carrier_body_in_txn(
+                store,
+                txn,
+                id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?)?
+        } else {
+            None
+        };
+        if let Some(source) = carrier {
             // Direct carrier deletion retires its payload, never its agent row.
             RETIRED.put(store, txn, &source.child()?, &())?;
             super::birth_dependencies::retire_input(write, txn, id)?;

@@ -15,13 +15,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::llm::run_admission::LeaseUnit;
 
 use super::spend_calibration::ExpectedSpend;
-use super::spend_record::{ChildSpend, SCOPE, SpendScope, SpendScopeId, SpendState};
+use super::spend_record::{ChildSpend, SCOPE, SpendRefused, SpendScope, SpendScopeId, SpendState};
 use super::widen_record::invalid;
-use super::{AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent};
+use super::{
+    AgentDispatchInput, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+};
 
 /// A root launch's spend: the root scope the host opened with
 /// [`AgentDispatcher::open_root_spend_scope`]. A child launch never names one;
@@ -115,6 +117,7 @@ pub(super) struct LaunchAdmission {
     pub plan: LaunchPlan,
     pub statement: LaunchStatement,
     reserve: LaunchReserve,
+    ceiling_units: Option<u64>,
 }
 
 enum LaunchReserve {
@@ -133,15 +136,19 @@ impl LaunchAdmission {
     /// Reserves the launch's own scope, keyed by `attempt`, in the launch's
     /// transaction. A carve the cap cannot cover refuses, and the caller's
     /// transaction (with its enqueue) aborts. Returns the scope, if metered.
+    /// A pinned scope, its tree's root, keeps `funding`, the owner's agent
+    /// Grant the launch's work is funded by (FIX 7766); a child scope reads
+    /// its root's instead.
     pub(super) fn reserve_in_txn(
         &self,
         dispatcher: &AgentDispatcher<'_>,
         txn: &mut heed::RwTxn<'_>,
         attempt: AttemptId,
         agent: Option<EntityId>,
+        funding: Option<super::GrantSpendBinding>,
         now: u64,
     ) -> Result<Option<SpendScope>> {
-        Ok(match &self.reserve {
+        let mut scope = match &self.reserve {
             LaunchReserve::Unmetered => None,
             LaunchReserve::Pinned { unit, cap_units } => {
                 Some(dispatcher.open_pinned_scope_in_txn(
@@ -150,13 +157,150 @@ impl LaunchAdmission {
                     agent,
                     unit.clone(),
                     *cap_units,
+                    funding,
                     now,
                 )?)
             }
             LaunchReserve::Child { parent, ask } => {
                 Some(dispatcher.reserve_agent_in_txn(txn, parent, &attempt, agent, *ask, now)?)
             }
-        })
+        };
+        if let Some(scope) = &mut scope
+            && let Some(ceiling) = self.ceiling_units
+        {
+            scope.ceiling_units = Some(ceiling);
+            SCOPE.put(&dispatcher.vault.store, txn, &scope.scope.0, scope)?;
+        }
+        Ok(scope)
+    }
+}
+
+/// What a machine that takes over an agent run reserves for it (FIX 4747
+/// slice 6).
+enum HandedOverReserve {
+    Reserve(LaunchReserve),
+    /// This machine cannot fund the run as its launch was stated: it waits.
+    Unfunded,
+}
+
+/// What an agent run another machine dispatched reserves on the machine that
+/// takes it over, from the launch statement its dispatch froze (FIX 4747
+/// slice 6). Engine call (CALLS, FIX 4747): a launch stated unmetered stays
+/// unmetered; a pinned `budget` outside any tree pins the same cap here; a
+/// launch under a tree scope this machine holds open, or books at an open
+/// ancestor (`tree_here`), reserves under it as the dispatch did, a carve of
+/// its budget or a hold of its expected spend. A tree scope this machine
+/// does not hold lives on the machine that opened it, and nothing of it is
+/// seeded here (cross-node budget custody is FIX 4889): the run gets a pinned
+/// hard scope of what its launch reserved from that tree, so it never spends
+/// past what its launch set aside. A launch that reserved nothing there, or
+/// a room-bound one, whose payer only that tree names, is unfunded here.
+fn handed_over_launch_reserve(
+    statement: &LaunchStatement,
+    tree_here: bool,
+    room_bound: bool,
+) -> HandedOverReserve {
+    let Some(cap_units) = statement.cap_units else {
+        return HandedOverReserve::Reserve(LaunchReserve::Unmetered);
+    };
+    let unit = statement.unit.clone();
+    match &statement.parent_scope {
+        None => HandedOverReserve::Reserve(LaunchReserve::Pinned { unit, cap_units }),
+        Some(parent) if tree_here => HandedOverReserve::Reserve(LaunchReserve::Child {
+            parent: parent.clone(),
+            ask: if statement.hard {
+                ChildSpend::Carve { cap_units }
+            } else {
+                ChildSpend::Hold {
+                    expected_units: statement.expected.units,
+                }
+            },
+        }),
+        Some(_) if room_bound || statement.reserved_units == 0 => HandedOverReserve::Unfunded,
+        Some(_) => HandedOverReserve::Reserve(LaunchReserve::Pinned {
+            unit,
+            cap_units: statement.reserved_units,
+        }),
+    }
+}
+
+impl AgentDispatcher<'_> {
+    /// Reserves on this machine the spend of `attempt`, the try of an agent
+    /// run this machine takes over, in the take's write (FIX 4747 slice 6),
+    /// as `handed_over_launch_reserve` rules from the launch statement
+    /// `input` froze. A scope that already stands here for `attempt` is kept.
+    /// A pinned scope keeps the Grant `input` froze as its funding (FIX
+    /// 7766), as the dispatch's own reserve did.
+    /// A room-bound run proves its join again under the scope it reserves
+    /// under, as its dispatch did. `false` when this machine cannot fund it:
+    /// the take writes nothing, and the run waits.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(super) fn reserve_handed_over_launch_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        input: &AgentDispatchInput,
+        now: u64,
+    ) -> Result<bool> {
+        if SCOPE.contains(
+            &self.vault.store,
+            txn,
+            &SpendScopeId::for_attempt(&attempt).0,
+        )? {
+            return Ok(true);
+        }
+        let Some(statement) = input.launch.as_ref() else {
+            return Ok(true);
+        };
+        let tree_here = match &statement.parent_scope {
+            Some(parent) => match SCOPE.get(&self.vault.store, txn, &parent.0)? {
+                Some(row) if row.state == SpendState::Open => true,
+                Some(_) => self.effective_scope_in_txn(txn, parent)?.state == SpendState::Open,
+                None => false,
+            },
+            None => false,
+        };
+        let agent = input.target.agent_definition_ref()?;
+        match handed_over_launch_reserve(statement, tree_here, input.room.is_some()) {
+            HandedOverReserve::Unfunded => return Ok(false),
+            HandedOverReserve::Reserve(LaunchReserve::Unmetered) => {}
+            HandedOverReserve::Reserve(LaunchReserve::Pinned { unit, cap_units }) => {
+                self.open_pinned_scope_in_txn(
+                    txn,
+                    &attempt,
+                    Some(agent),
+                    unit,
+                    cap_units,
+                    input.funding.clone(),
+                    now,
+                )?;
+            }
+            HandedOverReserve::Reserve(LaunchReserve::Child { parent, ask }) => {
+                match self.reserve_agent_in_txn(txn, &parent, &attempt, Some(agent), ask, now) {
+                    Ok(_) => {}
+                    Err(SpendRefused::Engine(error)) => return Err(error),
+                    Err(SpendRefused::OverCap { .. } | SpendRefused::Start(_)) => {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        if input.room.is_some() {
+            match self.require_room_join_in_txn(
+                txn,
+                input.room.as_ref(),
+                agent,
+                statement.parent_scope.as_ref(),
+            ) {
+                Ok(_) => {}
+                Err(Error::Claim(_) | Error::Artifact(_)) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -178,7 +322,7 @@ impl AgentDispatcher<'_> {
         {
             let (project, _) =
                 self.project_depth_limit_in_txn(&txn, input.parent_attempt, spawn.project_ref)?;
-            let type_ref =
+            let (type_ref, _) =
                 self.spawn_type_in_txn(&txn, project, input.target.agent_definition_ref()?, spawn)?;
             crate::learning_setting_choice::owner_spawn_budget_in_txn(
                 self.vault,
@@ -195,6 +339,7 @@ impl AgentDispatcher<'_> {
                 input.parent_attempt,
                 spawn.spend.as_ref(),
                 budget,
+                spawn.token_ceiling,
                 &input.target,
                 spawn.plan.as_ref().map(|plan| &plan.plan.model),
                 input.now,
@@ -215,6 +360,7 @@ impl AgentDispatcher<'_> {
         parent: Option<AttemptId>,
         spend: Option<&SpawnSpend>,
         budget: Option<u64>,
+        token_ceiling: Option<u64>,
         target: &AgentDispatchTarget,
         model: Option<&crate::llm::ModelId>,
         now: u64,
@@ -224,7 +370,7 @@ impl AgentDispatcher<'_> {
             .as_ref()
             .map_or_else(LeaseUnit::tokens, |scope| scope.unit.clone());
         let nodes = self.launch_nodes_in_txn(txn, target, &unit, model)?;
-        self.admit_nodes_in_txn(txn, tree, budget, nodes, unit, now)
+        self.admit_nodes_in_txn(txn, tree, budget, token_ceiling, nodes, unit, now)
     }
 
     /// The scope a caller spends under: its parent attempt's own, open or
@@ -303,7 +449,7 @@ impl AgentDispatcher<'_> {
                 model,
             )?,
         };
-        self.admit_nodes_in_txn(txn, tree, None, vec![node], unit, now)
+        self.admit_nodes_in_txn(txn, tree, None, None, vec![node], unit, now)
     }
 
     pub(super) fn launch_nodes_in_txn(
@@ -344,13 +490,18 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         tree: Option<SpendScope>,
         budget: Option<u64>,
+        token_ceiling: Option<u64>,
         nodes: Vec<LaunchNode>,
         unit: LeaseUnit,
         now: u64,
     ) -> Result<LaunchAdmission> {
         let expected = ExpectedSpend::sum(nodes.iter().map(|node| node.expected));
         let agent_count = u64::try_from(nodes.len()).unwrap_or(u64::MAX);
-        let terms = self.spend_terms_in_txn(txn, tree, budget, expected.units, &unit)?;
+        let ceiling_units = token_ceiling
+            .filter(|_| unit == LeaseUnit::tokens())
+            .map(|ceiling| budget.map_or(ceiling, |budget| ceiling.min(budget)));
+        let terms =
+            self.spend_terms_in_txn(txn, tree, budget, ceiling_units, expected.units, &unit)?;
         let (over_available, more_would_buy) = terms.shortfall(
             expected,
             &unit,
@@ -387,6 +538,7 @@ impl AgentDispatcher<'_> {
             },
             statement,
             reserve,
+            ceiling_units,
         })
     }
 
@@ -397,11 +549,25 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         tree: Option<SpendScope>,
         budget: Option<u64>,
+        token_ceiling: Option<u64>,
         expected_units: u64,
         unit: &LeaseUnit,
     ) -> Result<SpendTerms> {
         if budget == Some(0) {
             return Err(invalid("a spawn budget is more than zero units"));
+        }
+        if let Some(ceiling) = token_ceiling.filter(|_| *unit == LeaseUnit::tokens()) {
+            if ceiling == 0 {
+                return Err(invalid("a task reservation is more than zero tokens"));
+            }
+            return self.capped_spend_terms_in_txn(
+                txn,
+                tree,
+                budget,
+                ceiling,
+                expected_units,
+                unit,
+            );
         }
         Ok(match (tree, budget) {
             (None, None) => SpendTerms {
@@ -431,6 +597,7 @@ impl AgentDispatcher<'_> {
             // drawing through each closed hard scope above it.
             (Some(tree), budget) => {
                 let (available, binding) = self.reservable_in_txn(txn, &tree.scope)?;
+                let binding_limit = binding.limit_units();
                 let parent = tree.scope;
                 match budget {
                     Some(cap_units) => SpendTerms {
@@ -453,7 +620,7 @@ impl AgentDispatcher<'_> {
                         cap: Some(SpendCapView {
                             scope: Some(binding.scope),
                             unit: unit.clone(),
-                            cap_units: binding.cap_units,
+                            cap_units: binding_limit,
                             available_units: available,
                             hard: false,
                         }),
@@ -467,6 +634,72 @@ impl AgentDispatcher<'_> {
                     },
                 }
             }
+        })
+    }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the reservation narrows the existing launch terms"
+    )]
+    fn capped_spend_terms_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        tree: Option<SpendScope>,
+        budget: Option<u64>,
+        ceiling: u64,
+        expected_units: u64,
+        unit: &LeaseUnit,
+    ) -> Result<SpendTerms> {
+        let ceiling = budget.map_or(ceiling, |budget| ceiling.min(budget));
+        let Some(tree) = tree else {
+            return Ok(SpendTerms {
+                cap: Some(SpendCapView {
+                    scope: None,
+                    unit: unit.clone(),
+                    cap_units: ceiling,
+                    available_units: ceiling,
+                    hard: true,
+                }),
+                reserve: LaunchReserve::Pinned {
+                    unit: unit.clone(),
+                    cap_units: ceiling,
+                },
+                reserved_units: ceiling,
+                parent_scope: None,
+                spendable: Some(ceiling),
+            });
+        };
+        let (available, binding) = self.reservable_in_txn(txn, &tree.scope)?;
+        let room = available.min(ceiling);
+        let (ask, reserved_units, hard) = if budget.is_some() {
+            (ChildSpend::Carve { cap_units: ceiling }, ceiling, true)
+        } else {
+            (
+                ChildSpend::Hold {
+                    expected_units: expected_units.min(ceiling),
+                },
+                expected_units.min(room),
+                false,
+            )
+        };
+        Ok(SpendTerms {
+            cap: Some(SpendCapView {
+                scope: Some(binding.scope.clone()),
+                unit: unit.clone(),
+                cap_units: if hard {
+                    ceiling
+                } else {
+                    ceiling.min(binding.limit_units())
+                },
+                available_units: room,
+                hard,
+            }),
+            reserve: LaunchReserve::Child {
+                parent: tree.scope.clone(),
+                ask,
+            },
+            reserved_units,
+            parent_scope: Some(tree.scope),
+            spendable: Some(room),
         })
     }
 }

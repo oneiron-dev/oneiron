@@ -135,6 +135,8 @@ impl Vault {
         )
     }
 
+    /// Keeps an admitted child's requested ceiling; the live author's bound
+    /// decides whether it is active or an inert proposal.
     #[expect(
         clippy::too_many_arguments,
         reason = "the authoring door binds author, target, request, scope, lease generation and time in one transaction"
@@ -168,58 +170,13 @@ impl Vault {
                 )));
             }
         }
-        let author_def = self.read_agent_definition_in_txn(&wtxn, author)?;
-        if author_def.lifecycle_status != ClaimLifecycleStatus::Active
-            || !author_def.enabled
-            || !matches!(
-                author_def.approval_status,
-                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-            )
-        {
-            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
-                "author definition is not active and approved",
-            )));
-        }
-        if self.store.port_entity_record(&wtxn, id)?.is_some() {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "agents.put creates a new definition; use the update door for an existing row",
-            )));
-        }
-        if requested.forked_from.is_some() || requested.logical_id.is_some() {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "agent-authored definitions cannot assert fork lineage or a reserved logical id",
-            )));
-        }
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
-        let effective = match policy.actor_ceiling("agent", Some(&author.to_hex())) {
-            crate::gate::PolicyApprovalCeiling::Auto => author_def.ceiling,
-            crate::gate::PolicyApprovalCeiling::Proposed => super::types::AgentCeiling::Proposed,
-        };
-        let mut bounded_author = author_def.clone();
-        bounded_author.ceiling = effective;
-        let mut definition = inherit_model_choices(requested, &bounded_author);
-        let within = !scope_widens && within_author_slice(&definition, &bounded_author);
-        definition.source = crate::claim::ClaimSource::Generated;
-        definition.generated = true;
-        definition.human_authored = false;
-        definition.provenance = rmpv::Value::Map(vec![
-            (
-                rmpv::Value::from("author"),
-                rmpv::Value::from(author.to_hex()),
-            ),
-            (
-                rmpv::Value::from("definedVia"),
-                rmpv::Value::from("vault.agents.put"),
-            ),
-        ]);
-        definition.lifecycle_status = ClaimLifecycleStatus::Active;
-        let disposition = if within {
-            definition.approval_status = author_def.approval_status;
-            AgentDefinitionPutDisposition::Active
-        } else {
-            definition.approval_status = ClaimApprovalStatus::Proposed;
-            AgentDefinitionPutDisposition::Proposed
-        };
+        let (definition, disposition) = self.prepare_agent_definition_for_author_in_txn(
+            &wtxn,
+            author,
+            id,
+            requested,
+            scope_widens,
+        )?;
         let data = encode_agent_definition(&definition)?;
         self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
         wtxn.commit()?;
@@ -233,6 +190,102 @@ impl Vault {
             learned_at,
         )?;
         Ok(disposition)
+    }
+
+    /// Creates only after credential admission and an Allow setup receipt in
+    /// the same writer. `None` leaves the shape item resting without storing a
+    /// proposed definition. A non-Allow result stores its Gate receipt only.
+    /// The caller holds the credential's spend turn and commits this writer,
+    /// including its item journal, only after the result has been recorded.
+    ///
+    /// `channel_scope`, `channel_ref` and `effect` are the native adapter's
+    /// observed context, never fields taken from a shape request. This door
+    /// supplies no default channel scope, effect facts or host signer.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "setup binds the actual credential, channel, target, native effect and optional consuming signer in one writer"
+    )]
+    pub(crate) fn create_agent_definition_for_actor_credential_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        author: &EntityId,
+        credential: &crate::authority::VerifiedSlip,
+        issuer: Option<&crate::authority::HostSlipIssuer>,
+        id: &EntityId,
+        requested: &AgentDefinition,
+        channel_scope: &crate::federation::Scope,
+        channel_ref: Option<&str>,
+        effect: &crate::consent::ComposedEffect,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<Option<(crate::gate::GateOutcome, crate::store::GateDecisionId)>> {
+        if author == id {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "author cannot replace its own definition through agents.put",
+            )));
+        }
+        let claims = credential.claims();
+        if claims.holder_ref != author.to_hex()
+            || !self.capability_slip_is_live_in_txn(txn, credential)?
+        {
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
+                "setup requires the author's live credential",
+            )));
+        }
+        // Without the real consuming signer this call retains the old
+        // resting state; an explicitly supplied signer supports one-shots.
+        if claims.single_use && issuer.is_none() {
+            return Ok(None);
+        }
+        let (definition, disposition) =
+            self.prepare_agent_definition_for_author_in_txn(txn, author, id, requested, false)?;
+        if disposition != AgentDefinitionPutDisposition::Active {
+            return Ok(None);
+        }
+        let data = encode_agent_definition(&definition)?;
+        let Some(position) = crate::federation::record_scope::candidate_put_position(
+            &self.store,
+            txn,
+            *id,
+            ENTITY_TYPE_AGENT_DEF,
+            &data,
+        )?
+        else {
+            return Ok(None);
+        };
+        let current = self.current_view_scope_in_txn(txn, claims);
+        let admitted = ["core:write", "write"]
+            .into_iter()
+            .any(|verb| current.admits(verb, &position, channel_scope))
+            && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
+            && (claims.channels.is_empty()
+                || channel_ref.is_some_and(|channel| claims.channels.contains(channel)));
+        if !admitted {
+            return Ok(None);
+        }
+        let actor = crate::WriteActor::new(*author, crate::edge::EdgeActorClass::Agent);
+        let (decision, receipt) = crate::gate::record_agent_definition_setup_in_txn(
+            self, txn, actor, *id, &data, &position, effect,
+        )?;
+        let outcome = decision.outcome();
+        if outcome != crate::gate::GateOutcome::Allow {
+            return Ok(Some((outcome, receipt)));
+        }
+        if let Some(issuer) = issuer {
+            self.consume_verified_capability_slip_in_txn(txn, issuer, credential)?;
+        }
+        self.apply_agent_definition_body(txn, id, occurred, learned_at, data)?;
+        crate::context_board::ensure_agent_person_in_txn(
+            self,
+            txn,
+            *id,
+            definition
+                .display_name
+                .as_deref()
+                .unwrap_or(&definition.agent_id),
+            learned_at,
+        )?;
+        Ok(Some((outcome, receipt)))
     }
 
     /// Encodes (validating) and writes an `AgentDefinition` through the generic
@@ -570,6 +623,70 @@ impl Vault {
             )));
         }
         decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])
+    }
+
+    /// Prepares the same author-bounded definition for a door that owns its writer.
+    fn prepare_agent_definition_for_author_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        author: &EntityId,
+        id: &EntityId,
+        requested: &AgentDefinition,
+        scope_widens: bool,
+    ) -> Result<(AgentDefinition, AgentDefinitionPutDisposition)> {
+        let author_def = self.read_agent_definition_in_txn(txn, author)?;
+        if author_def.lifecycle_status != ClaimLifecycleStatus::Active
+            || !author_def.enabled
+            || !matches!(
+                author_def.approval_status,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
+        {
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
+                "author definition is not active and approved",
+            )));
+        }
+        if self.store.port_entity_record(txn, id)?.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "agents.put creates a new definition; use the update door for an existing row",
+            )));
+        }
+        if requested.forked_from.is_some() || requested.logical_id.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "agent-authored definitions cannot assert fork lineage or a reserved logical id",
+            )));
+        }
+        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        let effective = match policy.actor_ceiling("agent", Some(&author.to_hex())) {
+            crate::gate::PolicyApprovalCeiling::Auto => author_def.ceiling,
+            crate::gate::PolicyApprovalCeiling::Proposed => super::types::AgentCeiling::Proposed,
+        };
+        let mut bounded_author = author_def.clone();
+        bounded_author.ceiling = effective;
+        let mut definition = inherit_model_choices(requested, &bounded_author);
+        let within = !scope_widens && within_author_slice(&definition, &bounded_author);
+        definition.source = crate::claim::ClaimSource::Generated;
+        definition.generated = true;
+        definition.human_authored = false;
+        definition.provenance = rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("author"),
+                rmpv::Value::from(author.to_hex()),
+            ),
+            (
+                rmpv::Value::from("definedVia"),
+                rmpv::Value::from("vault.agents.put"),
+            ),
+        ]);
+        definition.lifecycle_status = ClaimLifecycleStatus::Active;
+        let disposition = if within {
+            definition.approval_status = author_def.approval_status;
+            AgentDefinitionPutDisposition::Active
+        } else {
+            definition.approval_status = ClaimApprovalStatus::Proposed;
+            AgentDefinitionPutDisposition::Proposed
+        };
+        Ok((definition, disposition))
     }
 
     fn apply_agent_definition_body(

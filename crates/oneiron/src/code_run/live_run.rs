@@ -214,5 +214,5 @@ pub fn live_run_lease_holds(vault: &Vault, proof: &HostBinding) -> Result<bool> 
 #[must_use]
 pub fn is_live_run_verb(verb: &str) -> bool {
     RunVerb::from_name(verb)
-        .is_some_and(|verb| super::run_verb_call::LIVE_RUN_VERBS.contains(&verb))
+        .is_some_and(|verb| crate::task_verb::sdk::RunVerb::LIVE_RUN.contains(&verb))
 }

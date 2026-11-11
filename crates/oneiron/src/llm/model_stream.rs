@@ -99,6 +99,22 @@ pub struct ModelStreamDetached {
     pub detached: bool,
 }
 
+/// Explicitly discards this credential's transient replay and outstanding
+/// subscription handles, without cancelling its producer or durable terminal.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStreamRelease {
+    pub stream_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ModelStreamReleased {
+    pub stream_ref: String,
+    pub stream_key: String,
+    pub status: ModelStreamStatus,
+    pub released: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelStreamAbort {
@@ -212,6 +228,29 @@ pub fn open_as_owner(
         }
     })?;
     Ok((opened(id, &row), created))
+}
+
+/// The current durable terminal state for a newly attached transient bus.
+/// A live row says nothing about whether this process still has its producer.
+pub fn retained_terminal_status_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    stream_key: &str,
+) -> MemoryResult<Option<ModelStreamStatus>> {
+    validate_key(stream_key)?;
+    let actor = owner.revalidate(vault)?;
+    let id = identity(actor, stream_key)?;
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    Ok(STREAMS
+        .get(&vault.store, &txn, &id)?
+        .filter(|row| row.actor == actor)
+        .map(|row| status(&row))
+        .filter(|status| {
+            matches!(
+                status,
+                ModelStreamStatus::Finished | ModelStreamStatus::Failed
+            )
+        }))
 }
 
 /// Read this owner's durable terminal without touching a live producer.

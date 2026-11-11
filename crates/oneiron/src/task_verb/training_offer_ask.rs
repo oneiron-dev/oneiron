@@ -24,8 +24,9 @@ use serde::{Deserialize, Serialize};
 
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOptionId, TaskAskQuestion,
-    TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskTarget, TaskAskWord,
+    TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption, TaskAskOptionId,
+    TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
+    TaskAskTarget, TaskAskWord,
 };
 use super::{ConsultPayloadRef, TaskAssignee};
 use crate::consent::AuthenticatedOwner;
@@ -267,7 +268,10 @@ fn offer_ask_spec(
     let mut options = BTreeMap::new();
     for (id, answer, label) in OPTIONS {
         if fits(&offer.candidate, answer) {
-            options.insert(TaskAskOptionId::new(id)?, label.to_owned());
+            options.insert(
+                TaskAskOptionId::new(id)?,
+                TaskAskOption::new(label.to_owned()),
+            );
         }
     }
     what.options = options;
@@ -531,7 +535,7 @@ fn issue_one(
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: Some(route.message.to_hex()),
-                author: WitnessAuthor::System,
+                author: WitnessAuthor::Companion,
                 message_type: OFFER_QUESTION_TYPE.to_owned(),
                 content: offer_question_text(offer),
                 parts: None,

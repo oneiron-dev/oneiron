@@ -8,7 +8,8 @@ impl Memory<'_> {
     /// Prior-claim match for auto-supersede: the standing head on `key`.
     /// Deterministic when multiple actives match: the newest id (UUIDv7
     /// order) wins. A write held `beside_stated` (OF-023) never replaces a
-    /// `UserStated` head, so those are passed over.
+    /// `UserStated` head, so those are passed over. Set-cardinality predicates
+    /// replace only an agreeing answer; distinct answers remain standing.
     pub(super) fn find_prior_claim(
         &self,
         key: &MemoryKey<'_>,
@@ -16,6 +17,8 @@ impl Memory<'_> {
         beside_stated: bool,
     ) -> MemoryResult<Option<EntityId>> {
         let ids = self.vault.claims_for_subject(&key.subject)?;
+        let set_answer = (declared_cardinality(&key.input.predicate) == ClaimCardinality::Set)
+            .then(|| json_to_rmpv(&key.input.value));
         let mut best: Option<EntityId> = None;
         for id in ids {
             if id == *exclude {
@@ -24,7 +27,11 @@ impl Memory<'_> {
             let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
-            if !key.stands(&body) || (beside_stated && body.source == Some(ClaimSource::UserStated))
+            if !key.stands(&body)
+                || (beside_stated && body.source == Some(ClaimSource::UserStated))
+                || set_answer
+                    .as_ref()
+                    .is_some_and(|answer| !answers_agree(answer, &body.value))
             {
                 continue;
             }
@@ -45,6 +52,8 @@ impl Memory<'_> {
         exclude: &EntityId,
         beside_stated: bool,
     ) -> crate::Result<Option<EntityId>> {
+        let set_answer = (declared_cardinality(&key.input.predicate) == ClaimCardinality::Set)
+            .then(|| json_to_rmpv(&key.input.value));
         let mut best: Option<EntityId> = None;
         for id in self.vault.claims_for_subject_in_txn(rtxn, &key.subject)? {
             if id == *exclude {
@@ -53,7 +62,11 @@ impl Memory<'_> {
             let Some(body) = self.vault.get_claim_in_txn(rtxn, &id)? else {
                 continue;
             };
-            if !key.stands(&body) || (beside_stated && body.source == Some(ClaimSource::UserStated))
+            if !key.stands(&body)
+                || (beside_stated && body.source == Some(ClaimSource::UserStated))
+                || set_answer
+                    .as_ref()
+                    .is_some_and(|answer| !answers_agree(answer, &body.value))
             {
                 continue;
             }

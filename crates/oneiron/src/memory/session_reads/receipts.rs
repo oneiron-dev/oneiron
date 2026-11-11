@@ -21,7 +21,8 @@ use crate::memory::reads::{ReceiptReader, receipts_page_for};
 use crate::memory::{MemoryResult, VaultReceiptsPage};
 use crate::receipt::ReceiptContent;
 use crate::settings::ReadDestination;
-use crate::task_verb::sdk::{VAULT_RECEIPTS_LIMIT_DEFAULT, VaultReceiptsRequest};
+use crate::task_verb::sdk::VaultReceiptsRequest;
+use crate::verb_names::VAULT_RECEIPTS_LIMIT_DEFAULT;
 
 impl ReceiptReader for SessionReadContext<'_> {
     fn receipt_vault(&self) -> &Vault {
@@ -39,7 +40,7 @@ impl ReceiptReader for SessionReadContext<'_> {
     /// row it holds. Its scan checks wait with the room.
     fn receipt_content(&self) -> ReceiptContent<'_> {
         ReceiptContent::of_room(
-            self.lane(ClaimReadStatus::Recorded).store_read(),
+            self.lane(ClaimReadStatus::Recorded, None).store_read(),
             self.session.pending_scan_checks(),
         )
     }
@@ -57,7 +58,7 @@ impl ReceiptReader for SessionReadContext<'_> {
     fn readable_trigger_rows(&self, ids: &[EntityId]) -> MemoryResult<Option<BTreeSet<EntityId>>> {
         let reads: Vec<_> = ids.iter().map(|id| PointRead::id(*id)).collect();
         let rows = self
-            .lane(ClaimReadStatus::Recorded)
+            .lane(ClaimReadStatus::Recorded, None)
             .read(&reads, None)?
             .value;
         Ok(Some(

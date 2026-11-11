@@ -32,6 +32,7 @@ use crate::batch::secret_scan::{SidePart, admit_side_parts};
 use crate::code_run::{CodeRunReplayGeneration, CodeRunReplayRecord};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::outbound_consent::RawOutboundBody;
 use crate::outbound_intent_ledger::IntentLedgerRecord;
 use crate::side_table::{self, Named, SideKey, SideTable};
 
@@ -524,7 +525,7 @@ pub(crate) fn settle_program_outbound_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &IntentLedgerRecord,
-    body: Option<&[u8]>,
+    body: Option<RawOutboundBody>,
     now: u64,
 ) {
     let settled = (|| -> Result<()> {
@@ -533,12 +534,12 @@ pub(crate) fn settle_program_outbound_in_txn(
         };
         let code_run = turn_program_code_run(&stamp.admission)?;
         let key = (code_run, step_id(&[b"outbound", &record.id])?);
-        let result_digest = *blake3::Hasher::new()
-            .update(STEP_DOMAIN)
-            .update(&record.payload_hash)
-            .update(body.unwrap_or_default())
-            .finalize()
-            .as_bytes();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(STEP_DOMAIN).update(&record.payload_hash);
+        if let Some(body) = &body {
+            hasher.update_reader(body.reader())?;
+        }
+        let result_digest = *hasher.finalize().as_bytes();
         let skeleton = TurnProgramStep {
             attempt: *record.attempt_id.as_bytes(),
             issued: StepIssue::Outbound {
@@ -555,7 +556,11 @@ pub(crate) fn settle_program_outbound_in_txn(
         let Some(body) = body.filter(|_| !gone) else {
             return put_step_savepoint(vault, wtxn, &key, &skeleton);
         };
-        if let Err(error) = put_admitted_step_savepoint(vault, wtxn, &key, &skeleton, body) {
+        if let Err(error) = body
+            .into_bytes()
+            .map_err(Error::from)
+            .and_then(|body| put_admitted_step_savepoint(vault, wtxn, &key, &skeleton, body))
+        {
             tracing::warn!(
                 kind = ?error.kind(),
                 "a program's outbound step body was not kept; the step settles without it"
@@ -614,11 +619,11 @@ fn put_admitted_step_savepoint(
     wtxn: &mut heed::RwTxn<'_>,
     key: &(EntityId, EntityId),
     skeleton: &TurnProgramStep,
-    body: &[u8],
+    body: Vec<u8>,
 ) -> Result<()> {
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
     let full = STEP.key_bytes(key);
-    let mut parts = [SidePart::Body(body.to_vec())];
+    let mut parts = [SidePart::Body(body)];
     admit_side_parts(
         vault,
         &mut savepoint,

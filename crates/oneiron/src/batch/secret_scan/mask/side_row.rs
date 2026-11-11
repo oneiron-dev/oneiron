@@ -454,6 +454,32 @@ pub(crate) fn admit_seeded_parts(
     Ok(admitted(scope, wtxn, origins, parts, seed, |_| true, pass)?.is_some())
 }
 
+/// [`admit_seeded_parts`] as its plan alone (FIX 21363), for a replay that
+/// proves what an earlier admission stored: `vault`'s switch and kept values
+/// and the caller's `known` matcher plan the parts, and its custody door is
+/// not opened, so nothing is minted and nothing is written, not even the
+/// clock and id floors a mint stamps. A value `known` holds takes its
+/// handle; a secret it does not hold refuses with the door's reason.
+pub(super) fn plan_seeded_parts(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    origins: &[(EntityId, &str)],
+    parts: &mut [SidePart],
+    known: Arc<KnownValues>,
+) -> Result<bool> {
+    let scope = Scope {
+        mode: secret_scan_mode_in_txn(vault, &*wtxn)?,
+        decides: Some(&vault.store),
+        door: None,
+    };
+    let pass = Pass {
+        known: Some(known),
+        ..Pass::default()
+    };
+    let mut seed = Lifted::default();
+    Ok(admitted(scope, wtxn, origins, parts, &mut seed, |_| true, pass)?.is_some())
+}
+
 /// The wall's one admission, for a side row and for a record's own parts
 /// alike: `None` when the parts are written as given, else, with a tracked
 /// `pass`, where each handle went in each text it masked. Only a clean copy
@@ -649,6 +675,27 @@ pub(crate) fn admitted_from(held: &Value, raw: &Value) -> Result<bool> {
     stand_in_handles(&mut held);
     stand_in_handles(&mut planned.0);
     Ok(held == planned.0)
+}
+
+/// `value` in the one form [`admitted_from`] compares a held row and a raw
+/// offer in (FIX 6534): each secret the plan places, and each handle, as
+/// the plan's one stand-in. A held row and the raw value it was admitted
+/// from read the same here, so a digest of either is one identity. Nothing
+/// is minted, and the plan's copy is wiped.
+///
+/// # Errors
+///
+/// A value the plan cannot read.
+pub(crate) fn admission_form(value: &Value) -> Result<Value> {
+    let mut planned = PlanTree(value.clone());
+    Masker {
+        mints: true,
+        at: Some((origin("replay", &[])?, "replay".to_owned())),
+        ..Masker::default()
+    }
+    .mask_value(&mut planned.0)?;
+    stand_in_handles(&mut planned.0);
+    Ok(std::mem::replace(&mut planned.0, Value::Nil))
 }
 
 /// `value` as a MessagePack tree that keeps its field names, as a named row

@@ -1,0 +1,8 @@
+{
+  "name": "self.code.snapshots.ingest",
+  "input": "crate::memory::repo_doors::RepoSnapshotsIngestInput",
+  "output": "crate::memory::repo_doors::RepoSnapshotsIngestOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "RepoSnapshotsIngest"
+}

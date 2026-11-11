@@ -26,6 +26,9 @@ pub(super) fn gate_input(
         actor: request.actor.gate_actor(),
         provenance: GateProvenanceHandles {
             mail_content_ref: request.intent.content_ref.clone(),
+            // Fix list row 17645: the Gate judges each recipient of one
+            // message to several, and its digest pins them all.
+            mail_recipients: request.intent.recipients.clone(),
             approval_target: approval_target(
                 request,
                 &verb_contract.kind,
@@ -57,11 +60,12 @@ pub(super) fn gate_input(
 
 /// FIX 6424: the one send an owner's approve-once press on `request`
 /// approves, read off the canonical request: its original transport target
-/// (never the counterparty alias), its logical send ref, and its family's
-/// facts. A Linear send (part 2a) pins its canonical `verb`, its target and
-/// content ref, its stable logical send ref, the digest of `frozen_payload`
-/// (every frozen field of the send), and the mirror operation's facts only
-/// when the mirror door supplies them. Every caller freezes a Linear request
+/// (never the counterparty alias) and, for a message to several, every
+/// recipient in its role (fix list row 17645), its logical send ref, and
+/// its family's facts. A Linear send (part 2a) pins its canonical `verb`,
+/// its target and content ref, its stable logical send ref, the digest of
+/// `frozen_payload` (every frozen field of the send), and the mirror
+/// operation's facts only when the mirror door supplies them. Every caller freezes a Linear request
 /// first; one that did not would pin nothing, as before part 2a.
 pub(super) fn approval_target(
     request: &OutboundDispatchRequest,
@@ -80,16 +84,19 @@ pub(super) fn approval_target(
             mirror: request.linear_mirror.as_ref().map(LinearMirrorFacts::of),
         });
     }
-    ApprovalTarget::for_outbound(&OutboundSendFacts {
-        connector: &connector,
-        target: &request.intent.target,
-        sender: request.channel_identity_ref,
-        native_mail_recipient,
-        thread_ref: request.reply_thread_ref.as_deref(),
-        content_ref: request.intent.content_ref.as_deref(),
-        send_ref: approval_send_ref(request, &connector),
-        calendar_invite: request.calendar_invite.as_ref(),
-    })
+    ApprovalTarget::for_outbound_to(
+        &OutboundSendFacts {
+            connector: &connector,
+            target: &request.intent.target,
+            sender: request.channel_identity_ref,
+            native_mail_recipient,
+            thread_ref: request.reply_thread_ref.as_deref(),
+            content_ref: request.intent.content_ref.as_deref(),
+            send_ref: approval_send_ref(request, &connector),
+            calendar_invite: request.calendar_invite.as_ref(),
+        },
+        &request.intent.recipients,
+    )
 }
 
 /// The connector a Linear issue mutation rides (FIX 6424 part 2a).
@@ -168,7 +175,7 @@ pub fn outbound_step_approve_once_digest(
     request: &OutboundDispatchRequest,
 ) -> Result<Option<EffectDigest>, OutboundDispatchError> {
     let binding =
-        crate::model_step_effect::StepEffectBinding::for_request(attempt_id, step_request)?;
+        crate::model_step_effect::step_effect_binding_for_request(attempt_id, step_request)?;
     Ok(pinned_approval_digest(&prepared_gate_effect(
         vault,
         request,
@@ -215,6 +222,44 @@ fn prepared_gate_effect(
         frozen.as_deref(),
         prepared.native_mail_recipient,
     ))
+}
+
+/// The gate input and frozen payload of a send not yet dispatched, built as
+/// `dispatch_prepared` builds them, with no write (FIX 22102): `request`
+/// prepared under `verified_actor`, frozen and validated, and the Gate input
+/// composed over its frozen payload. It resolves no delivery window, runs no
+/// admission stage, provisions no binding authority, and reaches no sink or
+/// dispatch.
+/// # Errors
+/// The request's own refusal at preparation or freeze (an unknown channel or
+/// verb, an off-record session, an unsettled mention, a sender or replay that
+/// does not match its admitted binding), or a storage failure.
+pub(crate) fn outbound_preflight_effect(
+    vault: &Vault,
+    request: OutboundDispatchRequest,
+    verified_actor: (crate::EntityId, crate::edge::EdgeActorClass),
+) -> Result<(ExternalEffectGateInput, Vec<u8>), OutboundDispatchError> {
+    let mut prepared = super::request_binding::PreparedOutboundDispatch::prepare(
+        vault,
+        request,
+        Some(verified_actor),
+        None,
+    )?;
+    prepared.freeze_and_validate(vault)?;
+    let payload = prepared
+        .payload
+        .take()
+        .ok_or(crate::error::Error::InvariantViolation(
+            "missing outbound payload",
+        ))?;
+    let effect = gate_input(
+        &prepared.request,
+        prepared.verb_contract,
+        prepared.policy_risk,
+        Some(payload.as_slice()),
+        prepared.native_mail_recipient,
+    );
+    Ok((effect, payload))
 }
 
 /// FIX 6424: the approve-once digest a held `effect` names, 64 lower-hex,

@@ -87,6 +87,8 @@ pub struct NapiQuoteSpan {
 /// Receipt for one witnessed turn.
 #[napi(object)]
 pub struct NapiWitnessReceipt {
+    /// Actual native TURN identity, not a vault record ref.
+    pub turn_id: String,
     /// TURN short ref.
     pub turn_short_id: String,
     /// MESSAGE short refs, input order.
@@ -898,6 +900,20 @@ pub struct NapiCalendarEventView {
     pub calendar_systems: Vec<String>,
     /// Whether this EVENT consumes availability.
     pub blocks_time: bool,
+    /// An all-day or floating EVENT's days or wall times, which it has in
+    /// place of UTC bounds.
+    pub civil: Option<NapiCalendarCivilSpan>,
+}
+
+/// The days or wall times of an all-day or floating calendar occurrence.
+#[napi(object)]
+pub struct NapiCalendarCivilSpan {
+    /// `all_day` (dates) or `floating` (wall times in any zone).
+    pub time_kind: String,
+    /// The first day (`2026-11-06`), or the wall time it starts.
+    pub start: String,
+    /// The day, or the wall time, it ends before.
+    pub end: String,
 }
 
 /// `calendarSearch` request.

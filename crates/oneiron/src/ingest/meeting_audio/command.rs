@@ -41,7 +41,8 @@ pub const UNIT_PROGRESS_TIMEOUT: Duration = Duration::from_secs(600);
 /// Native process configuration. Every path is absolute and host-owned.
 /// No launcher, shell, remote URL, package installer or model downloader runs.
 /// Configure `python` as the existing environment's interpreter itself.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommandAudioConfig {
     pub python: PathBuf,
     pub bridge: PathBuf,

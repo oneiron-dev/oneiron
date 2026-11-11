@@ -1,0 +1,16 @@
+{
+  "name": "vault.questions.schedule",
+  "description": "Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold.",
+  "input": "crate::receipt::QuestionScheduleRequest",
+  "output": "Option<crate::llm::decision::questions::QuestionScheduleHead>",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.schedule\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

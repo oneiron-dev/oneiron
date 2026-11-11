@@ -1,0 +1,16 @@
+{
+  "name": "vault.affect.coping.update",
+  "description": "Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs.",
+  "input": "crate::memory::coping_doors::CopingOutcomeUpdateRequest",
+  "output": "crate::memory::coping_doors::CopingOutcomeReceipt",
+  "call": "memory.coping_outcome_update_as_owner(&memory.embedded_owner(\"vault.affect.coping.update\")?, &input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

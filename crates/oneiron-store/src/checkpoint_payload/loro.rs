@@ -18,8 +18,11 @@
 //! capture keeps a split only once its own all-open join gives back the
 //! stored history ([`admit_round_trip`]); every join proves the history its
 //! bytes carry is the filled one before anything is written. A shallow or
-//! state-only document holds no history before its cut, so no projection
-//! shows its actors: it stays under the vault-wide seal (Engine R3).
+//! state-only document holds no history before its cut, so no history walk
+//! shows what was written there. One that names no one, in its state at the
+//! cut, its kept changes and its state at its head, is its own no-one form
+//! and is kept as stored ([`Slice::ShallowSnapshot`], FIX 6442); one that
+//! names an actor stays under the vault-wide seal (Engine R3).
 
 pub mod frame;
 pub mod proof;
@@ -34,7 +37,8 @@ use ::loro::{
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 
-/// R3: a shallow or state-only document, whose history before its cut no
+/// R3: a shallow or state-only document that names an actor, or holds what
+/// its state reading does not take, whose history before its cut no
 /// projection holds.
 pub const SHALLOW: &str = "shallow document projection not supplied";
 
@@ -133,11 +137,14 @@ pub struct JoinedLoro {
     pub doc: LoroDoc,
 }
 
-/// Which part of a document's history a row holds: a full snapshot, or an
-/// update's exact operation spans, in (peer, counter) order.
+/// Which part of a document's history a row holds: a full snapshot, a
+/// shallow or state-only snapshot that names no one and is kept as stored
+/// (FIX 6442), or an update's exact operation spans, in (peer, counter)
+/// order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Slice {
     Snapshot,
+    ShallowSnapshot,
     Updates(Vec<IdSpan>),
 }
 
@@ -203,10 +210,11 @@ fn spans_of(meta: &ImportBlobMetadata) -> Vec<IdSpan> {
 }
 
 /// The typed history `slice` names in `doc`: for a snapshot, everything
-/// `doc` holds now; for an update, its spans.
+/// `doc` holds now (a shallow document's starts at its cut, which Loro's
+/// export starts from); for an update, its spans.
 pub fn history(doc: &LoroDoc, slice: &Slice) -> Vec<JsonChange> {
     match slice {
-        Slice::Snapshot => {
+        Slice::Snapshot | Slice::ShallowSnapshot => {
             let start = VersionVector::default();
             let all = doc.export_json_updates_without_peer_compression(&start, &doc.oplog_vv());
             all.changes
@@ -218,14 +226,15 @@ pub fn history(doc: &LoroDoc, slice: &Slice) -> Vec<JsonChange> {
     }
 }
 
-/// Whether `bytes` is a blob of `slice`'s shape: a full snapshot, or an
-/// update holding exactly its spans.
+/// Whether `bytes` is a blob of `slice`'s shape: a full snapshot, a shallow
+/// or state-only one, or an update holding exactly its spans.
 pub fn blob_holds(bytes: &[u8], slice: &Slice) -> bool {
     let Ok(meta) = LoroDoc::decode_import_blob_meta(bytes, true) else {
         return false;
     };
     match slice {
         Slice::Snapshot => meta.mode == EncodedBlobMode::Snapshot,
+        Slice::ShallowSnapshot => meta.mode == EncodedBlobMode::ShallowSnapshot,
         Slice::Updates(spans) => meta.mode == EncodedBlobMode::Updates && spans_of(&meta) == *spans,
     }
 }

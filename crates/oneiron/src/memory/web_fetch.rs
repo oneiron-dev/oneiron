@@ -286,10 +286,16 @@ fn fetch_error(error: WebFetchError) -> MemoryError {
                 "A hosted node refuses private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7) outside the origins its hosting operator allows; a self-hosted node fetches this address, or the hosting operator can allow its named private origin.",
             ],
         ),
+        // A same-site crawl records a cross-site redirect per page; only a
+        // non-seed page meets it, so it reaches here from no single fetch.
+        // A page whose redirect hop was unsafe fails like any page no rung
+        // fetched (FIX 4734).
         error @ (WebFetchError::InvalidRendererSlot { .. }
         | WebFetchError::MissingRequiredRenderer { .. }
         | WebFetchError::InvalidMinimumContentBytes
-        | WebFetchError::AllRenderersFailed { .. }) => {
+        | WebFetchError::AllRenderersFailed { .. }
+        | WebFetchError::CrossSiteRedirect { .. }
+        | WebFetchError::UnsafeRedirect { .. }) => {
             MemoryError::new("WEB_FETCH_FAILED", error.to_string(), &[])
         }
     }

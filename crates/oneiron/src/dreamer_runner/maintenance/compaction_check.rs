@@ -47,7 +47,7 @@ use crate::inbox::{
 use crate::inference_context::HostInferenceContext;
 use crate::llm::call_as_step;
 use crate::model_binding::ModelRole;
-use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
 use crate::model_step_error::DurableStepResult;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{
@@ -292,13 +292,14 @@ pub async fn run_compaction_check(
             record(ctx.vault, attempt_id, &declaration, &settled, now)?;
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
     };
     let locality = judge_locality(&model)?;
     let keyless = model.inference.selected_keyless();
-    let request = judge_request(&model, &declaration, &read, locality, keyless)?;
+    let paid = model.inference.selected_paid();
+    let request = judge_request(&model, &declaration, &read, locality, keyless, paid)?;
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
@@ -313,6 +314,7 @@ pub async fn run_compaction_check(
         state: &state,
         locality,
         keyless,
+        paid,
     };
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
@@ -352,6 +354,7 @@ struct Judging {
     response: LlmResponse,
     memoized: bool,
     step_hash: [u8; 32],
+    binding: StepEffectBinding,
     /// What it spent: nothing when memoized, paid for by the pass that
     /// asked it.
     units: u64,
@@ -397,7 +400,7 @@ async fn ask_judge(
         now_ms: ctx.now_ms,
     };
     let outcome = call_as_step(&step_ctx, model.backend, model.guard, request).await;
-    let (response, memoized) = match step_answer(outcome)? {
+    let (response, memoized, binding) = match step_answer(outcome)? {
         Ok(answer) => answer,
         Err(parked) => return Ok(Err(parked)),
     };
@@ -414,21 +417,26 @@ async fn ask_judge(
         response,
         memoized,
         step_hash,
+        binding,
         units,
     }))
 }
 
 /// The judge's answer and whether it was memoized, or how the attempt
 /// waits for one.
-type StepAnswer = std::result::Result<(LlmResponse, bool), DreamerAttemptExecution>;
+type StepAnswer =
+    std::result::Result<(LlmResponse, bool, StepEffectBinding), DreamerAttemptExecution>;
 
 /// [`StepAnswer`] from the durable step's outcome: nothing was spent before
 /// it, so a step that did not finish parks with only its own spend.
 fn step_answer(outcome: DurableStepResult<StepOutcome>) -> Result<StepAnswer> {
     match outcome {
         Ok(StepOutcome::Finished {
-            response, memoized, ..
-        }) => Ok(Ok((response, memoized))),
+            response,
+            memoized,
+            binding,
+            ..
+        }) => Ok(Ok((response, memoized, binding))),
         Ok(StepOutcome::Trapped { .. }) => Ok(Err(support::Spend::default().trapped())),
         Err(error) => support::Spend::default().parked_on(error).map(Err),
     }
@@ -544,9 +552,10 @@ fn judge_request(
     read: &Ready,
     locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
+    paid: bool,
 ) -> Result<LlmRequest> {
     let input = judge_input(declaration, read);
-    judge_call(model, diagnostic_schema(), &input, locality, keyless)
+    judge_call(model, diagnostic_schema(), &input, locality, keyless, paid)
 }
 
 /// What the judge reads: the span, the summary and the span's retained
@@ -589,13 +598,17 @@ fn judge_call(
     input: &serde_json::Value,
     locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
+    paid: bool,
 ) -> Result<LlmRequest> {
     let input = serde_json::to_string(input)
         .map_err(|_| Error::InvariantViolation("the check input did not encode"))?;
-    let mut request = judge_shell(model, schema, locality, keyless);
+    let mut request = judge_shell(model, schema, locality, keyless, paid);
     request.messages.push(LlmMessage {
         role: LlmMessageRole::User,
-        content: vec![ContentPart::Text { text: input }],
+        content: vec![ContentPart::Text {
+            text: input,
+            signature: None,
+        }],
     });
     Ok(request)
 }
@@ -607,6 +620,7 @@ fn judge_shell(
     schema: serde_json::Value,
     locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
+    paid: bool,
 ) -> LlmRequest {
     LlmRequest {
         model: model.model.clone(),
@@ -624,12 +638,14 @@ fn judge_shell(
             response_format: ResponseFormat::Json { schema },
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![LlmMessage {
             role: LlmMessageRole::System,
             content: vec![ContentPart::Text {
                 text: model.rubric.to_owned(),
+                signature: None,
             }],
         }],
         tools: Vec::new(),
@@ -653,7 +669,7 @@ fn judgment(response: &LlmResponse, declaration: &CompactionCheckDeclaration) ->
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

@@ -1,7 +1,8 @@
 //! The rows a saved weave period's copies depend on, for its erase index:
 //! the sources its own checks read, each loop row's refs, audit decision
-//! candidates, and the rows a
-//! health card's Coach draft was written from (FIX 8672). The draft's
+//! candidates, and the rows a health card's numeric input witness names
+//! or its Coach draft was written from (FIX 8672). A deleted numeric
+//! member clears the whole witness, independently of the draft. The draft's
 //! diagnosis and proposal are text copied out of the agent's TASK and its
 //! sealed pads, so the card's copy depends on every row its answer froze
 //! (FIX 9220). A hard delete of one scrubs the text from the period's
@@ -22,8 +23,8 @@ use crate::store::Store;
 
 /// Every ref a saved period carries, for its erase index: the sources its
 /// checks read, each loop row's claim, actor and evidence refs, and the
-/// rows each card's unscrubbed draft text was written from, plus audit
-/// decision candidates. A hard delete
+/// rows each card's numeric witness names or its unscrubbed draft text
+/// was written from, plus audit decision candidates. A hard delete
 /// of a source erases the period; of any other ref, it rewrites the rows
 /// that name it (`rewrite.rs`).
 pub(super) fn indexed_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
@@ -32,6 +33,9 @@ pub(super) fn indexed_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>
         sources.extend(loop_decisions::row_refs(item));
         if let WeaveItem::SieveAudit { audit, .. } = item {
             sources.extend(audit.decision_candidate_refs());
+        }
+        if let WeaveItem::AgentHealth { card, .. } = item {
+            sources.extend(card.source_rows.iter().flatten().copied());
         }
         if let WeaveItem::AgentHealth {
             card,
@@ -70,20 +74,30 @@ fn scrub_draft(card: &mut AgentHealthCard, draft_erased: &mut bool) {
     *draft_erased = true;
 }
 
-/// A hard delete of `source` in a saved card row: its draft text goes when
-/// it was written from `source`. `true` when the row was rewritten.
+/// A hard delete of `source` in a saved card row clears its whole numeric
+/// witness if it names `source`. Draft text goes only when it was written
+/// from `source`. `true` when either part of the row was rewritten.
 pub(super) fn scrub_draft_of(item: &mut WeaveItem, source: &EntityId) -> bool {
     let WeaveItem::AgentHealth { card, draft_erased } = item else {
         return false;
     };
+    let changed = card
+        .source_rows
+        .as_ref()
+        .is_some_and(|rows| rows.contains(source));
+    if changed {
+        card.source_rows = None;
+    }
     if *draft_erased || !draft_sources(card).contains(source) {
-        return false;
+        return changed;
     }
     scrub_draft(card, draft_erased);
     true
 }
 
-/// The serve-time recheck of each card's draft in a served copy: a draft
+/// The serve-time recheck also clears a numeric witness when any member
+/// is erased or stale, even without draft text or a saved index entry.
+/// The draft recheck is separate: a draft
 /// written from a row now erased or stale, by its tombstone, is scrubbed
 /// from the copy served, whether or not the erase index named the period.
 /// A draft that predates `source_rows` names no rows the tombstone check
@@ -103,6 +117,17 @@ fn scrub_erased_drafts_in(
         let WeaveItem::AgentHealth { card, draft_erased } = item else {
             continue;
         };
+        let mut numeric_gone = false;
+        for row in card.source_rows.iter().flatten() {
+            let state = store.port_deletion_state(txn, row)?;
+            if state.deleted || state.stale {
+                numeric_gone = true;
+                break;
+            }
+        }
+        if numeric_gone {
+            card.source_rows = None;
+        }
         if *draft_erased {
             continue;
         }
@@ -126,7 +151,8 @@ fn scrub_erased_drafts_in(
 }
 
 impl ScopedRead<'_> {
-    /// A saved period's copy as this read serves it, in `txn`: draft text
+    /// A saved period's copy as this read serves it, in `txn`: numeric
+    /// witnesses with erased or stale members cleared, and draft text
     /// written from an erased row scrubbed, indexed or not (FIX 8672), and
     /// each audit decision's refs past this reader's own floor (FIX 8322).
     /// Every row and the period stay.

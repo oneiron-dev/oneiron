@@ -1,0 +1,16 @@
+{
+  "name": "vault.reports.route",
+  "description": "The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to.",
+  "input": "crate::task_verb::sdk::ReportRouteRequest",
+  "output": "crate::task_verb::sdk::ReportRouteReceipt",
+  "call": "crate::task_verb::sdk::set_report_route_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.route\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

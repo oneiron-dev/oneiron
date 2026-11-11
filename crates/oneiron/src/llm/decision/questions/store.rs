@@ -203,7 +203,7 @@ fn create_question_reading_in_txn(
         principal: asker.entity_ref(),
         definition,
         created_at: now,
-        asker_class: Some(asker.actor_class().into()),
+        asker_class: Some(asker.actor_class()),
         read_lane,
     };
     let id = record.definition.question.id;
@@ -418,7 +418,7 @@ fn edit_question_reading(
             principal,
             definition,
             created_at: now,
-            asker_class: Some(asker.actor_class().into()),
+            asker_class: Some(asker.actor_class()),
             read_lane,
         };
         secret_scan_before_put(&record)?;

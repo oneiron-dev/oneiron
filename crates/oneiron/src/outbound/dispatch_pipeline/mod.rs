@@ -20,13 +20,16 @@ mod vault;
 pub(super) mod verdict;
 
 pub(crate) use self::connector_slate::connector_slate_effect_from_frozen_payload;
-pub(super) use self::degrade::ALTERNATIVE_OUTCOME_FIELD;
+pub(super) use self::degrade::{
+    ALTERNATIVE_OUTCOME_FIELD, ambient_alternative_dispatch_request, ambient_alternative_ref,
+    name_ambient_alternative,
+};
 pub(crate) use self::esign_delivery::{
     EsignDeliveryCall, esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
     esign_delivery_grant_in_txn, failure_signals_approval_digest_from_frozen_payload,
 };
-pub(crate) use self::govern::outbound_gate_effect;
 pub use self::govern::{outbound_approve_once_digest, outbound_step_approve_once_digest};
+pub(crate) use self::govern::{outbound_gate_effect, outbound_preflight_effect};
 pub use self::pipeline::OutboundDispatchPipeline;
 pub(crate) use self::pipeline::RecordedDispatch;
 pub(super) use self::policy_risk::GATE_OUTCOME_PENDING;

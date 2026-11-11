@@ -40,18 +40,6 @@ pub const SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD: u32 = 3;
 /// land. Distinct from expiry: the warning asks, expiry forces.
 pub const LEASE_LANDING_WARNING_PERCENT: u64 = 80;
 
-impl LandingTrigger {
-    /// Stable wire/render token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::CancelRequest => "cancel_request",
-            Self::BudgetWarning => "budget_warning",
-            Self::LeaseWarning => "lease_warning",
-        }
-    }
-}
-
 impl CancelStanding {
     /// Stable wire/render token.
     #[must_use]
@@ -152,17 +140,19 @@ impl ForceCancelAuthority {
     pub(crate) fn erase_actor_payloads_in_txn(
         erase: &mut crate::deletion::ActorErasureWriter<'_, '_>,
         act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
-    ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+    ) -> Result<crate::deletion::ErasureEffects> {
         let (vault, wtxn, actor) = erase.parts();
         let owned = crate::attempt_queue::payload_erase::erase_attempt_payload_actors_owned_in_txn(
             &crate::secret_custody::CustodyWrite::of(vault),
             wtxn,
             &std::collections::BTreeSet::from([actor]),
         )?;
-        let mut cancelled = crate::deletion::erase_owned_byoa_exhausts_in_txn(erase, &owned, act)?;
+        let mut effects = crate::deletion::erase_owned_byoa_exhausts_in_txn(erase, &owned, act)?;
         let (vault, wtxn, _) = erase.parts();
-        cancelled.extend(Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)?);
-        Ok(cancelled)
+        effects
+            .cancelled
+            .extend(Self::cancel_erased_payloads_in_txn(vault, wtxn, &owned)?);
+        Ok(effects)
     }
 
     /// Scrubs and cancels the authenticated image writer's owned BYOA
@@ -224,25 +214,6 @@ impl ForceCancelAuthority {
     #[must_use]
     pub fn actor(&self) -> &str {
         &self.actor
-    }
-}
-
-impl AttemptResumePoint {
-    /// Builds a resume point with no artifact reference.
-    #[must_use]
-    pub fn new(marker: impl Into<String>, recorded_at: u64) -> Self {
-        Self {
-            marker: marker.into(),
-            artifact_ref: None,
-            recorded_at,
-        }
-    }
-
-    /// Attaches the durable artifact a successor should read first.
-    #[must_use]
-    pub fn with_artifact_ref(mut self, artifact_ref: impl Into<String>) -> Self {
-        self.artifact_ref = Some(artifact_ref.into());
-        self
     }
 }
 

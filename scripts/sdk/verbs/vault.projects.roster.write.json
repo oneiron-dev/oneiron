@@ -1,0 +1,13 @@
+{
+  "name": "vault.projects.roster.write",
+  "description": "Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent.",
+  "input": "crate::workspace_roster::ProjectRosterWriteRequest",
+  "output": "crate::workspace_roster::ProjectRosterWriteOutcome",
+  "call": "memory.projects_write_roster(input.project, &input.record)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

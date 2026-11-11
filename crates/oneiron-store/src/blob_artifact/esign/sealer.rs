@@ -100,6 +100,15 @@ pub enum SealVerdict {
     Indeterminate,
 }
 
+/// Action subtypes observed in the sealed bytes, not a safety certificate.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub struct SealActiveContentFacts {
+    pub javascript: bool,
+    pub launch: bool,
+}
+
 /// A sealed PDF's verification, derived from its evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EsignVerdict {
@@ -114,6 +123,7 @@ pub struct EsignVerdict {
     /// The sealer's full report as JSON, kept as its word: carried and
     /// stored, never parsed here.
     pub report_json: Vec<u8>,
+    pub active_content: SealActiveContentFacts,
 }
 
 impl EsignVerdict {

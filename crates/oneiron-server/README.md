@@ -254,10 +254,13 @@ any effort. Call mode without one takes this server's setting:
 ```toml
 [recall]
 call_deadline_ms = 100   # 1..60000; ONEIRON_RECALL_CALL_DEADLINE_MS
+retrieval_telemetry_capture = false   # ONEIRON_RECALL_RETRIEVAL_TELEMETRY_CAPTURE
 ```
 
 The default, 100 ms, is the ARCH-0042 #call-mode-budget bar: call-mode recall
 p95 at or under 100 ms server-side at 10k records.
+
+`retrieval_telemetry_capture` makes each recall record a retrieval-run row. A recall that asks `telemetry: { capture_trace: true }` then gets a `retrieval_run_id` back, and `vault.retrieval.run` reads that run. It is off by default, because the trace lane is for measurement (ARCH-0004 RET-TRACE-1): turn it on for diagnostics or evaluation only.
 
 ## This install's key slots: the `[keystore]` section
 

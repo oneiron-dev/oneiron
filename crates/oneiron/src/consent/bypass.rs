@@ -13,8 +13,6 @@
 //! either: a shared-vault act waits on its own act record
 //! ([`Vault::start_authority_act`]), which a consent verdict never settles.
 
-use rmpv::Value;
-
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
@@ -29,119 +27,29 @@ use super::grant::{
 };
 use super::support::invalid_bound;
 
-const BYPASS_GRANT_REF_DOMAIN: &[u8] = b"oneiron.consent.bypass_grant.v1\0";
+#[doc(hidden)]
+use oneiron_consent_state::consent::bypass::BYPASS_GRANT_REF_DOMAIN;
+#[doc(hidden)]
+pub use oneiron_consent_state::consent::bypass::{BypassExtent, BypassScope};
 
-/// Where a bypass grant applies.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum BypassScope {
-    /// One project. The vault's root project is the whole vault, so it is
-    /// never a bypass scope.
-    Project(EntityId),
-    /// One conversation thread.
-    Thread(EntityId),
-}
-
-impl BypassScope {
-    const fn kind(self) -> &'static str {
-        match self {
-            Self::Project(_) => "project",
-            Self::Thread(_) => "thread",
-        }
-    }
-
-    const fn id(self) -> EntityId {
-        match self {
-            Self::Project(id) | Self::Thread(id) => id,
-        }
-    }
-
-    fn admits(self, effect: &ComposedEffect) -> bool {
-        let place = effect.place();
-        match self {
-            Self::Project(id) => place.project == Some(id),
-            Self::Thread(id) => place.thread == Some(id),
-        }
+fn bypass_scope_admits(bypass_scope: BypassScope, effect: &ComposedEffect) -> bool {
+    let place = effect.place();
+    match bypass_scope {
+        BypassScope::Project(id) => place.project == Some(id),
+        BypassScope::Thread(id) => place.thread == Some(id),
     }
 }
 
-/// The bypass half of a persisted grant row.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-pub struct BypassExtent {
-    /// Where the grant applies.
-    pub scope: BypassScope,
-    /// The catastrophe-floor row version the grant was created under.
-    pub floor_version: u16,
-}
-
-impl BypassExtent {
-    /// A bypass row's registry reference. Two bypasses of one bound in two
-    /// scopes are two rows.
-    pub(super) fn grant_ref(&self, bound: &GrantBound) -> String {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(BYPASS_GRANT_REF_DOMAIN);
-        hasher.update(bound.digest().as_bytes());
-        hasher.update(self.scope.kind().as_bytes());
-        hasher.update(self.scope.id().as_bytes());
-        hasher.update(&self.floor_version.to_be_bytes());
-        hasher.finalize().to_hex().to_string()
-    }
-
-    pub(super) fn encode_value(&self) -> Value {
-        Value::Map(vec![
-            (Value::from("scope"), Value::from(self.scope.kind())),
-            (Value::from("id"), Value::from(self.scope.id().to_hex())),
-            (
-                Value::from("floor_version"),
-                Value::from(self.floor_version),
-            ),
-        ])
-    }
-
-    pub(super) fn decode_value(value: &Value) -> Option<Self> {
-        let Value::Map(fields) = value else {
-            return None;
-        };
-        if fields.len() != 3 {
-            return None;
-        }
-        let field = |name: &str| {
-            fields
-                .iter()
-                .find(|(key, _)| key.as_str() == Some(name))
-                .map(|(_, value)| value)
-        };
-        let id = EntityId::from_hex(field("id")?.as_str()?).ok()?;
-        let scope = match field("scope")?.as_str()? {
-            "project" => BypassScope::Project(id),
-            "thread" => BypassScope::Thread(id),
-            _ => return None,
-        };
-        Some(Self {
-            scope,
-            floor_version: u16::try_from(field("floor_version")?.as_u64()?).ok()?,
-        })
-    }
+/// A bypass row's registry reference. Two bypasses of one bound in two
+/// scopes are two rows.
+pub(super) fn bypass_extent_grant_ref(bypass_extent: &BypassExtent, bound: &GrantBound) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(BYPASS_GRANT_REF_DOMAIN);
+    hasher.update(bound.digest().as_bytes());
+    hasher.update(bypass_extent.scope.kind().as_bytes());
+    hasher.update(bypass_extent.scope.id().as_bytes());
+    hasher.update(&bypass_extent.floor_version.to_be_bytes());
+    hasher.finalize().to_hex().to_string()
 }
 
 /// The one warning shown when a bypass grant is created: what it allows, for
@@ -253,7 +161,7 @@ pub(super) fn covering_bypass<'a>(
     }
     bypasses.iter().find(|bypass| {
         bypass.bound.class().as_str() == catastrophe.as_str()
-            && bypass.extent.scope.admits(effect)
+            && crate::consent::bypass::bypass_scope_admits(bypass.extent.scope, effect)
             && bypass.bound.contains(action)
     })
 }
@@ -322,7 +230,19 @@ impl Vault {
             created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
             bypass: Some(extent),
         };
-        let grant_ref = row.grant_ref();
+        let grant_ref = crate::consent::consent_grant_row_grant_ref(&row);
+        let from = GRANTS
+            .get(&self.store, &*wtxn, &grant_ref)?
+            .map(|stored| stored.status);
+        // The bypass mint writes no companion rows (no reason retirement, no widen bookkeeping).
+        let super::GrantStep::Write { status, .. } =
+            super::ConsentLifecycle::grant(from, super::GrantCommand::MintBypass)
+        else {
+            return Err(Error::InvariantViolation(
+                "the grant table refused a bypass mint",
+            ));
+        };
+        let row = ConsentGrantRow { status, ..row };
         GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
         let receipt = ConsentReceipt::BypassCreated {
             decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),

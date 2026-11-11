@@ -18,18 +18,18 @@
 //! chunk, and authenticates a chunk before it returns a byte of it: a body
 //! cut short, reordered, extended or opened under another manifest does not
 //! read. Malformed or unauthenticated bodies return [`Error::CorruptedIndex`],
-//! carrying no manifest bytes. Reserving a native record's measured plaintext
-//! length, associated-data buffers and sealed frame storage can also return
-//! an I/O allocation fault.
+//! carrying no manifest bytes. Reserving the parsed frame list, a native
+//! record's measured plaintext length, associated-data buffers and sealed frame
+//! storage can also return an I/O allocation fault.
 
 use std::borrow::Cow;
 
-use aes_gcm::aead::{Aead, KeyInit, Payload};
-use aes_gcm::{Aes256Gcm, Nonce};
+use aes_gcm::aead::{AeadInPlace, KeyInit};
+use aes_gcm::{Aes256Gcm, Nonce, Tag};
 use getrandom::SysRng;
 use oneiron_crypto::{
     Argon2Cost, Envelope, Kek, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId,
-    WrapType, seal_with_aad,
+    WrapType, seal_with_aad_into,
 };
 use zeroize::Zeroizing;
 
@@ -81,6 +81,7 @@ impl<'a> SealedSnapshot<'a> {
             let len = usize::try_from(u32::from_be_bytes(*len)).map_err(|_| corrupt())?;
             let frame = tail.get(..len).ok_or_else(corrupt)?;
             Envelope::parse(frame).map_err(|_| corrupt())?;
+            frames.try_reserve(1).map_err(std::io::Error::from)?;
             frames.push(Cow::Borrowed(frame));
             rest = &tail[len..];
         }
@@ -223,15 +224,30 @@ fn seal_chunk(
         recipient: RECIPIENT,
         vault_id: id,
     };
-    Ok(seal_with_aad(
+    let len = plaintext
+        .len()
+        .checked_add(oneiron_crypto::TAG_LEN)
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+    let mut ciphertext = Vec::new();
+    ciphertext
+        .try_reserve_exact(len)
+        .map_err(std::io::Error::from)?;
+    ciphertext.resize(len, 0);
+    let envelope = seal_with_aad_into(
         &params,
         SealKey::SymmetricKek(kek),
         plaintext,
         extra,
         &mut SysRng,
+        ciphertext,
     )
-    .map_err(|_| refused("sealing an inference snapshot failed"))?
-    .to_bytes())
+    .map_err(|_| refused("sealing an inference snapshot failed"))?;
+    let mut frame = Vec::new();
+    frame
+        .try_reserve_exact(envelope.len())
+        .map_err(std::io::Error::from)?;
+    envelope.write_to(&mut frame)?;
+    Ok(frame)
 }
 
 fn chunk_policy<'a>(id: &'a [u8; ID_LEN], key_id: &'a [u8; 27]) -> OpenPolicy<'a> {
@@ -299,32 +315,35 @@ fn wrap_aad(id: &[u8; ID_LEN]) -> [u8; WRAP_AAD_DOMAIN.len() + ID_LEN] {
     aad
 }
 
-/// Wraps `raw` under `vault_key` for snapshot `id`.
+/// Wraps `raw` under `vault_key` for snapshot `id` in the fallibly reserved
+/// canonical wrapped-key bytes. This buffer is wiped if encryption fails.
 fn wrap_key(vault_key: &[u8; 32], id: &[u8; ID_LEN], raw: &[u8; 32]) -> Result<WrappedSnapshotKey> {
     let mut nonce = [0; WRAP_NONCE_LEN];
     os_fill(&mut nonce)?;
     let cipher = Aes256Gcm::new_from_slice(vault_key)
         .map_err(|_| refused("sealing an inference snapshot failed"))?;
-    let ciphertext = cipher
-        .encrypt(
-            &Nonce::from(nonce),
-            Payload {
-                msg: raw,
-                aad: &wrap_aad(id),
-            },
-        )
-        .map_err(|_| refused("sealing an inference snapshot failed"))?;
-    let mut bytes = Vec::new();
+    let mut bytes = Zeroizing::new(Vec::new());
     bytes
         .try_reserve_exact(WRAPPED_LEN)
         .map_err(std::io::Error::from)?;
     bytes.push(VERSION);
     bytes.extend_from_slice(&nonce);
-    bytes.extend_from_slice(&ciphertext);
-    Ok(WrappedSnapshotKey { bytes })
+    bytes.extend_from_slice(raw);
+    let tag = cipher
+        .encrypt_in_place_detached(
+            &Nonce::from(nonce),
+            &wrap_aad(id),
+            &mut bytes[1 + WRAP_NONCE_LEN..],
+        )
+        .map_err(|_| refused("sealing an inference snapshot failed"))?;
+    bytes.extend_from_slice(&tag);
+    Ok(WrappedSnapshotKey {
+        bytes: std::mem::take(&mut *bytes),
+    })
 }
 
-/// Opens `wrapped` under `vault_key` for snapshot `id`.
+/// Opens `wrapped` under `vault_key` for snapshot `id` directly into the
+/// zeroizing data-key array, without a heap plaintext intermediate.
 fn open_wrapped(
     vault_key: &[u8; 32],
     id: &[u8; ID_LEN],
@@ -337,21 +356,17 @@ fn open_wrapped(
         .split_first_chunk::<WRAP_NONCE_LEN>()
         .ok_or_else(corrupt)?;
     let cipher = Aes256Gcm::new_from_slice(vault_key).map_err(|_| corrupt())?;
-    let plain = cipher
-        .decrypt(
-            &Nonce::from(*nonce),
-            Payload {
-                msg: ciphertext,
-                aad: &wrap_aad(id),
-            },
-        )
-        .map_err(|_| corrupt())
-        .map(Zeroizing::new)?;
-    if plain.len() != 32 {
-        return Err(corrupt());
-    }
     let mut raw = Zeroizing::new([0u8; 32]);
-    raw.copy_from_slice(&plain);
+    let (ciphertext, tag) = ciphertext.split_at(raw.len());
+    raw.copy_from_slice(ciphertext);
+    cipher
+        .decrypt_in_place_detached(
+            &Nonce::from(*nonce),
+            &wrap_aad(id),
+            &mut raw[..],
+            Tag::from_slice(tag),
+        )
+        .map_err(|_| corrupt())?;
     Ok(raw)
 }
 

@@ -121,8 +121,29 @@ fn shared_members_in_txn(
 }
 
 /// [`shared_members_in_txn`] over `store` and the posture its vault opened
-/// with, each PERSON's liveness read by `person_live` (FIX 7461).
+/// with, each PERSON's liveness read by `person_live` (FIX 7461). A shared
+/// vault with no live Owner fails closed.
 fn shared_members_with(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    live_persons: bool,
+    person_live: &mut dyn FnMut(&EntityId) -> Result<bool>,
+) -> Result<Option<LiveMembers>> {
+    let members = shared_members_census_with(store, posture, txn, live_persons, person_live)?;
+    if members
+        .as_ref()
+        .is_some_and(|members| members.owners.is_empty())
+    {
+        return Err(invalid());
+    }
+    Ok(members)
+}
+
+/// The census [`shared_members_with`] reads, before it fails closed on a
+/// shared vault with no live Owner: here such a vault reads with an empty
+/// owner set. A row that does not decode still faults.
+fn shared_members_census_with(
     store: &crate::store::Store,
     posture: crate::HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
@@ -179,12 +200,35 @@ fn shared_members_with(
     // The creation record must still read as one; its creator is history,
     // not a standing requirement. Ownership is the CURRENT conferring Owner
     // grants, so a vault whose creator transferred or left keeps its other
-    // live Owners, and one with no live Owner at all fails closed (FIX 10030).
+    // live Owners, and one with no live Owner at all fails closed (FIX 10030,
+    // in `shared_members_with`).
     EntityId::from_hex(&creation.owner_ref).map_err(|_| invalid())?;
-    if owners.is_empty() {
-        return Err(invalid());
-    }
     Ok(Some(LiveMembers { grants, owners }))
+}
+
+/// Whether `holder` holds this vault's ownership now, read as a recheck of
+/// an act that owner admitted earlier reads it (FIX 11591): the embedded
+/// owner of a personal vault while that PERSON lives, or an Owner a
+/// conferring grant names in a shared vault whose PERSON lives. A shared
+/// vault left with no live Owner at all reads false for every holder, not a
+/// fault: the holder's ownership is positively gone. A row that does not
+/// decode still faults.
+pub(crate) fn holds_live_ownership_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    holder: &EntityId,
+) -> Result<bool> {
+    let members = shared_members_census_with(
+        &vault.store,
+        vault.privacy_posture(),
+        txn,
+        true,
+        &mut |id| crate::consent::person_is_live_in_txn(vault, txn, id),
+    )?;
+    Ok(match members {
+        None => personal_owner_in_txn(vault, txn)?.contains(holder),
+        Some(members) => members.owners.contains(holder),
+    })
 }
 
 impl Vault {

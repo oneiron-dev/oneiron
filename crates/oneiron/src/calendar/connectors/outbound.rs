@@ -1,8 +1,14 @@
 //! Conditional writes plus durable outbox and remote-object cursor store.
 
 mod archived;
+mod collection;
 
 pub(crate) use self::archived::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
+pub(super) use self::collection::omission_observed;
+pub use self::collection::{
+    CalendarCollectionMember, CalendarRemoteObjectObservation,
+    calendar_collection_members_for_operation,
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -170,6 +176,12 @@ pub struct CalendarWriteOutboxRow {
     /// Per-EVENT hashes captured from the staged resource, before transport I/O.
     /// Receipt settlement uses these members even if local content changes.
     pub component_hashes: Vec<(EntityId, [u8; 32])>,
+    /// The zone that heads the staged resource: its source's own, else the
+    /// collection's (fix list row 19192); `None` when none heads it.
+    /// Settlement gives each all-day member this zone as its `calendar.tz`,
+    /// as a read of the staged bytes does, before the passport makes those
+    /// bytes an echo.
+    pub resource_zone: Option<String>,
     /// The precondition the write carries.
     pub expected_etag: Option<String>,
     /// The resource the write targets, when one is known.
@@ -277,6 +289,14 @@ pub fn write_calendar_event(
         prior_instance = row.carrier.as_ref().map(|carrier| carrier.instance);
         match row.state {
             CalendarWriteOutboxState::Prepared => {
+                // The replay renders under the collection's zone as it is
+                // now; a zone that moved the staged hashes refuses below
+                // like a local edit does, never restaging (fix list row
+                // 19192).
+                let collection_zone = transport.resource_calendar_timezone(
+                    &seat.config.secret_ref,
+                    &seat.config.calendar_ref,
+                )?;
                 let ics = render_owner_vevent(
                     vault,
                     &event_ref,
@@ -284,13 +304,14 @@ pub fn write_calendar_event(
                     row.sequence,
                     now,
                     source.as_deref(),
+                    collection_zone.as_deref(),
                 )?
                 .ics;
                 let rendered_hash = ics_content_hash(&ics, &uid)?;
                 if rendered_hash != row.content_hash {
                     return Err(CalendarConnectorError::Outbox {
                         outbox_id,
-                        detail: "staged intent no longer matches the local EVENT".to_owned(),
+                        detail: "staged intent no longer matches the EVENT or its zone".to_owned(),
                     });
                 }
                 let request = RemoteWriteRequest {
@@ -343,7 +364,19 @@ pub fn write_calendar_event(
     } else {
         floor
     };
-    let rendered = render_owner_vevent(vault, &event_ref, &uid, sequence, now, source.as_deref())?;
+    // Read once, before the render, so the staged hashes below are those of
+    // the bytes the write sends (fix list row 19192).
+    let collection_zone =
+        transport.resource_calendar_timezone(&seat.config.secret_ref, &seat.config.calendar_ref)?;
+    let rendered = render_owner_vevent(
+        vault,
+        &event_ref,
+        &uid,
+        sequence,
+        now,
+        source.as_deref(),
+        collection_zone.as_deref(),
+    )?;
     let ics = rendered.ics;
     let content_hash = ics_content_hash(&ics, &uid)?;
     let expected_etag = object.as_ref().and_then(|row| row.etag.clone());
@@ -360,6 +393,7 @@ pub fn write_calendar_event(
         sequence,
         content_hash,
         component_hashes: rendered.component_hashes,
+        resource_zone: rendered.resource_zone,
         expected_etag: expected_etag.clone(),
         href: href.clone(),
         receipt: None,
@@ -367,7 +401,15 @@ pub fn write_calendar_event(
         updated_at: now,
         carrier: None,
     };
-    write_outbox_row(vault, operation, &mut row, prior_instance)?;
+    {
+        // A full listing's omission of this UID is admitted in the vault's
+        // calendar admission turn once no upsert of it is in flight, so the
+        // prepared row is published in that turn too and a write cannot
+        // begin between that check and the absence (fix list row 19192).
+        // The turn ends before any provider call.
+        let _turn = crate::calendar::ingest::admission_turn(vault)?;
+        write_outbox_row(vault, operation, &mut row, prior_instance)?;
+    }
 
     let request = RemoteWriteRequest {
         href,
@@ -587,7 +629,37 @@ fn finish_remote_applied_write_in_txn(
         &operation.registration().seat,
         &row.uid,
     );
+    // Fix list row 19192 (reviews of #6397): the zone that heads the staged
+    // bytes, or none, is event content, which a read of those bytes gives
+    // each all-day member as its `calendar.tz`. The passport below makes the
+    // next read of the bytes an echo that admits nothing, so the zone lands
+    // here first, under this seat's own property source, and a zone of that
+    // source the bytes no longer carry goes.
+    let zone_prefix = crate::calendar::ingest::property_claims::source_prefix(&row.system);
+    let zone_record = format!("{zone_prefix}{source_record_id}");
     for &(member, content_hash) in &row.component_hashes {
+        if super::resource::all_day_in_txn(vault, txn, &member)? {
+            crate::calendar::ingest::property_claims::reconcile_zone_in_txn(
+                vault,
+                txn,
+                member,
+                row.resource_zone.as_deref(),
+                &zone_prefix,
+                now,
+                |txn, predicate, value| {
+                    admit_screened_in_txn(
+                        vault,
+                        txn,
+                        member,
+                        &CalendarInboundBody::default(),
+                        &zone_record,
+                        predicate,
+                        value,
+                        now,
+                    )
+                },
+            )?;
+        }
         // Direction remains approval-blind, while the UID-index gate below
         // still requires an admitted passport for a non-local UID.
         let current = live_passport_for_in_txn(vault, txn, &member, &row.system, &row.uid)?;
@@ -604,6 +676,7 @@ fn finish_remote_applied_write_in_txn(
             uid: row.uid.clone(),
             last_sequence: receipt.sequence,
             content_hash,
+            source: None,
             direction,
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
@@ -659,6 +732,8 @@ pub(super) struct StoredOutboxRow {
     sequence: u32,
     content_hash: [u8; 32],
     component_hashes: Vec<([u8; 16], [u8; 32])>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resource_zone: Option<String>,
     expected_etag: Option<String>,
     href: Option<String>,
     receipt: Option<RemoteWriteReceipt>,
@@ -685,6 +760,7 @@ impl StoredOutboxRow {
                 .iter()
                 .map(|(member, hash)| (*member.as_bytes(), *hash))
                 .collect(),
+            resource_zone: literal::projection(&row.resource_zone)?,
             expected_etag: literal::projection(&row.expected_etag)?,
             href: literal::projection(&row.href)?,
             receipt: literal::projection(&row.receipt)?,
@@ -718,6 +794,7 @@ impl StoredOutboxRow {
                     ))
                 })
                 .collect::<Result<_, CalendarConnectorError>>()?,
+            resource_zone: self.resource_zone,
             expected_etag: self.expected_etag,
             href: self.href,
             receipt: self.receipt,

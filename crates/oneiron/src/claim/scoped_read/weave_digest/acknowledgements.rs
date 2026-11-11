@@ -197,16 +197,30 @@ impl ScopedRead<'_> {
         let now = vault.instant_in_txn(txn)?.secs();
         let owners = crate::policy_model::owners_in_txn(vault, txn)?;
         let (grants, _undecoded) = vault.agent_grants_reporting_in_txn(txn)?;
+        let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+            &vault.store,
+            txn,
+            grants.iter().map(|standing| &standing.grant),
+        )?;
         for standing in grants {
             if standing.delegated_by != delegator
-                || !standing.stands_in_txn(vault, txn, agent, WEAVE_OWNER_ACK_VERB, now, &owners)
+                || !standing.stands_in_txn(
+                    vault,
+                    txn,
+                    agent,
+                    WEAVE_OWNER_ACK_VERB,
+                    now,
+                    &owners,
+                    &classes,
+                )
             {
                 continue;
             }
-            // The SAME Grant admits the ack at the notice's record position.
+            // The SAME Grant admits the ack at the notice's record position,
+            // its ack verb admitted by its exact verbs or a class it names.
             if standing
                 .grant
-                .authority_scope
+                .scope_for_verb(WEAVE_OWNER_ACK_VERB, &classes)
                 .admits(WEAVE_OWNER_ACK_VERB, &position, &Scope::top())
             {
                 return Ok(Some(standing.id));

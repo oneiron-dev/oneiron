@@ -6,9 +6,9 @@
 //! grant over this shared vault, and to the [`AdminStepUp`] witness that
 //! person's step-up left. Canon: an Admin cannot skip MFA, because any one
 //! admin can act alone (ARCH-0043, MFA-1 A, 2026-10-09). Only real step-up
-//! ingress may mint the witness, and none exists yet: the witness has no
-//! public constructor, so no served route can present an Admin proof until
-//! that ingress lands (FIX-LIST `[→L13]`).
+//! ingress may mint the witness: it has no public constructor, and its one
+//! producer is the passkey step-up verifier, [`Vault::admin_step_up`]
+//! (`authority::step_up`, FIX 11694).
 //!
 //! The proof only ADDS a path. A Person, Owner or Agent read never asks for
 //! it, and a live vault Owner, co-Owners included, never needs it: an
@@ -55,8 +55,8 @@ const WEAVE_ADMIN_READ_VERB: &str = "read";
 /// The witness one person's MFA step-up leaves: whose step-up, over which
 /// request instrument, and when. Opaque: no caller JSON, flag or field
 /// builds one. The only constructor is the crate-internal seam
-/// [`AdminStepUp::after_step_up`], which real step-up ingress fills once it
-/// exists (FIX-LIST `[→L13]`); until then nothing mints one.
+/// [`AdminStepUp::after_step_up`], which only the passkey step-up verifier
+/// calls ([`Vault::admin_step_up`], FIX 11694).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminStepUp {
     holder: EntityId,
@@ -69,10 +69,6 @@ impl AdminStepUp {
     /// `stepped_up_at`. Only the ingress that verified the step-up itself
     /// may call this; it never takes a caller's word that a step-up
     /// happened.
-    #[allow(
-        dead_code,
-        reason = "L13's MFA step-up ingress is its first caller; none mints a witness yet"
-    )]
     pub(crate) fn after_step_up(
         holder: EntityId,
         request: &VerifiedSlip,
@@ -179,7 +175,8 @@ impl AuthenticatedWeaveAdmin {
     }
 
     /// Whether this proof still holds in `txn`: the same vault open, the
-    /// step-up witness this holder's over this request, the request still a
+    /// step-up witness this holder's over this request and still its slip's
+    /// standing step-up with its passkey enrolled, the request still a
     /// live capability of this vault held by its own holder, the person a
     /// live PERSON, the vault shared and not deleted, the grant exactly a
     /// live Admin membership of that person over this vault (unexpired, its
@@ -220,6 +217,20 @@ impl AuthenticatedWeaveAdmin {
             .capability_slip_is_live_in_txn(txn, request)
             .map_err(&checked)?
             || !crate::consent::person_is_live_in_txn(vault, txn, &self.actor).map_err(&checked)?
+        {
+            return Err(not_current());
+        }
+        // The witness stands only while its step-up does: an owner reset, a
+        // removed passkey or a newer step-up on the slip ends it here, in
+        // every read's own transaction.
+        if !vault
+            .step_up_record_stands_in_txn(
+                txn,
+                self.mfa.holder,
+                &self.mfa.slip_id,
+                self.mfa.stepped_up_at,
+            )
+            .map_err(&checked)?
         {
             return Err(not_current());
         }

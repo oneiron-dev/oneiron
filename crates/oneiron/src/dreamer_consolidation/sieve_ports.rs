@@ -26,11 +26,11 @@ use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::call_as_step_checked;
+use crate::llm::call_as_step_checked_with_unsaved_usage;
 use crate::llm::decision::AskTo;
 use crate::model_binding::ModelRole;
 use crate::model_decision::{DecisionQuestion, EvidenceVersion};
-use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole,
@@ -94,10 +94,10 @@ pub enum SieveRungOutcome {
 }
 
 /// A rung read's outcome, and each generation that finished (its request
-/// hash, usage and memoized flag) whatever the outcome.
+/// hash, usage and optional durable binding and memoized flag) whatever the outcome.
 pub struct SieveRungRead {
     pub outcome: DurableStepResult<SieveRungOutcome>,
-    pub steps: Vec<([u8; 32], LlmUsage, bool)>,
+    pub steps: Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
 }
 
 /// One child's extraction, as the child hands it to its port.
@@ -241,6 +241,8 @@ pub(in crate::dreamer_consolidation) struct SliceCall<'a> {
 pub struct SliceStep {
     pub step_hash: [u8; 32],
     pub outcome: DurableStepResult<StepOutcome>,
+    /// A fresh response's usage when serialization or its checkpoint write failed.
+    pub unsaved_usage: Option<LlmUsage>,
 }
 
 /// The sieve's rungs on the executor's own roles: one generated pack per
@@ -326,6 +328,7 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
         };
     };
     let keyless = rung.call.inference.selected_keyless();
+    let paid = rung.call.inference.selected_paid();
     let vault = rung.step.vault;
     let refused = AtomicBool::new(false);
     let seal = |request: LlmRequest| -> Result<LlmRequest> {
@@ -355,12 +358,14 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![LlmMessage {
             role: LlmMessageRole::System,
             content: vec![ContentPart::Text {
                 text: rung.instruction.to_owned(),
+                signature: None,
             }],
         }],
         tools: Vec::new(),
@@ -454,7 +459,7 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
         .zip(&checks)
         .zip(&backends)
         .map(|(((_, request), check), backend)| {
-            call_as_step_checked(
+            call_as_step_checked_with_unsaved_usage(
                 child.step,
                 backend.get(),
                 child.guard,
@@ -467,7 +472,11 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
     Ok(requests
         .into_iter()
         .zip(outcomes)
-        .map(|((step_hash, _), outcome)| SliceStep { step_hash, outcome })
+        .map(|((step_hash, _), (outcome, unsaved_usage))| SliceStep {
+            step_hash,
+            outcome,
+            unsaved_usage,
+        })
         .collect())
 }
 

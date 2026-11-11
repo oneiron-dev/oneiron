@@ -148,6 +148,10 @@ impl Vault {
             // So is the record of a membership change no host issuer signed
             // (FIX 12335).
             self.carry_pending_membership_executions_logged();
+            // An import mark this install could not sign is signed as its
+            // key loads (FIX 12291); the live windows take it on their next
+            // refresh or open.
+            self.carry_pending_import_marks_logged();
             return Ok(machine);
         }
         Err(super::refused(

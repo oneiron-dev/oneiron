@@ -81,5 +81,7 @@ pub(super) fn scrub_pending(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: Entity
     } else {
         super::document_store::persist_authoritative(vault, txn, &clean)?;
     }
-    crate::sync::documents::storage::snapshot(vault, txn, id, &clean.doc, true)
+    let indexed_before = super::revision::indexed_input_in_txn(vault, txn, id)?;
+    crate::sync::documents::storage::snapshot(vault, txn, id, &clean.doc, true)?;
+    super::revision::index_stored_note_in_txn(vault, txn, id, indexed_before.as_deref(), None)
 }

@@ -191,8 +191,8 @@ pub(super) fn hydrate_entity(
     // Whether the read revision is another than the live row, judged on the
     // stored bytes before a file-plane ASSET's body replaces its manifest.
     let other_revision = raw != live_raw;
-    // A file-plane ASSET's live row hydrates its body, not its manifest;
-    // an older revision keeps the manifest it was stored as.
+    // A file-plane ASSET's live row hydrates its body, not its manifest,
+    // as does an older revision whose file its revisions keep (FIX 22091).
     let raw = vault.materialized_revision_in_txn(rtxn, &id, raw)?;
     // A history pin cannot restore a claim inadmissible at the current door,
     // its live support included, as the scoped read lane admits a pin.
@@ -390,10 +390,13 @@ fn hydrate_selected_note_fields(
         crate::note::ensure_citations_ready(store.base(), rtxn, *id)?;
     }
     if !(note && options.read_mode == crate::vault::ReadMode::Live) {
-        if crate::batch::export::write_door_refuses_body(body) {
+        // A NOTE's selected revision is its birth row, read with its birth
+        // text (FIX 7783).
+        let body = crate::note::birth_body_from_in_txn(store, rtxn, id, entity_type, body)?;
+        if crate::batch::export::write_door_refuses_body(&body) {
             return Ok(HashMap::new());
         }
-        return Ok(decode_entity_fields(body, true).unwrap_or_default());
+        return Ok(decode_entity_fields(&body, true).unwrap_or_default());
     }
     let body =
         crate::note::live_body_from_in_txn(store.base(), store, rtxn, id, entity_type, body)?;
@@ -440,6 +443,15 @@ fn pins_indexed_frontier(
         false,
     )?
     .is_some_and(|text| text.revision == revision))
+}
+
+/// Release an admitted claim's fields without retrieval-only ranking gates.
+pub(crate) fn released_claim_fields(raw_body: &[u8]) -> Option<HashMap<String, serde_json::Value>> {
+    if crate::batch::export::write_door_refuses_body(raw_body) {
+        return None;
+    }
+    let body = crate::claim::decode_claim_body(raw_body, true).ok()?;
+    Some(claim_fields_to_json(&body))
 }
 
 /// Projects an already-decoded CLAIM body into the hydrated-fields map —
@@ -512,13 +524,13 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     if let Some(world) = body.world {
         // Board fences use identity from this authorized snapshot, not a later read.
         out.insert(
-            "world".to_owned(),
+            "worldId".to_owned(),
             serde_json::Value::String(world.to_hex()),
         );
     }
     if body.rel.is_some() {
-        // On-disk `rel` is MessagePack binary and renders as JSON null.
-        out.insert("rel".to_owned(), serde_json::Value::Null);
+        // Relationship references retain this projection's null representation.
+        out.insert("scopeRelationshipId".to_owned(), serde_json::Value::Null);
     }
     // On-disk `subj` is MessagePack binary; the generic projection renders
     // binary as null, and so does this one.

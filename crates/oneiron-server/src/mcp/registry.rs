@@ -6,6 +6,7 @@ use super::actors::{
     McpCredentialHashKey, McpResolvedActor,
 };
 use super::paging::{McpPageContinuation, McpPageCursorError, McpPageCursorState, McpPageSnapshot};
+use crate::server::self_brief_custody::{BriefKey, BriefOwner};
 use oneiron::context_board::{
     BoardRenderMode, BoardStreamFrame, BoardStreamRegistry, FrameEnqueueOutcome, StreamConnectionId,
 };
@@ -55,6 +56,14 @@ pub struct McpConnectorActorRegistry {
     run_readers: BTreeMap<StreamConnectionId, oneiron::claim::ScopedReadActorKey>,
     /// Host wake instances belong to a credential connection and die with it.
     wake_owners: BTreeMap<StreamConnectionId, StreamConnectionId>,
+    /// The self brief each attached connection's setup installed in the
+    /// server's custody, and the installation's owner (FIX 17594 D4). It
+    /// lives with the connection, as the connection's other state does.
+    self_briefs: BTreeMap<StreamConnectionId, (BriefKey, BriefOwner)>,
+    /// The installations whose connection was revoked, unregistered or
+    /// pruned, still to be closed in the server's custody: housekeeping takes
+    /// them and closes each while its owner holds it.
+    detached_self_briefs: Vec<(BriefKey, BriefOwner)>,
 }
 
 impl fmt::Debug for McpConnectorActorRegistry {
@@ -78,6 +87,8 @@ impl McpConnectorActorRegistry {
             stream_readers: BTreeMap::new(),
             run_readers: BTreeMap::new(),
             wake_owners: BTreeMap::new(),
+            self_briefs: BTreeMap::new(),
+            detached_self_briefs: Vec::new(),
         }
     }
 
@@ -405,6 +416,7 @@ impl McpConnectorActorRegistry {
         self.drop_page_continuations(&fingerprint.stream_connection());
         self.stream_readers.remove(&fingerprint.stream_connection());
         self.drop_wake_instances(&fingerprint.stream_connection());
+        self.detach_self_brief(&fingerprint.stream_connection());
         Ok(McpConnectorActorRevokeStatus::Revoked)
     }
 
@@ -488,6 +500,7 @@ impl McpConnectorActorRegistry {
             self.drop_page_continuations(&fingerprint.stream_connection());
             self.stream_readers.remove(&fingerprint.stream_connection());
             self.drop_wake_instances(&fingerprint.stream_connection());
+            self.detach_self_brief(&fingerprint.stream_connection());
         }
         removed
     }
@@ -525,6 +538,7 @@ impl McpConnectorActorRegistry {
             self.drop_page_continuations(&fingerprint.stream_connection());
             self.stream_readers.remove(&fingerprint.stream_connection());
             self.drop_wake_instances(&fingerprint.stream_connection());
+            self.detach_self_brief(&fingerprint.stream_connection());
         }
         stale.len()
     }
@@ -696,6 +710,50 @@ impl McpConnectorActorRegistry {
             self.streams.detach(&instance);
             self.stream_readers.remove(&instance);
             self.wake_owners.remove(&instance);
+        }
+    }
+
+    /// Whether `connection` is attached now: a registered credential's
+    /// connection that was not revoked, unregistered or pruned.
+    #[must_use]
+    pub(crate) fn connection_attached(&self, connection: &StreamConnectionId) -> bool {
+        self.streams.connection_state(connection).is_some()
+    }
+
+    /// Records `installation`, the self brief `connection`'s setup installed,
+    /// as the connection's own, replacing the one before. A connection not
+    /// attached records nothing.
+    pub(crate) fn hold_self_brief(
+        &mut self,
+        connection: &StreamConnectionId,
+        installation: (BriefKey, BriefOwner),
+    ) {
+        if self.connection_attached(connection) {
+            self.self_briefs.insert(connection.clone(), installation);
+        }
+    }
+
+    /// Takes the self brief `connection` holds, for its caller to close in
+    /// the server's custody: the connection keeps none.
+    pub(crate) fn release_self_brief(
+        &mut self,
+        connection: &StreamConnectionId,
+    ) -> Option<(BriefKey, BriefOwner)> {
+        self.self_briefs.remove(connection)
+    }
+
+    /// The self brief installations whose connection was revoked,
+    /// unregistered or pruned since the last call, each to be closed in the
+    /// server's custody while its owner holds it.
+    pub(crate) fn take_detached_self_briefs(&mut self) -> Vec<(BriefKey, BriefOwner)> {
+        std::mem::take(&mut self.detached_self_briefs)
+    }
+
+    /// `connection`'s self brief goes with the connection: its installation
+    /// waits to be closed in the server's custody.
+    fn detach_self_brief(&mut self, connection: &StreamConnectionId) {
+        if let Some(installation) = self.self_briefs.remove(connection) {
+            self.detached_self_briefs.push(installation);
         }
     }
 

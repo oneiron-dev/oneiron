@@ -1,0 +1,15 @@
+{
+  "name": "vault.weave.admin.digest",
+  "description": "One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy.",
+  "input": "crate::authority::WeaveAdminDigestRequest",
+  "output": "Option<crate::claim::WeaveDigestView>",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.admin.digest\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

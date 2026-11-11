@@ -132,6 +132,7 @@ fn stamp_erased_before_deindex_in_txn(
             started_at: now_ms,
             updated_at: now_ms,
             response_payload: None,
+            source: None,
             owners: StepStateOwners {
                 actor: None,
                 subject: None,
@@ -165,6 +166,7 @@ fn stamp_erased_before_deindex_in_rows(rows: &mut Rows, claim: EntityId) -> Resu
             started_at: 0,
             updated_at: 0,
             response_payload: None,
+            source: None,
             owners: StepStateOwners {
                 actor: None,
                 subject: None,

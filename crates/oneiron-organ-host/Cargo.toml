@@ -14,6 +14,7 @@ doctest = false
 # The host links the engine and the open protocol, never an organ crate
 # (the of060 F4 fence in tests/organ_fence.rs).
 [dependencies]
+oneiron-docedit = { path = "../oneiron-docedit" }
 oneiron = { version = "0.1.0", path = "../oneiron" }
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }

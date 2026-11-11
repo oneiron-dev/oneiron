@@ -14,6 +14,7 @@ use super::grant::{
     CONSENT_CONTENT_KIND, ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentOwnerStamp,
     ConsentReceipt, StandingConsentGrant,
 };
+use super::lifecycle_table_imports::*;
 use super::registry::{ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow};
 use super::support::{
     APPROVE_ONCE_MARKERS, ApproveOnceMarker, CONSENT_APPROVE_ONCE_AVAILABLE,
@@ -21,6 +22,7 @@ use super::support::{
 };
 use crate::error::GateError;
 
+mod code_wait_rebind;
 mod decision_slot;
 mod grants;
 mod invitee_credential;
@@ -31,6 +33,10 @@ mod queue_check;
 mod read;
 mod request_credential;
 
+pub(crate) use grants::{
+    DerivedGrantOrigin, DerivedGrantSetting, record_standing_grant_use_for_store_in_txn,
+    standing_grant_rows_in_txn,
+};
 pub(crate) use queue_check::QueuedCheckApproval;
 
 // ---------------------------------------------------------------------------
@@ -443,16 +449,16 @@ impl Vault {
         digest: &EffectDigest,
         decision_id: GateDecisionId,
     ) -> Result<()> {
-        if APPROVE_ONCE_MARKERS
+        let from = APPROVE_ONCE_MARKERS
             .get(&self.store, &*wtxn, digest.as_bytes())?
-            .is_some()
-        {
+            .map(|marker| marker_state(&marker));
+        let Ok(to) = ConsentLifecycle::marker(from, MarkerCommand::Approve) else {
             return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
                 "this op digest already carries an approve-once receipt",
             )));
-        }
+        };
         let marker = ApproveOnceMarker {
-            state: CONSENT_APPROVE_ONCE_AVAILABLE,
+            state: marker_byte(to),
             decision_id,
         };
         APPROVE_ONCE_MARKERS.put(&self.store, wtxn, digest.as_bytes(), &marker)?;
@@ -542,8 +548,8 @@ impl Vault {
             content_kind: CONSENT_CONTENT_KIND.to_owned(),
             policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
             claim_id: None,
-            grant_ref: receipt.grant_ref(),
-            diff_handle: receipt.diff_handle(),
+            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
+            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
             read_frontier_hash: [0_u8; 32],
             context: Default::default(),
             redacted_at: None,
@@ -596,8 +602,8 @@ impl Vault {
             content_kind: CONSENT_CONTENT_KIND.to_owned(),
             policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
             claim_id: None,
-            grant_ref: receipt.grant_ref(),
-            diff_handle: receipt.diff_handle(),
+            grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
+            diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),
             read_frontier_hash: [0_u8; 32],
             context: Default::default(),
             redacted_at: None,
@@ -646,12 +652,24 @@ pub fn load_active_standing_grants(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<StandingConsentGrant>> {
+    Ok(active_standing_grant_rows_in_txn(store, txn)?
+        .into_iter()
+        .map(|row| row.grant)
+        .collect())
+}
+
+/// [`load_active_standing_grants`] with each grant's whole row (reference,
+/// status, stamp). A bypass row is never an ordinary standing grant.
+pub(crate) fn active_standing_grant_rows_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<ConsentGrantRow>> {
     Ok(GRANTS
         .scan(store, txn)?
         .into_iter()
         // A bypass row covers only catastrophe-floor ops inside its scope,
         // through the bypass arm; it is never an ordinary standing grant.
-        .filter_map(|(_, row)| (row.is_active() && row.bypass.is_none()).then_some(row.grant))
+        .filter_map(|(_, row)| (row.is_active() && row.bypass.is_none()).then_some(row))
         .collect())
 }
 
@@ -702,13 +720,52 @@ pub(crate) fn revoke_standing_grant_in_txn(
     let Some(mut row) = GRANTS.get(store, &*wtxn, &key)? else {
         return Ok(false);
     };
-    if !row.is_active() {
+    let GrantStep::Write {
+        status,
+        retire_reason_rules,
+        ..
+    } = ConsentLifecycle::grant(Some(row.status), GrantCommand::Revoke)
+    else {
         return Ok(false);
-    }
-    row.status = ConsentGrantStatus::Revoked;
+    };
+    row.status = status;
     GRANTS.put(store, wtxn, &key, &row)?;
-    super::owner_reason::retire_owner_reason_rules_in_txn(store, wtxn, grant_ref)?;
+    if retire_reason_rules {
+        super::owner_reason::retire_owner_reason_rules_in_txn(store, wtxn, grant_ref)?;
+    }
     Ok(true)
+}
+
+/// A revoke's answer: its receipt, whether the grant was already revoked (no write), and what revoked it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsentRevocation {
+    /// The consent revoke receipt: this act's, or the current issuance's original one when the grant was
+    /// already revoked. `None` when the current issuance was revoked without a consent receipt (a graduation
+    /// demotion, an office-edit erase or an owner-less pack update).
+    pub receipt: Option<ConsentReceipt>,
+    /// The grant was already revoked; nothing was written.
+    pub already_revoked: bool,
+    /// The record that revoked the current issuance without a consent receipt, where that path writes one: a
+    /// graduation demotion's receipt id. An office-edit erase and an owner-less pack update write no record
+    /// that names the grant.
+    pub revoked_by: Option<String>,
+}
+
+/// The marker table's state of a stored marker row (its state byte).
+pub(super) const fn marker_state(marker: &ApproveOnceMarker) -> MarkerState {
+    match marker.state {
+        CONSENT_APPROVE_ONCE_AVAILABLE => MarkerState::Available,
+        CONSENT_APPROVE_ONCE_SPENT => MarkerState::Spent,
+        _ => MarkerState::Unreadable,
+    }
+}
+
+/// The stored state byte of a marker the table wrote.
+pub(super) const fn marker_byte(state: MarkerState) -> u8 {
+    match state {
+        MarkerState::Available => CONSENT_APPROVE_ONCE_AVAILABLE,
+        MarkerState::Spent | MarkerState::Unreadable => CONSENT_APPROVE_ONCE_SPENT,
+    }
 }
 
 /// Reads one approve-once marker from the caller's transaction.
@@ -758,21 +815,31 @@ pub(crate) fn spend_approve_once_in_txn(
     authorization: &ApproveOnceAuthorization,
 ) -> Result<()> {
     let key = *authorization.effect_digest.as_bytes();
-    let Some(marker) = APPROVE_ONCE_MARKERS.get(store, &*wtxn, &key)? else {
-        return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
-            "approve-once authorization has no live marker",
-        )));
+    let stored = APPROVE_ONCE_MARKERS.get(store, &*wtxn, &key)?;
+    let to = match ConsentLifecycle::marker(stored.as_ref().map(marker_state), MarkerCommand::Spend)
+    {
+        Ok(to) => to,
+        Err(MarkerRefusal::AlreadySpent) => {
+            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
+                "this approve-once authorization already delivered its effect",
+            )));
+        }
+        Err(MarkerRefusal::Unreadable) => {
+            return Err(Error::CorruptedIndex("consent approve-once marker state"));
+        }
+        Err(_) => {
+            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
+                "approve-once authorization has no live marker",
+            )));
+        }
     };
-    if marker.state == CONSENT_APPROVE_ONCE_SPENT {
-        return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
-            "this approve-once authorization already delivered its effect",
-        )));
-    }
-    if marker.state != CONSENT_APPROVE_ONCE_AVAILABLE {
-        return Err(Error::CorruptedIndex("consent approve-once marker state"));
-    }
+    let Some(marker) = stored else {
+        return Err(Error::InvariantViolation(
+            "the marker table spent an absent marker",
+        ));
+    };
     let spent = ApproveOnceMarker {
-        state: CONSENT_APPROVE_ONCE_SPENT,
+        state: marker_byte(to),
         decision_id: marker.decision_id,
     };
     APPROVE_ONCE_MARKERS.put(store, wtxn, &key, &spent)?;

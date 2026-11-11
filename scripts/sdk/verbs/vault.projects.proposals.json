@@ -1,0 +1,13 @@
+{
+  "name": "vault.projects.proposals",
+  "description": "The project cards shown in a conversation, each with its state.",
+  "input": "ProjectConversationRequest",
+  "output": "Vec<crate::workspace_roster::ProjectCardRecord>",
+  "call": "memory.projects_proposals(crate::EntityId::from_hex(&input.conversation_ref)?)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

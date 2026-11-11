@@ -19,7 +19,9 @@ pub use people::{
     PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,
 };
 pub(crate) use people::{
-    ensure_agent_person, ensure_agent_person_in_txn, ensure_seeded_agent_person_in_txn,
+    PreparedAgentPerson, agent_person_id, ensure_agent_person, ensure_agent_person_in_txn,
+    ensure_seeded_agent_person_in_txn, prepare_agent_person_after_puts_in_txn,
+    seeded_agent_person_ids,
 };
 mod inbox;
 pub use inbox::assemble_inbox_section;
@@ -55,12 +57,18 @@ mod history;
 mod hydration;
 mod self_brief;
 pub use history::{
-    BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard,
+    BoardHistoryError, BoardSelection, BoardTurn, BoardTurnEpoch, BoardTurnHistory,
+    BoardTurnReceipt, ReconstructedBoard,
 };
 pub(crate) use history::{fold_board_turns_in_txn, validate_board_claim};
 pub use self_brief::{
-    BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
-    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,
+    BriefActPosture, BriefActionEnvelope, BriefBranchBound, BriefCeiling, BriefCeilingPosture,
+    BriefCeilingTarget, BriefClassPrecedence, BriefClassReads, BriefClassSource, BriefClassVerdict,
+    BriefClassVerdicts, BriefConnectorCeiling, BriefContextBound, BriefCredentialCeiling,
+    BriefDefaultRule, BriefGrant, BriefGrants, BriefOutboundScope, BriefParentBound,
+    BriefParentCeiling, BriefPerActCheck, BriefPlacement, BriefRunCeiling, BriefSkillRow,
+    BriefWorkingHandle, BriefWorkingSet, CommunicationLimits, PlacedSelfBrief, SelfBrief,
+    SelfBriefInput, SelfBriefSession, SelfBriefState, brief_credential_ceiling, brief_run_ceiling,
 };
 mod hook_pins;
 mod memories;
@@ -194,3 +202,4 @@ pub(super) fn one_line_token(s: &str) -> String {
 pub(crate) use self::plugin::context_board_plugin_block_accepts_masked;
 
 pub mod agent_run_status;
+pub(crate) mod tables;

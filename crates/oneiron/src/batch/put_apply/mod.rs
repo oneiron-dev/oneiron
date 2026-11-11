@@ -41,15 +41,17 @@ mod put_entity_update;
 mod put_staging;
 mod request;
 
-// The ledger is immutable birth identity, never a second text plane. This
-// shared guard covers local writes and replicated/window rematerialization.
+// The ledger is immutable birth identity, never a second text plane: a NOTE
+// row is its core alone (FIX 7783), and a logical projection, which carries
+// text, never decodes as one. This shared guard covers local writes and
+// replicated/window rematerialization.
 fn validate_note_birth_put(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     data: &[u8],
 ) -> Result<()> {
-    crate::note::decode_note_body_in_txn(store, txn, data)?;
+    crate::note::decode_note_core_in_txn(store, txn, data)?;
     if let Some(old) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         && old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
     {

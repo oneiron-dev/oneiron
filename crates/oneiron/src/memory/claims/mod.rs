@@ -29,6 +29,79 @@ pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["companion.onboarding.answe
 
 const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
 
+/// How the facade chooses a prior head; keyed multi predicates additionally
+/// retain the `value.question_id` identity above (ARCH-0044 S3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimCardinality {
+    Single,
+    Set,
+}
+
+/// Canon's `multi` rows use set semantics: only an agreeing answer is replaced.
+const DECLARED_CARDINALITY: &[(&str, ClaimCardinality)] = &[
+    // ARCH-0003 §G.1 predicate registry, line 242.
+    ("preference.food", ClaimCardinality::Set),
+    // ARCH-0003 §G.1 predicate registry, line 243.
+    ("boundary.topic", ClaimCardinality::Set),
+    // ARCH-0003 §G.1 predicate registry, line 244.
+    ("goal.financial", ClaimCardinality::Set),
+    // ARCH-0003 §G.1 predicate registry, line 245.
+    ("commitment.promise", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 267 (multi).
+    ("decision.*", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 268 (multi).
+    ("decision.social", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 269 (multi).
+    ("decision.creative", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 270 (multi).
+    ("decision.moral", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 271 (multi).
+    ("decision.practical", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 272 (multi).
+    ("decision.emotional", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 273 (multi).
+    ("decision.strategic", ClaimCardinality::Set),
+    // ARCH-0003 §G.1 predicate registry, line 263 (one superseding head).
+    ("decision.settled", ClaimCardinality::Single),
+    // ARCH-0022 predicate registry additions, line 274 (multi).
+    ("storytelling.*", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 275 (multi).
+    ("storytelling.genre", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 276 (single).
+    ("storytelling.pacing", ClaimCardinality::Single),
+    // ARCH-0022 predicate registry additions, line 277 (multi).
+    ("storytelling.themes", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 278 (multi).
+    ("storytelling.style", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 279 (multi).
+    ("character.personality", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 280 (multi).
+    ("character.appearance", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 281 (multi).
+    ("character.backstory", ClaimCardinality::Set),
+    // ARCH-0022 predicate registry additions, line 282 (multi).
+    ("character.dynamic", ClaimCardinality::Set),
+];
+
+/// Exact rows beat namespace wildcards regardless of table order. A wildcard
+/// matches every suffix, including deeper predicates (`ns.a.b` for `ns.*`).
+/// Unknown predicates keep the single-head default (ARCH-0044 S3).
+fn declared_cardinality(predicate: &str) -> ClaimCardinality {
+    let mut wildcard: Option<(usize, ClaimCardinality)> = None;
+    for &(pattern, cardinality) in DECLARED_CARDINALITY {
+        if pattern == predicate {
+            return cardinality;
+        }
+        if let Some(prefix) = pattern.strip_suffix('*')
+            && predicate.starts_with(prefix)
+            && wildcard.is_none_or(|(length, _)| prefix.len() > length)
+        {
+            wildcard = Some((prefix.len(), cardinality));
+        }
+    }
+    wildcard.map_or(ClaimCardinality::Single, |(_, cardinality)| cardinality)
+}
+
 /// One claim to commit. `approval` is deliberately NOT settable by callers
 /// (pin 2); the facade computes the request and the gate decides.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -241,8 +314,8 @@ pub struct MemoryReceipt {
     pub receipt_ref: String,
     /// The receipt family kind (`gate`, `hook`, `outbound`, ...).
     pub kind: String,
-    /// Gate outcome: `allow`/`pending`/`deny`; the receipt's own outcome
-    /// for another kind.
+    /// The recorded outcome: `allow`/`pending`/`deny` for policy decisions,
+    /// `imported` for code captures, or another receipt's own outcome.
     pub outcome: String,
     /// Unix seconds.
     pub created_at: u64,
@@ -255,14 +328,16 @@ pub struct MemoryReceipt {
     pub actor_ref: Option<String>,
     /// Gate content kind (e.g. `claim`); empty for a kind that names none.
     pub content_kind: String,
-    /// 32-hex id of the claim the decision covers, if any.
+    /// 32-hex id of the decision's bound target, if any. A code snapshot
+    /// capture binds its CODE_ARTIFACT; ordinary claim decisions bind CLAIM.
     pub claim_ref: Option<String>,
-    /// That claim as a typed record ref (OF-063), built from its id with no
-    /// read, so labelled with its kind and id.
+    /// That target as a typed record ref (OF-063), built from its id with no
+    /// read, so labelled with its actual kind and id.
     #[serde(default)]
     pub claim: Option<crate::lens::RecordRef>,
-    /// A family receipt's own fields (a hook run's hook, CODE id, body hash
-    /// and run key), with its trigger, job and principal refs. Empty on a
+    /// A receipt's own fields (a hook run's hook, CODE id, body hash
+    /// and run key), with its trigger, job and principal refs. A code capture
+    /// names its repo artifact and retained snapshot hash; otherwise empty on a
     /// gate-ledger row.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, String>,

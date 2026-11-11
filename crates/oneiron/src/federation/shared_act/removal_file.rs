@@ -76,6 +76,27 @@ pub(crate) fn removal_archive_owner(row: ArchiveRow) -> Result<EntityId> {
     )
 }
 
+/// A writer that hashes every byte it passes on, so a copy is checked as it
+/// is written rather than read again.
+#[cfg(unix)]
+struct HashingWriter<W> {
+    inner: W,
+    hasher: blake3::Hasher,
+}
+
+#[cfg(unix)]
+impl<W: std::io::Write> std::io::Write for HashingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        self.hasher.update(&buf[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// BLAKE3 and length of everything `source` holds, read from its start.
 fn measure(source: &mut (impl Read + Seek)) -> Result<([u8; 32], u64)> {
     source.seek(SeekFrom::Start(0))?;
@@ -153,10 +174,12 @@ impl Vault {
             &OwnedBody {
                 owner: removal_archive_owner(row)?,
                 occurrence,
+                mark_occurrence: occurrence,
                 state: BodyState::Complete {
                     body: staged.body.clone(),
                 },
                 result: None,
+                code_run_output: None,
             },
         )?;
         Ok(ArchiveFile {
@@ -165,22 +188,51 @@ impl Vault {
         })
     }
 
-    /// The bytes of the row `row`'s archive `file`, as `txn` names
-    /// it: its descriptor must be complete with this body, and the file is
-    /// read through the instance row `txn` holds and checked against its
-    /// digest. A writer's snapshot keeps the file: no release of it commits
-    /// while the writer is open.
+    /// The archive `file` of the row `row`, as `txn` names it, copied into
+    /// an anonymous spool file of the vault's own and rewound to its start:
+    /// what a door answers and a projection reads where it lies (FIX
+    /// 21529), so no archive is held whole. Its descriptor must be complete
+    /// with this body; the file is read through the instance row `txn`
+    /// holds, so a sealed file's spool holds the plaintext, and checked
+    /// against its length and digest as it is copied. A writer's snapshot
+    /// keeps the file: no release of it commits while the writer is open.
     ///
     /// # Errors
     ///
-    /// [`Error::CorruptedIndex`] for a descriptor, file or digest that does
-    /// not match; storage and filesystem errors.
-    pub(super) fn read_removal_archive_in_txn(
+    /// [`Error::CorruptedIndex`] for a descriptor, file, length or digest
+    /// that does not match; storage, filesystem and spool errors.
+    pub(super) fn spool_removal_archive_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         row: ArchiveRow,
         file: &ArchiveFile,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<std::fs::File> {
+        let mut reader = self.open_removal_archive_in_txn(txn, row, file)?;
+        let mut spool = HashingWriter {
+            inner: std::io::BufWriter::new(self.archive_spool_file()?),
+            hasher: blake3::Hasher::new(),
+        };
+        let len = std::io::copy(&mut reader, &mut spool)?;
+        let HashingWriter { inner, hasher } = spool;
+        let mut spool = inner
+            .into_inner()
+            .map_err(std::io::IntoInnerError::into_error)?;
+        if len != file.body.bytes || hasher.finalize().as_bytes() != &file.body.blake3 {
+            return Err(Error::CorruptedIndex("removal archive digest"));
+        }
+        spool.seek(SeekFrom::Start(0))?;
+        Ok(spool)
+    }
+
+    /// The archive `file` of the row `row`, opened for reading once its
+    /// descriptor is checked: the complete body its archive owner's
+    /// occurrence names, through the instance row `txn` holds.
+    fn open_removal_archive_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        row: ArchiveRow,
+        file: &ArchiveFile,
+    ) -> Result<crate::store::BodyFile> {
         let named = crate::provenance::body::owned_body_in_txn(
             &self.store,
             txn,
@@ -197,17 +249,10 @@ impl Vault {
             return Err(Error::CorruptedIndex("removal archive descriptor"));
         }
         let key = crate::store::body_key_row_in_txn(&self.store, txn, &file.body.blake3)?;
-        let mut reader = self
-            .store
+        self.store
             .body_dir()?
             .open_reader(&file.body.blake3, file.body.bytes, key.as_ref())?
-            .ok_or(Error::CorruptedIndex("removal archive file"))?;
-        let mut bytes = Vec::with_capacity(usize::try_from(file.body.bytes).unwrap_or(0));
-        reader.read_to_end(&mut bytes)?;
-        if blake3::hash(&bytes).as_bytes() != &file.body.blake3 {
-            return Err(Error::CorruptedIndex("removal archive digest"));
-        }
-        Ok(bytes)
+            .ok_or(Error::CorruptedIndex("removal archive file"))
     }
 
     /// Releases the archive file `file` of the row `row` in `wtxn`: its
@@ -325,6 +370,66 @@ pub(crate) fn removal_archive_body_keys_in_txn(
     Ok(())
 }
 
+/// One kept removal archive as raw `vault_meta` rows hold it (FIX 3679): its
+/// receipt, the archive owner its file is held under (its row's: the
+/// removed member and the receipt), and the file, by descriptor occurrence
+/// and body.
+pub(crate) struct RemovalArchiveBinding {
+    pub(crate) receipt: EntityId,
+    pub(crate) owner: EntityId,
+    pub(crate) occurrence: EntityId,
+    pub(crate) body: BodyRef,
+}
+
+/// The archive owners of the removal archive rows among the raw
+/// `vault_meta` rows `rows`, read from the rows' keys alone.
+pub(crate) fn removal_archive_owners_in_rows(
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> std::collections::BTreeSet<EntityId> {
+    let prefix = super::REMOVAL_EXPORT.decl().prefix;
+    rows.iter()
+        .filter_map(|(key, _)| key.strip_prefix(prefix))
+        .filter_map(|key| std::str::from_utf8(key).ok())
+        .filter_map(ArchiveRow::from_key)
+        .filter_map(|row| removal_archive_owner(row).ok())
+        .collect()
+}
+
+/// Each removal archive row of the raw `vault_meta` rows `rows`, by its full
+/// key, with the file it names. A row that does not decode names no file
+/// and is left out; its readers refuse it as before.
+pub(crate) fn removal_archive_bindings_in_rows(
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Vec<(Vec<u8>, RemovalArchiveBinding)> {
+    let prefix = super::REMOVAL_EXPORT.decl().prefix;
+    let mut bindings = Vec::new();
+    for (key, value) in rows {
+        let Some(row) = key
+            .strip_prefix(prefix)
+            .and_then(|key| std::str::from_utf8(key).ok())
+            .and_then(ArchiveRow::from_key)
+        else {
+            continue;
+        };
+        let Ok(stored) = super::REMOVAL_EXPORT.decode_value(value) else {
+            continue;
+        };
+        let Ok(owner) = removal_archive_owner(row) else {
+            continue;
+        };
+        bindings.push((
+            key.clone(),
+            RemovalArchiveBinding {
+                receipt: row.receipt,
+                owner,
+                occurrence: stored.file().occurrence,
+                body: stored.file().body.clone(),
+            },
+        ));
+    }
+    bindings
+}
+
 /// A host without the vault's body store keeps no removal archive: the
 /// store is where its bytes go.
 #[cfg(not(unix))]
@@ -346,12 +451,12 @@ impl Vault {
         Err(no_body_store())
     }
 
-    pub(super) fn read_removal_archive_in_txn(
+    pub(super) fn spool_removal_archive_in_txn(
         &self,
         _txn: &heed::RoTxn<'_>,
         _row: ArchiveRow,
         _file: &ArchiveFile,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<std::fs::File> {
         Err(no_body_store())
     }
 

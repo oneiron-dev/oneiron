@@ -1,0 +1,13 @@
+{
+  "name": "ai.anonymous_chat",
+  "description": "One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call.",
+  "input": "crate::task_verb::sdk::AnonymousChatRequest",
+  "output": "crate::task_verb::sdk::AnonymousChatResponse",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.anonymous_chat\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "no_record": true,
+  "scope": "Read",
+  "section": false,
+  "openapi": true
+}

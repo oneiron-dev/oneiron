@@ -1,0 +1,17 @@
+{
+  "name": "vault.consolidation.wake.status",
+  "description": "Reads one page of a consolidation wake pass observation by attempt or wake reference: its clock and ceiling, admitted attempts, each model call with its lease, the Checkpoint parks it cut and the pass as it runs now.",
+  "input": "crate::memory::ConsolidationWakeStatusRequest",
+  "output": "Option<crate::memory::DreamerWakeView>",
+  "call": "memory_requests::dreamer_wake_status(memory, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "openapi": true
+}

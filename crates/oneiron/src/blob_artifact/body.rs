@@ -8,6 +8,7 @@ use crate::error::ArtifactError;
 use crate::error::{Error, Result};
 use crate::secret_lease::SecretTaintRef;
 use crate::secret_rotation::{taint_refs_from_value, taint_refs_to_value, validate_taint_refs};
+use crate::store::source_audience_obligation::SOURCE_AUDIENCE_REQUIRED_KEY;
 use rmpv::Value;
 
 /// Artifact-level metadata. Stable across versions; content bytes never live
@@ -104,6 +105,12 @@ fn decode_blob_artifact_body_value(value: &Value) -> Result<BlobArtifactBody> {
                 "body keys must be strings",
             )));
         };
+        // A source landing's stamp is the source-audience obligation's own
+        // key, which the write door judges (fix list row 16256), not a key
+        // of the body's.
+        if key == SOURCE_AUDIENCE_REQUIRED_KEY {
+            continue;
+        }
         let Some(index) = BLOB_ARTIFACT_KNOWN_BODY_KEYS
             .iter()
             .position(|known| *known == key)

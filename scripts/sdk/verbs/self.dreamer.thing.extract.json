@@ -1,0 +1,11 @@
+{
+  "name": "self.dreamer.thing.extract",
+  "description": "Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate.",
+  "input": "crate::dreamer_consolidation::ThingExtractInput",
+  "output": "crate::dreamer_consolidation::ThingExtractOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"self.dreamer.thing.extract\", &input)?",
+  "scope": "Write",
+  "context": "scoped_child",
+  "mcp": "none",
+  "section": false
+}

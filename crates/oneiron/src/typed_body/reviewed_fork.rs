@@ -9,7 +9,7 @@
 
 use super::{
     BodyActor, DOCS, FORK_DOCS, FORKS, HEADS, TypedBodyHead, TypedForkState, import, invalid, load,
-    require_live, snapshot, validate_actor,
+    queue_fork_mirror, require_live, snapshot, validate_actor,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -125,6 +125,11 @@ pub(crate) fn merge_reviewed_fork_in_txn(
     head.landed_at = Some(at);
     DOCS.put(&vault.store, txn, entity, &snapshot(&live)?)?;
     HEADS.put(&vault.store, txn, entity, &head)?;
+    // FIX 12470: the fork's document keeps its version whether all of it
+    // landed or the rest stays open, and the fork's row rides to the owner's
+    // other machines once this landing commits.
+    record.version = proposal.oplog_vv().encode();
+    queue_fork_mirror(vault, txn, entity);
     if whole {
         record.state = TypedForkState::Merged {
             by: BodyActor::Actor(actor.entity_ref()),

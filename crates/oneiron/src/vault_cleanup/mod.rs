@@ -20,10 +20,12 @@
 //! local hygiene rather than a deletion intent peers must obey; see
 //! `DeleteReason::publishes_crdt_tombstone`.
 //!
-//! **Hard deletion is NEVER automatic.** Nothing in this module hard-erases,
+//! **Hard deletion is NEVER automatic.** The cleanup cron never hard-erases,
 //! purges, or enqueues a historical sweep. Its transaction-composable archive
 //! door accepts only `DeleteReason::ArchivedByCleanup`, whose behavior matrix
-//! is false on every destructive row.
+//! is false on every destructive row. The separate explicit attempt-delete
+//! preview and confirm doors delete only the selected archived Completed row,
+//! under live owner/Admin authority, with a durable deletion receipt.
 //!
 //! # The tripwire is closed-form
 //!
@@ -82,9 +84,9 @@
 //!   waterfall restores an archived subject it selects, through
 //!   [`Vault::restore_archived`], beside the archived-aware query
 //!   ([`Vault::archived_entities`]).
-//! * **Nothing here erases.** Retention archives and never routes to
-//!   erasure; emptying the archive is a ladder delete and erasure stays the
-//!   owner's, by hand.
+//! * **Retention never erases.** It archives only. Emptying the entity archive
+//!   is a ladder delete; the explicit completed-attempt sibling removes one
+//!   selected queue row, its marks and indexes, not TASKs or sibling attempts.
 //! * **Any run reverts (OF-449).** Each archive records its run's snapshot
 //!   on the run's RUN row in the same write: per entry the kind, the id, the
 //!   revision of the bytes it hid and the marks before and after. The owner's
@@ -110,8 +112,12 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::attempt_id::AttemptId;
 
+mod attempt_delete_authority;
+mod attempt_delete_receipts;
+mod attempt_delete_wire;
 use oneiron_store::vault_cleanup::cleanup_types;
 mod codec_receipts;
+mod entity_rows;
 mod erase;
 mod marks;
 mod owner_doors;
@@ -130,6 +136,12 @@ pub mod surface;
 mod tripwire;
 mod visibility;
 
+pub use self::attempt_delete_wire::{
+    AttemptArchiveDeleteConfirmRequest, AttemptArchiveDeleteExpectation,
+    AttemptArchiveDeletePreviewRequest, AttemptArchiveDeletePreviewView,
+    AttemptArchiveDeleteReceiptView, confirm_attempt_archive_delete_wire,
+    preview_attempt_archive_delete_wire,
+};
 pub use self::cleanup_types::{
     ArchivedEntity, CLEANUP_PHASE, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision,
     CleanupDigest, CleanupImpactPreview, CleanupKind, CleanupPosture, CleanupProposal,
@@ -162,6 +174,9 @@ pub use self::tripwire::{
     run_vault_cleanup, scan_cleanup_candidates, set_cleanup_posture, zero_live_members,
 };
 
+pub(crate) use self::attempt_delete_receipts::{
+    deletions_for_run_in_txn, erase_attempt_delete_actor_in_txn,
+};
 pub(crate) use self::codec_receipts::{cleanup_digests_in_txn, cleanup_receipts};
 pub(crate) use self::erase::{erase_attempt_references_in_txn, erase_in_txn};
 pub(crate) use self::proposals_archive::cleanup_proposals_in_txn;
@@ -214,6 +229,7 @@ use uuid::Uuid;
 mod retention_tests;
 
 mod attempt_retention;
+pub(crate) mod tables;
 pub(crate) use attempt_retention::{
     attempt_is_archived, forget_archived_attempt_in_txn, refresh_archived_attempt_in_rows,
     refresh_archived_attempt_in_txn, restore_task_attempts,

@@ -123,6 +123,29 @@ pub(crate) fn raw_readable_apart_from_use_in_txn(
         && !super::integrity::source_withdrawn_in(store, txn, id)?)
 }
 
+/// [`raw_readable_in_txn`] for the owner's whole-vault export, which carries a
+/// record a cleanup archive filed away, with its retained body: a cleanup
+/// archive is not a removal (ARCH-0073 §2, FIX 21912). A removal, a stale
+/// mark, a legal-hold use limit, a stale body or a withdrawn source still
+/// refuses the row.
+pub(crate) fn raw_exportable_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let state = super::TombstoneStoreRead::port_deletion_state(store, txn, id)?;
+    if !state.archived {
+        return raw_readable_in_txn(store, txn, id, raw);
+    }
+    let (body, stale) = stored_body(raw);
+    Ok(!state.stale
+        && !super::removed_in_txn(store, txn, id)?
+        && crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_none()
+        && stale.admits(body)
+        && !super::integrity::source_withdrawn_in(store, txn, id)?)
+}
+
 /// A stored envelope's body and the raw doors' stale rule for its kind.
 fn stored_body(raw: &[u8]) -> (&[u8], BodyStale) {
     let stale = match crate::batch::EntityMetadataHeader::parse(raw) {

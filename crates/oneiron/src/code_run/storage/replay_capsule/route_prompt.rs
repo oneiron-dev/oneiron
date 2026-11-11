@@ -21,6 +21,7 @@ use super::super::super::replay_capsule::{
     CapsuleRequest, CapsuleRungBinding, ReplayRoutePin, StepReplayCapsule, StoredRungBinding,
     route_prompt_digest,
 };
+use super::super::fold_answers::words_withdrawn;
 use super::super::records::body_drifted;
 use super::admit::{Spill, Unwritten, spilling, with_spill};
 use super::erase::actor_gone_in_txn;
@@ -70,7 +71,11 @@ pub(crate) fn finalize_capsule(
         let Some(actor) = capsule.content.actor() else {
             return Ok(());
         };
-        if capsule.binding.is_some() || actor_gone_in_txn(vault, wtxn, &actor) {
+        // FIX 18924: no rung binds a request whose fold words are withdrawn.
+        if capsule.binding.is_some()
+            || actor_gone_in_txn(vault, wtxn, &actor)
+            || words_withdrawn(&vault.store, wtxn, &capsule.fold_words.request)?
+        {
             return Ok(());
         }
         let prompt = match &sent {

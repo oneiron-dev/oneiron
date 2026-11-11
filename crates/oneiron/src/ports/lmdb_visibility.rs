@@ -304,6 +304,20 @@ pub(crate) fn owner_gone_in_txn(
         || dbs.port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, owner)?)
 }
 
+/// Whether an owner's hard erasure is complete in `txn` (FIX 6591): it
+/// holds the hard-delete marker, which the erase's own writer puts beside
+/// the purge and the retirement. A removed row, or a pending `df:` or `pt:`
+/// fence, without that marker is not hard-erased: the delete it stands for
+/// may still apply, and its retirement has not run. A marker read error is
+/// returned to the caller.
+pub(crate) fn owner_hard_erased_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    owner: &EntityId,
+) -> Result<bool> {
+    dbs.port_deletion_marked(txn, DeletionMarker::HardDelete, owner)
+}
+
 impl TombstoneStoreRead for Vault {
     fn port_tombstone_records<'a>(
         &self,

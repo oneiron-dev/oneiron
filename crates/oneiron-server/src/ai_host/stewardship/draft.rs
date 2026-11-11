@@ -74,9 +74,9 @@ pub(super) enum DraftPass {
     Failed(DraftFailure, StewardshipDraftRequest),
 }
 
-/// Draft every eligible source first. A call failure with more than
-/// [`FALLBACK_DRAFT_EVIDENCE`] sources tries smaller drafts and synthesis;
-/// the existing newest-source rescue remains available if that fails.
+/// Draft every eligible source first. A call failure with multiple sources
+/// tries smaller drafts and synthesis; the existing newest-source rescue
+/// remains available if that fails.
 ///
 /// # Errors
 ///
@@ -97,10 +97,7 @@ pub(super) async fn draft_pass(
     if failure.stage.inputs_may_move() && current != *draft {
         return Ok(DraftPass::Moved(current));
     }
-    if current.request.evidence.len() <= FALLBACK_DRAFT_EVIDENCE {
-        return Ok(DraftPass::Failed(failure, current));
-    }
-    if failure.stage == DraftStage::Call {
+    if failure.stage == DraftStage::Call && current.request.evidence.len() > 1 {
         match fold::draft_fold(vault, runtime, drafter, &current).await? {
             DraftPass::Failed(fold_failure, latest) => {
                 failure = fold_failure;
@@ -108,6 +105,9 @@ pub(super) async fn draft_pass(
             }
             outcome => return Ok(outcome),
         }
+    }
+    if current.request.evidence.len() <= FALLBACK_DRAFT_EVIDENCE {
+        return Ok(DraftPass::Failed(failure, current));
     }
     // By kind only: an engine error can quote the vault.
     tracing::info!(
@@ -203,6 +203,7 @@ async fn generate_draft(
             response_format: ResponseFormat::Text,
             locality: seat.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: sources.messages(&context),
         tools: Vec::new(),
@@ -241,7 +242,7 @@ async fn generate_draft(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

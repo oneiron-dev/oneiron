@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 
 use super::lfs::{LFS_POINTER_SIZE_CUTOFF, LfsOid, LfsPushedPointer};
 use super::mirror::{
-    ORIGIN_MIRROR_NAMED_LFS_OBJECTS, OriginMirrorLfsObject, OriginMirrorNotReadyReason,
-    OriginMirrorReadiness, OriginMirrorTarget,
+    ORIGIN_MIRROR_NAMED_LFS_OBJECTS, OriginMirrorLfsObject, OriginMirrorLfsTransfer,
+    OriginMirrorNotReadyReason, OriginMirrorReadiness, OriginMirrorTarget,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -77,9 +77,10 @@ struct Reuse {
 
 impl Vault {
     /// The readiness of the mirror `target` that took exactly `refs`, once
-    /// each Git-LFS object the census met went to it (FIX 919). A census
-    /// that cannot finish is never ready, and neither it nor a transfer
-    /// that fails ever fails the push.
+    /// each Git-LFS object the census met went to it (FIX 919), and how the
+    /// objects went out when any did (FIX 19876). A census that cannot
+    /// finish is never ready, and neither it nor a transfer that fails ever
+    /// fails the push.
     pub(super) fn mirror_lfs_readiness(
         &self,
         wire: &GitWire<'_>,
@@ -87,7 +88,7 @@ impl Vault {
         target: &OriginMirrorTarget,
         repo_id: EntityId,
         refs: &[(GitRefName, GitOid)],
-    ) -> OriginMirrorReadiness {
+    ) -> (OriginMirrorReadiness, Option<OriginMirrorLfsTransfer>) {
         let tips: Vec<GitOid> = refs.iter().map(|(_, oid)| oid.clone()).collect();
         let kept = self.kept_mirror_lfs_census(repo_id);
         let mut census = LfsCensus::default();
@@ -95,9 +96,10 @@ impl Vault {
             Ok(walk) => walk,
             Err(error) => {
                 tracing::warn!(kind = ?error.kind(), "mirror LFS census did not finish");
-                return census.readiness(false);
+                return (census.readiness(false), None);
             }
         };
+        let mut transfer = None;
         if walk.complete {
             match walk
                 .peeled
@@ -111,15 +113,17 @@ impl Vault {
                 }
             }
             if !census.met.is_empty() {
-                match self.push_mirror_lfs_objects(target, &census.met) {
+                let (missing, sent) = self.push_mirror_lfs_objects(repo_id, target, &census.met);
+                match missing {
                     Ok(missing) => census.met.retain(|(oid, _)| missing.contains(oid)),
                     Err(error) => {
                         tracing::warn!(kind = ?error.kind(), "mirror LFS objects were not sent");
                     }
                 }
+                transfer = Some(sent);
             }
         }
-        census.readiness(walk.complete)
+        (census.readiness(walk.complete), transfer)
     }
 
     /// Drops the kept census of a repository whose mirror target goes.

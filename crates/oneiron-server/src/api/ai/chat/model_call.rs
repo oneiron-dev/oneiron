@@ -1,6 +1,7 @@
 //! Model-call evidence from the actual answering leg, independent of delivery,
 //! and the drafter's view of the same leg (FIX 15128, FIX 15129): its call as
-//! its rung sent it and the span it generated.
+//! its rung sent it and the span it generated. The same leg's answering rung
+//! reaches the answer's breakpoint, its record kept or not (FIX 4933).
 
 use std::sync::{Arc, Mutex};
 
@@ -13,7 +14,7 @@ use oneiron::{
 use tokio::sync::{mpsc, oneshot};
 
 use super::TurnCredential;
-use crate::models::{ModelCallBinding, OfferLadder, RoleCall};
+use crate::models::{AnsweringRung, ModelCallBinding, OfferLadder, RoleCall};
 
 /// Retention for evidence written directly to base, not the session overlay.
 pub(crate) fn model_call_keeps_no_record(
@@ -46,6 +47,7 @@ pub(super) struct Capture {
     no_record_at_arrival: bool,
     terminal: mpsc::Receiver<CompletedCall>,
     answered: AnsweredSlot,
+    terminal_rung: TerminalRung,
 }
 
 /// The answering leg's call as its rung sent it and what it generated, for
@@ -70,6 +72,11 @@ pub(super) struct AnsweredCall {
 /// hooks.
 pub(super) type AnsweredSlot = Arc<Mutex<Option<AnsweredCall>>>;
 
+/// Where the producer leaves the answering leg's rung and its sent call
+/// for the answer's breakpoint (FIX 4933): `None` until a leg answers, and
+/// for an answer whose stream ended any other way.
+pub(super) type TerminalRung = Arc<Mutex<Option<AnsweringRung>>>;
+
 /// `request` as the rung `binding` names sent it, as the ladder binds a
 /// rung's call: its model at that rung's locality, its route prompt as the
 /// first message, each cache boundary moved past it. The segment manifest
@@ -85,6 +92,7 @@ fn sent_request(request: &LlmRequest, binding: &ModelCallBinding) -> LlmRequest 
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: prompt.clone(),
+                    signature: None,
                 }],
             },
         );
@@ -108,6 +116,7 @@ pub(super) fn channel(
             no_record_at_arrival,
             terminal,
             answered: AnsweredSlot::default(),
+            terminal_rung: TerminalRung::default(),
         },
     )
 }
@@ -146,6 +155,12 @@ impl Capture {
         Arc::clone(&self.answered)
     }
 
+    /// Where [`Self::record`] leaves the answering leg's rung for the
+    /// answer's breakpoint (FIX 4933).
+    pub(super) fn terminal_rung(&self) -> TerminalRung {
+        Arc::clone(&self.terminal_rung)
+    }
+
     pub(super) fn record(
         &mut self,
         vault: &Vault,
@@ -163,6 +178,19 @@ impl Capture {
         else {
             return;
         };
+        // FIX 4933: the answering leg's rung reaches the answer's breakpoint
+        // whether or not its record is kept.
+        let terminal = self.terminal.try_recv().ok().map(|mut call| {
+            let binding = call.binding.try_recv().ok();
+            (call, binding)
+        });
+        if let Some(answering) = terminal
+            .as_ref()
+            .and_then(|(_, binding)| binding.as_ref()?.answering.clone())
+            && let Ok(mut slot) = self.terminal_rung.lock()
+        {
+            *slot = Some(answering);
+        }
         let session = match credential {
             TurnCredential::Request { auth, .. } => auth.off_record_session(),
             TurnCredential::Action { .. } => None,
@@ -173,11 +201,10 @@ impl Capture {
         {
             return;
         }
-        let Ok(mut call) = self.terminal.try_recv() else {
+        let Some((call, binding)) = terminal else {
             tracing::warn!("chat terminal has no answering model-call context");
             return;
         };
-        let binding = call.binding.try_recv().ok();
         // FIX 15128: the drafter's view of the leg, by the rung that
         // answered; a leg that names no route is no example.
         if let Some(binding) = binding.as_ref()

@@ -1,0 +1,14 @@
+{
+  "name": "vault.rooms.join",
+  "description": "Files and decides a request to take part in a room or one of its threads.",
+  "input": "crate::workspace_roster::JoinRequest",
+  "output": "crate::workspace_roster::JoinOutcome",
+  "call": "memory.rooms_join(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$",
+    "room_ref": "=room"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

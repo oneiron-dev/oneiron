@@ -30,13 +30,13 @@ use crate::batch::secret_scan::container::Kind;
 use crate::batch::secret_scan::container::Stop;
 use crate::batch::secret_scan::container::Walked;
 use crate::batch::secret_scan::container::archive;
-use crate::batch::secret_scan::container::classify;
 use crate::batch::secret_scan::container::gzip;
 use crate::batch::secret_scan::container::over_budget;
 use crate::batch::secret_scan::container::pdf;
 use crate::batch::secret_scan::container::tar;
-use crate::batch::secret_scan::container::writes_handles;
+use crate::batch::secret_scan::container::writes_handles_with_pacing;
 use crate::batch::secret_scan::container::xz;
+use crate::batch::secret_scan::container::{ReadPacing, classify_with_pacing};
 use crate::file_secret_marks::KeyPlaces;
 use crate::file_secret_marks::MemberStep;
 use crate::file_secret_marks::PlaceHandles;
@@ -73,6 +73,7 @@ pub struct FillPlaces<'p> {
     pub places: &'p KeyPlaces,
     pub handles: Option<&'p PlaceHandles>,
     pub met: usize,
+    pub pacing: ReadPacing,
 }
 
 impl RetainedLeafTransform for FillPlaces<'_> {
@@ -95,7 +96,7 @@ impl RetainedLeafTransform for FillPlaces<'_> {
             return Ok(bytes);
         }
         spans.sort_unstable_by_key(|(span, _)| *span);
-        if self.handles.is_some() && writes_handles(path, &bytes) {
+        if self.handles.is_some() && writes_handles_with_pacing(path, &bytes, &self.pacing) {
             return filled_with(&bytes, &spans).map_err(Stop::Fail);
         }
         filled(&bytes, spans.into_iter().map(|(span, _)| span)).map_err(Stop::Fail)
@@ -122,11 +123,12 @@ impl RetainedLeafTransform for FillPlaces<'_> {
 #[derive(Default)]
 pub struct RebuildAll {
     pub containers: Vec<Vec<MemberStep>>,
+    pub pacing: ReadPacing,
 }
 
 impl RetainedLeafTransform for RebuildAll {
     fn transform(&mut self, path: &[MemberStep], bytes: Vec<u8>) -> Walked<Vec<u8>> {
-        if classify(&bytes).is_some() {
+        if classify_with_pacing(&bytes, &self.pacing).is_some() {
             self.containers.push(path.to_vec());
         }
         Ok(bytes)

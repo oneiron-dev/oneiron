@@ -3,15 +3,18 @@
 //! It uses the same self registry, gate policy and home logic: one writer,
 //! bound to the answering agent, wearing its home at the place its caller
 //! sits, on the house compaction route. A live flight forks the answer's own
-//! admitted call, captured at the answer's breakpoint through a per-answer
-//! admission that hands back exactly that call; it is never admitted again
-//! over a rendered transcript. Under a row on `auto` (FIX 6029, the
-//! default) a breakpoint whose prefix is cold leaves the flight to the
-//! cheap writer as the agent, over the retained ledger. The flight spends on
+//! admitted call, captured once the answer ended through a per-answer
+//! admission that hands back exactly that call and the rung that answered
+//! it (FIX 4933); it is never admitted again over a rendered transcript.
+//! Under a row on `auto` (FIX 6029, the default) a breakpoint whose prefix
+//! is cold leaves the flight to the cheap writer as the agent, over the
+//! retained ledger. The flight spends on
 //! its own guard on the chat actor's budget line and bills the payer the
 //! turn resolved: each call takes its own permit and settles once, and
 //! filing settles nothing. It runs off the answer's path, queued with every
-//! other pass.
+//! other pass. One flight per conversation runs at a time (FIX 5030): a
+//! second answer past its threshold while its conversation's flight is held
+//! does not fly, and leaves its log raw for the next turn.
 
 use std::sync::Arc;
 
@@ -30,9 +33,9 @@ use oneiron::{
     MemoryProfile, Vault, WriteActor,
 };
 
-use super::{CodeModeCompaction, CompactionMeter, LiveAdmission, ThreadSpawn};
+use super::{AnsweringRungSlot, CodeModeCompaction, CompactionMeter, LiveAdmission, ThreadSpawn};
 use crate::ai_host::AiHandle;
-use crate::models::{OfferLadder, RoleCall, RoleRefusal};
+use crate::models::{AnsweringRung, OfferLadder, RoleCall, RoleRefusal};
 
 /// `chat_compaction_entry`: a chat answer compacts as its agent only for an
 /// agent whose engine-owned profile names `self`, under a row that reads
@@ -93,13 +96,19 @@ pub(crate) struct ChatBreakpointCall {
     pub(crate) budget_units: u64,
     /// The reply's MESSAGE: the flight's paid calls' job.
     pub(crate) message: EntityId,
+    /// Every row the answer's own admitted call was read from, `None` when
+    /// not all were witnessed: its live fork is captured only from a whole
+    /// set (FIX 9463).
+    pub(crate) sources: Option<Vec<EntityId>>,
 }
 
 /// One answer's own admitted call, as its breakpoint captures it: a clone
-/// of that call, handed back only for that call's own request.
+/// of that call, handed back only for that call's own request, with the
+/// rung that answered it, once it answered (FIX 4933).
 struct AnswerAdmission {
     request: LlmRequest,
     ladder: Arc<OfferLadder>,
+    answering: Option<AnsweringRung>,
 }
 
 impl LiveAdmission for AnswerAdmission {
@@ -113,6 +122,18 @@ impl LiveAdmission for AnswerAdmission {
             request: self.request.clone(),
             ladder: Arc::clone(&self.ladder),
         })
+    }
+
+    /// The answer holds its one answering rung itself.
+    fn hold_answering_rungs(&self, _: &LlmRequest) -> Option<Arc<AnsweringRungSlot>> {
+        None
+    }
+
+    fn answering_rung(&self, live: &LlmRequest) -> Option<AnsweringRung> {
+        if *live != self.request {
+            return None;
+        }
+        self.answering.clone()
     }
 }
 
@@ -154,15 +175,19 @@ impl AiHandle {
         })
     }
 
-    /// Enters an answer's breakpoint: past its profile's threshold, the
-    /// answer's own `admitted` call is captured now, before it is sent (none
-    /// under `auto` when its prefix is cold, FIX 6029), and its flight is
-    /// queued to run off the answer's path. Says why no flight is queued
-    /// when none is; the log then stays raw.
+    /// Enters an answer's breakpoint once the answer ended: past its
+    /// profile's threshold, the answer's own `admitted` call is captured on
+    /// `answering`, the rung that answered it (FIX 4933; none under `auto`
+    /// when its prefix is cold, FIX 6029, or when no rung answered), and its
+    /// flight is queued to run off the answer's path, holding its
+    /// conversation's one flight claim until it ends (FIX 5030). Says why no
+    /// flight is queued when none is; the log then stays raw. A conversation
+    /// whose flight is held reads `Quiet`, as a driver already in flight does.
     pub(crate) fn enter_chat_breakpoint(
         &self,
         call: ChatBreakpointCall,
         admitted: &RoleCall,
+        answering: Option<AnsweringRung>,
     ) -> Result<(), ConversationCompactionUnavailable> {
         use ConversationCompactionUnavailable as Why;
         let live = match self.writer_compaction.get() {
@@ -185,6 +210,7 @@ impl AiHandle {
         let admission: Arc<dyn LiveAdmission> = Arc::new(AnswerAdmission {
             request: admitted.request.clone(),
             ladder: Arc::clone(&admitted.ladder),
+            answering,
         });
         let meter = CompactionMeter::Chat {
             guard,
@@ -198,7 +224,7 @@ impl AiHandle {
                 Some(meter),
                 &admission,
             )
-            .map_err(|_| Why::Off(CompactionOff::BackendFailed))?;
+            .map_err(Why::Off)?;
         let driver = match CompactionDriver::for_profile(&call.mode.profile, &registry) {
             Ok(Some(driver)) => driver,
             Ok(None) => return Err(Why::Off(CompactionOff::HarnessCompacts)),
@@ -207,7 +233,10 @@ impl AiHandle {
         if call.log.uncompacted_tokens < driver.compact_at() {
             return Err(Why::Quiet);
         }
-        let captured = capture_conversation_fork(&driver, &admitted.request);
+        let Some(claim) = live.chat_flights.claim(call.log.conversation) else {
+            return Err(Why::Quiet);
+        };
+        let captured = capture_conversation_fork(&driver, &admitted.request, call.sources.clone());
         let spawn = ThreadSpawn {
             passes: Arc::clone(&live.passes),
             credential: call.payer.entity_ref().to_hex(),
@@ -216,6 +245,8 @@ impl AiHandle {
         let policy = live.policy;
         let mut driver = driver;
         spawn.spawn(Box::new(move || {
+            // Held to the flight's end, released on every exit.
+            let _flight = claim;
             let ChatBreakpointCall {
                 vault,
                 log,

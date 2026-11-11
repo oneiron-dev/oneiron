@@ -49,6 +49,28 @@ pub enum SessionStreamOutcome {
     Unretained(SessionStreamEnd),
 }
 
+/// A closed native stream's actual outcome, native TURN and caller-projected text.
+/// An unretained stream has no TURN or MESSAGE to name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionStreamFinished {
+    pub outcome: SessionStreamOutcome,
+    pub turn_id: Option<EntityId>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::memory::witness) struct SessionStreamStaged {
+    receipt: MessageStreamReceipt,
+    turn_id: EntityId,
+    text: String,
+}
+
+struct ClosedStream {
+    outcome: SessionStreamOutcome,
+    turn_id: Option<EntityId>,
+    text: String,
+}
+
 /// Terminal facts the native writer stages its actual receipt against.
 ///
 /// `generation` is the stream token's own generation. The witness writer builds the actual
@@ -60,7 +82,7 @@ pub(in crate::memory::witness) struct SessionStreamTerminal {
     pub(in crate::memory::witness) finality: StreamFinality,
     pub(in crate::memory::witness) finality_reason: StreamFinalityReason,
     pub(in crate::memory::witness) finish_reason: Option<FinishReason>,
-    pub(in crate::memory::witness) staged: RefCell<Option<MessageStreamReceipt>>,
+    pub(in crate::memory::witness) staged: RefCell<Option<SessionStreamStaged>>,
 }
 
 impl SessionStreamTerminal {
@@ -78,10 +100,19 @@ impl SessionStreamTerminal {
             staged: RefCell::new(None),
         }
     }
-    pub(in crate::memory::witness) fn remember(&self, receipt: MessageStreamReceipt) {
-        *self.staged.borrow_mut() = Some(receipt);
+    pub(in crate::memory::witness) fn remember(
+        &self,
+        receipt: MessageStreamReceipt,
+        turn_id: EntityId,
+        text: String,
+    ) {
+        *self.staged.borrow_mut() = Some(SessionStreamStaged {
+            receipt,
+            turn_id,
+            text,
+        });
     }
-    pub(in crate::memory::witness) fn staged(&self) -> Option<MessageStreamReceipt> {
+    pub(in crate::memory::witness) fn staged(&self) -> Option<SessionStreamStaged> {
         self.staged.borrow().clone()
     }
 }
@@ -102,7 +133,8 @@ pub(super) struct SessionState {
     idle_timeout_ms: u64,
     terminal: bool,
     completion: Option<MessageCompletion>,
-    pending_receipt: Option<MessageStreamReceipt>,
+    pending_terminal: Option<SessionStreamStaged>,
+    closed: Option<ClosedStream>,
     permit: Option<crate::live_rows::LivePermit>,
 }
 
@@ -207,6 +239,24 @@ impl SessionMessageStream {
             incomplete: true,
             generating: !state.terminal,
             finish_reason: None,
+        }))
+    }
+    /// Resolves a closed stream and projects its exact terminal text for the
+    /// original caller now. This read does not refresh the idle clock.
+    pub fn finished(&self, vault: &Vault) -> MessageStreamResult<Option<SessionStreamFinished>> {
+        let mut state = lock(&self.state)?;
+        check_caller_locked(vault, &mut state)?;
+        resolve_pending_locked(vault, &mut state)?;
+        let Some(closed) = &state.closed else {
+            return Ok(None);
+        };
+        let text = state
+            .binding
+            .project_finished_stream_text(vault, &closed.text)?;
+        Ok(Some(SessionStreamFinished {
+            outcome: closed.outcome.clone(),
+            turn_id: closed.turn_id,
+            text,
         }))
     }
     /// Explicit final end.
@@ -324,7 +374,8 @@ impl SessionWitnessBinding {
             idle_timeout_ms: policy.idle_timeout_ms,
             terminal: false,
             completion: None,
-            pending_receipt: None,
+            pending_terminal: None,
+            closed: None,
             permit: Some(permit),
         }));
         {
@@ -363,7 +414,7 @@ pub(super) fn pump(
     );
     if let Err(MessageStreamError::Memory(error)) = &outcome
         && error.code != MEMORY_CODE_INTERNAL
-        && state.pending_receipt.is_none()
+        && state.pending_terminal.is_none()
         && state.tokens.upgrade().is_none()
     {
         // Only actual private tokens keep a refused orphan retryable. Registry
@@ -495,7 +546,8 @@ fn check_caller_locked(vault: &Vault, state: &mut SessionState) -> MessageStream
 fn retire_locked(state: &mut SessionState) -> MessageStreamResult<()> {
     state.terminal = true;
     state.completion = None;
-    state.pending_receipt = None;
+    state.pending_terminal = None;
+    state.closed = None;
     state.permit.take();
     state.text.clear();
     state.remove()
@@ -550,6 +602,11 @@ fn finish_locked(
             let completion = completion_for(end.finality, end.finish_reason.clone());
             state.terminal = true;
             state.completion = Some(completion);
+            state.closed = Some(ClosedStream {
+                outcome: SessionStreamOutcome::Unretained(end.clone()),
+                turn_id: None,
+                text: state.text.clone(),
+            });
             state.permit.take();
             state.text.clear();
             state.remove()?;
@@ -559,11 +616,14 @@ fn finish_locked(
             let Some(candidate) = terminal.staged() else {
                 return Err(error.into());
             };
-            state.pending_receipt = Some(candidate.clone());
-            match state.binding.stream_terminal_receipt(vault, &candidate) {
-                Ok(Some(found)) if found == candidate => retained_locked(state, found),
+            state.pending_terminal = Some(candidate.clone());
+            match state
+                .binding
+                .stream_terminal_receipt(vault, &candidate.receipt)
+            {
+                Ok(Some(found)) if found == candidate.receipt => retained_locked(state, candidate),
                 Ok(None) => {
-                    state.pending_receipt = None;
+                    state.pending_terminal = None;
                     Err(error.into())
                 }
                 Ok(Some(_)) => Err(error.into()),
@@ -579,16 +639,19 @@ fn resolve_pending_locked(
     vault: &Vault,
     state: &mut SessionState,
 ) -> MessageStreamResult<Option<MessageStreamReceipt>> {
-    let Some(candidate) = state.pending_receipt.clone() else {
+    let Some(candidate) = state.pending_terminal.clone() else {
         return Ok(None);
     };
-    match state.binding.stream_terminal_receipt(vault, &candidate)? {
-        Some(found) if found == candidate => {
-            retained_locked(state, found.clone())?;
+    match state
+        .binding
+        .stream_terminal_receipt(vault, &candidate.receipt)?
+    {
+        Some(found) if found == candidate.receipt => {
+            retained_locked(state, candidate)?;
             Ok(Some(found))
         }
         None => {
-            state.pending_receipt = None;
+            state.pending_terminal = None;
             Ok(None)
         }
         Some(_) => Err(MessageStreamError::Memory(Box::new(MemoryError::new(
@@ -601,15 +664,25 @@ fn resolve_pending_locked(
 
 fn retained_locked(
     state: &mut SessionState,
-    receipt: MessageStreamReceipt,
+    staged: SessionStreamStaged,
 ) -> MessageStreamResult<SessionStreamOutcome> {
+    let SessionStreamStaged {
+        receipt,
+        turn_id,
+        text,
+    } = staged;
     state.completion = Some(MessageCompletion {
         incomplete: !receipt.complete(),
         generating: false,
         finish_reason: receipt.finish_reason.clone(),
     });
     state.terminal = true;
-    state.pending_receipt = None;
+    state.pending_terminal = None;
+    state.closed = Some(ClosedStream {
+        outcome: SessionStreamOutcome::Retained(receipt.clone()),
+        turn_id: Some(turn_id),
+        text,
+    });
     state.permit.take();
     state.text.clear();
     state.remove()?;

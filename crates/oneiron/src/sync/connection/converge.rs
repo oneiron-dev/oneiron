@@ -8,12 +8,13 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::sync::client::{SyncClient, SyncEvent};
 use crate::sync::queue::QueuedUpdate;
+use crate::sync::types::WindowKey;
 
 use super::SyncConnection;
 use super::server_close::ServerClose;
 use super::session::{
     ConvergenceSession, FullResyncMarker, ITEM11_REBOOTSTRAP_UNREADABLE, MAX_CONVERGENCE_ROUNDS,
-    PumpBudget, WsSink, WsSource,
+    PumpBudget, SessionFault, WsSink, WsSource,
 };
 
 impl SyncConnection {
@@ -35,7 +36,7 @@ impl SyncConnection {
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         queued: &[QueuedUpdate],
         force_resync: &BTreeSet<String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionFault> {
         let mut session = if force_resync.is_empty() {
             ConvergenceSession::from_queued(queued)
         } else {
@@ -71,6 +72,32 @@ impl SyncConnection {
         Ok(())
     }
 
+    /// A peer session's vector rounds after its queue replay (FIX 4748): the
+    /// same SyncStep1/SyncStep2 exchange as [`Self::run_convergence`], so
+    /// each side imports the other's writes, but it confirms nothing for the
+    /// home. The queue stays whole, and where the home session would
+    /// re-bootstrap after `MAX_CONVERGENCE_ROUNDS`, the peer session ends.
+    pub(super) async fn exchange_with_peer(
+        &self,
+        write: &mut WsSink,
+        read: &mut WsSource,
+        client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        queued: &[QueuedUpdate],
+    ) -> Result<(), SessionFault> {
+        let mut session = ConvergenceSession::from_queued(queued);
+        if self
+            .confirm_rounds(write, read, client, event_tx, &mut session, false)
+            .await?
+        {
+            return Ok(());
+        }
+        Err(SessionFault::Remote(format!(
+            "the peer did not come level in {MAX_CONVERGENCE_ROUNDS} rounds; the peer session \
+             ends and nothing re-bootstraps"
+        )))
+    }
+
     /// VV rounds over the session's pending windows: `true` once all of them
     /// confirm, `false` when the round budget runs out first.
     async fn confirm_rounds(
@@ -81,11 +108,11 @@ impl SyncConnection {
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         session: &mut ConvergenceSession,
         strict: bool,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, SessionFault> {
         loop {
             let frames = session
                 .begin_round(client)
-                .map_err(|e| format!("Convergence round failed: {e}"))?;
+                .map_err(|e| SessionFault::Local(format!("Convergence round failed: {e}")))?;
             let Some(frames) = frames else {
                 return Ok(false);
             };
@@ -93,7 +120,7 @@ impl SyncConnection {
                 write
                     .send(Message::Binary(frame.into()))
                     .await
-                    .map_err(|e| format!("Convergence send failed: {e}"))?;
+                    .map_err(|e| SessionFault::Remote(format!("Convergence send failed: {e}")))?;
             }
             self.pump_server_frames(
                 read,
@@ -121,10 +148,10 @@ impl SyncConnection {
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         force_resync: &BTreeSet<String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionFault> {
         let frames = self
             .re_bootstrap_local_state(client, force_resync)
-            .map_err(|e| format!("Re-bootstrap queue clear failed: {e}"))?;
+            .map_err(|e| SessionFault::Local(format!("Re-bootstrap queue clear failed: {e}")))?;
         // A forced window's replacement retires its queued sends, deletes included, into the
         // window itself: until this re-bootstrap proves the window, `fr:w:` is what makes a later
         // connect, after a restart too, fetch and prove it again.
@@ -139,19 +166,19 @@ impl SyncConnection {
             write
                 .send(Message::Binary(frame.into()))
                 .await
-                .map_err(|e| format!("Re-bootstrap send failed: {e}"))?;
+                .map_err(|e| SessionFault::Remote(format!("Re-bootstrap send failed: {e}")))?;
         }
         let received = self
             .pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
             .await?;
         if received == 0 {
-            return Err("Re-bootstrap sync timeout".to_string());
+            return Err(SessionFault::remote("Re-bootstrap sync timeout"));
         }
         // F25 H17/H21: a reply proves nothing about a given window. The delete
         // rows the queue clear kept are sent again, and every forced or
         // replayed window must be VV-confirmed against this re-bootstrap's
         // own server witness before the caller clears `fr:w:` or says Synced.
-        let kept = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
+        let kept = self.queue.drain_updates().map_err(SessionFault::local)?;
         let sent = self
             .replay_queued_updates(write, client, event_tx, kept)
             .await?;
@@ -162,9 +189,9 @@ impl SyncConnection {
                 .confirm_rounds(write, read, client, event_tx, &mut session, true)
                 .await?
         {
-            return Err(format!(
+            return Err(SessionFault::Remote(format!(
                 "Re-bootstrap not confirmed after {MAX_CONVERGENCE_ROUNDS} rounds"
-            ));
+            )));
         }
         if !sent.is_empty()
             && let Err(e) = self.queue.clear_through_confirmed(session.max_seq)
@@ -174,6 +201,172 @@ impl SyncConnection {
             )));
         }
         self.clear_full_resync_markers(&markers)
+    }
+
+    /// FIX 20202: an opened-item home session re-bootstraps from the server
+    /// each marked window this device promoted, one window at a time over its
+    /// promoted exchange, as a sync-all session re-bootstraps every forced
+    /// window. The home granted each window's promotion on this connection;
+    /// the replacement the window asks for installs here, which retires the
+    /// queued sends it carried into the window; and the window then
+    /// VV-confirms against the fresh witness that replacement starts, within
+    /// strict rounds. Only then does its `fr:w:` go. Any failure keeps every
+    /// marker, so a later connect, after a restart too, tries again.
+    pub(super) async fn re_bootstrap_promoted(
+        &self,
+        write: &mut WsSink,
+        read: &mut WsSource,
+        client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        markers: &[FullResyncMarker],
+    ) -> Result<(), SessionFault> {
+        let windows: BTreeSet<String> = markers
+            .iter()
+            .map(|marker| marker.window_key.clone())
+            .collect();
+        let mut keys = Vec::with_capacity(windows.len());
+        for window in &windows {
+            keys.push(WindowKey::try_new(window.as_str()).ok_or_else(|| {
+                SessionFault::Local(format!("Invalid full-resync marker key: fr:w:{window}"))
+            })?);
+        }
+        // Phase 2 asked the home to promote each window before its first
+        // vector; nothing is asked of a window until its grant is here.
+        let granted =
+            |client: &SyncClient, key: &WindowKey| client.promotion_granted_on_connection(key);
+        if !self
+            .pump_until_each(write, read, client, event_tx, &keys, granted)
+            .await?
+        {
+            return Err(SessionFault::remote(
+                "the home granted no promotion of a marked window on this connection",
+            ));
+        }
+        for key in &keys {
+            client.expect_window_replacement(key);
+        }
+        let frames = client.replacement_requests(&windows).map_err(|e| {
+            SessionFault::Local(format!("Promoted re-bootstrap request failed: {e}"))
+        })?;
+        for frame in frames {
+            write
+                .send(Message::Binary(frame.into()))
+                .await
+                .map_err(|e| {
+                    SessionFault::Remote(format!("Promoted re-bootstrap send failed: {e}"))
+                })?;
+        }
+        // A reply is not an install: a withheld or partial answer installs
+        // nothing, and the window stays marked.
+        let installed =
+            |client: &SyncClient, key: &WindowKey| client.window_replacement_installed(key);
+        if !self
+            .pump_until_each(write, read, client, event_tx, &keys, installed)
+            .await?
+        {
+            return Err(SessionFault::remote(
+                "a marked promoted window's replacement did not install",
+            ));
+        }
+        // Each install asked the home for the new window's vector already.
+        let mut session = ConvergenceSession::confirming(&[], &windows);
+        if !self
+            .confirm_each(write, read, client, event_tx, &mut session)
+            .await?
+        {
+            return Err(SessionFault::Remote(format!(
+                "Promoted re-bootstrap not confirmed: {MAX_CONVERGENCE_ROUNDS} asks in a row \
+                 brought no window level"
+            )));
+        }
+        // A window the home may not read settles a confirming session
+        // unproved (FIX 922 item 11): its marker stays.
+        if keys.iter().any(|key| !client.home_may_request(key)) {
+            return Err(SessionFault::remote(
+                "a marked promoted window's world is no longer readable by the home",
+            ));
+        }
+        self.clear_full_resync_markers(markers)
+    }
+
+    /// Strict server-frame pumps until `holds` is true of every key in
+    /// `keys`. The home answers this socket's frames in order, so what these
+    /// keys wait for may come behind its answers to every earlier request,
+    /// for windows outside `keys` too: it reads on while the home sends
+    /// anything, and gives up only after `MAX_CONVERGENCE_ROUNDS` pumps in a
+    /// row read nothing. `true` once every key holds.
+    async fn pump_until_each(
+        &self,
+        write: &mut WsSink,
+        read: &mut WsSource,
+        client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        keys: &[WindowKey],
+        holds: impl Fn(&SyncClient, &WindowKey) -> bool,
+    ) -> Result<bool, SessionFault> {
+        let mut quiet = 0;
+        while !keys.iter().all(|key| holds(&*client, key)) {
+            if quiet >= MAX_CONVERGENCE_ROUNDS {
+                return Ok(false);
+            }
+            let received = self
+                .pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
+                .await?;
+            if received == 0 {
+                quiet += 1;
+            } else {
+                quiet = 0;
+            }
+        }
+        Ok(true)
+    }
+
+    /// Strict VV confirmation of `session`'s windows. As in
+    /// [`Self::pump_until_each`], it reads on while the home sends anything:
+    /// the answers may come behind its answers to earlier requests. Only once
+    /// a pump reads nothing with windows still pending does it ask again for
+    /// each of them, and it gives up after `MAX_CONVERGENCE_ROUNDS` such asks
+    /// in a row that bring no window level. `true` once all confirm.
+    async fn confirm_each(
+        &self,
+        write: &mut WsSink,
+        read: &mut WsSource,
+        client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        session: &mut ConvergenceSession,
+    ) -> Result<bool, SessionFault> {
+        session.note_progress(client);
+        let mut asked = 0;
+        while !session.all_converged() {
+            let before = session.pending.len();
+            let received = self
+                .pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
+                .await?;
+            session.note_progress(client);
+            if session.pending.len() < before {
+                asked = 0;
+                continue;
+            }
+            if received > 0 {
+                continue;
+            }
+            if asked >= MAX_CONVERGENCE_ROUNDS {
+                return Ok(false);
+            }
+            asked += 1;
+            let frames = session.vector_requests(client).map_err(|e| {
+                SessionFault::Local(format!("Promoted re-bootstrap round failed: {e}"))
+            })?;
+            for frame in frames {
+                write
+                    .send(Message::Binary(frame.into()))
+                    .await
+                    .map_err(|e| {
+                        SessionFault::Remote(format!("Promoted re-bootstrap send failed: {e}"))
+                    })?;
+            }
+        }
+        Ok(true)
     }
 
     /// The queue clear of every re-bootstrap (`clear_all`). A row a
@@ -248,7 +441,7 @@ impl SyncConnection {
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         budget: PumpBudget,
         strict: bool,
-    ) -> Result<usize, String> {
+    ) -> Result<usize, SessionFault> {
         let mut received = 0usize;
         let mut wait = budget.first_frame;
         while received < budget.max_frames {
@@ -267,13 +460,20 @@ impl SyncConnection {
                                 .into_iter()
                                 .filter(|frame| !client.frame_withheld(frame))
                             {
-                                write
-                                    .send(Message::Binary(resp.into()))
+                                self.send_document_response(write, client, resp)
                                     .await
-                                    .map_err(|e| format!("Send response failed: {e}"))?;
+                                    .map_err(|exit| {
+                                        SessionFault::remote(
+                                            super::document_response::response_error(exit),
+                                        )
+                                    })?;
                             }
                         }
-                        Err(e) if strict => return Err(format!("Protocol error: {e}")),
+                        // A fault of this machine's own store applying the frame
+                        // says nothing of the far end (FIX 22153).
+                        Err(e) if strict => {
+                            return Err(SessionFault::of_frame(&e, format!("Protocol error: {e}")));
+                        }
                         Err(e) => {
                             let _ = event_tx.send(SyncEvent::Error(format!("Protocol error: {e}")));
                         }
@@ -285,15 +485,15 @@ impl SyncConnection {
                     write
                         .send(Message::Pong(data))
                         .await
-                        .map_err(|e| format!("Pong failed: {e}"))?;
+                        .map_err(|e| SessionFault::Remote(format!("Pong failed: {e}")))?;
                 }
                 Some(Ok(Message::Pong(_) | Message::Text(_) | Message::Frame(_))) => {}
                 // The close code tells a server fault from a refusal (FIX 5927).
                 Some(Ok(Message::Close(frame))) => {
-                    return Err(ServerClose::read(frame.as_ref()).to_string());
+                    return Err(SessionFault::remote(ServerClose::read(frame.as_ref())));
                 }
-                Some(Err(e)) => return Err(format!("WS error: {e}")),
-                None => return Err("WS stream ended".to_string()),
+                Some(Err(e)) => return Err(SessionFault::Remote(format!("WS error: {e}"))),
+                None => return Err(SessionFault::remote("WS stream ended")),
             }
         }
         Ok(received)

@@ -1,5 +1,8 @@
 //! Claims are the document state machine. The audit copy survives document deletion.
+use super::field_admission::InspectedPages;
 use super::model::*;
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
@@ -244,6 +247,28 @@ pub(super) fn append(
     actor: EsignAuditActor,
     now: u64,
 ) -> Result<EsignState> {
+    append_inspected(
+        vault,
+        txn,
+        document,
+        event,
+        actor,
+        now,
+        &InspectedPages::default(),
+    )
+}
+/// [`append`] with the pages its event's items had inspected before this
+/// writer (FIX 9609): its field admission lays the fields out on them and
+/// parses no PDF they hold.
+pub(super) fn append_inspected(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    document: EntityId,
+    event: EsignEvent,
+    actor: EsignAuditActor,
+    now: u64,
+    inspected: &InspectedPages,
+) -> Result<EsignState> {
     if vault.get_blob_artifact_in_txn(txn, &document)?.is_none() {
         return Err(Error::EntityNotFound);
     }
@@ -261,7 +286,7 @@ pub(super) fn append(
     };
     // Refuse unrenderable input before any event or Completed recipient state
     // commits. Signed rechecks all of that recipient's saved values as a backstop.
-    super::field_admission::validate_event_fields(vault, txn, &state, &event)?;
+    super::field_admission::validate_event_fields(vault, txn, &state, &event, inspected)?;
     let row = EsignEventRow {
         sequence: rows.len() as u64,
         previous_sha256: rows.last().map(hash).transpose()?.unwrap_or([0; 32]),
@@ -282,6 +307,23 @@ pub(super) fn append(
         ClaimLifecycleStatus::Active,
     )?;
     body.source = Some(ClaimSource::Observed);
+    // The constructor's scope_facet is the document's substrate id: a
+    // derived id, not a stored FACET, so the CLAIM birth edge the put stamps
+    // would fail InvalidFacet (the facet birth contract, #4389). The audit
+    // claim takes the document artifact's own stored birth facet, else the
+    // vault default, as the calendar origin claim does (calendar/origin.rs).
+    let document_facet = crate::federation::record_scope::birth_facet(&vault.store, txn, document)?;
+    body.scope_facet = match document_facet {
+        Some(facet)
+            if vault
+                .store
+                .port_entity_record(txn, &facet)?
+                .is_some_and(|row| row.entity_type == ENTITY_TYPE_FACET) =>
+        {
+            facet
+        }
+        _ => crate::claim::default_facet_in(&vault.store, txn)?,
+    };
     // A document sent for a project keeps its trail in that project's
     // audience; one sent for none stays at the reserved default.
     if let Some(project) = state.document.project {

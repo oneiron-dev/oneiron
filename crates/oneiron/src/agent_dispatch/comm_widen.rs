@@ -99,6 +99,12 @@ pub(crate) struct CommWidenDecision {
 #[serde(deny_unknown_fields)]
 pub(crate) struct CommWidenRequest {
     pub(crate) needed: CommReach,
+    /// The reach the child addressed with when it asked (FIX 10413): its
+    /// frozen dial or an earlier approval, as [`effective_comm_in_txn`]
+    /// read it when the request was reserved. `None` on a request reserved
+    /// before the reach was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) from: Option<CommReach>,
     pub(crate) recipient: CommWidenRecipient,
     pub(crate) at: u64,
     /// The current round's question; `None` until one is reserved, and again

@@ -29,6 +29,7 @@
 //! resolves storage for another tenant, even when byte-identical.
 
 mod body;
+mod body_file;
 pub use oneiron_store::blob_artifact::body_tags;
 mod born_from;
 pub(crate) mod checkpoint;
@@ -61,6 +62,8 @@ pub use self::body::{
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
+pub use self::body_file::BlobBodyFile;
+pub(crate) use self::body_file::BlobContent;
 pub use self::born_from::{BornFromArtifact, BornFromSource};
 pub(crate) use self::born_from::{
     agent_run_artifacts_with_prefix_in_txn, archive_born_from_table, artifacts_born_from_in_txn,
@@ -86,6 +89,7 @@ pub(crate) use self::lifecycle::{
     release_asset_reference_in_txn,
 };
 // FIX 6225: a step response's exact version, released by its last pin.
+pub(crate) use self::lifecycle::{archive_version_stands_in_txn, release_archive_version_in_txn};
 pub(crate) use self::lifecycle::{release_response_version_in_txn, response_version_stands_in_txn};
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
@@ -106,6 +110,7 @@ pub use self::verbs::{
     NativeOutputRequest, ProposalSettleRequest, ReleasedWait, SlideReviewOutcome,
     SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
+pub(crate) use self::versions::RoomResponseVersion;
 pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 // FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),
@@ -145,3 +150,4 @@ use crate::write_envelope::WriteActor;
 use rmpv::Value;
 
 pub mod esign;
+pub(crate) mod tables;

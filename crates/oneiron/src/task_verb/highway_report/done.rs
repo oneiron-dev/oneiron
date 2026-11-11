@@ -3,6 +3,9 @@
 //! Shared report vocabulary stays in `highway_report`.
 
 use super::*;
+use crate::task_verb::host_done_confession::{
+    FIELD_CONFESSION_STRUCTURED, FIELD_HOST_ATTEMPT_COUNT,
+};
 use crate::task_verb::settlement_anchor::{SETTLEMENT_ANCHOR_WORLD_PROOF, anchor_fields};
 
 impl Memory<'_> {
@@ -20,7 +23,11 @@ impl Memory<'_> {
         task_ref: EntityId,
         key: &str,
         attempt: Option<AttemptHandle>,
-        (result_ref, confession): (EntityId, Option<String>),
+        (result_ref, confession, confession_structured): (
+            EntityId,
+            Option<String>,
+            Option<Vec<crate::self_heal::audit::ObjectiveConfession>>,
+        ),
         current: &TaskVerbBody,
         decisions: Option<&TaskDecisions<'_>>,
         mut lifecycle: TaskLifecycleRecord,
@@ -32,6 +39,29 @@ impl Memory<'_> {
             .insert("result_ref".to_owned(), result_ref.to_hex());
         if let Some(confession) = confession {
             lifecycle.fields.insert("confession".to_owned(), confession);
+        }
+        // Only the sealed host supplies the generation used by the closer.
+        if let TaskVia::Host(binding) = via
+            && let Some(structured) = confession_structured.as_ref()
+            && !structured.is_empty()
+        {
+            match serde_json::to_string(structured) {
+                Ok(serialized) => {
+                    lifecycle
+                        .fields
+                        .insert(FIELD_CONFESSION_STRUCTURED.to_owned(), serialized);
+                    lifecycle.fields.insert(
+                        FIELD_HOST_ATTEMPT_COUNT.to_owned(),
+                        binding.attempt_count().to_string(),
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        category = ?error.classify(),
+                        "a Done's structured confession did not encode; it is not stamped"
+                    );
+                }
+            }
         }
         let continuation = block_continuation(
             via,
@@ -400,9 +430,10 @@ impl Memory<'_> {
             (("proceed", "Proceed"), ("hold", "Hold"))
         };
         for (option, text) in [yes, no] {
-            question
-                .options
-                .insert(TaskAskOptionId::new(option)?, text.to_owned());
+            question.options.insert(
+                TaskAskOptionId::new(option)?,
+                TaskAskOption::new(text.to_owned()),
+            );
         }
         if done {
             question.outcome_binding = brief.brief.success.outcome_binding.clone();

@@ -211,7 +211,8 @@ pub struct IdentityAssertDistinctRequest {
     pub reason: String,
 }
 
-/// Only merge and split have resolvable parked events in the engine.
+/// Merge, split and facet have resolvable parked events in the engine. A
+/// parked facet mints nothing until its ruling approves it.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "op",
@@ -222,6 +223,7 @@ pub struct IdentityAssertDistinctRequest {
 pub enum IdentityProposedOp {
     Merge(IdentityMergeRequest),
     Split(IdentitySplitRequest),
+    Facet(IdentityFacetRequest),
 }
 
 impl IdentityProposedOp {
@@ -229,6 +231,7 @@ impl IdentityProposedOp {
         Ok(match self {
             Self::Merge(input) => topology::IdentityTopologyOp::Merge(input.into_engine()),
             Self::Split(input) => topology::IdentityTopologyOp::Split(input.into_engine()?),
+            Self::Facet(input) => topology::IdentityTopologyOp::Facet(input.into_engine()?),
         })
     }
 }
@@ -275,6 +278,12 @@ pub enum IdentityAmendment {
         heads: Vec<EntityId>,
         reassignment_map: Vec<IdentityReassignment>,
     },
+    /// Replaces the parked specs and map; the base stays the proposal's.
+    Facet {
+        entity: EntityId,
+        facets: Vec<IdentityFacetSpec>,
+        reassignment_map: Vec<IdentityReassignment>,
+    },
 }
 
 impl IdentityAmendment {
@@ -303,6 +312,19 @@ impl IdentityAmendment {
                 heads,
                 evidence,
                 reassignment: map_into_engine(reassignment_map)?,
+            }),
+            Self::Facet {
+                entity,
+                facets,
+                reassignment_map,
+            } => topology::IdentityTopologyOp::Facet(topology::FacetOp {
+                entity,
+                facets: facets
+                    .into_iter()
+                    .map(|spec| topology::FacetSpec { label: spec.label })
+                    .collect(),
+                reassignment: map_into_engine(reassignment_map)?,
+                evidence,
             }),
         })
     }
@@ -391,6 +413,12 @@ pub enum IdentityEventAction {
         applied_residue: u64,
         forked: Vec<EntityId>,
     },
+    /// A parked facet: the specs its ruling would mint, with no FACET minted.
+    ParkedFacet {
+        entity: EntityId,
+        specs: Vec<IdentityFacetSpec>,
+        reassignment_map: Vec<IdentityReassignment>,
+    },
     AssertDistinct {
         a: EntityId,
         b: EntityId,
@@ -461,6 +489,14 @@ impl IdentityTopologyReceipt {
                 rows.push(*entity);
                 rows.extend(facets);
                 rows.extend(forked);
+                map_rows(reassignment_map, &mut rows);
+            }
+            IdentityEventAction::ParkedFacet {
+                entity,
+                reassignment_map,
+                ..
+            } => {
+                rows.push(*entity);
                 map_rows(reassignment_map, &mut rows);
             }
             IdentityEventAction::AssertDistinct { a, b, claim } => rows.extend([*a, *b, *claim]),

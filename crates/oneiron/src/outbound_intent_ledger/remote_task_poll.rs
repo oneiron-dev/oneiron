@@ -8,9 +8,20 @@
 //! with its delivery uncertain (the provider has not shown it never took
 //! effect), its reserved budget kept; a running one is polled again after
 //! the provider's hint, never sooner than the host's pass, backing off while
-//! it runs. A task waiting on input (`input_required`) is polled as running:
-//! this host answers no task input, so such a task ends when its provider
-//! drops it. The poll table keeps only
+//! it runs. A task waiting on input (`input_required`) is polled as running,
+//! its requests read through `tasks/result`: a form question, in a session
+//! that declared form elicitation, is parked for the owner, and a task whose
+//! parked question the owner answered is due on the host's next pass, which
+//! sends the answer (FIX 16029). Each writer that drops a task's poll row
+//! forgets its parked question and stages the retirement of its task-input
+//! subject, whether or not a question ever committed, or keeps the poll row
+//! for the next pass. A session the connector ended (HTTP 404) is
+//! renewed: the host opens a new one under the row's own endpoint and
+//! credential, declaring what the send's session declared, and the handle
+//! keeps its id for the polls that follow (FIX 16028). A session
+//! whose handle goes before it ended (an erase takes the request, or the
+//! row settles another way) is owed its end: the host ends it on its next
+//! pass. The poll table keeps only
 //! the next poll time, the count and the last status: the session and the
 //! credential choice stay in the handle, which an erase forgets.
 
@@ -19,13 +30,19 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use super::settlement::{RemoteTaskHandle, RemoteTaskObservation, intent_settlement_in_txn};
-use super::types::{FrozenOutboundCall, IntentLedgerResult, IntentState};
+use super::types::{FrozenOutboundCall, IntentLedgerError, IntentLedgerResult, IntentState};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
 /// Each pollable Deferred row's next poll, by its intent id.
 const POLLS: SideTable<[u8; 32], RemoteTaskPollState, Named> =
     SideTable::new(&side_table::OUTBOUND_REMOTE_TASK_POLL);
+
+/// Each MCP session a remote task's polls kept open whose handle went
+/// before the session ended (FIX 16028): the served host ends each, then
+/// drops its row.
+const SESSION_ENDS: SideTable<[u8; 32], RemoteTaskSessionEnd, Named> =
+    SideTable::new(&side_table::OUTBOUND_REMOTE_TASK_SESSION_END);
 
 /// The shortest wait between two polls of one task: the host's own pass.
 pub const MIN_REMOTE_TASK_POLL_MS: u64 = 30_000;
@@ -38,14 +55,22 @@ const MAX_STATUS_BYTES: usize = 64;
 /// had open. Opaque provider data: never logged.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteTaskPoll {
-    /// The MCP session the task was created in (`Mcp-Session-Id`), kept
-    /// open for its polls; `None` for a server that keeps no session.
+    /// The MCP session the task's polls go in (`Mcp-Session-Id`): the one
+    /// it was created in, kept open for them, or the one that replaced it
+    /// once the connector ended that one; `None` for a server that keeps no
+    /// session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     /// The protocol revision the send pinned (`MCP-Protocol-Version`).
     pub protocol: String,
     /// The credential the send presented, presented again for each poll.
     pub credential: RemoteTaskCredential,
+    /// Whether the send's `initialize` declared form elicitation (FIX
+    /// 16029): a renewed session declares the same, and only then is a form
+    /// question the task asks parked for the owner. A handle kept without
+    /// it reads as none declared.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub form_elicitation: bool,
 }
 
 impl fmt::Debug for RemoteTaskPoll {
@@ -54,8 +79,86 @@ impl fmt::Debug for RemoteTaskPoll {
             .field("session", &self.session.as_ref().map(|_| "[redacted]"))
             .field("protocol", &self.protocol)
             .field("credential", &self.credential)
+            .field("form_elicitation", &self.form_elicitation)
             .finish()
     }
+}
+
+/// An MCP session a remote task's polls kept open, owed its end: where it
+/// is, and the credential that opens it. Opaque provider data: never
+/// logged.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteTaskSessionEnd {
+    /// The connector the call went to, by its registry name.
+    pub server: String,
+    pub tool: String,
+    pub endpoint: String,
+    /// The key the call's binding named, 32-hex, when it named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_ref: Option<String>,
+    /// The protocol revision the send pinned.
+    pub protocol: String,
+    /// The session (`Mcp-Session-Id`).
+    pub session: String,
+    pub credential: RemoteTaskCredential,
+}
+
+impl fmt::Debug for RemoteTaskSessionEnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RemoteTaskSessionEnd")
+            .field("server", &self.server)
+            .field("tool", &self.tool)
+            .field("protocol", &self.protocol)
+            .field("session", &"[redacted]")
+            .field("credential", &self.credential)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Keeps, in `wtxn`, the end owed to the MCP session row `id`'s remote
+/// task is polled in, before its handle goes (FIX 16028): the served host
+/// ends it. A handle that keeps no session, or a row whose frozen call does
+/// not read, owes none.
+///
+/// # Errors
+/// Storage, row-codec and custody faults.
+pub(crate) fn keep_session_end_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &[u8; 32],
+) -> IntentLedgerResult<()> {
+    let Some(poll) = intent_settlement_in_txn(vault, wtxn, id)?
+        .remote_task
+        .and_then(|handle| handle.poll)
+    else {
+        return Ok(());
+    };
+    let Some(session) = poll.session else {
+        return Ok(());
+    };
+    let Some(mut record) = super::store::get_ledger_record(vault, wtxn, id)? else {
+        return Ok(());
+    };
+    // A payload that does not open names no session's place: the erase it
+    // runs in never fails for it.
+    if super::payload::open_payload_in_txn(vault, wtxn, &mut record).is_err() {
+        return Ok(());
+    }
+    let call = FrozenOutboundCall::from_record(&record);
+    let Ok(view) = crate::outbound_consent::FrozenToolCallView::read(&call) else {
+        return Ok(());
+    };
+    let end = RemoteTaskSessionEnd {
+        server: view.server().to_owned(),
+        tool: view.tool().to_owned(),
+        endpoint: view.endpoint().to_owned(),
+        key_ref: view.key_ref().map(str::to_owned),
+        protocol: poll.protocol,
+        session,
+        credential: poll.credential,
+    };
+    SESSION_ENDS.put(&vault.store, wtxn, id, &end)?;
+    Ok(())
 }
 
 /// The credential a send presented, as a poll presents it again. A secret
@@ -105,7 +208,10 @@ pub struct DueRemoteTask {
 impl fmt::Debug for DueRemoteTask {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DueRemoteTask")
-            .field("task_id", &format_args!("[{} bytes redacted]", self.task_id.len()))
+            .field(
+                "task_id",
+                &format_args!("[{} bytes redacted]", self.task_id.len()),
+            )
             .field("poll", &self.poll)
             .field("polls", &self.polls)
             .finish_non_exhaustive()
@@ -153,7 +259,12 @@ pub(crate) fn schedule_first_poll_in_txn(
 impl Vault {
     /// The Deferred sends whose tasks are due a poll at `now_ms`, at most
     /// `limit`, each with its frozen call opened. A poll row whose ledger
-    /// row is gone, settled, or keeps no poll any more is dropped.
+    /// row is gone, settled, or keeps no poll any more is dropped, in the
+    /// writer that forgets its task's parked question and stages the
+    /// retirement of its task-input subject whether or not a question
+    /// committed (FIX 16029); a row whose question cannot be forgotten now
+    /// stays for the next pass, so the intent is found again. The key
+    /// retirements are carried out after the commit.
     ///
     /// # Errors
     /// Storage, row-codec and custody faults.
@@ -202,14 +313,70 @@ impl Vault {
             }
         }
         if !stale.is_empty() {
-            self.with_write_txn_grouped(|txn| {
-                for id in &stale {
-                    POLLS.delete(&self.store, txn, id)?;
-                }
-                Ok(())
-            })?;
+            let withdrawn =
+                self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<Vec<u64>> {
+                    let mut withdrawn = Vec::new();
+                    for id in &stale {
+                        // The task is done with: its parked question goes, and
+                        // its task-input subject's retirement is staged even
+                        // with no question row (a first park whose writer
+                        // failed may have published its key, FIX 16029).
+                        match self.forget_input_in_txn(txn, id) {
+                            Ok(ask) => withdrawn.extend(ask),
+                            Err(error) => {
+                                tracing::warn!(
+                                    %error,
+                                    "a remote task's parked question was not forgotten; its poll \
+                                     row waits for the next pass"
+                                );
+                                continue;
+                            }
+                        }
+                        // A row settled another way may keep the session its
+                        // polls had open: it is owed its end (FIX 16028).
+                        keep_session_end_in_txn(self, txn, id)?;
+                        POLLS.delete(&self.store, txn, id)?;
+                    }
+                    Ok(withdrawn)
+                })?;
+            for seq in withdrawn {
+                self.signal_decision_answer(seq);
+            }
+            self.finish_remote_task_input_retirements();
         }
         Ok(due)
+    }
+
+    /// The MCP sessions owed their end, at most `limit` (FIX 16028).
+    ///
+    /// # Errors
+    /// Storage and row-codec faults.
+    pub fn remote_task_sessions_to_end(
+        &self,
+        limit: usize,
+    ) -> IntentLedgerResult<Vec<([u8; 32], RemoteTaskSessionEnd)>> {
+        let txn = self
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        SESSION_ENDS
+            .iter_from(&self.store, &txn, &[])?
+            .take(limit)
+            .map(|row| row.map_err(IntentLedgerError::from))
+            .collect()
+    }
+
+    /// Drops the end owed to row `intent`'s session: the host ended it, or
+    /// can no longer reach it.
+    ///
+    /// # Errors
+    /// Storage faults.
+    pub fn remote_task_session_ended(&self, intent: &[u8; 32]) -> IntentLedgerResult<()> {
+        self.with_write_txn_grouped(|txn| {
+            SESSION_ENDS.delete(&self.store, txn, intent).map(|_| ())
+        })?;
+        Ok(())
     }
 
     /// Records a poll that found row `intent`'s task still running, as
@@ -246,6 +413,37 @@ impl Vault {
         Ok(())
     }
 
+    /// Makes the polls of `intents` due at `now_ms` (FIX 16029): each is a
+    /// task whose parked question the owner answered, which the host's next
+    /// pass drives to `tasks/result` however recently it last read the task.
+    /// The backoff of every other poll stays as it is; an intent with no
+    /// poll row, or one already due, changes nothing.
+    ///
+    /// # Errors
+    /// Storage faults.
+    pub fn remote_task_polls_due_at(
+        &self,
+        intents: &[[u8; 32]],
+        now_ms: u64,
+    ) -> IntentLedgerResult<()> {
+        if intents.is_empty() {
+            return Ok(());
+        }
+        self.with_write_txn_grouped(|txn| {
+            for intent in intents {
+                let Some(mut state) = POLLS.get(&self.store, txn, intent)? else {
+                    continue;
+                };
+                if state.next_poll_ms > now_ms {
+                    state.next_poll_ms = now_ms;
+                    POLLS.put(&self.store, txn, intent, &state)?;
+                }
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
     /// Whether row `intent` is still a Deferred send whose kept handle names
     /// the task `task_id` and keeps how to poll it: read again just before a
     /// poll leaves, so an erase or a settlement since the pass began sends
@@ -271,22 +469,57 @@ impl Vault {
                 .is_some_and(|handle| handle.id == task_id && handle.poll.is_some()))
     }
 
+    /// Records that row `intent`'s task `task_id` is polled in the MCP
+    /// session `session` from now on (FIX 16028): the connector ended the
+    /// one its polls went in (HTTP 404), and a new `initialize` under the
+    /// row's own endpoint and credential opened this one. Only a row still
+    /// Deferred on that task, its handle keeping how to poll it, changes:
+    /// whether it did, so a host that renewed a session for a row settled
+    /// or erased since ends it.
+    ///
+    /// # Errors
+    /// Storage and row-codec faults.
+    pub fn remote_task_session_renewed(
+        &self,
+        intent: &[u8; 32],
+        task_id: &str,
+        session: Option<String>,
+    ) -> IntentLedgerResult<bool> {
+        self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<bool> {
+            let deferred = super::store::get_ledger_record(self, txn, intent)?
+                .is_some_and(|record| record.state == IntentState::Deferred);
+            if !deferred {
+                return Ok(false);
+            }
+            super::settlement::renew_remote_task_session_in_txn(self, txn, intent, task_id, session)
+        })
+    }
+
     /// Settles row `intent` by how a poll found its task ended (FIX 11023):
     /// a completed task is the send's Done
     /// ([`Vault::settle_remote_outbound_task`]); any other end stops the send
     /// with its delivery uncertain and its reserved budget kept. Its poll row
-    /// goes.
+    /// goes, in the writer that forgets its parked question and its owner
+    /// Ask and stages the retirement of its task-input subject whether or
+    /// not a question ever committed (FIX 16029); the Ask's waiters wake and
+    /// the key retirement is carried out after that commit. A stop before
+    /// that writer leaves the poll row, and the next pass's due read drops
+    /// it the same way.
     ///
     /// # Errors
-    /// A row that is not Deferred; storage faults.
+    /// A row that is not Deferred; storage and custody faults.
     pub fn settle_polled_remote_task(
         &self,
         intent: &[u8; 32],
         end: RemoteTaskEnd,
     ) -> IntentLedgerResult<IntentState> {
         let state = match end {
+            // The served poller has no turn queue to steer: a completed
+            // task's budget events fire in its settling writer, and only the
+            // state goes back.
             RemoteTaskEnd::Completed => {
                 self.settle_remote_outbound_task(intent, RemoteTaskObservation::Completed)?
+                    .state
             }
             RemoteTaskEnd::Unconfirmed => super::store::abandon_unconfirmed_remote_task(
                 self,
@@ -294,7 +527,15 @@ impl Vault {
                 self.now_recorded_at(),
             )?,
         };
-        self.with_write_txn_grouped(|txn| POLLS.delete(&self.store, txn, intent).map(|_| ()))?;
+        let withdrawn =
+            self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<Option<u64>> {
+                POLLS.delete(&self.store, txn, intent)?;
+                self.forget_input_in_txn(txn, intent)
+            })?;
+        if let Some(seq) = withdrawn {
+            self.signal_decision_answer(seq);
+        }
+        self.finish_remote_task_input_retirements();
         Ok(state)
     }
 }

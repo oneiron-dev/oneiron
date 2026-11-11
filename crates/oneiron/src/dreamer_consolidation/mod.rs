@@ -101,7 +101,7 @@ pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
 pub use executor::*;
-pub(crate) use extracted_people::pin_lineage_origin_in_txn;
+pub(crate) use extracted_people::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub(crate) use partition::PartitionAudience;
@@ -116,7 +116,7 @@ pub(crate) use person_about::{
 };
 pub use provenance::*;
 pub(crate) use provenance::{
-    decode_verified_citations, decode_verified_locators,
+    VerifiedLocator, decode_verified_citations, decode_verified_locators,
     encode_consolidation_evidence_with_locators, kept_decisions_value,
 };
 pub use request_sources::SourcedBackend;
@@ -127,7 +127,7 @@ pub use resident_dream::{
 };
 pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resident_for_human::run_free_time_for_human;
-pub use resources::ScopedConsolidationWrite;
+pub use resources::{NightlyLinkGrantRequest, ScopedConsolidationWrite, mint_nightly_link_grant};
 pub use retained_conflict::RetainedAlternative;
 pub(crate) use retained_keep::SettlementApplied;
 pub use retained_keep::{ConflictSettleOutcome, StagedKeep};
@@ -179,6 +179,7 @@ pub use thing_agent::{
 };
 pub(crate) use turn_text::compaction_span::{
     ConversationSpanRead, conversation_span_text, conversation_span_text_in,
+    scoped_turn_body_text_in, scoped_turn_text_in,
 };
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
@@ -226,4 +227,29 @@ use rmpv::Value;
 #[cfg(test)]
 use std::collections::BTreeSet;
 
+pub(crate) mod tables;
 mod value_projection;
+
+/// The side doors' TURN read (gap scan, owner intent, retrieval shadow), for
+/// the integration regression doors (`test_doors::untangle_regressions`,
+/// X01). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn side_door_turn_text_for_test(
+    vault: &crate::Vault,
+    turn: &crate::EntityId,
+) -> crate::Result<TurnText> {
+    turn_text::read_turn_text(vault, turn)
+}
+
+/// The writer's re-check of a side door's TURN record, read as the Dreamer in
+/// a fresh snapshot, for the integration regression doors (X01). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn side_door_recheck_for_test(
+    record: &TurnText,
+    vault: &crate::Vault,
+    turn: &crate::EntityId,
+) -> crate::Result<()> {
+    let read = turn_text::dreamer_read(vault)?;
+    let txn = turn_text::snapshot(vault)?;
+    record.check_live_in(&read, &txn, turn)
+}
