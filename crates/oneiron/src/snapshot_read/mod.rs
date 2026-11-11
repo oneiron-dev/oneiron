@@ -13,10 +13,39 @@
 //! filters, source finality and deletion apply to each row.
 
 mod evidence_spans;
+mod policy_preflight;
+mod run_reader;
+mod settings_doors;
+mod skill_reader;
+mod snapshot;
 mod source_version;
+pub(crate) mod tables;
 
 pub use evidence_spans::{
-    EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice, EvidenceRange, EvidenceSourceStatus,
-    EvidenceSpan, EvidenceSpans, EvidenceSpansRequest, evidence_spans, validate_evidence_spans,
+    EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES, EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice,
+    EvidenceRange, EvidenceSourceStatus, EvidenceSpan, EvidenceSpans, EvidenceSpansRequest,
+    evidence_spans, validate_evidence_spans,
+};
+pub use policy_preflight::{
+    POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
+    PolicyPreflightRequest, policy_preflight, validate_policy_preflight,
+};
+pub use run_reader::{
+    checkpoint_as_reader, checkpoint_embedded, settled_step_as_reader, settled_step_embedded,
+};
+pub(crate) use run_reader::{is_attempt_actor_in_txn, is_steward_in_txn, not_the_callers};
+pub use settings_doors::{read_snapshot_read_settings, replace_snapshot_read_settings};
+pub use skill_reader::{
+    skill_library_get_as_reader, skill_library_get_embedded, skill_library_list_as_reader,
+    skill_library_list_embedded,
+};
+pub(crate) use snapshot::erase_snapshot_handles_of_actor_in_txn;
+pub use snapshot::{
+    SNAPSHOT_MAX_KINDS, SnapshotHandle, SnapshotKind, SnapshotOpenRequest, SnapshotPage,
+    SnapshotPageRequest, SnapshotRow, snapshot_open, snapshot_page, validate_snapshot_open,
 };
 pub use source_version::{SourceVersion, SourceVersionCheck};
+// The integration tests' doors name a cited source's version as a caller's
+// read serves it (untangle 6.7a).
+#[cfg(oneiron_test_support)]
+pub(crate) use source_version::source_version_in_txn;
