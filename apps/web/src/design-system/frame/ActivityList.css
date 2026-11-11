@@ -161,6 +161,126 @@
   padding: 0 8px 8px calc(8px + 22px + 12px);
 }
 
+/* ── compact: two lines per row, for a sidebar about 230 px wide ─────── */
+
+.sl-activity-list[data-density="compact"] {
+  gap: 1px;
+}
+
+.sl-activity-list[data-density="compact"] .sl-activity-row {
+  margin: 0;
+}
+
+.sl-activity-list[data-density="compact"] .sl-activity-row-main {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "what who when"
+    ". say say";
+  column-gap: 8px;
+  row-gap: 1px;
+  min-height: 0;
+  padding: 6px 8px 7px;
+}
+
+.sl-activity-list[data-density="compact"] [data-slot="what"] {
+  grid-area: what;
+}
+
+.sl-activity-list[data-density="compact"] [data-slot="who"] {
+  grid-area: who;
+  gap: 7px;
+}
+
+.sl-activity-list[data-density="compact"] [data-slot="when"] {
+  grid-area: when;
+}
+
+.sl-activity-list[data-density="compact"] [data-slot="say"] {
+  grid-area: say;
+  font-size: var(--sl-t-do);
+}
+
+.sl-activity-list[data-density="compact"] .sl-activity-name {
+  font-size: var(--sl-t-do);
+}
+
+.sl-activity-list[data-density="compact"] .sl-activity-day {
+  padding: 12px 8px 2px;
+}
+
+.sl-activity-list[data-density="compact"] .sl-activity-day:first-child {
+  padding-top: 0;
+}
+
+/* Where the thread lives, for a screen reader: the compact row has no
+   room to show it. */
+.sl-activity-where-said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* In a sidebar the list's words and marks take the sidebar's inks (on the
+   field: the on-field inks and their halo), so they read on the field by
+   day; portraits keep their own. */
+.sl-sidebar .sl-activity-row {
+  --sl-activity-name-ink: var(--sl-sidebar-ink-on);
+  --sl-activity-ink: var(--sl-sidebar-ink);
+}
+
+.sl-sidebar .sl-activity-row[data-age="yesterday"] {
+  --sl-activity-name-ink: var(--sl-sidebar-ink);
+  --sl-activity-ink: var(--sl-sidebar-quiet);
+}
+
+.sl-sidebar .sl-activity-row[data-age="older"] {
+  --sl-activity-name-ink: var(--sl-sidebar-quiet);
+  --sl-activity-ink: var(--sl-sidebar-quiet);
+}
+
+.sl-sidebar .sl-activity-day {
+  color: var(--sl-sidebar-ink);
+}
+
+.sl-sidebar .sl-activity-list .sl-figure {
+  color: var(--sl-sidebar-quiet);
+}
+
+.sl-sidebar .sl-activity-day,
+.sl-sidebar .sl-activity-name,
+.sl-sidebar .sl-activity-row [data-slot="say"],
+.sl-sidebar .sl-activity-list .sl-figure {
+  text-shadow: var(--sl-sidebar-text-shadow);
+}
+
+.sl-sidebar .sl-activity-mark {
+  filter: var(--sl-sidebar-symbol-shadow);
+}
+
+.sl-sidebar .sl-activity-mark[data-kind="running"] svg {
+  fill: var(--sl-sidebar-ink);
+}
+
+.sl-sidebar .sl-activity-mark[data-kind="done"] {
+  color: var(--sl-sidebar-quiet);
+}
+
+.sl-sidebar .sl-status-dot.sl-activity-mark[data-state="waiting"] {
+  box-shadow: inset 0 0 0 1.5px var(--sl-sidebar-ink-on);
+}
+
+.sl-sidebar .sl-activity-row-main:hover,
+.sl-sidebar .sl-activity-row-main:focus-visible {
+  background: var(--sl-sidebar-hover);
+}
+
+.sl-sidebar .sl-activity-row[data-selected] {
+  background: var(--sl-sidebar-lit);
+}
+
 /* A narrow list gives the who and where columns less room. */
 @container (max-width: 640px) {
   .sl-activity-row {

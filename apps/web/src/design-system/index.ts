@@ -190,6 +190,7 @@ export {
   type ActivityRowProps,
   type ActivityDayProps,
   type ActivityAge,
+  type ActivityDensity,
 } from './frame/ActivityList'
 export { SortCycle, type SortCycleProps, type SortCycleOption } from './frame/SortCycle'
 export { PeopleTable, type PeopleTableProps, type PeopleTableRowProps } from './frame/PeopleTable'
