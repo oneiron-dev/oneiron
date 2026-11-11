@@ -214,7 +214,7 @@ impl CapturedEdgeSetter {
             value,
         } = self;
         store.port_stage_edge_rows(wtxn, &src, kind, &tgt, &value)?;
-        crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
+        crate::conversation_dag::pin_membership(store, store, wtxn, &src, kind, &tgt)?;
         Ok(())
     }
 }
@@ -286,7 +286,7 @@ impl PreparedEdgePut {
             tgt,
             value,
         } = self;
-        stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)?;
+        stage_edge_rows(store, store, wtxn, &src, kind, &tgt, &value)?;
         if matches!(kind, EdgeKind::RepliesTo | EdgeKind::Parent) {
             crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
         }
