@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use super::system_agent_grant::{SystemAgent, steward_grant_of_in};
 use super::{
-    FederationGrantKind, FederationGrantPreset, FederationGrantRole, ScopeAxis,
+    FederationGrantKind, FederationGrantPreset, FederationGrantRole, Scope, ScopeAxis,
     decode_federation_grant_body, grant_scope, standing_steward_verbs_in,
 };
 use crate::Vault;
@@ -125,24 +125,61 @@ impl Vault {
             .map(|_| (holder, false)))
     }
 
-    /// The grant through which `holder` holds `engine.controls` now, if any:
-    /// for a base agent the grant its marker names, while that grant stands
-    /// with `engine.controls` and its MACHINE binding is live; for any other
-    /// actor a live Steward grant on this vault's root that names
-    /// `engine.controls` itself.
+    /// The grant through which `holder` holds `engine.controls` now, if any
+    /// ([`Self::steward_grant_with_verb_in`] for that verb).
     pub(crate) fn engine_controls_grant_in(
         &self,
         txn: &heed::RoTxn<'_>,
         holder: EntityId,
     ) -> Result<Option<EntityId>> {
+        self.steward_grant_with_verb_in(txn, holder, grant_scope::ENGINE_CONTROLS_VERB)
+    }
+
+    /// The grant through which `holder` may use the Steward verb `verb` now,
+    /// if any, checked live at each use (untangle 6.6c): for a base agent the
+    /// grant its marker names, while that grant stands with `verb` and its
+    /// MACHINE binding is live; for any other actor a live Steward grant on
+    /// this vault's root that names `verb` itself. A grant whose verbs are
+    /// left open (an Owner's or an Admin's) does not count.
+    pub(crate) fn steward_grant_with_verb_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+        verb: &str,
+    ) -> Result<Option<EntityId>> {
+        self.steward_grant_reaching_in(txn, holder, verb, GrantReach::Any)
+    }
+
+    /// [`Self::steward_grant_with_verb_in`], counting only a grant that
+    /// reaches the whole vault ([`reaches_whole_vault`]). A read whose rows
+    /// no reader filters by project, world, band or sensitivity asks this
+    /// one, so a grant narrowed to part of the vault reads none of them
+    /// (review of #6996).
+    pub(crate) fn whole_vault_steward_grant_with_verb_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+        verb: &str,
+    ) -> Result<Option<EntityId>> {
+        self.steward_grant_reaching_in(txn, holder, verb, GrantReach::WholeVault)
+    }
+
+    fn steward_grant_reaching_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+        verb: &str,
+        reach: GrantReach,
+    ) -> Result<Option<EntityId>> {
         if SystemAgent::of(holder).is_none() {
-            return self.root_engine_controls_grant_in(txn, holder);
+            return self.root_steward_grant_with_verb_in(txn, holder, verb, reach);
         }
         Ok(match steward_grant_of_in(&self.store, txn, holder)? {
             Some(Some(grant))
-                if standing_steward_verbs_in(&self.store, txn, grant, holder)?
-                    .contains(grant_scope::ENGINE_CONTROLS_VERB)
-                    && self.system_agent_binding_live_in(txn, holder)? =>
+                if standing_steward_verbs_in(&self.store, txn, grant, holder)?.contains(verb)
+                    && self.system_agent_binding_live_in(txn, holder)?
+                    && (reach == GrantReach::Any
+                        || self.grant_reaches_whole_vault_in(txn, grant)?) =>
             {
                 Some(grant)
             }
@@ -150,12 +187,25 @@ impl Vault {
         })
     }
 
+    /// Whether the stored grant `grant` reaches the whole vault
+    /// ([`reaches_whole_vault`]); a row that is gone or does not decode
+    /// reaches nothing.
+    fn grant_reaches_whole_vault_in(&self, txn: &heed::RoTxn<'_>, grant: EntityId) -> Result<bool> {
+        let Some(raw) = self.store.port_entity_record(txn, &grant)? else {
+            return Ok(false);
+        };
+        Ok(decode_federation_grant_body(&raw.body)
+            .is_ok_and(|row| reaches_whole_vault(&row.authority_scope)))
+    }
+
     /// The live Steward grant on this vault's root that names `holder` and
-    /// `engine.controls` itself, if any.
-    fn root_engine_controls_grant_in(
+    /// the verb `verb` itself, and reaches as far as `reach` asks, if any.
+    fn root_steward_grant_with_verb_in(
         &self,
         txn: &heed::RoTxn<'_>,
         holder: EntityId,
+        verb: &str,
+        reach: GrantReach,
     ) -> Result<Option<EntityId>> {
         let root = self.steward_root_scope_in_txn(txn)?;
         let now = self.store.clock.now_recorded_at();
@@ -182,7 +232,8 @@ impl Vault {
                 && grant.kind == FederationGrantKind::Access
                 && grant.is_live_at(now)
                 && matches!(&grant.authority_scope.verbs, ScopeAxis::Some(verbs)
-                    if verbs.contains(grant_scope::ENGINE_CONTROLS_VERB))
+                    if verbs.contains(verb))
+                && (reach == GrantReach::Any || reaches_whole_vault(&grant.authority_scope))
             {
                 return Ok(Some(id));
             }
@@ -232,6 +283,28 @@ impl Vault {
             Ok(id)
         })
     }
+}
+
+/// How far a Steward grant must reach to count at a door.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GrantReach {
+    /// Any live grant naming the verb: an engine control is one vault knob,
+    /// not a record at a position.
+    Any,
+    /// Only a grant that reaches the whole vault ([`reaches_whole_vault`]).
+    WholeVault,
+}
+
+/// Whether a grant's scope reaches the whole vault: no axis but `verbs` is
+/// narrowed. A vault or holder override row narrows a member's grant by a
+/// meet (worlds, facets, bands, audience, sensitivity), and a member works
+/// "exactly as its scopes allow" (ARCH-0043).
+fn reaches_whole_vault(scope: &Scope) -> bool {
+    *scope
+        == Scope {
+            verbs: scope.verbs.clone(),
+            ..Scope::top()
+        }
 }
 
 /// A holder's change, rendered for its receipt.

@@ -109,6 +109,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::ModelStepCaller => {
             crate::api::facade::model_step_doors::step_caller_admits(server, auth, verb)
         }
+        // A substrate read (untangle 6.6c): the owner under its proof, or a person or agent on its own slip,
+        // whose Steward grant the engine reader checks at the read.
+        Proof::SubstrateReader => {
+            crate::api::facade::substrate_read_doors::substrate_reader(server, auth, verb).map(drop)
+        }
         Proof::ClaimSettler => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
         }
