@@ -1,0 +1,265 @@
+/* The microsidebar: a narrow strip of places that never hides. On the
+   field it is bare (symbols and words in the on-field inks, with their
+   halo); on paper it sits on a near-opaque strip of the ground. No tile
+   sits behind a symbol: hover and the current place are tone steps. */
+.sl-micro-sidebar {
+  --sl-micro-ink: var(--sl-ink-2);
+  --sl-micro-ink-on: var(--sl-ink-1);
+  --sl-micro-hover: var(--sl-hover);
+  --sl-micro-lit: var(--sl-lit);
+  --sl-micro-text-shadow: none;
+  --sl-micro-symbol-shadow: none;
+  --sl-micro-badge: var(--sl-ink-1);
+  --sl-micro-badge-ink: var(--sl-on-primary);
+  --sl-micro-rule: var(--sl-rule);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 56px;
+  min-height: 0;
+  padding: 12px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  color: var(--sl-micro-ink);
+}
+
+.sl-micro-sidebar[data-ground="field"] {
+  --sl-micro-ink: var(--sl-on-field-word);
+  --sl-micro-ink-on: var(--sl-on-field-ink);
+  --sl-micro-hover: var(--sl-on-field-hover);
+  --sl-micro-lit: var(--sl-on-field-lit);
+  --sl-micro-text-shadow: var(--sl-on-field-text-halo);
+  --sl-micro-symbol-shadow: var(--sl-on-field-symbol-halo);
+  --sl-micro-badge: var(--sl-on-field-ink);
+  --sl-micro-badge-ink: var(--sl-on-field-badge-ink);
+  --sl-micro-rule: var(--sl-on-field-quiet);
+}
+
+.sl-micro-sidebar[data-ground="paper"] {
+  background: var(--sl-paper);
+}
+
+.sl-micro-sidebar-items,
+.sl-micro-sidebar-pinned {
+  display: flex;
+  flex-direction: column;
+}
+
+/* An item's box spans the strip and touches its neighbours, so the
+   pointer moving down the strip goes from item to item, never through a
+   gap. */
+.sl-micro-item {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding: 2px 0;
+}
+
+.sl-micro-item-control {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--sl-radius);
+  color: var(--sl-micro-ink);
+  text-decoration: none;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    transform 120ms var(--sl-ease-out);
+}
+
+.sl-micro-sidebar[data-labels="word"] .sl-micro-item-control {
+  width: 52px;
+  height: 50px;
+  padding-top: 2px;
+}
+
+.sl-micro-item-control:hover,
+.sl-micro-item-control[aria-expanded="true"] {
+  color: var(--sl-micro-ink-on);
+  background: var(--sl-micro-hover);
+}
+
+.sl-micro-item-control[aria-current="page"] {
+  color: var(--sl-micro-ink-on);
+  background: var(--sl-micro-lit);
+}
+
+.sl-micro-item-control:active {
+  transform: scale(0.96);
+}
+
+.sl-micro-item-control:focus-visible {
+  outline-offset: -1.5px;
+}
+
+.sl-micro-item-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  filter: var(--sl-micro-symbol-shadow);
+}
+
+.sl-micro-item-mark > .sl-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* By day the field is bright: a resident's line glyph prints in the
+   on-field ink like every other symbol; by night it keeps its own. */
+.sl-micro-sidebar[data-ground="field"] .sl-glyph-line {
+  color: light-dark(var(--sl-on-field-word), var(--sl-glyph-ink, var(--sl-ink-2)));
+}
+
+.sl-micro-item-count {
+  position: absolute;
+  top: -6px;
+  left: 12px;
+  min-width: 17px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-micro-badge);
+  color: var(--sl-micro-badge-ink);
+  line-height: 16px;
+  text-align: center;
+  text-shadow: none;
+}
+
+/* The waiting ring sits at the top corner; under a count, at the bottom. */
+.sl-micro-item-needs {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  box-shadow: inset 0 0 0 1.5px var(--sl-micro-ink-on);
+}
+
+.sl-micro-item-control[data-has-count] .sl-micro-item-needs {
+  top: auto;
+  bottom: -3px;
+}
+
+.sl-micro-item-word {
+  max-width: 100%;
+  padding: 0 2px;
+  overflow: hidden;
+  font-size: var(--sl-t-badge);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-shadow: var(--sl-micro-text-shadow);
+  white-space: nowrap;
+}
+
+.sl-micro-sidebar-divider {
+  flex: none;
+  width: 22px;
+  height: 1px;
+  margin: 8px auto;
+  background: var(--sl-micro-rule);
+}
+
+.sl-micro-sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+/* A control placed in the strip (the frame's fold) sits centred. */
+.sl-micro-sidebar-items > .sl-icon-action,
+.sl-micro-sidebar-foot > .sl-icon-action {
+  align-self: center;
+  margin: 2px 0 6px;
+  color: var(--sl-micro-ink);
+}
+
+.sl-micro-sidebar .sl-icon-action > svg {
+  filter: var(--sl-micro-symbol-shadow);
+}
+
+.sl-micro-sidebar .sl-icon-action:hover,
+.sl-micro-sidebar .sl-icon-action:focus-visible {
+  color: var(--sl-micro-ink-on);
+  background: var(--sl-micro-hover);
+}
+
+/* While a drag is on, the neighbours slide to open the gap. */
+.sl-micro-sidebar-pinned[data-reorder-active] > .sl-micro-item:not([data-dragging]) {
+  transition: transform 150ms var(--sl-ease-out);
+}
+
+.sl-micro-item[data-dragging] {
+  z-index: 1;
+  cursor: grabbing;
+}
+
+.sl-micro-item[data-dragging] > .sl-micro-item-control {
+  color: var(--sl-micro-ink-on);
+  background: var(--sl-micro-lit);
+}
+
+/* The `more` menu: a place's row, then its pin toggle at the right. A
+   pinned place's pin is filled (the `pinned` symbol): the state is the
+   mark. */
+.sl-micro-more-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sl-micro-more-row > .sl-menu-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The menu sits inside the strip's markup: its toggles take the menu's
+   inks, not the strip's on-field inks and halo. */
+.sl-micro-more .sl-micro-more-pin {
+  margin-right: 2px;
+  color: var(--sl-ink-3);
+  background: none;
+}
+
+.sl-micro-more .sl-micro-more-pin > svg {
+  filter: none;
+}
+
+.sl-micro-more .sl-micro-more-pin:hover,
+.sl-micro-more .sl-micro-more-pin:focus-visible {
+  color: var(--sl-ink-1);
+  background: var(--sl-hover);
+}
+
+.sl-micro-more .sl-micro-more-pin[aria-checked="true"] {
+  color: var(--sl-ink-1);
+}
+
+/* Moves said in words for a screen reader. */
+.sl-micro-sidebar-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-micro-item-control,
+  .sl-micro-sidebar-pinned[data-reorder-active] > .sl-micro-item:not([data-dragging]) {
+    transition: none;
+  }
+  .sl-micro-item-control:active {
+    transform: none;
+  }
+}

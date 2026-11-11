@@ -110,6 +110,7 @@ mod route_receipts;
 pub mod run_cancel;
 pub mod run_control;
 pub mod run_doors;
+pub(crate) mod run_rows;
 mod runner_done;
 mod scheduling;
 pub(crate) mod settlement_anchor;
@@ -157,7 +158,7 @@ pub(crate) use world_privacy_wait::{
 };
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
 pub use consult_fanout_types::{
