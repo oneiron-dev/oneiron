@@ -35,7 +35,7 @@ mod policy;
 mod receipt;
 mod resolve;
 mod role_preset;
-mod tables;
+pub(crate) mod tables;
 mod verb_act_class;
 mod waits;
 
