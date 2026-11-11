@@ -1488,7 +1488,7 @@ fn two_projects_in_one_partition_never_merge_and_keep_their_source_project() -> 
     let store = DreamerRunnerStore::new(&vault);
     let (project_a, project_b) = (EntityId::now(), EntityId::now());
     let conversation = seed_session(&vault, 0x5a, 1);
-    let turn_a = seed_project_turn(&vault, &conversation, "call me Oleksii", 10, project_a)?;
+    let turn_a = seed_project_turn(&vault, &conversation, "call me Owen", 10, project_a)?;
     let turn_b = seed_project_turn(&vault, &conversation, "call me Alex", 11, project_b)?;
     let attempt = admit_seeded_attempt(&vault, &store)?;
     let subject = EntityId::now();
@@ -1501,7 +1501,7 @@ fn two_projects_in_one_partition_never_merge_and_keep_their_source_project() -> 
     };
     let extraction = text_response(
         serde_json::json!({"candidates": [
-            candidate("profile.name", "Oleksii", vec![cite(turn_a)]),
+            candidate("profile.name", "Owen", vec![cite(turn_a)]),
             candidate("profile.name", "Alex", vec![cite(turn_b)]),
             candidate("profile.city", "Kyiv", vec![cite(turn_a)]),
             candidate("profile.city", "Kyiv", vec![cite(turn_b)]),
@@ -1571,7 +1571,7 @@ fn two_projects_in_one_partition_never_merge_and_keep_their_source_project() -> 
             ("Alex".to_owned(), project_b, vec![turn_b]),
             ("Kyiv".to_owned(), project_a, vec![turn_a]),
             ("Kyiv".to_owned(), project_b, vec![turn_b]),
-            ("Oleksii".to_owned(), project_a, vec![turn_a]),
+            ("Owen".to_owned(), project_a, vec![turn_a]),
         ])
     );
     Ok(())

@@ -1,9 +1,9 @@
 //! Rebuild mechanical projections and reset leased attempt ownership.
 use super::codec_error;
+use crate::attempt_queue::lifecycle::{RunLifecycle, RunStep};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{
     EntityId, Error, Result, Vault,
-    attempt_queue::AttemptState,
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     temporal::TimeRange,
 };
@@ -29,17 +29,16 @@ pub(super) fn unlease_attempt(key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
         bytes,
         crate::attempt_queue::AttemptId::from_bytes(key)?,
     )?;
-    if record.state == AttemptState::Landing {
-        // A landing needs its executor to finish its audited cancellation.
-        // Do not invent a completed/cancelled receipt during backup.
-        return Err(Error::InvalidConfig(
-            "checkpoint requires landing attempts to settle".into(),
-        ));
-    }
-    if record.state == AttemptState::Leased {
-        record.state = AttemptState::Queued;
-        record.lease_owner = None;
-        record.claimed_at = None;
+    match RunLifecycle::unlease(&mut record) {
+        RunStep::Refuse => {
+            // A landing needs its executor to finish its audited cancellation.
+            // Do not invent a completed/cancelled receipt during backup.
+            return Err(Error::InvalidConfig(
+                "checkpoint requires landing attempts to settle".into(),
+            ));
+        }
+        RunStep::Move { .. } => record.claimed_at = None,
+        RunStep::Note { .. } | RunStep::Replay | RunStep::Keep => {}
     }
     let mut out = vec![version];
     out.extend(rmp_serde::to_vec_named(&record).map_err(|_| codec_error())?);
