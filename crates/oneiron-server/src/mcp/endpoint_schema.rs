@@ -293,12 +293,7 @@ fn unknown_field(root: &Value, schema: &Value, value: &Value, path: &str) -> Opt
             Value::Array(items) => shape.unknown_item_field(root, items, path),
             _ => None,
         };
-        match refused {
-            None => return None,
-            Some(field) => {
-                unknown.get_or_insert(field);
-            }
-        }
+        unknown.get_or_insert(refused?);
     }
     unknown
 }
