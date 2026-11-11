@@ -5,6 +5,7 @@ use crate::error::Result;
 
 use super::AttemptQueue;
 use super::encoding::decode_record;
+use super::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use super::telemetry::invalid_transition;
 use super::types::{
     AbandonAttempt, AbandonOutcome, AttemptRecord, AttemptState, AttemptTerminalExhaust,
@@ -150,9 +151,9 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("abandon", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Abandoned => Ok(AbandonOutcome::AlreadyAbandoned(record)),
-            AttemptState::Leased | AttemptState::Landing => {
+        match RunLifecycle::step(RunRow::of(&record), RunEvent::Abandon) {
+            RunStep::Replay => Ok(AbandonOutcome::AlreadyAbandoned(record)),
+            RunStep::Move { .. } => {
                 validate_lease_owner(&input.lease_owner)?;
                 validate_transition_lease(
                     &record,
@@ -163,19 +164,11 @@ impl AttemptQueue<'_> {
                 validate_failure_reason(&input.reason)?;
                 validate_result_ref(input.result_ref.as_str())?;
                 validate_result_rebind(&record, &input.result_ref)?;
-                record.state = AttemptState::Abandoned;
-                // The landing was answered-but-unfinished advisory state; an
-                // abandoned row settles by reason + result_ref, and the
-                // placement rule forbids a landing record outside
-                // landing/cancelled.
-                record.cancel_state.landing = None;
-                record.lease_owner = None;
-                record.scheduled_at = None;
+                let _ = RunLifecycle::abandon(&mut record, input.now);
                 record.backoff_until = None;
                 record.last_error = Some(input.reason);
                 record.result_ref = Some(input.result_ref);
                 record.updated_at = input.now;
-                record.settled_at = Some(input.now);
                 // A settled row owns no advisory dedupe claim: the next
                 // dispatch under the same key must mint a fresh try rather
                 // than be handed this stopped one.
@@ -199,7 +192,9 @@ impl AttemptQueue<'_> {
                 }
                 Ok(AbandonOutcome::Abandoned(record))
             }
-            state => Err(invalid_transition("abandon", state.as_str())),
+            RunStep::Note { .. } | RunStep::Keep | RunStep::Refuse => {
+                Err(invalid_transition("abandon", record.state.as_str()))
+            }
         }
     }
 }

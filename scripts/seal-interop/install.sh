@@ -61,7 +61,11 @@ for version in 24.02.0 25.02.0 26.05.0; do
   [[ -x "$prefix/bin/pdfsig" ]] && continue
   candidate=""
   case "$version" in
-    24.02.0) candidate="${SEAL_POPPLER_24_BIN:-<host-home>/w8-opus/poppler-2402/bin}" ;;
+    # SEAL_POPPLER_24_BIN names a preinstalled exact-version bin dir, e.g. <host-home>/w8-opus/poppler-2402/bin.
+    24.02.0)
+      candidate="${SEAL_POPPLER_24_BIN:-}"
+      [[ -n "$candidate" ]] || warn "SEAL_POPPLER_24_BIN unset; installing Poppler 24.02.0 under $ROOT"
+      ;;
     26.05.0) candidate="${SEAL_POPPLER_26_BIN:-/usr/bin}" ;;
   esac
   if [[ -x "$candidate/pdfsig" ]] && "$candidate/pdfsig" -v 2>&1 | grep -Fq "pdfsig version ${version}"; then
