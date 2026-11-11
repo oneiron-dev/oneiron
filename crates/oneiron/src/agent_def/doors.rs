@@ -286,9 +286,12 @@ impl Vault {
         )?;
         let data = encode_agent_definition(&definition)?;
         self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
-        wtxn.commit()?;
-        crate::context_board::ensure_agent_person(
+        // PEOPLE (ARCH-0067): the definition and its person land in this one
+        // writer, so a person that cannot be built leaves no definition
+        // behind for a retry of this create-only door to find occupied.
+        crate::context_board::ensure_agent_person_in_txn(
             self,
+            &mut wtxn,
             *id,
             definition
                 .display_name
@@ -296,6 +299,7 @@ impl Vault {
                 .unwrap_or(&definition.agent_id),
             learned_at,
         )?;
+        wtxn.commit()?;
         Ok(disposition)
     }
 
@@ -402,7 +406,7 @@ impl Vault {
     }
 
     /// Encodes (validating) and writes an `AgentDefinition` through the generic
-    /// entity door.
+    /// entity door, with its person, in one writer.
     pub fn put_agent_definition(
         &self,
         id: &EntityId,
@@ -411,14 +415,20 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let data = encode_agent_definition(def)?;
-        self.put_entity(id, ENTITY_TYPE_AGENT_DEF, occurred, learned_at, &data)?;
-        // PEOPLE (ARCH-0067): every agent is a person with a `pr` handle.
-        crate::context_board::ensure_agent_person(
-            self,
-            *id,
-            def.display_name.as_deref().unwrap_or(&def.agent_id),
-            learned_at,
-        )
+        self.with_write_txn(|txn| {
+            self.batch_in()
+                .put(id, ENTITY_TYPE_AGENT_DEF, occurred, learned_at, &data)
+                .apply(txn)?;
+            // PEOPLE (ARCH-0067): every agent is a person with a `pr` handle.
+            // A person that cannot be built leaves no definition behind.
+            crate::context_board::ensure_agent_person_in_txn(
+                self,
+                txn,
+                *id,
+                def.display_name.as_deref().unwrap_or(&def.agent_id),
+                learned_at,
+            )
+        })
     }
 
     /// Transaction-composable [`Self::put_agent_definition`]: the definition

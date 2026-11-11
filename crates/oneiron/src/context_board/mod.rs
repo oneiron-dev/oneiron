@@ -19,9 +19,8 @@ pub use people::{
     PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,
 };
 pub(crate) use people::{
-    PreparedAgentPerson, ensure_agent_person, ensure_agent_person_in_txn,
-    ensure_seeded_agent_person_in_txn, prepare_agent_person_after_puts_in_txn,
-    seeded_agent_person_ids,
+    PreparedAgentPerson, ensure_agent_person_in_txn, ensure_seeded_agent_person_in_txn,
+    prepare_agent_person_after_puts_in_txn, seeded_agent_person_ids,
 };
 mod inbox;
 pub use inbox::assemble_inbox_section;

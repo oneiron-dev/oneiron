@@ -4,7 +4,7 @@
 //! A person is a PERSON entity, and its handle is the PERSON's own vault
 //! short id. An agent is a person through its `actor.subject_ref` anchor; a
 //! definition with no subject gets its own model PERSON when it is defined
-//! ([`ensure_agent_person`]). The cached prefix holds a budgeted `people`
+//! ([`ensure_agent_person_in_txn`]). The cached prefix holds a budgeted `people`
 //! roster per vault; the live board names persons by handle, and a handle the
 //! reader's cached roster does not hold carries its name inline.
 
@@ -470,24 +470,10 @@ impl<'a> PeopleView<'a> {
 
 /// Every agent is a person: a definition with no subject gets its own model
 /// PERSON, named for it, and the anchor to it, written by the agent itself in
-/// one transaction. The PERSON id derives from the agent's, so a rerun finds
-/// the same person. Upkeep agents are not people and get none.
-pub(crate) fn ensure_agent_person(
-    vault: &Vault,
-    agent: EntityId,
-    name: &str,
-    at: u64,
-) -> Result<()> {
-    if crate::dreamer_runner::authority::is_base_agent_actor(&agent)? {
-        return Ok(());
-    }
-    let mut txn = vault.store.env.write_txn()?;
-    ensure_agent_person_in_txn(vault, &mut txn, agent, name, at)?;
-    txn.commit()?;
-    Ok(())
-}
-
-/// [`ensure_agent_person`] in the caller's writer, which owns commit.
+/// the caller's writer, which owns commit: the writer that stores the
+/// definition, so a person that cannot be built leaves no definition behind.
+/// The PERSON id derives from the agent's, so a rerun finds the same person.
+/// Upkeep agents are not people and get none.
 pub(crate) fn ensure_agent_person_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
