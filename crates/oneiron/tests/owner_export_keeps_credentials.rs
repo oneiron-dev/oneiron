@@ -21,10 +21,11 @@
 //! already travels in the owner's archive today, and `SecretCustodyRecord`
 //! value fields are crate-private, so no public door seeds one here.
 //!
-//! Public doors only: no `#[cfg(test)]` helpers, no crate-private items, no
-//! feature flags. These tests are intended to fail on main edffeb5696f for
-//! their promises' reasons (the writer nulls) and pass with owner retention.
-//! They have not been compiled or run here.
+//! Public doors only: no `#[cfg(test)]` helpers or crate-private items.
+//! Destinations use the public `test-support` opener, enabled by `--all-features`.
+//! These tests are intended to fail on main edffeb5696f for their promises'
+//! reasons (the writer nulls) and pass with owner retention.
+//! The fixture was revised after the first fleet run to avoid seeded-row import collisions.
 
 use oneiron::batch::export::{ExportImportRefusal, ExportSourceContent};
 use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
@@ -42,6 +43,21 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
     (dir, vault)
+}
+
+fn open_restore_vault(source: &Vault) -> Result<(tempfile::TempDir, Vault)> {
+    let dir = tempfile::tempdir()?;
+    let fresh = Vault::open_unseeded_for_test(dir.path(), VaultConfig::default())?;
+    // Keep the source's runtime kind vocabulary without seeding its pack skills.
+    for registration in source.structural_kind_registrations() {
+        fresh.register_structural_kind(
+            registration.type_byte,
+            registration.short_id_prefix,
+            registration.zone,
+            registration.pack,
+        )?;
+    }
+    Ok((dir, fresh))
 }
 
 fn scan_off(vault: &Vault, principal: &str, at: u64) -> Result<()> {
@@ -183,7 +199,7 @@ fn owner_archive_keeps_skill_source_credentials_and_restores_them() -> Result<()
     );
     // The owner's archive restores the skill's exact source on import: a
     // fresh vault's own archive carries the same tree.
-    let (_fresh_dir, fresh) = open_vault();
+    let (_fresh_dir, fresh) = open_restore_vault(&vault)?;
     fresh.import_whole_vault_archive(export.bytes())?;
     let again = fresh.export_whole_vault(true)?;
     assert!(again.manifest().secrets_included);
@@ -472,7 +488,17 @@ fn owner_archive_keeps_credential_fields_and_binary_payloads() -> Result<()> {
     );
     // The destination owner also disables masking so this check isolates
     // exact archive restoration from the destination's write-scan policy.
-    let (_fresh_dir, fresh) = open_vault();
+    let (_fresh_dir, fresh) = open_restore_vault(&vault)?;
+    // The source's embedded owner and substrate are seeded at time zero.
+    // Copy only that owner before scan_off would create it at the current time.
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    fresh.put_entity(
+        &owner_id,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 0, end: 0 },
+        0,
+        &vault.get(&owner_id)?.expect("source owner row"),
+    )?;
     scan_off(&fresh, "principal:person-restore-residue", 10)?;
     fresh.import_whole_vault_archive(export.bytes())?;
     let stored = fresh.get(&id)?.expect("restored person row");
