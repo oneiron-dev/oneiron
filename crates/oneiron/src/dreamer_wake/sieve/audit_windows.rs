@@ -397,11 +397,8 @@ fn source_scope_in_txn(
         crate::dreamer_runner::authority::dreamer_actor_id()?,
         crate::EdgeActorClass::System,
     );
-    let key = ScopedReadActorKey::with_actor_class(
-        actor.entity_ref().to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or(Error::InvalidConfig("sieve read actor".into()))?;
+    let key = ScopedReadActorKey::for_engine_actor(actor)
+        .ok_or(Error::InvalidConfig("sieve read actor".into()))?;
     let read = vault.scoped_read(key);
     let mut scope = Scope::default();
     for id in BTreeSet::from([window.turn, window.source]) {

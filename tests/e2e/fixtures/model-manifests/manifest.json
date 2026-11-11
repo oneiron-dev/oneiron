@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "area": "model-manifests",
+  "assets": [
+    {
+      "id": "muse-loop-04-approved-model-manifest",
+      "path": "muse-loop-04-approved-model-manifest.json",
+      "source": {
+        "uri": "oneiron-bench:teacher-probe crates/oneiron-bench/tests/e2e_approved_manifest_fixture.rs (candidate.fixture.json, checkpoint/, fixture_runner.py)",
+        "revision": "15f99499be4dbb2bddd4bdffe30a90a5194975aa"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "4b9e95c00e0e92f5785044238e0687588f45d73021a974f997f12556b2e951fe",
+      "expectedFacts": {
+        "manifestVersion": 2,
+        "teacherModel": "McGill-NLP/LLM2Vec-Qwen3-8B-mntp@fixture-v1",
+        "generativeReasoner": "fixture/generative_reasoner@v1",
+        "probeId": "oneiron-conll-bio-v1",
+        "policyFloorMillionths": 800000,
+        "holderRef": null,
+        "teacherRouteModels": "none",
+        "checkpoint": "canned CI protocol checkpoint (crates/oneiron-bench/README.md): not real LLM2Vec weights",
+        "modelCalls": "none: every pin names provider `fixture` or `McGill-NLP`, which no E2E host config serves",
+        "consumer": "MUSE-LOOP-04 (coordination.test.ts)"
+      },
+      "scenarios": [],
+      "requires": [
+        "vault.models.manifest.replace",
+        "vault.models.manifest.read"
+      ]
+    }
+  ]
+}

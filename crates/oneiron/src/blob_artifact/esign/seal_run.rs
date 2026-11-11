@@ -4,8 +4,9 @@
 //! attempt failed with the reason, and the backstop sweep queues the
 //! document again: a retryable op, never a nominally complete document.
 
-use super::{ESIGN_SEAL_ATTEMPT_KIND, EsignSealer, SealProfile};
-use crate::attempt_queue::{AttemptQueue, ClaimOutcome};
+use super::seal::{EsignSealAttemptResult, EsignSealError, RESULT, live_attempt};
+use super::{ESIGN_SEAL_ATTEMPT_KIND, EsignSealer, EsignSealerError, SealProfile};
+use crate::attempt_queue::{AttemptQueue, ClaimOutcome, FailOutcome};
 use crate::store::attempt_inputs::ClaimAttempt;
 use crate::store::attempt_inputs::FailAttempt;
 use crate::{EntityId, Result, Vault};
@@ -58,6 +59,15 @@ impl Vault {
             match self.seal_esign_attempt(&attempt, sealer, profile, canonical_url) {
                 Ok(_) => runs.push(EsignSealRun::Sealed { document }),
                 Err(error) => {
+                    let verify_reasons = match &error {
+                        EsignSealError::Sealer(EsignSealerError::VerifyFailed { verdict }) => {
+                            Some(verdict.reasons.clone())
+                        }
+                        EsignSealError::Verification { verify_reasons } => {
+                            Some(verify_reasons.clone())
+                        }
+                        _ => None,
+                    };
                     let mut reason = error.to_string();
                     if reason.len() > REASON_MAX_BYTES {
                         let mut end = REASON_MAX_BYTES;
@@ -66,13 +76,39 @@ impl Vault {
                         }
                         reason.truncate(end);
                     }
-                    queue.fail(FailAttempt {
-                        id: attempt.id,
-                        lease_owner: lease_owner.to_owned(),
-                        attempt_count: attempt.attempt_count,
-                        reason: reason.clone(),
-                        now: self.now_recorded_at(),
+                    let now = self.now_recorded_at();
+                    let outcome = self.with_write_txn_grouped(|txn| {
+                        live_attempt(self, txn, &attempt)?;
+                        if RESULT.contains(&self.store, txn, attempt.id.as_bytes())? {
+                            return Err(super::model::invalid("seal attempt result already kept"));
+                        }
+                        if let Some(verify_reasons) = verify_reasons {
+                            RESULT.put(
+                                &self.store,
+                                txn,
+                                attempt.id.as_bytes(),
+                                &EsignSealAttemptResult::VerificationFailed { verify_reasons },
+                            )?;
+                        }
+                        queue.fail_in_txn(
+                            txn,
+                            FailAttempt {
+                                id: attempt.id,
+                                lease_owner: lease_owner.to_owned(),
+                                attempt_count: attempt.attempt_count,
+                                reason: reason.clone(),
+                                now,
+                            },
+                        )
                     })?;
+                    if let FailOutcome::Failed(record) = outcome {
+                        self.store.notify_task_updates(
+                            record
+                                .task_ref
+                                .as_deref()
+                                .and_then(|task| EntityId::from_hex(task).ok()),
+                        );
+                    }
                     runs.push(EsignSealRun::Failed { document, reason });
                 }
             }

@@ -51,7 +51,7 @@ fn shipped_policy_with_members(vault: &Vault, members: &[String]) -> Result<()> 
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -71,7 +71,7 @@ pub fn open_member_vault(
     members: &[String],
 ) -> Result<Vault> {
     let vault = Vault::open(path, config)?;
-    crate::test_support::provision_engine_machines(&vault);
+    crate::test_fixtures::provision_engine_machines(&vault);
     shipped_policy_with_members(&vault, members)?;
     Ok(vault)
 }
@@ -88,7 +88,7 @@ pub fn embedded_owner(
     let owner = vault
         .ensure_embedded_owner_actor()
         .map_err(|error| Error::InvalidConfig(format!("embedded owner: {error:?}")))?;
-    vault.bind_host_owner_for_test(&crate::test_support::test_host_issuer(), owner)?;
+    vault.bind_host_owner_for_test(&crate::test_fixtures::test_host_issuer(), owner)?;
     let proof = vault.authenticate_owner(
         owner,
         &owner.to_hex(),

@@ -1,0 +1,38 @@
+/* A group is its own container: a narrow group drops the maker column. */
+.sl-file-group {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sl-file-group + .sl-file-group {
+  padding-top: 16px;
+}
+
+.sl-file-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.sl-file-group-head > h3 {
+  font-size: var(--sl-t-section);
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--sl-ink-1);
+}
+
+.sl-file-group-head > :last-child:not(h3) {
+  margin-left: auto;
+}
+
+@container (max-width: 520px) {
+  .sl-file-row {
+    grid-template-columns: 18px minmax(0, 1fr) 19ch;
+  }
+  .sl-file-author {
+    display: none;
+  }
+}
