@@ -78,6 +78,7 @@ pub(super) fn native_output_pending_row(
     delta_receipt: Option<&str>,
     in_body_file: bool,
     producer_position: BirthPosition,
+    version_claim_id: Option<EntityId>,
 ) -> PendingRow {
     PendingRow {
         proposal_ref: output.run_ref.clone(),
@@ -111,6 +112,7 @@ pub(super) fn native_output_pending_row(
             name: output.name.clone(),
             media_type: output.media_type.clone(),
             report,
+            version_claim_id,
             producer_world: producer_position.world,
             producer_facet: producer_position.facet,
         },
@@ -137,6 +139,7 @@ impl Vault {
         (actor, retained_at): (WriteActor, u64),
         base_override: Option<(u64, [u8; 32])>,
         producer_position: BirthPosition,
+        version_claim_id: Option<EntityId>,
     ) -> Result<(PendingProposalView, Option<StagedHold>)> {
         let body = self
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
@@ -160,6 +163,7 @@ impl Vault {
             None,
             staged.is_some(),
             producer_position,
+            version_claim_id,
         );
         // None cannot clock a lane. It still rejects an envelope naming
         // anything beyond its writer; no reader authority is invented here.
