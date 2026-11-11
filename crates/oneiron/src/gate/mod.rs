@@ -59,6 +59,7 @@ mod definition_ceiling;
 mod delegation_chain;
 mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
+mod derive_verdict;
 pub(crate) mod dispatch_compliance;
 mod docx_budget;
 mod doors;
@@ -99,8 +100,25 @@ mod replicated_confirm;
 mod residence_budgets;
 mod resolution;
 mod tracker_limits;
+pub(crate) use self::derive_verdict::{DeriveAllowance, DeriveCapability, derive_verdict_in_txn};
 pub use self::dreamer_grant::DreamerWeaveReach;
-pub(crate) use self::dreamer_grant::{DREAMER_LANDING_ROWS_REF, dreamer_landing_verdict_in_txn};
+// The refusal's type is named only by the integration tests' doors; the
+// engine reads its token where the verdict answers.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::derive_verdict::DeriveRefusal;
+// An ordinary agent's derive rows are written only by the integration
+// tests' doors (untangle 6.7d).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dreamer_grant::body_with_agent_derive_rows;
+// The landing rows' reference names the X02 grant a verdict stood on before
+// the Dreamer held a Steward grant (6.3b); only the lib tests and the
+// regression door (`test_doors::untangle_regressions`) read it here.
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use self::dreamer_grant::DREAMER_LANDING_ROWS_REF;
+pub(crate) use self::dreamer_grant::{
+    DreamerLandingVerdict, body_with_steward_rows, dreamer_landing_verdict_in_txn,
+    dreamer_rows_held,
+};
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 pub(crate) mod retrieval_retention;
