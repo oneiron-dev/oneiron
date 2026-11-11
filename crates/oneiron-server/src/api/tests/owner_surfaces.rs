@@ -179,6 +179,7 @@ async fn an_archived_attempt_is_in_the_review_and_restores_onto_the_queue() {
     let mut config = oneiron::VaultConfig::device();
     config.store_clock = clock.bundle();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     assert_default_policy_manifest_fixture(vault.as_ref());
     let server = Arc::new(
         SyncServer::new(
@@ -970,6 +971,7 @@ pub(super) fn feedback_server(endpoint: &str) -> (tempfile::TempDir, Arc<SyncSer
     use crate::feedback_delivery::{FeedbackDeliveryConfig, FeedbackDestination, FeedbackHost};
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -1235,10 +1237,7 @@ async fn a_feedback_send_queued_behind_a_slip_revocation_admits_nothing() {
         tokio::task::spawn_blocking(move || {
             let revoker = server.clone();
             oneiron::outbound::before_next_admission_for_test(move || {
-                let issuer = oneiron::authority::HostSlipIssuer::from_secret(
-                    revoker.config.auth_secret.as_deref().unwrap().as_bytes(),
-                )
-                .unwrap();
+                let issuer = crate::test_credentials::host_issuer(&revoker);
                 revoker
                     .vault()
                     .revoke_capability_slip(&issuer, slip.claims.slip_id)

@@ -507,10 +507,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
     // Admitted at the door, then revoked before any act reaches the writer.
     let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
     let (slip, _) = slip_credentials::credential(&server, &recipe);
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
-        server.config.auth_secret.as_deref().unwrap().as_bytes(),
-    )
-    .unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     vault
         .revoke_capability_slip(&issuer, slip.claims.slip_id)
         .unwrap();
@@ -900,10 +897,7 @@ async fn a_backup_queued_behind_a_slip_revocation_takes_and_prunes_nothing() {
     let before = crate::owner::backup::list(&host.backups).unwrap();
 
     let (slip, _) = slip_credentials::credential(&server, &recipe);
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
-        server.config.auth_secret.as_deref().unwrap().as_bytes(),
-    )
-    .unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     vault
         .revoke_capability_slip(&issuer, slip.claims.slip_id)
         .unwrap();

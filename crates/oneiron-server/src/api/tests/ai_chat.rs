@@ -376,14 +376,25 @@ fn install_route_manifest(vault: &oneiron::Vault) {
         roles: MODEL_ROLES
             .into_iter()
             .map(|role| {
+                // The extraction encoder binds the Oneironer slot, alone, to
+                // a model no generative role serves (`validate_families`).
+                let encoder = role == ModelRole::ExtractionEncoder;
                 (
                     role,
                     ModelBinding {
-                        model: model("cloud/big@live"),
-                        slot: ModelSlot::Llm,
+                        model: model(if encoder {
+                            "device/encoder@live"
+                        } else {
+                            "cloud/big@live"
+                        }),
+                        slot: if encoder {
+                            ModelSlot::Oneironer
+                        } else {
+                            ModelSlot::Llm
+                        },
                         tier: ModelTierRef("chat".into()),
                         // The teacher's pin is probe-approved as one model.
-                        route_models: if role == ModelRole::ExtractionTeacher {
+                        route_models: if encoder || role == ModelRole::ExtractionTeacher {
                             std::collections::BTreeMap::new()
                         } else {
                             std::collections::BTreeMap::from([

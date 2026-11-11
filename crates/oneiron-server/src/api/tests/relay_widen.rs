@@ -2,7 +2,6 @@
 use super::*;
 use ed25519_dalek::Signer;
 use oneiron::{
-    authority::HostSlipIssuer,
     consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound},
     registry::ENTITY_TYPE_PERSON,
 };
@@ -31,7 +30,7 @@ async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
     let (agent_slip, agent_key) = slip_credentials::credential(&server, &agent_recipe);
     let challenge = b"widen-proposal";
     let signature = agent_key.sign(&agent_slip.binding_transcript(challenge).unwrap());
-    let issuer = HostSlipIssuer::from_secret(b"secret").unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let proof = vault
         .verify_capability_slip(
             &issuer.public_key(),
@@ -200,7 +199,7 @@ async fn managed_host_account_holder_lands_once_but_host_root_and_other_account_
     use tower::ServiceExt;
 
     let (dir, mut server) = auth_test_server();
-    let issuer = HostSlipIssuer::from_secret(b"secret").unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     server.vault().ensure_host_root_slip(&issuer).unwrap();
     Arc::get_mut(&mut server).unwrap().managed_issuer =
         Some(crate::server::ManagedIssuer::new(Some(issuer)));

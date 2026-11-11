@@ -760,7 +760,7 @@ enabled = false
         .with_ai(host.handle())
         .with_run_receipts(receipts.clone());
     let server = Arc::new(server);
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(TEST_SECRET.as_bytes()).unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let world = |kept: bool| {
         let world = EntityId::now();
         let when = TimeRange { start: 1, end: 1 };
