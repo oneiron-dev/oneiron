@@ -34,6 +34,8 @@
 //! binds no row, and until a row a source landed is written here the
 //! conjunct answers at once from each row's own stamp (fix list row 16255).
 
+#[cfg(oneiron_test_support)]
+pub(crate) mod binding_door;
 pub(crate) mod carried;
 pub(crate) mod checkpoint;
 mod obligation;
@@ -72,8 +74,8 @@ pub(crate) use wake::{
 #[cfg(feature = "sync")]
 pub(crate) use walk::derived_travel_in;
 pub(crate) use walk::{
-    LineagePass, ReplicationScope, lineage_held_in, readable_with_read_in, withheld_by_lineage_in,
-    withheld_from_replication_in,
+    LineagePass, ReplicationScope, lineage_held_in, read_audience_in, readable_with_read_in,
+    withheld_by_lineage_in, withheld_from_replication_in,
 };
 
 /// Each row a source landing is about to stamp with the source-audience
