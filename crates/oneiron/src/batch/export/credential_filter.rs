@@ -769,14 +769,25 @@ mod tests {
             let stored = residue_vault
                 .get(&residue)?
                 .ok_or(Error::InvariantViolation("stored residue"))?;
-            assert_eq!(&stored, body, "scan-off residue keeps the exact fixture bytes");
-            assert!(carries_sausage(&stored), "release fixture still holds the phrase");
+            assert_eq!(
+                &stored, body,
+                "scan-off residue keeps the exact fixture bytes"
+            );
+            assert!(
+                carries_sausage(&stored),
+                "release fixture still holds the phrase"
+            );
             let served = redacted_memory_payload(stored)?;
-            assert!(!carries_sausage(&served), "residual raw serving: {served:?}");
+            assert!(
+                !carries_sausage(&served),
+                "residual raw serving: {served:?}"
+            );
             let bundle: Value =
                 serde_json::from_slice(&residue_vault.export_entity_bundle_json(&[residue])?)
                     .map_err(|_| Error::InvariantViolation("residual bundle JSON"))?;
-            let entities = bundle["entities"].as_array().expect("residual bundle entities");
+            let entities = bundle["entities"]
+                .as_array()
+                .expect("residual bundle entities");
             assert_eq!(entities.len(), 1);
             assert_eq!(entities[0]["id"], residue.to_hex());
             let emitted = entities[0]["body"].to_string();
@@ -807,8 +818,14 @@ mod tests {
             let stored = residue_vault
                 .get(&residue)?
                 .ok_or(Error::InvariantViolation("stored mapped residue"))?;
-            assert_eq!(stored, body, "scan-off mapped residue keeps the fixture bytes");
-            assert!(carries_sausage(&stored), "pack fixture still holds the phrase");
+            assert_eq!(
+                stored, body,
+                "scan-off mapped residue keeps the fixture bytes"
+            );
+            assert!(
+                carries_sausage(&stored),
+                "pack fixture still holds the phrase"
+            );
             let id = put_asset(&vault, &body).expect("LABEL-04: a mapped split-phrase write lands");
             let stored = vault.get(&id)?.ok_or(Error::InvariantViolation("stored"))?;
             assert!(
