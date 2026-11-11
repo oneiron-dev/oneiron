@@ -311,3 +311,157 @@ fn a_held_wake_rides_to_the_home_elected_after_it_was_held() {
         0
     );
 }
+
+#[test]
+fn a_wake_whose_turn_stays_on_its_machine_is_admitted_there() {
+    let a = Machine::open("machine-a");
+    let b = Machine::open("machine-b");
+    let home = doors::node_id(&a.vault).unwrap();
+    doors::node_id(&b.vault).unwrap();
+    elect(&[&a, &b], home);
+    let (actor, slip, instrument) = agent_slip(&b);
+    let turn = put_turn(&b);
+    assert!(doors::withhold_turn(&b.vault, turn).unwrap());
+    let conversation = EntityId::from_bytes([0x62; 16]).unwrap();
+    let registration = doors::plant_slip_wake(
+        &b.vault,
+        actor,
+        &slip,
+        &instrument,
+        conversation,
+        turn,
+        T0 - 60,
+        T0,
+    )
+    .unwrap();
+    put_row(&b, registration);
+    let doc_b = b.doc();
+    let doc_a = a.doc();
+    assert!(doc_b.get_map("entities").get(&turn.to_hex()).is_none());
+    exchange(&doc_a, &doc_b);
+    b.housekeeping();
+    a.housekeeping();
+    assert_eq!(
+        doors::wake_decisions_here(&b.vault, turn, registration).unwrap(),
+        1
+    );
+    assert!(!doors::wake_owed_here(&b.vault, turn, registration).unwrap());
+    assert_eq!(
+        doors::wake_decisions_here(&a.vault, turn, registration).unwrap(),
+        0
+    );
+    assert!(!doors::wake_owed_here(&a.vault, turn, registration).unwrap());
+    let wake_key = format!("{}{}", turn.to_hex(), registration.to_hex());
+    for doc in [&doc_a, &doc_b] {
+        assert!(doc.get_map("turn_program_wakes").get(&wake_key).is_none());
+    }
+}
+
+/// A synthetic pin shared byte-for-byte by separate armings.
+fn definition(skill: EntityId) -> oneiron::dreamer_runner::ProgramRecipePin {
+    oneiron::dreamer_runner::ProgramRecipePin {
+        skill,
+        version: "1".into(),
+        content_hash: "0".repeat(64),
+        entry: "main".into(),
+        contract_digest: [0; 32],
+        executor: "test".into(),
+        args: "{}".into(),
+    }
+}
+
+#[test]
+fn a_disarm_stands_against_an_arming_stamped_later() {
+    let a = Machine::open("machine-a");
+    let b = Machine::open("machine-b");
+    let (actor, _, _) = agent_slip(&a);
+    let conversation = EntityId::from_bytes([0x62; 16]).unwrap();
+    let skill = a.vault.new_entity_id().unwrap();
+    let armed_at = a.vault.now_recorded_at() + 120;
+    let registration =
+        doors::plant_arming(&a.vault, actor, conversation, &definition(skill), armed_at).unwrap();
+    let window = WindowKey::from_timestamp(armed_at);
+    let doc_a = a.manager.open_window(&window).unwrap().doc.clone();
+    let doc_b = b.manager.open_window(&window).unwrap().doc.clone();
+    exchange(&doc_a, &doc_b);
+    assert!(doors::program_armed_here(&b.vault, actor, registration).unwrap());
+
+    let disarmed_at = doors::disarm_program(&b.vault, actor, registration)
+        .unwrap()
+        .unwrap();
+    assert!(disarmed_at < armed_at, "the fixture lost its clock skew");
+    exchange(&doc_a, &doc_b);
+    // Near a month boundary the disarm and arming can have different windows.
+    let disarm_window = WindowKey::from_timestamp(disarmed_at);
+    let disarm_a = a.manager.open_window(&disarm_window).unwrap().doc.clone();
+    let disarm_b = b.manager.open_window(&disarm_window).unwrap().doc.clone();
+    exchange(&disarm_a, &disarm_b);
+    a.housekeeping();
+    b.housekeeping();
+
+    // Unload persists the doc; the cold open merges its carried intents again.
+    drop(doc_b);
+    drop(disarm_b);
+    assert!(b.manager.unload_window(&window).unwrap());
+    b.manager.open_window(&window).unwrap();
+    assert!(!doors::program_armed_here(&a.vault, actor, registration).unwrap());
+    assert!(!doors::program_armed_here(&b.vault, actor, registration).unwrap());
+}
+
+#[test]
+fn one_definition_armed_on_two_machines_wakes_once_for_a_turn() {
+    let a = Machine::open("machine-a");
+    let b = Machine::open("machine-b");
+    let home = doors::node_id(&a.vault).unwrap();
+    doors::node_id(&b.vault).unwrap();
+    elect(&[&a, &b], home);
+    let (actor, slip, instrument) = agent_slip(&a);
+    let conversation = EntityId::from_bytes([0x62; 16]).unwrap();
+    let skill = a.vault.new_entity_id().unwrap();
+    let pin = definition(skill);
+    let registration_a = doors::plant_arming(&a.vault, actor, conversation, &pin, T0 - 60).unwrap();
+    let registration_b = doors::plant_arming(&b.vault, actor, conversation, &pin, T0 - 60).unwrap();
+    assert_ne!(registration_a, registration_b);
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    for machine in [&a, &b] {
+        for registration in [registration_a, registration_b] {
+            assert!(doors::program_armed_here(&machine.vault, actor, registration).unwrap());
+        }
+    }
+
+    let turn = put_turn(&a);
+    let landed = oneiron::dreamer_runner::LandedTurnRef {
+        turn,
+        conversation,
+        landed_at: T0,
+    };
+    doors::record_slip_turn_wakes(&a.vault, actor, &slip, &instrument, landed).unwrap();
+    let registrations = [registration_a, registration_b];
+    let count = registrations
+        .iter()
+        .filter(|&&registration| {
+            doors::wake_owed_here(&a.vault, turn, registration).unwrap()
+                || doors::wake_decisions_here(&a.vault, turn, registration).unwrap() > 0
+        })
+        .count();
+    assert_eq!(count, 1);
+    let chosen = registration_a.min(registration_b);
+    assert!(doors::wake_owed_here(&a.vault, turn, chosen).unwrap());
+    // An append finds the group's existing wake, whichever registration owns it.
+    assert_eq!(
+        doors::record_slip_turn_wakes(&a.vault, actor, &slip, &instrument, landed).unwrap(),
+        0
+    );
+    a.housekeeping();
+    let decisions: usize = registrations
+        .iter()
+        .map(|&registration| doors::wake_decisions_here(&a.vault, turn, registration).unwrap())
+        .sum();
+    assert_eq!(decisions, 1);
+    assert_eq!(
+        doors::record_slip_turn_wakes(&a.vault, actor, &slip, &instrument, landed).unwrap(),
+        0
+    );
+}
