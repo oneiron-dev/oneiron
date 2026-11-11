@@ -192,11 +192,11 @@ fn actor_fits_in_txn(
     Ok(crate::provenance::validate_actor_class(raw.entity_type, actor.actor_class()).is_ok())
 }
 
-/// Stages a topology judgment: the derive verdict over every row it names,
-/// the actor's own live `topology_seal` Grant, and every row read by the
-/// actor; then the judgment through the topology ledger under that Grant's seal, in
-/// a savepoint of `txn`: a parked proposal, or an applied event when the item
-/// asks for one.
+/// Stages a topology judgment: the derive verdict with no target, the
+/// actor's own live `topology_seal` Grant, and every row read by the actor;
+/// then the judgment through the topology ledger under that Grant's seal,
+/// in a savepoint of `txn`: a parked proposal, or an applied event when the
+/// item asks for one.
 ///
 /// # Errors
 ///
@@ -210,11 +210,14 @@ pub(super) fn stage_topology_in_txn(
     let participants = item.op.participants();
     let about = participants.first().copied();
     let actor = context.stamp.actor;
-    let allowance = match verdict_over(vault, txn, context, &participants)? {
-        Ok(Some(allowance)) => allowance,
-        Ok(None) => return refuse_about(vault, txn, context, about, TOPOLOGY_UNREAD),
-        Err(token) => return refuse_about(vault, txn, context, about, token),
-    };
+    let allowance =
+        match derive_verdict_in_txn(&vault.store, txn, actor, DeriveCapability::Derive, None)? {
+            Ok(allowance) => allowance,
+            Err(refusal) => return refuse_about(vault, txn, context, about, refusal.token()),
+        };
+    if participants.is_empty() {
+        return refuse_about(vault, txn, context, about, TOPOLOGY_UNREAD);
+    }
     if actor.actor_class() != EdgeActorClass::Agent {
         return refuse_about(vault, txn, context, about, TOPOLOGY_NEEDS_GRANT);
     }

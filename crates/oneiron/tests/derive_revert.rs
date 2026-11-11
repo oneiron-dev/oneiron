@@ -17,8 +17,9 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derivation_floor::define_agent;
 use oneiron::test_doors::derive::{
-    Claim, Derived, Named, SameAs, Supersede, claim_lifecycle, commit, commit_claims,
-    mint_nightly_links, revert, revert_as_owner, same_as_edge,
+    Claim, Derived, Named, SameAs, Settle, Settlement, Supersede, claim_lifecycle, commit,
+    commit_claims, mint_nightly_links, open_conflict_with_alternative, revert, revert_as_owner,
+    same_as_edge, settlement_kept_claim,
 };
 use oneiron::test_doors::steward::dreamer;
 use oneiron::{EdgeActorClass, EntityId, Vault};
@@ -335,4 +336,88 @@ fn reverting_a_batch_whose_items_share_a_row_takes_back_every_item() {
     assert!(active(&fixture, a));
     assert!(active(&fixture, b));
     assert!(active(&fixture, c));
+}
+
+#[test]
+fn a_settlement_whose_landed_winner_changed_since_is_left_alone() {
+    let fixture = fixture();
+    let member = observed_claim(&fixture, "preference.tea", "black tea");
+    let (marker, alternative) = open_conflict_with_alternative(&fixture.vault, member, "green tea")
+        .expect("an open conflict with a retained alternative");
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-keep-alternative",
+        &[Derived::Settle(Settle {
+            local: "keep_alternative",
+            marker: Named::Stored(marker),
+            settlement: Settlement::Keep(Named::Stored(alternative)),
+        })],
+    )
+    .expect("the settlement commits");
+    let [settled] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(settled.landed, "{settled:?}");
+    let answer = settled.rows[0];
+    let winner = settlement_kept_claim(&fixture.vault, fixture.person, answer)
+        .expect("read the standing settlement")
+        .expect("the settlement keeps a claim");
+    assert_eq!(winner, alternative);
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, member).expect("read"),
+        Some("superseded".to_owned())
+    );
+    assert!(active(&fixture, winner));
+
+    let later = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-replace-settlement-winner",
+        &[
+            Derived::Claim(claim(
+                fixture.person,
+                fixture.turn,
+                "new_tea",
+                "preference.tea",
+            )),
+            Derived::Supersede(Supersede {
+                local: "replace_winner",
+                new: Named::Local("new_tea"),
+                old: Named::Stored(winner),
+            }),
+        ],
+    )
+    .expect("the later batch commits");
+    assert_eq!(later.items.len(), 2);
+    assert!(
+        later.items.iter().all(|item| item.landed),
+        "{:?}",
+        later.items
+    );
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, winner).expect("read"),
+        Some("superseded".to_owned())
+    );
+
+    let (reverted, left) = revert(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        committed.batch,
+    )
+    .expect("revert")
+    .expect("the Dreamer may revert its own batch");
+    assert_eq!(reverted, Vec::<String>::new());
+    assert_eq!(
+        left,
+        vec![("keep_alternative".to_owned(), CHANGED_SINCE.to_owned())]
+    );
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, member).expect("read"),
+        Some("superseded".to_owned())
+    );
+    assert!(active(&fixture, answer));
 }
