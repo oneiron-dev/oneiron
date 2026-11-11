@@ -40,7 +40,14 @@ pub fn land_source_bound_artifact(
         let stamped = birth.stamp_in_txn(vault, txn, &row, &body)?;
         vault
             .batch_in()
-            .put_source_bound(&row, ENTITY_TYPE_BLOB_ARTIFACT, occurred, at, &stamped, &birth)
+            .put_source_bound(
+                &row,
+                ENTITY_TYPE_BLOB_ARTIFACT,
+                occurred,
+                at,
+                &stamped,
+                &birth,
+            )
             .apply(txn)?;
         crate::source_audience::bind_record_in_txn(vault, txn, &row, &policy)?;
         Ok(policy)

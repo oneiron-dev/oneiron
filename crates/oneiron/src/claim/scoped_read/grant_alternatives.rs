@@ -5,9 +5,12 @@
 //! every other check already binds; this adds the one conjunct the envelope
 //! cannot answer, and the one the NOTE shortcuts skip: a base NOTE is read
 //! "always" at the world-membership check (`note_world`), so only a Grant
-//! that holds base reads it, as FIX 7462 judges a row under a Grant.
+//! that holds base reads it, as FIX 7462 judges a row under a Grant. The
+//! holder's Grants are also read again in each serving txn, so a lane held
+//! past a revoke narrows with it (REVIEW-7051 P1).
 
-use super::ScopedRead;
+use super::access_gate::HeldAuthority;
+use super::{ScopedRead, ScopedReadActorKey};
 use crate::EntityId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimRecordScope, decode_claim_body};
@@ -25,20 +28,73 @@ impl ScopedRead<'_> {
     /// Grant binds admits every row here; one bound by no standing Grant,
     /// none.
     ///
+    /// A key that names its holder ([`ScopedReadActorKey::agent_grant_holder`])
+    /// also needs one of the Grants that stand for that holder in `rtxn`,
+    /// each alone and met with the key's own Scope, read once per serving txn
+    /// in `authority`: a Grant revoked or lapsed since the key was built, or
+    /// since its lane was saved, narrows the lane still held (REVIEW-7051
+    /// P1). A Grant minted since narrows it too, as a fresh key would be.
+    ///
     /// # Errors
-    /// A store or decode failure reading the row's position or facets.
+    /// A store or decode failure reading the row's position or facets, or a
+    /// store, fold or clock failure reading the holder's Grants.
     pub(super) fn one_grant_alternative_admits_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
+        authority: &HeldAuthority,
     ) -> Result<bool> {
-        let Some(alternatives) = self.actor_key.grant_alternatives() else {
+        let standing = self
+            .actor_key
+            .agent_grant_holder()
+            .map(|holder| {
+                authority.grants().bounds_of(holder, || {
+                    self.vault.agent_grant_read_bounds_in_txn(rtxn, holder)
+                })
+            })
+            .transpose()?;
+        let standing = standing.as_deref().and_then(|bounds| bounds.as_deref());
+        let kept = self.actor_key.grant_alternatives();
+        if kept.is_none() && standing.is_none() {
             return Ok(true);
-        };
+        }
         let Some((entity_type, record)) = self.row_position_in(rtxn, id, raw)? else {
             return Ok(false);
         };
+        if let Some(kept) = kept
+            && !self.one_of_admits_in(rtxn, id, raw, entity_type, &record, kept)?
+        {
+            return Ok(false);
+        }
+        let Some(standing) = standing else {
+            return Ok(true);
+        };
+        let own = self
+            .actor_key
+            .authority_scope()
+            .cloned()
+            .unwrap_or_else(Scope::top);
+        let live: Vec<Scope> = standing
+            .iter()
+            .map(|bound| ScopedReadActorKey::read_authority(&own.meet(bound)))
+            .collect();
+        self.one_of_admits_in(rtxn, id, raw, entity_type, &record, &live)
+    }
+
+    /// Whether one of `alternatives` alone admits the row `raw` of `id`,
+    /// whose type is `entity_type` and record position `record`: held at one
+    /// world the key's ceiling and that alternative both hold, admitted by
+    /// that alternative, and its facets inside that alternative's.
+    fn one_of_admits_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        entity_type: u8,
+        record: &Scope,
+        alternatives: &[Scope],
+    ) -> Result<bool> {
         let ceiling = self.actor_key.world_ceiling();
         for alternative in alternatives {
             let held = note_world::held_at(
@@ -46,7 +102,7 @@ impl ScopedRead<'_> {
                 rtxn,
                 *id,
                 entity_type,
-                &record,
+                record,
                 &[&ceiling.worlds, &alternative.worlds],
             );
             if !alternative.admits("read", &held, &Scope::top()) {
