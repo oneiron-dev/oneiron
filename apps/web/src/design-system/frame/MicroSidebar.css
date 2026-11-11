@@ -179,7 +179,7 @@
   padding-top: 12px;
 }
 
-/* A control placed in the strip (the frame's fold) sits centred. */
+/* A control placed in the strip sits centred. */
 .sl-micro-sidebar-items > .sl-icon-action,
 .sl-micro-sidebar-foot > .sl-icon-action {
   align-self: center;

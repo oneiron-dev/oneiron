@@ -784,14 +784,12 @@ function sidebarFor(id: string, specimen: string): React.ReactNode | null {
 
 /* A whole microsidebar on fixture data: the vault's mark (home), activity
    with its count, the vault, more; the divider; the pinned lenses (they
-   reorder and unpin); the person at the foot. Inside a frame the foot
-   also holds the fold control, shown while the sidebar is folded. Alone,
-   it stands on a window ground of its own with the readout under it. */
+   reorder and unpin); the person at the foot. Alone, it stands on a
+   window ground of its own with the readout under it. */
 function MicroSidebarDemo({
   labels,
   current,
   onCurrent,
-  inFrame = false,
   alone = false,
   waiting = false,
   specimen,
@@ -799,7 +797,6 @@ function MicroSidebarDemo({
   labels?: 'none' | 'word'
   current: string
   onCurrent: (id: string) => void
-  inFrame?: boolean
   alone?: boolean
   /* Activity waits on the person: the waiting ring under its count. */
   waiting?: boolean
@@ -845,7 +842,6 @@ function MicroSidebarDemo({
         })}
       </MicroSidebar.Pinned>
       <MicroSidebar.Foot>
-        {inFrame ? <AppFrame.Fold tooltipSide="right" /> : null}
         <Menu>
           <Menu.Trigger asChild>
             <MicroSidebar.Item id="you" icon={<Glyph initial="o" label="Owen" size={24} />} label="Owen" />
@@ -1016,7 +1012,7 @@ function FrameDemo({
           <AppFrame
             className="lib-frame"
             data-specimen={specimen}
-            microSidebar={<MicroSidebarDemo labels={labels} current={current} onCurrent={setCurrent} inFrame />}
+            microSidebar={<MicroSidebarDemo labels={labels} current={current} onCurrent={setCurrent} />}
             sidebar={sidebar}
             peek={(id) => sidebarFor(id, `${specimen}-peek`)}
             sidebarOpen={open}
@@ -1144,7 +1140,7 @@ function BesideDemo({ width, height, withThread, specimen, caption }: { width: n
           <AppFrame
             className="lib-frame"
             data-specimen={specimen}
-            microSidebar={<MicroSidebarDemo current={current} onCurrent={setCurrent} inFrame />}
+            microSidebar={<MicroSidebarDemo current={current} onCurrent={setCurrent} />}
             sidebar={<HomeSidebar specimen={`${specimen}-home`} />}
             sidebarOpen={sidebarOpen}
             onSidebarOpenChange={setSidebarOpen}

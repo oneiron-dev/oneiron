@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AppFrame } from '../src/design-system/frame/AppFrame'
+import { AppFramePeekContext } from '../src/design-system/frame/app-frame-context'
 import { MicroSidebar } from '../src/design-system/frame/MicroSidebar'
 import { Sidebar } from '../src/design-system/frame/Sidebar'
 import { VaultSwitch } from '../src/design-system/frame/VaultSwitch'
@@ -134,5 +135,22 @@ describe('Sidebar.Head', () => {
     const html = frame(false)
     assert.match(tagWith(html, 'class="sl-app-frame"'), /data-sidebar="folded"/)
     assert.match(html, /aria-label="Open the sidebar"/)
+  })
+
+  test('in the peek the fold action stays and keeps the sidebar open', () => {
+    const html = renderToStaticMarkup(
+      <AppFrame microSidebar={<MicroSidebar />} sidebar={<p>sidebar</p>} sidebarOpen={false}>
+        <AppFramePeekContext.Provider value={true}>
+          <AppFrame.Fold />
+        </AppFramePeekContext.Provider>
+      </AppFrame>,
+    )
+    assert.match(tagWith(html, 'aria-label="Keep the sidebar open"'), /class="sl-icon-action sl-app-frame-fold"/)
+  })
+
+  test('the strip carries no fold control', () => {
+    const html = frame(false)
+    const strip = html.slice(html.indexOf('class="sl-app-frame-micro"'), html.indexOf('class="sl-app-frame-sheet"'))
+    assert.doesNotMatch(strip, /sl-app-frame-fold/)
   })
 })

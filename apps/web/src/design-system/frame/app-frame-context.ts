@@ -18,3 +18,7 @@ export interface AppFrameContextValue {
 }
 
 export const AppFrameContext = React.createContext<AppFrameContextValue | null>(null)
+
+/* True inside the peek: the sidebar raised over the sheet while it is
+   folded. The fold control there keeps the sidebar open. */
+export const AppFramePeekContext = React.createContext(false)
