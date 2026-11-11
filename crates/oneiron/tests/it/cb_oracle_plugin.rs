@@ -504,7 +504,7 @@ mod cb_x_props {
 // ONE-1706's own. The CRM pack is a test fixture/example only.
 // ════════════════════════════════════════════════════════════════════════
 mod plugin_fixture {
-    use oneiron::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
+    use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
     use oneiron::config::VaultConfig;
     use oneiron::context_board::{
         ApprovedPluginIdentity, AuthorityLaneRef, BudgetPolicyRef, PluginProposalRow,
@@ -932,7 +932,8 @@ mod plugin_fixture {
                 .get_claim(claim_id)
                 .expect("read the proposed claim")
                 .expect("the proposal exists");
-            let reviewed = encode_claim_body(&body);
+            let reviewed = oneiron::write_envelope::claim_body::encode_claim_body(&body)
+                .expect("encode the reviewed claim body");
             self.vault
                 .approve_inbox_member_with_edit_at(claim_id, &reviewed, 3_000)
                 .expect("owner consent lands");
@@ -1314,88 +1315,5 @@ mod plugin_fixture {
             vec![HubFile::new("SKILL.md", format!("---\nname: {CRM_SKILL_ID}\ndescription: CRM contact pack\nversion: {CRM_SKILL_VERSION}\n---\n# CRM contacts\n").into_bytes())],
             SkillCapabilitySurface::default(),
         )
-    }
-
-    /// The engine's pinned CLAIM body encoding, mirrored for the bound
-    /// consent door (which takes the reviewed body as bytes). Field order
-    /// and key names follow `oneiron::claim::CLAIM_BODY_KEYS`.
-    ///
-    /// v2 stamps are REQUIRED: `worldId` always stamps (base id for
-    /// `None`), `scopeRelationshipId` is `all` or a singleton id array,
-    /// `scopeFacetId`/`scopeProjectId` round-trip the reviewed body's own
-    /// stamps, and `scopeVersion` is 2. The helper re-encodes the EXACT
-    /// reviewed body — the decision stays "yes to this", not an edit.
-    fn encode_claim_body(body: &ClaimBody) -> Vec<u8> {
-        let mut entries: Vec<(Value, Value)> = Vec::new();
-        entries.push((Value::from("pred"), Value::from(body.predicate.as_str())));
-        entries.push((Value::from("val"), body.value.clone()));
-        entries.push((Value::from("conf"), Value::F32(body.confidence)));
-        if let Some(salience) = body.salience {
-            entries.push((Value::from("sal"), Value::F32(salience)));
-        }
-        if let Some(evidence) = &body.evidence {
-            entries.push((Value::from("evid"), evidence.clone()));
-        }
-        if let Some(valid_from) = body.valid_from {
-            entries.push((Value::from("from"), Value::from(valid_from)));
-        }
-        if let Some(valid_to) = body.valid_to {
-            entries.push((Value::from("to"), Value::from(valid_to)));
-        }
-        if let Some(source) = body.source {
-            entries.push((Value::from("src"), Value::from(source.as_str())));
-        }
-        entries.push((
-            Value::from("worldId"),
-            Value::Binary(
-                body.world
-                    .unwrap_or_else(oneiron::claim::base_world_id)
-                    .as_bytes()
-                    .to_vec(),
-            ),
-        ));
-        entries.push((
-            Value::from("scopeRelationshipId"),
-            // A relationship scope is a set of ids (a816c661035), written as
-            // the engine writes it: `all`, or every id in set order.
-            body.rel.as_ref().map_or_else(
-                || Value::from("all"),
-                |ids| {
-                    Value::Array(
-                        ids.iter()
-                            .map(|id| Value::Binary(id.as_bytes().to_vec()))
-                            .collect(),
-                    )
-                },
-            ),
-        ));
-        let subject = match body.subject {
-            ClaimSubject::Entity(id) => id.as_bytes().to_vec(),
-            ClaimSubject::Edge { .. } => panic!("fixture claims are entity-subject"),
-        };
-        entries.push((Value::from("subj"), Value::Binary(subject)));
-        if let Some(scope) = &body.scope {
-            entries.push((Value::from("scope"), scope.clone()));
-        }
-        entries.push((Value::from("appr"), Value::from(body.approval.as_str())));
-        entries.push((Value::from("life"), Value::from(body.lifecycle.as_str())));
-        if body.stale {
-            entries.push((Value::from("stale"), Value::Boolean(true)));
-        }
-        if let Some(session_tag) = &body.session_tag {
-            entries.push((Value::from("sess"), Value::from(session_tag.as_str())));
-        }
-        entries.push((
-            Value::from("scopeFacetId"),
-            Value::Binary(body.scope_facet.as_bytes().to_vec()),
-        ));
-        entries.push((
-            Value::from("scopeProjectId"),
-            Value::Binary(body.scope_project.as_bytes().to_vec()),
-        ));
-        entries.push((Value::from("scopeVersion"), Value::from(2_u64)));
-        let mut out = Vec::new();
-        rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("encode claim body");
-        out
     }
 }
