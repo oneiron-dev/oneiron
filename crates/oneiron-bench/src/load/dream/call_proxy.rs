@@ -1,8 +1,12 @@
 //! The model-call timing proxy of `load dream` (FIX 21929). The server's
 //! `[models]` provider points here; every byte goes on to the model gateway
-//! unchanged, and each HTTP call is recorded when its response ends: its
-//! request start, first response byte and end, its status and sizes, and
-//! what tells calls apart without their text. A call's `schema` is the
+//! unchanged but each request's `Host` line, which names the gateway's own
+//! authority again (a virtual-host gateway routes by it). Each HTTP call is
+//! recorded when its response ends: its request start, first response byte
+//! and end, its status and sizes, and what tells calls apart without their
+//! text. A call that fails in transport (no connection, a reset or close
+//! before its response ended) is recorded with status 0 when its connection
+//! ends, so a lost call still counts as a failed one. A call's `schema` is the
 //! digest of the JSON schema it asks for (one per role); `retry_of` names
 //! an earlier call with the same body digest, and `extends` an earlier call
 //! whose messages are a strict prefix of this one's (a corrective call).
@@ -32,6 +36,8 @@ pub(super) struct CallRecord {
     pub(super) start_ms: f64,
     pub(super) first_byte_ms: Option<f64>,
     pub(super) end_ms: f64,
+    /// The response status; 0 when the call failed in transport (no
+    /// response, or one cut off before its end).
     pub(super) status: u16,
     pub(super) request_bytes: usize,
     pub(super) response_bytes: usize,
@@ -223,12 +229,105 @@ fn message_end(bytes: &[u8], response: bool) -> Option<(usize, Head)> {
     Some((total, parsed))
 }
 
-/// A request sent and not yet answered.
+/// `head` (a request head, through its blank line) with its `Host` line
+/// naming `host`; every other byte stays as it came.
+fn with_host(head: &[u8], host: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(head.len() + host.len());
+    let mut rest = head;
+    while let Some(at) = rest.windows(2).position(|w| w == b"\r\n") {
+        let line = &rest[..at];
+        if line.len() >= 5 && line[..5].eq_ignore_ascii_case(b"host:") {
+            out.extend_from_slice(b"Host: ");
+            out.extend_from_slice(host.as_bytes());
+        } else {
+            out.extend_from_slice(line);
+        }
+        out.extend_from_slice(b"\r\n");
+        rest = &rest[at + 2..];
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
+/// A request whose last byte came from the server.
 struct Pending {
     seq: u64,
     start: Instant,
     bytes: usize,
     shape: RequestShape,
+}
+
+/// How one call's response ended.
+struct Answer {
+    first_byte: Option<Instant>,
+    end: Instant,
+    status: u16,
+    bytes: usize,
+}
+
+impl Answer {
+    /// The answer of a call whose connection ended with no response.
+    fn failed() -> Self {
+        Self {
+            first_byte: None,
+            end: Instant::now(),
+            status: 0,
+            bytes: 0,
+        }
+    }
+}
+
+/// One connection's requests and responses. HTTP/1.1 answers in request
+/// order, so the n-th response answers the n-th request; either one may end
+/// first (a gateway may answer before a request's body is all in).
+#[derive(Default)]
+struct Exchange {
+    unanswered: VecDeque<Pending>,
+    early: VecDeque<Answer>,
+}
+
+impl Exchange {
+    /// Queues `call`; the pair at once if its response already ended.
+    fn request(&mut self, call: Pending) -> Option<(Pending, Answer)> {
+        match self.early.pop_front() {
+            Some(answer) => Some((call, answer)),
+            None => {
+                self.unanswered.push_back(call);
+                None
+            }
+        }
+    }
+
+    /// Pairs `answer` with the oldest unanswered request, or keeps it until
+    /// that request ends.
+    fn response(&mut self, answer: Answer) -> Option<(Pending, Answer)> {
+        match self.unanswered.pop_front() {
+            Some(call) => Some((call, answer)),
+            None => {
+                self.early.push_back(answer);
+                None
+            }
+        }
+    }
+}
+
+/// Records the pair, if both halves of the call ended.
+fn settle(shared: &Shared, pair: Option<(Pending, Answer)>) {
+    if let Some((call, answer)) = pair {
+        shared.answered(call, answer);
+    }
+}
+
+/// Records every request still unanswered as a failed call: no response
+/// can come for it any more.
+fn fail_unanswered(exchange: &Mutex<Exchange>, shared: &Shared) {
+    let left: Vec<Pending> = exchange
+        .lock()
+        .map(|mut exchange| exchange.unanswered.drain(..).collect())
+        .unwrap_or_default();
+    for call in left {
+        shared.answered(call, Answer::failed());
+    }
 }
 
 /// The shared state of one proxy.
@@ -244,22 +343,16 @@ impl Shared {
         at.saturating_duration_since(self.origin).as_secs_f64() * 1000.0
     }
 
-    /// Records the answered `pending` and appends it to the JSONL file.
-    fn answered(
-        &self,
-        pending: Pending,
-        first_byte: Option<Instant>,
-        status: u16,
-        bytes: usize,
-    ) {
+    /// Records `pending` with its `answer` and appends it to the JSONL file.
+    fn answered(&self, pending: Pending, answer: Answer) {
         let call = CallRecord {
             seq: pending.seq,
             start_ms: self.ms(pending.start),
-            first_byte_ms: first_byte.map(|at| self.ms(at)),
-            end_ms: self.ms(Instant::now()),
-            status,
+            first_byte_ms: answer.first_byte.map(|at| self.ms(at)),
+            end_ms: self.ms(answer.end),
+            status: answer.status,
             request_bytes: pending.bytes,
-            response_bytes: bytes,
+            response_bytes: answer.bytes,
             model: pending.shape.model.clone(),
             stream: pending.shape.stream,
             messages: pending.shape.messages,
@@ -302,6 +395,8 @@ impl CallProxy {
             return Ok(None);
         };
         let (authority, path) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
+        // The gateway's own authority, as its URL names it, for each `Host`.
+        let host = authority.to_owned();
         let upstream = if authority.contains(':') {
             authority.to_owned()
         } else {
@@ -330,8 +425,8 @@ impl CallProxy {
                 }
                 let Ok(client) = client else { continue };
                 let shared = Arc::clone(&accept_shared);
-                let upstream = upstream.clone();
-                std::thread::spawn(move || relay(client, &upstream, &shared));
+                let (upstream, host) = (upstream.clone(), host.clone());
+                std::thread::spawn(move || relay(client, &upstream, &host, &shared));
             }
         });
         let base_url = if path.is_empty() {
@@ -368,33 +463,47 @@ impl Drop for CallProxy {
     }
 }
 
-/// Relays one server connection to the gateway and back.
-fn relay(client: TcpStream, upstream: &str, shared: &Arc<Shared>) {
-    let Ok(gateway) = TcpStream::connect(upstream) else {
-        let _ = client.shutdown(Shutdown::Both);
-        return;
-    };
-    let _ = (client.set_nodelay(true), gateway.set_nodelay(true));
-    let (Ok(client_back), Ok(gateway_back)) = (client.try_clone(), gateway.try_clone()) else {
-        return;
-    };
-    let pending = Arc::new(Mutex::new(VecDeque::<Pending>::new()));
-    let answers = {
-        let (pending, shared) = (Arc::clone(&pending), Arc::clone(shared));
-        std::thread::spawn(move || responses(gateway_back, client_back, &pending, &shared))
-    };
-    requests(client, gateway, &pending, shared);
-    let _ = answers.join();
+/// Relays one server connection to the gateway and back. Whatever request
+/// is still unanswered when both directions end failed in transport.
+fn relay(client: TcpStream, upstream: &str, host: &str, shared: &Arc<Shared>) {
+    let _ = client.set_nodelay(true);
+    let exchange = Arc::new(Mutex::new(Exchange::default()));
+    match TcpStream::connect(upstream) {
+        Ok(gateway) => {
+            let _ = gateway.set_nodelay(true);
+            let (Ok(client_back), Ok(gateway_back)) = (client.try_clone(), gateway.try_clone())
+            else {
+                let _ = client.shutdown(Shutdown::Both);
+                return;
+            };
+            let answers = {
+                let (exchange, shared) = (Arc::clone(&exchange), Arc::clone(shared));
+                std::thread::spawn(move || responses(gateway_back, client_back, &exchange, &shared))
+            };
+            requests(client, Some(gateway), host, &exchange, shared);
+            let _ = answers.join();
+        }
+        // No gateway: the server's first request is read, and fails.
+        Err(_) => requests(client, None, host, &exchange, shared),
+    }
+    fail_unanswered(&exchange, shared);
 }
 
-/// Server to gateway: forwards bytes and queues each request as it ends.
+/// Server to gateway: forwards each request with its `Host` line naming the
+/// gateway. A request is queued as soon as all of it came and before its
+/// last bytes go on, so its response always finds it. Without a gateway it
+/// reads the first request only, and closes.
 fn requests(
     mut client: TcpStream,
-    mut gateway: TcpStream,
-    pending: &Mutex<VecDeque<Pending>>,
+    mut gateway: Option<TcpStream>,
+    host: &str,
+    exchange: &Mutex<Exchange>,
     shared: &Shared,
 ) {
+    // The bytes from the current request's first on; `sent` of them went on
+    // (0 until its head is all in).
     let mut buffer = Vec::new();
+    let mut sent = 0;
     let mut started: Option<Instant> = None;
     let mut chunk = [0_u8; 64 * 1024];
     loop {
@@ -403,11 +512,22 @@ fn requests(
             Ok(read) => read,
         };
         started.get_or_insert_with(Instant::now);
-        if gateway.write_all(&chunk[..read]).is_err() {
-            break;
-        }
         buffer.extend_from_slice(&chunk[..read]);
-        while let Some((end, _)) = message_end(&buffer, false) {
+        let mut out = Vec::new();
+        let mut queued = false;
+        loop {
+            if sent == 0 {
+                let Some(head_at) = head_end(&buffer) else {
+                    break;
+                };
+                out.extend_from_slice(&with_host(&buffer[..head_at], host));
+                sent = head_at;
+            }
+            let Some((end, _)) = message_end(&buffer, false) else {
+                out.extend_from_slice(&buffer[sent..]);
+                sent = buffer.len();
+                break;
+            };
             let body_at = head_end(&buffer).unwrap_or(end);
             let call = Pending {
                 seq: shared.next_seq.fetch_add(1, Ordering::Relaxed),
@@ -415,31 +535,57 @@ fn requests(
                 bytes: end,
                 shape: shape(&buffer[body_at..end]),
             };
-            if let Ok(mut queue) = pending.lock() {
-                queue.push_back(call);
-            }
+            settle(
+                shared,
+                exchange.lock().ok().and_then(|mut exchange| exchange.request(call)),
+            );
+            queued = true;
+            out.extend_from_slice(&buffer[sent..end]);
             buffer.drain(..end);
+            sent = 0;
             if !buffer.is_empty() {
                 started = Some(Instant::now());
             }
         }
+        let stop = match gateway.as_mut() {
+            Some(gateway) => gateway.write_all(&out).is_err(),
+            None => queued,
+        };
+        if stop {
+            break;
+        }
     }
-    let _ = gateway.shutdown(Shutdown::Write);
+    match gateway {
+        Some(gateway) => {
+            let _ = gateway.shutdown(Shutdown::Write);
+        }
+        None => {
+            let _ = client.shutdown(Shutdown::Both);
+        }
+    }
 }
 
-/// Gateway to server: forwards bytes and records each answered request.
+/// Gateway to server: forwards bytes and records each response with the
+/// request it answers. When the gateway's side ends no response can come
+/// any more: the requests still unanswered failed, and the server's side
+/// closes too, so the server sees the failure at once.
 fn responses(
     mut gateway: TcpStream,
     mut client: TcpStream,
-    pending: &Mutex<VecDeque<Pending>>,
+    exchange: &Mutex<Exchange>,
     shared: &Shared,
 ) {
     let mut buffer = Vec::new();
     let mut first_byte: Option<Instant> = None;
     let mut chunk = [0_u8; 64 * 1024];
+    let mut closed = false;
     loop {
         let read = match gateway.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => {
+                closed = true;
+                break;
+            }
+            Err(_) => break,
             Ok(read) => read,
         };
         first_byte.get_or_insert_with(Instant::now);
@@ -450,24 +596,41 @@ fn responses(
         while let Some((end, parsed)) = message_end(&buffer, true) {
             buffer.drain(..end);
             // An interim 1xx answers nothing yet.
-            if parsed.status / 100 != 1
-                && let Some(call) = pending.lock().ok().and_then(|mut queue| queue.pop_front())
-            {
-                shared.answered(call, first_byte.take(), parsed.status, end);
+            if parsed.status / 100 != 1 {
+                let answer = Answer {
+                    first_byte: first_byte.take(),
+                    end: Instant::now(),
+                    status: parsed.status,
+                    bytes: end,
+                };
+                settle(
+                    shared,
+                    exchange.lock().ok().and_then(|mut exchange| exchange.response(answer)),
+                );
             }
             if !buffer.is_empty() {
                 first_byte = Some(Instant::now());
             }
         }
     }
-    // A body framed by the close ends here.
+    // A response begun and not ended: a body framed by the close ends here
+    // if the gateway closed cleanly; any other was cut off, and failed.
     if let Some(end) = head_end(&buffer) {
         let parsed = head(&buffer[..end], true);
-        if let Some(call) = pending.lock().ok().and_then(|mut queue| queue.pop_front()) {
-            shared.answered(call, first_byte.take(), parsed.status, buffer.len());
-        }
+        let whole = closed && parsed.body == Body::UntilClose;
+        let answer = Answer {
+            first_byte: first_byte.take(),
+            end: Instant::now(),
+            status: if whole { parsed.status } else { 0 },
+            bytes: buffer.len(),
+        };
+        settle(
+            shared,
+            exchange.lock().ok().and_then(|mut exchange| exchange.response(answer)),
+        );
     }
-    let _ = client.shutdown(Shutdown::Write);
+    fail_unanswered(exchange, shared);
+    let _ = client.shutdown(Shutdown::Both);
 }
 
 /// The calls' summary for the report: counts, ms spread, the most calls
@@ -513,7 +676,129 @@ pub(super) fn summary(calls: &[CallRecord], from_ms: f64, to_ms: f64) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read as _, Write as _};
+
     use super::*;
+
+    #[test]
+    fn with_host_names_the_gateway_and_keeps_every_other_byte() {
+        let head = b"POST /v1/chat/completions HTTP/1.1\r\nhost: 127.0.0.1:5555\r\nContent-Length: 2\r\n\r\n";
+        assert_eq!(
+            with_host(head, "models.example:8080"),
+            b"POST /v1/chat/completions HTTP/1.1\r\nHost: models.example:8080\r\nContent-Length: 2\r\n\r\n"
+                .to_vec()
+        );
+    }
+
+    #[test]
+    fn exchange_pairs_a_response_that_ended_before_its_request() {
+        let call = |seq| Pending {
+            seq,
+            start: Instant::now(),
+            bytes: 0,
+            shape: RequestShape::default(),
+        };
+        let answer = |status| Answer {
+            status,
+            ..Answer::failed()
+        };
+        let mut exchange = Exchange::default();
+        let early = exchange.response(answer(429)).is_none();
+        let first = exchange.request(call(1)).map(|(c, a)| (c.seq, a.status));
+        let second_waits = exchange.request(call(2)).is_none();
+        let second = exchange.response(answer(200)).map(|(c, a)| (c.seq, a.status));
+        assert_eq!(
+            (early, first, second_waits, second),
+            (true, Some((1, 429)), true, Some((2, 200)))
+        );
+    }
+
+    /// One connection through the proxy: a fast 429, then a request the
+    /// gateway reads and drops with no answer. Both calls are recorded, in
+    /// order, and the gateway sees its own authority in each `Host`.
+    #[test]
+    fn proxy_records_a_fast_answer_and_a_dropped_call_and_names_the_gateway_host() {
+        let gateway = TcpListener::bind("127.0.0.1:0").expect("gateway bind");
+        let gateway_port = gateway.local_addr().expect("gateway addr").port();
+        let seen = std::thread::spawn(move || {
+            let (mut socket, _) = gateway.accept().expect("gateway accept");
+            let (mut heads, mut buffer, mut chunk) = (Vec::new(), Vec::new(), [0_u8; 4096]);
+            let fast: &[u8] = b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n";
+            for answer in [Some(fast), None] {
+                let end = loop {
+                    if let Some((end, _)) = message_end(&buffer, false) {
+                        break end;
+                    }
+                    let read = socket.read(&mut chunk).expect("gateway read");
+                    assert!(read > 0, "the request came whole");
+                    buffer.extend_from_slice(&chunk[..read]);
+                };
+                let head_at = head_end(&buffer).expect("request head");
+                heads.push(String::from_utf8_lossy(&buffer[..head_at]).into_owned());
+                buffer.drain(..end);
+                if let Some(answer) = answer {
+                    socket.write_all(answer).expect("gateway write");
+                }
+            }
+            // Drops the socket: the second request is never answered.
+            heads
+        });
+        let jsonl = std::env::temp_dir().join(format!("call-proxy-{}.jsonl", std::process::id()));
+        let proxy = CallProxy::start(
+            &format!("http://127.0.0.1:{gateway_port}/v1"),
+            Instant::now(),
+            jsonl.clone(),
+        )
+        .expect("proxy start")
+        .expect("an http gateway is proxied");
+        let proxy_authority = proxy
+            .base_url
+            .trim_start_matches("http://")
+            .trim_end_matches("/v1")
+            .to_owned();
+        let mut server = TcpStream::connect(&proxy_authority).expect("connect to the proxy");
+        let body: &[u8] = br#"{"model":"m","messages":[]}"#;
+        let request = [
+            format!(
+                "POST /v1/chat/completions HTTP/1.1\r\nHost: {proxy_authority}\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+            body,
+        ]
+        .concat();
+        server.write_all(&request).expect("send the first request");
+        let (mut answer, mut chunk) = (Vec::new(), [0_u8; 4096]);
+        while message_end(&answer, true).is_none() {
+            let read = server.read(&mut chunk).expect("read the first answer");
+            assert!(read > 0, "the first answer came");
+            answer.extend_from_slice(&chunk[..read]);
+        }
+        server.write_all(&request).expect("send the second request");
+        let mut rest = Vec::new();
+        let _ = server.read_to_end(&mut rest);
+        let heads = seen.join().expect("gateway thread");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while proxy.calls().len() < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let calls: Vec<(u64, u16)> = proxy.calls().iter().map(|c| (c.seq, c.status)).collect();
+        let _ = std::fs::remove_file(&jsonl);
+        let (gateway_host, proxy_host) = (
+            format!("\r\nHost: 127.0.0.1:{gateway_port}\r\n"),
+            format!("\r\nHost: {proxy_authority}\r\n"),
+        );
+        assert_eq!(
+            (
+                calls,
+                heads.len(),
+                heads.iter().all(|head| head.contains(&gateway_host)),
+                heads.iter().any(|head| head.contains(&proxy_host)),
+                rest.is_empty(),
+            ),
+            (vec![(1, 429), (2, 0)], 2, true, false, true)
+        );
+    }
 
     #[test]
     fn message_end_frames_length_chunked_and_interim() {
