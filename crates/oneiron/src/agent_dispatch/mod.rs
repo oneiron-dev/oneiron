@@ -115,6 +115,7 @@ mod types;
 mod widen;
 pub mod widen_doors;
 mod widen_record;
+mod work_room;
 mod workflow;
 mod workflow_host;
 mod workflow_pump;

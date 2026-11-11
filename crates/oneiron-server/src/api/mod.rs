@@ -248,6 +248,8 @@ pub(crate) use self::mcp_gateway::{
     ride_run_carrier, run_brief_people_budget, run_brief_pins, run_session_reads,
     swap_oauth_access_token,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::run_board_pins_for_test;
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;
