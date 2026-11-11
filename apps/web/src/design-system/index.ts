@@ -181,6 +181,7 @@ export { AppFrame, type AppFrameProps, type AppFrameFoldProps } from './frame/Ap
 export { peekReducer, PEEK_CLOSED, PEEK_DELAY_MS, PEEK_WARM_MS, type PeekState, type PeekAction } from './frame/frame-peek'
 export { moveItem, dropIndex, leadingEdge, shiftFor } from './frame/reorder'
 export { VaultSwitch, type VaultSwitchProps, type VaultSwitchVault } from './frame/VaultSwitch'
+export { ActivityMark, ACTIVITY_KIND_LABEL, type ActivityMarkProps, type ActivityKind } from './frame/ActivityMark'
 export {
   ActivityList,
   ActivityRow,
@@ -188,7 +189,6 @@ export {
   type ActivityListProps,
   type ActivityRowProps,
   type ActivityDayProps,
-  type ActivityKind,
   type ActivityAge,
 } from './frame/ActivityList'
 export { SortCycle, type SortCycleProps, type SortCycleOption } from './frame/SortCycle'

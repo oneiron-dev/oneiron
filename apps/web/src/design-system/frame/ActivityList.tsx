@@ -1,62 +1,12 @@
 import * as React from 'react'
-import { GuestRing } from '../marks/GuestRing'
-import { StatusDot } from '../marks/StatusDot'
 import { NeedsYou, useNeedsYouAnswerStatus } from '../patterns/NeedsYou'
 import { Figure } from '../primitives/Figure'
 import { Icon } from '../primitives/Icon'
 import { cx } from '../lib/react-utils'
+import { ActivityMark, type ActivityKind } from './ActivityMark'
 
-export type ActivityKind = 'needs-you' | 'running' | 'mention' | 'done' | 'reaction' | 'outside'
+export type { ActivityKind } from './ActivityMark'
 export type ActivityAge = 'today' | 'yesterday' | 'older'
-
-/* What a screen reader hears for each mark. */
-const KIND_WORD: Record<ActivityKind, string> = {
-  'needs-you': 'waits on you',
-  running: 'running',
-  mention: 'mentioned you',
-  done: 'done',
-  reaction: 'reacted',
-  outside: 'from another vault',
-}
-
-/* The working mark: a short half-tone segment, the steps bar's working
-   screen (one 1 px dot on every other pixel of a 12 x 6 box). */
-const HALFTONE = Array.from({ length: 12 * 6 }, (_, i) => [i % 12, Math.floor(i / 12)] as const)
-  .filter(([x, y]) => (x + y) % 2 === 0)
-  .map(([x, y]) => `M${x} ${y}h1v1h-1z`)
-  .join('')
-
-function KindMark({ kind }: { kind: ActivityKind }) {
-  const word = KIND_WORD[kind]
-  let mark: React.ReactNode
-  switch (kind) {
-    case 'needs-you':
-      return <StatusDot state="waiting" label={word} className="sl-activity-mark" data-kind={kind} />
-    case 'outside':
-      return <GuestRing label={word} className="sl-activity-mark" data-kind={kind} />
-    case 'running':
-      mark = (
-        <svg viewBox="0 0 12 6" width="12" height="6" shapeRendering="crispEdges" aria-hidden="true" focusable="false">
-          <path d={HALFTONE} />
-        </svg>
-      )
-      break
-    case 'mention':
-      mark = <Icon name="at" size={15} />
-      break
-    case 'done':
-      mark = <Icon name="check" size={15} />
-      break
-    case 'reaction':
-      mark = <Icon name="smile" size={15} />
-      break
-  }
-  return (
-    <span role="img" aria-label={word} className="sl-activity-mark" data-kind={kind}>
-      {mark}
-    </span>
-  )
-}
 
 /* ── the list ───────────────────────────────────────────────────────────── */
 
@@ -155,7 +105,7 @@ function ActivityRowBody({
       <div className="sl-activity-row-inner">
         <button type="button" className="sl-activity-row-main" onClick={onOpen}>
           <span className="sl-activity-slot" data-slot="what">
-            <KindMark kind={kind} />
+            <ActivityMark kind={kind} />
           </span>
           <span className="sl-activity-slot" data-slot="who">
             <span className="sl-activity-glyph">{glyph}</span>

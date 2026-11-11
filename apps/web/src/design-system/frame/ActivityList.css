@@ -147,27 +147,6 @@
   justify-content: flex-end;
 }
 
-/* Marks: a ring waits on you, half-tone runs, a symbol for the rest. */
-.sl-activity-mark {
-  display: grid;
-  place-items: center;
-  color: var(--sl-activity-ink);
-}
-
-.sl-activity-mark[data-kind="running"] svg {
-  display: block;
-  fill: var(--sl-ink-2);
-}
-
-.sl-activity-mark[data-kind="done"] {
-  color: var(--sl-ink-3);
-}
-
-.sl-status-dot.sl-activity-mark,
-.sl-guest-ring.sl-activity-mark {
-  display: inline-block;
-}
-
 /* The second line of an open needs-you row sits under the sentence. */
 .sl-activity-row-line {
   padding: 0 8px 8px calc(8px + 22px + 12px);
