@@ -4564,7 +4564,7 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
         content: `This distinct person is ${personName}.`,
         is_visible: true, order: 0,
       }, {
-        author: "assistant", message_type: "text",
+        author: "companion", message_type: "text",
         content: `Generated disagreement: the person's preferred display name is ${generatedValue}. ${inferredValue}`,
         is_visible: true, order: 1,
       }],
