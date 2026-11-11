@@ -200,6 +200,11 @@ impl Vault {
         if let Some(at) = crate::runtime_hooks::next_tick_release_at(self)? {
             owed.push((HousekeepingSweep::ModelPackRetirement, at));
         }
+        // The next due timer turn program (untangle slice 6.8c), released
+        // where the ticks are, on the same carrier.
+        if let Some(at) = crate::dreamer_runner::next_program_timer_at(self)? {
+            owed.push((HousekeepingSweep::ModelPackRetirement, at));
+        }
         let mut earliest: Option<u64> = None;
         for (sweep, at) in owed {
             let Runner::Engine { every, .. } = sweep.runner() else {
@@ -421,7 +426,8 @@ impl Vault {
 /// no hook runner (`--no-hooks`, no sandbox, a sandbox that failed to load)
 /// still settles a watch TASK at its due time and drops the ticks no binding
 /// reads again, and `oneiron maintain` settles a stopped vault's due watch
-/// TASKs. Beside a live runner, a row two releases both plan moves once, and
+/// TASKs. Due timer and moved feed turn programs are released after the ticks
+/// (untangle slice 6.8c). Beside a live runner, a row two releases both plan moves once, and
 /// a row two prunes both plan goes once (`prune_hook_feeds`). A failed
 /// release or prune is logged and retried on the next pass.
 fn release_ticks_and_prune_hook_feeds(vault: &Vault, deadline: &Deadline) {
@@ -438,6 +444,12 @@ fn release_ticks_and_prune_hook_feeds(vault: &Vault, deadline: &Deadline) {
             }
         }
     }
+    if deadline.stopped() {
+        return;
+    }
+    // Timer and feed turn programs are released beside the ticks (untangle
+    // slice 6.8c), and what they owe is admitted.
+    crate::dreamer_runner::release_program_wakes(vault, vault.now_recorded_at());
     if deadline.stopped() {
         return;
     }
