@@ -106,33 +106,15 @@ pub(crate) fn dreamer_landing_verdict_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: crate::WriteActor,
 ) -> Result<Option<DreamerLandingVerdict>> {
-    let policy = super::resolve_policy_manifest(store, txn)?;
-    if !policy.lands_generated_auto(
-        actor.actor_class().gate_actor_class(),
-        &actor.entity_ref().to_hex(),
-    ) {
-        return Ok(None);
-    }
-    let grant_ref = match crate::federation::steward_grant_of_in(store, txn, actor.entity_ref())? {
-        None => DREAMER_LANDING_ROWS_REF.to_owned(),
-        Some(None) => return Ok(None),
-        Some(Some(grant)) => {
-            let verbs = crate::federation::standing_steward_verbs_in(
-                store,
-                txn,
-                grant,
-                actor.entity_ref(),
-            )?;
-            if !verbs.contains(crate::federation::grant_scope::STEWARD_ARCHIVE_VERB) {
-                return Ok(None);
-            }
-            grant.to_hex()
-        }
-    };
-    Ok(Some(DreamerLandingVerdict {
-        frontier: policy.read_frontier_hash()?,
-        grant_ref,
-    }))
+    // One judge (untangle 6.7a): the archive case of the derive verdict.
+    Ok(
+        super::derive_verdict_in_txn(store, txn, actor, super::DeriveCapability::Archive, None)?
+            .ok()
+            .map(|allowance| DreamerLandingVerdict {
+                frontier: allowance.frontier,
+                grant_ref: allowance.grant_ref,
+            }),
+    )
 }
 
 /// The trusted pack the grant edits, and its body: the one owner-authored
@@ -630,4 +612,69 @@ fn push_dreamer_rows(
         )?;
     }
     Ok(changed)
+}
+
+/// TEST-ONLY (untangle 6.7d): `live` with the rows an owner's policy gives
+/// an ordinary agent that derives: its `core:read` grant, an `agent` Auto
+/// ceiling, and the actor-bound, receipted and warned `generated` permit.
+/// The last two are its landing rows, as [`push_dreamer_rows`] writes the
+/// Dreamer's under the `system` class.
+///
+/// # Errors
+///
+/// A live policy that is not a map, or rows that are not lists.
+#[cfg(oneiron_test_support)]
+pub(crate) fn body_with_agent_derive_rows(live: &[u8], actor_ref: &str) -> Result<Vec<u8>> {
+    let mut entries = decode_live(live)?;
+    push_unless_bound(
+        entry_mut(&mut entries, POLICY_ACTOR_CEILINGS_KEY),
+        actor_ref,
+        Value::Map(vec![
+            (Value::from(ACTOR_CLASS_KEY), Value::from("agent")),
+            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+            (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+        ]),
+    )?;
+    push_unless_bound(
+        entry_mut(&mut entries, POLICY_SCOPED_GRANTS_KEY),
+        actor_ref,
+        Value::Map(vec![
+            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+            (
+                Value::from("effector"),
+                Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
+            ),
+            (
+                Value::from("scope"),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::read_preset(),
+                )?,
+            ),
+            (Value::from("receipt_required"), Value::Boolean(false)),
+        ]),
+    )?;
+    let sources = entry_mut(&mut entries, POLICY_SOURCE_TRUST_KEY);
+    if matches!(sources, Value::Nil) {
+        *sources = Value::Map(Vec::new());
+    }
+    let Value::Map(sources) = sources else {
+        return Err(invalid("live source trust is not a map"));
+    };
+    push_unless_bound(
+        entry_mut(sources, ClaimSource::Generated.as_str()),
+        actor_ref,
+        Value::Map(vec![
+            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+            (
+                Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+            ),
+            (
+                Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                Value::Boolean(true),
+            ),
+            (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+        ]),
+    )?;
+    encode_live(entries)
 }
