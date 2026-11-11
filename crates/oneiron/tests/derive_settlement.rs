@@ -18,8 +18,8 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derivation_floor::{define_agent, write_derived_claim};
 use oneiron::test_doors::derive::{
-    Claim, Derived, Named, Settle, Settlement, Supersede, claim_lifecycle, commit, open_conflict,
-    refusal_receipt,
+    Claim, Derived, Named, Settle, Settlement, Supersede, claim_lifecycle, commit,
+    define_auto_agent, grant_derive_rows, open_conflict, refusal_receipt,
 };
 use oneiron::test_doors::steward::{
     STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, dreamer, stand_steward_grant,
@@ -31,6 +31,8 @@ const READER: &str = "reader";
 const PROTECTED: &str = "gate.deny.derive.supersede_protected_source";
 const REPLACEMENT_UNSETTLED: &str = "gate.deny.derive.supersede_replacement_unsettled";
 const LACKS_DERIVE: &str = "gate.deny.derive.grant_lacks_derive";
+const LIFECYCLE: &str = "gate.deny.derive.supersede_lifecycle";
+const OUTSIDE_GRANT: &str = "gate.deny.derive.outside_grant";
 const SETTLE_REFUSED: &str = "gate.deny.derive.settle_refused";
 
 fn put(vault: &Vault, entity_type: u8, body: &[u8]) -> EntityId {
@@ -323,6 +325,68 @@ fn a_supersession_needs_the_derive_grant() {
 }
 
 #[test]
+fn a_supersession_over_a_claim_outside_the_actors_read_answers_as_one_over_no_claim() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let second = landed_claim(&fixture, "a cortado");
+    let stated = stated_claim(&fixture, "a black filter coffee");
+    // Derive and archive with no read: the grant still reaches every claim,
+    // and the Dreamer reads none.
+    stand_steward_grant(
+        &fixture.vault,
+        fixture.dreamer,
+        &["derive", STEWARD_ARCHIVE_VERB],
+    )
+    .expect("a grant without read");
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-unread-pair",
+        &[
+            Derived::Supersede(Supersede {
+                local: "replace_unread",
+                new: Named::Stored(second),
+                old: Named::Stored(first),
+            }),
+            Derived::Supersede(Supersede {
+                local: "replace_stated",
+                new: Named::Stored(second),
+                old: Named::Stored(stated),
+            }),
+            Derived::Supersede(Supersede {
+                local: "replace_none",
+                new: Named::Stored(second),
+                old: Named::Stored(EntityId::now()),
+            }),
+        ],
+    )
+    .expect("commit");
+    let [unread, over_stated, none] = committed.items.as_slice() else {
+        panic!("three items: {:?}", committed.items);
+    };
+    assert!(
+        !unread.landed,
+        "a claim its actor does not read is not closed: {unread:?}"
+    );
+    assert_eq!(unread.reasons, vec![LIFECYCLE.to_owned()]);
+    assert_eq!(
+        over_stated.reasons, unread.reasons,
+        "the refusal does not say an unread claim is user-stated"
+    );
+    assert_eq!(
+        none.reasons, unread.reasons,
+        "a claim outside the read and one that was never stored answer alike"
+    );
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, first).expect("read"),
+        Some("active".to_owned()),
+        "the unread claim stands"
+    );
+}
+
+#[test]
 fn a_derived_settlement_keeps_one_member_of_an_open_conflict() {
     let fixture = fixture();
     let first = landed_claim(&fixture, "an oat milk flat white");
@@ -413,5 +477,151 @@ fn a_settlement_needs_the_derive_grant() {
     assert_eq!(
         claim_lifecycle(&fixture.vault, first).expect("read"),
         Some("active".to_owned())
+    );
+}
+
+#[test]
+fn a_settlement_of_a_conflict_outside_the_actors_read_is_refused() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let second = landed_claim(&fixture, "a cortado");
+    let marker = open_conflict(&fixture.vault, second, first).expect("an open conflict");
+    // Derive and archive with no read: the grant still reaches the marker,
+    // and the Dreamer reads neither it nor its members.
+    stand_steward_grant(
+        &fixture.vault,
+        fixture.dreamer,
+        &["derive", STEWARD_ARCHIVE_VERB],
+    )
+    .expect("a grant without read");
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-settle-unread",
+        &[Derived::Settle(Settle {
+            local: "keep_second",
+            marker: Named::Stored(marker),
+            settlement: Settlement::Keep(Named::Stored(second)),
+        })],
+    )
+    .expect("commit");
+    let [settled] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(
+        !settled.landed,
+        "a conflict its actor does not read is not settled: {settled:?}"
+    );
+    assert_eq!(settled.reasons, vec![SETTLE_REFUSED.to_owned()]);
+    assert!(settled.rows.is_empty(), "no member's id is answered");
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, first).expect("read"),
+        Some("active".to_owned()),
+        "both members stand"
+    );
+}
+
+#[test]
+fn a_settlement_naming_no_stored_row_is_refused_alone() {
+    let fixture = fixture();
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-settle-nothing",
+        &[
+            Derived::Settle(Settle {
+                local: "settle_nothing",
+                marker: Named::Stored(EntityId::now()),
+                settlement: Settlement::Dismiss,
+            }),
+            coffee(&fixture, "beside_it", "a cortado"),
+        ],
+    )
+    .expect("the batch commits: a marker that names no row refuses its own item");
+    let [settled, beside_it] = committed.items.as_slice() else {
+        panic!("two items: {:?}", committed.items);
+    };
+    assert!(!settled.landed);
+    assert_eq!(settled.reasons, vec![SETTLE_REFUSED.to_owned()]);
+    assert_eq!(
+        refusal_receipt(&fixture.vault, committed.batch, "settle_nothing").expect("read"),
+        Some(vec![SETTLE_REFUSED.to_owned()])
+    );
+    assert!(beside_it.landed, "the item beside it lands: {beside_it:?}");
+}
+
+#[test]
+fn an_agent_with_no_steward_grant_settles_and_supersedes_nothing() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let second = landed_claim(&fixture, "a cortado");
+    let third = landed_claim(&fixture, "an espresso");
+    let marker = open_conflict(&fixture.vault, second, first).expect("an open conflict");
+    // An ordinary agent that reads the vault and lands what it derives at
+    // Auto. It holds no Steward grant, and no conflict review Grant.
+    let agent = define_auto_agent(&fixture.vault).expect("an agent");
+    grant_derive_rows(&fixture.vault, &[agent]).expect("the agent's derive rows");
+
+    let committed = commit(
+        &fixture.vault,
+        agent,
+        EdgeActorClass::Agent,
+        "run-no-steward-grant",
+        &[
+            Derived::Settle(Settle {
+                local: "dismiss",
+                marker: Named::Stored(marker),
+                settlement: Settlement::Dismiss,
+            }),
+            Derived::Supersede(Supersede {
+                local: "replace_third",
+                new: Named::Stored(second),
+                old: Named::Stored(third),
+            }),
+        ],
+    )
+    .expect("commit");
+    let [dismiss, replace_third] = committed.items.as_slice() else {
+        panic!("two items: {:?}", committed.items);
+    };
+    assert!(
+        !dismiss.landed,
+        "landing rows alone settle no conflict: {dismiss:?}"
+    );
+    assert_eq!(dismiss.reasons, vec![OUTSIDE_GRANT.to_owned()]);
+    assert!(
+        !replace_third.landed,
+        "landing rows alone close no stored claim: {replace_third:?}"
+    );
+    assert_eq!(replace_third.reasons, vec![OUTSIDE_GRANT.to_owned()]);
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, third).expect("read"),
+        Some("active".to_owned())
+    );
+
+    // The conflict is still open: the Dreamer, which settles with no grant
+    // step, answers it.
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-dreamer-settles",
+        &[Derived::Settle(Settle {
+            local: "keep_second",
+            marker: Named::Stored(marker),
+            settlement: Settlement::Keep(Named::Stored(second)),
+        })],
+    )
+    .expect("commit");
+    let [settled] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(
+        settled.landed,
+        "the conflict the agent could not settle is still open: {settled:?}"
     );
 }
