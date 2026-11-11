@@ -399,6 +399,9 @@ impl Vault {
                 },
             )?;
             self.delete_agent_grant_row_in_txn(txn, *grant)?;
+            // The mark goes with the grant; the mint that follows marks the
+            // grant that replaces it (6.3c).
+            self.unmark_system_critical_in_txn(txn, *grant)?;
         }
         Ok(standing)
     }
