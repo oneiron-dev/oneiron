@@ -11,19 +11,21 @@ export interface ProgressDonutProps extends Omit<React.ComponentPropsWithRef<'sp
   size?: DonutSize
   /* The tooltip and accessible name; `1 of 3 done, waits on you` by default. */
   label?: string
+  /* false: no tooltip of its own, for a donut inside a control that has one. */
+  tooltip?: boolean
 }
 
 /* Progress of a set of tasks, or of one task's steps, as a ring of arcs:
    done in the reading ink, working one step quieter, ahead in the track
    tone, failed as a dashed arc. The middle holds a dot when something
    waits on the person, a check when all is done. Nothing in it moves. */
-export function ProgressDonut({ arcs, needsYou = false, size = 18, label, className, ...props }: ProgressDonutProps) {
+export function ProgressDonut({ arcs, needsYou = false, size = 18, label, tooltip = true, className, ...props }: ProgressDonutProps) {
   const geometry = donutSegments(arcs, size)
   const centre = donutCentre(arcs, needsYou)
   const name = label ?? donutLabel(arcs, needsYou)
   const mid = size / 2
   return (
-    <Tooltip label={name}>
+    <Tooltip label={name} disabled={!tooltip}>
       <span
         role="img"
         aria-label={name}

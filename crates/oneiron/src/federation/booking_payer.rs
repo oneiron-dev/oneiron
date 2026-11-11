@@ -208,7 +208,7 @@ fn confers_for_payer(grant: &FederationGrant, now: u64) -> bool {
 
 /// The purposes whose grant makes its member the payer (CALLS "FIX 5327
 /// payer purposes"): the standing purposes, as they already stand. A member
-/// grant (Owner, Admin, Member, Viewer or Delegate) of this shared vault, by
+/// grant (Owner, Deputy, Admin, Member, Viewer or Delegate) of this shared vault, by
 /// its nonzero id; an Ask guest's grant, with its guest payload, on a shared
 /// vault; a Connect guest's grant, on a shared or a personal vault. No grant
 /// verb names booking, and none is needed: standing to pay is not a view.
