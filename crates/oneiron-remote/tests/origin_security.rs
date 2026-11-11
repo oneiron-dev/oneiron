@@ -99,7 +99,7 @@ fn bearer_requests_do_not_follow_redirects() {
     let client = OneironClient::connect(&format!("http://{address}"), "bearer-secret")
         .expect("loopback client");
     let error = client
-        .receipts(1)
+        .vault_receipts(1, &[], None)
         .expect_err("redirects are not facade responses");
     peer.join().expect("fixture thread");
     assert_eq!(error.code, "INTERNAL_SERVER_ERROR");

@@ -555,7 +555,7 @@ pub(crate) fn apply_ops_session(
                 // `unix_seconds_now()` — a promoted edge must carry the time
                 // the turn happened, not the time it was promoted.
                 let value = encode_edge_value(*kind, *weight, entry.learned_at, *vad, None)?;
-                stage_edge_rows(view, wtxn, src, *kind, tgt, &value)?;
+                stage_edge_rows(view, view.read().base(), wtxn, src, *kind, tgt, &value)?;
             }
             BatchOp::Text { id, fields } => {
                 crate::store::text_index::index_text(view, wtxn, analyzer, id, fields)?;

@@ -5,6 +5,7 @@
 //! build reaches them. Hidden; never API.
 
 pub mod authority_view_grant;
+pub mod callable_skill;
 pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod consolidation;
@@ -13,5 +14,6 @@ pub mod label_writers;
 pub mod live_run_claim_put;
 pub mod retrieval_policy_default_floor;
 pub mod run_hold;
+pub mod scope_summary;
 pub mod untangle_regressions;
 pub mod wake_d1_park_release;
