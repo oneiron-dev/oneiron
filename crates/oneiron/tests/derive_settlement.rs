@@ -329,8 +329,9 @@ fn a_supersession_over_a_claim_outside_the_actors_read_answers_as_one_over_no_cl
     let fixture = fixture();
     let first = landed_claim(&fixture, "an oat milk flat white");
     let second = landed_claim(&fixture, "a cortado");
-    // Derive and archive with no read: the grant still reaches both claims,
-    // and the Dreamer reads neither.
+    let stated = stated_claim(&fixture, "a black filter coffee");
+    // Derive and archive with no read: the grant still reaches every claim,
+    // and the Dreamer reads none.
     stand_steward_grant(
         &fixture.vault,
         fixture.dreamer,
@@ -350,6 +351,11 @@ fn a_supersession_over_a_claim_outside_the_actors_read_answers_as_one_over_no_cl
                 old: Named::Stored(first),
             }),
             Derived::Supersede(Supersede {
+                local: "replace_stated",
+                new: Named::Stored(second),
+                old: Named::Stored(stated),
+            }),
+            Derived::Supersede(Supersede {
                 local: "replace_none",
                 new: Named::Stored(second),
                 old: Named::Stored(EntityId::now()),
@@ -357,14 +363,18 @@ fn a_supersession_over_a_claim_outside_the_actors_read_answers_as_one_over_no_cl
         ],
     )
     .expect("commit");
-    let [unread, none] = committed.items.as_slice() else {
-        panic!("two items: {:?}", committed.items);
+    let [unread, over_stated, none] = committed.items.as_slice() else {
+        panic!("three items: {:?}", committed.items);
     };
     assert!(
         !unread.landed,
         "a claim its actor does not read is not closed: {unread:?}"
     );
     assert_eq!(unread.reasons, vec![LIFECYCLE.to_owned()]);
+    assert_eq!(
+        over_stated.reasons, unread.reasons,
+        "the refusal does not say an unread claim is user-stated"
+    );
     assert_eq!(
         none.reasons, unread.reasons,
         "a claim outside the read and one that was never stored answer alike"
