@@ -101170,6 +101170,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sufficiency_like_for_like.rs",
+     "purpose": "A sufficiency card reads unknown, not worse, when the comparison is not like for like: the set or rubric…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -102938,7 +102946,7 @@
    "over_bar": 250,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7336,
-   "test_files": 1016
+   "test_files": 1017
   },
   "oneiron-agent-runtime": {
    "files": [
