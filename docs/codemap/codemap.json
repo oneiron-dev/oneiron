@@ -5172,7 +5172,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 54,
+      "crate-vis": 56,
       "mod": 2,
       "re-export": 76
      }
@@ -5500,7 +5500,7 @@
      "path": "src/authority/past_grant_standing.rs",
      "purpose": "Prior signed owner-agent standing for main-log WorldPrivacy acts (FIX 4703)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -6792,7 +6792,7 @@
      "path": "src/authority/world_privacy.rs",
      "purpose": "Folds `WorldPrivacy` edits into each world's effective settings",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 2,
       "fn": 7,
       "re-export": 2,
@@ -6832,7 +6832,17 @@
      "path": "src/authority/world_strength.rs",
      "purpose": "Each world's settings-edit frontier and the strength of its edits (world privacy P2, re-cut for the mesh…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/world_undo_door.rs",
+     "purpose": "The authority-internal half of the FIX 22381 integration-test door",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -90475,6 +90485,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/authority_view_grant.rs",
+     "purpose": "Agent-binding fixture for the warm authority-view Grant regression",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/authority_world_undo.rs",
+     "purpose": "The concurrent agent world-edit fixture for FIX 22381",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/callable_skill.rs",
      "purpose": "Doors for `tests/skill_call_caller_sandbox.rs`: exact source persistence and callable outcome evidence under…",
      "surface": {
@@ -90591,7 +90621,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 20
+      "mod": 22
      }
     },
     {
@@ -98732,6 +98762,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/authority_view_deleted_grant.rs",
+     "purpose": "A deleted Grant must stop conferring on an already-cached authority view, and the warm reads that judge it…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/authority_world_undo_subset.rs",
+     "purpose": "FIX 22381: refusing agent world edits removes their effects, whichever of a world's agent edits they are…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/build_cache.rs",
      "purpose": "Public cache boundary: real vaults and BLOB_ARTIFACT versions only",
      "surface": {}
@@ -100149,7 +100195,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 279,
+     "files": 280,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101549,7 +101595,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 22,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101726,8 +101772,8 @@
    },
    "over_bar": 244,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7284,
-   "test_files": 957
+   "source_files": 7287,
+   "test_files": 959
   },
   "oneiron-agent-runtime": {
    "files": [
