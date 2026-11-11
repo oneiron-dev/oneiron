@@ -12,6 +12,7 @@ pub mod dag_append;
 pub mod derivation_floor;
 pub mod derive;
 pub mod derive_verbs;
+pub mod feeds;
 pub mod label_writers;
 pub mod live_run_claim_put;
 pub mod retrieval_policy_default_floor;
