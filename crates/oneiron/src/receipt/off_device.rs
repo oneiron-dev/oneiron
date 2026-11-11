@@ -101,6 +101,9 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
         ReceiptKind::RunHoldOverride,
         &["launch_ref", "artifact_ref", "thread_ref"],
     ),
+    // A check-in transition: the holders a rung pinned, and the holder who
+    // answered or extended. (ROLES-CHECKIN P2.2)
+    (ReceiptKind::CheckIn, &["holders", "by"]),
     // A served form: the ASSET it served, and the ASSET_TEXT it read in
     // place of the body. (FIX 4848)
     (ReceiptKind::ServedForm, &["asset_ref", "asset_text_ref"]),
