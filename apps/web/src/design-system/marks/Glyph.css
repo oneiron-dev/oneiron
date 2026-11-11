@@ -1,0 +1,134 @@
+/* Marks at the corners are cut out of the surface the glyph sits on: set
+   --sl-mark-ground to that surface (island by default). */
+.sl-glyph {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  vertical-align: middle;
+}
+
+.sl-glyph[data-size="18"] {
+  width: 18px;
+  height: 18px;
+}
+
+.sl-glyph[data-size="20"] {
+  width: 20px;
+  height: 20px;
+}
+
+.sl-glyph[data-size="32"] {
+  width: 32px;
+  height: 32px;
+}
+
+.sl-glyph[data-kind="resident"] {
+  border: 1px solid var(--sl-ink-3);
+}
+
+/* A line glyph stands bare: no frame. */
+.sl-glyph[data-form="line"] {
+  border: 0;
+}
+
+.sl-glyph[data-kind="person"] {
+  background: var(--sl-disc);
+  color: var(--sl-ink-1);
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-do);
+  line-height: 1;
+}
+
+.sl-glyph[data-shape="rounded"] {
+  border-radius: var(--sl-radius);
+}
+
+.sl-glyph[data-shape="round"] {
+  border-radius: 50%;
+}
+
+.sl-glyph-print {
+  display: block;
+  image-rendering: pixelated;
+  color: var(--sl-glyph-ink, var(--sl-ink-1));
+}
+
+.sl-glyph-line {
+  display: block;
+  color: var(--sl-glyph-ink, var(--sl-ink-2));
+}
+
+.sl-glyph-initial {
+  display: block;
+  padding-bottom: 2px;
+}
+
+.sl-glyph-state {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--sl-mark-ground, var(--sl-island));
+}
+
+.sl-glyph-state[data-state="idle"] {
+  background: var(--sl-ink-3);
+}
+
+.sl-glyph-state[data-state="working"] {
+  background: var(--sl-ink-1);
+  animation: sl-breathe 2.6s ease-in-out infinite;
+}
+
+.sl-glyph-state[data-state="waiting"] {
+  background: var(--sl-mark-ground, var(--sl-island));
+  box-shadow:
+    inset 0 0 0 1.5px var(--sl-ink-1),
+    0 0 0 2px var(--sl-mark-ground, var(--sl-island));
+}
+
+.sl-glyph-state[data-state="done"] {
+  display: grid;
+  place-items: center;
+  width: 9px;
+  height: 9px;
+  right: -3px;
+  bottom: -3px;
+  background: var(--sl-mark-ground, var(--sl-island));
+  box-shadow: none;
+  color: var(--sl-ink-2);
+}
+
+.sl-glyph-state svg {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
+
+.sl-glyph-state path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sl-glyph-guest {
+  position: absolute;
+  right: -3px;
+  top: -3px;
+  box-shadow:
+    inset 0 0 0 1.4px var(--sl-outside),
+    0 0 0 1.5px var(--sl-mark-ground, var(--sl-island));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-glyph-state[data-state="working"] {
+    animation: none;
+  }
+}
