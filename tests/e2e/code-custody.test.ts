@@ -525,10 +525,13 @@ function codeCustody06SlipId(credential: string): number[] {
   return slipId;
 }
 
-function codeCustody06ErrorBody(reply: { body: unknown }): Record<string, unknown> {
+function codeCustody06ErrorBody(reply: { body: unknown; status?: number; headers?: Headers }): Record<string, unknown> {
   const body = reply.body as { error?: unknown };
-  if (!body || typeof body !== "object" || !body.error || typeof body.error !== "object")
-    throw new Error("Expected an error envelope");
+  if (!body || typeof body !== "object" || !body.error || typeof body.error !== "object") {
+    // Shape only (status, media type, top-level keys), never values.
+    const shape = body && typeof body === "object" ? `keys=${JSON.stringify(Object.keys(body).sort())}` : `body_type=${typeof body}`;
+    throw new Error(`Expected an error envelope; status=${reply.status ?? "<none>"} content_type=${reply.headers?.get("content-type") ?? "<none>"} ${shape}`);
+  }
   return body.error as Record<string, unknown>;
 }
 
@@ -621,7 +624,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     expect(appendB.landed.version).toBe(1);
     const versionB = appendB.landed.version;
     // Register accepts a served name without .git and a short branch name.
-    const registered = await codeCustody06ExpectedSuccess(`ENGINE DEFECT 2026-11-11: FIX [ORIGIN-REGISTER-GIT-REF-FORMAT-UNSUPPORTED] origin.register runs git init --ref-format=files, which Git < 2.45 rejects (exit 129); CODE-CUSTODY-06 owner register vault.code.origin.register repo=${codeCustody06Repo} default_branch=main`, () =>
+    const registered = await codeCustody06ExpectedSuccess(`CODE-CUSTODY-06 owner register (FIX [ORIGIN-REGISTER-GIT-REF-FORMAT-UNSUPPORTED], fixed by #7052) vault.code.origin.register repo=${codeCustody06Repo} default_branch=main`, () =>
       engine.client.call("vault.code.origin.register", {
         repo: codeCustody06Repo, default_branch: "main",
       }));
