@@ -6,9 +6,12 @@
 //!
 //! - Each registration is armed once: its disarm always orders after its
 //!   arming. Between intents of the same kind, the writer's recorded time,
-//!   then the row's content digest decide. An arming rides the month it was
-//!   armed in, as `Armed`; a disarm rides the base window of its own month,
-//!   as `Disarmed`, and each machine that learns it keeps it (`DISARMED`).
+//!   then the row's content digest decide. An arming rides the base window
+//!   of its armed month, and the base window of each TURN whose wake for it
+//!   rides (beside that wake's `Owed` row, so the home that takes the wake
+//!   holds its arming whatever month it was armed in), as `Armed`; a disarm
+//!   rides the base window of its own month, as `Disarmed`, and each machine
+//!   that learns it keeps it (`DISARMED`).
 //!   A carried row takes its registration only when it comes later in that
 //!   order than the intent held here, so every machine that holds the same
 //!   rows holds the same intent, whatever order they arrived in, and a
@@ -537,6 +540,28 @@ pub(crate) fn turn_wake_rows_in_txn(
         }
     }
     Ok(rows)
+}
+
+/// The `Armed` row beside the `Owed` row emitted under `map_key` by
+/// [`turn_wake_rows_in_txn`] in the same snapshot.
+pub(crate) fn owed_wake_arming_row_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    map_key: &str,
+) -> Result<Option<(String, Vec<u8>)>> {
+    let Some(key) = wake_key_ids(map_key) else {
+        return Ok(None);
+    };
+    let Some(wake) = WAKE.get(vault, txn, &key)? else {
+        return Ok(None);
+    };
+    let Some(arming) = ARM.get(vault, txn, &(wake.authority.actor(), wake.registration))? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        arming_key(arming.registration),
+        encode(&ArmingRow::Armed(arming))?,
+    )))
 }
 
 /// The `Admitted` rows TURN `turn` owes the window from this machine's own
