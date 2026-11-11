@@ -27,7 +27,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
+  height: 36px;
   padding: 0 8px;
   border-radius: var(--sl-radius);
   color: var(--sl-ink-3);
