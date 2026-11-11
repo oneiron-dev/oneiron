@@ -1,9 +1,16 @@
 //! `oneiron doctor`: where the vault lives and how it is, read on a
 //! stopped vault or beside a running `serve` (moved out of `owner` whole).
 
+use std::path::PathBuf;
+
+use oneiron::store::ports::StoreClock;
+
 use crate::cli::DoctorArgs;
 use crate::commands::resolve_dict_search_paths;
-use crate::config::{BackupConfig, ServeArgs, resolve_backup_config, resolve_serve_config};
+use crate::config::{
+    BackupConfig, EnvConfig, ServeArgs, default_config_path, layer_serve_config,
+    resolve_backup_config, resolve_serve_config,
+};
 use crate::owner::backup::BackupPlan;
 use crate::owner::embedder::EmbedderReport;
 use crate::owner::location;
@@ -11,7 +18,9 @@ use crate::owner::location;
 /// Where the vault lives and how it is, then the rest of its health. Serve
 /// settings never stop this report: one that does not resolve is listed in
 /// `config_errors` beside it, and backups are read with the defaults if the
-/// `[backup]` section itself is what fails.
+/// `[backup]` section itself is what fails. When the settings that do not
+/// resolve leave the vault's clock unknown, the vault is not opened and the
+/// report holds where it lives ([`layered_store_clock`]).
 pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
     let vectors_from = args.vectors_from;
     let vectors_runtime = args.vectors_runtime;
@@ -31,18 +40,23 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
         }
     };
     // The shape `serve` and `import` open the vault in: the config's
-    // dimensions, map size and dictionaries, under the flags, and a sealed
+    // clock, dimensions, map size and dictionaries, under the flags, and a sealed
     // vault's page seal from this device's keystore (FIX 1944). The rest stays
     // the server default, so a configured embedder that disagrees with the
     // vault does not keep doctor from reporting it. Settings that do not
-    // resolve leave the flags over the defaults, and no seal.
+    // resolve leave the flags over the defaults, no seal, and the clock the
+    // layers select.
     let mut vault_config = oneiron::VaultConfig::server();
     let serve_config = resolve_serve_config(&serve);
     let unresolved = serve_config.is_err();
+    let mut clock_unknown = false;
     let mut embedder = None;
     let dict_search_paths = match serve_config {
         Ok(config) => {
             vault_config.page_seal = config.device_page_seal();
+            if let Some(clock) = config.runtime.store_clock() {
+                vault_config.store_clock = clock;
+            }
             vault_config.dimensions = config.dimensions;
             vault_config.map_size = config.map_size;
             embedder = config.embedder;
@@ -50,6 +64,11 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
         }
         Err(error) => {
             note_error(error);
+            match layered_store_clock(&serve) {
+                LayeredClock::Host => {}
+                LayeredClock::Selected(clock) => vault_config.store_clock = clock,
+                LayeredClock::Unknown => clock_unknown = true,
+            }
             vault_config.dimensions = args.dimensions.unwrap_or(vault_config.dimensions);
             vault_config.map_size = args.map_size.unwrap_or(vault_config.map_size);
             args.dict_search_paths.unwrap_or_default()
@@ -64,6 +83,28 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
     });
     let plan = BackupPlan::new(&args.path, backup.dir_for(&args.path), backup.keep);
     let every = backup.enabled.then_some(backup.every_hours);
+    if clock_unknown {
+        // An open runs the vault's recovery, which may record the time it
+        // reads for good, so a vault whose clock may be a manual one is not
+        // opened on the host's. The filesystem facts still answer "where is
+        // my data".
+        let mut location = location::locate(&args.path, None, &plan, every)?;
+        location.note = Some(
+            "the config did not resolve and may set a [runtime] clock other than the host's, \
+             so doctor did not open the vault; fix the config errors and run doctor again"
+                .to_owned(),
+        );
+        let embedder = EmbedderReport::unobserved(
+            embedder.as_ref(),
+            None,
+            "doctor did not open the vault: the config did not resolve",
+        );
+        return Ok(serde_json::json!({
+            "location": location,
+            "embedder": embedder,
+            "config_errors": config_errors,
+        }));
+    }
     // A vault that holds vectors opens only under its own model (bug repro:
     // doctor opened every vault under none and failed on each that holds
     // vectors). It is read without opening the vault; opening under it pins
@@ -126,4 +167,61 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
         report["config_errors"] = serde_json::to_value(config_errors)?;
     }
     Ok(report)
+}
+
+/// The vault clock a doctor whose serve config did not resolve opens under.
+enum LayeredClock {
+    /// The host's clock, which the vault config already holds.
+    Host,
+    /// The clock `[runtime] clock` selects.
+    Selected(StoreClock),
+    /// The config cannot be read far enough to tell.
+    Unknown,
+}
+
+/// The clock the config layers select for a doctor whose whole serve config
+/// did not resolve. A clock file that is missing or cannot be read fails
+/// validation, after the layers merge, so the merged runtime section still
+/// selects the manual clock, which then reads zero, never the host's time
+/// ([`crate::runtime::ManualClockFile`]). When the layers themselves do not
+/// merge, the clock is read from the config file alone: the environment and
+/// the flags set no clock, and doctor reads no settings file. A config path
+/// whose existence cannot be checked, a config file that does not read as
+/// TOML, or one whose `[runtime] clock` is not `"system"` leaves the clock
+/// unknown.
+fn layered_store_clock(serve: &ServeArgs) -> LayeredClock {
+    if let Ok(env) = EnvConfig::from_process()
+        && let Ok(layered) = layer_serve_config(serve, env, default_config_path())
+    {
+        return layered
+            .runtime
+            .store_clock()
+            .map_or(LayeredClock::Host, LayeredClock::Selected);
+    }
+    let path = serve
+        .config
+        .clone()
+        .or_else(|| std::env::var_os("ONEIRON_CONFIG").map(PathBuf::from))
+        .or_else(default_config_path);
+    // A path whose existence cannot be checked (a parent the process may not
+    // search) is not taken as absent: its file may select the manual clock.
+    let Some(path) = path else {
+        return LayeredClock::Host;
+    };
+    match path.try_exists() {
+        Ok(true) => {}
+        Ok(false) => return LayeredClock::Host,
+        Err(_) => return LayeredClock::Unknown,
+    }
+    let Ok(table) = std::fs::read_to_string(&path)
+        .map_err(drop)
+        .and_then(|raw| toml::from_str::<toml::Table>(&raw).map_err(drop))
+    else {
+        return LayeredClock::Unknown;
+    };
+    match table.get("runtime").and_then(|runtime| runtime.get("clock")) {
+        None => LayeredClock::Host,
+        Some(toml::Value::String(clock)) if clock == "system" => LayeredClock::Host,
+        Some(_) => LayeredClock::Unknown,
+    }
 }
