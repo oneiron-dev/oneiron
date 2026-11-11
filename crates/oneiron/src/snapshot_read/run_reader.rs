@@ -3,7 +3,9 @@
 //! owner reads as before. Any other caller reads a run it is the actor of,
 //! through its own read lane: every claim, artifact and source the answer
 //! derives from must read for it, as the existing caller projections judge.
-//! The Steward's reach over every run of its root is 6.4f.
+//! A Steward of this shared vault (ARCH-0043's seventh role, #6886) reads
+//! every run of its root the same way (slice 6.4f): it reads and organises
+//! everything in this vault, through its own read lane all the same.
 
 use crate::attempt_queue::AttemptId;
 use crate::edge::EdgeActorClass;
@@ -70,6 +72,30 @@ pub(crate) fn is_code_run_actor_in_txn(
     )
 }
 
+/// Whether `caller` holds a live Steward grant over this shared vault, as
+/// its membership standing reads in `txn`. A vault that is not shared has no
+/// Steward.
+///
+/// # Errors
+///
+/// Storage errors, and a conflicted vault root.
+pub(crate) fn is_steward_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    caller: WriteActor,
+) -> Result<bool> {
+    let Some(creation) = vault.shared_vault_creation_in_txn(txn)? else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        vault.membership_standing_in_txn(txn, creation.vault_id, &caller.entity_ref())?,
+        Some(crate::federation::MembershipStanding::Member {
+            role: crate::federation::FederationGrantRole::Steward,
+            ..
+        })
+    ))
+}
+
 fn caller_of(memory: &Memory<'_>) -> WriteActor {
     WriteActor::new(memory.actor(), memory.actor_class())
 }
@@ -77,18 +103,19 @@ fn caller_of(memory: &Memory<'_>) -> WriteActor {
 fn not_the_callers(verb: &str) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
-        format!("{verb} reads the owner's runs and the caller's own"),
-        &["Call it as the vault's owner, or for a run you are the actor of."],
+        format!("{verb} reads the owner's runs, a Steward's, and the caller's own"),
+        &["Call it as the vault's owner or a Steward, or for a run you are the actor of."],
     )
 }
 
 /// `vault.runs.step` for a caller other than the owner: one settled step of
-/// an attempt the caller is the actor of. `None` when no terminal claim
-/// records exactly this step.
+/// an attempt the caller is the actor of, or of any attempt for a Steward.
+/// `None` when no terminal claim records exactly this step.
 ///
 /// # Errors
 ///
-/// A malformed request; an attempt the caller is not the actor of, or a step
+/// A malformed request; an attempt the caller is not the actor of, for a
+/// caller that is no Steward, or a step
 /// whose claim or response does not read for the caller (`FORBIDDEN`); and
 /// storage errors.
 pub fn settled_step_as_reader(
@@ -100,6 +127,7 @@ pub fn settled_step_as_reader(
     let own = {
         let txn = memory.vault().store.env.read_txn().map_err(Error::from)?;
         is_attempt_actor_in_txn(memory.vault(), &txn, caller_of(memory), attempt)?
+            || is_steward_in_txn(memory.vault(), &txn, caller_of(memory))?
     };
     if !own {
         return Err(not_the_callers(VERB));
@@ -118,11 +146,13 @@ pub fn settled_step_as_reader(
 }
 
 /// `vault.runs.checkpoint` for a caller other than the owner: one page of a
-/// code run the caller is the actor of, every source read through its lane.
+/// code run the caller is the actor of, or of any code run for a Steward,
+/// every source read through its lane.
 ///
 /// # Errors
 ///
-/// A malformed request; a run the caller is not the actor of, or a source
+/// A malformed request; a run the caller is not the actor of, for a caller
+/// that is no Steward, or a source
 /// that does not read for it (`FORBIDDEN`); and storage errors.
 pub fn checkpoint_as_reader(
     memory: &Memory<'_>,
@@ -134,6 +164,7 @@ pub fn checkpoint_as_reader(
     let own = {
         let txn = memory.vault().store.env.read_txn().map_err(Error::from)?;
         is_code_run_actor_in_txn(memory.vault(), &txn, caller_of(memory), &run)?
+            || is_steward_in_txn(memory.vault(), &txn, caller_of(memory))?
     };
     if !own {
         return Err(not_the_callers(VERB));
