@@ -112,6 +112,16 @@ pub(in crate::api::facade) fn door_admits(
         Proof::ClaimSettler => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
         }
+        // The owner's proof, or an actor-bound credential whose own live Grant the proposal
+        // writer checks. A caller bound to no actor keeps the owner refusal.
+        Proof::ModelBindingProposer => {
+            owner_proof(auth, server, verb)
+                .map(drop)
+                .or_else(|refusal| {
+                    crate::api::facade::owner_binding::facade_caller_or(server, auth, || refusal)
+                        .map(drop)
+                })
+        }
         Proof::SharedPerson => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }
