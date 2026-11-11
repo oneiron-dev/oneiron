@@ -1145,10 +1145,9 @@ impl<'a> DreamerRunnerStore<'a> {
         self.park_attempt_with_wait_in_txn(wtxn, input, None)
     }
 
-    /// [`Self::park_attempt_in_txn`] with a typed wait: the refill or the delivery that resumes
-    /// the park. A wait exists only on a trap park (any other owner fails); the writer stamps its
-    /// lease fence from the queue row's `attempt_count`, read in this same transaction, never from
-    /// the caller.
+    /// [`Self::park_attempt_in_txn`] with the typed condition that resumes the park.
+    /// Step waits require a trap owner; Seat waits refuse a trap owner. The writer stamps the
+    /// lease fence from the queue row's `attempt_count` in this transaction, never from the caller.
     pub(crate) fn park_attempt_with_wait_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -1157,11 +1156,19 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<DreamerParkedAttemptRecord> {
         validate_park_reason(&input.reason)?;
         validate_park_owner(&input.park_owner)?;
-        if wait.is_some() && !matches!(ParkOwnerClass::of(&input.park_owner), ParkOwnerClass::Trap)
-        {
-            return Err(invalid_dreamer_runner(
-                "dreamer parked wait needs a trap park owner",
-            ));
+        if let Some(wait) = &wait {
+            let trap = matches!(ParkOwnerClass::of(&input.park_owner), ParkOwnerClass::Trap);
+            if matches!(wait, DreamerParkWait::Seat { .. }) {
+                if trap {
+                    return Err(invalid_dreamer_runner(
+                        "dreamer seat wait needs the driver's park owner, never a trap owner",
+                    ));
+                }
+            } else if !trap {
+                return Err(invalid_dreamer_runner(
+                    "dreamer parked wait needs a trap park owner",
+                ));
+            }
         }
         if self.status(input.attempt_id)?.is_none() {
             return Err(invalid_dreamer_runner("dreamer parked attempt must exist"));
@@ -1200,10 +1207,12 @@ impl<'a> DreamerRunnerStore<'a> {
         if let Some(existing) = &existing {
             super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, existing)?;
             super::program::unindex_program_hold_in_txn(self.vault, wtxn, existing)?;
+            super::seat_wait::unindex_seat_wait_in_txn(self.vault, wtxn, existing)?;
         }
         PARKED.put(self.vault, wtxn, &record.attempt_id, &record)?;
         super::outage_due::index_outage_due_in_txn(self.vault, wtxn, &record)?;
         super::program::index_program_hold_in_txn(self.vault, wtxn, &record)?;
+        super::seat_wait::index_seat_wait_in_txn(self.vault, wtxn, &record)?;
         crate::dreamer_wake::record_checkpoint_in_txn(self.vault, wtxn, &record);
         // WAKE-D1: a park only the owner's release resumes tells the owner, in its own write.
         super::park_release::raise_park_release_notice_in_txn(self.vault, wtxn, &record);
@@ -1263,6 +1272,7 @@ impl<'a> DreamerRunnerStore<'a> {
             .ok_or(invalid_dreamer_runner("dreamer resumed attempt must exist"))?;
         super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, &record)?;
         super::program::unindex_program_hold_in_txn(self.vault, wtxn, &record)?;
+        super::seat_wait::unindex_seat_wait_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
         // FIX 4747: a resuming agent run keeps its executor lease until its
         // next claim takes it.

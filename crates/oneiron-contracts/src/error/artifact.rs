@@ -225,6 +225,18 @@ pub enum ArtifactError {
     /// approval the decider already made.
     #[error("no amendment delta capture lane is available: {0}")]
     DeltaCaptureUnavailable(&'static str),
+    /// A seat-available write answered a generation the seat's row does not hold: no row, an
+    /// Available row, another generation, or (for a reset-passed write) a reset the recorded now
+    /// has not reached. Nothing was written.
+    #[error("model seat {} does not answer generation {answers_generation}: {reason}", seat.to_hex())]
+    ModelSeatAvailableRefused {
+        /// The seat the write named.
+        seat: EntityId,
+        /// The generation the write answered.
+        answers_generation: u64,
+        /// Why the row does not answer it.
+        reason: &'static str,
+    },
 }
 
 /// The class of a live-deck refusal, one per `oneiron_docedit::live::LiveError`
@@ -320,6 +332,7 @@ impl ArtifactError {
             Self::InvalidAttemptQueueRecord(_) => ErrorKind::InvalidAttemptQueueRecord,
             Self::InvalidAttemptQueueTransition { .. } => ErrorKind::InvalidAttemptQueueTransition,
             Self::DeltaCaptureUnavailable(_) => ErrorKind::DeltaCaptureUnavailable,
+            Self::ModelSeatAvailableRefused { .. } => ErrorKind::ModelSeatAvailableRefused,
         }
     }
 }

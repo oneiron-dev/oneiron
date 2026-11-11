@@ -16,7 +16,8 @@ use super::constants::{
     DREAMER_RUN_TREE_KEYS, DREAMER_RUN_TREE_SCHEMA_VERSION, KEY_ATTEMPT_ID, KEY_CARRIED_SPEND,
     KEY_CAUSE, KEY_CLASS, KEY_CREATED_AT, KEY_ELECTED_AT, KEY_NODE_ID, KEY_PARENT_ATTEMPT,
     KEY_PARK_OWNER, KEY_PARKED_AT, KEY_REASON, KEY_SCHEMA_VERSION, KEY_WAIT, KEY_WAIT_ASKED_UNITS,
-    KEY_WAIT_GENERATION, KEY_WAIT_ID, KEY_WAIT_LEASE_GENERATION, KEY_WAIT_RUN, KEY_WAIT_SCOPE,
+    KEY_WAIT_GENERATION, KEY_WAIT_ID, KEY_WAIT_LEASE_GENERATION, KEY_WAIT_RESET_AT_S, KEY_WAIT_RUN,
+    KEY_WAIT_SCOPE, KEY_WAIT_SEAT, KEY_WAIT_SEAT_GENERATION,
 };
 use super::types::{
     DreamerHomeNodeClass, DreamerHomeNodeDesignation, DreamerParkCause, DreamerParkWait,
@@ -246,6 +247,28 @@ fn encode_parked_wait(wait: Option<&DreamerParkedWait>) -> Value {
                     Value::from(key.generation),
                 ),
             ],
+            DreamerParkWait::Seat {
+                seat,
+                generation,
+                reset_at_s,
+            } => {
+                let mut entries = vec![
+                    (Value::from(KEY_CLASS), class),
+                    lease_generation,
+                    (
+                        Value::from(KEY_WAIT_SEAT),
+                        Value::Binary(seat.as_bytes().to_vec()),
+                    ),
+                    (
+                        Value::from(KEY_WAIT_SEAT_GENERATION),
+                        Value::from(*generation),
+                    ),
+                ];
+                if let Some(reset_at_s) = reset_at_s {
+                    entries.push((Value::from(KEY_WAIT_RESET_AT_S), Value::from(*reset_at_s)));
+                }
+                entries
+            }
         };
         Value::Map(entries)
     })
@@ -302,6 +325,9 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
     let mut wait_run = None;
     let mut wait_id = None;
     let mut wait_generation = None;
+    let mut seat = None;
+    let mut seat_generation = None;
+    let mut reset_at_s = None;
     let mut seen = [false; DREAMER_PARKED_WAIT_KEYS.len()];
 
     for (key, value) in entries {
@@ -361,6 +387,24 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                     "dreamer parked wait wait_generation must be an integer",
                 )?);
             }
+            KEY_WAIT_SEAT => {
+                seat = Some(decode_wait_entity_id(
+                    value,
+                    "dreamer parked wait seat must be 16-byte binary",
+                )?);
+            }
+            KEY_WAIT_SEAT_GENERATION => {
+                seat_generation = Some(expect_u64(
+                    value,
+                    "dreamer parked wait seat_generation must be an integer",
+                )?);
+            }
+            KEY_WAIT_RESET_AT_S => {
+                reset_at_s = Some(expect_u64(
+                    value,
+                    "dreamer parked wait reset_at_s must be an integer",
+                )?);
+            }
             _ => unreachable!("index resolved from DREAMER_PARKED_WAIT_KEYS"),
         }
     }
@@ -371,7 +415,13 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
     ))?;
     let wait = match class {
         DreamerParkWaitClass::Budget => {
-            if wait_run.is_some() || wait_id.is_some() || wait_generation.is_some() {
+            if wait_run.is_some()
+                || wait_id.is_some()
+                || wait_generation.is_some()
+                || seat.is_some()
+                || seat_generation.is_some()
+                || reset_at_s.is_some()
+            {
                 return Err(invalid_dreamer_runner(
                     "dreamer parked wait key does not belong to its class",
                 ));
@@ -385,8 +435,32 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                 ))?,
             }
         }
+        DreamerParkWaitClass::Seat => {
+            if scope.is_some()
+                || asked_units.is_some()
+                || wait_run.is_some()
+                || wait_id.is_some()
+                || wait_generation.is_some()
+            {
+                return Err(invalid_dreamer_runner(
+                    "dreamer parked wait key does not belong to its class",
+                ));
+            }
+            DreamerParkWait::Seat {
+                seat: seat.ok_or(invalid_dreamer_runner("missing dreamer parked wait seat"))?,
+                generation: seat_generation.ok_or(invalid_dreamer_runner(
+                    "missing dreamer parked wait seat_generation",
+                ))?,
+                reset_at_s,
+            }
+        }
         answer => {
-            if scope.is_some() || asked_units.is_some() {
+            if scope.is_some()
+                || asked_units.is_some()
+                || seat.is_some()
+                || seat_generation.is_some()
+                || reset_at_s.is_some()
+            {
                 return Err(invalid_dreamer_runner(
                     "dreamer parked wait key does not belong to its class",
                 ));
@@ -406,7 +480,9 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                 DreamerParkWaitClass::Consent => DreamerParkWait::Consent { key },
                 DreamerParkWaitClass::Peer => DreamerParkWait::Peer { key },
                 DreamerParkWaitClass::Human => DreamerParkWait::Human { key },
-                DreamerParkWaitClass::Budget => unreachable!("budget waits decode above"),
+                DreamerParkWaitClass::Budget | DreamerParkWaitClass::Seat => {
+                    unreachable!("budget and seat waits decode above")
+                }
             }
         }
     };
@@ -600,7 +676,9 @@ mod tests {
             DreamerParkWaitClass::Consent => DreamerParkWait::Consent { key },
             DreamerParkWaitClass::Peer => DreamerParkWait::Peer { key },
             DreamerParkWaitClass::Human => DreamerParkWait::Human { key },
-            DreamerParkWaitClass::Budget => unreachable!("answer waits only"),
+            DreamerParkWaitClass::Budget | DreamerParkWaitClass::Seat => {
+                unreachable!("answer waits only")
+            }
         };
         DreamerParkedWait {
             wait,
@@ -644,6 +722,35 @@ mod tests {
         ];
         if let Some((key, value)) = extra {
             entries.push((Value::from(key), value));
+        }
+        Value::Map(entries)
+    }
+
+    fn seat_wait(reset_at_s: Option<u64>) -> DreamerParkedWait {
+        DreamerParkedWait {
+            wait: DreamerParkWait::Seat {
+                seat: EntityId::from_bytes([0x71; 16]).expect("test seat id reads"),
+                generation: 2,
+                reset_at_s,
+            },
+            lease_generation: 4,
+        }
+    }
+
+    fn seat_wait_value(omit: Option<&str>) -> Value {
+        let seat = EntityId::from_bytes([0x71; 16]).expect("test seat id reads");
+        let mut entries = vec![
+            (Value::from(KEY_CLASS), Value::from("seat")),
+            (Value::from(KEY_WAIT_LEASE_GENERATION), Value::from(4_u32)),
+            (
+                Value::from(KEY_WAIT_SEAT),
+                Value::Binary(seat.as_bytes().to_vec()),
+            ),
+            (Value::from(KEY_WAIT_SEAT_GENERATION), Value::from(2_u64)),
+            (Value::from(KEY_WAIT_RESET_AT_S), Value::from(90_u64)),
+        ];
+        if let Some(omit) = omit {
+            entries.retain(|(key, _)| key.as_str() != Some(omit));
         }
         Value::Map(entries)
     }
@@ -763,6 +870,28 @@ mod tests {
         assert!(
             decode_parked_record(&bytes).is_err(),
             "a peer wait without wait_id fails decode"
+        );
+    }
+
+    #[test]
+    fn seat_parks_round_trip_with_and_without_a_reset() {
+        for reset_at_s in [Some(90), None] {
+            let record = parked_record(Some(seat_wait(reset_at_s)));
+            let bytes = encode_parked_record(&record).expect("parked row encodes");
+            let decoded = decode_parked_record(&bytes).expect("parked row decodes");
+            assert_eq!(decoded, record, "a seat park round-trips its seat wait");
+        }
+    }
+
+    #[test]
+    fn a_seat_wait_without_seat_generation_fails() {
+        let bytes = row_bytes(
+            DREAMER_PARKED_SCHEMA_VERSION,
+            Some(seat_wait_value(Some(KEY_WAIT_SEAT_GENERATION))),
+        );
+        assert!(
+            decode_parked_record(&bytes).is_err(),
+            "a seat wait without seat_generation fails decode"
         );
     }
 }
