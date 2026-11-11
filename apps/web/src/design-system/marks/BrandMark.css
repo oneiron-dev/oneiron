@@ -1,0 +1,21 @@
+/* The Oneiron mark in the colour of its context, and the name beside it
+   at the section size. It never animates. */
+.sl-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  vertical-align: middle;
+}
+
+.sl-brand-mark-symbol {
+  display: block;
+  flex: none;
+  fill: currentColor;
+}
+
+.sl-brand-mark-word {
+  font-size: var(--sl-t-section);
+  font-weight: 600;
+  line-height: 1.2;
+}

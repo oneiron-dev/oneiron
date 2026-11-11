@@ -280,16 +280,25 @@ fn an_unclear_verdict_changes_no_reliability_and_files_one_note() -> Result<()> 
     }
     /// Leans to the skill's defect, but only at 0.4.
     struct Unsure;
-    impl AttributionJudge for Unsure {
-        fn judge(&self, _: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-            Ok(Some(AttributionVerdict::SkillDefect))
+    impl DecisionProvider for Unsure {
+        fn pin(&self) -> ProviderPin {
+            big_rung_pin("unsure")
         }
-        fn judge_hunks(&self, request: &JudgeRequest<'_>) -> Result<Option<Vec<HunkVerdict>>> {
+        fn decide(&self, _: &DecisionCall<'_>) -> Result<ProviderDecision> {
+            Ok(provider_answer(Some(AttributionVerdict::SkillDefect), 0.4))
+        }
+    }
+    /// Its note on a doubtful answer, from the note seam beside the decision.
+    impl AttributionNotes for Unsure {
+        fn notes(
+            &self,
+            request: &JudgeRequest<'_>,
+            _: &[HunkVerdict],
+        ) -> Result<Vec<Option<String>>> {
             assert!(request.hunks.is_empty(), "a failed attempt carries no edit");
-            Ok(Some(vec![
-                HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, 0.4)
-                    .with_note("the upstream API may have failed, not the skill"),
-            ]))
+            Ok(vec![Some(
+                "the upstream API may have failed, not the skill".to_owned(),
+            )])
         }
     }
 
@@ -297,10 +306,12 @@ fn an_unclear_verdict_changes_no_reliability_and_files_one_note() -> Result<()> 
     let actor = put_actor(&vault, EntityId::now())?;
     let skill = put_skill(&vault, EntityId::now(), FIXTURE_SKILL_ID)?;
     let source = Source { actor, skill };
+    let unsure_ladder = big_rung_ladder(Unsure);
+    let unsure = attribution_decisions(unsure_ladder.ladder(), Some(&Unsure));
     assert_eq!(setting_value(&vault, &ATTRIBUTION_UNCLEAR_FLOOR)?, 0.6);
 
     let receipt = terminal(&vault, actor, true)?;
-    let report = run_task_attribution_sweep_with_judge(&vault, 16, &source, &Unsure)?;
+    let report = run_task_attribution_sweep_with_decisions(&vault, 16, &source, Some(&unsure))?;
     assert_eq!(report.captured_evidence, 1);
     assert_eq!(report.judgments, 0, "an unclear verdict charges nobody");
     assert!(attribution_judgments(&vault)?.is_empty());
@@ -352,7 +363,7 @@ fn an_unclear_verdict_changes_no_reliability_and_files_one_note() -> Result<()> 
     assert_eq!(setting_value(&vault, &ATTRIBUTION_UNCLEAR_FLOOR)?, 0.3);
     let prior = skill_reliability_prior(&vault, &skill)?;
     terminal(&vault, actor, true)?;
-    let report = run_task_attribution_sweep_with_judge(&vault, 16, &source, &Unsure)?;
+    let report = run_task_attribution_sweep_with_decisions(&vault, 16, &source, Some(&unsure))?;
     assert_eq!(
         report.judgments, 1,
         "above the pinned floor the defect counts"
@@ -369,7 +380,7 @@ fn an_unclear_verdict_changes_no_reliability_and_files_one_note() -> Result<()> 
     // Replaying the held evidence under the pinned floor settles it: the
     // outcome is judged now, so its note leaves the unclear ledger (Sol review,
     // 10-08: a replay used to leave both ledgers holding one outcome).
-    run_attribution_projector_with_judge(&vault, 0, &Unsure)?;
+    run_attribution_projector_with_decisions(&vault, 0, Some(&unsure))?;
     assert_eq!(attribution_judgments(&vault)?.len(), 2);
     assert!(unclear_attributions(&vault)?.is_empty());
     Ok(())
@@ -396,9 +407,12 @@ fn environment_fits_a_failed_attempt_and_taste_does_not() -> Result<()> {
         }
     }
     struct Says(AttributionVerdict);
-    impl AttributionJudge for Says {
-        fn judge(&self, _: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-            Ok(Some(self.0))
+    impl DecisionProvider for Says {
+        fn pin(&self) -> ProviderPin {
+            big_rung_pin("says")
+        }
+        fn decide(&self, _: &DecisionCall<'_>) -> Result<ProviderDecision> {
+            Ok(provider_answer(Some(self.0), 1.0))
         }
     }
 
@@ -408,11 +422,12 @@ fn environment_fits_a_failed_attempt_and_taste_does_not() -> Result<()> {
     let source = Source { actor, skill };
 
     terminal(&vault, actor, true)?;
-    let report = run_task_attribution_sweep_with_judge(
+    let environment = big_rung_ladder(Says(AttributionVerdict::Environment));
+    let report = run_task_attribution_sweep_with_decisions(
         &vault,
         16,
         &source,
-        &Says(AttributionVerdict::Environment),
+        Some(&attribution_decisions(environment.ladder(), None)),
     )?;
     assert_eq!(report.judgments, 0, "an outside fact blames nobody");
     assert!(
@@ -425,11 +440,12 @@ fn environment_fits_a_failed_attempt_and_taste_does_not() -> Result<()> {
     );
 
     terminal(&vault, actor, true)?;
-    let report = run_task_attribution_sweep_with_judge(
+    let taste = big_rung_ladder(Says(AttributionVerdict::PreferenceShift));
+    let report = run_task_attribution_sweep_with_decisions(
         &vault,
         16,
         &source,
-        &Says(AttributionVerdict::PreferenceShift),
+        Some(&attribution_decisions(taste.ladder(), None)),
     )?;
     assert_eq!(report.judgments, 0);
     let filed = unclear_attributions(&vault)?;

@@ -46,7 +46,7 @@ fn a_stolen_machines_world_is_re_picked_from_another_of_the_owners_machines() {
             );
         }
         host.vault
-            .set_machine_role(&host.issuer, &host.owner, stolen, role)
+            .set_machine_role(&host.owner, ActSurface::ThisInstall, stolen, role, None)
             .unwrap();
         if !seen {
             land(&host, std::slice::from_ref(&theft));
@@ -111,7 +111,13 @@ fn a_conflict_with_one_live_contender_is_not_orphaned() {
     );
     land(&host, &[pick_b, pick_c]);
     host.vault
-        .set_machine_role(&host.issuer, &host.owner, c, MachineRole::Removed)
+        .set_machine_role(
+            &host.owner,
+            ActSurface::ThisInstall,
+            c,
+            MachineRole::Removed,
+            None,
+        )
         .unwrap();
     let conflicted = EffectiveRead::Conflicted {
         contenders: BTreeSet::from([b, c]),
@@ -150,7 +156,13 @@ fn a_conflict_with_one_live_contender_is_not_orphaned() {
     // the owner's machines re-picks it. The early edit stays refused: it was
     // judged where it was made.
     host.vault
-        .set_machine_role(&host.issuer, &host.owner, b, MachineRole::Removed)
+        .set_machine_role(
+            &host.owner,
+            ActSurface::ThisInstall,
+            b,
+            MachineRole::Removed,
+            None,
+        )
         .unwrap();
     assert_eq!(read_of(&host, world), conflicted);
     let repick = edit_by(&host, d, &d_key, world, settings(ReadLocation::MyMachines));
@@ -218,10 +230,11 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
         .unwrap();
     host.vault
         .enroll_machine(
-            &next,
             &owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     let here = request.machine;
@@ -249,7 +262,13 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
     assert!(repick().is_err());
 
     host.vault
-        .set_machine_role(&next, &owner, old, MachineRole::Removed)
+        .set_machine_role(
+            &owner,
+            ActSurface::ThisInstall,
+            old,
+            MachineRole::Removed,
+            None,
+        )
         .unwrap();
     assert_eq!(
         host.vault
@@ -315,11 +334,14 @@ fn a_world_orphaned_by_a_removal_that_arrived_late_is_re_picked() {
             machine: node,
             owner: host.owner.actor(),
             machine_key: request.machine_key,
+            device_class: request.device_class,
             encryption_key: request.encryption_key,
             role: MachineRole::HostedNode,
             revision: 1,
             machine_proof: request.machine_proof,
             seen_world_edits: BTreeSet::new(),
+            carrier: None,
+            act: None,
         }),
     );
     // The higher row first, in a write of its own.

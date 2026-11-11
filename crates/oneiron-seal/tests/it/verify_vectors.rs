@@ -6,11 +6,13 @@ use std::sync::Arc;
 
 use oneiron_seal::{
     FetchPolicy, InputInvalidCode, NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine,
-    SealConfig, SealError, SealRequest, SealResourceLimits, VerifyCheckKind, VerifyCheckStatus,
-    VerifyFindingCode, VerifyReport,
+    SealConfig, SealError, SealRequest, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
+    VerifyReport,
 };
 
-use crate::support::{FixedClock, FixtureBackend, TEST_TIME_MS, TestIdentity, p256_identity};
+use crate::support::{
+    FixedClock, FixtureBackend, TEST_TIME_MS, TestIdentity, grant_all_limits, p256_identity,
+};
 
 fn fixture_pdf(name: &str) -> Vec<u8> {
     let path = format!(
@@ -28,7 +30,7 @@ fn sealed_b_input(input: &[u8]) -> (NativeSealEngine, Vec<u8>) {
             trust_anchors_der: vec![anchor],
             timestamp_authorities: Vec::new(),
             fetch_policy: FetchPolicy::default(),
-            resource_limits: SealResourceLimits::default(),
+            resource_limits: grant_all_limits(),
         },
         Arc::new(FixtureBackend::new(id)),
         Arc::new(OfflineFetcher),
@@ -46,7 +48,7 @@ fn sealed_b_input(input: &[u8]) -> (NativeSealEngine, Vec<u8>) {
             },
         ))
         .unwrap();
-    (engine, out.bytes)
+    (engine, out.bytes.to_vec())
 }
 
 fn sealed_b() -> (NativeSealEngine, Vec<u8>) {

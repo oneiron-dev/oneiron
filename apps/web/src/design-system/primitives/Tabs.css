@@ -1,0 +1,56 @@
+.sl-tabs-list {
+  display: flex;
+  align-items: flex-end;
+  gap: 22px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sl-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 6px 0 9px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+}
+
+.sl-tab:hover,
+.sl-tab:focus-visible,
+.sl-tab[aria-selected="true"] {
+  color: var(--sl-ink-1);
+  outline: none;
+}
+
+/* The selected tab carries the line; keyboard focus on another tab shows a
+   faint one. */
+.sl-tab[aria-selected="true"]::after,
+.sl-tab:focus-visible::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.5px;
+  background: var(--sl-ink-1);
+}
+
+.sl-tab:focus-visible:not([aria-selected="true"])::after {
+  background: var(--sl-ink-4);
+}
+
+.sl-tab > .sl-figure {
+  color: var(--sl-ink-3);
+}
+
+.sl-tab:disabled {
+  cursor: default;
+  color: var(--sl-ink-2);
+}
+
+.sl-tab-panel:focus-visible {
+  outline-offset: 4px;
+}

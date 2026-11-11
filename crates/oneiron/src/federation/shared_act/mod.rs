@@ -10,6 +10,7 @@
 mod erase_ask;
 mod execute;
 mod export_records;
+mod member_ask;
 mod membership;
 mod owner_add;
 mod removal;
@@ -20,6 +21,10 @@ mod removal_import;
 
 pub use erase_ask::{
     EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
+};
+pub use member_ask::{
+    MemberAskChange, MemberAskStatus, NOTIFICATION_PRODUCER_MEMBER_ASK, SharedMemberAsk,
+    SharedMemberChange,
 };
 pub(crate) use membership::SharedMemberDeparture;
 pub use membership::{
@@ -264,6 +269,12 @@ pub struct SharedActExecutionReceipt {
     /// names him (FIX 5401). `None` for every other change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authorizer: Option<String>,
+    /// The Steward whose member ask this change applied, PERSON hex
+    /// (untangle 6.3d): a Steward only suggests a member change, and `actor`
+    /// is the Admin or Owner who applied it. `None` for every change no ask
+    /// proposed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposer: Option<String>,
     /// The bound Connect grants a genuine leave released here (FIX 12555):
     /// the grants actually withdrawn and the typed remainder still standing.
     /// `Some` only when the leave selected at least one bound grant; `None`
@@ -801,6 +812,7 @@ impl Vault {
                 .map(|hash| crate::entity_id::bytes_to_hex_lower(hash)),
             authority_record_pending: record == ChangeRecord::Pending,
             authorizer: authorizer.as_ref().map(EntityId::to_hex),
+            proposer: None,
             detach: effect.detach,
             completed_at: now,
         };

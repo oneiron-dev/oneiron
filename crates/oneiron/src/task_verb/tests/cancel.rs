@@ -685,7 +685,8 @@ fn connector_send_cancel_cancels_queued_realization() {
     let send_grant_ref = EntityId::from_bytes([0xD3; 16]).expect("send grant id");
     vault
         .mint_standing_outbound_grant(
-            &send_grant_ref,
+            &crate::test_util::embedded_owner_proof(&vault),
+            send_grant_ref,
             &GrantMintIntent {
                 principal_ref: own.to_hex(),
                 origin_component_id: "tasks".to_owned(),
@@ -695,7 +696,6 @@ fn connector_send_cancel_cancels_queued_realization() {
                     verb_class: "send".to_owned(),
                 },
             },
-            1,
         )
         .expect("mint send grant");
     grant_cancel(&vault, own, 0xD4);

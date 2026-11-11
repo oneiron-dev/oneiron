@@ -30,6 +30,64 @@ fn summary(vault: &Vault) -> EntityId {
     id
 }
 
+/// The call shape of `scan::run_with_limit`, deleted by c72f09112c4 (#3650,
+/// Rule 5 drains: the nightly cleanup scans every index), over its successor
+/// `scan::run`. The successor reads each index to its end and keeps no
+/// rotating cursor, so `limit` reaches nothing.
+mod scan {
+    pub(super) fn run_with_limit(
+        vault: &crate::Vault,
+        attempt: &crate::store::attempt_id::AttemptId,
+        _limit: usize,
+    ) -> crate::error::Result<super::RunReportView> {
+        crate::vault_cleanup::scan::run(vault, attempt).map(super::RunReportView::from)
+    }
+}
+
+/// Each candidate slot live. FIX 7517 (bd141242bea, #3688) made a run's and a
+/// proposal's candidates slots, `None` once an erase reaches one; no test here
+/// erases.
+fn live_candidates(slots: &[Option<CleanupCandidate>]) -> Vec<CleanupCandidate> {
+    slots
+        .iter()
+        .map(|slot| slot.expect("no erase reached a cleanup candidate"))
+        .collect()
+}
+
+/// One cleanup run's report with its candidates live. Equality compares the
+/// whole report.
+#[derive(Debug, PartialEq, Eq)]
+struct RunReportView {
+    report: CleanupRunReport,
+    candidates: Vec<CleanupCandidate>,
+    proposal: Option<EntityId>,
+}
+
+impl From<CleanupRunReport> for RunReportView {
+    fn from(report: CleanupRunReport) -> Self {
+        Self {
+            candidates: live_candidates(&report.candidates),
+            proposal: report.proposal,
+            report,
+        }
+    }
+}
+
+/// One open proposal with its candidates live.
+struct ProposalView {
+    attempt: AttemptId,
+    candidates: Vec<CleanupCandidate>,
+}
+
+impl From<CleanupProposal> for ProposalView {
+    fn from(proposal: CleanupProposal) -> Self {
+        Self {
+            attempt: proposal.attempt,
+            candidates: live_candidates(&proposal.candidates),
+        }
+    }
+}
+
 #[test]
 fn open_rollout_blockers_refuse_owner_auto_and_ignore_persisted_auto() {
     let (dir, vault) = open();
@@ -429,6 +487,8 @@ fn retry_of_auto_or_empty_run_never_produces_another_decision() {
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).expect("regression fixture");
     let auto_attempt = AttemptId::now();
     let auto = run_vault_cleanup(&vault, &auto_attempt).expect("regression fixture");
+    // A report's archived ids are slots since bd141242bea (FIX 7517).
+    let first = Some(first);
     assert_eq!(auto.archived, vec![first]);
     let later = summary(&vault);
     assert_eq!(
@@ -441,6 +501,7 @@ fn retry_of_auto_or_empty_run_never_produces_another_decision() {
         1
     );
     let next = run_vault_cleanup(&vault, &AttemptId::now()).expect("regression fixture");
+    let later = Some(later);
     assert_eq!(next.archived, vec![later]);
     assert_eq!(
         cleanup_digests(&vault).expect("regression fixture").len(),
@@ -494,9 +555,11 @@ fn failed_scan_keeps_the_cursor_and_has_no_durable_run_result() {
     assert_eq!(retried.candidates[0].entity, people[1]);
     assert_eq!(retried.candidates[1].entity, summary);
     let proposal_id = retried.proposal.expect("retry proposal");
-    let proposal = cleanup_proposal(&vault, &proposal_id)
-        .expect("read retry proposal")
-        .expect("open retry proposal");
+    let proposal = ProposalView::from(
+        cleanup_proposal(&vault, &proposal_id)
+            .expect("read retry proposal")
+            .expect("open retry proposal"),
+    );
     assert_eq!(proposal.attempt, attempt);
     assert_eq!(proposal.candidates.len(), 2);
     assert_eq!(proposal.candidates[0].entity, people[1]);

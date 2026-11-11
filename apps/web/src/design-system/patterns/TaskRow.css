@@ -1,0 +1,105 @@
+/* A task row: the donut, what the task is, who has it. Hover is one tone
+   step; the open row is lit and its body unfolds under it. The row reaches
+   8 px past its column on both sides so the tone frames the words. */
+.sl-task {
+  display: flex;
+  flex-direction: column;
+}
+
+.sl-task-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: center;
+  width: calc(100% + 16px);
+  min-height: 36px;
+  margin: 0 -8px;
+  padding: 6px 8px;
+  border-radius: var(--sl-radius);
+  color: var(--sl-ink-2);
+  text-align: left;
+  transition: background-color 120ms ease;
+}
+
+.sl-task-row:hover,
+.sl-task-row:focus-visible {
+  color: var(--sl-ink-1);
+  background: var(--sl-hover);
+  outline: none;
+}
+
+.sl-task-row[aria-expanded="true"] {
+  color: var(--sl-ink-1);
+  background: var(--sl-lit);
+}
+
+.sl-task-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--sl-t-say);
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-task-who {
+  max-width: 14em;
+  overflow: hidden;
+  font-size: var(--sl-t-do);
+  line-height: 1.45;
+  color: var(--sl-ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The body: a hairline under the donut's centre, the parts to its right. */
+.sl-task-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 2px 0 10px 8.5px;
+  padding: 4px 0 4px 18px;
+  border-left: 1px solid var(--sl-rule);
+}
+
+.sl-task-last {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--sl-t-say);
+  line-height: 1.5;
+  color: var(--sl-ink-2);
+  overflow-wrap: anywhere;
+}
+
+.sl-task-question {
+  font-size: var(--sl-t-say);
+  line-height: 1.45;
+  color: var(--sl-ink-1);
+}
+
+.sl-task-body .sl-needs-you-answers {
+  margin-top: -4px;
+}
+
+.sl-task-own {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 30px;
+}
+
+.sl-task-own-count {
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.sl-task-own-open {
+  margin-left: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-task-row {
+    transition: none;
+  }
+}
