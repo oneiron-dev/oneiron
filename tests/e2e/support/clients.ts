@@ -187,6 +187,20 @@ export class WsClient {
         socket.addEventListener("close",event => reject(new Error(`WS upgrade closed ${event.code}`)),{once:true});
       }),timeoutMs,"WS upgrade",() => socket.close());
       socket.send(new Uint8Array([3,8]));
+      // The upgrade admits replication only; app-tier calls need the in-band
+      // auth.bind (handler/app_tier.rs require_bound_app_auth). The upgrade
+      // consumed its proof's nonce, so the bind carries a fresh holder proof.
+      const binding: unknown = JSON.parse(boundHeaders(credential).get("x-oneiron-binding")!);
+      const bindId = 0; // Facade call ids start at 1.
+      client.send(30,{type:"rpc.req",id:bindId,seq:0,last:true,payload:{
+        method:"auth.bind",params:{token:credentialParts(credential).bearer,binding},
+      }});
+      const bound = await client.next(timeoutMs);
+      if (bound.tag !== 30 || bound.envelope.id !== bindId || bound.envelope.type !== "rpc.res"
+        || bound.envelope.seq !== 0 || !bound.envelope.last || !(bound.envelope.payload instanceof Uint8Array)
+        || decode(bound.envelope.payload) !== null) {
+        throw new Error("WS auth.bind did not return its null acknowledgement");
+      }
       return client;
     } catch (error) { client.close(); throw error }
   }
