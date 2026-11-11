@@ -171,7 +171,8 @@ impl EngineNativeExecutor<'_> {
             completed_steps,
             &config.model,
             repairs,
-        );
+        )
+        .answered_by(answering_model(&response));
         record_script_output(
             &self.storage,
             record,

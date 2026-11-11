@@ -92,7 +92,10 @@ fn inactive_persisted_binding_cannot_signal() {
     let fixture = HumanFixture::open();
     let task_ref = fixture.create_human_task();
     let (_, _, binding) = park_on_human(&fixture, task_ref, STEP_HASH);
-    assert!(release_human_wait(&fixture.vault, task_ref).expect("release wait"));
+    assert!(
+        release_human_wait_trap(&fixture.vault, task_ref, binding.trap_claim_id)
+            .expect("release wait")
+    );
     let stored = stored_human_wait_binding(&fixture.vault, task_ref)
         .expect("read retired binding")
         .expect("release persists a tombstone");
@@ -216,7 +219,7 @@ fn parked_wait_and_cursor_survive_reopen() {
         consume_trap_signal(&vault, &runner, &trap, NOW + 31).expect("consume"),
         attempt_id
     );
-    assert!(release_human_wait(&vault, task_ref).expect("release"));
+    assert!(release_human_wait_trap(&vault, task_ref, binding.trap_claim_id).expect("release"));
     assert!(
         human_wait_binding(&vault, task_ref)
             .expect("read binding")
