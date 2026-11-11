@@ -76,6 +76,39 @@ fn policy_key<'a>(map: &'a mut Value, key: &str) -> &'a mut Value {
         .map_or_else(|| panic!("missing policy key {key}"), |(_, value)| value)
 }
 
+/// Sets K, the distinct receipts a substitution cluster owes, on the stored
+/// default policy manifest's `miner_recurrence_receipts` row, which
+/// `miner_k` reads: d247ce92e83 (FIX 9809) removed the vault_meta dial and
+/// its `set_miner_k` setter, and an owner sets K through the manifest.
+fn set_miner_recurrence_receipts(vault: &Vault, k: u64) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let body = match vault.get(&id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest()?,
+    };
+    let mut manifest =
+        rmpv::decode::read_value(&mut body.as_slice()).expect("stored manifest decodes");
+    let Value::Array(rows) = policy_key(&mut manifest, "policy_values") else {
+        panic!("policy value rows")
+    };
+    let Some(Value::Map(fields)) = rows.iter_mut().find(|row| match row {
+        Value::Map(fields) => fields.iter().any(|(key, value)| {
+            key.as_str() == Some("key") && value.as_str() == Some("miner_recurrence_receipts")
+        }),
+        _ => false,
+    }) else {
+        panic!("miner_recurrence_receipts row")
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("value"))
+        .expect("miner_recurrence_receipts value")
+        .1 = Value::from(k);
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &manifest).expect("manifest encodes");
+    crate::test_util::put_policy_manifest_bytes(vault, id, &encoded)
+}
+
 fn policy_rows(manifest: &mut Value) -> &mut Vec<Value> {
     let Value::Array(rows) = policy_key(policy_key(manifest, "compilation_policy"), "rows") else {
         panic!("compilation rows")
@@ -228,7 +261,7 @@ fn inbox_amendment_infers_ban_without_a_host_target() -> Result<()> {
     let owner = fixture_owner(&vault);
     let run = miner_run(&vault);
     let actor = put_actor(&vault);
-    set_miner_k(&vault, 2)?;
+    set_miner_recurrence_receipts(&vault, 2)?;
     for index in 0..2 {
         let id = proposal(&vault, &run, actor, "allow greetings", 100 + index)?;
         let mut changed = vault.get_claim(&id)?.expect("proposed claim");
