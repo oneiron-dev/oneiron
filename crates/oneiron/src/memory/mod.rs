@@ -59,6 +59,7 @@ mod claim_stale;
 pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
+pub(crate) use conflict_settle::conflict_review_held_in;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
