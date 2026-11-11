@@ -5,6 +5,7 @@
       "objector_roles": [],
       "initiator_roles": [
         "owner",
+        "deputy",
         "admin"
       ],
       "policy_editor_roles": [
@@ -102,6 +103,7 @@
       "objector_roles": [],
       "initiator_roles": [
         "owner",
+        "deputy",
         "admin"
       ],
       "policy_editor_roles": [

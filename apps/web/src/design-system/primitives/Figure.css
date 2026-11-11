@@ -1,0 +1,13 @@
+.sl-figure {
+  font-family: var(--sl-mono);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--sl-t-figure);
+  letter-spacing: 0.02em;
+  color: var(--sl-ink-3);
+  white-space: nowrap;
+}
+
+.sl-figure[data-size="badge"] {
+  font-size: var(--sl-t-badge);
+}

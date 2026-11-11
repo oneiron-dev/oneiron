@@ -4,8 +4,9 @@ use crate::error::Result;
 
 use super::encoding::decode_record;
 use super::engine::AttemptQueue;
+use super::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use super::telemetry::invalid_transition;
-use super::types::{AttemptRecord, AttemptState, CompleteAttempt, CompleteOutcome};
+use super::types::{AttemptRecord, CompleteAttempt, CompleteOutcome};
 use super::validate::{validate_lease_owner, validate_transition_lease};
 
 impl AttemptQueue<'_> {
@@ -23,9 +24,9 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("complete", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Completed => Ok(CompleteOutcome::AlreadyCompleted(record)),
-            AttemptState::Leased => {
+        match RunLifecycle::step(RunRow::of(&record), RunEvent::Complete) {
+            RunStep::Replay => Ok(CompleteOutcome::AlreadyCompleted(record)),
+            RunStep::Move { .. } => {
                 validate_lease_owner(&input.lease_owner)?;
                 validate_transition_lease(
                     &record,
@@ -33,12 +34,10 @@ impl AttemptQueue<'_> {
                     input.attempt_count,
                     "complete",
                 )?;
-                record.state = AttemptState::Completed;
-                record.lease_owner = None;
+                let _ = RunLifecycle::complete(&mut record, input.now);
                 record.backoff_until = None;
                 record.last_error = None;
                 record.updated_at = input.now;
-                record.settled_at = Some(input.now);
                 self.delete_dedupe_entry_for_record(wtxn, &record)?;
                 let encoded = self.encode_in_txn(wtxn, &mut record)?;
                 self.store
@@ -54,7 +53,9 @@ impl AttemptQueue<'_> {
                 self.notify_settled_in_txn(wtxn, &record)?;
                 Ok(CompleteOutcome::Completed(record))
             }
-            state => Err(invalid_transition("complete", state.as_str())),
+            RunStep::Note { .. } | RunStep::Keep | RunStep::Refuse => {
+                Err(invalid_transition("complete", record.state.as_str()))
+            }
         }
     }
 }
@@ -65,7 +66,9 @@ impl AttemptQueue<'_> {
     /// has the vault's entity door to write through. An agent run's try
     /// sets its run TASK's outcome here too, in the same write, while this
     /// machine holds the run (FIX 4747): every terminal door ends here, and
-    /// a retry or a landing handoff, which carry the run on, do not.
+    /// a retry or a landing handoff, which carry the run on, do not. So does
+    /// each wait its spawner holds over it (`tasks.wait({agents})`, slice
+    /// 6.5b): reduced here, and delivered when this row ends it.
     pub(crate) fn notify_settled_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -75,6 +78,9 @@ impl AttemptQueue<'_> {
             vault.record_job_notification_in_txn(wtxn, record)?;
             vault.enqueue_health_review_in_txn(wtxn, record)?;
             crate::agent_dispatch::settle_agent_run_task_in_txn(vault, wtxn, record)?;
+            // Slice 6.5b: a parent's wait over this child is answered in the
+            // write that ends it.
+            crate::agent_dispatch::settle_agent_child_waits_in_txn(vault, wtxn, record)?;
         }
         Ok(())
     }

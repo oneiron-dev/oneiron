@@ -5,11 +5,15 @@ use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::edit_distance::escalation::{EscalationTrigger, escalation_stats, standing_policy_for};
 use crate::fanout_auto::{
-    FanoutAskClassifier, FanoutAskContext, FanoutAskVerdict, FanoutClassifierView,
-    FanoutDecisionHistory,
+    FANOUT_ASK_DIAL, FanoutAskVerdict, FanoutDecisionHistory, FanoutDecisions,
+};
+use crate::llm::decision::{
+    DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
+    DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision, ProviderPin,
 };
 use crate::own_rate::OwnRateKind;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::GateDecisionId;
 
 fn owner(vault: &Vault) -> AuthenticatedOwner {
@@ -33,6 +37,101 @@ fn scope(actor: EntityId, input: &ConsultFanOutSpec) -> String {
         actor.to_hex(),
         input.question_ref.short_ref()
     )
+}
+
+/// The person queue of a host with no person to ask: `FANOUT_ASK_DIAL` ends
+/// below the person rung, so the ladder never queues here.
+struct NoPerson;
+impl HumanDecisionQueue for NoPerson {
+    fn queue(&self, _: HumanDecisionRequest) -> Result<()> {
+        Err(crate::error::Error::InvalidConfig(
+            "no person to ask".into(),
+        ))
+    }
+}
+
+/// The host's AUTO decisions with `local` as the one rung that answers the
+/// fan-out ask (0a4d98d5f0c, #1575: the ask is a typed decision through the
+/// host's ladder, which replaced `FanoutAskClassifier`).
+fn decisions<'a>(
+    local: &'a dyn DecisionProvider,
+    principal: EntityId,
+    deadline: &'a RetrievalDeadline,
+) -> FanoutDecisions<'a> {
+    FanoutDecisions {
+        ladder: DecisionLadder {
+            rule: None,
+            local: Some(local),
+            system_one: None,
+            escalation: None,
+            big: None,
+            human: &NoPerson,
+            human_pin: ProviderPin {
+                rung: DecisionRung::Human,
+                model: "no-person".into(),
+                version: "1".into(),
+            },
+            ask_to: None,
+            paired: None,
+            person: None,
+            presence: None,
+            correlation: None,
+        },
+        principal,
+        dial: FANOUT_ASK_DIAL,
+        bands: DecisionBandPolicy::default(),
+        wording: "May this consult fan-out start without its owner?".to_owned(),
+        deadline,
+    }
+}
+
+/// The call's clock for one AUTO ruling.
+fn decision_deadline() -> RetrievalDeadline {
+    RetrievalDeadline::hard(
+        std::time::Instant::now(),
+        std::time::Duration::from_secs(3600),
+    )
+}
+
+/// The Local rung's pin for a test answer.
+fn local_pin() -> ProviderPin {
+    ProviderPin {
+        rung: DecisionRung::Local,
+        model: "consult-fanout-test".into(),
+        version: "1".into(),
+    }
+}
+
+/// The plan's metered total, read from the ask's bounded state, where the
+/// classifier view's projection now arrives.
+struct StateView<'a>(&'a serde_json::Value);
+impl StateView<'_> {
+    fn total_count(&self) -> u64 {
+        self.0["total_count"]
+            .as_u64()
+            .expect("the ask's total count")
+    }
+}
+
+/// The ruling history the ask's bounded state carries.
+fn state_history(state: &serde_json::Value) -> FanoutDecisionHistory {
+    serde_json::from_value(state["history"].clone()).expect("the ask's ruling history")
+}
+
+/// `verdict` as the ladder's answer: its pinned wire token, held certain.
+fn answer(verdict: FanoutAskVerdict) -> ProviderDecision {
+    let token = serde_json::to_value(verdict)
+        .ok()
+        .and_then(|token| token.as_str().map(str::to_owned))
+        .expect("a verdict is its wire token");
+    ProviderDecision {
+        answer: DecisionAnswer::Choice(token),
+        probability: Some(1.0),
+        paired: None,
+        person: None,
+        served: None,
+        cost_per_thousand: None,
+    }
 }
 
 #[test]
@@ -359,16 +458,16 @@ fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
 }
 
 struct HistoryClassifier;
-impl FanoutAskClassifier for HistoryClassifier {
-    fn classify(
-        &self,
-        _: &FanoutAskContext,
-        view: &FanoutClassifierView<'_>,
-        history: &FanoutDecisionHistory,
-    ) -> Result<FanoutAskVerdict> {
+impl DecisionProvider for HistoryClassifier {
+    fn pin(&self) -> ProviderPin {
+        local_pin()
+    }
+
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        let (view, history) = (StateView(call.state), state_history(call.state));
         assert_eq!(view.total_count(), 2);
         assert_eq!(history.deny, 1);
-        Ok(FanoutAskVerdict::Allow)
+        Ok(answer(FanoutAskVerdict::Allow))
     }
 }
 
@@ -418,8 +517,10 @@ fn fanout_tunable_threshold_auto_history_and_human_authentication() {
             &human,
         )
         .unwrap();
+    let deadline = decision_deadline();
+    let history_decisions = decisions(&HistoryClassifier, actor, &deadline);
     let classified = facade
-        .fan_out_consults_with_classifier(&input, Some(&HistoryClassifier))
+        .fan_out_consults_with_classifier(&input, Some(&history_decisions))
         .unwrap();
     assert_eq!(classified.task_refs.len(), 2);
     facade
@@ -427,7 +528,7 @@ fn fanout_tunable_threshold_auto_history_and_human_authentication() {
             &human,
             &ConsultFanOutPolicy {
                 approval_threshold: 1,
-                mode: ConsultFanOutMode::Manual,
+                mode: CheckInMode::AlwaysAsk,
                 peer_rate: None,
                 create_rate: ConsultFanOutPolicy::default().create_rate,
             },
@@ -435,7 +536,7 @@ fn fanout_tunable_threshold_auto_history_and_human_authentication() {
         .unwrap();
     assert!(
         facade
-            .fan_out_consults_with_classifier(&input, Some(&HistoryClassifier))
+            .fan_out_consults_with_classifier(&input, Some(&history_decisions))
             .unwrap()
             .paused
             .is_some()
@@ -445,7 +546,7 @@ fn fanout_tunable_threshold_auto_history_and_human_authentication() {
             &human,
             &ConsultFanOutPolicy {
                 approval_threshold: 1,
-                mode: ConsultFanOutMode::FullAccess,
+                mode: CheckInMode::NeverAsk,
                 peer_rate: None,
                 create_rate: ConsultFanOutPolicy::default().create_rate,
             },
@@ -734,19 +835,18 @@ struct InterleavingClassifier<'a> {
     input: &'a ConsultFanOutSpec,
     burst: usize,
 }
-impl FanoutAskClassifier for InterleavingClassifier<'_> {
-    fn classify(
-        &self,
-        _: &FanoutAskContext,
-        _: &FanoutClassifierView<'_>,
-        _: &FanoutDecisionHistory,
-    ) -> Result<FanoutAskVerdict> {
+impl DecisionProvider for InterleavingClassifier<'_> {
+    fn pin(&self) -> ProviderPin {
+        local_pin()
+    }
+
+    fn decide(&self, _: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.clock.set(self.next_window);
         for _ in 0..self.burst {
             let landed = self.facade.fan_out_consults(self.input).expect("lands");
             assert_eq!(landed.task_refs.len(), 1);
         }
-        Ok(FanoutAskVerdict::Allow)
+        Ok(answer(FanoutAskVerdict::Allow))
     }
 }
 
@@ -785,8 +885,10 @@ fn a_fan_out_held_across_a_window_counts_in_the_window_it_lands_in() {
         input: &one,
         burst: 20,
     };
+    let deadline = decision_deadline();
+    let interleaving = decisions(&classifier, actor, &deadline);
     let held = facade
-        .fan_out_consults_with_classifier(&plan(&vault, 26), Some(&classifier))
+        .fan_out_consults_with_classifier(&plan(&vault, 26), Some(&interleaving))
         .unwrap();
     assert_eq!(held.task_refs.len(), 26);
     assert_eq!(facade.fan_out_consults(&one).unwrap().task_refs.len(), 1);

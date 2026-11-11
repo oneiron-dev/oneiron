@@ -2,7 +2,6 @@
 
 use oneiron::{commitment_schedule, commitment_wake};
 
-use super::super::*;
 use super::*;
 
 #[test]

@@ -17,41 +17,49 @@ impl ExtractionEncoder for Scripted {
     fn locality(&self) -> crate::embed::EmbedderLocality {
         crate::embed::EmbedderLocality::OnDevice
     }
-    fn infer(&self, _input: &EncoderInput) -> crate::Result<EncoderOutput> {
-        if self.fail {
-            return Err(crate::Error::InvalidConfig("fixture refusal".into()));
+    fn infer(&self, _input: &EncoderInput, _work: ExtractionWork) -> EncoderAttempt {
+        let result = (|| -> crate::Result<EncoderOutput> {
+            if self.fail {
+                return Err(crate::Error::InvalidConfig("fixture refusal".into()));
+            }
+            Ok(EncoderOutput {
+                spans: vec![
+                    NerSpan {
+                        message: 0,
+                        start: 0,
+                        end: 5,
+                        label: "PERSON".into(),
+                        confidence: 0.9,
+                    },
+                    NerSpan {
+                        message: 0,
+                        start: 7,
+                        end: 10,
+                        label: "PERSON".into(),
+                        confidence: 0.8,
+                    },
+                ],
+                links: vec![CorefLink {
+                    span: 1,
+                    antecedent: 0,
+                    confidence: None,
+                }],
+                vad: Some(Vad {
+                    valence: 0.5,
+                    arousal: 0.6,
+                    dominance: 0.4,
+                }),
+                context_links: Vec::new(),
+                speaker_links: Vec::new(),
+                mood_parts: Vec::new(),
+                stack_sha16: None,
+            })
+        })();
+        EncoderAttempt {
+            execution: None,
+            panicked: false,
+            result,
         }
-        Ok(EncoderOutput {
-            spans: vec![
-                NerSpan {
-                    message: 0,
-                    start: 0,
-                    end: 5,
-                    label: "PERSON".into(),
-                    confidence: 0.9,
-                },
-                NerSpan {
-                    message: 0,
-                    start: 7,
-                    end: 10,
-                    label: "PERSON".into(),
-                    confidence: 0.8,
-                },
-            ],
-            links: vec![CorefLink {
-                span: 1,
-                antecedent: 0,
-                confidence: None,
-            }],
-            vad: Some(Vad {
-                valence: 0.5,
-                arousal: 0.6,
-                dominance: 0.4,
-            }),
-            context_links: Vec::new(),
-            speaker_links: Vec::new(),
-            stack_sha16: None,
-        })
     }
 }
 fn person(vault: &Vault, byte: u8) -> EntityId {
@@ -109,16 +117,20 @@ fn turn() -> WitnessTurn {
     WitnessTurn {
         conversation_ref: "31313131313131313131313131313131".into(),
         turn_ref: Some("32323232323232323232323232323232".into()),
+        thread_audience: None,
         occurred_at: 100,
         messages: vec![WitnessMessage {
             id: Some("33333333333333333333333333333333".into()),
             author: WitnessAuthor::User,
             message_type: "text".into(),
             content: "Alice. She agreed.".into(),
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
+            quote: None,
         }],
+        assertions: Default::default(),
     }
 }
 #[test]
@@ -258,26 +270,34 @@ fn a_shadow_of_messages_sent_out_of_order_is_saved() {
         fn locality(&self) -> crate::embed::EmbedderLocality {
             crate::embed::EmbedderLocality::OnDevice
         }
-        fn infer(&self, input: &EncoderInput) -> crate::Result<EncoderOutput> {
-            let message = input
-                .messages
-                .iter()
-                .position(|message| message.text.starts_with("Ada"))
-                .ok_or_else(|| crate::Error::InvalidConfig("no Ada".into()))?;
-            Ok(EncoderOutput {
-                spans: vec![NerSpan {
-                    message,
-                    start: 0,
-                    end: 3,
-                    label: "PERSON".into(),
-                    confidence: 0.9,
-                }],
-                links: Vec::new(),
-                vad: None,
-                context_links: Vec::new(),
-                speaker_links: Vec::new(),
-                stack_sha16: None,
-            })
+        fn infer(&self, input: &EncoderInput, _work: ExtractionWork) -> EncoderAttempt {
+            let result = (|| -> crate::Result<EncoderOutput> {
+                let message = input
+                    .messages
+                    .iter()
+                    .position(|message| message.text.starts_with("Ada"))
+                    .ok_or_else(|| crate::Error::InvalidConfig("no Ada".into()))?;
+                Ok(EncoderOutput {
+                    spans: vec![NerSpan {
+                        message,
+                        start: 0,
+                        end: 3,
+                        label: "PERSON".into(),
+                        confidence: 0.9,
+                    }],
+                    links: Vec::new(),
+                    vad: None,
+                    context_links: Vec::new(),
+                    speaker_links: Vec::new(),
+                    mood_parts: Vec::new(),
+                    stack_sha16: None,
+                })
+            })();
+            EncoderAttempt {
+                execution: None,
+                panicked: false,
+                result,
+            }
         }
     }
     let message = |id: &str, order: u32, content: &str| WitnessMessage {
@@ -285,9 +305,11 @@ fn a_shadow_of_messages_sent_out_of_order_is_saved() {
         author: WitnessAuthor::User,
         message_type: "text".into(),
         content: content.into(),
+        parts: None,
         metadata: None,
         is_visible: true,
         order,
+        quote: None,
     };
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), armed()).unwrap();
@@ -299,11 +321,13 @@ fn a_shadow_of_messages_sent_out_of_order_is_saved() {
             &WitnessTurn {
                 conversation_ref: "34343434343434343434343434343434".into(),
                 turn_ref: Some("35353535353535353535353535353535".into()),
+                thread_audience: None,
                 occurred_at: 100,
                 messages: vec![
                     message("36363636363636363636363636363636", 1, "Bob replied"),
                     message("37373737373737373737373737373737", 0, "Ada called"),
                 ],
+                assertions: Default::default(),
             },
             &FindsAda("fixture/finds-ada@v1".parse().unwrap()),
         )

@@ -49,8 +49,9 @@ pub(super) enum Class {
     Live,
     /// Authority entangled with content, which cannot be carried without it:
     /// the restore refuses before publication when the target's rows differ
-    /// from the live vault's. Whole families are checked before creation;
-    /// image-entity scopes wait for opened compartments. `what` names it.
+    /// from the live vault's. Whole families are checked once compartments
+    /// open, before creation; image-entity scopes wait for the restored
+    /// target. `what` names it.
     Refuse { what: &'static str, scope: Scope },
 }
 
@@ -153,6 +154,27 @@ fn own_device_grant_row(value: &[u8]) -> bool {
 /// withdrawal on the record, a lapsed OAuth sign-in's among them (FIX 22193).
 /// So is the shell of his GitPush grant withdrawn on the record (FIX 22226).
 const OWNER_AGENT_GRANTS: Class = LIVE;
+
+/// A base agent's Steward grant (untangle 6.3) is standing access the host
+/// stands by default and the owner narrows, revokes or grants back, not
+/// vault content: it stays as the live vault holds it, so a grant stood or
+/// replaced after a checkpoint never blocks restoring that checkpoint
+/// (review of #6913: the host's own first mint made every earlier
+/// checkpoint unrestorable). Every such row counts, not only the one the
+/// marker names: a narrowing or a grant back replaces the marked row. A
+/// revoked one's bodyless shell is Live by its revoke act, as an owner's
+/// agent grant's is.
+const STEWARD_GRANTS: Class = LIVE;
+
+/// Whether the entity row `value` holds a base agent's Steward grant
+/// ([`crate::federation::is_system_agent_steward_grant`]). Read from the
+/// row alone, so an image row and a live row class alike.
+fn steward_grant_row(value: &[u8]) -> bool {
+    value
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|body| crate::federation::decode_federation_grant_body(body).ok())
+        .is_some_and(|grant| crate::federation::is_system_agent_steward_grant(&grant))
+}
 
 /// Whether the entity row `value` is a bodyless shell: a deleted entity's
 /// header, its body scrubbed.
@@ -610,10 +632,16 @@ impl Classes {
                         {
                             return Some(OWNER_AGENT_GRANTS);
                         }
+                        if header.entity_type == ENTITY_TYPE_FEDERATION_GRANT
+                            && steward_grant_row(value)
+                        {
+                            return Some(STEWARD_GRANTS);
+                        }
                         // A withdrawn agent or GitPush grant's shell holds
                         // no body to read a kind from; his revoke act or
                         // another withdrawal on the record names it (FIX
-                        // 5732, 22193, 22226).
+                        // 5732, 22193, 22226). A revoked Steward grant's
+                        // shell is among them, by the same act.
                         if header.entity_type == ENTITY_TYPE_FEDERATION_GRANT
                             && bodyless_row(value)
                             && self.withdrawn_owner_grants.contains(key)

@@ -169,7 +169,8 @@ fn public_verifier_reports_duplicate_object_numbers_before_and_after_signing() {
     // An unindexed earlier definition of a new object in an appended
     // revision must be visible even though the merged object map keeps
     // only the definition named by xref.
-    let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+    let state =
+        pdf::reparse_revision(&signed, &crate::memory::testing::operation_limits()).unwrap();
     let id = state.max_obj + 1;
     let mut later = signed;
     later.extend_from_slice(format!("\n{id} 0 obj\n<< /Probe /Orphan >>\nendobj\n").as_bytes());
@@ -247,7 +248,17 @@ fn public_verifier_uses_four_byte_eol_tolerance_consistently() {
     let signer = test_ca("eol-signer");
     let signed = append_sig_revision(&base_input(), &signer, "eol", None, AT_UNIX);
     let engine = verify_engine(vec![signer.cert_der], VERIFY_SECS);
-    for tail in [b"".as_slice(), b"\n", b"\r\n", b"\n\r\n", b"\r\n\r\n"] {
+    // Rule 5 conversion (072a918f8b6, #3385): an %%EOF's CR/LF run belongs to
+    // its revision however long it is, so the five-byte run passes like the
+    // shorter ones; a non-EOL byte after the signed range still fails.
+    for tail in [
+        b"".as_slice(),
+        b"\n",
+        b"\r\n",
+        b"\n\r\n",
+        b"\r\n\r\n",
+        b"\n\r\n\r\n",
+    ] {
         let mut bytes = signed.clone();
         bytes.extend_from_slice(tail);
         let report = engine.verify_sealed_pdf(&bytes).unwrap();
@@ -262,7 +273,7 @@ fn public_verifier_uses_four_byte_eol_tolerance_consistently() {
             Modifications::Clean(crate::api::ModificationLevel::None)
         );
     }
-    for tail in [b"\n\r\n\r\n".as_slice(), b"\nx"] {
+    for tail in [b"\nx".as_slice()] {
         let mut bytes = signed.clone();
         bytes.extend_from_slice(tail);
         let report = engine.verify_sealed_pdf(&bytes).unwrap();
@@ -295,7 +306,8 @@ fn revision_classifier_allows_writer_lta_but_denies_unlisted_post_sign_object() 
     );
     assert_eq!(clean.verdict(), VerifyVerdict::Passed);
     assert_eq!(clean.signatures[0].profile, Some(PadesProfile::BaselineLta));
-    let state = pdf::reparse_revision(&renewed, &SealResourceLimits::default()).unwrap();
+    let state =
+        pdf::reparse_revision(&renewed, &crate::memory::testing::operation_limits()).unwrap();
     let (tampered, _) = emit_revision(
         &renewed,
         &state,

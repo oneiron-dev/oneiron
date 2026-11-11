@@ -18,7 +18,7 @@ App theme selects the authored day/night edition. Text always sits on the
 opaque existing sheet token. No uploads, animation, filtering or new grain.
 
 Local source and receipts:
-`/Users/olety/Desktop/temp/oneiron-backgrounds-20260919-131514/ART-REVIEW.md`
+`<workspace>/oneiron-backgrounds-20260919-131514/ART-REVIEW.md`
 (originals, prompt manifest and export manifest are beside that report).
 
 ## SHA-256

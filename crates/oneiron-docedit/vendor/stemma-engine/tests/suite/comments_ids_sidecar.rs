@@ -176,6 +176,7 @@ fn create_and_reply_chain_adds_two_entries() {
     let created = base
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
+            story: None,
             expect: "clause".to_string(),
             occurrence: None,
             semantic_hash: None,
