@@ -1,6 +1,6 @@
 {
   "name": "vault.code.proposal_submit",
-  "description": "Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. The engine binds the owner's session and an owner_request provenance claim; the caller names neither. Nothing is approved, queued or landed.",
+  "description": "Stage one repository file change as a Proposed proposal with its retained base, under the owner's lens catalog or else the vault's review policy. Owner only; the engine binds owner_request attribution. Nothing is approved, queued or landed.",
   "input": "crate::memory::code_doors::CodeProposalSubmitRequest",
   "output": "crate::memory::code_doors::CodeProposalSubmitted",
   "call": "memory.code_proposal_submit_as(&memory.embedded_owner(\"vault.code.proposal_submit\")?, input)?",

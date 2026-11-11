@@ -1,6 +1,6 @@
 {
   "name": "vault.code.proposal_rereview",
-  "description": "Submit a fresh Proposed review of verified redacted bytes from an approved file proposal. Owner only. The change supplies the message and policy; the engine fills content and binds fresh owner_request attribution to it. The original stays unchanged; nothing lands.",
+  "description": "Submit a fresh Proposed review of verified redacted bytes from an approved file proposal. Owner only. The change gives message and policy; the engine fills content and fresh owner_request attribution. The original stays; nothing lands.",
   "input": "crate::memory::code_doors::CodeProposalRereviewRequest",
   "output": "crate::memory::code_doors::CodeProposalSubmitted",
   "call": "memory.code_proposal_rereview_as(&memory.embedded_owner(\"vault.code.proposal_rereview\")?, input.original, input.change)?",
