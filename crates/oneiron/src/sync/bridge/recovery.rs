@@ -220,6 +220,19 @@ fn land_edge(
             ArtifactError::InvalidRecoveryArtifact("edge endpoint missing at recovery").into(),
         );
     }
+    // A landing reply whose signed landing is later in this snapshot waits:
+    // the preflight skips it (the aborted txn holds no ledger) and the real
+    // forward pass lands it, never refusing a complete snapshot.
+    if matches!(kind, EdgeKind::ChildOf | EdgeKind::RepliesTo)
+        && crate::conversation_dag::landing_reply_waits_in(
+            &vault.store,
+            &vault.store,
+            txn,
+            &source,
+        )?
+    {
+        return Ok(());
+    }
     if matches!(kind, EdgeKind::SpawnedBy | EdgeKind::RepliesTo) {
         crate::conversation_dag::validate_received_edge(
             &vault.store,
