@@ -595,9 +595,10 @@ async fn saved_query_owner_actor_is_authenticated_principal() {
     .expect_err("strict saved-query intake refuses the same spoof in-process");
     assert_eq!(refused["message"], in_process_refusal.message, "{refused}");
     assert!(
-        refused["message"].as_str().unwrap().starts_with(
-            "campaign surface saved-query body is not the verb's input: "
-        ),
+        refused["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("campaign surface saved-query body is not the verb's input: "),
         "{refused}"
     );
 

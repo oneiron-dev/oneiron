@@ -519,7 +519,10 @@ fn import_measured(home: &Home, source: &str, path: &Path, dry_run: bool) -> (Va
         stderr,
     };
     let succeeded = output.status.success();
-    let failure = format!("import {source}: {}", String::from_utf8_lossy(&output.stderr));
+    let failure = format!(
+        "import {source}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     succeeded.then_some(()).expect(failure.as_str());
     let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report on stdout");
     let max = u64::try_from(usage.ru_maxrss).unwrap_or(0);
@@ -692,19 +695,34 @@ fn session_logs_past_the_decoded_limit_are_refused_before_anything_lands() {
     }
     let before = home.vault_bytes();
     let dry = home.run_import("codex", &home.dir.path().join("sessions"), true);
-    assert!(dry.status.success(), "{}", String::from_utf8_lossy(&dry.stderr));
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
     assert_eq!(home.vault_bytes(), before, "a dry run writes nothing");
     let output = home.run_import("codex", &home.dir.path().join("sessions"), false);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report");
     assert_eq!(totals(&report), (1_000_002, 0, 0, 0));
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 1_000_002);
-    assert!(report["warnings"].as_array().unwrap().iter().any(|warning| {
-        warning["warning"] == "limit_crossed"
-            && warning["row"] == "limits.import_decoded_messages"
-            && warning["observed"] == 1_000_002
-            && warning["observed"].as_u64().unwrap() > warning["limit"].as_u64().unwrap()
-    }), "{report}");
+    assert!(
+        report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning["warning"] == "limit_crossed"
+                    && warning["row"] == "limits.import_decoded_messages"
+                    && warning["observed"] == 1_000_002
+                    && warning["observed"].as_u64().unwrap() > warning["limit"].as_u64().unwrap()
+            }),
+        "{report}"
+    );
     assert_ne!(home.vault_bytes(), before, "the real import landed");
 }
 
@@ -736,16 +754,31 @@ fn session_logs_whose_titles_pass_the_decoded_limit_are_refused() {
     }
     let before = home.vault_bytes();
     let dry = home.run_import("claude-code", &home.dir.path().join("projects"), true);
-    assert!(dry.status.success(), "{}", String::from_utf8_lossy(&dry.stderr));
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
     assert_eq!(home.vault_bytes(), before, "a dry run writes nothing");
     let output = home.run_import("claude-code", &home.dir.path().join("projects"), false);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report");
-    assert!(report["warnings"].as_array().unwrap().iter().any(|warning| {
-        warning["warning"] == "limit_crossed"
-            && warning["row"] == "limits.import_decoded_bytes"
-            && warning["observed"].as_u64().unwrap() > warning["limit"].as_u64().unwrap()
-    }), "{report}");
+    assert!(
+        report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning["warning"] == "limit_crossed"
+                    && warning["row"] == "limits.import_decoded_bytes"
+                    && warning["observed"].as_u64().unwrap() > warning["limit"].as_u64().unwrap()
+            }),
+        "{report}"
+    );
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 0, "no log holds a message");
 }
 

@@ -147,16 +147,25 @@ fn follows_the_prompt(case: &Case) -> Reply {
                 let mut reply = serde_json::Map::new();
                 for question in questions {
                     let labels = question["labels"].as_array().unwrap();
-                    let chosen = [Some("supersede"), corrected, candidate, Some("no"), Some("none")]
-                        .into_iter()
-                        .flatten()
-                        .find(|label| labels.iter().any(|shown| shown.as_str() == Some(*label)))
-                        .expect("the pack lists the correction, resolution or identity choice");
+                    let chosen = [
+                        Some("supersede"),
+                        corrected,
+                        candidate,
+                        Some("no"),
+                        Some("none"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .find(|label| labels.iter().any(|shown| shown.as_str() == Some(*label)))
+                    .expect("the pack lists the correction, resolution or identity choice");
                     let weights: serde_json::Map<String, Value> = labels
                         .iter()
                         .map(|label| {
                             let label = label.as_str().unwrap();
-                            (label.to_owned(), json!(if label == chosen { 1.0 } else { 0.0 }))
+                            (
+                                label.to_owned(),
+                                json!(if label == chosen { 1.0 } else { 0.0 }),
+                            )
                         })
                         .collect();
                     reply.insert(question["id"].as_str().unwrap().to_owned(), json!(weights));
@@ -375,9 +384,7 @@ async fn binds_once(case: Case) {
     let seen = fake.seen();
     let listing = seen[before..]
         .iter()
-        .filter(|call| {
-            text(&call.body["messages"][0]).starts_with("Extract durable memory claims")
-        })
+        .filter(|call| text(&call.body["messages"][0]).starts_with("Extract durable memory claims"))
         .filter_map(|call| call.body["messages"].as_array()?.last())
         .map(text)
         .find(|input| {

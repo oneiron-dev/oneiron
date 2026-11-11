@@ -643,7 +643,10 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
     ] {
         seen.push_str(&std::fs::read_to_string(dir.path().join(log)).unwrap());
     }
-    assert!(!argv_log.exists(), "the bridge does not execute curl (OF-601)");
+    assert!(
+        !argv_log.exists(),
+        "the bridge does not execute curl (OF-601)"
+    );
     seen.push_str(&minted.to_string());
     for secret in [slip_hex, seed] {
         assert!(!seen.contains(secret), "a credential leaked");

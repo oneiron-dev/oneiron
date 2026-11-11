@@ -264,7 +264,9 @@ fn enveloped_update_frames(key: &str, update: &[u8]) -> Vec<Vec<u8>> {
         refs: Vec::new(),
         sidecar: None,
     };
-    envelope.encode_frames(key, window_sub_tags::UPDATE).unwrap()
+    envelope
+        .encode_frames(key, window_sub_tags::UPDATE)
+        .unwrap()
 }
 
 async fn send_enveloped_update(ws: &mut WsStream, key: &str, update: &[u8]) {
@@ -280,8 +282,8 @@ fn unwrap_window_frame(frame: Vec<u8>) -> Vec<u8> {
     if frame.first() != Some(&TAG_WINDOW_SYNC) {
         return frame;
     }
-    let (key, sub_tag, payload) = transport::decode_window_sync(&frame[1..])
-        .expect("a received window frame decodes");
+    let (key, sub_tag, payload) =
+        transport::decode_window_sync(&frame[1..]).expect("a received window frame decodes");
     if sub_tag != window_sub_tags::UPDATE {
         return frame;
     }
