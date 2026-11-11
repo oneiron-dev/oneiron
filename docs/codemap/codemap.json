@@ -3733,6 +3733,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/agent_grant_bound.rs",
+     "purpose": "FIX AGENT-GRAPHFS-GRANT-WORLDS (Engine RULING GRANT-COMBINE, 11 Nov 04:30): a credential an agent holds…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/agent_principal.rs",
      "purpose": "A named token agent's own-vault agent binding (PRIVACY-07)",
      "surface": {
@@ -15880,7 +15890,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 52,
+      "crate-vis": 55,
       "fn": 10,
       "re-export": 1,
       "struct": 1
@@ -16034,6 +16044,16 @@
       "crate-vis": 1,
       "fn": 10,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/grant_alternatives.rs",
+     "purpose": "FIX AGENT-GRAPHFS-GRANT-WORLDS: a credential the owner's agent Grants bind reads a row only where one of…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -98357,6 +98377,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_grant_read_ceiling.rs",
+     "purpose": "A paired agent's broad credential must not read beyond its owner's live Grant",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -99593,7 +99621,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 278,
+     "files": 279,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99726,7 +99754,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 144,
+     "files": 145,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101163,8 +101191,8 @@
    },
    "over_bar": 241,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7253,
-   "test_files": 931
+   "source_files": 7255,
+   "test_files": 932
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -120121,7 +120149,7 @@
      "path": "src/memory.rs",
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 31,
       "enum": 1,
       "fn": 2,
       "struct": 1,
@@ -120626,7 +120654,7 @@
      "path": "src/native/verify/verify_tests_fixtures_dss_a.rs",
      "purpose": "Verifier tests A: rcgen fixtures, CRL/OCSP builders, DSS harness and first DSS revocation tests",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -120751,7 +120779,7 @@
      "path": "tests/support/mod.rs",
      "purpose": "Shared test support: ephemeral identities, fixture backend/fetcher/clock, and a functional fixture TSA",
      "surface": {
-      "crate-vis": 39
+      "crate-vis": 45
      }
     },
     {
