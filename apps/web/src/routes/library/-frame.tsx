@@ -606,7 +606,7 @@ function MicroSidebarDemo({
   inFrame = false,
   specimen,
 }: {
-  labels: 'none' | 'word'
+  labels?: 'none' | 'word'
   ground: 'field' | 'paper'
   current: string
   onCurrent: (id: string) => void
@@ -620,7 +620,7 @@ function MicroSidebarDemo({
   )
   return (
     <>
-      <MicroSidebar labels={labels} ground={ground} aria-label={`places, ${labels}, ${ground}`} data-specimen={specimen}>
+      <MicroSidebar labels={labels} ground={ground} aria-label={`places, ${labels ?? 'symbols'}, ${ground}`} data-specimen={specimen}>
         {inFrame ? <AppFrame.Fold tooltipSide="right" /> : null}
         <VaultSwitch
           vaults={VAULTS}
@@ -629,7 +629,7 @@ function MicroSidebarDemo({
           onCreate={() => {}}
           trigger={<MicroSidebar.Item id="vault-switch" icon={<span className="lib-vault-initial">{vault[0].toUpperCase()}</span>} label={vault} />}
         />
-        {item('companion', 'companion', line(EIRI), { needsYou: true })}
+        {item('companion', 'eiri', line(EIRI), { needsYou: true })}
         {item('home', 'home', <Icon name="house" />)}
         {item('activity', 'activity', <Icon name="activity" />, { count: 3 })}
         {item('vault', 'vault', <Icon name="vault" />)}
@@ -686,7 +686,7 @@ function MicroSidebarDemo({
 }
 
 /* A microsidebar alone on the field, outside a frame. */
-function MicroSidebarAlone({ labels, ground, specimen }: { labels: 'none' | 'word'; ground: 'field' | 'paper'; specimen: string }) {
+function MicroSidebarAlone({ labels, ground, specimen }: { labels?: 'none' | 'word'; ground: 'field' | 'paper'; specimen: string }) {
   const [current, setCurrent] = React.useState('home')
   return (
     <div className="lib-micro-demo">
@@ -704,7 +704,7 @@ function FrameDemo({
   defaultOpen,
   specimen,
 }: {
-  labels: 'none' | 'word'
+  labels?: 'none' | 'word'
   ground: 'field' | 'paper'
   defaultOpen: boolean
   specimen: string
@@ -821,17 +821,17 @@ export function FieldSections() {
         </h2>
         <div className="lib-field-specimens">
           <figure className="lib-field-specimen">
-            <MicroSidebarAlone labels="none" ground="field" specimen="micro-none" />
+            <MicroSidebarAlone ground="field" specimen="micro-none" />
             <figcaption className="lib-field-caption">
-              symbols, names in a tooltip; drag a pinned lens, or right-click it to unpin
+              the default: symbols, names in a tooltip; drag a pinned lens, or right-click it to unpin
             </figcaption>
           </figure>
           <figure className="lib-field-specimen">
             <MicroSidebarAlone labels="word" ground="field" specimen="micro-word" />
-            <figcaption className="lib-field-caption">a word under each symbol</figcaption>
+            <figcaption className="lib-field-caption">labels word: a word of at most eight letters under each symbol</figcaption>
           </figure>
           <figure className="lib-field-specimen">
-            <MicroSidebarAlone labels="none" ground="paper" specimen="micro-paper" />
+            <MicroSidebarAlone ground="paper" specimen="micro-paper" />
             <figcaption className="lib-field-caption">on paper</figcaption>
           </figure>
         </div>
@@ -843,10 +843,10 @@ export function FieldSections() {
         </h2>
         {(
           [
-            { ground: 'field', open: true, labels: 'none', caption: 'open, symbols; fold it with the control in its head or the [ key' },
-            { ground: 'field', open: false, labels: 'word', caption: 'folded, words; rest the pointer on a place to see its sidebar' },
+            { ground: 'field', open: true, labels: undefined, caption: 'open, symbols; fold it with the control in its head or the [ key' },
+            { ground: 'field', open: false, labels: undefined, caption: 'folded, symbols; rest the pointer on a place to see its sidebar, move to the next place to switch' },
             { ground: 'paper', open: true, labels: 'word', caption: 'open, words, on paper' },
-            { ground: 'paper', open: false, labels: 'none', caption: 'folded, symbols, on paper' },
+            { ground: 'paper', open: false, labels: undefined, caption: 'folded, symbols, on paper' },
           ] as const
         ).map((f) => (
           <figure key={`${f.ground}-${f.open}`} className="lib-frame-specimen">
