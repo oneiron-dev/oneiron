@@ -87,7 +87,8 @@ pub(super) fn grant_cancel(vault: &Vault, actor: EntityId, seed: u8) {
     let grant_ref = EntityId::from_bytes([seed; 16]).expect("grant id");
     vault
         .mint_standing_outbound_grant(
-            &grant_ref,
+            &crate::test_util::embedded_owner_proof(&vault),
+            grant_ref,
             &GrantMintIntent {
                 principal_ref: actor.to_hex(),
                 origin_component_id: "tasks".to_owned(),
@@ -97,7 +98,6 @@ pub(super) fn grant_cancel(vault: &Vault, actor: EntityId, seed: u8) {
                     verb_class: AgentVerb::Cancel.as_str().to_owned(),
                 },
             },
-            1,
         )
         .expect("mint cancel grant");
 }
@@ -186,7 +186,8 @@ pub(super) fn grant_outbound(vault: &Vault, actor: EntityId, seed: u8) {
     let grant_ref = EntityId::from_bytes([seed; 16]).expect("grant id");
     vault
         .mint_standing_outbound_grant(
-            &grant_ref,
+            &crate::test_util::embedded_owner_proof(&vault),
+            grant_ref,
             &GrantMintIntent {
                 principal_ref: actor.to_hex(),
                 origin_component_id: "tasks".to_owned(),
@@ -196,7 +197,6 @@ pub(super) fn grant_outbound(vault: &Vault, actor: EntityId, seed: u8) {
                     verb_class: "send".to_owned(),
                 },
             },
-            CONSULT_NOW,
         )
         .expect("mint outbound grant");
 }

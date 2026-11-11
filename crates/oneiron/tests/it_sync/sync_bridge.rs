@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use crate::sync_harness::open_vault_with_memory_keystore;
 use crate::sync_harness::{
     clear_policy_manifests, make_entity_blob, map_get_bytes, map_insert_bytes, test_config,
 };
@@ -85,7 +86,7 @@ fn put_edge_in_window(
 #[test]
 fn invalid_tombstone_id_does_not_block_other_purges_in_same_commit() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
@@ -120,7 +121,7 @@ fn invalid_tombstone_id_does_not_block_other_purges_in_same_commit() {
 #[test]
 fn observer_a_sequence_overflow_preserves_zero_update_slot() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
@@ -160,7 +161,7 @@ fn observer_a_sequence_overflow_preserves_zero_update_slot() {
 #[test]
 fn crash_recovery_pm_markers() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
     let key = WindowKey::new("2026-03");
 
     let id = EntityId::now();
@@ -213,7 +214,7 @@ fn crash_recovery_pm_markers() {
 #[test]
 fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
@@ -253,7 +254,7 @@ fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
     // Recover into a FRESH vault (crash-lost LMDB / new node): only the
     // never-deleted entities and their edge may materialize.
     let temp_b = tempfile::tempdir().unwrap();
-    let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
+    let vault_b = open_vault_with_memory_keystore(temp_b.path(), test_config());
     let materializer_b = Materializer::new();
 
     let rematerialized =
@@ -297,7 +298,7 @@ fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
 #[test]
 fn reverse_rematerialize_mirrors_lmdb_entities_edges_and_skips_tombstones() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
@@ -383,7 +384,7 @@ fn reverse_rematerialize_mirrors_lmdb_entities_edges_and_skips_tombstones() {
 #[test]
 fn sync_client_handle_server_message_imports_root_sync_update() {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
     let (mut client, _rx) = make_client(&vault);
 
     let server_doc = LoroDoc::new();
@@ -463,7 +464,10 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
 fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
     // --- Node A: author a real GDPR receipt in LMDB via a hard delete ---
     let temp_a = tempfile::tempdir().unwrap();
-    let vault_a = Arc::new(Vault::open(temp_a.path(), test_config()).unwrap());
+    let vault_a = Arc::new(open_vault_with_memory_keystore(
+        temp_a.path(),
+        test_config(),
+    ));
 
     let subject = EntityId::now();
     // Seed a non-CLAIM subject (TURN = type 1) with a learned_at well outside
@@ -517,7 +521,7 @@ fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
 
     // --- Node B: CRDT → LMDB (the seam that silently dropped the receipt) ---
     let temp_b = tempfile::tempdir().unwrap();
-    let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
+    let vault_b = open_vault_with_memory_keystore(temp_b.path(), test_config());
 
     // ONE-1140 (OD-3/OD-4): node B's door verifies the receipt's origin
     // attestation against its `ls:` lease-registry mirror, so B registers
@@ -620,7 +624,10 @@ fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
 fn edge_provenance_claim_survives_crdt_sync_round_trip() {
     // --- Node A: subject edge + provenance through the real unit ---
     let temp_a = tempfile::tempdir().unwrap();
-    let vault_a = Arc::new(Vault::open(temp_a.path(), test_config()).unwrap());
+    let vault_a = Arc::new(open_vault_with_memory_keystore(
+        temp_a.path(),
+        test_config(),
+    ));
     clear_policy_manifests(&vault_a);
 
     let person = EntityId::now();
@@ -720,7 +727,7 @@ fn edge_provenance_claim_survives_crdt_sync_round_trip() {
 
     // --- Node B: CRDT → LMDB (the seam that silently dropped the Claim) ---
     let temp_b = tempfile::tempdir().unwrap();
-    let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
+    let vault_b = open_vault_with_memory_keystore(temp_b.path(), test_config());
     let materializer = Materializer::new();
     let restored =
         window::forward_rematerialize(&vault_b, &doc_b, &materializer, &window_key).unwrap();

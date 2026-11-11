@@ -3,22 +3,33 @@
 //! reads (ONE-2328, ONE-2329).
 
 use super::*;
+use crate::llm::decision::{DecisionProvider, HeldLadder, RuleDecisionProvider};
 use crate::llm::image::{
     ImageBackend, ImageBytes, ImageCatalog, ImageCatalogRow, ImageFuture, ImageIntent,
     ImageResponse,
 };
-use crate::llm::{
-    BudgetExhaustionPolicy, BudgetLease, BudgetRead, BudgetThreshold, CallPurpose, LlmCapability,
-    ModelId,
+use crate::llm::{BudgetLease, CallPurpose, LlmCapability, ModelId};
+use crate::memory::{AssetConsumer, ImagePick, LandedImage, ResolvedAsset, ServedAssetForm};
+use crate::model_decision::catalogue::IMAGE_FULL;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionRung,
+    ProviderDecision,
 };
-use crate::memory::{AssetConsumer, LandedImage, ResolvedAsset, ServedAssetForm};
 use crate::registry::ENTITY_TYPE_ASSET_TEXT;
 use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
+use std::time::Duration;
 
 const PIXELS: &[u8] = b"\x89PNG\r\n\x1a\nfake generated pixels";
 const INSTRUCTION: &str = "a lighthouse at dusk over a calm grey sea";
+/// A read's room for every form of the generated image.
+const CALM_ROOM: u64 = 1 << 20;
+/// A read's room for the caption's stored text, and not for the image form
+/// beside it, which carries the caption, the pixels and the handle.
+const PRESSED_ROOM: u64 = 2 * INSTRUCTION.len() as u64;
+/// The host's wording of the per-image question (OF-329).
+const PICK_WORDING: &str = "Does this task need this image in full?";
 
 /// The fake adapter: answers every intent with the same PNG bytes.
 struct FakeImageBackend;
@@ -41,6 +52,7 @@ impl ImageBackend for FakeImageBackend {
         &'a self,
         intent: ImageIntent,
         _references: Vec<ImageBytes>,
+        _mask: Option<ImageBytes>,
         lease: &'a BudgetLease,
     ) -> ImageFuture<'a> {
         self.generate(intent, lease)
@@ -109,36 +121,74 @@ fn consumer(capabilities: &[LlmCapability], purpose: CallPurpose) -> AssetConsum
     }
 }
 
-/// A budget `used` units into a 100-unit limit, with the rungs it crossed.
-fn budget(used: u64) -> BudgetRead {
-    BudgetRead {
-        attempt_id: "attempt".into(),
-        limit_units: 100,
-        cap_units: 100,
-        used_units: used,
-        reserved_units: 0,
-        remaining_units: 100 - used,
-        on_budget_exhausted: BudgetExhaustionPolicy::Suspend,
-        fired_thresholds: [
-            BudgetThreshold::Silent50,
-            BudgetThreshold::Plan80,
-            BudgetThreshold::Land95,
-        ]
-        .into_iter()
-        .filter(|rung| used >= rung.percent())
-        .collect(),
+/// The host's rule table for its per-image pick (OF-329): an in-band "no"
+/// to the question keyed by `stepped_down`, and no row for any other
+/// purpose, so the table abstains there and the image goes in full.
+fn pick_rules(stepped_down: &CallPurpose) -> HeldLadder {
+    let purpose = serde_json::to_string(stepped_down).expect("purpose");
+    let question = IMAGE_FULL
+        .question(
+            &[purpose.as_bytes()],
+            PICK_WORDING.to_owned(),
+            AnswerContract::Noul,
+        )
+        .expect("image question");
+    let mut rules =
+        RuleDecisionProvider::new("test-image-pick".into(), "1".into()).expect("rule table");
+    rules
+        .insert(
+            &question,
+            ProviderDecision {
+                answer: DecisionAnswer::Noul(false),
+                // Inside the dial's band (0.35 to 0.65).
+                probability: Some(0.4),
+                paired: None,
+                person: None,
+                served: None,
+                cost_per_thousand: None,
+            },
+        )
+        .expect("rule row");
+    let mut held = HeldLadder::unstaffed();
+    held.rule = Some(Arc::new(rules) as Arc<dyn DecisionProvider>);
+    held
+}
+
+/// The host's per-image pick on `held`'s rule rung alone.
+fn image_pick(held: &HeldLadder, principal: EntityId) -> ImagePick<'_> {
+    ImagePick {
+        ladder: held.ladder(),
+        principal,
+        dial: DecisionDial {
+            first: DecisionRung::Rule,
+            ceiling: DecisionRung::Rule,
+            band: DecisionBand::default(),
+        },
+        bands: DecisionBandPolicy::default(),
+        wording: PICK_WORDING.to_owned(),
+        task: "check the generated image against its instruction".into(),
+        budget: Duration::from_secs(60),
     }
 }
 
+/// `asset` as `consumer` is served it, after the host's `pick` when it gives
+/// one: the single-image read, or with `room` one call's serving within that
+/// many bytes of served forms.
 fn resolve(
     memory: &Memory<'_>,
     asset: &str,
     consumer: &AssetConsumer,
-    budget: Option<&BudgetRead>,
+    pick: Option<&ImagePick<'_>>,
+    room: Option<u64>,
 ) -> MemoryResult<ResolvedAsset> {
-    memory
-        .resolve_asset(asset, consumer, budget)
-        .map(|read| read.value)
+    match room {
+        None => memory
+            .resolve_asset(asset, consumer, pick)
+            .map(|read| read.value),
+        Some(room) => memory
+            .serve_images(&[asset.to_owned()], consumer, pick, Some(room))
+            .map(|mut read| read.value.remove(0)),
+    }
 }
 
 #[test]
@@ -183,7 +233,7 @@ fn resolve_serves_image_to_vision_consumer_asset_text_to_text_only_and_text_unde
     let vision = consumer(&[LlmCapability::ImageInput], CallPurpose::AnswerGen);
     let text_only = consumer(&[LlmCapability::ToolCalling], CallPurpose::AnswerGen);
 
-    let served = resolve(&memory, &landed.asset_ref, &vision, None).unwrap();
+    let served = resolve(&memory, &landed.asset_ref, &vision, None, None).unwrap();
     assert_eq!(served.form, ServedAssetForm::Image);
     let image = served.image.expect("image bytes");
     assert_eq!(image.bytes, PIXELS);
@@ -191,7 +241,7 @@ fn resolve_serves_image_to_vision_consumer_asset_text_to_text_only_and_text_unde
     // The caption rides beside the bytes.
     assert_eq!(served.text.as_deref(), Some(INSTRUCTION));
 
-    let served = resolve(&memory, &landed.asset_ref, &text_only, None).unwrap();
+    let served = resolve(&memory, &landed.asset_ref, &text_only, None, None).unwrap();
     assert_eq!(served.form, ServedAssetForm::AssetText);
     assert_eq!(served.image, None);
     assert_eq!(served.text.as_deref(), Some(INSTRUCTION));
@@ -200,23 +250,43 @@ fn resolve_serves_image_to_vision_consumer_asset_text_to_text_only_and_text_unde
         Some(landed.asset_text_ref.as_str())
     );
 
-    // Budget pressure: the purpose's rung (Plan80 by default) forces text.
-    let calm = resolve(&memory, &landed.asset_ref, &vision, Some(&budget(60))).unwrap();
+    // Budget pressure (OF-329): a room that holds the text and not the image
+    // serves the text. The fake pixels decode to no thumbnail.
+    let calm = resolve(&memory, &landed.asset_ref, &vision, None, Some(CALM_ROOM)).unwrap();
     assert_eq!(calm.form, ServedAssetForm::Image);
-    let pressed = resolve(&memory, &landed.asset_ref, &vision, Some(&budget(85))).unwrap();
+    let pressed = resolve(
+        &memory,
+        &landed.asset_ref,
+        &vision,
+        None,
+        Some(PRESSED_ROOM),
+    )
+    .unwrap();
     assert_eq!(pressed.form, ServedAssetForm::AssetText);
     assert_eq!(pressed.image, None);
 
-    // The per-purpose row decides where pressure starts for that purpose only.
-    let mut table = vault.purpose_default_table().unwrap();
-    table
-        .asset_text_at
-        .insert(CallPurpose::AutoCheck, BudgetThreshold::Silent50);
-    vault.set_purpose_default_table(&table).unwrap();
+    // The host's pick, keyed by purpose, steps the image down for that
+    // purpose only.
+    let held = pick_rules(&CallPurpose::AutoCheck);
+    let pick = image_pick(&held, owner);
     let checker = consumer(&[LlmCapability::ImageInput], CallPurpose::AutoCheck);
-    let served = resolve(&memory, &landed.asset_ref, &checker, Some(&budget(60))).unwrap();
+    let served = resolve(
+        &memory,
+        &landed.asset_ref,
+        &checker,
+        Some(&pick),
+        Some(CALM_ROOM),
+    )
+    .unwrap();
     assert_eq!(served.form, ServedAssetForm::AssetText);
-    let served = resolve(&memory, &landed.asset_ref, &vision, Some(&budget(60))).unwrap();
+    let served = resolve(
+        &memory,
+        &landed.asset_ref,
+        &vision,
+        Some(&pick),
+        Some(CALM_ROOM),
+    )
+    .unwrap();
     assert_eq!(served.form, ServedAssetForm::Image);
 }
 
@@ -241,16 +311,31 @@ fn resolve_fails_closed_when_no_form_matches() {
     let text_only = consumer(&[], CallPurpose::AnswerGen);
 
     assert_eq!(
-        resolve(&memory, &bare.to_hex(), &vision, None)
+        resolve(&memory, &bare.to_hex(), &vision, None, None)
             .unwrap()
             .form,
         ServedAssetForm::Image
     );
-    for (who, pressure) in [(&text_only, None), (&vision, Some(budget(90)))] {
-        let refused = resolve(&memory, &bare.to_hex(), who, pressure.as_ref()).unwrap_err();
+    // A reader that takes no image gets no form of it, at any room.
+    for room in [None, Some(0)] {
+        let refused = resolve(&memory, &bare.to_hex(), &text_only, None, room).unwrap_err();
         assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
     }
+    // OF-329: a vision reader whose room fits no form gets the image's view
+    // handle alone (the ask rung), never its pixels or a text.
+    let asked = resolve(&memory, &bare.to_hex(), &vision, None, Some(0)).unwrap();
+    assert_eq!(asked.form, ServedAssetForm::Ask, "{asked:?}");
+    assert_eq!(asked.image, None);
+    assert_eq!(asked.text, None);
+    assert_eq!(asked.asset_text_ref, None);
+    assert!(
+        asked
+            .handle
+            .as_deref()
+            .is_some_and(|handle| handle.starts_with(&format!("{}@", bare.to_hex()))),
+        "{asked:?}"
+    );
     // A ref to something that is not an ASSET serves no form at all.
-    let refused = resolve(&memory, &owner.to_hex(), &vision, None).unwrap_err();
+    let refused = resolve(&memory, &owner.to_hex(), &vision, None, None).unwrap_err();
     assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND);
 }

@@ -503,6 +503,10 @@ pub(super) fn load_match_candidates(
         if !super::recognition::admit_recognition_candidate_in(vault, rtxn, &record, purpose)? {
             continue;
         }
+        #[allow(
+            clippy::question_mark,
+            reason = "the loop reads `machine` again for the next record; `?` would move it"
+        )]
         let secret = if stored.needs_world_key() {
             Some(match machine {
                 Ok(ref secret) => secret,

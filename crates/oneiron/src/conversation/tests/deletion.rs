@@ -226,9 +226,11 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
         conversation: room,
         parent: Some(root),
         reply_to: None,
+        quote: None,
         address: crate::conversation_dag::AddressMode::Broadcast,
         recipients: vec![],
         kind: crate::registry::ENTITY_TYPE_TURN,
+        containing_turn: None,
         session: None,
         text: vec![],
         advance: false,
@@ -236,6 +238,7 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
         occurred: TimeRange { start: 11, end: 11 },
         learned_at: 11,
         actor: bob,
+        thread_audience: None,
     };
     let fresh = vault.append_dag_record(&append).unwrap().id;
     assert!(vault.get(&fresh).unwrap().is_some());
@@ -280,8 +283,6 @@ fn independent_root(seed: u8) -> crate::authority::AuthorityLogEntry {
             },
             genesis_nonce: [seed.wrapping_add(10); 32],
             recovery: GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
         signer: AuthoritySignature {
             suite: key.suite(),

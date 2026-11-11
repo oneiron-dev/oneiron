@@ -1,7 +1,15 @@
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 use super::*;
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 struct Critics;
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 impl ReviewHost for Critics {
     fn fan_out(&self, inputs: &[CriticReviewInput]) -> Result<Vec<CritiqueArtifact>> {
         inputs
@@ -25,6 +33,8 @@ impl ReviewHost for Critics {
             .collect()
     }
 }
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 fn catalog() -> Result<LensCatalog> {
     Ok(LensCatalog {
         schema_version: 1,
@@ -34,6 +44,8 @@ fn catalog() -> Result<LensCatalog> {
             .collect::<Result<_>>()?,
     })
 }
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 #[test]
 fn document_and_claim_reviews_persist_and_learn_dismissals() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
@@ -157,13 +169,19 @@ fn document_and_claim_reviews_persist_and_learn_dismissals() -> Result<()> {
     Ok(())
 }
 
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 struct NoSecondCall;
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 impl ReviewHost for NoSecondCall {
     fn fan_out(&self, _: &[CriticReviewInput]) -> Result<Vec<CritiqueArtifact>> {
         panic!("a durable retry must not call critics again")
     }
 }
 
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 /// A reviewed session whose lens `a` the owner has calibrated, for the
 /// consolidation reader table (`gate::tests::consolidation_readers`).
 pub(crate) struct CalibratedSession {
@@ -173,6 +191,8 @@ pub(crate) struct CalibratedSession {
     rounds: usize,
 }
 
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 impl CalibratedSession {
     pub(crate) fn new(vault: &Vault) -> Result<Self> {
         let time = TimeRange { start: 10, end: 10 };

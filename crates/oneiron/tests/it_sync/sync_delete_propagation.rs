@@ -24,6 +24,8 @@
 
 use std::sync::Arc;
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use oneiron::sync::bridge::Materializer;
@@ -53,7 +55,11 @@ fn test_config() -> VaultConfig {
 
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), test_config()));
+    // FIX 7957/9599 (604f9388019): isolate subject-month work from bootstrap notifications.
+    for key in vault.sync_state_keys_with_prefix("lm:w:1970-01:").unwrap() {
+        vault.sync_state_delete(&key).unwrap();
+    }
     (dir, vault)
 }
 
@@ -74,7 +80,8 @@ fn hex(bytes: &[u8]) -> String {
 
 fn receipt_request_id(vault: &Vault, receipt_id: &EntityId) -> String {
     let raw = vault.get_raw(receipt_id).unwrap().expect("receipt raw");
-    let body: serde_json::Value = rmp_serde::from_slice(&raw[25..]).expect("receipt body");
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("receipt body");
     body["request_id"]
         .as_str()
         .expect("request_id string")
@@ -143,6 +150,8 @@ fn hard_delete_routes_through_live_window_doc_with_carrier_15_scrub() {
     let (_dir, vault) = open_vault();
     let id = EntityId::now();
     let (manager, window) = open_routed_window(&vault, "node-a", &id, b"live-route-secret");
+    // FIX 3787/5133 (a0d15200af5, b7a4b1fe82d): checkpoint recovery before the payload delta.
+    window.persist_state(&vault).unwrap();
     let hex_id = id.to_hex();
 
     // A post-open commit so the window has a payload-carrying `u:` row to
@@ -150,11 +159,12 @@ fn hard_delete_routes_through_live_window_doc_with_carrier_15_scrub() {
     // this window (must be scrubbed) and one for another window (must
     // survive).
     let bystander = EntityId::now();
-    let mut blob = Vec::with_capacity(25 + 14);
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 14);
     blob.push(1u8);
     for _ in 0..3 {
         blob.extend_from_slice(&LEARNED_AT.to_be_bytes());
     }
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(b"bystander-body");
     window
         .doc
@@ -382,16 +392,36 @@ fn production_open_window_replays_pending_tombstones_before_mirrors() {
 
     // Persisted window doc: holds ONLY the bystander (byte-identical to
     // its LMDB envelope), never the doomed body.
-    let mut bystander_blob = Vec::with_capacity(25 + 12);
+    let mut bystander_blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 12);
     bystander_blob.push(1u8);
     for _ in 0..3 {
         bystander_blob.extend_from_slice(&LEARNED_AT.to_be_bytes());
     }
+    bystander_blob.extend_from_slice(&0_u64.to_be_bytes());
     bystander_blob.extend_from_slice(b"pt-bystander");
     let setup = LoroDoc::new();
     setup
         .get_map("entities")
         .insert(bystander.to_hex().as_str(), bystander_blob.as_slice())
+        .unwrap();
+    // FIX 7774 (d2423e39bbc): pre-carry the bystander's birth edge, not recovery work.
+    let birth_facet = vault.default_facet().unwrap();
+    let birth_key = oneiron::sync::bridge::format_edge_key(
+        &bystander,
+        oneiron::EdgeKind::FacetOf,
+        &birth_facet,
+    );
+    let birth_value = oneiron::sync::bridge::encode_edge_value_for_crdt(
+        oneiron::EdgeKind::FacetOf,
+        1.0,
+        LEARNED_AT,
+        None,
+        None,
+    )
+    .unwrap();
+    setup
+        .get_map("edges")
+        .insert(birth_key.as_str(), birth_value.as_slice())
         .unwrap();
     setup.commit();
     vault
@@ -530,11 +560,12 @@ fn persist_state_cannot_clobber_transient_tombstone() {
 
     // The live doc diverges with its own commit (an unrelated entity).
     let unrelated = EntityId::now();
-    let mut blob = Vec::with_capacity(25 + 9);
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 9);
     blob.push(1u8);
     for _ in 0..3 {
         blob.extend_from_slice(&LEARNED_AT.to_be_bytes());
     }
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(b"unrelated");
     window
         .doc
@@ -681,7 +712,7 @@ fn offline_hard_delete_is_delivered_on_reconnect_replay() {
 }
 
 /// AC5 (SoftErase variant): a `user_delete` on A replays to B over the same
-/// transport and leaves B the 25 B shell — no purge, no receipt, no sweep
+/// transport and leaves B the header-only shell — no purge, no receipt, no sweep
 /// row — and on A no carrier-15 scrub runs (soft deletes keep the window's
 /// pending rows and set no full-resync marker).
 #[test]
@@ -744,8 +775,8 @@ fn offline_soft_delete_replay_leaves_replica_shell() {
     let raw = vault_b
         .get_raw(&id)
         .unwrap()
-        .expect("user_delete replay must keep the 25 B shell on the replica");
-    assert_eq!(raw.len(), 25);
+        .expect("user_delete replay must keep the header-only shell on the replica");
+    assert_eq!(raw.len(), ENTITY_METADATA_HEADER_LEN);
     assert_eq!(vault_b.get(&id).unwrap().as_deref(), Some([].as_slice()));
     assert!(vault_b.search_text("soft-secret", 10).unwrap().is_empty());
     let value = map_get_bytes(&window_b.doc.get_map("tombstones"), &id.to_hex())

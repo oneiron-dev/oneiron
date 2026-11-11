@@ -1,6 +1,10 @@
 //! A Steward's membership acts are asks (untangle 6.3d, S63-4 = A; ARCH-0043
 //! Steward): its add-member call writes an ask and changes no membership; a
 //! live Owner applies it through the add door, and the receipt names both.
+//! A hard erase of a person deletes each ask that names them (review of
+//! #6915, round 2: the ask table had no actor scrub). An ask stands while
+//! its Steward does: once the Steward has lost the role, an Owner's apply is
+//! refused and nothing changes (review of #6915).
 //!
 //! Runs on public paths: `cargo test -p oneiron --all-features --test
 //! steward_member_asks`.
@@ -12,7 +16,7 @@ use oneiron::federation::{
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::{DeleteReason, EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
 
@@ -311,5 +315,191 @@ fn a_steward_cannot_ask_to_add_a_person_who_holds_an_open_invitation() {
             .expect("asks")
             .is_empty(),
         "no ask is stored"
+    );
+}
+
+/// An ask does not outlive its Steward. The Owner makes the Steward a plain
+/// Member; the open ask the Steward had filed can no longer be applied (the
+/// change landed in the former Steward's name and told them its outcome),
+/// and the Owner declines it.
+#[test]
+fn an_ask_is_not_applied_once_its_steward_has_lost_the_role() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let steward = person(&vault);
+    let invitee = person(&vault);
+    let (owner_proof, steward_proof, invitee_proof) = (
+        proof(&vault, owner),
+        proof(&vault, steward),
+        proof(&vault, invitee),
+    );
+    vault
+        .initialize_shared_vault(
+            &owner_proof,
+            SHARED,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(Role::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: steward,
+                    role: Some(Role::Steward),
+                },
+            ],
+            1,
+        )
+        .expect("a shared vault with a Steward");
+    let invitation = vault
+        .shared_invitations(&steward_proof, SHARED)
+        .expect("the Steward's invitations")
+        .into_iter()
+        .find(|open| open.role == Role::Steward)
+        .expect("the Steward's founding invitation");
+    vault
+        .accept_shared_invitation(&steward_proof, SHARED, &invitation.id)
+        .expect("the Steward accepts");
+    let ask = vault
+        .ask_shared_member_change(
+            &steward_proof,
+            SHARED,
+            MemberAskChange::Add {
+                member: invitee.to_hex(),
+                role: None,
+            },
+        )
+        .expect("the Steward's ask");
+
+    vault
+        .change_shared_member_role(&owner_proof, SHARED, steward, Role::Member, None)
+        .expect("the Owner makes the Steward a Member");
+
+    assert!(
+        vault
+            .apply_shared_member_ask(&owner_proof, &ask.id, None)
+            .is_err(),
+        "the ask's Steward no longer holds the role: the ask is not applied"
+    );
+    assert!(
+        vault
+            .shared_invitations(&invitee_proof, SHARED)
+            .expect("invitations")
+            .is_empty(),
+        "nothing changed: no invitation was issued"
+    );
+    let open = vault
+        .shared_member_asks(&owner_proof, SHARED)
+        .expect("asks");
+    assert_eq!(open.len(), 1, "the ask is still there");
+    assert_eq!(open[0].status, MemberAskStatus::Open, "and still open");
+    let declined = vault
+        .decline_shared_member_ask(&owner_proof, &ask.id)
+        .expect("the Owner declines it");
+    assert_eq!(
+        declined.status,
+        MemberAskStatus::Declined { by: owner.to_hex() }
+    );
+}
+
+/// A hard erase of a person takes them out of the asks: the ask table names
+/// people (its Steward, the member a change is about, who closed it) and had
+/// no actor scrub, so an ask to add M still showed M after M was erased.
+#[test]
+fn a_hard_erase_deletes_the_asks_that_name_the_erased_person() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    // An erase signs its receipt with the install's device key, which the
+    // delete door loads from the keystore a host installs.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let steward = person(&vault);
+    let erased = person(&vault);
+    let other = person(&vault);
+    let (owner_proof, steward_proof) = (proof(&vault, owner), proof(&vault, steward));
+    vault
+        .initialize_shared_vault(
+            &owner_proof,
+            SHARED,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(Role::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: steward,
+                    role: Some(Role::Steward),
+                },
+            ],
+            1,
+        )
+        .expect("a shared vault with a Steward");
+    let invitation = vault
+        .shared_invitations(&steward_proof, SHARED)
+        .expect("the Steward's invitations")
+        .into_iter()
+        .find(|open| open.role == Role::Steward)
+        .expect("the Steward's founding invitation");
+    vault
+        .accept_shared_invitation(&steward_proof, SHARED, &invitation.id)
+        .expect("the Steward accepts");
+
+    // Two asks: one names the person who is erased, one names someone else.
+    let names_erased = vault
+        .ask_shared_member_change(
+            &steward_proof,
+            SHARED,
+            MemberAskChange::Add {
+                member: erased.to_hex(),
+                role: None,
+            },
+        )
+        .expect("the ask that names the erased person");
+    let names_other = vault
+        .ask_shared_member_change(
+            &steward_proof,
+            SHARED,
+            MemberAskChange::Add {
+                member: other.to_hex(),
+                role: None,
+            },
+        )
+        .expect("the ask that names someone else");
+    assert_eq!(
+        vault
+            .shared_member_asks(&owner_proof, SHARED)
+            .expect("asks")
+            .len(),
+        2,
+        "two asks before the erase"
+    );
+
+    vault
+        .delete_entity_with_reason(&erased, DeleteReason::UserHardDelete)
+        .expect("hard erase");
+
+    let left = vault
+        .shared_member_asks(&owner_proof, SHARED)
+        .expect("asks");
+    let named = erased.to_hex();
+    assert!(
+        left.iter()
+            .all(|ask| !serde_json::to_string(ask).expect("ask").contains(&named)),
+        "no ask names the erased person: {left:?}"
+    );
+    assert_eq!(
+        left.iter().map(|ask| ask.id.as_str()).collect::<Vec<_>>(),
+        [names_other.id.as_str()],
+        "the ask that names someone else stands"
+    );
+    assert!(
+        vault
+            .apply_shared_member_ask(&owner_proof, &names_erased.id, None)
+            .is_err(),
+        "an ask about an erased person is gone: nothing to apply"
     );
 }
