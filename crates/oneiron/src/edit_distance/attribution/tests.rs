@@ -2,12 +2,19 @@ use super::*;
 
 use rmpv::Value;
 
-use crate::claim::ClaimLifecycleStatus;
+use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::config::VaultConfig;
 use crate::edit_distance::delta::{delta_from_reconstructed, put_amendment_delta_in_txn};
 use crate::error::ClaimError;
+use crate::llm::decision::{
+    DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
+    DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
+};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
+use crate::skill_attribution::{
+    ATTRIBUTION_DIAL, AttributionDecisions, AttributionLane, AttributionNotes, split_from_verdicts,
+};
 
 // ─── fixtures ───────────────────────────────────────────────────────────
 
@@ -154,10 +161,25 @@ fn a_forged_judgment_lands_nothing() -> Result<()> {
         scope: "outbound".to_owned(),
         evidence_receipts: vec!["receipt:forged".to_owned()],
         d_norm: 1.0,
+        engine_ver: "test".to_owned(),
         at: 50,
+        hunks: Vec::new(),
+        executor: None,
+        type_ref: None,
+        project: None,
+        attempt_receipt: None,
+        judge: None,
+        judge_model: None,
+        receipts: Vec::new(),
+        actor: None,
+        skill: None,
+        rejected: false,
     };
     assert!(project_edit_cost_claims(&vault, std::slice::from_ref(&forged))?.is_empty());
-    assert!(active_rows(&vault, &skill, PREDICATE_SKILL_EDIT_COST)?.is_empty());
+    // e576014ab29 (#4332) retired the scalar skill.edit_cost rows into the
+    // shared learning.edit_cost cells: the same "nothing landed" read, through
+    // the cell the routed judgment below charges.
+    assert!(edit_cost_for(&vault, &skill, UNKNOWN_EXECUTOR, "outbound", None, None)?.is_none());
 
     // The same row, once it IS what this module routed, lands — so the refusal
     // above is the grounding check and not an unrelated failure.
@@ -199,11 +221,12 @@ fn the_evidence_door_refuses_a_subject_that_cannot_act() -> Result<()> {
 fn public_writes_of_both_cost_predicates_are_reserved() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.reserved")?;
 
-    for predicate in [PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST] {
+    for subject in [actor, skill] {
         let mut body = ClaimBody::new(
-            predicate,
-            ClaimSubject::Entity(actor),
+            crate::learning::PREDICATE_LEARNING_EDIT_COST,
+            ClaimSubject::Entity(subject),
             Value::F32(0.0),
             1.0,
             ClaimApprovalStatus::Auto,
@@ -249,11 +272,11 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
     }
     let ids = project_edit_cost_claims(&source, &judgments)?;
     assert_eq!(ids.len(), 2);
-    let archive = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
-    target.import_whole_vault_json(archive.bytes())?;
+    let archive = source.export_whole_vault(false)?;
+    target.import_whole_vault_archive(archive.bytes())?;
     assert_eq!(
         target
-            .import_whole_vault_json(archive.bytes())?
+            .import_whole_vault_archive(archive.bytes())?
             .inserted_entities,
         0
     );
@@ -277,7 +300,8 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
                         crate::registry::ENTITY_TYPE_CLAIM,
                         t(70),
                         70,
-                        &bytes
+                        None,
+                        &bytes,
                     )
                     .commit()
                     .is_err()
@@ -285,8 +309,17 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
         }
         preserved.push(body);
     }
-    assert_eq!(edit_cost_for(&target, &actor, "outbound")?, None);
-    assert_eq!(edit_cost_for(&target, &skill, "outbound")?, None);
+    // Learning-cell readbacks (e576014ab29 #4332): the same "nothing
+    // charged" values through the cells a local judgment would charge.
+    let actor_hex = actor.to_hex();
+    assert_eq!(
+        edit_cost_for(&target, &actor, &actor_hex, "outbound", None, None)?,
+        None
+    );
+    assert_eq!(
+        edit_cost_for(&target, &skill, UNKNOWN_EXECUTOR, "outbound", None, None)?,
+        None
+    );
     assert!(project_edit_cost_claims(&target, &judgments)?.is_empty());
     let local = judged(
         &target,
@@ -303,7 +336,7 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
     let fresh = project_edit_cost_claims(&target, &[local])?;
     assert_eq!(fresh.len(), 1);
     assert!(!ids.contains(&fresh[0]));
-    assert!(edit_cost_for(&target, &skill, "outbound")?.is_some());
+    assert!(edit_cost_for(&target, &skill, UNKNOWN_EXECUTOR, "outbound", None, None)?.is_some());
     for (id, before) in ids.iter().zip(preserved) {
         assert_eq!(target.get_claim(id)?, Some(before));
     }
@@ -312,21 +345,99 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
 
 // ─── split verdicts and unclear (ARCH-0056 §5, owner 2026-10-08) ──────────
 
-/// Labels the first hunk the skill's defect and the second the executor's
-/// lapse, both above the floor.
-struct DefectThenLapse;
+/// The host's attribution decisions over `ladder` (ab2a34ddceb #1588: a host
+/// judge became a provider on the decision ladder): the shipped dial and
+/// wording, each doubtful answer's note from `notes`.
+fn attribution_decisions<'a>(
+    ladder: DecisionLadder<'a>,
+    notes: Option<&'a dyn AttributionNotes>,
+) -> AttributionDecisions<'a> {
+    AttributionDecisions {
+        ladder,
+        principal: EntityId::now(),
+        dial: ATTRIBUTION_DIAL,
+        bands: DecisionBandPolicy::default(),
+        wording: "Which label does this region of the amendment earn?".to_owned(),
+        budget: std::time::Duration::from_secs(3600),
+        notes,
+    }
+}
 
-impl AttributionJudge for DefectThenLapse {
-    fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-        Ok(None)
+/// A host ladder whose one model rung, Big, is `judge`.
+fn big_rung_ladder(judge: impl DecisionProvider + 'static) -> HeldLadder {
+    HeldLadder {
+        big: Some(std::sync::Arc::new(judge) as std::sync::Arc<dyn DecisionProvider>),
+        ..HeldLadder::unstaffed()
+    }
+}
+
+/// A scripted judge: one (verdict, confidence) per hunk, in hunk order. Each
+/// hunk's state entry carries the id of the question that asks about it, so
+/// the answer stays aligned however the ladder packs the regions.
+struct ScriptedAttribution {
+    answers: Vec<(AttributionVerdict, f64)>,
+}
+
+impl DecisionProvider for ScriptedAttribution {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Big,
+            model: "scripted-attribution".to_owned(),
+            version: "1".to_owned(),
+        }
     }
 
-    fn judge_hunks(&self, request: &JudgeRequest<'_>) -> Result<Option<Vec<HunkVerdict>>> {
-        assert_eq!(request.hunks.len(), 2, "the judge sees every changed hunk");
-        Ok(Some(vec![
-            HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, 0.9),
-            HunkVerdict::with_confidence(AttributionVerdict::ExecutionLapse, 0.8),
-        ]))
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        let wanted = call.question.id.to_hex();
+        let hunks = call
+            .state
+            .get("hunks")
+            .and_then(serde_json::Value::as_array)
+            .expect("the attribution question carries every changed hunk");
+        assert_eq!(
+            hunks.len(),
+            self.answers.len(),
+            "the judge sees every changed hunk"
+        );
+        let index = call
+            .state
+            .get("hunks")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|hunks| {
+                hunks.iter().position(|hunk| {
+                    hunk.get("question").and_then(serde_json::Value::as_str)
+                        == Some(wanted.as_str())
+                })
+            })
+            .unwrap_or(0);
+        let (verdict, probability) = self
+            .answers
+            .get(index)
+            .copied()
+            .unwrap_or((AttributionVerdict::Unclear, 0.0));
+        Ok(ProviderDecision {
+            answer: DecisionAnswer::Choice(verdict.as_str().to_owned()),
+            probability: Some(probability),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        })
+    }
+}
+
+/// Notes for doubtful answers, in hunk order: `None` where no note is needed.
+struct ScriptedNotes {
+    notes: Vec<Option<String>>,
+}
+
+impl AttributionNotes for ScriptedNotes {
+    fn notes(
+        &self,
+        _request: &JudgeRequest<'_>,
+        _answers: &[HunkVerdict],
+    ) -> Result<Vec<Option<String>>> {
+        Ok(self.notes.clone())
     }
 }
 
@@ -366,7 +477,16 @@ fn a_two_hunk_edit_charges_each_route_only_its_share() -> Result<()> {
             .with_routing_facts(true, true),
     )?;
 
-    let judgment = judge_amendment_hunks(&vault, receipt, &DefectThenLapse, &hunks)?
+    // Labels the first hunk the skill's defect and the second the executor's
+    // lapse, both above the floor.
+    let ladder = big_rung_ladder(ScriptedAttribution {
+        answers: vec![
+            (AttributionVerdict::SkillDefect, 0.9),
+            (AttributionVerdict::ExecutionLapse, 0.8),
+        ],
+    });
+    let decisions = attribution_decisions(ladder.ladder(), None);
+    let judgment = judge_amendment_hunks(&vault, receipt, Some(&decisions), &hunks)?
         .expect("a split amendment routes");
     // Each hunk weighs what the pinned ED metric measures for it.
     let mass = |hunk: &EditHunk<'_>| {
@@ -388,12 +508,16 @@ fn a_two_hunk_edit_charges_each_route_only_its_share() -> Result<()> {
     );
 
     project_edit_cost_claims(&vault, std::slice::from_ref(&judgment))?;
-    let skill_cost = f64::from(
-        edit_cost_for(&vault, &skill, "outbound")?.expect("the skill is charged its share"),
-    );
-    let actor_cost = f64::from(
-        edit_cost_for(&vault, &actor, "outbound")?.expect("the actor is charged its share"),
-    );
+    // The cell keeps the receipt's edit mass at the charged share's weight
+    // (e576014ab29 #4332): mean x runs is the share of the edit each route
+    // takes, the value the scalar head used to carry.
+    let skill_estimate = edit_cost_for(&vault, &skill, UNKNOWN_EXECUTOR, "outbound", None, None)?
+        .expect("the skill is charged its share");
+    let actor_hex = actor.to_hex();
+    let actor_estimate = edit_cost_for(&vault, &actor, &actor_hex, "outbound", None, None)?
+        .expect("the actor is charged its share");
+    let skill_cost = skill_estimate.mean() * skill_estimate.runs;
+    let actor_cost = actor_estimate.mean() * actor_estimate.runs;
     let d_norm = f64::from(d_norm);
     assert!((skill_cost - defect_share * d_norm).abs() < 1e-5);
     assert!((actor_cost - (1.0 - defect_share) * d_norm).abs() < 1e-5);
@@ -409,20 +533,6 @@ fn a_two_hunk_edit_charges_each_route_only_its_share() -> Result<()> {
 /// and a re-judgment that clears the doubt withdraws the note.
 #[test]
 fn an_unclear_hunk_charges_nobody_and_files_its_note() -> Result<()> {
-    struct DefectThenUnsure;
-    impl AttributionJudge for DefectThenUnsure {
-        fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-            Ok(None)
-        }
-        fn judge_hunks(&self, _request: &JudgeRequest<'_>) -> Result<Option<Vec<HunkVerdict>>> {
-            Ok(Some(vec![
-                HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, 0.9),
-                HunkVerdict::with_confidence(AttributionVerdict::Unclear, 0.7)
-                    .with_note("a new date with no stated reason"),
-            ]))
-        }
-    }
-
     let (_tmp, vault) = temp_vault();
     let actor = put_actor(&vault)?;
     let skill = put_skill(&vault, "ed03.unclear")?;
@@ -447,18 +557,33 @@ fn an_unclear_hunk_charges_nobody_and_files_its_note() -> Result<()> {
             .with_routing_facts(true, true),
     )?;
 
-    let judgment = judge_amendment_hunks(&vault, receipt, &DefectThenUnsure, &hunks)?
+    let ladder = big_rung_ladder(ScriptedAttribution {
+        answers: vec![
+            (AttributionVerdict::SkillDefect, 0.9),
+            (AttributionVerdict::Unclear, 0.7),
+        ],
+    });
+    let notes = ScriptedNotes {
+        notes: vec![None, Some("a new date with no stated reason".to_owned())],
+    };
+    let decisions = attribution_decisions(ladder.ladder(), Some(&notes));
+    let judgment = judge_amendment_hunks(&vault, receipt, Some(&decisions), &hunks)?
         .expect("a partly clear amendment routes");
     let unclear_share = judgment.share_of(AmendmentClass::Unclear);
     assert!(unclear_share > 0.0 && unclear_share < 1.0);
     project_edit_cost_claims(&vault, std::slice::from_ref(&judgment))?;
-    let skill_cost = edit_cost_for(&vault, &skill, "outbound")?.expect("the clear hunk charges");
+    let skill_estimate = edit_cost_for(&vault, &skill, UNKNOWN_EXECUTOR, "outbound", None, None)?
+        .expect("the clear hunk charges");
     assert!(
-        (f64::from(skill_cost) - f64::from(1.0 - unclear_share) * f64::from(d_norm)).abs() < 1e-5,
+        (skill_estimate.mean() * skill_estimate.runs
+            - f64::from(1.0 - unclear_share) * f64::from(d_norm))
+        .abs()
+            < 1e-5,
         "the skill carries the clear hunk's share alone"
     );
+    let actor_hex = actor.to_hex();
     assert!(
-        active_rows(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?.is_empty(),
+        edit_cost_for(&vault, &actor, &actor_hex, "outbound", None, None)?.is_none(),
         "the unclear hunk charges nobody"
     );
 
@@ -484,26 +609,12 @@ fn an_unclear_hunk_charges_nobody_and_files_its_note() -> Result<()> {
 /// refused rather than filed (ARCH-0056 §5: the judge always adds a note).
 #[test]
 fn a_doubt_holds_at_any_floor_and_must_say_why() -> Result<()> {
-    struct Answers(HunkVerdict);
-    impl AttributionJudge for Answers {
-        fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-            Ok(None)
-        }
-        fn judge_hunks(&self, _request: &JudgeRequest<'_>) -> Result<Option<Vec<HunkVerdict>>> {
-            Ok(Some(vec![self.0.clone()]))
-        }
-    }
-    let evidence = AmendmentEvidence::new("r:1", EntityId::now(), "outbound")
-        .at(5)
-        .with_skill(EntityId::now())
-        .with_cause(AmendmentCause::ProposalWrong)
-        .with_routing_facts(true, true);
-
-    let unmeasured = Answers(
-        HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, f32::NAN)
-            .with_note("the score came back empty"),
-    );
-    let split = classify_amendment(&evidence, &unmeasured, &[], 0.0)?.expect("an answer");
+    // ab2a34ddceb (#1588) moved the judge behind the decision ladder; the
+    // lane, floor and note rules a judge's answers meet live on in
+    // split_from_verdicts, so the same verdicts take the same path.
+    let unmeasured = HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, f32::NAN)
+        .with_note("the score came back empty");
+    let split = split_from_verdicts(AttributionLane::Amendment, &[], vec![unmeasured], 0.0)?;
     assert_eq!(split.sole(), Some(AttributionVerdict::Unclear));
     assert_eq!(
         split.unclear[0].reason,
@@ -515,7 +626,7 @@ fn a_doubt_holds_at_any_floor_and_must_say_why() -> Result<()> {
         HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, 0.2),
     ] {
         assert!(matches!(
-            classify_amendment(&evidence, &Answers(silent), &[], 0.6),
+            split_from_verdicts(AttributionLane::Amendment, &[], vec![silent], 0.6),
             Err(Error::InvalidClaimBody(_))
         ));
     }
@@ -642,7 +753,14 @@ fn an_amended_attempt_counts_once_as_its_defect_share() -> Result<()> {
         .with_cause(AmendmentCause::ProposalWrong)
         .with_routing_facts(true, true);
     record_amendment_evidence(&vault, &evidence)?;
-    let judgment = judge_amendment_hunks(&vault, receipt, &DefectThenLapse, &hunks)?
+    let ladder = big_rung_ladder(ScriptedAttribution {
+        answers: vec![
+            (AttributionVerdict::SkillDefect, 0.9),
+            (AttributionVerdict::ExecutionLapse, 0.8),
+        ],
+    });
+    let decisions = attribution_decisions(ladder.ladder(), None);
+    let judgment = judge_amendment_hunks(&vault, receipt, Some(&decisions), &hunks)?
         .expect("a split amendment routes");
     let defect_share = judgment.share_of(AmendmentClass::SkillDefect);
     assert!(defect_share > 0.0 && defect_share < 1.0);
@@ -825,6 +943,7 @@ fn a_discovery_share_mints_one_edit_proposal_shaped_like_the_attempt_lanes() -> 
         *proposal,
         SkillEditProposal {
             judgment_sequence: proposal.judgment_sequence,
+            row_id: proposal.row_id,
             skill,
             evidence_receipts: vec![receipt.to_owned()],
             at: 70,
@@ -879,7 +998,14 @@ fn an_execution_lapse_adds_one_actor_lesson_citing_its_amendment() -> Result<()>
     assert_eq!(lessons.len(), 1, "one lapse, one lesson");
     assert_eq!(
         lessons[0].evidence,
-        Some(ActorClaimEvidence::amendment(vec![receipt.to_owned()], 70)?.to_value()),
+        Some(
+            ActorClaimEvidence::amendment(
+                vec![receipt.to_owned()],
+                judgment.engine_ver.clone(),
+                70,
+            )?
+            .to_value(),
+        ),
         "the lesson cites its amendment receipt"
     );
     assert_eq!(

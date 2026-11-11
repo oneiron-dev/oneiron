@@ -1,0 +1,17 @@
+error[E0425]: cannot find value `FIELD_ESCALATION_SCOPE` in module `oneiron_store::receipt_row`
+ --> tests/store_split_compilefail/a_receipt_key_is_engine_only.rs:8:41
+  |
+8 |     let _ = oneiron_store::receipt_row::FIELD_ESCALATION_SCOPE;
+  |                                         ^^^^^^^^^^^^^^^^^^^^^^ not found in `oneiron_store::receipt_row`
+
+error[E0603]: constant `FIELD_ESCALATION_SCOPE` is private
+ --> tests/store_split_compilefail/a_receipt_key_is_engine_only.rs:7:42
+  |
+7 |     let _ = oneiron::store::receipt_row::FIELD_ESCALATION_SCOPE;
+  |                                          ^^^^^^^^^^^^^^^^^^^^^^ private constant
+  |
+note: the constant `FIELD_ESCALATION_SCOPE` is defined here
+ --> src/store/receipt_row.rs
+  |
+  | pub(crate) const FIELD_ESCALATION_SCOPE: &str = "escalation_scope";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

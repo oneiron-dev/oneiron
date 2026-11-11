@@ -1,4 +1,5 @@
 //! Claim refinements use the same typed question and independent held-out rule.
+use super::tests::ladder_fixture::{FixtureJudge, fixture_judge, noul_answer, score_answer};
 use super::*;
 use crate::{
     Vault, VaultConfig,
@@ -8,14 +9,8 @@ use crate::{
     },
     consent::AuthenticatedOwner,
     deletion::{ReplayedTombstoneOutcome, TombstoneReason, TombstoneValueV2},
-    llm::decision::{
-        AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionQuestion,
-        DecisionReceipt, DecisionRung, ProviderPin, TypedDecision,
-    },
-    skill_hub::{
-        ClaimRefinementMergeDisposition, HeldOutClaimReplayCase, HeldOutClaimReplayScorer,
-        UsefulUpstreamClaimJudge,
-    },
+    llm::decision::{AnswerContract, DecisionClass, DecisionQuestion, DecisionRung, ProviderPin},
+    skill_hub::ClaimRefinementMergeDisposition,
 };
 
 fn at(t: u64) -> TimeRange {
@@ -113,57 +108,71 @@ impl Fixture {
         )
     }
 }
-struct Useful(bool);
-impl UsefulUpstreamClaimJudge for Useful {
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        resident: EntityId,
-        _: &ClaimBody,
-        _: &ClaimBody,
-    ) -> Result<TypedDecision> {
-        Ok(TypedDecision {
-            answer: DecisionAnswer::Noul(self.0),
-            probability: Some(if self.0 { 0.9 } else { 0.1 }),
-            evidence: vec![],
-            in_band: false,
-            receipt: DecisionReceipt {
-                question: question.id,
-                question_version: question.version,
-                principal: resident,
-                providers: vec![ProviderPin {
-                    rung: DecisionRung::SystemOne,
-                    model: "system-one".to_owned(),
-                    version: "1".to_owned(),
-                }],
-                band: DecisionBand::default(),
-                band_version: 0,
-                evidence_versions: Vec::new(),
-                cost_per_thousand: None,
-                paired: Vec::new(),
-                person: Vec::new(),
-                time: None,
-            },
-            human_ask: None,
-        })
-    }
+/// The claim-replay wording every guard below scores under.
+const REPLAY_WORDING: &str =
+    "How well does this claim fit the owner's held-out labels, from 0 to 1?";
+
+/// A useful-upstream judge answering `useful`, on the System One seat.
+fn useful_judge(useful: bool) -> FixtureJudge<'static> {
+    fixture_judge(
+        ProviderPin {
+            rung: DecisionRung::SystemOne,
+            model: "system-one".to_owned(),
+            version: "1".to_owned(),
+        },
+        "fixture-judge@1",
+        move |_, question, _| {
+            assert!(matches!(question.contract, AnswerContract::Noul));
+            Ok(noul_answer(useful))
+        },
+    )
 }
-struct Replay;
-impl HeldOutClaimReplayScorer for Replay {
-    fn score(&self, case: &HeldOutClaimReplayCase<'_>) -> Result<f32> {
-        assert_eq!(case.held_out_receipts.len(), 1);
-        Ok(if case.claim.value.as_str() == Some("improved") {
-            0.9
-        } else {
-            0.2
-        })
-    }
+
+/// A claim-replay judge scoring the "improved" arm 0.9 and anything else 0.2.
+fn replay_judge() -> FixtureJudge<'static> {
+    fixture_judge(
+        ProviderPin {
+            rung: DecisionRung::SystemOne,
+            model: "system-one".to_owned(),
+            version: "1".to_owned(),
+        },
+        "fixture-judge@1",
+        |_, question, state| {
+            assert!(matches!(question.contract, AnswerContract::Score { .. }));
+            assert_eq!(state["labels"].as_array().map(Vec::len), Some(1));
+            let value = state["claim"]["value"].as_str().unwrap_or_default();
+            Ok(score_answer(if value == "improved" { 0.9 } else { 0.2 }))
+        },
+    )
 }
-struct NoReplay;
-impl HeldOutClaimReplayScorer for NoReplay {
-    fn score(&self, _: &HeldOutClaimReplayCase<'_>) -> Result<f32> {
-        panic!("replay must not run")
-    }
+
+/// A claim-replay judge that must never run.
+fn no_replay_judge() -> FixtureJudge<'static> {
+    fixture_judge(
+        ProviderPin {
+            rung: DecisionRung::SystemOne,
+            model: "system-one".to_owned(),
+            version: "1".to_owned(),
+        },
+        "fixture-judge@1",
+        |_, _, _| panic!("replay must not run"),
+    )
+}
+
+/// A claim-replay judge scoring every arm 0.5.
+fn tie_judge() -> FixtureJudge<'static> {
+    fixture_judge(
+        ProviderPin {
+            rung: DecisionRung::SystemOne,
+            model: "system-one".to_owned(),
+            version: "1".to_owned(),
+        },
+        "fixture-judge@1",
+        |_, question, _| {
+            assert!(matches!(question.contract, AnswerContract::Score { .. }));
+            Ok(score_answer(0.5))
+        },
+    )
 }
 #[test]
 fn rejected_branch_claim_stays_local_and_cannot_use_the_generic_claim_door() -> Result<()> {
@@ -172,15 +181,26 @@ fn rejected_branch_claim_stays_local_and_cannot_use_the_generic_claim_door() -> 
     let ask = f
         .vault
         .prepare_claim_refinement_merge(candidate, f.resident, question(candidate))?;
+    let judge = useful_judge(true);
+    let replay = no_replay_judge();
     assert_eq!(
-        f.vault
-            .merge_local_claim_refinement(&ask, &Useful(true), &NoReplay, 6)?,
+        f.vault.merge_local_claim_refinement(
+            &ask,
+            &judge.useful_decisions(),
+            &replay.claim_replay(REPLAY_WORDING.to_owned()),
+            6,
+        )?,
         ClaimRefinementMergeDisposition::PendingConsent
     );
     f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
-    let ClaimRefinementMergeDisposition::Ruled(receipt) =
-        f.vault
-            .merge_local_claim_refinement(&ask, &Useful(false), &NoReplay, 6)?
+    let judge = useful_judge(false);
+    let replay = no_replay_judge();
+    let ClaimRefinementMergeDisposition::Ruled(receipt) = f.vault.merge_local_claim_refinement(
+        &ask,
+        &judge.useful_decisions(),
+        &replay.claim_replay(REPLAY_WORDING.to_owned()),
+        6,
+    )?
     else {
         panic!("consented")
     };
@@ -235,9 +255,14 @@ fn claim_yes_needs_held_out_win_and_supersedes_only_at_the_merge_door() -> Resul
         .vault
         .prepare_claim_refinement_merge(candidate, f.resident, question(candidate))?;
     f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
-    let ClaimRefinementMergeDisposition::Ruled(receipt) =
-        f.vault
-            .merge_local_claim_refinement(&ask, &Useful(true), &Replay, 8)?
+    let judge = useful_judge(true);
+    let replay = replay_judge();
+    let ClaimRefinementMergeDisposition::Ruled(receipt) = f.vault.merge_local_claim_refinement(
+        &ask,
+        &judge.useful_decisions(),
+        &replay.claim_replay(REPLAY_WORDING.to_owned()),
+        8,
+    )?
     else {
         panic!("consented")
     };
@@ -257,22 +282,23 @@ fn claim_yes_needs_held_out_win_and_supersedes_only_at_the_merge_door() -> Resul
 }
 #[test]
 fn claim_tie_keeps_the_branch_and_base() -> Result<()> {
-    struct Tie;
-    impl HeldOutClaimReplayScorer for Tie {
-        fn score(&self, _: &HeldOutClaimReplayCase<'_>) -> Result<f32> {
-            Ok(0.5)
-        }
-    }
     let f = Fixture::new()?;
     let candidate = f.submit("improved")?;
     let ask = f
         .vault
         .prepare_claim_refinement_merge(candidate, f.resident, question(candidate))?;
     f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
-    assert!(
-        matches!(f.vault.merge_local_claim_refinement(&ask, &Useful(true), &Tie, 8)?,
-        ClaimRefinementMergeDisposition::Ruled(receipt) if !receipt.accepted)
-    );
+    let judge = useful_judge(true);
+    let tie = tie_judge();
+    assert!(matches!(
+        f.vault.merge_local_claim_refinement(
+            &ask,
+            &judge.useful_decisions(),
+            &tie.claim_replay(REPLAY_WORDING.to_owned()),
+            8
+        )?,
+        ClaimRefinementMergeDisposition::Ruled(receipt) if !receipt.accepted
+    ));
     assert_eq!(
         f.vault.get_claim(&candidate)?.unwrap().approval,
         ClaimApprovalStatus::Proposed
@@ -347,10 +373,17 @@ fn explicit_delete_erases_pending_rejected_and_admitted_claim_branch_bytes_even_
                 question(candidate),
             )?;
             f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
-            assert!(
-                matches!(f.vault.merge_local_claim_refinement(&ask, &Useful(false), &NoReplay, 8)?,
-                ClaimRefinementMergeDisposition::Ruled(receipt) if !receipt.accepted)
-            );
+            let judge = useful_judge(false);
+            let replay = no_replay_judge();
+            assert!(matches!(
+                f.vault.merge_local_claim_refinement(
+                    &ask,
+                    &judge.useful_decisions(),
+                    &replay.claim_replay(REPLAY_WORDING.to_owned()),
+                    8
+                )?,
+                ClaimRefinementMergeDisposition::Ruled(receipt) if !receipt.accepted
+            ));
         }
         assert!(
             f.vault
@@ -381,10 +414,17 @@ fn explicit_delete_erases_pending_rejected_and_admitted_claim_branch_bytes_even_
         .vault
         .prepare_claim_refinement_merge(candidate, f.resident, question(candidate))?;
     f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
-    assert!(
-        matches!(f.vault.merge_local_claim_refinement(&ask, &Useful(true), &Replay, 8)?,
-        ClaimRefinementMergeDisposition::Ruled(receipt) if receipt.accepted)
-    );
+    let judge = useful_judge(true);
+    let replay = replay_judge();
+    assert!(matches!(
+        f.vault.merge_local_claim_refinement(
+            &ask,
+            &judge.useful_decisions(),
+            &replay.claim_replay(REPLAY_WORDING.to_owned()),
+            8
+        )?,
+        ClaimRefinementMergeDisposition::Ruled(receipt) if receipt.accepted
+    ));
     assert!(f.vault.local_claim_refinement(candidate)?.is_some());
     assert!(
         f.vault
@@ -418,10 +458,17 @@ fn replayed_delete_erases_admitted_claim_branch_copy_after_reopen() -> Result<()
             f.vault
                 .prepare_claim_refinement_merge(candidate, f.resident, question(candidate))?;
         f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
-        assert!(
-            matches!(f.vault.merge_local_claim_refinement(&ask, &Useful(true), &Replay, 8)?,
-            ClaimRefinementMergeDisposition::Ruled(receipt) if receipt.accepted)
-        );
+        let judge = useful_judge(true);
+        let replay = replay_judge();
+        assert!(matches!(
+            f.vault.merge_local_claim_refinement(
+                &ask,
+                &judge.useful_decisions(),
+                &replay.claim_replay(REPLAY_WORDING.to_owned()),
+                8
+            )?,
+            ClaimRefinementMergeDisposition::Ruled(receipt) if receipt.accepted
+        ));
         let tombstone = TombstoneValueV2 {
             reason,
             deleted_at: 9,
@@ -464,8 +511,14 @@ fn replayed_soft_and_hard_delete_erase_headerless_claim_refinement() -> Result<(
                     question(candidate),
                 )?;
                 f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
-                f.vault
-                    .merge_local_claim_refinement(&ask, &Useful(false), &NoReplay, 8)?;
+                let judge = useful_judge(false);
+                let replay = no_replay_judge();
+                f.vault.merge_local_claim_refinement(
+                    &ask,
+                    &judge.useful_decisions(),
+                    &replay.claim_replay(REPLAY_WORDING.to_owned()),
+                    8,
+                )?;
             }
             let tombstone = TombstoneValueV2 {
                 reason,
@@ -499,15 +552,16 @@ fn native_claim_erase_matrix_keeps_the_id_fenced_after_reopen() -> Result<()> {
                     question(candidate),
                 )?;
                 f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
-                let scorer: &dyn HeldOutClaimReplayScorer = if state == "admitted" {
-                    &Replay
+                let replay = if state == "admitted" {
+                    replay_judge()
                 } else {
-                    &NoReplay
+                    no_replay_judge()
                 };
+                let judge = useful_judge(state == "admitted");
                 f.vault.merge_local_claim_refinement(
                     &ask,
-                    &Useful(state == "admitted"),
-                    scorer,
+                    &judge.useful_decisions(),
+                    &replay.claim_replay(REPLAY_WORDING.to_owned()),
                     8,
                 )?;
             }
