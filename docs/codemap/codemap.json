@@ -18257,7 +18257,7 @@
      "purpose": "Durable code-run correction records (CODE-RUNTIME-02 slice 1: FIX 4411, 4412, 4413)",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 2,
       "struct": 4
@@ -38400,7 +38400,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/repl/deadline.rs",
@@ -74063,14 +74063,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/skill/call/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -90320,6 +90312,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/callable_skill.rs",
+     "purpose": "Doors for `tests/skill_call_caller_sandbox.rs`: exact source persistence and callable outcome evidence under…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/code_reply_healer.rs",
      "purpose": "Doors for `tests/code_reply_healer.rs` (CODE-RUNTIME-02 ruling B, the lead 10 Nov 10:32): the code-reply…",
      "surface": {
@@ -90386,7 +90388,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 11
+      "mod": 12
      }
     },
     {
@@ -98496,6 +98498,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/code_run_correction_names_served_model.rs",
+     "purpose": "E2E CODE-RUNTIME-02: a code-run correction record names the model that answered",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/code_run_restricted_actor_answer.rs",
      "purpose": "OPUS-E2E-1: a code run whose actor may not witness a companion MESSAGE completes anyway, and `execute_code`…",
      "surface": {}
@@ -99518,6 +99528,14 @@
      "notable": [],
      "path": "tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs",
      "purpose": "(b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/skill_call_caller_sandbox.rs",
+     "purpose": "Pins callable execution in the caller's sandbox and lease",
      "surface": {}
     },
     {
@@ -100984,7 +101002,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 31,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101145,7 +101163,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101315,8 +101333,8 @@
    },
    "over_bar": 244,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7260,
-   "test_files": 941
+   "source_files": 7261,
+   "test_files": 942
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -117036,9 +117054,9 @@
      "path": "src/llm/protocol.rs",
      "purpose": "Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "enum": 8,
-      "fn": 7,
+      "fn": 8,
       "struct": 8
      }
     },
