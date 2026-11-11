@@ -18,7 +18,7 @@ mod park;
 mod retry_policy;
 
 pub use crate::store::dreamer_attempt_payload::DreamerAttemptPayload;
-pub use park::ParkDreamerAttempt;
+pub use park::{DreamerParkWait, DreamerParkedWait, ParkDreamerAttempt};
 
 use super::constants::DEFAULT_DREAMER_CHILD_RESERVE_UNITS;
 
@@ -628,6 +628,8 @@ pub struct DreamerRunTreeRecord {
 }
 
 #[doc(hidden)]
+pub use oneiron_wake_contract::dreamer_runner::park_wait::DreamerParkWaitClass;
+#[doc(hidden)]
 pub use oneiron_wake_contract::dreamer_runner::types::DreamerParkCause;
 
 /// The cause of a park a failed model call made (FIX 7382, Engine
@@ -703,4 +705,6 @@ pub struct DreamerParkedAttemptRecord {
     pub park_owner: String,
     pub carried_spend: Option<u64>,
     pub parked_at: u64,
+    /// The typed refill that resumes this park, with its lease fence; `None` for an untyped park.
+    pub wait: Option<DreamerParkedWait>,
 }
