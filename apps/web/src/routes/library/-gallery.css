@@ -448,14 +448,13 @@
 /* The reply line sits at the foot of the thread pane. */
 .lib-thread-reply {
   margin-top: auto;
-  background: var(--sl-island);
 }
 
 .lib-split-closed {
   justify-content: flex-start;
 }
 
-.lib-write-line {
+.lib-composer-small {
   width: 360px;
 }
 
@@ -742,9 +741,6 @@
   margin: 0 0 6px 36px;
 }
 
-.lib-room-write {
-  max-width: 690px;
-}
 
 /* The place's name in a sidebar head inside the frame. */
 .lib-sidebar-title {

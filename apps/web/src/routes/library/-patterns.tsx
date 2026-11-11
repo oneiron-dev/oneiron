@@ -23,9 +23,9 @@ import {
   SplitPane,
   StepsBar,
   Verb,
-  WriteLine,
   formatElapsed,
   type ComposerPersonaKind,
+  type ComposerTools,
   type RunSubState,
   type Step,
 } from '~/design-system'
@@ -546,7 +546,8 @@ function SplitDemo() {
                 {r}
               </span>
             ))}
-            <WriteLine
+            <Composer
+              size="small"
               className="lib-thread-reply"
               placeholder="Reply in the thread"
               onSend={(text) => setReplies((l) => [...l.slice(-1), text])}
@@ -580,6 +581,24 @@ function SplitDemo() {
 
 const PERSONAS: ComposerPersonaKind[] = ['all', 'work', 'personal', 'dream']
 
+/* The `+` of a write box: what can ride along, then the model and the
+   effort the message is answered with. */
+function ComposerAddMenu({ onFile, onPointer }: { onFile?: () => void; onPointer?: () => void }) {
+  return (
+    <Composer.Add label="Add to the message">
+      <Menu.Item icon={<Icon name="clip" />} onClick={onFile}>
+        a file
+      </Menu.Item>
+      <Menu.Item icon={<Icon name="images" />}>a picture</Menu.Item>
+      <Menu.Item icon={<Icon name="reply" />} onClick={onPointer}>
+        a pointer to a message
+      </Menu.Item>
+      <Menu.Separator />
+      <Menu.Item icon={<Icon name="tool" />}>model and effort</Menu.Item>
+    </Composer.Add>
+  )
+}
+
 function ComposerDemo() {
   const [persona, setPersona] = React.useState<ComposerPersonaKind>('all')
   const [sent, setSent] = React.useState<Array<{ text: string; boost: boolean }>>([])
@@ -604,13 +623,27 @@ function ComposerDemo() {
         }}
         onDictate={() => hear('dictate')}
         onVoice={() => hear('talk')}
-        savedIn="Saved in: your vault"
         boostWords={['ultrathink', 'think hard']}
         onBoostChange={setBoost}
+        crossing={
+          <OutsideLine summary="Guests see what you send here">
+            <OutsideLine.Group origin="from Acme’s vault">
+              <OutsideLine.Guest glyph={<Glyph initial="y" label="Yuki" size={18} guest />}>Yuki</OutsideLine.Guest>
+            </OutsideLine.Group>
+            <OutsideLine.Group origin="from Owen’s personal vault">
+              <OutsideLine.Guest glyph={<Glyph glyph="wing" label="Eiri" size={18} guest />}>Eiri</OutsideLine.Guest>
+            </OutsideLine.Group>
+          </OutsideLine>
+        }
         persona={
           <Menu>
             <Menu.Trigger asChild>
-              <Composer.Persona persona={persona} initial="o" aria-label={`persona ${persona}, change who you write as`} />
+              <Composer.Persona
+                persona={persona}
+                initial="o"
+                note="You write as Owen. Saved in Antevon’s vault."
+                aria-label={`persona ${persona}, change who you write as`}
+              />
             </Menu.Trigger>
             <Menu.Content side="top" aria-label="personas">
               {PERSONAS.map((p) => (
@@ -627,14 +660,6 @@ function ComposerDemo() {
           </Menu>
         }
       >
-        <OutsideLine summary="Guests see what you send here">
-          <OutsideLine.Group origin="from Acme’s vault">
-            <OutsideLine.Guest glyph={<Glyph initial="y" label="Yuki" size={18} guest />}>Yuki</OutsideLine.Guest>
-          </OutsideLine.Group>
-          <OutsideLine.Group origin="from Owen’s personal vault">
-            <OutsideLine.Guest glyph={<Glyph glyph="wing" label="Eiri" size={18} guest />}>Eiri</OutsideLine.Guest>
-          </OutsideLine.Group>
-        </OutsideLine>
         <Composer.Carry>
           {pointer ? (
             <Composer.Pointer who="Metryon" onRemove={() => setPointer(false)} removeLabel="Drop the pointer">
@@ -647,15 +672,7 @@ function ComposerDemo() {
             </Composer.Chip>
           ) : null}
         </Composer.Carry>
-        <Composer.Add label="Add to the message">
-          <Menu.Item icon={<Icon name="clip" />} onClick={() => setChip(true)}>
-            a file
-          </Menu.Item>
-          <Menu.Item icon={<Icon name="images" />}>a picture</Menu.Item>
-          <Menu.Item icon={<Icon name="reply" />} onClick={() => setPointer(true)}>
-            a pointer to a message
-          </Menu.Item>
-        </Composer.Add>
+        <ComposerAddMenu onFile={() => setChip(true)} onPointer={() => setPointer(true)} />
       </Composer>
       <span className="lib-readout" data-specimen="composer-log">
         boost {boost ? 'on' : 'off'}
@@ -666,14 +683,23 @@ function ComposerDemo() {
   )
 }
 
-/* ── one line to write ───────────────────────────────────────────────── */
+/* ── the small write box ─────────────────────────────────────────────── */
 
-function WriteLineDemo() {
+function ComposerSmallDemo({ tools, text, specimen }: { tools: ComposerTools; text?: string; specimen: string }) {
   const [log, setLog] = React.useState<string[]>([])
   return (
-    <div className="lib-stack lib-write-line" data-specimen="write-line">
-      <WriteLine placeholder="Reply to Metryon about the Q4 view" onSend={(text) => setLog((l) => [...l.slice(-1), `sent “${text}”`])} />
-      <span className="lib-readout" data-specimen="write-line-log">
+    <div className="lib-stack lib-composer-small" data-specimen={specimen}>
+      <Composer
+        size="small"
+        tools={tools}
+        placeholder="Write about this"
+        defaultValue={text}
+        onDictate={() => setLog((l) => [...l.slice(-1), 'dictate'])}
+        onSend={(sent) => setLog((l) => [...l.slice(-1), `sent “${sent}”`])}
+      >
+        <ComposerAddMenu />
+      </Composer>
+      <span className="lib-readout" data-specimen={`${specimen}-log`}>
         {log.length ? log.join(', ') : 'Nothing sent yet.'}
       </span>
     </div>
@@ -901,14 +927,26 @@ export function PatternSections() {
       </Section>
 
       <Section title="SplitPane">
-        <Specimen name="drag the edge: it leans to 25, 50 and 75; double-click resets; arrow keys move it. The thread pane's head: its title, outline, open as a room, close (Escape in the pane closes it); a WriteLine is its reply line" full>
+        <Specimen name="drag the edge: it leans to 25, 50 and 75; double-click resets; arrow keys move it. The thread pane's head: its title, outline, open as a room, close (Escape in the pane closes it); the small write box is its reply line" full>
           <SplitDemo />
         </Specimen>
       </Section>
 
       <Section title="Composer, OutsideLine">
-        <Specimen name="persona, add, a pointer and a chip, the outside line; empty, the button talks; type and it sends; write ultrathink for the boost line" full>
+        <Specimen name="the portrait in the gutter (its tooltip says who writes and where it is kept), add, a pointer and a chip, the crossing line; empty, the button talks; type and it sends; write ultrathink for the boost line" full>
           <ComposerDemo />
+        </Specimen>
+        <Specimen name="with text: the button sends" full>
+          <Composer
+            placeholder="Write to the room"
+            defaultValue="Check the supplier notes against the filings."
+            onVoice={() => {}}
+            onDictate={() => {}}
+            persona={<Composer.Persona initial="o" note="You write as Owen. Saved in Antevon’s vault." aria-label="Owen" />}
+            data-specimen="composer-text"
+          >
+            <ComposerAddMenu />
+          </Composer>
         </Specimen>
         <Specimen name="narrow: the placeholder stays on one line and ends in an ellipsis" wide={1}>
           <div className="lib-composer-narrow" data-specimen="composer-narrow">
@@ -924,14 +962,18 @@ export function PatternSections() {
         </Specimen>
       </Section>
 
-      <Section title="WriteLine">
-        <Specimen name="Enter sends and clears; empty text does not send; Escape leaves the line" wide={1}>
-          <WriteLineDemo />
+      <Section title="Composer, small">
+        <Specimen name="tools on focus (the default): the field alone at rest" wide={1}>
+          <ComposerSmallDemo tools="on focus" specimen="composer-small-focus" />
         </Specimen>
-        <Specimen name="narrow: the placeholder ends in an ellipsis" wide={1}>
-          <div className="lib-composer-narrow">
-            <WriteLine placeholder="Reply to Metryon about the Q4 view" aria-label="reply, narrow" />
-          </div>
+        <Specimen name="tools on focus, with text: the tools show at the right" wide={1}>
+          <ComposerSmallDemo tools="on focus" text="Keep the promo weeks." specimen="composer-small-focus-text" />
+        </Specimen>
+        <Specimen name="tools always: add at the left, dictation and send at the right" wide={1}>
+          <ComposerSmallDemo tools="always" specimen="composer-small-always" />
+        </Specimen>
+        <Specimen name="tools always, with text" wide={1}>
+          <ComposerSmallDemo tools="always" text="Show week 44 on its own too." specimen="composer-small-always-text" />
         </Specimen>
       </Section>
 
