@@ -21,14 +21,18 @@
 //!   the `check_in` policy row ([`CheckInPolicy`]), the asker's longer wait
 //!   and `until`, a holder's extension and answer, and canon's table "When
 //!   nobody answers", each transition receipted (`check_in` receipts).
+//! * the ladder from verified records (PR 2, P2.2: 2c): rung 2 the grantor,
+//!   rung 3 the other holders of the grantor's role, rung 4 the owners; a
+//!   holder answers while its live grant and its own check-in admit the act,
+//!   and an agent holder's verdict comes from its caller.
 //!
 //! Fan-out admission is the first caller, through [`check_in_with_mode`],
-//! because its mode comes from its own manifest rows. The resolver that
-//! names each rung's holders from verified records (2c), the host that wakes
-//! a due check-in (2e), the agent verbs (2f, 2l), the change path and the
-//! key and quorum proofs are later builds.
+//! because its mode comes from its own manifest rows. The host that wakes a
+//! due check-in (2e), the agent verbs (2f, 2l), the change path and the key
+//! and quorum proofs are later builds.
 
 mod act_class;
+mod chain;
 mod mode;
 mod pending;
 mod policy;
@@ -40,6 +44,9 @@ mod verb_act_class;
 mod waits;
 
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
+// The chain 2e's host builds; until then only `test_doors::check_in` does.
+#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
+pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};
 pub use mode::CheckInMode;
 pub(crate) use pending::erase_pending_check_in_actor_in_txn;
 pub use pending::{

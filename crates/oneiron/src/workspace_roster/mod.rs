@@ -100,6 +100,7 @@ use codec::*;
 use companion_bind::*;
 use steps::*;
 
+pub(crate) use self::codec::companion_principal_in_txn;
 pub use self::intent::CompanionChoice;
 pub use self::intent::{
     CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent,
