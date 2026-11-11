@@ -129,12 +129,22 @@ pub(crate) fn layer_serve_config(
         .or_else(|| env.config_path.clone())
         .or(default_config_path);
     let explicit_config = args.config.is_some() || env.config_path.is_some();
+    // A config path whose existence cannot be checked (a parent this process
+    // may not search) is not taken as absent, even the default one: its file
+    // may set what the defaults do not, such as a manual `[runtime] clock`.
     let file_values = match config_path {
-        Some(path) if path.exists() => load_file_config(&path)?,
-        Some(path) if explicit_config => {
-            anyhow::bail!("config file {} does not exist", path.display());
-        }
-        _ => PartialServeConfig::default(),
+        Some(path) => match path.try_exists() {
+            Ok(true) => load_file_config(&path)?,
+            Ok(false) if explicit_config => {
+                anyhow::bail!("config file {} does not exist", path.display());
+            }
+            Ok(false) => PartialServeConfig::default(),
+            Err(error) => {
+                let path = path.display();
+                anyhow::bail!("config file {path} cannot be checked: {error}");
+            }
+        },
+        None => PartialServeConfig::default(),
     };
     // The owner's settings file (`--settings-file`, FIX 5016), in the config
     // file's schema as a managed vault reads it: one more vault file layer,

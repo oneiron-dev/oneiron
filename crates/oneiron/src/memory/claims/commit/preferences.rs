@@ -17,8 +17,7 @@ impl Memory<'_> {
         beside_stated: bool,
     ) -> MemoryResult<Option<EntityId>> {
         let ids = self.vault.claims_for_subject(&key.subject)?;
-        let set_answer = SET_CARDINALITY_PREDICATES
-            .contains(&key.input.predicate.as_str())
+        let set_answer = (declared_cardinality(&key.input.predicate) == ClaimCardinality::Set)
             .then(|| json_to_rmpv(&key.input.value));
         let mut best: Option<EntityId> = None;
         for id in ids {
@@ -53,8 +52,7 @@ impl Memory<'_> {
         exclude: &EntityId,
         beside_stated: bool,
     ) -> crate::Result<Option<EntityId>> {
-        let set_answer = SET_CARDINALITY_PREDICATES
-            .contains(&key.input.predicate.as_str())
+        let set_answer = (declared_cardinality(&key.input.predicate) == ClaimCardinality::Set)
             .then(|| json_to_rmpv(&key.input.value));
         let mut best: Option<EntityId> = None;
         for id in self.vault.claims_for_subject_in_txn(rtxn, &key.subject)? {
