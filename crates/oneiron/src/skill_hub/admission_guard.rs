@@ -100,14 +100,19 @@ impl HubAdmissionProof {
         crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
         Ok(Self::new(id, data, HubAdmissionKind::OwnerConsent))
     }
+    /// A held-out win's activation. It spends the owner's answer where the
+    /// candidate asked for a permission; a candidate that asks for none has
+    /// no answer to spend.
     pub(in crate::skill_hub) fn held_out(
         store: &Store,
         txn: &mut heed::RwTxn<'_>,
         id: EntityId,
         data: &[u8],
-        authorization: &crate::consent::ApproveOnceAuthorization,
+        authorization: Option<&crate::consent::ApproveOnceAuthorization>,
     ) -> Result<Self> {
-        crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
+        if let Some(authorization) = authorization {
+            crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
+        }
         Ok(Self::new(id, data, HubAdmissionKind::HeldOut))
     }
     pub(in crate::skill_hub) fn id(&self) -> EntityId {

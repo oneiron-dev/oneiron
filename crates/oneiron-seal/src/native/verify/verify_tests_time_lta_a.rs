@@ -30,7 +30,13 @@ pub(crate) mod tests {
         let doc = dss_doc(std::slice::from_ref(&issuer.cert_der), &[crl], &[]);
         let covered = covered_of(&[&issuer.cert_der]);
         let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50; Engine reading
+        // 07:02): forged or unverifiable presented material is NotRun with
+        // the visible sub-indication ValidationMaterialPossibleTampering.
+        assert_material_unresolved(
+            &checks,
+            crate::api::VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
         // Control: the same shape with cRLSign asserted is accepted.
         let ok_issuer = ca_with_kus(
             "with-crlsign",
@@ -448,9 +454,9 @@ pub(crate) mod tests {
         // Attack: an UNSIGNED /DSS incremental revision appended after every
         // signature, carrying evidence fresh at the old DocTimeStamp genTime
         // but stale at the verify clock. No DocTimeStamp covers this
-        // revision, so its genTime must not feed freshness: the stale
-        // evidence fails ValidationMaterial and the profile drops below
-        // B-LT/LTA.
+        // revision, so its genTime must not feed freshness, and the profile
+        // drops below B-LT/LTA. (Under Engine call Q-C the stale CRL here is
+        // about trust anchors only and claims nothing; see below.)
         let fx = lta_multisig();
         let attacked = append_dss_revision(
             &fx.bytes,
@@ -465,14 +471,14 @@ pub(crate) mod tests {
             .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
-        assert_eq!(
-            (vm.status, vm.finding),
-            (
-                VerifyCheckStatus::Fail,
-                Some(VerifyFindingCode::ValidationMaterialInvalid)
-            ),
-            "stale uncovered evidence must fail ValidationMaterial"
-        );
+        // Engine call Q-C = A (10 Nov 07:23; Engine 07:54 on
+        // SEAL-QC-ANCHOR-SIGNED-PROBES): the signer is a self-signed trust
+        // anchor, so every covered certificate is an anchor, and the stale
+        // CRL its own key signed claims nothing about the chains. ETSI EN 319
+        // 102-1 §5.2.6 checks the revocation status of the certificates the
+        // trust anchor certifies, never of the trust anchor itself. The
+        // material passes; the profile assertions above stand.
+        assert_eq!(vm.status, VerifyCheckStatus::Pass);
     }
 
     // --- dss_revision_end adversarial probes: the re-checker's shapes -----
