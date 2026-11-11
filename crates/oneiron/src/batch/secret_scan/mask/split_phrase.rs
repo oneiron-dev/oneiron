@@ -3,12 +3,11 @@
 //! any depth, or between the bytes that frame those items. The door reads it
 //! whole, in the leaf's decoded parts joined or in its lossy text, where no
 //! run of valid text holds it, so no text span places it. Each word is found
-//! at its bytes
-//! in the leaf: one custody record holds the phrase, and the file's mark
-//! covers each word (owner ruling G04 binary = C2). In a body that is no
-//! file, [`array_phrase`], [`leaves_phrase_part`] and [`encoded_phrase_part`]
-//! name the smallest value that reads as the phrase, which takes the handle
-//! whole.
+//! at its bytes in the leaf: one custody record holds the phrase, and the
+//! file's mark covers each word (owner ruling G04 binary = C2). In a body
+//! that is no file, [`array_phrase`], [`leaves_phrase_part`] and
+//! [`encoded_phrase_part`] name the smallest value that reads as the phrase,
+//! which takes the handle whole.
 
 use std::ops::Range;
 
