@@ -28,6 +28,27 @@ impl AgentDefinitionWriteReceipts {
             .map(|(_, receipt)| receipt.clone())
     }
 
+    /// The receipt of each AGENT_DEF put staged at `staged`, in order: the
+    /// n-th put staged at an id takes the n-th receipt the writer recorded for
+    /// that id, so two puts at one id each name what they became. `None` for
+    /// a put the writer recorded nothing for.
+    #[must_use]
+    pub fn in_staged_order(&self, staged: &[EntityId]) -> Vec<Option<AgentDefinitionWriteReceipt>> {
+        let Ok(recorded) = self.0.lock() else {
+            return vec![None; staged.len()];
+        };
+        let mut taken = vec![false; recorded.len()];
+        staged
+            .iter()
+            .map(|id| {
+                let index =
+                    (0..recorded.len()).find(|&index| !taken[index] && recorded[index].0 == *id)?;
+                taken[index] = true;
+                Some(recorded[index].1.clone())
+            })
+            .collect()
+    }
+
     /// Replaces every receipt: a writer that runs again holds only its last
     /// run's.
     ///

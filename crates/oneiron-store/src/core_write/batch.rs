@@ -57,6 +57,18 @@ pub enum AgentDefinitionWriteDisposition {
     ProposedChange,
 }
 
+impl AgentDefinitionWriteDisposition {
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Proposed => "proposed",
+            Self::ProposedChange => "proposed_change",
+        }
+    }
+}
+
 /// What the author writer made of one agent's AGENT_DEF put.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentDefinitionWriteReceipt {

@@ -340,3 +340,44 @@ fn a_put_that_is_no_agents_definition_carries_no_agent_definition_field() {
         "a writer that is no agent gets the receipt it had"
     );
 }
+
+#[test]
+fn two_puts_at_one_definition_each_name_their_own_proposal() {
+    let fixture = fixture();
+    let stored = fixture
+        .vault
+        .get_agent_definition(&fixture.author)
+        .expect("read the author")
+        .expect("the author row");
+    let entities: Vec<Value> = ["2", "3"]
+        .into_iter()
+        .map(|version| {
+            let mut wider = stored.clone();
+            wider.scope = AgentScope::All;
+            wider.version = version.to_owned();
+            json!({
+                "id": fixture.author.to_hex(),
+                "entity_type": ENTITY_TYPE_AGENT_DEF,
+                "occurred_start": NOW + 5,
+                "occurred_end": NOW + 5,
+                "learned_at": NOW + 5,
+                "body": body_of(&wider),
+            })
+        })
+        .collect();
+    let receipt = oneiron::task_verb::sdk::invoke(
+        &fixture.vault.memory(fixture.author, EdgeActorClass::Agent),
+        "vault.batch",
+        json!({ "entities": entities }),
+    )
+    .expect("the batch lands");
+    println!("CONFORMANCE case=batch-two-proposed-changes receipt={receipt}");
+    for (row, version) in [(0, "2"), (1, "3")] {
+        let proposal = proposed_change_id(&fixture.author, version);
+        assert_eq!(
+            receipt["entities"][row]["agent_definition"],
+            json!({"disposition": "proposed_change", "proposal_id": proposal.to_hex()}),
+            "row {row} names the proposal its own put became"
+        );
+    }
+}
