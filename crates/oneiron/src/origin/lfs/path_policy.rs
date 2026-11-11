@@ -112,6 +112,20 @@ impl Vault {
         Ok((repo_id, self.origin_lfs_path_policy_in_txn(&txn, repo_id)?))
     }
 
+    /// The served origin `repo_id`'s policy, read now: what a push's
+    /// pointers are classified by when it is accepted and when it lands. No
+    /// decision reads the class yet (Engine CODECUSTODY-LFS-CLASS = B), so a
+    /// later set changes nothing an accepted push does; the first consumer of
+    /// the class freezes the revision on the push (FIX
+    /// LFS-CLASS-FIRST-CONSUMER).
+    ///
+    /// # Errors
+    /// A stored row that does not decode, or a store failure.
+    pub(crate) fn origin_lfs_path_policy(&self, repo_id: EntityId) -> Result<OriginLfsPathPolicy> {
+        let txn = self.store.env.read_txn()?;
+        self.origin_lfs_path_policy_in_txn(&txn, repo_id)
+    }
+
     /// The served origin `repo_id`'s policy in `txn`; revision 0 with no
     /// rules when the owner never set one. A stored row that does not decode
     /// is an error, never the default.
