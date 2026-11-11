@@ -39,8 +39,6 @@ fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
             device: authority_test_device(key.clone()),
             genesis_nonce: [seed.wrapping_add(1); 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: crate::authority::AuthorityTier::Software,
-            pending_widen_delay_secs: 86_400,
         },
         signer: crate::authority::AuthoritySignature {
             suite: key.suite(),
@@ -249,6 +247,7 @@ fn authority_log_body_divergent_overwrite_rejected_at_store_key() -> Result<()> 
             ENTITY_TYPE_AUTHORITY_LOG,
             test_time_range(2, 2),
             2,
+            None,
             &divergent_body,
         )
         .commit()
@@ -301,6 +300,7 @@ fn authority_log_put_lands_at_an_id_an_agent_held() -> Result<()> {
         vault.snapshot_checkpoint(&image, 100)?;
         let (restored, _) = Vault::restore_checkpoint_keeping_authority(
             &image,
+            &vault.checkpoint_key()?,
             &backups.path().join("restored"),
             vault.config.clone(),
             &vault,
@@ -380,6 +380,7 @@ fn authority_log_put_evicts_cross_type_squatter_and_its_indexes() -> Result<()> 
             ENTITY_TYPE_AUTHORITY_LOG,
             test_time_range(3, 3),
             3,
+            None,
             &divergent_body,
         )
         .commit()
@@ -463,6 +464,7 @@ fn put_identity_topology_event_for_test(
             entity_type: crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
             occurred: test_time_range(1, 1),
             learned_at: 1,
+            row_version: None,
             data,
             allow_maintenance: true,
             allow_reserved_predicate: true,
@@ -492,11 +494,20 @@ fn ingest_replicated_identity_topology_event_for_test(
     blob.extend_from_slice(&1u64.to_be_bytes());
     blob.extend_from_slice(&1u64.to_be_bytes());
     blob.extend_from_slice(&1u64.to_be_bytes());
+    // row_version (29ac7734ec8 widened the header to 33 bytes): zero on a
+    // non-CLAIM row.
+    blob.extend_from_slice(&0u64.to_be_bytes());
     blob.extend_from_slice(&body);
     let header = EntityMetadataHeader::parse(&blob).expect("blob header");
     vault.with_write_txn(|wtxn| {
         crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn(
-            vault, wtxn, id, &header, &blob, &body, 7,
+            vault,
+            wtxn,
+            id,
+            &header,
+            (blob.as_slice(), "2026-01"),
+            &body,
+            7,
         )
         .map(|_| ())
     })?;
@@ -508,6 +519,7 @@ fn ingest_replicated_identity_topology_event_for_test(
     for _ in 0..3 {
         fact_blob.extend_from_slice(&1u64.to_be_bytes());
     }
+    fact_blob.extend_from_slice(&0u64.to_be_bytes());
     fact_blob.extend_from_slice(&fact_body);
     let fact_header = EntityMetadataHeader::parse(&fact_blob).expect("admission fact header");
     vault.with_write_txn(|wtxn| {
@@ -516,7 +528,7 @@ fn ingest_replicated_identity_topology_event_for_test(
             wtxn,
             &fact_id,
             &fact_header,
-            &fact_blob,
+            (fact_blob.as_slice(), "2026-01"),
             &fact_body,
             7,
         )
@@ -1087,8 +1099,11 @@ fn authority_log_first_seen_ignores_future_learned_at_metadata() -> Result<()> {
     let genesis = authority_genesis_fixture(87);
     let genesis_hash = crate::authority::authority_entry_hash(&genesis)?;
     let genesis_sidecar = crate::authority::authority_first_seen_sync_key(&genesis_hash);
-    let future_learned_at = crate::unix_seconds_now()
-        .saturating_add(crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS);
+    // The day-long offset the removed `DEFAULT_PENDING_WIDEN_DELAY_SECS`
+    // named (cb0899ccc91 deleted the widen delay): any learned_at this far
+    // past the local clock is future metadata.
+    const FUTURE_LEARNED_AT_OFFSET_SECS: u64 = 24 * 60 * 60;
+    let future_learned_at = crate::unix_seconds_now().saturating_add(FUTURE_LEARNED_AT_OFFSET_SECS);
 
     vault.put_authority_log_entry(&genesis, test_time_range(1, 1), future_learned_at)?;
 
@@ -1204,6 +1219,7 @@ fn replicated_authority_log_rejects_foreign_vault_root() -> Result<()> {
             ENTITY_TYPE_AUTHORITY_LOG,
             test_time_range(2, 2),
             2,
+            None,
             &foreign_body,
         )
         .commit()

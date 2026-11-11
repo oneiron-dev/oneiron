@@ -74,7 +74,7 @@ fn a_rollback_never_moves_a_projects_parent_or_leader() -> Result<()> {
     s1.parents = vec![b.to_hex()];
     s1.leader = new.to_hex();
     s1.roster = vec![new.to_hex()];
-    sign_with(&vault, p, &mut s1, None, Some(s0.anchor()), None)?;
+    sign_with(&vault, p, &mut s1, None, Some(s0.anchor()?), None)?;
     vault.put_project(p, &s1, 4)?;
     let stale = signed_over(&vault, p, &s0, old, |row| row.depth_remaining -= 1)?;
     replay_project(&vault, p, &stale, 5)?;
@@ -206,7 +206,7 @@ fn a_bad_raw_winner_never_hides_a_projects_valid_signed_authority() -> Result<()
         unsigned,
         &mut signed,
         None,
-        Some(owner_row.anchor()),
+        Some(owner_row.anchor()?),
         None,
     )?;
     late.put_project(unsigned, &signed, 9)?;
@@ -225,7 +225,7 @@ fn a_bad_raw_winner_never_hides_a_projects_valid_signed_authority() -> Result<()
         .insert(crate::llm::ScopeResource::Bucket {
             key: "wider".into(),
         });
-    sign_with(&vault, child, &mut wide, None, Some(born.anchor()), None)?;
+    sign_with(&vault, child, &mut wide, None, Some(born.anchor()?), None)?;
     vault.put_project(child, &wide, 10)?;
     assert_eq!(vault.project(child)?.map(|row| row.slice), Some(wide.slice));
     Ok(())
