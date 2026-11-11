@@ -153,8 +153,6 @@ fn bind_owner_with_revocation(
             },
             genesis_nonce: [0x86; 32],
             recovery: GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
     ));
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;

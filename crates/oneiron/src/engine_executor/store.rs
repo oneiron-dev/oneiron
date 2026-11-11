@@ -603,12 +603,15 @@ pub(super) fn scan_output_windows(
 pub(super) const IMPLICIT_SPEECH_TEXT_BYTES: u64 = COMPACTION_OBSERVATION_WINDOW_BYTES as u64;
 
 /// What a terminal checkpoint will say on a run's behalf (FIX 365): words,
-/// or the typed result that names a stored answer too large to say. Stored
-/// as its exact JSON, hashed into the checkpoint by those bytes, and decoded
-/// from them by a recovery, never rebuilt.
+/// the typed result that names a stored answer too large to say, or a
+/// result-only decision when the actor cannot witness a companion MESSAGE.
+/// Stored as its exact JSON, hashed into the checkpoint by those bytes, and
+/// decoded from them by a recovery, never rebuilt.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "intent", rename_all = "snake_case")]
 pub(super) enum ImplicitSpeechIntent {
+    /// The answer remains in the run's result; recovery must not witness it.
+    ResultOnly,
     Text {
         text: String,
     },

@@ -4,6 +4,10 @@ use crate::attempt_queue::{
     ManifestEntry, ManifestKind,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::llm::decision::{
+    DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
+    DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
+};
 use crate::receipt::attempt_pack_receipt_id;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::skill::{SkillLifecycle, SkillRecord};
@@ -198,6 +202,56 @@ fn fabricated_evidence_references_are_refused_at_the_door() -> Result<()> {
     Ok(())
 }
 
+/// The host's attribution decisions over `ladder`, as `oneiron-server`'s
+/// `decision_host` assembles them: the shipped dial, never a person, and each
+/// doubtful answer's note from `notes` (ab2a34ddceb: a host judge became a
+/// provider on the decision ladder).
+fn attribution_decisions<'a>(
+    ladder: DecisionLadder<'a>,
+    notes: Option<&'a dyn AttributionNotes>,
+) -> AttributionDecisions<'a> {
+    AttributionDecisions {
+        ladder,
+        principal: EntityId::now(),
+        dial: ATTRIBUTION_DIAL,
+        bands: DecisionBandPolicy::default(),
+        wording: "Which label does this region of the outcome earn?".to_owned(),
+        budget: std::time::Duration::from_secs(3600),
+        notes,
+    }
+}
+
+/// A host ladder whose one model rung, Big, is `judge`.
+fn big_rung_ladder(judge: impl DecisionProvider + 'static) -> HeldLadder {
+    HeldLadder {
+        big: Some(std::sync::Arc::new(judge) as std::sync::Arc<dyn DecisionProvider>),
+        ..HeldLadder::unstaffed()
+    }
+}
+
+/// The Big rung's pin for a test judge named `model`.
+fn big_rung_pin(model: &str) -> ProviderPin {
+    ProviderPin {
+        rung: DecisionRung::Big,
+        model: model.to_owned(),
+        version: "1".to_owned(),
+    }
+}
+
+/// A judge's answer: `verdict` at `probability`, or an abstention.
+fn provider_answer(verdict: Option<AttributionVerdict>, probability: f64) -> ProviderDecision {
+    ProviderDecision {
+        answer: verdict.map_or(DecisionAnswer::Abstain, |verdict| {
+            DecisionAnswer::Choice(verdict.as_str().to_owned())
+        }),
+        probability: verdict.map(|_| probability),
+        paired: None,
+        person: None,
+        served: None,
+        cost_per_thousand: None,
+    }
+}
+
 /// The 100%-by-label guard. Fixture ids are OPAQUE, so a judge that reads the
 /// receipt id instead of reasoning over the routing facts learns nothing: it
 /// cannot reach the honest tier's rate. With verdict-bearing ids
@@ -208,15 +262,28 @@ fn audit_fixture_ids_leak_no_verdict_signal() -> Result<()> {
     /// Answers purely from the receipt id — the cheating strategy the audit
     /// must not reward.
     struct ReceiptRefSniffingJudge;
-    impl AttributionJudge for ReceiptRefSniffingJudge {
-        fn judge(&self, evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-            Ok([
-                AttributionVerdict::SkillDefect,
-                AttributionVerdict::ExecutionLapse,
-                AttributionVerdict::Discovery,
-            ]
-            .into_iter()
-            .find(|verdict| evidence.receipt_ref.contains(verdict.as_str())))
+    impl DecisionProvider for ReceiptRefSniffingJudge {
+        fn pin(&self) -> ProviderPin {
+            big_rung_pin("receipt-ref-sniffer")
+        }
+        fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+            // The call's state carries the outcome's receipt ref beside its
+            // routing facts.
+            let receipt_ref = call
+                .state
+                .get("receipt_ref")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            Ok(provider_answer(
+                [
+                    AttributionVerdict::SkillDefect,
+                    AttributionVerdict::ExecutionLapse,
+                    AttributionVerdict::Discovery,
+                ]
+                .into_iter()
+                .find(|verdict| receipt_ref.contains(verdict.as_str())),
+                1.0,
+            ))
         }
     }
 
@@ -240,9 +307,14 @@ fn audit_fixture_ids_leak_no_verdict_signal() -> Result<()> {
         }
     }
 
-    let honest = run_attribution_audit_with_judge(&vault, &fixtures, &RuleAttributionJudge, 40)?;
-    let sniffer =
-        run_attribution_audit_with_judge(&vault, &fixtures, &ReceiptRefSniffingJudge, 41)?;
+    let sniffing = big_rung_ladder(ReceiptRefSniffingJudge);
+    let honest = run_attribution_audit_with_decisions(&vault, &fixtures, None, 40)?;
+    let sniffer = run_attribution_audit_with_decisions(
+        &vault,
+        &fixtures,
+        Some(&attribution_decisions(sniffing.ladder(), None)),
+        41,
+    )?;
 
     assert!(
         (honest.pass_rate() - 1.0).abs() < f32::EPSILON,

@@ -14,7 +14,32 @@
       "crates/oneiron/src/sync/transport.rs": "736cc5a784172abf858863843480d70dd74fd344a11717f812fdb7b40f0567c6",
       "crates/oneiron/src/authority/slip.rs": "8d0cc7cbc8298a4414bf4e7a161bf5ec69b9dd50781c7339918adaf4afc86376",
       "crates/oneiron/src/authority/slip_pairing.rs": "7f701e2f3f16f7c1a3d3a61ef9318cab0dec4f1d06d9c3d6ac1972bfb7c62703"
-    }
+    },
+    "ownerAdditions": [
+      {
+        "ids": [
+          "MUSE-RECALL-01",
+          "MUSE-RECALL-02",
+          "MUSE-RECALL-03",
+          "MUSE-RECALL-04",
+          "MUSE-RECALL-05",
+          "MUSE-RECALL-06",
+          "MUSE-RECALL-07",
+          "MUSE-RECALL-08"
+        ],
+        "file": "retrieval.test.ts",
+        "ruling": "Engine ORDER 2026-11-10 12:54 JST (Muse recall plumbing cases)",
+        "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
+      },
+      {
+        "ids": [
+          "MUSE-RECALL-09"
+        ],
+        "file": "retrieval.test.ts",
+        "ruling": "Engine RULING 2026-11-11 05:37 JST E2E4-RECALL-CONTRACT 1 = A (ledger engine-20261111-e2e4-recall-contract)",
+        "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (P-RECALL-007 changed 2026-11-11, PC-20261111-1)"
+      }
+    ]
   },
   "files": [
     {
@@ -1068,7 +1093,7 @@
       "file": "retrieval.test.ts",
       "area": "Retrieval and embeddings",
       "slots": 1,
-      "estimatedSeconds": 60,
+      "estimatedSeconds": 300,
       "tests": [
         {
           "id": "RETRIEVAL-01",
@@ -1249,6 +1274,125 @@
             "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
             "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#embedding-funnel",
             "/registry/oneiron/#OF-088"
+          ]
+        },
+        {
+          "id": "MUSE-RECALL-01",
+          "name": "Ordinary recall serves auto and approved active claims, the surfaceable claim list holds back proposed, rejected, retracted, stale and superseded ones, and the pack is versioned with confidence and provenance by default",
+          "rows": [],
+          "source": [
+            "/oneiron/core/oneiron-arch-0003-semantic-memory/#claim-type",
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#s6-title"
+          ],
+          "promises": [
+            "P-RECALL-001",
+            "P-RECALL-016"
+          ]
+        },
+        {
+          "id": "MUSE-RECALL-02",
+          "name": "Recall takes the five effort levels, light makes no model call, a deadline returns the best pack so far, and a limit of 1,001 is served whole with no clamp flag",
+          "rows": [],
+          "source": [
+            "/oneiron/retrieval/#effort",
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#s6-title",
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#s6-limit-clamped-built"
+          ],
+          "promises": [
+            "P-RECALL-004",
+            "P-RECALL-005",
+            "P-RECALL-006",
+            "P-RECALL-007"
+          ]
+        },
+        {
+          "id": "MUSE-RECALL-03",
+          "name": "Recall partitions worlds base-first with labels, names an out-of-scope world instead of calling it empty, and refuses readers without or after losing read access",
+          "rows": [],
+          "source": [
+            "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#world-scope",
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#s6-title"
+          ],
+          "promises": [
+            "P-RECALL-011",
+            "P-RECALL-017"
+          ]
+        },
+        {
+          "id": "MUSE-RECALL-04",
+          "name": "Thin evidence returns no memory, search reports each signal's share, and a capability hit spends no memory slot",
+          "rows": [],
+          "source": [
+            "/oneiron/retrieval/#signals",
+            "/oneiron/retrieval/oneiron-arch-0037-retrieval-telemetry-and-policy-v1/#abstention-deltas",
+            "/oneiron/retrieval/oneiron-arch-0037-retrieval-telemetry-and-policy-v1/#feedback-deltas"
+          ],
+          "promises": [
+            "P-RECALL-003",
+            "P-RECALL-012",
+            "P-RECALL-013"
+          ]
+        },
+        {
+          "id": "MUSE-RECALL-05",
+          "name": "A world outside an agent's owner-minted grant stays absent and uncounted in the filesystem view",
+          "rows": [],
+          "source": [
+            "/oneiron/retrieval/#filesystem"
+          ],
+          "promises": [
+            "P-RECALL-008"
+          ]
+        },
+        {
+          "id": "MUSE-RECALL-06",
+          "name": "A recall subscription sends a snapshot then EOSE before live updates, and a reconnect with its last cursor catches up and resumes live updates",
+          "rows": [],
+          "source": [
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#t4-title",
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#t5-title"
+          ],
+          "promises": [
+            "P-RECALL-018",
+            "P-RECALL-019"
+          ]
+        },
+        {
+          "id": "MUSE-RECALL-07",
+          "name": "A short id hydrates for read-granted callers, hard-erased and soft-deleted persons' short ids are not reused, and a 50-ref hydrate returns live rows despite erased, deleted and never-assigned refs",
+          "rows": [],
+          "source": [
+            "/cross/auth/cross-arch-0007-hydration-endpoint-v1/#single",
+            "/cross/auth/cross-arch-0007-hydration-endpoint-v1/#lifecycle",
+            "/cross/auth/cross-arch-0007-hydration-endpoint-v1/#batch"
+          ],
+          "promises": [
+            "P-RECALL-022",
+            "P-RECALL-023",
+            "P-RECALL-025"
+          ]
+        },
+        {
+          "id": "MUSE-RECALL-08",
+          "name": "Recall serializes the same pack in all five formats",
+          "rows": [],
+          "source": [
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#s6-title",
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#c4-title"
+          ],
+          "promises": [
+            "P-RECALL-021"
+          ]
+        },
+        {
+          "id": "MUSE-RECALL-09",
+          "name": "Recall above 1,048,576 records a limit question while serving available memories, refuses a write-only agent, and keeps the question and memory after restart",
+          "rows": [],
+          "source": [
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#s6-limit-clamped-built"
+          ],
+          "promises": [
+            "P-RECALL-007"
           ]
         }
       ]
