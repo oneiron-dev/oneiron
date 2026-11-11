@@ -42,13 +42,26 @@ impl Vault {
         reads_goal: bool,
     ) -> Result<ProjectGoalInterviewContext> {
         let txn = self.store.env.read_txn()?;
+        self.project_goal_interview_context_in_txn(&txn, project, reads_goal)
+    }
+
+    /// [`Self::project_goal_interview_context`] in the caller's snapshot
+    /// `txn`: a caller-facing read decides `reads_goal` in that same
+    /// snapshot, so a disclosure check and the proposals it discloses never
+    /// come from two snapshots.
+    pub(crate) fn project_goal_interview_context_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project: EntityId,
+        reads_goal: bool,
+    ) -> Result<ProjectGoalInterviewContext> {
         let record = self
-            .visible_project_in_txn(&txn, project)?
+            .visible_project_in_txn(txn, project)?
             .ok_or_else(invalid)?;
-        let base = project_goal_base_in_txn(self, &txn, project)?;
-        let generation = super::interview::generation(&self.store, &txn, project)?;
+        let base = project_goal_base_in_txn(self, txn, project)?;
+        let generation = super::interview::generation(&self.store, txn, project)?;
         let goal_proposals = if reads_goal {
-            project_goal_proposals_in_txn(self, &txn, project)?
+            project_goal_proposals_in_txn(self, txn, project)?
                 .into_iter()
                 .map(|row| row.view(base.as_ref()))
                 .filter(|view| view.status == ProjectGoalProposalStatus::Open)
@@ -64,7 +77,7 @@ impl Vault {
                 why: seed.why,
                 axes: seed.axes,
             }),
-            revision_proposals: project_goal_revision_proposals_in_txn(self, &txn, project)?,
+            revision_proposals: project_goal_revision_proposals_in_txn(self, txn, project)?,
             goal_proposals,
         })
     }

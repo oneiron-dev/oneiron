@@ -751,20 +751,19 @@ impl Memory<'_> {
 
     /// What the goal-intake interview starts from, for a member of the
     /// project's home room. The full goal proposals carry goal records, so
-    /// only a member that reads the goal gets them.
+    /// only a member that reads the goal gets them. Membership, the goal
+    /// read and the context are read in one snapshot.
     pub fn projects_goal_intake(
         &self,
         project: EntityId,
     ) -> MemoryResult<super::ProjectGoalInterviewContext> {
         let vault = self.vault();
-        let reads_goal = {
-            let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            let record = vault
-                .visible_project_in_txn(&txn, project)?
-                .ok_or_else(invalid)?;
-            rooms::require_member(vault, &txn, canonical(&record.home_room)?, self.actor())?;
-            super::reads_goal_proposals_in_txn(self, &txn)?
-        };
-        Ok(vault.project_goal_interview_context(project, reads_goal)?)
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        let record = vault
+            .visible_project_in_txn(&txn, project)?
+            .ok_or_else(invalid)?;
+        rooms::require_member(vault, &txn, canonical(&record.home_room)?, self.actor())?;
+        let reads_goal = super::reads_goal_proposals_in_txn(self, &txn)?;
+        Ok(vault.project_goal_interview_context_in_txn(&txn, project, reads_goal)?)
     }
 }
