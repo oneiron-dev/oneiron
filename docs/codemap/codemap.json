@@ -3157,7 +3157,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "PauseKind",
@@ -3166,7 +3166,7 @@
      "path": "src/attempt_queue/lifecycle.rs",
      "purpose": "The run lifecycle (untangle slice 5.0c, S5-3): ONE transition table for an attempt row's state and pause…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 43,
       "enum": 2,
       "fn": 3
      }
@@ -3189,7 +3189,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 9,
       "re-export": 12
      }
@@ -3610,7 +3610,7 @@
      "path": "src/attempt_queue/validate/cancel_receipt_landing.rs",
      "purpose": "Cancel-receipt shape table, landing validators, and receipt/event append mutators",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 2
      }
     },
     {
@@ -6701,7 +6701,7 @@
      "purpose": "OF-499 A3: a real, current Admin proof for the weave, behind an MFA step-up witness",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "struct": 2
      }
@@ -15165,6 +15165,89 @@
      "purpose": "Selection-law projection of an email thread mask",
      "surface": {
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ActClass",
+      "ActClassRow",
+      "ModelCheck",
+      "ProofKind",
+      "UndoClass"
+     ],
+     "path": "src/check_in/act_class.rs",
+     "purpose": "The shipped act table (ARCH-0082 #act-table and #catastrophe-floor)",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 2,
+      "static": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/check_in/mod.rs",
+     "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckInMode"
+     ],
+     "path": "src/check_in/mode.rs",
+     "purpose": "The three check-in modes and their stable wire tokens",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckInAnswer",
+      "CheckInRequest",
+      "GoReason",
+      "ModeSource",
+      "ResolvedMode",
+      "UnsureTest",
+      "WaitReason"
+     ],
+     "path": "src/check_in/resolve.rs",
+     "purpose": "One check-in: power, mode and rung 0, then the unsure test (ARCH-0082 #composing and #ladder)",
+     "surface": {
+      "enum": 5,
+      "fn": 3,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoleDefault",
+      "RolePreset",
+      "RolePresetRow"
+     ],
+     "path": "src/check_in/role_preset.rs",
+     "purpose": "The seven role presets and their default check-in mode per act class (ARCH-0082 #role-defaults; ARCH-0043…",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 3,
+      "static": 1,
+      "struct": 1
      }
     },
     {
@@ -40876,6 +40959,7 @@
      "purpose": "Erase asks (ARCH-0043 \"Who may archive, delete and erase\", 2026-10-09): in a shared vault a Member requests…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 3,
       "struct": 1
@@ -41090,7 +41174,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "InitialSharedMember",
@@ -42351,7 +42435,6 @@
      "path": "src/gate/consult_fanout_values.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
       "struct": 4
      }
     },
@@ -43046,19 +43129,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "FanoutApprovalMode"
-     ],
-     "path": "src/gate/fanout_mode.rs",
-     "purpose": "Fan-out approval policy dial and its stable wire spelling",
-     "surface": {
-      "crate-vis": 1,
-      "enum": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/gate/fanout_policy.rs",
      "purpose": "Manifest-backed fan-out policy composition; no executable defaults",
@@ -43178,7 +43248,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 97,
+      "crate-vis": 96,
       "mod": 2,
       "re-export": 8
      }
@@ -48216,7 +48286,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 216,
+      "mod": 217,
       "re-export": 105
      }
     },
@@ -62427,8 +62497,7 @@
      "path": "src/outbound_chokepoint/fanout.rs",
      "purpose": "Pre-execution fan-out admission",
      "surface": {
-      "crate-vis": 26,
-      "re-export": 1
+      "crate-vis": 26
      }
     },
     {
@@ -62456,8 +62525,7 @@
      "path": "src/outbound_chokepoint/mod.rs",
      "purpose": "Replay-first outbound effect execution",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 1
+      "crate-vis": 7
      }
     },
     {
@@ -89037,7 +89105,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "re-export": 3,
+      "re-export": 2,
       "struct": 4
      }
     },
@@ -91089,11 +91157,36 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AdmissionOutcome",
+      "Classifier"
+     ],
+     "path": "src/test_doors/fanout_admission.rs",
+     "purpose": "Door for `tests/check_in_fanout_modes.rs` (ROLES-CHECKIN PR 1): one fan-out admission under a mode named by…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/feeds.rs",
      "purpose": "Doors for `tests/feed_erase_doors.rs`: the change feed rows that name an entity, which an erase leaves at…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/grant_roles.rs",
+     "purpose": "Door for `tests/grant_roles_seven.rs` (ROLES R1, the lead 11 Nov 11:38): the default membership scope a…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -91114,6 +91207,16 @@
      "purpose": "Fixture vaults for the label-writer tests (OPUS-LEAKS, lead call G): the shipped policy plus a `core:read`…",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/learning_claim_value.rs",
+     "purpose": "Doors for `tests/learning_claim_value.rs` (FIX LEARNING-CELL-POSITIONAL-DECODE): the learning claim value…",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -91154,7 +91257,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 32
+      "mod": 36
      }
     },
     {
@@ -91184,6 +91287,20 @@
      "path": "src/test_doors/run_hold.rs",
      "purpose": "Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override…",
      "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TableAnswer",
+      "TableEvent"
+     ],
+     "path": "src/test_doors/run_lifecycle.rs",
+     "purpose": "Doors for `tests/run_lifecycle_props.rs`: the lifecycle table's answer, the stored pause kind, force-cancel…",
+     "surface": {
+      "enum": 2,
       "fn": 6
      }
     },
@@ -99411,6 +99528,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/check_in_fanout_modes.rs",
+     "purpose": "ROLES-CHECKIN PR 1 (ARCH-0082 #build): fan-out admission is the first caller of check-in, and the rename…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_tables.rs",
+     "purpose": "ROLES-CHECKIN PR 1 (ONEIRON-ARCH-0082): the check-in modes, the act table, the role defaults and the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/checkpoint_registry_rows.rs",
      "purpose": "Every side table states a complete checkpoint row (fix list rows 22409-22423, 22346): a payload family, a…",
      "surface": {}
@@ -99783,6 +99916,14 @@
      "notable": [],
      "path": "tests/goal_read_through_grant.rs",
      "purpose": "The goal read is an ordinary granted read with an actor (untangle 6.6d, F4; Engine 10 Nov 06:53 and 07:23)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/grant_roles_seven.rs",
+     "purpose": "The grant roles after the lead's 11 Nov 11:38 ruling (VS-CHECKIN-NAMES = A with the roles, VS-OLD-NAMES =…",
      "surface": {}
     },
     {
@@ -100453,6 +100594,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/learning_claim_value.rs",
+     "purpose": "FIX LEARNING-CELL-POSITIONAL-DECODE: a learning claim value is written with named fields, so a cell with…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/linked_self_verb_surface.rs",
      "purpose": "The verb table is closed over the linked `self.*` operations (F2.1): each operation a code-mode guest can…",
      "surface": {}
@@ -100737,6 +100886,22 @@
      "notable": [],
      "path": "tests/run_lifecycle.rs",
      "purpose": "The run lifecycle (untangle slice 5.0c): the interventions, the budget hold and lease reclaim move an…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_lifecycle_props.rs",
+     "purpose": "Real queue operations agree with the lifecycle table for E1, E2 and E3",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_lifecycle_single_writer.rs",
+     "purpose": "Single-writer guard for the run lifecycle (untangle slices E1, E2 and E3)",
      "surface": {}
     },
     {
@@ -101297,6 +101462,13 @@
      "layout": "dir",
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)"
     },
+    "check_in": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…"
+    },
     "checkout": {
      "files": 14,
      "impl_vault": false,
@@ -101767,7 +101939,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 210,
+     "files": 209,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -102579,7 +102751,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 34,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102754,10 +102926,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 248,
+   "over_bar": 249,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7328,
-   "test_files": 1009
+   "source_files": 7336,
+   "test_files": 1015
   },
   "oneiron-agent-runtime": {
    "files": [
