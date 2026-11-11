@@ -578,7 +578,7 @@ fn a_run_whose_lease_ended_is_refused() -> TestResult {
 }
 
 #[test]
-fn a_run_its_host_no_longer_holds_attached_is_refused_and_saves_no_result() -> TestResult {
+fn a_run_its_host_no_longer_holds_attached_is_refused_and_its_try_is_not_settled() -> TestResult {
     block_on(async {
         let dir = tempfile::tempdir()?;
         let vault = open_vault(dir.path())?;
@@ -610,8 +610,8 @@ fn a_run_its_host_no_longer_holds_attached_is_refused_and_saves_no_result() -> T
         );
         assert_eq!(unsent.call_count(), 0);
 
-        // A run let go while its call ran is refused its answer, and no
-        // result is saved under the standing it lost.
+        // A run let go while its call ran is refused its answer, and its
+        // try is not settled under the standing it lost.
         attachment.store(true, Ordering::SeqCst);
         let ending = ScriptedBackend::ending(1, &attachment);
         assert_run_actor_refused(
@@ -625,14 +625,13 @@ fn a_run_its_host_no_longer_holds_attached_is_refused_and_saves_no_result() -> T
         assert!(unfinished.result.is_none());
 
         // Attached again, the key's next call resumes the same step and
-        // finishes it.
-        let backend = ScriptedBackend::new(1);
-        let finished = submit_as_run_actor(&vault, caller, input, &backend, &line).await?;
+        // finishes it on the answer the provider already gave: the durable
+        // step kept that paid answer, so no model is asked a second time.
+        let unasked = ScriptedBackend::new(0);
+        let finished = submit_as_run_actor(&vault, caller, input, &unasked, &line).await?;
         assert_eq!(finished.step_ref, unfinished.step_ref);
-        assert!(matches!(
-            finished.result,
-            Some(ModelStepResult::Finished { .. })
-        ));
+        finished_claim(&finished, true);
+        assert_eq!(unasked.call_count(), 0);
         Ok(())
     })
 }
