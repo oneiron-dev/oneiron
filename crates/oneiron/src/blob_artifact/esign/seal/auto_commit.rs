@@ -25,20 +25,22 @@ pub(super) struct VerifiedSealOutput {
 
 impl VerifiedSealOutput {
     pub(super) fn verify(
-        sealed: EsignSealed,
-        checked: EsignVerdict,
+        mut sealed: EsignSealed,
+        mut checked: EsignVerdict,
         profile: SealProfile,
         audit_chain_sha256: [u8; 32],
     ) -> std::result::Result<Self, EsignSealError> {
+        let mut verify_reasons = std::mem::take(&mut sealed.self_verify.reasons);
+        verify_reasons.append(&mut checked.reasons);
         if !sealed.self_verify.self_verify_ok
             || !checked.self_verify_ok
             || !coherent(&sealed, &checked, profile)
         {
-            return Err(EsignSealError::Verification);
+            return Err(EsignSealError::Verification { verify_reasons });
         }
         let sha256: [u8; 32] = Sha256::digest(&sealed.bytes).into();
         if sealed.evidence_sha256 != sha256 {
-            return Err(EsignSealError::Verification);
+            return Err(EsignSealError::Verification { verify_reasons });
         }
         Ok(Self {
             bytes: sealed.bytes,
