@@ -526,8 +526,8 @@ fn later_turn(server: &SyncServer) -> Value {
 
 /// The same wake through the generated facade: a turn witnessed at
 /// `POST /v1/core/facade/witness` is read by a Micro round. The handler is
-/// generated (the verb-table row's `lands_turn`), so this fails if
-/// `scripts/sdk/generate.py` stops emitting the wake.
+/// generated (the verb-table row's `lands_turn`), so this fails if the SDK
+/// generator (`crates/oneiron-sdk-generator`) stops emitting the wake.
 #[tokio::test]
 async fn a_facade_witness_turn_wakes_the_dreamer() {
     let reply = Reply::Text {
@@ -571,7 +571,7 @@ async fn a_facade_witness_turn_wakes_the_dreamer() {
 /// The same wake through MCP: a turn witnessed by the generated `witness` tool
 /// is read by a Micro round. Every MCP door (the tool list, code mode, the
 /// stdio bridge) reaches the verb table through one generated dispatcher, so
-/// this fails if `scripts/sdk/generate.py` stops emitting the wake there.
+/// this fails if the SDK generator stops emitting the wake there.
 #[tokio::test]
 async fn an_mcp_witness_turn_wakes_the_dreamer() {
     let reply = Reply::Text {

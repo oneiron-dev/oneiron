@@ -71,8 +71,8 @@ pub enum SharedSkillRollback {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SharedSkillMergeDisposition {
     /// The owner must answer this exact effect once: the delta widens the
-    /// skill's permissions (the fit ladder's ask rung), or the scan of its
-    /// bytes requires an owner review.
+    /// skill's permissions (the fit ladder's ask rung). A scanner flag alone
+    /// asks nothing (ARCH-0053 #promise-gate-23).
     PendingConsent,
     Ruled(Box<SharedSkillMergeReceipt>),
 }
@@ -82,7 +82,6 @@ struct MergeSnapshot {
     base: SkillRecord,
     record: SkillRecord,
     package: HubPackage,
-    scan: crate::skill_scan::ActivationPosture,
     baseline: String,
     evidence: Vec<String>,
     binding: String,
@@ -139,8 +138,7 @@ impl Vault {
         })
     }
     /// The owner's answer to a merge whose delta widens the skill's
-    /// permissions or whose scan requires review. Any other merge needs no
-    /// answer.
+    /// permissions. Any other merge needs no answer.
     pub fn approve_shared_skill_merge(
         &self,
         ask: &SharedSkillMergeAsk,
@@ -154,10 +152,10 @@ impl Vault {
     /// The one merge door. A caller cannot submit a bool or a precomputed score.
     /// The typed useful-upstream decision and the held-out replay are the gate;
     /// no per-merge approval exists, because the merge is reversible (ARCH-0053
-    /// r4, ARCH-0043: "No publish step exists"). A required review still asks:
-    /// a delta that widens the skill's permissions, or whose scan sets
-    /// `ProposedRequired`, returns `PendingConsent` until the owner approves
-    /// that exact effect.
+    /// r4, ARCH-0043: "No publish step exists"). A permission widening still
+    /// asks: a delta that widens the skill's permissions returns
+    /// `PendingConsent` until the owner approves that exact effect. A scanner
+    /// flag is a signal and holds nothing (ARCH-0053 #promise-gate-23).
     /// The useful-upstream question runs on the host's ladder with a System One or
     /// escalation seat first; it reads submitted bytes, never the branch vault, and
     /// its typed receipt is checked before any held-out replay or state change.
@@ -312,11 +310,12 @@ impl Vault {
     /// and links `DerivedFrom` the revision it restores. Both earlier
     /// revisions stay readable.
     ///
-    /// A rollback asks only where a review is required, as a merge does: when
+    /// A rollback asks only where it widens permissions, as a merge does: when
     /// the restoring revision declares capabilities beyond the active
-    /// revision's admitted surface, or the scan of its bytes sets
-    /// `ProposedRequired`. Then only `owner` rolls back: without one, nothing
-    /// changes and the result is [`SharedSkillRollback::PendingOwner`].
+    /// revision's admitted surface. A scanner flag on its bytes holds nothing
+    /// (ARCH-0053 #promise-gate-23). Then only `owner` rolls back: without
+    /// one, nothing changes and the result is
+    /// [`SharedSkillRollback::PendingOwner`].
     ///
     /// Refuses unless `merged` is the active revision a shared merge admitted.
     /// Once a later revision has superseded it, roll that one back instead.
@@ -421,10 +420,6 @@ impl Vault {
             if !surface
                 .unwrap_or_default()
                 .is_same_or_narrower_than(&active)
-                || matches!(
-                    scan,
-                    crate::skill_scan::ActivationPosture::ProposedRequired { .. }
-                )
             {
                 let owner = owner.ok_or(Stop::PendingOwner)?;
                 // Only this vault's live owner answers. A proof minted
@@ -495,23 +490,18 @@ impl Vault {
         let snapshot = self.shared_merge_snapshot(&txn, candidate)?;
         self.merge_needs_owner_in_txn(&txn, &snapshot)
     }
-    /// The owner answers a merge only where a review is required. A widening
+    /// The owner answers a merge only where it widens permissions. A widening
     /// is any capability the candidate declares beyond the base's admitted
     /// surface; a base with no admitted surface admits none, so every declared
-    /// capability then widens. A `ProposedRequired` scan of the candidate's
-    /// bytes asks too: the activation stamps `Approved`, which the scan gate
-    /// never escalates, so the review must happen here.
+    /// capability then widens. A scanner flag on the candidate's bytes holds
+    /// nothing: the scanner is a signal, and its verdict rows stay on the
+    /// update (ARCH-0053 #promise-gate-23). The ask's binding still covers
+    /// the scan posture, so a flag that moves after the ask stales it.
     fn merge_needs_owner_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         snapshot: &MergeSnapshot,
     ) -> Result<bool> {
-        if matches!(
-            snapshot.scan,
-            crate::skill_scan::ActivationPosture::ProposedRequired { .. }
-        ) {
-            return Ok(true);
-        }
         let admitted = self
             .read_admitted_capability_surface_in_txn(txn, &snapshot.base_id)?
             .unwrap_or_default();
@@ -618,7 +608,6 @@ impl Vault {
             base,
             record,
             package,
-            scan,
             baseline,
             evidence,
             binding: hash.finalize().to_hex().to_string(),

@@ -61,6 +61,9 @@ impl EdgeStoreMaintenance for Store {
             crate::store::ppr_cache_invalidation::invalidate_ppr_for_edge(
                 self, txn, source, target,
             )?;
+            // A revision's lifecycle link is written here, past the batch's edge seam, so it
+            // feeds the edge change here, as that seam does for a put (review #6942).
+            crate::feeds::record_edge_change_in_txn(self, txn, source, kind, target, true)?;
         }
         Ok(changed)
     }
@@ -162,7 +165,10 @@ impl super::EdgeStoreReadiness for crate::Vault {
             &from,
             &to,
         )?;
-        crate::store::graph_version::increment_graph_version(&self.store, txn)
+        crate::store::graph_version::increment_graph_version(&self.store, txn)?;
+        // The Blocks door writes its rows here, past the batch's edge seam, so it feeds the
+        // edge change here, as that seam does for every other edge (review #6942).
+        crate::feeds::record_edge_change_in_txn(&self.store, txn, &from, kind, &to, true)
     }
     fn port_blocks_remove(
         &self,
@@ -188,6 +194,7 @@ impl super::EdgeStoreReadiness for crate::Vault {
                 &to,
             )?;
             crate::store::graph_version::increment_graph_version(&self.store, txn)?;
+            crate::feeds::record_edge_change_in_txn(&self.store, txn, &from, kind, &to, false)?;
         }
         Ok(existed)
     }
