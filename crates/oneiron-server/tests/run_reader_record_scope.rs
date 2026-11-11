@@ -20,7 +20,9 @@ use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::task_verb::run_doors::{RunBranchesRequest, RunBranchesView};
 use oneiron::task_verb::{TaskAssignee, TaskCreateSpec, TaskRouteOutcome};
 use oneiron::{AttemptQueue, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
+use oneiron_server::{
+    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
+};
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -188,6 +190,35 @@ impl Fixture {
     }
 }
 
+/// Runs `test` as the server's binary runs its app: on a multi-thread runtime
+/// whose threads have the engine's stack, driven from a thread that has it
+/// too. The generated facade dispatch's poll frame alone is over 11 MiB in a
+/// dev build (`ENGINE_THREAD_STACK_BYTES`), which a test thread's default
+/// stack does not hold.
+fn on_engine_stack<F, Fut>(test: F) -> TestResult
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = TestResult>,
+{
+    let driver = std::thread::Builder::new()
+        .stack_size(ENGINE_THREAD_STACK_BYTES)
+        .spawn(move || -> Result<(), String> {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
+                .enable_all()
+                .build()
+                .map_err(|error| error.to_string())?
+                .block_on(test())
+                .map_err(|error| error.to_string())
+        })?;
+    match driver.join() {
+        Ok(outcome) => Ok(outcome?),
+        // A failed assertion fails the test with its own message.
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -209,8 +240,12 @@ fn assert_record_scope_refusal(status: u16, body: &Value) {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_narrowed_credential_is_refused_the_run_branches() -> TestResult {
+#[test]
+fn a_narrowed_credential_is_refused_the_run_branches() -> TestResult {
+    on_engine_stack(narrowed_credential_and_the_run_branches)
+}
+
+async fn narrowed_credential_and_the_run_branches() -> TestResult {
     let fixture = Fixture::new()?;
     let input = serde_json::to_value(RunBranchesRequest {
         task_ref: fixture.task_ref,
@@ -242,8 +277,12 @@ async fn a_narrowed_credential_is_refused_the_run_branches() -> TestResult {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_narrowed_credential_is_refused_the_spend_lease() -> TestResult {
+#[test]
+fn a_narrowed_credential_is_refused_the_spend_lease() -> TestResult {
+    on_engine_stack(narrowed_credential_and_the_spend_lease)
+}
+
+async fn narrowed_credential_and_the_spend_lease() -> TestResult {
     let fixture = Fixture::new()?;
     // A TASK id is well-formed hex but names no attempt's spend scope. The
     // old guard reaches the door's own-scope refusal, not a record-scope one.
