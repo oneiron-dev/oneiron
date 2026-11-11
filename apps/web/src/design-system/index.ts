@@ -46,7 +46,7 @@ export {
   type StepsBarCell,
   type StepsBarLayout,
 } from './marks/steps-bar-cells'
-export { Glyph, type GlyphProps, type GlyphState, type GlyphShape } from './marks/Glyph'
+export { Glyph, type GlyphProps, type GlyphState, type GlyphShape, type GlyphForm } from './marks/Glyph'
 export { Portrait, type PortraitProps } from './marks/Portrait'
 
 export {
@@ -119,6 +119,7 @@ export { ClaimText, type ClaimTextProps } from './patterns/ClaimText'
 export { claimInk, type ClaimInk } from './patterns/claim-ink'
 
 export { GLYPH_NAMES, type GlyphName } from './lib/seal-art'
+export { GlyphLine, laurelLeaves, type GlyphLineProps, type LaurelLeaf } from './lib/glyph-lines'
 export { placeFloating, anchorInViewport, type Side, type Align, type Placement, type PlacementOptions } from './lib/placement'
 export { bayerThreshold, easeOutQuart, develop, BAYER_8X8 } from './lib/dither'
 export { useResolvedScheme, resolveScheme, type Scheme } from './lib/scheme'

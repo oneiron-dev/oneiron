@@ -12,21 +12,21 @@ type Plate = 'ink' | 'tone'
 type DrawPlate = (ctx: CanvasRenderingContext2D, plate: Plate) => void
 
 /* The laurel's spine: a cubic from the base to the tip, mirrored. */
-const LAUREL_SPINE: ReadonlyArray<readonly [number, number]> = [
+export const LAUREL_SPINE: ReadonlyArray<readonly [number, number]> = [
   [15.2, 28.6],
   [7.4, 25.6],
   [4.2, 15.8],
   [9.4, 4.8],
 ]
 
-function laurelPoint(t: number): [number, number] {
+export function laurelPoint(t: number): [number, number] {
   const u = 1 - t
   const P = LAUREL_SPINE
   const at = (k: 0 | 1) => u * u * u * P[0][k] + 3 * u * u * t * P[1][k] + 3 * u * t * t * P[2][k] + t * t * t * P[3][k]
   return [at(0), at(1)]
 }
 
-function laurelTangent(t: number): [number, number] {
+export function laurelTangent(t: number): [number, number] {
   const u = 1 - t
   const P = LAUREL_SPINE
   const at = (k: 0 | 1) =>
