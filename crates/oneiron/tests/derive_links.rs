@@ -9,12 +9,14 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron::identity_topology::{StoredIdentityOpAction, distinct_pair_key};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{
     Claim, Derived, Distinct, Named, SameAs, claim_lifecycle, commit, commit_claims,
-    mint_nightly_links, same_as_edge,
+    define_auto_agent, grant_derive_rows, grant_topology_seal, mint_nightly_links, same_as_edge,
 };
 use oneiron::test_doors::steward::dreamer;
 use oneiron::{EdgeActorClass, EntityId, Vault};
@@ -163,6 +165,78 @@ fn a_topology_judgment_needs_the_agents_own_grant() {
     assert!(!landed);
     assert_eq!(
         reasons,
+        vec!["gate.deny.derive.topology_needs_grant".to_owned()]
+    );
+}
+
+#[test]
+fn an_agent_with_its_own_topology_grant_lands_a_judgment_as_a_proposal() {
+    let fixture = fixture();
+    let other = put(&fixture.vault, ENTITY_TYPE_PERSON, b"someone else");
+    let agent = define_auto_agent(&fixture.vault).expect("an agent");
+    grant_derive_rows(&fixture.vault, &[agent]).expect("the agent's landing and read rows");
+    let grant = grant_topology_seal(&fixture.vault, agent).expect("the agent's topology grant");
+    let committed = commit(
+        &fixture.vault,
+        agent,
+        EdgeActorClass::Agent,
+        "run-topology",
+        &[Derived::Distinct(Distinct {
+            local: "distinct",
+            a: fixture.person,
+            b: other,
+            grant,
+            apply: false,
+        })],
+    )
+    .expect("commit");
+    let [item] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(item.landed, "the proposal lands: {:?}", item.reasons);
+    assert!(item.reasons.is_empty());
+    let [proposal] = item.rows.as_slice() else {
+        panic!("one proposal event: {:?}", item.rows);
+    };
+    let event = fixture
+        .vault
+        .identity_topology_event(proposal)
+        .expect("read the proposal")
+        .expect("the proposal event");
+    assert_eq!(event.source, ClaimSource::Generated);
+    assert_eq!(event.approval, ClaimApprovalStatus::Proposed);
+    let StoredIdentityOpAction::AssertDistinct { a, b, .. } = event.action else {
+        panic!("a distinct assertion: {:?}", event.action);
+    };
+    assert_eq!((a, b), distinct_pair_key(fixture.person, other));
+}
+
+#[test]
+fn an_agent_with_no_topology_grant_lands_no_judgment() {
+    let fixture = fixture();
+    let other = put(&fixture.vault, ENTITY_TYPE_PERSON, b"someone else");
+    let agent = define_auto_agent(&fixture.vault).expect("an agent");
+    grant_derive_rows(&fixture.vault, &[agent]).expect("the agent's landing and read rows");
+    let committed = commit(
+        &fixture.vault,
+        agent,
+        EdgeActorClass::Agent,
+        "run-topology",
+        &[Derived::Distinct(Distinct {
+            local: "distinct",
+            a: fixture.person,
+            b: other,
+            grant: EntityId::now(),
+            apply: false,
+        })],
+    )
+    .expect("commit");
+    let [item] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(!item.landed);
+    assert_eq!(
+        item.reasons,
         vec!["gate.deny.derive.topology_needs_grant".to_owned()]
     );
 }
