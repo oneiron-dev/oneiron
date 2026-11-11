@@ -731,7 +731,7 @@ fn verb_leaves(name: &str, written: bool) -> Vec<&str> {
 /// `describe`) with its typed input and reply, one overload first for each
 /// input field that selects its own reply (`describe({fold})`,
 /// `tasks.update({resultRef})`), and every type they reach in one namespace.
-/// `scripts/sdk/generate.py` writes that one text from the table to both
+/// The SDK generator (`crates/oneiron-sdk-generator`) writes that one text from the table to both
 /// `catalog_fragment.d.ts` and `code-mode.d.ts`, so the methods a model is
 /// shown are exactly the rows the host serves.
 #[must_use]
