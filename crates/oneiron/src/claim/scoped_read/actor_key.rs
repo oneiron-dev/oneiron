@@ -37,6 +37,11 @@ pub struct ScopedReadActorKey {
     /// The proof's Scope as every read door checks it; see
     /// [`Self::authority_scope`].
     authority: Option<oneiron_authority::federation::Scope>,
+    /// Set only on a credential the owner's agent Grants naming its holder
+    /// bind (FIX AGENT-GRAPHFS-GRANT-WORLDS): the credential's Scope met with
+    /// each standing Grant alone. `authority` is met with their envelope; a
+    /// row must lie inside one of them. See [`Self::within_agent_grants`].
+    grant_alternatives: Option<std::sync::Arc<[oneiron_authority::federation::Scope]>>,
     /// A host-bound channel on a channel-aware read door, never a grant.
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
@@ -380,6 +385,7 @@ impl ScopedReadActorKey {
             unscoped_rows_open: false,
             proof: None,
             authority: None,
+            grant_alternatives: None,
             channel: None,
             owner: None,
             owner_exemption: None,
@@ -422,6 +428,7 @@ impl ScopedReadActorKey {
             unscoped_rows_open: false,
             proof: None,
             authority: None,
+            grant_alternatives: None,
             channel: None,
             owner: Some(owner),
             owner_exemption: None,
@@ -862,6 +869,53 @@ impl ScopedReadActorKey {
     /// [`Self::from_verified_slip`] already does.
     pub(crate) fn authority_scope(&self) -> Option<&oneiron_authority::federation::Scope> {
         self.authority.as_ref()
+    }
+
+    /// This key bound by the owner's agent Grants that name its holder (FIX
+    /// AGENT-GRAPHFS-GRANT-WORLDS): its Scope met with their `envelope`,
+    /// whose verbs are left open, and its rows held to one of `alternatives`
+    /// alone, each the credential's Scope met with one standing Grant and
+    /// taken as every read door checks a proof of it
+    /// ([`Self::read_authority`]). It only narrows; with no alternative it
+    /// reads nothing.
+    #[must_use]
+    pub(crate) fn within_agent_grants(
+        self,
+        envelope: oneiron_authority::federation::Scope,
+        alternatives: &[oneiron_authority::federation::Scope],
+    ) -> Self {
+        self.within_authority(envelope)
+            .within_grant_alternatives(alternatives)
+    }
+
+    /// This key's rows held to one of `alternatives` alone, each taken as
+    /// every read door checks a proof of it ([`Self::read_authority`]): a
+    /// live key's agent Grants, or a saved lane's frozen ones (OF-506). It
+    /// only narrows: a key that already holds alternatives keeps each
+    /// pairing of one it held with one of these, met, so a row still lies
+    /// inside one of each. With no alternative it reads nothing.
+    #[must_use]
+    pub(super) fn within_grant_alternatives(mut self, alternatives: &[Scope]) -> Self {
+        let alternatives: Vec<Scope> = alternatives.iter().map(Self::read_authority).collect();
+        self.grant_alternatives = Some(match self.grant_alternatives.take() {
+            Some(held) => held
+                .iter()
+                .flat_map(|kept| {
+                    alternatives
+                        .iter()
+                        .map(move |alternative| kept.meet(alternative))
+                })
+                .collect(),
+            None => alternatives.into(),
+        });
+        self
+    }
+
+    /// The Scopes a row must lie inside one of, alone, beside this key's own
+    /// ([`Self::within_grant_alternatives`]); `None` when no agent Grant
+    /// binds it.
+    pub(crate) fn grant_alternatives(&self) -> Option<&[oneiron_authority::federation::Scope]> {
+        self.grant_alternatives.as_deref()
     }
 
     /// The worlds this read asked for, as a world-only ceiling; `None` when
