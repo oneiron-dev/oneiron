@@ -1,0 +1,20 @@
+{
+  "name": "vault.repo.proposal_resolve",
+  "description": "Keeps one whole-file resolution of a typed repository conflict against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance that names the resolution; without that witness it holds typed, work kept.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoProposalResolveInput>",
+  "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.proposal_resolve\", &input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}
