@@ -135,6 +135,32 @@ fn about_lines_published_before_any_wake_pass_read_back_at_once() {
 }
 
 #[test]
+fn a_batch_holds_one_about_item_for_a_person() {
+    let fixture = fixture();
+    let (digest, bands) = facts(&fixture);
+    assert!(!bands.is_empty(), "the person has a fact");
+    let again = Derived::About(About {
+        local: "about_again",
+        person: Named::Stored(fixture.person),
+        written_from: digest,
+        lines: bands.iter().map(|band| (*band, LINE)).collect(),
+    });
+    commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-two-abouts",
+        &[about(&fixture, digest, &bands), again],
+    )
+    .expect_err("two about items for one person are a malformed batch");
+    assert_eq!(
+        about_line(&fixture),
+        None,
+        "the malformed batch lands nothing"
+    );
+}
+
+#[test]
 fn the_dreamer_publishes_a_persons_about_lines() {
     let fixture = fixture();
     let (digest, bands) = facts(&fixture);

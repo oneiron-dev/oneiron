@@ -40,6 +40,26 @@ pub struct ItemRecord {
     /// The gate decision that decided it, landed or refused, when one was
     /// recorded.
     pub receipt: Option<[u8; 16]>,
+    /// Each landed row's revision as the commit left it, in `rows` order: a
+    /// revert undoes the item only while every row still stands at it
+    /// (untangle 6.7c).
+    #[serde(default)]
+    pub revisions: Vec<[u8; 32]>,
+    /// The SameAs edge a `same_as` item applied, when the item created it:
+    /// a revert removes only that edge, and only while it stands unchanged.
+    /// `None` for every other kind, for a link that stayed a proposal, and
+    /// for an edge that stood before the item (untangle 6.7c).
+    #[serde(default)]
+    pub(crate) applied_edge: Option<AppliedEdge>,
+}
+
+/// The SameAs edge one `same_as` item created: its endpoints, and a digest
+/// of the edge as the commit left it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct AppliedEdge {
+    pub(crate) source: EntityId,
+    pub(crate) target: EntityId,
+    pub(crate) revision: [u8; 32],
 }
 
 const BATCHES: SideTable<[u8; 16], DerivationBatchRecord, Named> =
@@ -70,7 +90,7 @@ pub(super) fn put_batch_in_txn(
 /// # Errors
 ///
 /// Storage errors, and a row that does not decode.
-fn batch_record_in_txn(
+pub(super) fn batch_record_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     batch: EntityId,

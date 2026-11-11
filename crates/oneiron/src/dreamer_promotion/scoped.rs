@@ -337,7 +337,11 @@ fn attach_evidence(
             answers,
             now_ms: run.now_ms,
         };
-        let (original, stored) = assert_evidence_in_txn(
+        let AssertedEvidence {
+            original,
+            answers: stored,
+            ..
+        } = assert_evidence_in_txn(
             vault,
             txn,
             &assertion,
@@ -408,13 +412,26 @@ pub(crate) struct EvidenceAssertion<'a> {
     pub(crate) now_ms: u64,
 }
 
+/// What an evidence assertion landed.
+pub(crate) struct AssertedEvidence {
+    /// The head as it stood, for the caller's check that it is unchanged.
+    pub(crate) original: crate::claim::ClaimBody,
+    /// The answers a replay reads back.
+    pub(crate) answers: Vec<ResolvedConflictOutput>,
+    /// The provenance record of each support this assertion wrote, one per
+    /// source it had not asserted before: what a revert retracts. A support
+    /// an earlier assertion wrote is replayed, stays that assertion's, and
+    /// is not listed.
+    pub(crate) records: Vec<EntityId>,
+}
+
 /// Gates `assertion` in `txn` and lands one support of each of its sources
 /// for the head, never an overwrite of the head: the gate judges the
 /// assertion over a copy of the head's complete scope, with the head's own
 /// facet and project stamps, under `reader`, and every support, its
 /// provenance row and the head's verified-support stamp share `txn`. The
-/// head as it stood, for the caller's check that it is unchanged, and the
-/// answers a replay reads back.
+/// head as it stood, the answers a replay reads back, and each support's
+/// provenance record.
 pub(crate) fn assert_evidence_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -423,7 +440,7 @@ pub(crate) fn assert_evidence_in_txn(
     reader: &crate::claim::ScopedRead<'_>,
     auto_write_rate: crate::store::own_rate_record::OwnRate,
     carried: &mut Option<String>,
-) -> Result<(crate::claim::ClaimBody, Vec<ResolvedConflictOutput>)> {
+) -> Result<AssertedEvidence> {
     let EvidenceAssertion {
         actor,
         envelope,
@@ -477,10 +494,11 @@ pub(crate) fn assert_evidence_in_txn(
     )?;
     // The gate is not an authority-granting preflight: all materialization
     // below and its receipt share this transaction, including live pins.
-    let mut stored = Vec::new();
+    let mut answers_kept = Vec::new();
+    let mut records = Vec::new();
     for source_id in sources {
         let cited = evidence.for_source(*source_id);
-        stored.extend(attach_ref(
+        let (record, written, kept) = attach_ref(
             vault,
             txn,
             (actor, now_ms),
@@ -488,18 +506,27 @@ pub(crate) fn assert_evidence_in_txn(
             &cited,
             answers,
             auto_write_rate,
-        )?);
+        )?;
+        if written {
+            records.push(record);
+        }
+        answers_kept.extend(kept);
     }
     crate::dreamer_consolidation::strength::record_verified_in_txn(
         vault, txn, head, evidence, now_ms,
     )?;
-    Ok((original, stored))
+    Ok(AssertedEvidence {
+        original,
+        answers: answers_kept,
+        records,
+    })
 }
 
 /// One support assertion of `source` for `head`, carrying the `answers` the
-/// head gives (FIX 7381). Returns the answers the assertion already keeps
-/// when this attempt wrote it before: a replay compares everything else
-/// exactly, and reads its binding back.
+/// head gives (FIX 7381). Returns the assertion's provenance record, whether
+/// this call wrote it, and the answers the assertion already keeps when an
+/// earlier call wrote it: a replay compares everything else exactly, and
+/// reads its binding back.
 fn attach_ref(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -508,7 +535,7 @@ fn attach_ref(
     evidence: &VerifiedEvidenceSet,
     answers: &[ResolvedConflictOutput],
     auto_write_rate: crate::store::own_rate_record::OwnRate,
-) -> Result<Vec<ResolvedConflictOutput>> {
+) -> Result<(EntityId, bool, Vec<ResolvedConflictOutput>)> {
     let evidence_meet = evidence.meet();
     let locators = evidence.verified_locators();
     if locators.is_empty()
@@ -643,7 +670,7 @@ fn attach_ref(
             actor.actor_class(),
             &policy,
         )?;
-        return Ok(stored_answers);
+        return Ok((id, false, stored_answers));
     }
     let at = now_ms / 1_000;
     if vault
@@ -689,5 +716,5 @@ fn attach_ref(
     #[cfg(test)]
     crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Attachment);
     evidence.record_message_dependencies_in_txn(vault, txn, &id)?;
-    Ok(Vec::new())
+    Ok((id, true, Vec::new()))
 }
