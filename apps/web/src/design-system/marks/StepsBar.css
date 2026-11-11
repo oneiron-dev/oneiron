@@ -17,3 +17,11 @@
 .sl-steps-bar .sl-steps-ink {
   fill: var(--sl-ink-2);
 }
+
+/* A failed step: the empty track, outlined by a dashed line. */
+.sl-steps-bar .sl-steps-failed {
+  fill: var(--sl-track);
+  stroke: var(--sl-ink-3);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}

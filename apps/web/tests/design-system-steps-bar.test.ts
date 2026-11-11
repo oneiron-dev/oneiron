@@ -9,6 +9,7 @@ import {
 
 const done: Step = { state: 'done' }
 const ahead: Step = { state: 'ahead' }
+const failed: Step = { state: 'failed' }
 const working = (progress?: number): Step => ({ state: 'working', progress })
 
 describe('stepsBarCells, one cell per step', () => {
@@ -35,6 +36,21 @@ describe('stepsBarCells, one cell per step', () => {
     assert.equal(stepsBarCells([working(1.5)]).cells[0].solid, 1)
     assert.equal(stepsBarCells([working(-0.2)]).cells[0].solid, 0)
     assert.equal(stepsBarCells([working(Number.NaN)]).cells[0].solid, 0)
+  })
+
+  test('a failed step is an empty cell in the failed state', () => {
+    assert.deepEqual(stepsBarCells([done, failed, ahead]), {
+      layout: 'per-step',
+      cells: [
+        { state: 'done', solid: 1, halftone: 0 },
+        { state: 'failed', solid: 0, halftone: 0 },
+        { state: 'ahead', solid: 0, halftone: 0 },
+      ],
+    })
+  })
+
+  test('progress on a failed step is ignored', () => {
+    assert.deepEqual(stepsBarCells([{ state: 'failed', progress: 0.6 }]).cells, [{ state: 'failed', solid: 0, halftone: 0 }])
   })
 
   test('eight steps still draw one cell each', () => {
@@ -66,6 +82,24 @@ describe('stepsBarCells, past eight steps', () => {
     assert.equal(result.cells.filter((c) => c.state === 'done').length, 4)
   })
 
+  test('a failed step marks the cell after the done cells when no step is working', () => {
+    const plan: Step[] = [done, done, done, failed, ahead, ahead, ahead, ahead, ahead]
+    const result = stepsBarCells(plan)
+    /* 3 of 9 done → 4 solid cells, then the failed cell */
+    assert.deepEqual(
+      result.cells.slice(0, 6).map((c) => c.state),
+      ['done', 'done', 'done', 'done', 'failed', 'ahead'],
+    )
+    assert.equal(result.cells.filter((c) => c.state === 'failed').length, 1)
+  })
+
+  test('a working step with progress wins the next cell over a failed step', () => {
+    const plan: Step[] = [done, done, done, failed, working(0.5), ahead, ahead, ahead, ahead]
+    const states = stepsBarCells(plan).cells.map((c) => c.state)
+    assert.equal(states[4], 'working')
+    assert.ok(!states.includes('failed'))
+  })
+
   test('a finished long plan fills all twelve cells', () => {
     const result = stepsBarCells(Array.from({ length: 9 }, () => done))
     assert.ok(result.cells.every((c) => c.state === 'done' && c.solid === 1))
@@ -76,5 +110,9 @@ describe('stepsBarLabel', () => {
   test('names the done count and the working step', () => {
     assert.equal(stepsBarLabel([done, working(0.2), ahead]), '1 of 3 steps done, step 2 of 3 working')
     assert.equal(stepsBarLabel([done, done]), '2 of 2 steps done')
+  })
+
+  test('names the failed step when none is working', () => {
+    assert.equal(stepsBarLabel([done, failed, ahead]), '1 of 3 steps done, step 2 of 3 failed')
   })
 })
