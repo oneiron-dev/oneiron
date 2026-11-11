@@ -27,6 +27,13 @@ crate::side_table::side_tables! {
     /// first. Empty marker. Key: u64be (occurred_at) + string (receipt id).
     INQUIRY_RECEIPT_BY_TIME: VaultMeta b"inquiry:receipt_by_time:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// An inquiry the member's check-in ladder took to the member (ARCH-0082 #inquiry): the
+    /// pending check-in it waits on, so a repeat of the inquiry advances that one and opens no
+    /// other, and the member's answer settles both in one writer. Key: id16 (the inquiry edge's
+    /// grant) + id16 (the inquiry); value: id16 (the pending check-in).
+    INQUIRY_PENDING: VaultMeta b"inquiry:pending:v1:" Raw
+        // Restore class: live, as the log row and the pending check-in it joins are.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The member's private link from an opened statement to the claim it was drawn from
     /// (federation.md #inquiry-scope): it stays in the member's vault, and no Connect export or
     /// answer reads it. An erase of either claim drops the row (`deletion::derived_rows`). Key:
