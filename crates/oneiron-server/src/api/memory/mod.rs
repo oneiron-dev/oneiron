@@ -4,7 +4,6 @@
 use super::CoreBatchEntityInput;
 use super::CoreBatchEntityResult;
 use super::CoreHydrateDeletionMetadata;
-use super::commit_core_batch_in_lane;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_hydrate_deletion_metadata;
@@ -12,10 +11,8 @@ use super::facade;
 use super::hex_bytes;
 use super::json_payload;
 use super::parse_entity_id_param;
-use super::parse_optional_entity_id;
 // memory/watch.rs reads it through `use super::*`.
 use super::scoped_read_for_core_auth;
-use super::stage_core_entity_put;
 use super::unix_seconds_now;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -297,38 +294,44 @@ pub(crate) async fn core_memory_verb(
             let entity = req.entity.ok_or_else(|| {
                 ApiError::bad_request("entity is required for remember", Some("entity"))
             })?;
-            let id = parse_optional_entity_id(entity.id.as_deref(), "entity.id")?;
-            let timestamps = core_entity_timestamps(
+            // The route's own refusals first, as `/v1/core/batch` does; the row mints what the
+            // body omits.
+            if let Some(id) = &entity.id {
+                parse_entity_id_param(id, "entity.id")?;
+            }
+            core_entity_timestamps(
                 entity.occurred_start,
                 entity.occurred_end,
                 entity.learned_at,
             )?;
-            let batch = stage_core_entity_put(
-                server.vault.batch(),
-                &id,
-                entity.entity_type,
-                timestamps,
-                &entity.body,
-                super::announcement_authority(&server, &auth),
-                entity.text.as_deref(),
-            )?;
-            // Held to the credential's write lane, as `vault.batch` is (FIX 1216).
-            let lane = facade::host_doors::core_write_lane(&server.vault, &auth)?;
-            commit_core_batch_in_lane(&server, &auth, batch, &lane).map_err(|error| {
-                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory remember failed");
-                core_engine_error("core memory remember failed", error)
-            })?;
+            // A host action's re-check at commit time, as the raw write did.
+            if let Some(action) = crate::api::host_action::host_action_of(&server.vault, &auth) {
+                action.map_err(crate::api::host_action::host_action_refusal)?;
+            }
+            // Through the guarded `vault.batch` door, at the credential's grade and lane, so a
+            // CONVERSATION body meets the same caller-stamp guard and link carry as every other
+            // generic write.
+            let input = oneiron::core_write::CoreBatchWriteInput {
+                entities: vec![entity.into_row()],
+            };
+            let receipt = facade::host_doors::write_core_batch(&server, &auth, input)
+                .await
+                .map_err(core_memory_remember_error)?;
+            let written =
+                receipt.entities.into_iter().next().ok_or_else(|| {
+                    ApiError::internal_server_error("core memory remember failed")
+                })?;
 
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),
                 operation,
                 at: None,
-                id: Some(id.to_hex()),
+                id: Some(written.id.clone()),
                 new_id: None,
                 old_id: None,
                 entity: Some(CoreBatchEntityResult {
-                    id: id.to_hex(),
-                    entity_type: entity.entity_type,
+                    id: written.id,
+                    entity_type: written.entity_type,
                 }),
                 delete: None,
             }))
@@ -644,6 +647,39 @@ fn memory_verb_refusal(refusal: oneiron::NamedMemoryVerbRefusal) -> ApiError {
             "verb must be one of remember (put), supersede (replace/revise), retract (withdraw), delete (forget), hard_delete",
             Some("verb"),
         ),
+    }
+}
+
+/// The guarded batch door's refusal as this route's error: the engine's code picks the status,
+/// and the engine's words ride whole.
+fn core_memory_remember_error(error: oneiron::memory::MemoryError) -> ApiError {
+    match error.code.as_str() {
+        oneiron::memory::MEMORY_CODE_BAD_REQUEST => ApiError::new(
+            error.message,
+            ApiErrorDetails::BadRequest { field: None },
+            error.suggestions,
+        ),
+        oneiron::memory::MEMORY_CODE_NOT_FOUND => ApiError::not_found("entity", None),
+        oneiron::memory::MEMORY_CODE_FORBIDDEN => ApiError::new(
+            error.message,
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            error.suggestions,
+        ),
+        // The authority log's refusal keeps its own code (FIX 6032).
+        oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
+            ApiError::owner_binding_required(error.message, None, error.suggestions)
+        }
+        oneiron::memory::MEMORY_CODE_INVALID_STATE => ApiError::new(
+            error.message,
+            ApiErrorDetails::InvalidState { state: None },
+            error.suggestions,
+        ),
+        _ => {
+            tracing::error!(code = %error.code, "core memory remember failed");
+            ApiError::internal_server_error("core memory remember failed")
+        }
     }
 }
 

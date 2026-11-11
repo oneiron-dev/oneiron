@@ -1,0 +1,15 @@
+{
+  "name": "vault.projects.rooms.link",
+  "description": "The vault's owner or a project's leader or board member groups an ordinary room into the project as an extra room; the room keeps its own members and scope.",
+  "input": "crate::workspace_roster::ProjectRoomLinkRequest",
+  "output": "crate::workspace_roster::ProjectRoomLink",
+  "call": "memory.projects_rooms_link(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$",
+    "project_ref": "=project_ref",
+    "room_ref": "=room_ref"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}
