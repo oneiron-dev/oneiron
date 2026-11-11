@@ -3736,7 +3736,7 @@
      "path": "src/authority/agent_grant_bound.rs",
      "purpose": "FIX AGENT-GRAPHFS-GRANT-WORLDS (Engine RULING GRANT-COMBINE, 11 Nov 04:30): a credential an agent holds…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -5733,14 +5733,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/slip_pairing/issue.rs",
      "purpose": "Issuing a single-use pairing link, the owner's answer for a machine it adds included",
      "surface": {
-      "crate-vis": 1,
-      "fn": 5
+      "crate-vis": 2,
+      "fn": 6
      }
     },
     {
@@ -15900,7 +15900,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 55,
+      "crate-vis": 57,
       "fn": 10,
       "re-export": 1,
       "struct": 1
@@ -15954,7 +15954,7 @@
      "path": "src/claim/scoped_read/agent_grants.rs",
      "purpose": "FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -39834,7 +39834,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -39845,6 +39845,16 @@
      "purpose": "The owner's explicitly selected funding Grant (FIX 7766, Engine 19:59 = A; L02 20:15 proof contract): the…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/agent_grant/member_index.rs",
+     "purpose": "Every agent a signed owner-agent Grant mint has ever named (Engine RULING PAIR-GRANT-DESIGN Q2 = A, 11 Nov…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -98703,6 +98713,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_pair_default_grant.rs",
+     "purpose": "Pairing a named agent mints its default read Grant, and revoking an agent's last Grant narrows its read…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -100691,7 +100709,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 89,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101708,8 +101726,8 @@
    },
    "over_bar": 244,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7283,
-   "test_files": 956
+   "source_files": 7284,
+   "test_files": 957
   },
   "oneiron-agent-runtime": {
    "files": [
