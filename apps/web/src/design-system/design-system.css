@@ -41,3 +41,11 @@
 @import './patterns/FileGroup.css';
 @import './patterns/LedgerTable.css';
 @import './patterns/ClaimText.css';
+
+@import './frame/Rail.css';
+@import './frame/VaultSwitch.css';
+@import './frame/ActivityList.css';
+@import './frame/SortCycle.css';
+@import './frame/PeopleTable.css';
+@import './frame/RoleWord.css';
+@import './frame/RolePicker.css';

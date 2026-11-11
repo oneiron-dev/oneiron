@@ -29,6 +29,7 @@ import {
 } from '~/design-system'
 import { Section, Specimen } from './-gallery-frame'
 import { RESIDENTS } from './-identity'
+import { FieldSections, FrameSections } from './-frame'
 import { PatternSections } from './-patterns'
 import galleryCss from './-gallery.css?url'
 
@@ -646,7 +647,9 @@ function LibraryPage() {
         </Section>
 
         <PatternSections />
+        <FrameSections />
       </Island>
+      <FieldSections />
     </SafelightRoot>
   )
 }

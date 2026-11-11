@@ -136,6 +136,11 @@
   min-height: 140px;
 }
 
+.lib-specimen[data-tall="6"] .lib-stage {
+  align-items: flex-start;
+  min-height: 600px;
+}
+
 .lib-specimen[data-tall="4"] .lib-stage {
   align-items: flex-start;
   min-height: 320px;
@@ -406,6 +411,120 @@
 
 .lib-persona-mark[data-persona="dream"] {
   border: 1.5px dotted var(--sl-ink-2);
+}
+
+/* ── frame demos ───────────────────────────────────────────────────── */
+
+.lib-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.lib-activity-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lib-activity-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: auto;
+  font-size: var(--sl-t-place);
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--sl-ink-1);
+}
+
+.lib-activity-title > .sl-icon {
+  color: var(--sl-ink-2);
+}
+
+.lib-people {
+  max-width: 640px;
+}
+
+/* Bare on the field below the island: the rail and the frame. */
+.lib-field-region {
+  position: relative;
+  z-index: var(--sl-z-work);
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  padding: 44px 0 0;
+}
+
+.lib-field-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lib-field-head,
+.lib-field-caption,
+.lib-field-readout {
+  color: var(--sl-on-field-ink);
+  text-shadow: var(--sl-on-field-text-halo);
+}
+
+.lib-field-head {
+  padding: 0 6px;
+  font-size: var(--sl-t-section);
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.lib-field-specimens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 28px 56px;
+}
+
+.lib-field-specimen,
+.lib-frame-specimen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+}
+
+.lib-field-caption,
+.lib-field-readout {
+  max-width: 300px;
+  padding: 0 6px;
+  font-size: var(--sl-t-do);
+  line-height: 1.4;
+}
+
+.lib-field-readout {
+  max-width: 320px;
+}
+
+.lib-rail-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lib-frame {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 16px;
+  align-items: start;
+  min-height: 640px;
+}
+
+.lib-frame .lib-field-readout {
+  display: none;
+}
+
+.lib-frame-island {
+  align-self: stretch;
+  padding: 22px 28px 24px;
 }
 
 @media (max-width: 760px) {
