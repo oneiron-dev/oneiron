@@ -17,12 +17,12 @@
 //!   payloads, and a fresh vault restores every field (the restore is held
 //!   out; see below).
 //!
-//! Every test also pins the nulling side: CONS-07's contact bundle and scoped
-//! record vector never carry the credential text. The scoped record vector
-//! asserts of CONS-06 and CONS-09 are held out in place under `#[cfg(any())]`
-//! (FIX row SCOPED-RECORD-EXPORT-SHIPS-SCAN-OFF-CREDENTIALS): on main the
-//! scoped door ships a credential that a scan-off write stored. Their contact
-//! bundle asserts are held out the same way (FIX row
+//! Every test also pins the nulling side: scoped record vectors never carry
+//! the credential text. CONS-06 keeps safe file copies byte-exact and withholds
+//! credential-bearing copies; CONS-09 keeps the person's header and safe fields
+//! while nulling its credential fields and encoded payloads. CONS-07's contact
+//! bundle also carries no credential text. CONS-06 and CONS-09's contact
+//! bundle asserts remain held out under `#[cfg(any())]` (FIX row
 //! CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS): on main the contact bundle
 //! keeps a `signature` member, byte arrays that encode a credential map and
 //! JSON text that encodes a credential, and nulls every safe binary too.
@@ -44,6 +44,7 @@
 use oneiron::batch::export::{ExportImportRefusal, ExportSourceContent};
 use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
 use oneiron::federation::Scope;
+use oneiron::federation::record_scope::ScopedRecord;
 use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::serialize::{ExportBody, ExportValue};
@@ -51,7 +52,9 @@ use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::skill_hub::{HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, Result, TimeRange, Vault, VaultConfig};
+use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use rmpv::Value;
+use std::collections::BTreeMap;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -108,6 +111,17 @@ fn archived_field<'a>(entries: &'a [(ExportValue, ExportValue)], name: &str) -> 
         .find(|(key, _)| matches!(key, ExportValue::String(text) if text == name))
         .map(|(_, value)| value)
         .unwrap_or_else(|| panic!("the owner's archive carries the field {name}"))
+}
+
+fn scoped_changed_types(vault: &Vault, scoped: &[ScopedRecord]) -> Result<BTreeMap<u8, usize>> {
+    let mut changed_types = BTreeMap::new();
+    for record in scoped {
+        let stored = vault.get_raw(&record.id)?.expect("stored scoped row");
+        if record.bytes != stored {
+            *changed_types.entry(record.bytes[0]).or_insert(0) += 1;
+        }
+    }
+    Ok(changed_types)
 }
 
 fn package() -> HubPackage {
@@ -275,13 +289,21 @@ fn owner_archive_keeps_skill_source_credentials_and_restores_them() -> Result<()
         selected.push(file_id);
         source_files.push((file_id, file.path.as_str()));
     }
-    // FIX [SCOPED-RECORD-EXPORT-SHIPS-SCAN-OFF-CREDENTIALS]: on main the scoped door
-    // ships a credential text a scan-off write stored; held out in place.
-    #[cfg(any())]
     {
-        // A scoped record vector never carries the credential text.
         let top = Scope::top();
         let scoped = vault.export_records_in_scope(&top, &top, &top)?;
+        let changed_types = scoped_changed_types(&vault, &scoped)?;
+        let changed: usize = changed_types.values().sum();
+        let withheld_selected = source_files
+            .iter()
+            .filter(|(file_id, _)| !scoped.iter().any(|record| record.id == *file_id))
+            .count();
+        eprintln!(
+            "SCOPED-CENSUS cons06 shipped={} changed={changed} changed_types={changed_types:?} \
+             withheld_selected={withheld_selected}",
+            scoped.len()
+        );
+        // A scoped record vector never carries the credential text.
         for record in &scoped {
             let shipped = String::from_utf8_lossy(&record.bytes);
             for secret in ["residual-file-credential", "residual-signature"] {
@@ -290,6 +312,26 @@ fn owner_archive_keeps_skill_source_credentials_and_restores_them() -> Result<()
                     "a scoped export carries no {secret}: record {}",
                     record.id.to_hex()
                 );
+            }
+        }
+        for (file_id, path) in &source_files {
+            match *path {
+                "scripts/private.py" | "signature.json" => assert!(
+                    !scoped.iter().any(|record| record.id == *file_id),
+                    "the credential-bearing file copy is withheld: {path}"
+                ),
+                _ => {
+                    let record = scoped
+                        .iter()
+                        .find(|record| record.id == *file_id)
+                        .expect("the safe file copy ships scoped");
+                    let stored = vault.get(file_id)?.expect("stored safe file copy");
+                    assert_eq!(
+                        &record.bytes[ENTITY_METADATA_HEADER_LEN..],
+                        stored.as_slice(),
+                        "the safe file copy stays byte-exact: {path}"
+                    );
+                }
             }
         }
     }
@@ -640,14 +682,17 @@ fn owner_archive_keeps_credential_fields_and_binary_payloads() -> Result<()> {
         );
         assert_eq!(field(&restored, "signature"), &Value::Binary(vec![1, 2, 3]));
     }
-    // FIX [SCOPED-RECORD-EXPORT-SHIPS-SCAN-OFF-CREDENTIALS]: on main the scoped door
-    // ships a credential this scan-off person row stored; held out in place.
-    #[cfg(any())]
     {
-        // A scoped export still nulls them: the row ships with its credentials
-        // redacted in place and its safe fields kept.
         let top = Scope::top();
         let scoped = vault.export_records_in_scope(&top, &top, &top)?;
+        let changed_types = scoped_changed_types(&vault, &scoped)?;
+        let changed: usize = changed_types.values().sum();
+        eprintln!(
+            "SCOPED-CENSUS cons09 shipped={} changed={changed} changed_types={changed_types:?}",
+            scoped.len()
+        );
+        // A scoped export still nulls them: the row ships with its credentials
+        // nulled in place and its safe fields kept.
         let record = scoped
             .iter()
             .find(|record| record.id == id)
@@ -674,6 +719,48 @@ fn owner_archive_keeps_credential_fields_and_binary_payloads() -> Result<()> {
         assert!(
             !String::from_utf8_lossy(&shipped_all).contains(credential.as_str()),
             "the scoped export carries no token"
+        );
+        let stored = vault.get_raw(&id)?.expect("stored person header and body");
+        assert_eq!(
+            &record.bytes[..ENTITY_METADATA_HEADER_LEN],
+            &stored[..ENTITY_METADATA_HEADER_LEN],
+            "the scoped person keeps its stored header"
+        );
+        let body = &record.bytes[ENTITY_METADATA_HEADER_LEN..];
+        let mut cursor = std::io::Cursor::new(body);
+        let decoded = rmpv::decode::read_value(&mut cursor).expect("scoped person MessagePack");
+        assert_eq!(cursor.position(), body.len() as u64, "one complete body");
+        let Value::Map(entries) = &decoded else {
+            panic!("the scoped person body is one MessagePack map");
+        };
+        let scoped_field = |name: &str| {
+            entries
+                .iter()
+                .find(|(key, _)| key.as_str() == Some(name))
+                .map(|(_, value)| value)
+                .expect("scoped person field")
+        };
+        for name in [
+            "api_key",
+            "binary",
+            "nested_binary",
+            "byte_array",
+            "json_bytes",
+            "byte_map",
+            "json_encoded_bytes",
+            "json_encoded_map",
+            "signature",
+        ] {
+            assert_eq!(
+                scoped_field(name),
+                &Value::Nil,
+                "scoped field {name} is nulled"
+            );
+        }
+        assert_eq!(scoped_field("name"), &Value::from("portable person"));
+        assert_eq!(
+            scoped_field("public_binary"),
+            &Value::Binary(b"inspectable public bytes".to_vec())
         );
     }
     // FIX [CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS]: on main the contact bundle
