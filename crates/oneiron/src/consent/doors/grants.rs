@@ -5,6 +5,8 @@ use super::*;
 use crate::failure_signals::FAILURE_SIGNALS_CHANNEL;
 use crate::outbound_grant::StandingOutboundGrantScope;
 
+mod grantee_revocation;
+
 impl Vault {
     /// Approves exactly one pending operation, identified by its exact
     /// engine-computed digest.
