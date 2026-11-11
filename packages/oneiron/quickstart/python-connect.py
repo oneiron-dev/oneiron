@@ -3,7 +3,8 @@ import os
 
 from oneiron import Oneiron
 
-memory = Oneiron.connect(os.environ["ONEIRON_URL"], os.environ["ONEIRON_KEY"])
+credential = "v2.cred." + os.environ["ONEIRON_SECRET"].removeprefix("v2.slip.") + "." + os.environ["ONEIRON_BINDING_KEY"]
+memory = Oneiron.connect(os.environ["ONEIRON_URL"], credential)
 
 witnessed = memory.vault.witness(
     {

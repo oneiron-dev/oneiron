@@ -111,7 +111,8 @@ pub(crate) async fn vault_runs_program_hold_release(
     .await
 }
 
-/// `vault.runs.parks.release` (WAKE-D1): the owner's release of a parked try that waits on an owner act.
+/// `vault.runs.parks.release` (WAKE-D1): the owner resumes a parked try that waits on an owner act, or stops a
+/// parked try of the Dreamer server's own pass.
 pub(crate) async fn vault_runs_parks_release(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
