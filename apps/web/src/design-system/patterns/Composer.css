@@ -1,5 +1,6 @@
 /* The write box: what rides along above, then one sunk bar with the
-   persona, the field, the tool icons and the one filled button. */
+   persona, the add menu, the field, the tool icons, the microphone and the
+   one filled button; under the bar, one quiet line. */
 .sl-composer {
   display: flex;
   flex-direction: column;
@@ -46,6 +47,39 @@
 
 .sl-composer-bar > .sl-icon-action {
   margin-bottom: 3px;
+}
+
+/* The filled button holds one symbol: an arrow to send, or the voice
+   lines to talk while the field is empty. */
+.sl-composer-send {
+  width: 36px;
+  padding: 0;
+}
+
+.sl-composer-send > .sl-icon {
+  display: block;
+}
+
+/* Under the bar: where the message is kept at the left, the boost at the
+   right, on one line so neither moves the field when the other appears. */
+.sl-composer-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 16px;
+  min-height: 21px;
+  margin-top: -2px;
+  padding: 0 8px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-3);
+}
+
+.sl-composer-boost {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-left: auto;
 }
 
 /* The persona portrait: a disc with the initial; each persona marks it. */
