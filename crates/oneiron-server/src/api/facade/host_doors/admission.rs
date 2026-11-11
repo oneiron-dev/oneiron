@@ -95,6 +95,12 @@ pub(in crate::api::facade) fn door_admits(
                 })
         }
         Proof::Owner => owner_proof(auth, server, verb).map(drop),
+        // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
+        // which the door then admits only on a Grant that actor holds. A caller with neither keeps
+        // the owner refusal.
+        Proof::ConsentRevoker => owner_proof(auth, server, verb).map(drop).or_else(|refusal| {
+            crate::api::facade::owner_binding::facade_caller_or(server, auth, || refusal).map(drop)
+        }),
         Proof::ClaimSettler => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
         }
