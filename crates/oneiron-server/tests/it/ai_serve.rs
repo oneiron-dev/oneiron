@@ -254,9 +254,14 @@ async fn a_dream_pass_killed_mid_call_runs_again_exactly_once_after_restart() {
         wait_for(Duration::from_secs(60), || fake.seen().len() >= 2).await,
         "the restarted server never re-ran the pass"
     );
-    // Give the re-run time to land, then stop gracefully.
+    // Give the re-run time to land, then stop gracefully, off this test's
+    // runtime thread: the fake model runs on that thread, and a call the
+    // server drains after the signal must still be answered (as
+    // dreamer_binding's stop_serving does).
     tokio::time::sleep(Duration::from_secs(2)).await;
-    stop(second);
+    tokio::task::spawn_blocking(move || stop(second))
+        .await
+        .unwrap();
 
     assert_eq!(
         fake.seen().len(),

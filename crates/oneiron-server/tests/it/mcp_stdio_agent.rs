@@ -338,11 +338,21 @@ fn output(answer: &Value) -> &Value {
     &answer["result"]["structuredContent"]["output"]
 }
 
+fn claim_scope(subject: &str) -> Value {
+    let person = oneiron::EntityId::from_hex(subject).unwrap();
+    json!({
+        "world_id": oneiron::claim::base_world_id().to_hex(),
+        "scope_facet_id": oneiron::claim::substrate_facet_id(person).unwrap().to_hex(),
+        "scope_relationship_id": "all",
+        "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+    })
+}
+
 /// A new claim about `subject`, with no `id`: the engine mints one.
 fn proposal(subject: &str) -> Value {
     json!({
         "predicate": "note.reviewed", "subject_ref": subject, "value": "worth a second look",
-        "confidence": 0.8, "source": "observed",
+        "confidence": 0.8, "source": "observed", "scope": claim_scope(subject),
     })
 }
 
@@ -1466,7 +1476,8 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     // Acknowledging a failed task commits at once: refused, and the failure
     // is still on the board.
     let task = json!({ "task_ref": failed });
-    let acked = call(&mut as_reviewer, 2, "tasks.update", task.clone());
+    let task_update = json!({ "task_ref": failed, "spec": task.clone() });
+    let acked = call(&mut as_reviewer, 2, "tasks.update", task_update.clone());
     assert!(refused_for_write(&acked), "{acked:#}");
     let card = call(&mut as_writer, 2, "describe", task.clone());
     assert!(
@@ -1477,11 +1488,11 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     // So does an exclusive room claim: refused for propose-only and
     // read-only, and the turn is still free for the full-access agent.
     let claim = json!({ "room_ref": room, "turn_ref": turn });
-    let proposer_claim = call(&mut as_reviewer, 3, "rooms.claim", claim.clone());
+    let proposer_claim = call(&mut as_reviewer, 3, "vault.rooms.claim", claim.clone());
     assert!(refused_for_write(&proposer_claim), "{proposer_claim:#}");
-    let reader_claim = call(&mut as_reader, 2, "rooms.claim", claim.clone());
+    let reader_claim = call(&mut as_reader, 2, "vault.rooms.claim", claim.clone());
     assert!(refused_for_write(&reader_claim), "{reader_claim:#}");
-    let claimed = call(&mut as_writer, 3, "rooms.claim", claim);
+    let claimed = call(&mut as_writer, 3, "vault.rooms.claim", claim);
     assert_eq!(
         output(&claimed)["Claimed"]["actor"],
         json!(principal(&writer)),
@@ -1501,9 +1512,9 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
         "replaced",
         0.8,
         "observed",
+        claim_scope(&principal(&writer)),
         null,
-        null,
-        null,
+        [],
         null,
         null,
         null,
@@ -1512,7 +1523,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     ]);
     let commits = [
         (
-            "witness",
+            "vault.witness",
             json!({ "spec": {
                 "conversation_ref": oneiron::EntityId::now().to_hex(), "occurred_at": unix_seconds_now(),
                 "messages": [{ "author": "user", "message_type": "dialogue", "content": "a note",
@@ -1520,7 +1531,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
             }}),
         ),
         (
-            "rooms.speak",
+            "vault.rooms.speak",
             json!({ "room_ref": room, "spec": {
                 "conversation_ref": room, "occurred_at": unix_seconds_now(),
                 "messages": [{ "author": "companion", "message_type": "text", "content": "mine",
@@ -1528,17 +1539,17 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
             }}),
         ),
         (
-            "key_value_put",
+            "vault.kv.put",
             json!({ "spec": {
                 "namespace": ["e2e"], "key": "k", "value": 1, "request_id": "put-1", "source": "observed",
             }}),
         ),
         (
-            "key_value_delete",
+            "vault.kv.delete",
             json!({ "spec": { "namespace": ["e2e"], "key": "k" } }),
         ),
         (
-            "tasks.ask",
+            "ask",
             json!({ "spec": {
                 "intent_key": "ask-e2e", "who": { "responder": { "human": { "actor_ref": reviewer_ref } } },
                 "what": { "reference": { "turn": turn }, "revision": 1, "options": {}, "context_refs": [],
@@ -1547,7 +1558,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
             }}),
         ),
         (
-            "tasks.wait",
+            "wait",
             json!({ "spec": { "handle": { "group_ref": failed }, "step_key": "step-one" } }),
         ),
         (
@@ -1556,8 +1567,8 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
                 "result_ref": failed, "option": null, "inform_for": null, "provenance_refs": [],
             }}}),
         ),
-        ("claim_upsert", json!({ "spec": in_place })),
-        ("claim_upsert", json!({ "spec": positional })),
+        ("vault.claims.upsert", json!({ "spec": in_place })),
+        ("vault.claims.upsert", json!({ "spec": positional })),
     ];
     for (id, (tool, arguments)) in (10..).zip(commits) {
         let answer = call(&mut as_reviewer, id, tool, arguments);
@@ -1568,7 +1579,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     let drafted = call(
         &mut as_reviewer,
         30,
-        "claim_upsert",
+        "vault.claims.upsert",
         json!({ "spec": proposal(&principal(&writer)) }),
     );
     assert_eq!(
@@ -1587,7 +1598,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
 
     // The full-access agent still acknowledges the failure, which then
     // leaves the board.
-    let acked = call(&mut as_writer, 4, "tasks.update", task.clone());
+    let acked = call(&mut as_writer, 4, "tasks.update", task_update.clone());
     assert_eq!(output(&acked)["acked"], json!(true), "{acked:#}");
     let gone = call(&mut as_writer, 5, "describe", task);
     assert!(gone.get("error").is_some(), "{gone:#}");
@@ -1753,7 +1764,7 @@ fn a_tool_call_runs_as_its_credential_and_one_naming_another_actor_is_refused() 
     // Straight to the server, with no bridge and no actor: the claim is the
     // writer's.
     let claim = json!({ "room_ref": room, "turn_ref": turn });
-    let (id, params) = tool_call(2, "rooms.claim", &version, claim);
+    let (id, params) = tool_call(2, "vault.rooms.claim", &version, claim);
     let claimed = writer.rpc(&endpoint, id, "tools/call", params);
     assert_eq!(
         output(&claimed)["Claimed"]["actor"],
