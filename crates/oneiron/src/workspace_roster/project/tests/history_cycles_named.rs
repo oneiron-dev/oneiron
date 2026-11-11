@@ -387,7 +387,7 @@ fn a_host_successor_still_in_the_cycle_is_no_conduit() -> Result<()> {
         let vault = open(&scaffold.dir)?;
         let b1 = &scaffold.records[graph.projects + 2];
         let mut b2 = b1.clone();
-        sign_with(&vault, b, &mut b2, None, Some(b1.anchor()), None)?;
+        sign_with(&vault, b, &mut b2, None, Some(b1.anchor()?), None)?;
         revisions_of_row(b, &b2)?.pop().ok_or_else(invalid)?
     };
     let all = vec![true; graph.revs.len()];

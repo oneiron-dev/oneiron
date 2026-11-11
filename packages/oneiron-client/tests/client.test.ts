@@ -155,6 +155,27 @@ describe("redirects are followed by hand and never leave the origin", () => {
 });
 
 describe("one credential, one authority model", () => {
+  test("a caller may not silently substitute the configured credential", () => {
+    const defaults = new Headers({ Authorization: `Bearer ${PLACEHOLDER_SECRET}` });
+
+    expect(() => mergeHeaders(defaults, { Authorization: "Bearer other-authority" })).toThrow(
+      TypeError,
+    );
+    // Restating the SAME credential is not a substitution.
+    expect(
+      mergeHeaders(defaults, { Authorization: `Bearer ${PLACEHOLDER_SECRET}` }).get(
+        "authorization",
+      ),
+    ).toBe(`Bearer ${PLACEHOLDER_SECRET}`);
+    // An explicitly configured header wins over the secret shorthand.
+    const explicit = new HttpBaseClient({
+      baseUrl: BASE_URL,
+      secret: PLACEHOLDER_SECRET,
+      headers: { Authorization: "Bearer configured-by-caller" },
+    });
+    expect(explicit.headers.get("authorization")).toBe("Bearer configured-by-caller");
+  });
+
   /**
    * The credential becomes ONE default header and is kept nowhere else: no
    * copy on the instance, nothing printed, and no diagnostic that quotes it.

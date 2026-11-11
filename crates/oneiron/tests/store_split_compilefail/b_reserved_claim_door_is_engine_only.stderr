@@ -1,0 +1,16 @@
+error[E0624]: method `put_reserved_claim_in_txn` is private
+ --> tests/store_split_compilefail/b_reserved_claim_door_is_engine_only.rs:7:29
+  |
+7 |       let _ = oneiron::Vault::put_reserved_claim_in_txn;
+  |                               ^^^^^^^^^^^^^^^^^^^^^^^^^ private method
+  |
+ ::: src/claim/put.rs
+  |
+  | /     pub(crate) fn put_reserved_claim_in_txn(
+  | |         &self,
+  | |         wtxn: &mut heed::RwTxn<'_>,
+  | |         id: &EntityId,
+... |
+  | |         learned_at: u64,
+  | |     ) -> Result<()> {
+  | |___________________- private method defined here

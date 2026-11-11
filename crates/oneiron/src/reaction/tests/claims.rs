@@ -340,14 +340,18 @@ fn a_first_party_reaction_cannot_be_backdated_or_flood_a_message() {
         })
         .unwrap_err();
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidClaimBody);
-    for index in 0..super::super::write::MAX_REACTIONS_PER_PERSON {
+    // Ruled refusal removed (FIX 10057, 3425b327448): every put is admitted;
+    // removed claims stay as history and never count against a new one. The
+    // old cap was 8 in tests (256 outside).
+    const OLD_MAX_REACTIONS_PER_PERSON: usize = 8;
+    for index in 0..OLD_MAX_REACTIONS_PER_PERSON {
         react(&room, room.bob, &format!("g{index}"));
     }
-    let err = room
+    let extra = room
         .vault
         .react(input(&room, room.bob, "one more"))
-        .unwrap_err();
-    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidClaimBody);
+        .expect("one past the old cap is admitted");
+    assert_eq!(extra.state, ReactionState::Put);
     // Another member is unaffected.
     assert_eq!(react(&room, room.dave, "👍").state, ReactionState::Put);
 }
