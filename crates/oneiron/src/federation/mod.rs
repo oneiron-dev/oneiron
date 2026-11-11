@@ -12,11 +12,11 @@ pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
 mod agent_grant;
 mod agent_verb_class;
 pub(crate) use agent_grant::{
-    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, SelectedOwnerAgentFundingGrant,
-    agent_grants_for_store_in_txn, backfill_agent_grant_member_index,
-    index_agent_grant_member_in_txn,
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, GrantlessAgentConversion,
+    SelectedOwnerAgentFundingGrant, agent_grants_for_store_in_txn,
+    backfill_agent_grant_member_index, index_agent_grant_member_in_txn,
 };
-pub use agent_grant::DefaultAgentGrantBackfill;
+pub use agent_grant::{AgentGrantFromSlipUnchangedReason, DefaultAgentGrantBackfill};
 pub(crate) use agent_verb_class::AgentVerbClasses;
 // The self brief's GRANT producer (FIX 17594).
 mod agent_grant_brief;
