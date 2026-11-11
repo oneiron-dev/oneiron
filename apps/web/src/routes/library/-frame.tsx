@@ -4,11 +4,13 @@ import {
   ActivityDay,
   ActivityList,
   ActivityRow,
+  AppFrame,
   Glyph,
   Icon,
   IconAction,
   Island,
   Menu,
+  MicroSidebar,
   NeedsYou,
   PeopleTable,
   Sidebar,
@@ -20,6 +22,7 @@ import {
   Figure,
   type ActivityAge,
   type ActivityKind,
+  type IconName,
   type RoleAct,
   type RoleOption,
   type SortCycleOption,
@@ -28,9 +31,10 @@ import {
 import { Section, Specimen } from './-gallery-frame'
 import { ANTEVON, EIRI, METRYON, TORY, type Resident } from './-identity'
 
-/* Frame sections of the /library gallery: the sidebar, the vault switch, the
-   activity list, the sort cycle, the people table and its roles. Every demo
-   works on fixture data from the app's cast. */
+/* Frame sections of the /library gallery: the sidebar, the microsidebar,
+   the app frame, the vault switch, the activity list, the sort cycle, the
+   people table and its roles. Every demo works on fixture data from the
+   app's cast. */
 
 const line = (r: Resident, size: 18 | 24 = 18) => (
   <Glyph glyph={r.glyph} label={r.name} form="line" ink={r.ink} size={size} />
@@ -345,17 +349,20 @@ const ROOMS: RoomFixture[] = [
 
 const GROUPS = ['top', 'pinned', 'rooms', 'projects', 'vault']
 
-/* A whole sidebar on fixture data: the head with the vault switch, the top
-   rows, pinned, rooms, projects with nested rooms, and the vault. Rows and
-   groups reorder; pinning moves a room between rooms and pinned. */
+/* A whole sidebar on fixture data: the head (the vault switch, or the
+   caller's), the top rows, pinned, rooms, projects with nested rooms, and
+   the vault. Rows and groups reorder; pinning moves a room between rooms
+   and pinned. */
 function SidebarDemo({
   ground,
   specimen,
+  head,
   collapsed: collapsedProp,
   onCollapsedChange,
 }: {
   ground: 'field' | 'paper'
   specimen: string
+  head?: React.ReactNode
   collapsed?: boolean
   onCollapsedChange?: (collapsed: boolean) => void
 }) {
@@ -443,21 +450,276 @@ function SidebarDemo({
   return (
     <div className="lib-sidebar-demo" data-specimen={specimen}>
       <Sidebar ground={ground} collapsed={collapsed} onGroupReorder={setGroups} aria-label={`places, ${ground}`}>
-        <Sidebar.Head>
-          <VaultSwitch vaults={VAULTS} currentId={vault} onSwitch={setVault} onCreate={() => {}}>
-            <AccountParts />
-          </VaultSwitch>
-          <IconAction label="Search" caption="press ⌘K">
-            <Icon name="search" />
-          </IconAction>
-          <IconAction label={collapsed ? 'Expand the sidebar' : 'Collapse to icons'} onClick={() => setCollapsed(!collapsed)}>
-            <Icon name="sidebar" />
-          </IconAction>
-        </Sidebar.Head>
+        {head ?? (
+          <Sidebar.Head>
+            <VaultSwitch vaults={VAULTS} currentId={vault} onSwitch={setVault} onCreate={() => {}}>
+              <AccountParts />
+            </VaultSwitch>
+            <IconAction label="Search" caption="press ⌘K">
+              <Icon name="search" />
+            </IconAction>
+            <IconAction label={collapsed ? 'Expand the sidebar' : 'Collapse to icons'} onClick={() => setCollapsed(!collapsed)}>
+              <Icon name="sidebar" />
+            </IconAction>
+          </Sidebar.Head>
+        )}
         {groups.map((g) => part[g])}
       </Sidebar>
       <p className="lib-field-readout" data-specimen={`${specimen}-order`}>
         {groups.join(' ')} | {pinned.join(' ')} | {rooms.join(' ')}
+      </p>
+    </div>
+  )
+}
+
+/* ── the microsidebar and the frame ──────────────────────────────────── */
+
+interface PlaceFixture {
+  id: string
+  label: string
+  icon: IconName
+}
+
+const LENSES: PlaceFixture[] = [
+  { id: 'pipeline', label: 'pipeline', icon: 'lens' },
+  { id: 'today', label: 'today', icon: 'calendar' },
+  { id: 'notes', label: 'notes', icon: 'note' },
+]
+
+const lensOf = (id: string) => LENSES.find((l) => l.id === id)!
+
+/* The head of a sidebar inside the frame: the place's name, search, and
+   the fold control. */
+function FrameSidebarHead({ title }: { title: string }) {
+  return (
+    <Sidebar.Head>
+      <span className="lib-sidebar-title">{title}</span>
+      <IconAction label="Search" caption="press ⌘K">
+        <Icon name="search" />
+      </IconAction>
+      <AppFrame.Fold />
+    </Sidebar.Head>
+  )
+}
+
+/* A short sidebar of rows, for the places that have one. */
+function ListSidebar({
+  title,
+  ground,
+  rows,
+}: {
+  title: string
+  ground: 'field' | 'paper'
+  rows: Array<{ id: string; label: string; icon?: IconName; glyph?: Resident; count?: number; caption?: string }>
+}) {
+  const [current, setCurrent] = React.useState(rows[0]?.id)
+  return (
+    <Sidebar ground={ground} aria-label={title}>
+      <FrameSidebarHead title={title} />
+      <Sidebar.Group id="rows">
+        {rows.map((r) => (
+          <Sidebar.Row
+            key={r.id}
+            id={r.id}
+            icon={r.icon ? <Icon name={r.icon} /> : undefined}
+            glyph={r.glyph ? line(r.glyph) : undefined}
+            label={r.label}
+            caption={r.caption}
+            count={r.count}
+            current={current === r.id}
+            onClick={() => setCurrent(r.id)}
+          />
+        ))}
+      </Sidebar.Group>
+    </Sidebar>
+  )
+}
+
+/* Each place's sidebar; null for the places that have none (the vault
+   switch is a menu, `more` is a menu, a lens is a page of its own). */
+function sidebarFor(id: string, ground: 'field' | 'paper', specimen: string): React.ReactNode | null {
+  switch (id) {
+    case 'home':
+      return <SidebarDemo ground={ground} specimen={`${specimen}-home`} head={<FrameSidebarHead title="Home" />} />
+    case 'companion':
+      return (
+        <ListSidebar
+          title="Eiri"
+          ground={ground}
+          rows={[
+            { id: 'eiri-today', label: 'today', icon: 'thread' },
+            { id: 'eiri-passport', label: 'passport photos', icon: 'thread' },
+            { id: 'eiri-q4', label: 'notes on the Q4 view', icon: 'thread', caption: 'with Metryon' },
+          ]}
+        />
+      )
+    case 'activity':
+      return (
+        <ListSidebar
+          title="Activity"
+          ground={ground}
+          rows={[
+            { id: 'needs-you', label: 'needs you', icon: 'activity', count: 2 },
+            { id: 'mentions', label: 'mentions', icon: 'at' },
+            { id: 'reactions', label: 'reactions', icon: 'smile' },
+            { id: 'done', label: 'done', icon: 'check' },
+          ]}
+        />
+      )
+    case 'vault':
+      return (
+        <ListSidebar
+          title="Vault"
+          ground={ground}
+          rows={[
+            { id: 'ledger', label: 'ledger', icon: 'sheet' },
+            { id: 'canvas', label: 'canvas', icon: 'canvas' },
+            { id: 'connections', label: 'connections', icon: 'link' },
+            { id: 'settings', label: 'settings', icon: 'gear' },
+          ]}
+        />
+      )
+    default:
+      return null
+  }
+}
+
+/* A whole microsidebar on fixture data: the vault switch, the fixed
+   places, the pinned lenses (they reorder and unpin), the person at the
+   foot. Inside a frame it also holds the fold control. */
+function MicroSidebarDemo({
+  labels,
+  ground,
+  current,
+  onCurrent,
+  inFrame = false,
+  specimen,
+}: {
+  labels: 'none' | 'word'
+  ground: 'field' | 'paper'
+  current: string
+  onCurrent: (id: string) => void
+  inFrame?: boolean
+  specimen?: string
+}) {
+  const [vault, setVault] = React.useState('antevon')
+  const [pinned, setPinned] = React.useState(LENSES.map((l) => l.id))
+  const item = (id: string, label: string, icon: React.ReactNode, extra: { count?: number; needsYou?: boolean } = {}) => (
+    <MicroSidebar.Item id={id} icon={icon} label={label} current={current === id} onClick={() => onCurrent(id)} {...extra} />
+  )
+  return (
+    <>
+      <MicroSidebar labels={labels} ground={ground} aria-label={`places, ${labels}, ${ground}`} data-specimen={specimen}>
+        {inFrame ? <AppFrame.Fold tooltipSide="right" /> : null}
+        <VaultSwitch
+          vaults={VAULTS}
+          currentId={vault}
+          onSwitch={setVault}
+          onCreate={() => {}}
+          trigger={<MicroSidebar.Item id="vault-switch" icon={<span className="lib-vault-initial">{vault[0].toUpperCase()}</span>} label={vault} />}
+        />
+        {item('companion', 'companion', line(EIRI), { needsYou: true })}
+        {item('home', 'home', <Icon name="house" />)}
+        {item('activity', 'activity', <Icon name="activity" />, { count: 3 })}
+        {item('vault', 'vault', <Icon name="vault" />)}
+        <Menu>
+          <Menu.Trigger asChild>
+            <MicroSidebar.Item id="more" icon={<Icon name="more" />} label="more" />
+          </Menu.Trigger>
+          <Menu.Content side="right" aria-label="more places">
+            <Menu.Item icon={<Icon name="files" />}>files</Menu.Item>
+            <Menu.Item icon={<Icon name="users" />}>people</Menu.Item>
+            <Menu.Item icon={<Icon name="gear" />}>settings</Menu.Item>
+          </Menu.Content>
+        </Menu>
+        <MicroSidebar.Divider />
+        <MicroSidebar.Pinned onReorder={setPinned}>
+          {pinned.map((id) => {
+            const lens = lensOf(id)
+            return (
+              <MicroSidebar.Item
+                key={id}
+                id={id}
+                icon={<Icon name={lens.icon} />}
+                label={lens.label}
+                current={current === id}
+                onClick={() => onCurrent(id)}
+                onUnpin={() => setPinned((l) => l.filter((x) => x !== id))}
+              />
+            )
+          })}
+        </MicroSidebar.Pinned>
+        <MicroSidebar.Foot>
+          <Menu>
+            <Menu.Trigger asChild>
+              <MicroSidebar.Item id="you" icon={<Glyph initial="o" label="Oleksii" size={24} />} label="Oleksii" />
+            </Menu.Trigger>
+            <Menu.Content side="right" align="end" width="wide" aria-label="account">
+              <AccountParts />
+            </Menu.Content>
+          </Menu>
+        </MicroSidebar.Foot>
+      </MicroSidebar>
+      {specimen ? (
+        <p className="lib-field-readout" data-specimen={`${specimen}-pinned`}>
+          pinned {pinned.join(' ') || 'none'}
+          {pinned.length < LENSES.length ? (
+            <button type="button" className="lib-pick lib-field-pick" onClick={() => setPinned(LENSES.map((l) => l.id))}>
+              pin them back
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+    </>
+  )
+}
+
+/* A microsidebar alone on the field, outside a frame. */
+function MicroSidebarAlone({ labels, ground, specimen }: { labels: 'none' | 'word'; ground: 'field' | 'paper'; specimen: string }) {
+  const [current, setCurrent] = React.useState('home')
+  return (
+    <div className="lib-micro-demo">
+      <MicroSidebarDemo labels={labels} ground={ground} current={current} onCurrent={setCurrent} specimen={specimen} />
+    </div>
+  )
+}
+
+/* The frame: microsidebar, sidebar and an island as the work area holding
+   the activity list. The current place sets the sidebar (none for a lens);
+   folded, each place's sidebar peeks over the work area. */
+function FrameDemo({
+  labels,
+  ground,
+  defaultOpen,
+  specimen,
+}: {
+  labels: 'none' | 'word'
+  ground: 'field' | 'paper'
+  defaultOpen: boolean
+  specimen: string
+}) {
+  const [current, setCurrent] = React.useState('home')
+  const [open, setOpen] = React.useState(defaultOpen)
+  const sidebar = sidebarFor(current, ground, specimen)
+  return (
+    <div className="lib-frame-demo">
+      <AppFrame
+        className="lib-frame"
+        data-specimen={specimen}
+        microSidebar={<MicroSidebarDemo labels={labels} ground={ground} current={current} onCurrent={setCurrent} inFrame />}
+        sidebar={sidebar}
+        peek={(id) => sidebarFor(id, ground, `${specimen}-peek`)}
+        sidebarOpen={open}
+        onSidebarOpenChange={setOpen}
+      >
+        <Island className="lib-frame-island">
+          <div className="lib-frame-column">
+            <ActivityDemo specimen={`${specimen}-activity`} />
+          </div>
+        </Island>
+      </AppFrame>
+      <p className="lib-field-readout" data-specimen={`${specimen}-state`}>
+        sidebar {sidebar === null ? 'none' : open ? 'open' : 'folded'}, current {current}
       </p>
     </div>
   )
@@ -514,8 +776,8 @@ function SortCycleSpecimen() {
   )
 }
 
-/* On the field: the sidebar alone, then the frame (a sidebar beside an island
-   holding the activity list), on both grounds. */
+/* On the field: the sidebar alone, the microsidebar alone, then the app
+   frame open and folded, with both label forms, on both grounds. */
 export function FieldSections() {
   const [collapsed, setCollapsed] = React.useState(true)
   return (
@@ -542,19 +804,48 @@ export function FieldSections() {
         </div>
       </section>
 
-      <section className="lib-field-section" aria-labelledby="lib-frame">
-        <h2 id="lib-frame" className="lib-field-head">
-          Frame
+      <section className="lib-field-section" aria-labelledby="lib-micro-sidebar">
+        <h2 id="lib-micro-sidebar" className="lib-field-head">
+          MicroSidebar
         </h2>
-        {(['field', 'paper'] as const).map((ground) => (
-          <figure key={ground} className="lib-frame-specimen">
-            <div className="lib-frame" data-specimen={`frame-${ground}`}>
-              <SidebarDemo ground={ground} specimen={`frame-${ground}-sidebar`} />
-              <Island className="lib-frame-island">
-                <ActivityDemo specimen={`frame-${ground}-activity`} />
-              </Island>
-            </div>
-            <figcaption className="lib-field-caption">ground {ground}</figcaption>
+        <div className="lib-field-specimens">
+          <figure className="lib-field-specimen">
+            <MicroSidebarAlone labels="none" ground="field" specimen="micro-none" />
+            <figcaption className="lib-field-caption">
+              symbols, names in a tooltip; drag a pinned lens, or right-click it to unpin
+            </figcaption>
+          </figure>
+          <figure className="lib-field-specimen">
+            <MicroSidebarAlone labels="word" ground="field" specimen="micro-word" />
+            <figcaption className="lib-field-caption">a word under each symbol</figcaption>
+          </figure>
+          <figure className="lib-field-specimen">
+            <MicroSidebarAlone labels="none" ground="paper" specimen="micro-paper" />
+            <figcaption className="lib-field-caption">on paper</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section className="lib-field-section" aria-labelledby="lib-app-frame">
+        <h2 id="lib-app-frame" className="lib-field-head">
+          AppFrame
+        </h2>
+        {(
+          [
+            { ground: 'field', open: true, labels: 'none', caption: 'open, symbols; fold it with the control in its head or the [ key' },
+            { ground: 'field', open: false, labels: 'word', caption: 'folded, words; rest the pointer on a place to see its sidebar' },
+            { ground: 'paper', open: true, labels: 'word', caption: 'open, words, on paper' },
+            { ground: 'paper', open: false, labels: 'none', caption: 'folded, symbols, on paper' },
+          ] as const
+        ).map((f) => (
+          <figure key={`${f.ground}-${f.open}`} className="lib-frame-specimen">
+            <FrameDemo
+              labels={f.labels}
+              ground={f.ground}
+              defaultOpen={f.open}
+              specimen={`frame-${f.open ? 'open' : 'folded'}-${f.ground}`}
+            />
+            <figcaption className="lib-field-caption">{f.caption}</figcaption>
           </figure>
         ))}
       </section>

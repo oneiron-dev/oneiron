@@ -31,6 +31,7 @@ import { Section, Specimen } from './-gallery-frame'
 import { RESIDENTS } from './-identity'
 import { FieldSections, FrameSections } from './-frame'
 import { PatternSections } from './-patterns'
+import { TaskSections } from './-tasks'
 import galleryCss from './-gallery.css?url'
 
 export const Route = createFileRoute('/library/')({
@@ -647,6 +648,7 @@ function LibraryPage() {
         </Section>
 
         <PatternSections />
+        <TaskSections />
         <FrameSections />
       </Island>
       <FieldSections />
