@@ -1,0 +1,16 @@
+.sl-day-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 0 4px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.sl-day-divider::before,
+.sl-day-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--sl-rule);
+}
