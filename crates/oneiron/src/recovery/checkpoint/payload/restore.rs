@@ -367,6 +367,29 @@ impl OpenedPayload {
         Ok(rows)
     }
 
+    /// Whole non-entity rows the opened bundles land without an unopened
+    /// owner holding them up, by database. Fragment paths and actor parts
+    /// are left to their getters; entity rows come from `entity_rows`.
+    pub(in crate::recovery::checkpoint) fn exact_rows(
+        &self,
+    ) -> BTreeMap<&'static str, Vec<(&[u8], &[u8])>> {
+        let mut rows: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (_, opened) in &self.bundles {
+            for part in &opened.rows {
+                let RowPart::Exact { at, value } = part else {
+                    continue;
+                };
+                if at.db == RowDb::Entities || !at.path.is_empty() || held_up(opened, at) {
+                    continue;
+                }
+                rows.entry(super::db_name(at.db))
+                    .or_default()
+                    .push((at.key.as_slice(), value.as_slice()));
+            }
+        }
+        rows
+    }
+
     /// `erased`, the ids a restore's source erased, with every entity
     /// whose compartment did not open: erased since the cut, so the
     /// restore's removal scrub and actor sweep take it as theirs.

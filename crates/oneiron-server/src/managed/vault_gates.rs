@@ -53,6 +53,7 @@ pub(super) fn provision_host_authority(
         (_, Ok(issuer)) => {
             vault.ensure_host_root_slip(&issuer)?;
             vault.provision_engine_machine_identities(&issuer)?;
+            vault.provision_system_agent_grants()?;
             if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Hosted
                 && !vault.checkpoint_policy_selection_available()
                 && !vault.checkpoint_root_eligible(&issuer.public_key())?
