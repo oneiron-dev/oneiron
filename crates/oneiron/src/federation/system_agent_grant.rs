@@ -19,8 +19,11 @@
 //! name the agent ([`steward_rows_rewrite`]); the rows it yields are the ones
 //! the manifest held. The agent's read keys are held to that grant and to
 //! its live MACHINE binding ([`Vault::system_agent_reads_live_in`]), the
-//! live delegation an ordinary agent's slip carries (census X04). A vault no
-//! host has opened keeps reading by its manifest rows, as before.
+//! live delegation an ordinary agent's slip carries (census X04), and to the
+//! grant's data axes ([`Vault::system_agent_read_scope_in`]; S67-READ-AXES =
+//! C): the fold's read row carries them, and each row a key reads is judged
+//! against them. A vault no host has opened keeps reading by its manifest
+//! rows, as before.
 //!
 //! The Coach holds one too (untangle 6.6, S66-1/S66-2): `read` and
 //! `engine.controls`, minted by the same host default with no rows to copy.
@@ -34,8 +37,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     FederationGrant, FederationGrantKind, FederationGrantPreset, FederationGrantRole,
-    FederationGrantScope, ScopeAxis, decode_federation_grant_body, encode_federation_grant_body,
-    grant_scope, own_device_residence_scope,
+    FederationGrantScope, Scope, ScopeAxis, decode_federation_grant_body,
+    encode_federation_grant_body, grant_scope, own_device_residence_scope,
 };
 use crate::authority::{ActSurface, AgentGrantAct};
 use crate::batch::{BatchOp, apply_ops};
@@ -133,6 +136,46 @@ pub(crate) fn holds_system_agent_grant(actor: EntityId) -> bool {
     SystemAgent::of(actor).is_some()
 }
 
+/// Whether `row` is a base agent's Steward grant: role and preset Steward, an
+/// access grant with no expiry, naming an agent whose reach such a grant
+/// carries ([`holds_system_agent_grant`]). A person's Steward membership is
+/// not one.
+#[must_use]
+pub(crate) fn is_system_agent_steward_grant(row: &FederationGrant) -> bool {
+    row.role == FederationGrantRole::Steward
+        && row.preset == FederationGrantPreset::Steward
+        && row.kind == FederationGrantKind::Access
+        && row.expires_at.is_none()
+        && holds_system_agent_grant(row.member_ref)
+}
+
+/// The grant row `grant` while it stands in `txn` as a Steward grant naming
+/// `agent` (role and preset Steward, an access grant with no expiry), else
+/// `None`: revoked, withdrawn, rewritten or never there. Its authority scope
+/// bounds the records the agent's verbs reach (untangle 6.7a).
+pub(crate) fn standing_steward_grant_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    grant: EntityId,
+    agent: EntityId,
+) -> Result<Option<FederationGrant>> {
+    let Some(raw) = store.port_entity_record(txn, &grant)? else {
+        return Ok(None);
+    };
+    if raw.entity_type != ENTITY_TYPE_FEDERATION_GRANT || raw.body.is_empty() {
+        return Ok(None);
+    }
+    let Ok(row) = decode_federation_grant_body(&raw.body) else {
+        return Ok(None);
+    };
+    Ok((row.role == FederationGrantRole::Steward
+        && row.preset == FederationGrantPreset::Steward
+        && row.member_ref == agent
+        && row.kind == FederationGrantKind::Access
+        && row.expires_at.is_none())
+    .then_some(row))
+}
+
 /// The Steward verbs the grant `grant` gives `agent` in `txn`: its explicit
 /// verb set while the row stands as a Steward grant naming `agent`, else
 /// none (revoked, withdrawn, rewritten or never there). A Steward grant has
@@ -143,23 +186,9 @@ pub(crate) fn standing_steward_verbs_in(
     grant: EntityId,
     agent: EntityId,
 ) -> Result<BTreeSet<String>> {
-    let Some(raw) = store.port_entity_record(txn, &grant)? else {
+    let Some(row) = standing_steward_grant_in(store, txn, grant, agent)? else {
         return Ok(BTreeSet::new());
     };
-    if raw.entity_type != ENTITY_TYPE_FEDERATION_GRANT || raw.body.is_empty() {
-        return Ok(BTreeSet::new());
-    }
-    let Ok(row) = decode_federation_grant_body(&raw.body) else {
-        return Ok(BTreeSet::new());
-    };
-    if row.role != FederationGrantRole::Steward
-        || row.preset != FederationGrantPreset::Steward
-        || row.member_ref != agent
-        || row.kind != FederationGrantKind::Access
-        || row.expires_at.is_some()
-    {
-        return Ok(BTreeSet::new());
-    }
     Ok(match &row.authority_scope.verbs {
         ScopeAxis::Some(verbs) => verbs
             .iter()
@@ -168,6 +197,30 @@ pub(crate) fn standing_steward_verbs_in(
             .collect(),
         ScopeAxis::All | ScopeAxis::Bottom => BTreeSet::new(),
     })
+}
+
+/// The records `agent`'s read reaches through the grant `grant` in `txn`
+/// (S67-READ-AXES = C, Engine 10 Nov): the standing grant's authority scope
+/// met with the read preset. Its worlds, bands, audience and sensitivity
+/// bound the read as they bound the grant, and its one verb is `read`.
+/// `None` while the grant does not stand or does not name `read`. The host's
+/// mint leaves every data axis whole, and no membership door rewrites the
+/// row (a base agent's grant is no membership); a row narrowed on an axis is
+/// read inside it all the same.
+pub(crate) fn standing_steward_read_scope_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    grant: EntityId,
+    agent: EntityId,
+) -> Result<Option<Scope>> {
+    let Some(row) = standing_steward_grant_in(store, txn, grant, agent)? else {
+        return Ok(None);
+    };
+    let reads = matches!(
+        &row.authority_scope.verbs,
+        ScopeAxis::Some(verbs) if verbs.contains(grant_scope::STEWARD_READ_VERB)
+    );
+    Ok(reads.then(|| row.authority_scope.meet(&super::scope_codec::read_preset())))
 }
 
 /// One base agent's rows as the policy fold reads them from its grant.
@@ -179,6 +232,9 @@ pub(crate) struct StewardRows {
     /// The verbs its rows come from: empty for an opt-out or a grant that no
     /// longer stands.
     pub(crate) verbs: BTreeSet<String>,
+    /// The scope its read row carries ([`standing_steward_read_scope_in`]):
+    /// `None` for an opt-out or a grant that does not stand with `read`.
+    pub(crate) read_scope: Option<Scope>,
 }
 
 /// How the policy fold reads the base agents' rows in `txn`: one entry per
@@ -191,17 +247,19 @@ pub(crate) fn steward_rows_rewrite(
     let mut rewrites = Vec::new();
     for agent in SystemAgent::ALL {
         let actor = agent.actor_id()?;
-        let verbs = match SYSTEM_AGENT_GRANT.get(store, txn, &actor)? {
+        let (verbs, read_scope) = match SYSTEM_AGENT_GRANT.get(store, txn, &actor)? {
             None => continue,
-            Some(SystemAgentGrantState::OptedOut) => BTreeSet::new(),
-            Some(SystemAgentGrantState::Minted { grant }) => {
-                standing_steward_verbs_in(store, txn, grant, actor)?
-            }
+            Some(SystemAgentGrantState::OptedOut) => (BTreeSet::new(), None),
+            Some(SystemAgentGrantState::Minted { grant }) => (
+                standing_steward_verbs_in(store, txn, grant, actor)?,
+                standing_steward_read_scope_in(store, txn, grant, actor)?,
+            ),
         };
         rewrites.push(StewardRows {
             agent,
             actor_ref: actor.to_hex(),
             verbs,
+            read_scope,
         });
     }
     Ok(rewrites)
@@ -287,6 +345,25 @@ impl Vault {
         }))
     }
 
+    /// The records a read key held to base agent `agent` reads inside in
+    /// `txn` (S67-READ-AXES = C): `None` before any mint, when the manifest
+    /// rows decide as before; else the read scope of the grant the marker
+    /// names ([`standing_steward_read_scope_in`]), which admits nothing for
+    /// an opt-out or a grant that no longer stands with `read`.
+    pub(crate) fn system_agent_read_scope_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+    ) -> Result<Option<Scope>> {
+        Ok(match SYSTEM_AGENT_GRANT.get(&self.store, txn, &agent)? {
+            None => None,
+            Some(SystemAgentGrantState::OptedOut) => Some(Scope::default()),
+            Some(SystemAgentGrantState::Minted { grant }) => Some(
+                standing_steward_read_scope_in(&self.store, txn, grant, agent)?.unwrap_or_default(),
+            ),
+        })
+    }
+
     /// The host's default for every base agent whose reach a Steward grant
     /// carries (untangle 6.3, 6.6): once per vault and agent, as the
     /// embedded owner's signed act. The Dreamer's first mint copies its live
@@ -367,7 +444,9 @@ impl Vault {
     /// The owner's act (`oneiron dreamer grant`): the Dreamer holds the
     /// whole Steward default from now on. Mints it when no grant the marker
     /// names stands with every Steward verb, and marks it; `false` when one
-    /// already does.
+    /// already does. A narrower grant it replaces is revoked first, by the
+    /// owner's signed act in the same writer, so the Dreamer holds one
+    /// Steward grant and a later whole revoke leaves none.
     pub(crate) fn grant_dreamer_steward(&self, owner: &AuthenticatedOwner) -> Result<bool> {
         self.grant_system_agent_default(owner, SystemAgent::Dreamer)
     }
@@ -405,6 +484,7 @@ impl Vault {
             {
                 return Ok(false);
             }
+            self.revoke_standing_steward_grants_in_txn(txn, owner, actor)?;
             let grant = self.mint_steward_grant_in_txn(txn, owner, actor, full.clone())?;
             SYSTEM_AGENT_GRANT.put(
                 &self.store,
@@ -464,6 +544,60 @@ impl Vault {
             .map_or_else(own_device_residence_scope, |shared| {
                 FederationGrantScope::vault(shared.vault_id)
             }))
+    }
+
+    /// Every grant row that stands in `txn` as a Steward grant naming base
+    /// agent `agent` ([`standing_steward_grant_in`]), whichever the marker
+    /// names.
+    pub(crate) fn standing_steward_grants_of_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut standing = Vec::new();
+        for id in self
+            .store
+            .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
+        {
+            let id = id?;
+            if standing_steward_grant_in(&self.store, txn, id, agent)?.is_some() {
+                standing.push(id);
+            }
+        }
+        Ok(standing)
+    }
+
+    /// Revokes every Steward grant of base agent `agent` that stands, as
+    /// `owner`'s signed act, in the caller's writer: the revoke and the row
+    /// delete land together, as the narrowing door's do (review of #6913: a
+    /// grant back left the grant it replaced standing, with no door to
+    /// revoke it). The revoked grants.
+    pub(super) fn revoke_standing_steward_grants_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        agent: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let standing = self.standing_steward_grants_of_in(txn, agent)?;
+        for grant in &standing {
+            let acknowledged_topology =
+                crate::identity_topology::acknowledged_grant_seals_in_txn(&self.store, txn, *grant)
+                    .unwrap_or_default();
+            self.append_agent_grant_act_in_txn(
+                txn,
+                owner,
+                ActSurface::ThisInstall,
+                AgentGrantAct::Revoke {
+                    grant: *grant,
+                    acknowledged_topology,
+                },
+            )?;
+            self.delete_agent_grant_row_in_txn(txn, *grant)?;
+            // The mark goes with the grant; the mint that follows marks the
+            // grant that replaces it (6.3c).
+            self.unmark_system_critical_in_txn(txn, *grant)?;
+        }
+        Ok(standing)
     }
 
     /// Mints `agent`'s Steward grant with `verbs` as `owner`'s signed act, in

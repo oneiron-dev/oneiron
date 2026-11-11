@@ -55,12 +55,18 @@ fn recall_high_in(
             scope,
             limit: Some(10),
             format: None,
+            token_budget: None,
+            reader_agent_ref: None,
             as_of: None,
             deadline_ms: None,
+            media: None,
+            query_affect: None,
+            telemetry: None,
             filter: None,
         },
         |_| Some(vec![1.0, 0.0, 0.0, 0.0]),
         &crate::task_verb::sdk::RecallDoor {
+            hyde: None,
             arrived: std::time::Instant::now(),
             on_cut: None,
             rerank: crate::memory::RecallRerank::Host(host),
@@ -86,8 +92,11 @@ impl crate::memory::RecallRerankHost for Placed<'_> {
         documents: &[crate::memory::RerankDocument<'_>],
         egress: &crate::memory::RerankEgress<'_>,
         answer_at: Option<std::time::Instant>,
+        cancel: Option<crate::llm::WorkCancel>,
     ) -> MemoryResult<crate::memory::RerankScores> {
-        crate::memory::RecallRerankHost::score(self.host, query, documents, egress, answer_at)
+        crate::memory::RecallRerankHost::score(
+            self.host, query, documents, egress, answer_at, cancel,
+        )
     }
 
     fn runs_on_device(&self) -> bool {

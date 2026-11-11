@@ -109,6 +109,40 @@ fn is_steward(holders: &[super::LiveActHolder], actor: EntityId) -> bool {
 }
 
 impl Vault {
+    /// The member-ask table's actor scrub (review of #6915, round 2): a hard
+    /// erase of `actor` deletes every ask that names it, open or closed, as
+    /// its Steward, as the member the change is about, or as the Admin or
+    /// Owner who closed it. A deleted ask can be neither applied nor
+    /// declined, so no pending change outlives the person it names. An id is
+    /// matched as written and by the id it decodes to: an ask holds the
+    /// member's hex as its filer wrote it.
+    pub(crate) fn erase_member_ask_actor_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        if crate::deletion::names_no_actor(self, txn, actor)? {
+            return Ok(());
+        }
+        let written = actor.to_hex();
+        let names = |hex: &String| {
+            *hex == written || EntityId::from_hex(hex).is_ok_and(|named| named == *actor)
+        };
+        for (id, ask) in MEMBER_ASK.scan(&self.store, txn)? {
+            let (MemberAskChange::Add { member, .. }
+            | MemberAskChange::Remove { member }
+            | MemberAskChange::AssignRole { member, .. }) = &ask.change;
+            let closed_by = match &ask.status {
+                MemberAskStatus::Open => false,
+                MemberAskStatus::Applied { by, .. } | MemberAskStatus::Declined { by } => names(by),
+            };
+            if names(&ask.steward) || names(member) || closed_by {
+                MEMBER_ASK.delete(&self.store, txn, &id)?;
+            }
+        }
+        Ok(())
+    }
+
     /// A member change on shared vault `vault_id` by `actor`: a live
     /// Steward's change becomes an ask ([`Self::ask_shared_member_change`]);
     /// anyone else goes through the membership door itself
@@ -297,6 +331,28 @@ impl Vault {
                 ask_ref,
             ),
         }
+    }
+
+    /// In the membership door's writer, before the change: refuses ask
+    /// `ask` unless the Steward who filed it is still a live Steward of
+    /// `vault_id` (review of #6915). An ask outlived its Steward: after an
+    /// Admin removed them, another Admin's apply still landed the change in
+    /// their name and wrote them its outcome notice, which a person outside
+    /// the vault then read with the receipt. The applier declines such an
+    /// ask, or makes the change as their own.
+    pub(super) fn member_ask_steward_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ask: &str,
+        vault_id: u64,
+        holders: &[super::LiveActHolder],
+    ) -> Result<()> {
+        let id = EntityId::from_hex(ask)?;
+        let ask = MEMBER_ASK.get(&self.store, txn, &id)?.ok_or_else(invalid)?;
+        if ask.vault_id != vault_id || !is_steward(holders, EntityId::from_hex(&ask.steward)?) {
+            return Err(invalid());
+        }
+        Ok(())
     }
 
     /// In the membership door's writer, after its receipt: close ask `ask`
