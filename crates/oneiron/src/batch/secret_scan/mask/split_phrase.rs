@@ -16,6 +16,7 @@ use zeroize::Zeroizing;
 
 use super::super::{byte_values, shapes};
 use super::wipe::PlanTree;
+use crate::file_secret_marks::FILLER;
 
 /// One recovery phrase a reading found split over a leaf.
 pub(super) struct SplitPhrase {
@@ -506,6 +507,92 @@ fn reads_as_text(item: &Value, node: &Node) -> bool {
         }
         _ => false,
     }
+}
+
+/// `leaf` with each of `marks` filled where the door's decoder still reads
+/// it as it reads `leaf` (REVIEW-7059 P1): in a string, binary or extension
+/// value each byte a mark covers is the mask's filler (a character's bytes
+/// whole, an escaped JSON string's whole text), a number a mark touches
+/// writes zero, and the frames between parts stay as written. `None` when
+/// the door decodes `leaf` as neither JSON nor one MessagePack value: it
+/// reads that leaf, and the leaf filled, as text alone.
+pub(super) fn filled_in_place(leaf: &[u8], marks: &[Range<usize>]) -> Option<Zeroizing<Vec<u8>>> {
+    let (_, node) = decoded(leaf)?;
+    // `decoded` takes JSON first.
+    let json = serde_json::from_slice::<Value>(leaf).map(PlanTree).is_ok();
+    let mut copy = Zeroizing::new(leaf.to_vec());
+    fill_in_place(&node, json, leaf, marks, &mut copy);
+    Some(copy)
+}
+
+/// [`filled_in_place`] over one part and each part under it.
+fn fill_in_place(node: &Node, json: bool, leaf: &[u8], marks: &[Range<usize>], copy: &mut [u8]) {
+    let touches = |part: &Range<usize>| {
+        marks
+            .iter()
+            .any(|mark| mark.start < part.end && part.start < mark.end)
+    };
+    match node {
+        Node::Bytes { span, as_written } => {
+            if !touches(span) {
+                return;
+            }
+            if !*as_written {
+                // An escape is filled whole: the string's whole text.
+                fill(copy, span.clone(), FILLER);
+                return;
+            }
+            for mark in marks {
+                let mut part = mark.start.max(span.start)..mark.end.min(span.end);
+                if part.is_empty() {
+                    continue;
+                }
+                // A character's bytes are filled whole, so text stays text.
+                while part.start > span.start && leaf.get(part.start).is_some_and(continues_char) {
+                    part.start -= 1;
+                }
+                while part.end < span.end && leaf.get(part.end).is_some_and(continues_char) {
+                    part.end += 1;
+                }
+                fill(copy, part, FILLER);
+            }
+        }
+        Node::Number(span) => {
+            if !touches(span) {
+                return;
+            }
+            if json {
+                // A zero, then blanks to the number's width.
+                fill(copy, span.clone(), b' ');
+                fill(copy, span.start..span.start + 1, b'0');
+            } else {
+                fill(copy, span.clone(), 0);
+            }
+        }
+        Node::Array(items) => {
+            for item in items {
+                fill_in_place(item, json, leaf, marks, copy);
+            }
+        }
+        Node::Map(fields) => {
+            for (key, member) in fields {
+                fill_in_place(key, json, leaf, marks, copy);
+                fill_in_place(member, json, leaf, marks, copy);
+            }
+        }
+        Node::Other => {}
+    }
+}
+
+fn fill(copy: &mut [u8], span: Range<usize>, byte: u8) {
+    if let Some(bytes) = copy.get_mut(span) {
+        bytes.fill(byte);
+    }
+}
+
+/// Whether `byte` continues a UTF-8 character.
+fn continues_char(byte: &u8) -> bool {
+    byte & 0xc0 == 0x80
 }
 
 /// Where each part of a JSON text sits. serde_json read the text whole

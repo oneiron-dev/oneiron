@@ -397,6 +397,41 @@ fn a_phrase_nested_in_an_array_that_holds_one_is_marked_too() -> TestResult {
     Ok(())
 }
 
+/// A token the door's field walk reads in a file's parts, beside a phrase
+/// split over its other parts, keeps the write refused. Each word's mark
+/// covers the separators between its byte values, so the plan's filled
+/// copy is no JSON; the door still reads the leaf's parts with each mark
+/// filled in place, finds the token no span places, and leaves the phrase
+/// unplaced (REVIEW-7059 P1).
+#[test]
+fn a_split_phrase_beside_an_unplaced_token_keeps_the_write_refused() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let token: &[u8] = b"TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+    let notes = serde_json::json!({ "notes": token });
+    assert!(
+        put_asset(&vault, &serde_json::to_vec(&notes)?).is_err(),
+        "the door refuses the token alone as byte values: no span places it"
+    );
+    let mut items: Vec<serde_json::Value> = PHRASE
+        .split(' ')
+        .map(|word| serde_json::json!(word.as_bytes()))
+        .collect();
+    items.push(notes);
+    let body = serde_json::to_vec(&items)?;
+    let before = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
+    let refused = put_asset(&vault, &body);
+    assert!(
+        refused.is_err(),
+        "the unplaced token keeps the write refused: {refused:?}"
+    );
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
+        before,
+        "a refused write mints no record"
+    );
+    Ok(())
+}
+
 /// A carrier's stored text (an entity document's, a typed body's) and how a
 /// lifted text reads back (REVIEW-7059, Fable P1).
 #[cfg(oneiron_test_support)]
