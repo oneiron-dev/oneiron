@@ -11,13 +11,14 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use oneiron::claim::ClaimSource;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derivation_floor::define_agent;
 use oneiron::test_doors::derive::{
     Claim, Named, batch_items, batches_of, commit_claims, derive_verdict, grant_core_read,
-    grant_core_read_of_kinds, refusal_receipt, refusal_tokens,
+    grant_core_read_of_kinds, imported_turn, permit_imported_auto, refusal_receipt, refusal_tokens,
 };
 use oneiron::test_doors::steward::{
     STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, dreamer, mark_steward_opt_out,
@@ -191,6 +192,57 @@ fn a_claim_about_a_row_its_actor_does_not_read_is_refused() {
     assert!(
         receipt.iter().any(|code| code == UNRESOLVED_REFERENCE),
         "{receipt:?}"
+    );
+}
+
+#[test]
+fn a_claim_citing_imported_words_lands_as_an_imported_proposal() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    // An owner's policy that lets the Dreamer's imported writes land at
+    // Auto: a derivation from imported words waits for review all the same.
+    permit_imported_auto(&vault, dreamer).expect("an imported permit");
+    let person = put(&vault, ENTITY_TYPE_PERSON, b"someone");
+    let imported = imported_turn(&vault).expect("an imported TURN");
+
+    let committed = commit_claims(
+        &vault,
+        dreamer,
+        EdgeActorClass::System,
+        "run-from-import",
+        &[Claim {
+            local: "from_import",
+            predicate: "preference.coffee",
+            subject: Named::Stored(person),
+            value: json!("an oat milk flat white"),
+            evidence: vec![Named::Stored(imported)],
+        }],
+    )
+    .expect("the batch commits");
+    let [from_import] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(
+        from_import.landed,
+        "the claim lands for review: {from_import:?}"
+    );
+    let [claim] = from_import.rows.as_slice() else {
+        panic!("one row: {from_import:?}");
+    };
+    assert_eq!(
+        vault
+            .get_claim(claim)
+            .expect("read")
+            .expect("the claim")
+            .source,
+        Some(ClaimSource::Imported),
+        "the claim's source is the trust of the words it cites"
+    );
+    assert_eq!(
+        from_import.approval.as_deref(),
+        Some("proposed"),
+        "imported words never land at Auto: {from_import:?}"
     );
 }
 
