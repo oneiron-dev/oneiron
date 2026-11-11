@@ -18,6 +18,25 @@
   margin-right: auto;
 }
 
+/* With views on the line, the title keeps its letters and the views take
+   what is left between it and the right slot. */
+.sl-place-head:has(> .sl-place-head-tabs) > .sl-place-head-main {
+  flex-shrink: 0;
+  margin-right: 0;
+}
+
+.sl-place-head-tabs {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  margin-left: 12px;
+}
+
+.sl-place-head-tabs > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .sl-place-head-line {
   display: flex;
   align-items: center;

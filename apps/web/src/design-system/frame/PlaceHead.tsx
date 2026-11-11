@@ -12,6 +12,9 @@ export interface PlaceHeadProps extends Omit<React.ComponentPropsWithRef<'header
   origin?: React.ReactNode
   /* The title's heading level: 1 for the place on screen. */
   level?: 1 | 2
+  /* Views of the place on the title's line, after the title: a Tabs.List.
+     They take the room the title and the right slot leave. */
+  tabs?: React.ReactNode
 }
 
 /* The head line of the work area: the symbol, the title, the origin line
@@ -20,7 +23,7 @@ export interface PlaceHeadProps extends Omit<React.ComponentPropsWithRef<'header
    whole, the first child first, so the last (the most used action) stays
    longest. Only once the slot is gone does the title lose letters, and
    then to an ellipsis. */
-export function PlaceHead({ icon, title, origin, level = 1, className, children, ...props }: PlaceHeadProps) {
+export function PlaceHead({ icon, title, origin, level = 1, tabs, className, children, ...props }: PlaceHeadProps) {
   const Heading = level === 1 ? 'h1' : 'h2'
   const parts = React.Children.toArray(children)
   return (
@@ -36,6 +39,7 @@ export function PlaceHead({ icon, title, origin, level = 1, className, children,
         </div>
         {origin !== undefined ? <p className="sl-place-head-origin">{origin}</p> : null}
       </div>
+      {tabs !== undefined ? <div className="sl-place-head-tabs">{tabs}</div> : null}
       {parts.length ? (
         <div className="sl-place-head-end">
           {/* Laid out from the right edge, last child first: a part that
