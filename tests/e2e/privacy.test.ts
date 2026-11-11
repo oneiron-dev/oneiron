@@ -13,7 +13,7 @@ import type { McpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiText } from "./support/providers.ts";
 import type { ProviderStep } from "./support/providers.ts";
-import { defineFile, redactor } from "./support/run.ts";
+import { Artifacts, defineFile, redactor } from "./support/run.ts";
 
 const recipeDefaults = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_wake/recipe_policy_defaults.json", import.meta.url)).text());
 const extractionPrompt = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_consolidation/executor/extraction_prompt.json", import.meta.url)).text());
@@ -553,7 +553,11 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
   const spec = data.archive;
   const names = [spec.empty.body.name, spec.protected.body.name];
   redactor.add(...names, spec.protected.claimText);
-  const providers = await ScriptedProviders.start({ id: "privacy-archive", steps: [{
+  // The redacted provider transcript, request bodies included, goes to PRIVACY-01-providers/provider-privacy-archive.json:
+  // a background request rejected at cleanup then shows its prompt and response_format, not only its origin.
+  const providers = await ScriptedProviders.start({ id: "privacy-archive",
+    ...(process.env.E2E_ARTIFACTS_DIR ? { artifacts: new Artifacts(resolve(process.env.E2E_ARTIFACTS_DIR, "PRIVACY-01-providers")) } : {}),
+    steps: [{
     id: "eligible-people", origin: "extraction", role: "extraction_teacher", purpose: "extract witnessed people",
     request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system }, barrier: "extract",
     response: openaiText("eligible-people", "privacy-extract", JSON.stringify({ candidates: [],
