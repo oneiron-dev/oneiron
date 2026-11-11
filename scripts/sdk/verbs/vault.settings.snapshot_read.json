@@ -5,6 +5,7 @@
   "output": "crate::settings::snapshot_read::SnapshotReadSettings",
   "call": "{ let _ = &input; crate::snapshot_read::read_snapshot_read_settings(memory)? }",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_precheck": false,
   "host_door_lists": true,
