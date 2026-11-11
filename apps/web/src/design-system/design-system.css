@@ -26,6 +26,7 @@
 @import './marks/Glyph.css';
 @import './marks/Portrait.css';
 @import './marks/BrandMark.css';
+@import './marks/PinMark.css';
 
 @import './overlays/Tooltip.css';
 @import './overlays/Popover.css';
