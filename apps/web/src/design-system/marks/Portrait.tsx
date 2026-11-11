@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { resolvedColor } from '../lib/field-art'
-import { cx } from '../lib/react-utils'
+import { cx, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { useResolvedScheme } from '../lib/scheme'
 import { devicePixelRatioRounded, paintInitialPortrait, paintPortrait, type GlyphName } from '../lib/seal-art'
 import { GuestRing } from './GuestRing'
@@ -61,6 +61,14 @@ export function Portrait({ glyph, initial, src, label, size = 'profile', guest =
   /* The picture that failed to load, so a new src tries again. */
   const [failedSrc, setFailedSrc] = React.useState<string | null>(null)
   const picture = face && !!src && failedSrc !== src
+  const imageRef = React.useRef<HTMLImageElement | null>(null)
+
+  /* A picture that failed before the page took over (server markup) fired
+     its error with no listener: read its state once on the client. */
+  useIsomorphicLayoutEffect(() => {
+    const image = imageRef.current
+    if (image && src && image.complete && image.naturalWidth === 0) setFailedSrc(src)
+  }, [src])
 
   React.useEffect(() => {
     const canvas = canvasRef.current
@@ -110,6 +118,7 @@ export function Portrait({ glyph, initial, src, label, size = 'profile', guest =
       >
         {picture ? (
           <img
+            ref={imageRef}
             className="sl-portrait-picture"
             src={src}
             alt=""
