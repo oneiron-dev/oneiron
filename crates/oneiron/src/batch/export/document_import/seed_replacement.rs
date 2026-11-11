@@ -27,7 +27,7 @@ pub(super) fn replace_edited_seed_in_txn<R: Read + Seek>(
     seeds: &EngineSeedIdentities,
     row: &ExportEntity,
     native_body: &[u8],
-    archive: &IndexedArchive<'_, R>,
+    archive: &mut IndexedArchive<'_, R>,
     at: &EntityAt,
     secrets: ExportSecrets,
 ) -> Result<bool> {

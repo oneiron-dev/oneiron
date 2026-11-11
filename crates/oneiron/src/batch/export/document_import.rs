@@ -361,7 +361,7 @@ impl Vault {
                         &seeds,
                         &row,
                         &row.body.to_bytes_in_with(&archive.files, secrets)?,
-                        &archive,
+                        &mut archive,
                         &at,
                         secrets,
                     )?

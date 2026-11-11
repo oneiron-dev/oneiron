@@ -34,8 +34,9 @@ pub(super) fn validate_skill_body_overwrite(
             if !replicated
                 && proof.is_some_and(|proof| proof.owner_seed_restore_binds(id, updated_body))
             {
+                use crate::write_envelope::skill_record::validate::validate_skill_record;
                 use crate::write_envelope::skill_record::{
-                    SkillLifecycle, validate_hub_sync_skill_update, validate_skill_record,
+                    SkillLifecycle, validate_hub_sync_skill_update,
                 };
                 validate_skill_record(updated)?;
                 // Compare identity and content at a common non-frozen lifecycle.
