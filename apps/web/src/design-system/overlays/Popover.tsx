@@ -34,6 +34,9 @@ export interface PopoverProps {
   open?: boolean
   defaultOpen?: boolean
   onOpenChange?: (open: boolean) => void
+  /* The element the layer is placed against and gives focus back to, when
+     no Popover.Trigger is rendered (a menu opened by right-click). */
+  anchorRef?: React.RefObject<HTMLElement | null>
   children?: React.ReactNode
 }
 
@@ -43,9 +46,17 @@ interface PopoverRootProps extends PopoverProps {
 
 /* Holds the open state shared by the trigger and the content. Renders no
    element of its own. */
-export function PopoverRoot({ open: openProp, defaultOpen = false, onOpenChange, hasPopup = 'dialog', children }: PopoverRootProps) {
+export function PopoverRoot({
+  open: openProp,
+  defaultOpen = false,
+  onOpenChange,
+  anchorRef,
+  hasPopup = 'dialog',
+  children,
+}: PopoverRootProps) {
   const [open, setOpenState] = useControllableState(openProp, defaultOpen, onOpenChange)
-  const triggerRef = React.useRef<HTMLElement | null>(null)
+  const ownTriggerRef = React.useRef<HTMLElement | null>(null)
+  const triggerRef = anchorRef ?? ownTriggerRef
   const contentId = useSafeId('sl-popover')
   const intent = React.useRef({ returnFocus: false, focusContent: false })
   const setOpen = React.useCallback<PopoverContextValue['setOpen']>(
@@ -57,7 +68,7 @@ export function PopoverRoot({ open: openProp, defaultOpen = false, onOpenChange,
   )
   const value = React.useMemo(
     () => ({ open, setOpen, triggerRef, contentId, hasPopup, intent }),
-    [open, setOpen, contentId, hasPopup],
+    [open, setOpen, triggerRef, contentId, hasPopup],
   )
   return <PopoverContext.Provider value={value}>{children}</PopoverContext.Provider>
 }
