@@ -105,10 +105,11 @@ impl Memory<'_> {
         self.commit_claim_batch("vault.commit", &batch)
     }
 
-    /// Commits one claim with single-cardinality auto-supersede (S3):
-    /// prior Active claim matching `subject+scope+predicate` (plus
-    /// `value.question_id` for declared multi-cardinality predicates, B1c)
-    /// is superseded by the new revision.
+    /// Commits one claim with cardinality-aware auto-supersede (ARCH-0044 S3).
+    /// A single-cardinality predicate replaces its prior standing head on
+    /// `subject+scope+predicate`; declared set/multi predicates replace only
+    /// an agreeing answer. Keyed multi predicates additionally match
+    /// `value.question_id` (B1c).
     pub fn claim_upsert(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
         self.commit_one(input, true, None)
     }

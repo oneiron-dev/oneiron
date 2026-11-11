@@ -254,7 +254,7 @@ fn witness_facade_turn_enqueues_meso_on_session_close() {
     let (_dir, vault) = open_vault();
     let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
-    let session = mint_open_session(&vault, 400);
+    let session = mint_open_session(&vault, actor, 400);
 
     let conversation_hex = EntityId::from_bytes([0x62; 16]).expect("conv id").to_hex();
     let receipt = facade
@@ -302,7 +302,7 @@ fn witness_facade_turn_enqueues_meso_on_session_close() {
 
     // The PRODUCTION close shape: read watermark -> scan dirty turns ->
     // plan partitions -> end the session with that wake.
-    let wake = production_close_wake(&vault);
+    let wake = production_close_wake(&vault, session);
     assert_eq!(
         wake.plans.len(),
         1,
@@ -331,7 +331,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
     let (_dir, vault) = open_vault();
     let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
-    mint_open_session(&vault, 400);
+    mint_open_session(&vault, actor, 400);
 
     // Arm one: the User + Companion MINT.
     let conversation_hex = EntityId::from_bytes([0x64; 16]).expect("conv id").to_hex();
@@ -1711,7 +1711,7 @@ fn witness_refuses_a_future_occurrence_that_would_strand_later_turns() {
         .expect_err("a far-future structural turn is refused");
     assert_eq!(structural.code, MEMORY_CODE_BAD_REQUEST);
 
-    let advance = production_close_wake(&vault)
+    let advance = production_close_wake(&vault, EntityId::now())
         .advance_watermark_to
         .expect("the current turns are dirty");
     assert!(

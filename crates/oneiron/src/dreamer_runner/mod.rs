@@ -57,7 +57,7 @@ pub use self::milestone::*;
 pub use self::outage_due::{outage_park_reason, outage_retry_after};
 pub use self::owner_doors::*;
 pub use self::park_release::{
-    PARK_RELEASE_OWED_PRODUCER, ParkReleaseView, ReleaseParkedAttemptRequest,
+    PARK_RELEASE_OWED_PRODUCER, ParkReleaseAction, ParkReleaseView, ReleaseParkedAttemptRequest,
     release_parked_attempt_as_owner,
 };
 // The owner notice's source, for the integration test doors (`test_doors::wake_d1_park_release`).
