@@ -175,15 +175,22 @@ fn the_detector_names_each_canary_that_reaches_a_reader_outside_its_audience() {
 }
 
 /// The turn wake's model calls over the canary vault, as `(prompt digest,
-/// reply)` (see tests/dreamer.rs for how a table is filled).
-const DREAMER_TURN_WAKE_CALLS: &[(&str, &str)] = &[];
+/// reply)` (see tests/dreamer.rs for how a table is filled). The turn wake
+/// reads the newest owner turn, the relationship message, with the
+/// private-flag claim listed beside it, and its reply lands one claim that
+/// quotes the relationship canary, held within that relationship (`R1`), so
+/// the rescans test a derived row.
+const DREAMER_TURN_WAKE_CALLS: &[(&str, &str)] = &[(
+    "04e5a959f9218289a8ba88ec259eec11a090a694637349ccfcb1103f73d527c2",
+    r#"{"candidates":[{"subject":"P1","predicate":"harbor.ledger_entry","value":"amber lanterns canarymessagerelationship71e296c6","confidence":0.9,"evidence_refs":[{"source":"T1","quote":"the harbor ledger lists amber lanterns canarymessagerelationship71e296c6"}],"rel":"R1"}],"persons":[]}"#,
+)];
 
 /// The Timer wake's model calls over the canary vault, after the turn wake.
 const DREAMER_TIMER_WAKE_CALLS: &[(&str, &str)] = &[];
 
 #[test]
 fn a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary() {
-    let (test_vault, canaries) = seeded();
+    let (test_vault, mut canaries) = seeded();
     let vault = test_vault.open_owned().expect("open the seeded vault");
     attach_test_host(&vault).expect("the test host attaches after the open");
     allow_scripted_extraction(&vault).expect("the owner lets extraction run on the scripted model");
@@ -204,10 +211,11 @@ fn a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary() {
     // call a table misses.
     let mut prompts = turn.finish();
     prompts.extend(timer.finish());
-    for pass in [turn_pass, timer_pass] {
-        let report = pass.unwrap_or_else(|error| panic!("{error}"));
+    let turn_report = turn_pass.unwrap_or_else(|error| panic!("{error}"));
+    let timer_report = timer_pass.unwrap_or_else(|error| panic!("{error}"));
+    for report in [&turn_report, &timer_report] {
         println!(
-            "{:?} wake: {} claim(s) landed; queue after it: {:?}",
+            "## DREAMER {:?} wake: {} claim(s) landed; queue after it: {:?}",
             report.wake,
             report.landed().len(),
             report.queue
@@ -218,9 +226,71 @@ fn a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary() {
     // the owner may read and never an agent's diary.
     let prompt_leaks = canaries.scan_prompts(&prompts, &[CanaryActor::Owner]);
     assert!(prompt_leaks.is_empty(), "{}", prompt_leaks.join("\n"));
+    // The positive control: the prompts did carry restricted canaries, and
+    // the scan names each one once the owner is outside its audience.
+    let carried = canaries
+        .excluding(CanaryActor::Owner)
+        .scan_prompts(&prompts, &[CanaryActor::Owner]);
+    for class in [
+        CanaryClass::RelationshipMessage,
+        CanaryClass::PrivateFlagClaim,
+    ] {
+        let head = format!("LEAK: {class} canary ");
+        assert!(
+            carried.iter().any(|line| line.starts_with(&head)),
+            "the Dreamer's prompts carried no {class} canary, so the prompt scan proves nothing for it:\n{}",
+            carried.join("\n")
+        );
+    }
+
+    // The claim the turn wake landed quotes the relationship canary: every
+    // scan point-reads it as a row derived from that message.
+    let landed = turn_report.landed();
+    assert_eq!(
+        landed.len(),
+        1,
+        "the turn wake lands the one claim its reply proposes: {turn_report:#?}"
+    );
+    let derived = format!("vault.get {}", landed[0].to_hex());
+    canaries.add_derived_refs(
+        CanaryClass::RelationshipMessage,
+        landed.iter().map(|id| id.to_hex()),
+    );
     // What the pass derived reaches no reader outside its source's audience.
+    let mut scans = Vec::new();
     for actor in CanaryActor::ALL {
         let scan = canaries.assert_no_canary_leak(&vault, actor);
         assert!(scan.incomplete.is_empty(), "{actor}: {:?}", scan.incomplete);
+        scans.push(scan);
+    }
+    // The positive control on the derived row: a reader in its source's
+    // audience reads it, and the detector would name it as a leak if that
+    // reader were outside the audience.
+    let readers: Vec<&CanaryScan> = scans
+        .iter()
+        .filter(|scan| {
+            canaries
+                .surfaces_seeing(scan, CanaryClass::RelationshipMessage)
+                .contains(&derived)
+        })
+        .collect();
+    println!(
+        "## DREAMER {derived} reached: {:?}",
+        readers.iter().map(|scan| scan.actor).collect::<Vec<_>>()
+    );
+    assert!(
+        !readers.is_empty(),
+        "no reader in the relationship message's audience read the claim the pass landed ({derived}), so the rescan proves nothing for it"
+    );
+    for scan in readers {
+        let via = format!(" via {derived}: ");
+        let named = canaries.excluding(scan.actor).leaks(scan);
+        assert!(
+            named.iter().any(|line| line.contains(&via)),
+            "the detector does not name the derived row as {}'s leak once {} is outside the audience:\n{}",
+            scan.actor,
+            scan.actor,
+            named.join("\n")
+        );
     }
 }
