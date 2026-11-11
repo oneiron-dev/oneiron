@@ -1,4 +1,5 @@
-//! A deleted Grant must stop conferring on an already-cached authority view.
+//! A deleted Grant must stop conferring on an already-cached authority view,
+//! and the warm reads that judge it must not reload the authority history.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
@@ -12,7 +13,7 @@ use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::policy_model::WorldPrivacyOutcome;
 use oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::authority_view_grant::bind_agent;
+use oneiron::test_doors::authority_view_grant::{bind_agent, past_standing_history_loads};
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
@@ -20,8 +21,10 @@ use oneiron::verbs::{
 use oneiron::{EntityId, Vault, VaultConfig};
 use serde_json::json;
 
-#[test]
-fn deleting_an_agent_grant_invalidates_its_warm_authority_view() {
+/// A vault whose agent tightened `world` under a Grant, read warm with the
+/// tighten in effect, and then the Grant deleted by a plain delete: no
+/// authority act, so the cached authority view stays at its generation.
+fn warm_view_of_a_deleted_agent_grant() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
@@ -140,6 +143,12 @@ fn deleting_an_agent_grant_invalidates_its_warm_authority_view() {
         generation,
         "precondition: plain Grant deletion appends no authority act",
     );
+    (dir, vault, world)
+}
+
+#[test]
+fn deleting_an_agent_grant_invalidates_its_warm_authority_view() {
+    let (_dir, vault, world) = warm_view_of_a_deleted_agent_grant();
     assert_eq!(
         vault
             .world_privacy(world)
@@ -147,5 +156,28 @@ fn deleting_an_agent_grant_invalidates_its_warm_authority_view() {
             .read,
         EffectiveRead::Everywhere,
         "a deleted Grant must hold back its agent's tighten even on a warm cache hit",
+    );
+}
+
+#[test]
+fn warm_reads_after_a_grant_deletion_load_the_authority_history_once() {
+    let (_dir, vault, world) = warm_view_of_a_deleted_agent_grant();
+    // The first read after the delete may be the one that loads it.
+    let read = |what| vault.world_privacy(world).expect(what).read;
+    assert_eq!(
+        read("first read after Grant deletion"),
+        EffectiveRead::Everywhere
+    );
+    let before = past_standing_history_loads();
+    for _ in 0..10 {
+        assert_eq!(
+            read("warm read after Grant deletion"),
+            EffectiveRead::Everywhere
+        );
+    }
+    let loads = past_standing_history_loads() - before;
+    assert!(
+        loads <= 1,
+        "ten warm reads of one authority generation loaded the stored authority history {loads} times",
     );
 }
