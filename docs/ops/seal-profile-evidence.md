@@ -32,6 +32,12 @@ This records a verified shortfall, including a timestamp outage that reaches onl
 B-B. It does not change which shortfalls the sealer permits, the verification
 verdict, consent, signing authority, provenance, notices, or completion policy.
 
+Failed self-verification keeps its native finding and sub-indication codes in the
+attempt's e-sign result row, atomically with the failed attempt and its summary.
+`vault.esign.seal.get` reads them as `attempts[i].verify_reasons`. These are codes,
+not prose; an empty list means no codes were supplied, not that verification
+passed. The public signer outcome is unchanged.
+
 ## Verification reason names
 
 For the standard-covered failures, native reports serialize digest mismatches as
