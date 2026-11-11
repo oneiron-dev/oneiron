@@ -179,6 +179,8 @@ function whoGlyph(who: ActivityFixture['who']) {
    picks apply with undo; a settled row folds away and the next opens. */
 function ActivityDemo({ specimen, head = true }: { specimen: string; head?: boolean }) {
   const [sort, setSort] = React.useState('newest')
+  /* The row whose item is open elsewhere: a click on a row moves it. */
+  const [selected, setSelected] = React.useState('filings')
   const [gone, setGone] = React.useState<string[]>([])
   const [log, setLog] = React.useState<string[]>([])
   const live = sortActivity(
@@ -210,6 +212,8 @@ function ActivityDemo({ specimen, head = true }: { specimen: string; head?: bool
         when={a.when}
         age={a.age}
         open={a.id === openId}
+        selected={a.id === selected}
+        onOpen={() => setSelected(a.id)}
         onSettle={(id, value) => settle(id, value)}
         onLater={(id) => settle(id, 'later')}
       >
@@ -251,6 +255,7 @@ function ActivityDemo({ specimen, head = true }: { specimen: string; head?: bool
       ) : null}
       <ActivityList>{rows}</ActivityList>
       <span className="lib-readout" data-specimen={`${specimen}-log`}>
+        {`${selected} is open in the work area. `}
         {log.length ? log.join(', ') : 'Nothing settled yet.'}
         {gone.length ? (
           <button

@@ -42,6 +42,9 @@ export interface ActivityRowProps extends Omit<React.ComponentPropsWithRef<'div'
   when: React.ReactNode
   /* Older rows print one or two ink steps fainter. */
   age?: ActivityAge
+  /* The row whose item is open elsewhere on the screen (the work area, a
+     pane): aria-current and the lit tone. */
+  selected?: boolean
   /* An open needs-you row shows its children as a second line (a
      NeedsYou.Picks line); a pick there applies with the undo window. */
   open?: boolean
@@ -84,6 +87,7 @@ function ActivityRowBody({
   sentence,
   when,
   age = 'today',
+  selected = false,
   open = false,
   onOpen,
   className,
@@ -98,12 +102,13 @@ function ActivityRowBody({
       data-kind={kind}
       data-age={age}
       data-open={open ? '' : undefined}
+      data-selected={selected ? '' : undefined}
       data-settle={settle ?? undefined}
       inert={settle === 'settled'}
       {...props}
     >
       <div className="sl-activity-row-inner">
-        <button type="button" className="sl-activity-row-main" onClick={onOpen}>
+        <button type="button" className="sl-activity-row-main" aria-current={selected ? 'true' : undefined} onClick={onOpen}>
           <span className="sl-activity-slot" data-slot="what">
             <ActivityMark kind={kind} />
           </span>

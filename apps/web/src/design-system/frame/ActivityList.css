@@ -52,6 +52,15 @@
   background: var(--sl-sunk);
 }
 
+/* The row whose item is open elsewhere on the screen: the lit tone. */
+.sl-activity-row[data-selected] {
+  background: var(--sl-lit);
+}
+
+.sl-activity-row[data-selected] .sl-activity-row-main:hover {
+  background: none;
+}
+
 /* A settled answer folds the row away. */
 .sl-activity-row[data-settle="settled"] {
   grid-template-rows: 0fr;
