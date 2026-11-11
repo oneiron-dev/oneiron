@@ -7,10 +7,10 @@ import { basename, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { test as BunTest } from "bun:test";
-import { E2E_ROOT, FIXTURE_ROOT, loadFixtures, loadBuildManifest, requireAsset, verifyFile } from "./fixtures.ts";
-import type { BuildManifest, Profile, SuitePlan, PlannedFile } from "./fixtures.ts";
+import { E2E_ROOT, FIXTURE_ROOT, loadFixtures, loadBuildManifest, loadBuildManifestWithVerification, requireAsset, verifyFile } from "./fixtures.ts";
+import type { BuildManifest, BuildVerification, Profile, SuitePlan, PlannedFile } from "./fixtures.ts";
 
-export const LIMITS = Object.freeze({ slots: 4, cpuPerSlot: 2, memoryMiBPerSlot: 4096,
+export const LIMITS = Object.freeze({ slots: 6, cpuPerSlot: 2, memoryMiBPerSlot: 4096,
   readyMs: 10_000, requestMs: 10_000, flowMs: 30_000, suiteMs: 600_000, stopMs: 2_000 });
 export type Outcome = "PASS" | "FAIL" | "BLOCKED" | "SKIPPED";
 export interface IdResult {
@@ -253,10 +253,9 @@ export async function runProcess(argv: readonly string[], options: ProcessOption
   return (await ManagedProcess.start(argv, options)).wait(ms);
 }
 export async function closeOwnedProcesses(): Promise<void> { await Promise.all([...(flowStorage.getStore()?.processes ?? owned)].map(p => p.stop())) }
-export async function tempRoot(label: string): Promise<string> {
+export async function tempRoot(label: string, base = process.env.E2E_TEMP_ROOT ?? tmpdir()): Promise<string> {
   assertFlowActive();
   assertLinux();
-  const base = process.env.E2E_TEMP_ROOT ?? tmpdir();
   await mkdir(base, {recursive:true,mode:0o700});
   assertFlowActive();
   const path = await mkdtemp(resolve(base,`oneiron-${label}-`));
@@ -264,8 +263,10 @@ export async function tempRoot(label: string): Promise<string> {
 }
 
 export interface FileDeclaration { readonly profile: Profile; readonly slots: 1 | 2 }
+/** A missing door's FIX-LIST row ("FIX <line>") and its "door or delete" date (YYYY-MM-DD, UTC). */
+export interface PendingDoor { readonly fix: string; readonly deadline: string }
 interface FileDiagnostics {
-  readonly file: string; readonly exitCode: number; readonly signal: string | null;
+  readonly file: string; readonly caseId: string; readonly exitCode: number; readonly signal: string | null;
   readonly expectedCases: number; readonly junitPresent: boolean; readonly junitCases: number;
   readonly matchedCases: number; readonly unknownCases: number; readonly duplicateCases: number;
   readonly registrationError: string | null;
@@ -329,6 +330,23 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
       results.set(id, {id,outcome:"SKIPPED",durationMs:0,reason});
       test.skip(`${id} ${reason}`, () => {});
     },
+    /** A case whose door is missing (Engine CORE-FOUR-SKIPS = A, the pending-door filter). It stays
+     * registered and in the 242-ID plan, is never run, and reports SKIPPED with its missing door, its
+     * FIX row and its deadline, so the PR tier stays green and honest. From the deadline on it FAILS:
+     * door or delete. */
+    pendingDoor(test: Reporter["test"], id: string, reason: `waits on ${string}`, pending: PendingDoor): void {
+      if (selected.size && !selected.has(id)) return;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(pending.deadline) || !/^FIX \d+$/.test(pending.fix)) throw new Error(`Malformed pending door for ${id}`);
+      register(id);
+      const text = `${reason} [${pending.fix}; pending door until ${pending.deadline}: door or delete]`;
+      if (Date.now() >= Date.parse(`${pending.deadline}T00:00:00Z`)) {
+        results.set(id, {id,outcome:"FAIL",durationMs:0,reason:`pending-door deadline passed: ${text}`});
+        test(`${id} ${text}`, () => { throw new Error(`pending-door deadline passed: ${text}`) });
+        return;
+      }
+      results.set(id, {id,outcome:"SKIPPED",durationMs:0,reason:`PENDING-DOOR ${text}`});
+      test.skip(`${id} ${text}`, () => {});
+    },
     /** Real test.todo, but also a mandatory BLOCKED row in the independent report. */
     todo(test: Reporter["test"], id: string, reason: `waits on ${string}`): void {
       if (selected.size && !selected.has(id)) return;
@@ -341,7 +359,7 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
   };
 }
 
-export interface Preflight { readonly build: BuildManifest; readonly plan: SuitePlan; readonly files: readonly PlannedFile[];
+export interface Preflight { readonly build: BuildManifest; readonly verification: BuildVerification; readonly plan: SuitePlan; readonly files: readonly PlannedFile[];
   readonly fixturePins:readonly {path:string;sha256:string}[] }
 function selectFiles(plan: SuitePlan, profile: Profile, names: readonly string[]): PlannedFile[] {
   const available = plan.files.filter(file => profile === "deterministic" || file.tests.some(test => plan.optionalIds.includes(test.id)));
@@ -352,7 +370,7 @@ export async function preflight(profile: Profile, names: readonly string[] = [])
   assertLinux();
   const catalog = await loadFixtures();
   const plan = await catalog.readJson<SuitePlan>("suite-plan");
-  const build = await loadBuildManifest(profile);
+  const {build,verification} = await loadBuildManifestWithVerification(profile);
   const files = selectFiles(plan,profile,names);
   if (build.launcher.length === 0 || !build.launcher[0]?.startsWith("/")) throw new BlockedDoor("waits on absolute Linux process launcher");
   if (!Object.values(build.assets).some(asset => asset.path === build.launcher[0])) throw new BlockedDoor("Unpinned process launcher");
@@ -386,7 +404,7 @@ export async function preflight(profile: Profile, names: readonly string[] = [])
   for (const manifest of catalog.manifests) for (const asset of manifest.value.assets) {
     for (const id of asset.scenarios) if (!allIds.has(id)) throw new Error(`Unknown scenario ${id} in ${asset.id}`);
   }
-  return { build, plan, files, fixturePins:catalog.manifests.map(m=>({path:m.path,sha256:m.sha256})) };
+  return { build, verification, plan, files, fixturePins:catalog.manifests.map(m=>({path:m.path,sha256:m.sha256})) };
 }
 async function reapDirectory(path: string): Promise<void> {
   let entries: string[];
@@ -399,7 +417,7 @@ async function reapDirectory(path: string): Promise<void> {
 }
 export async function runSuite(profile: Profile, workers = 4, names: readonly string[] = []): Promise<number> {
   assertLinux();
-  if (!Number.isInteger(workers) || workers < 1 || workers > LIMITS.slots) throw new Error("Workers must be between one and four slots");
+  if (!Number.isInteger(workers) || workers < 1 || workers > LIMITS.slots) throw new Error("Workers must be between one and six slots");
   const started = performance.now();
   const output = process.env.E2E_REPORT_DIR ?? await tempRoot("report");
   const artifacts = new Artifacts(output);
@@ -424,11 +442,15 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
     return 1;
   }
   const {build,plan} = ready;
-  const pending = [...ready.files].sort((a,b) => b.estimatedSeconds-a.estimatedSeconds || a.file.localeCompare(b.file));
-  const running = new Map<string,{file:PlannedFile; process:ManagedProcess; ownerDir:string; resultFile:string; junitFile:string; fileRoot:string; done:Promise<string>}>();
+  // A sibling of the report directory, never an exportable report artifact.
+  const verifiedRoot = await tempRoot("verified",dirname(resolve(output)));
+  const verifiedPath = resolve(verifiedRoot,"build.json");
+  const selectedIds = (file:PlannedFile) => file.tests.filter(t => profile === "deterministic" || plan.optionalIds.includes(t.id)).map(t => t.id);
+  const jobs = ready.files.flatMap(file => selectedIds(file).map(id => ({file,id,planIndex:file.tests.findIndex(test => test.id === id),estimate:file.estimatedSeconds/file.tests.length})));
+  const pending = jobs.sort((a,b) => b.estimate-a.estimate || a.file.file.localeCompare(b.file.file) || a.planIndex-b.planIndex);
+  const running = new Map<string,{file:PlannedFile; id:string; process:ManagedProcess; ownerDir:string; resultFile:string; junitFile:string; fileRoot:string; done:Promise<string>}>();
   const results = new Map<string,IdResult>();
   const fileDiagnostics: FileDiagnostics[] = [];
-  const selectedIds = (file:PlannedFile) => file.tests.filter(t => profile === "deterministic" || plan.optionalIds.includes(t.id)).map(t => t.id);
   const collect = async (name: string): Promise<void> => {
     const job = running.get(name)!;
     running.delete(name);
@@ -439,17 +461,17 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
     let rows: IdResult[] = [];
     let registrationError = processFailure;
     const junitOutcomes = new Map<string,string>();
-    const diagnostics = {file:name,exitCode:exit.exitCode,signal:exit.signal,
-      expectedCases:selectedIds(job.file).length,junitPresent:false,junitCases:0,matchedCases:0,unknownCases:0,duplicateCases:0};
+    const diagnostics = {file:job.file.file,caseId:job.id,exitCode:exit.exitCode,signal:exit.signal,
+      expectedCases:1,junitPresent:false,junitCases:0,matchedCases:0,unknownCases:0,duplicateCases:0};
     try {
       const payload = JSON.parse(await readFile(job.resultFile,"utf8")) as {declaration:FileDeclaration;registrations:string[];results:IdResult[]};
       rows = payload.results;
-      const expected = selectedIds(job.file).sort();
+      const expected = [job.id];
       if (payload.declaration.slots !== job.file.slots || payload.declaration.profile !== profile ||
           JSON.stringify([...payload.registrations].sort()) !== JSON.stringify(expected)) registrationError = "File declaration/ID registration differs from plan";
       if (new Set(rows.map(r => r.id)).size !== rows.length || rows.some(r => !expected.includes(r.id))) registrationError = "Duplicate or unknown result rows";
       const junit = await readFile(job.junitFile,"utf8");
-      await artifacts.json(`${job.file.file}.junit.json`, {format:"junit",source:basename(job.junitFile),
+      await artifacts.json(`${job.file.file}.${job.id}.junit.json`, {format:"junit",source:basename(job.junitFile),
         xml:redactor.text(junit).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]")});
       diagnostics.junitPresent = /<testsuites?\b/.test(junit);
       if (!diagnostics.junitPresent) registrationError = "Bun reports missing JUnit";
@@ -468,7 +490,7 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
       if (exit.exitCode !== 0 && rows.every(row => row.outcome === "PASS")) registrationError ||= "Bun file process failed outside a reported test";
     } catch { registrationError = "File has no complete result artifact" }
     fileDiagnostics.push({...diagnostics,registrationError:registrationError || null});
-    for (const id of selectedIds(job.file)) {
+    for (const id of [job.id]) {
       const row = rows.find(r => r.id === id);
       if (!row || !["PASS","FAIL","BLOCKED","SKIPPED"].includes(row.outcome) || !Number.isFinite(row.durationMs)) {
         results.set(id,{id,outcome:"FAIL",durationMs:0,reason:registrationError || "ID did not finish"});
@@ -485,34 +507,36 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
     let retain=false;
     try { await access(resolve(job.fileRoot,"retain-vaults")); retain=true } catch { /* Retention is explicit only. */ }
     if (!retain) await rm(job.fileRoot,{recursive:true,force:true});
-    else await artifacts.json(`${job.file.file}.retained.json`,{protectedLocalRoot:job.fileRoot,uploaded:false});
+    else await artifacts.json(`${job.file.file}.${job.id}.retained.json`,{protectedLocalRoot:job.fileRoot,uploaded:false});
   };
   let interrupted = false;
   const interrupt = () => { interrupted = true; for (const job of running.values()) job.process.signal("SIGKILL") };
   process.once("SIGINT",interrupt); process.once("SIGTERM",interrupt);
   let schedulerFailure: string | undefined;
   try {
+    await writeFile(verifiedPath,JSON.stringify(ready.verification)+"\n",{mode:0o600});
     while ((pending.length || running.size) && !interrupted) {
       const remaining = LIMITS.suiteMs-(performance.now()-started);
       if (remaining <= 0) break;
       let used = [...running.values()].reduce((n,r) => n+r.file.slots,0);
       for (let index=0; index<pending.length;) {
-        const file = pending[index]!;
+        const {file,id} = pending[index]!;
         if (used+file.slots > workers) { index++; continue }
         pending.splice(index,1); used += file.slots;
-        const fileRoot = await tempRoot(file.file.replace(".test.ts",""));
+        const fileRoot = await tempRoot(`${file.file.replace(".test.ts","")}-${id}`);
         const ownerDir = resolve(fileRoot,"owners");
-        const resultFile = resolve(output,`${file.file}.json`);
-        const junitFile = resolve(output,`${file.file}.junit.xml`);
+        const resultFile = resolve(output,`${file.file}.${id}.json`);
+        const junitFile = resolve(output,`${file.file}.${id}.junit.xml`);
         const env = isolatedEnv(fileRoot,{...build.environment,E2E_PROFILE:profile,E2E_FILE_SLOTS:String(file.slots),
           E2E_CPU_CREDITS:String(file.slots*LIMITS.cpuPerSlot),E2E_MEMORY_MIB:String(file.slots*LIMITS.memoryMiBPerSlot),
-          E2E_OWNERS_DIR:ownerDir,E2E_ARTIFACTS_DIR:resolve(output,file.file),E2E_RESULT_FILE:resultFile,E2E_SELECTED_IDS:selectedIds(file).join(","),
-          E2E_TEMP_ROOT:fileRoot,E2E_BUILD_MANIFEST:process.env.E2E_BUILD_MANIFEST!,E2E_BUILD_MANIFEST_SHA256:process.env.E2E_BUILD_MANIFEST_SHA256!,
+          E2E_OWNERS_DIR:ownerDir,E2E_ARTIFACTS_DIR:resolve(output,file.file),E2E_RESULT_FILE:resultFile,E2E_SELECTED_IDS:id,
+          E2E_TEMP_ROOT:fileRoot,E2E_BUILD_VERIFIED:verifiedPath,E2E_BUILD_MANIFEST:process.env.E2E_BUILD_MANIFEST!,E2E_BUILD_MANIFEST_SHA256:process.env.E2E_BUILD_MANIFEST_SHA256!,
           ...(process.env.E2E_MEMORY_RETAIN_VAULT?{E2E_MEMORY_RETAIN_VAULT:process.env.E2E_MEMORY_RETAIN_VAULT}:{})});
         await mkdir(env.TMPDIR!,{recursive:true,mode:0o700});
         const child = await ManagedProcess.start([...build.launcher,requireAsset(build,"bun"),"test",resolve(E2E_ROOT,file.file),"--timeout",String(LIMITS.suiteMs),"--max-concurrency","1","--reporter=junit","--reporter-outfile",junitFile],
-          {cwd:E2E_ROOT,env,label:`process-${file.file}`,artifacts});
-        running.set(file.file,{file,process:child,ownerDir,resultFile,junitFile,fileRoot,done:child.done.then(() => file.file,() => file.file)});
+          {cwd:E2E_ROOT,env,label:`process-${file.file}-${id}`,artifacts});
+        const key = `${file.file}#${id}`;
+        running.set(key,{file,id,process:child,ownerDir,resultFile,junitFile,fileRoot,done:child.done.then(() => key,() => key)});
       }
       if (!running.size) throw new Error("No schedulable file");
       try {
@@ -522,10 +546,12 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
     }
   } catch (error) { schedulerFailure=redactor.text(String(error)) }
   finally {
-    for (const job of running.values()) job.process.signal("SIGKILL");
-    for (const name of [...running.keys()]) await collect(name);
-    await closeOwnedProcesses();
-    process.off("SIGINT",interrupt); process.off("SIGTERM",interrupt);
+    try {
+      for (const job of running.values()) job.process.signal("SIGKILL");
+      for (const name of [...running.keys()]) await collect(name);
+      await closeOwnedProcesses();
+      process.off("SIGINT",interrupt); process.off("SIGTERM",interrupt);
+    } finally { await rm(verifiedRoot,{recursive:true,force:true}) }
   }
   for (const file of ready.files) for (const id of selectedIds(file))
     if (!results.has(id)) results.set(id,{id,outcome:"FAIL",durationMs:0,reason:"Suite deadline/interruption before completion"});

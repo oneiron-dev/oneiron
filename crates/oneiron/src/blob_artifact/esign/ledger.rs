@@ -1,6 +1,8 @@
 //! Claims are the document state machine. The audit copy survives document deletion.
 use super::field_admission::InspectedPages;
 use super::model::*;
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_FACET;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
@@ -305,6 +307,23 @@ pub(super) fn append_inspected(
         ClaimLifecycleStatus::Active,
     )?;
     body.source = Some(ClaimSource::Observed);
+    // The constructor's scope_facet is the document's substrate id: a
+    // derived id, not a stored FACET, so the CLAIM birth edge the put stamps
+    // would fail InvalidFacet (the facet birth contract, #4389). The audit
+    // claim takes the document artifact's own stored birth facet, else the
+    // vault default, as the calendar origin claim does (calendar/origin.rs).
+    let document_facet = crate::federation::record_scope::birth_facet(&vault.store, txn, document)?;
+    body.scope_facet = match document_facet {
+        Some(facet)
+            if vault
+                .store
+                .port_entity_record(txn, &facet)?
+                .is_some_and(|row| row.entity_type == ENTITY_TYPE_FACET) =>
+        {
+            facet
+        }
+        _ => crate::claim::default_facet_in(&vault.store, txn)?,
+    };
     // A document sent for a project keeps its trail in that project's
     // audience; one sent for none stays at the reserved default.
     if let Some(project) = state.document.project {
