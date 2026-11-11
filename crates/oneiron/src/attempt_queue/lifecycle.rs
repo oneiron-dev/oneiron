@@ -4,7 +4,8 @@
 //!
 //! Each production writer of the row's seven lifecycle fields (`state`,
 //! `active_pause`, `lease_owner`, `scheduled_at`, `settled_at`, `cancel_state`,
-//! `attempt_count`) goes through the write functions of [`RunLifecycle`] below.
+//! `attempt_count`) goes through the write functions of [`RunLifecycle`] below
+//! or through [`AttemptQueue::hold_in_txn`], the engine holds' shared write.
 //! State-moving writers ask [`RunLifecycle::step`] what the event does in the
 //! row's current state; fresh rows, cancel receipt appends and pressure counts
 //! also live here. The store codec's secret mask (`encode_admitted_record`)
