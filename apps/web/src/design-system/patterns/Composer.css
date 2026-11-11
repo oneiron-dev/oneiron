@@ -21,6 +21,13 @@
   background: var(--sl-sunk-focus);
 }
 
+.sl-composer-field-box {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
 .sl-composer-field {
   flex: 1;
   min-width: 0;
@@ -36,9 +43,21 @@
   line-height: 22px;
 }
 
-.sl-composer-field::placeholder {
+/* Over the empty field, on the field's first line: one line in any
+   width, a long placeholder ends in an ellipsis. */
+.sl-composer-placeholder {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  left: 8px;
+  overflow: hidden;
   color: var(--sl-ink-2);
+  font-size: var(--sl-t-say);
   font-style: italic;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .sl-composer-field:focus {
