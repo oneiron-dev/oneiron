@@ -102,23 +102,20 @@ impl OwnerClient {
         let body = self
             .success(
                 "/v1/core/facade/vault.structural.put",
-                json!({"spec": {
+                json!({
                     "kind": "WORLD",
                     "body": {"name": name, "kind": "fictional"},
                     "occurred_at": self.vault.now_recorded_at(),
                     "text_fields": [{"field": "name", "value": name}]
-                }}),
+                }),
             )
             .await;
         body["id_hex"].as_str().expect("new world id").to_owned()
     }
 
     async fn status(&self) -> Value {
-        self.success(
-            "/v1/core/facade/vault.federation.status",
-            json!({"spec": {}}),
-        )
-        .await
+        self.success("/v1/core/facade/vault.federation.status", json!({}))
+            .await
     }
 }
 
@@ -137,13 +134,13 @@ async fn connect_fixture() -> ConnectFixture {
     let local_id = local
         .success(
             "/v1/core/facade/vault.federation.connect.identity",
-            json!({"spec": {}}),
+            json!({}),
         )
         .await;
     let peer_id = peer
         .success(
             "/v1/core/facade/vault.federation.connect.identity",
-            json!({"spec": {}}),
+            json!({}),
         )
         .await;
     let local_world = local.world("local-shared-world").await;
