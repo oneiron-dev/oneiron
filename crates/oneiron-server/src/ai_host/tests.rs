@@ -333,10 +333,21 @@ async fn a_saved_workflow_advances_every_step_through_the_pump_without_a_call() 
             .collect()
     };
     assert_eq!(messages(0)[0], "Write one line about soil.");
-    // The second step reads the first step's durable output.
+    // This fixture captures no chat turns; the default memory selection fills its cap.
+    let omitted_memory = oneiron::config::context_spec::CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT;
+    let omitted_chat = 0;
+    let omission_notice = format!(
+        "{omitted_memory} memory rows and {omitted_chat} chat rows selected for this step's context are left out: \
+         they could not be read for this run now, or they hold no text of their own."
+    );
+    // 16916daf0dc1 (FIX 6290 + 2315), 13cc092c9a92: count-only notice precedes earlier output.
     assert_eq!(
         messages(1),
-        ["Shorten the line you are given.", "soil holds the seed"]
+        [
+            "Shorten the line you are given.",
+            omission_notice.as_str(),
+            "soil holds the seed",
+        ]
     );
     assert!(handle.status().workflows.completed >= 2);
     host.shutdown().await;
@@ -477,10 +488,10 @@ async fn a_failing_steps_retries_share_the_policy_rows_cap() {
     // The step's own budget would admit every try; the row's cap admits one.
     let host = AiHost::start(
         vault.clone(),
-        Some(&models(
+        Some(&metered_models(models(
             &fake.base_url,
             "[dreamer]\nenabled = false\n[workflows]\nretry_backoff_secs = 0\nstep_budget_units = 64000",
-        )),
+        ))),
         true,
     )
     .await;
@@ -494,20 +505,17 @@ async fn a_failing_steps_retries_share_the_policy_rows_cap() {
             now: 10,
         })
         .unwrap();
+    // 1820c118b76a (OF-541): exhaustion holds a Paused leaf under an open workflow.
     assert!(
-        eventually(Duration::from_secs(20), || dispatcher
-            .open_workflow_roots()
-            .is_ok_and(|roots| roots.is_empty()))
-        .await,
-        "the workflow never stopped; status {:?}",
+        eventually(Duration::from_secs(20), || workflow_is_held_for_budget(&vault)).await,
+        "the workflow never held at its policy cap; status {:?}",
         host.handle().status().workflows
     );
     assert_eq!(fake.seen().len(), 1);
     let stopped = host.handle().status().workflows.last_error;
+    // 1820c118b76a (OF-541): a held step is neither failed nor a failure last_error.
     assert!(
-        stopped
-            .as_deref()
-            .is_some_and(|error| error.contains("workflow step budget")),
+        stopped.is_none() && host.handle().status().workflows.failed == 0,
         "{stopped:?}"
     );
     host.shutdown().await;
@@ -531,12 +539,12 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
             b"person",
         )
         .unwrap();
-    // A pass budget below one call's reservation: the first extraction step
-    // traps on its budget before any provider call.
-    let tight = models(
+    // The pass keeps a 10% landing reserve: 8,500 leaves 7,650 ordinary
+    // units, below the paid call's reservation, so extraction traps before sending.
+    let tight = metered_models(models(
         &fake.base_url,
         "[dreamer]\nidle_floor_secs = 600\npass_budget_units = 8500\n[workflows]\nenabled = false",
-    );
+    ));
     let host = AiHost::start(vault.clone(), Some(&tight), true).await;
     let sitting = local_sitting(&vault);
     host.handle()
@@ -574,10 +582,10 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     // restarted Dreamer schedules for the same turns. A pass parked on its
     // trap stays as it was: leased, on the same trap, never claimed again.
     fake.push(extraction_reply(subject, "Oleksii"));
-    let roomy = models(
+    let roomy = metered_models(models(
         &fake.base_url,
         "[dreamer]\nidle_floor_secs = 600\n[workflows]\nenabled = false",
-    );
+    ));
     let host = AiHost::start(vault.clone(), Some(&roomy), true).await;
     tokio::time::sleep(Duration::from_secs(3)).await;
     let rows = AttemptQueue::new(&vault).list().unwrap();
@@ -588,6 +596,45 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
         assert_eq!(before.state, AttemptState::Leased);
     }
     host.shutdown().await;
+}
+
+/// Keep the configured own-server routes, but meter their simulated account work.
+fn metered_models(mut config: ModelsConfig) -> ModelsConfig {
+    for provider in config.providers.values_mut() {
+        provider.payer = oneiron::llm::run_admission::Payer::CustomerAccount;
+    }
+    config
+}
+
+fn workflow_is_held_for_budget(vault: &Vault) -> bool {
+    use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldState};
+    use oneiron::attempt_queue::{AttemptQueue, AttemptState};
+    let dispatcher = AgentDispatcher::new(vault);
+    let queue = AttemptQueue::new(vault);
+    dispatcher.open_workflow_roots().unwrap().iter().any(|root| {
+        dispatcher.plan_hold(*root).unwrap().is_some_and(|hold| {
+            hold.state == BudgetHoldState::Held
+                && !hold.held.is_empty()
+                && hold.held.iter().all(|held| {
+                    queue
+                        .get(held.attempt)
+                        .unwrap()
+                        .is_some_and(|row| row.state == AttemptState::Paused)
+                })
+        })
+    })
+}
+
+fn first_generative_offer_is_resting(host: &AiHost) -> bool {
+    host.handle()
+        .model_runtime()
+        .live_status()
+        .seats
+        .iter()
+        .find(|seat| seat.role == "generative_reasoner")
+        .and_then(|seat| seat.rungs.first())
+        .and_then(|rung| rung.health)
+        .is_some_and(|health| health.until.is_some())
 }
 
 /// The generative seat on two rungs, the first failing and the second
@@ -616,6 +663,14 @@ step_budget_units = {step_units}
 /// Runs a one-step workflow under `config` until it stops, and returns the
 /// run receipts its step wrote.
 async fn one_step(config: &ModelsConfig) -> Vec<oneiron::llm::run_admission::RunReceipt> {
+    one_step_until(config, false).await
+}
+
+/// Waits for either normal completion or the paid-budget hold the fixture expects.
+async fn one_step_until(
+    config: &ModelsConfig,
+    held_for_budget: bool,
+) -> Vec<oneiron::llm::run_admission::RunReceipt> {
     use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
     use oneiron::llm::run_admission::MemoryReceipts;
     let (_dir, vault) = rooted_vault();
@@ -641,12 +696,19 @@ async fn one_step(config: &ModelsConfig) -> Vec<oneiron::llm::run_admission::Run
             now: 10,
         })
         .unwrap();
+    // 1820c118b76a (OF-541): a paid denial holds; ordinary completion still stops.
     assert!(
-        eventually(Duration::from_secs(20), || dispatcher
-            .open_workflow_roots()
-            .is_ok_and(|roots| roots.is_empty()))
+        eventually(Duration::from_secs(20), || {
+            if held_for_budget {
+                workflow_is_held_for_budget(&vault)
+            } else {
+                dispatcher
+                    .open_workflow_roots()
+                    .is_ok_and(|roots| roots.is_empty())
+            }
+        })
         .await,
-        "the workflow never stopped; status {:?}",
+        "the workflow never reached its expected completion or budget hold; status {:?}",
         host.handle().status().workflows
     );
     host.shutdown().await;
@@ -687,7 +749,8 @@ async fn a_step_rung_its_line_cannot_cover_is_denied_and_never_sent() {
     let failing = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
     let answering = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::text("word"))).await;
     let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
-    let rows = one_step(&two_rung_steps(&failing, &answering, reserve)).await;
+    let config = metered_models(two_rung_steps(&failing, &answering, reserve));
+    let rows = one_step_until(&config, true).await;
     assert_eq!(failing.seen().len(), 1);
     assert!(answering.seen().is_empty(), "the second rung went out");
     assert_eq!(
@@ -704,8 +767,8 @@ fn local_sitting(vault: &Vault) -> oneiron::session_lifecycle::SessionKey {
     vault.local_session_key(owner).expect("local session key")
 }
 
-/// Runs the saved one-step workflow `workflow` once more, until it stops.
-async fn step_once(vault: &Arc<Vault>, workflow: EntityId, key: &str, host: &AiHost) {
+/// Dispatches the saved workflow once more and observes whether it stops in the same window.
+async fn step_once(vault: &Arc<Vault>, workflow: EntityId, key: &str) -> bool {
     use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
     let dispatcher = AgentDispatcher::new(vault);
     dispatcher
@@ -717,14 +780,10 @@ async fn step_once(vault: &Arc<Vault>, workflow: EntityId, key: &str, host: &AiH
             now: 10,
         })
         .unwrap();
-    assert!(
-        eventually(Duration::from_secs(20), || dispatcher
-            .open_workflow_roots()
-            .is_ok_and(|roots| roots.is_empty()))
-        .await,
-        "the workflow never stopped; status {:?}",
-        host.handle().status().workflows
-    );
+    eventually(Duration::from_secs(20), || dispatcher
+        .open_workflow_roots()
+        .is_ok_and(|roots| roots.is_empty()))
+    .await
 }
 
 /// Engine ruling 2026-10-15 (world privacy, "Models"): a workflow step names
@@ -768,7 +827,12 @@ retry_backoff_secs = 0
     let host =
         AiHost::start_receipted(vault.clone(), Some(&config), true, receipts.clone(), None).await;
 
-    step_once(&vault, workflow, "no-world-kept", &host).await;
+    // bf7c0817ad6c (OF-305): an available cloud fallback still completes the first run.
+    assert!(
+        step_once(&vault, workflow, "no-world-kept").await,
+        "the workflow never stopped; status {:?}",
+        host.handle().status().workflows
+    );
     assert_eq!(cloud.seen().len(), 1, "the step fell back to the cloud");
 
     let world = EntityId::now();
@@ -789,7 +853,13 @@ retry_backoff_secs = 0
         .keep_world_on_this_machine_under_for_test(&issuer, world, true)
         .unwrap();
     let tried = device.seen().len();
-    step_once(&vault, workflow, "a-world-kept", &host).await;
+    // bf7c0817ad6c (OF-305): the device rests and this call stays open in the same window.
+    assert!(
+        !step_once(&vault, workflow, "a-world-kept").await
+            && first_generative_offer_is_resting(&host),
+        "the held workflow stopped or its device offer did not rest; status {:?}",
+        host.handle().status().workflows
+    );
     let tries = device.seen().len() - tried;
     assert!(tries > 0, "the step was tried on the device");
     assert_eq!(cloud.seen().len(), 1, "no held try reached the cloud");
@@ -806,6 +876,7 @@ retry_backoff_secs = 0
             )
         })
         .count();
-    assert_eq!(held, tries, "each held try is receipted");
+    // bf7c0817ad6c (OF-305): one Denied row per held fallback rung in this model call.
+    assert_eq!(held, 1, "the held fallback decision is receipted once");
     host.shutdown().await;
 }
