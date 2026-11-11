@@ -8,7 +8,7 @@
 use rmpv::Value;
 
 use super::batch::{DerivedSameAs, DerivedTopology};
-use super::claim::stage_candidate_in_txn;
+use super::claim::{StagedClaim, stage_candidate_in_txn};
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
 use crate::authority::{ActAuthority, OwnerActKind};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
@@ -145,9 +145,12 @@ pub(super) fn stage_same_as_in_txn(
         vault,
         txn,
         context,
-        &item.local,
-        status_claim,
-        &candidate,
+        &StagedClaim {
+            local: &item.local,
+            id: status_claim,
+            candidate: &candidate,
+            source: ClaimSource::Generated,
+        },
         crate::core_write::CoreWriteLaneRef::Unbound,
     )?;
     if !matches!(outcome, ItemOutcome::Landed { .. }) {
