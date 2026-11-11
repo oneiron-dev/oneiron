@@ -222,6 +222,27 @@ impl Vault {
             POLICY.put(&self.store, txn, &(), &policy)
         })
     }
+
+    /// A holder of `engine.controls` sets the projector policy (untangle 6.6b; maintenance cadence),
+    /// through the one check, with a receipt naming it. Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `holder` holds no live `engine.controls`; the
+    /// row's own validation; store failures.
+    pub fn set_dreamer_projector_policy_as_holder(
+        &self,
+        holder: crate::entity_id::EntityId,
+        policy: ProjectorPolicy,
+    ) -> Result<crate::entity_id::EntityId> {
+        self.apply_engine_control(
+            crate::federation::EngineControlActor::Holder(holder),
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_PROJECTOR_POLICY",
+            &crate::federation::rendered_change(&policy)?,
+            |txn| POLICY.put(&self.store, txn, &(), &policy),
+        )
+    }
 }
 
 /// Compares a due window's material with the held turn, in the wake's

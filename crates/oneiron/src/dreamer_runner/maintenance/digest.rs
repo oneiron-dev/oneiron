@@ -360,6 +360,47 @@ impl Vault {
         self.store.notify_proactivity_changes();
         Ok(())
     }
+
+    /// A holder of `engine.controls` sets the proactivity digest's period. Its grouping and urgent flags and
+    /// the presentation stay as the owner set them (untangle 6.6b; maintenance cadence),
+    /// through the one check, with a receipt naming it. Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `holder` holds no live `engine.controls`; the
+    /// row's own validation; store failures.
+    pub fn set_proactivity_period_as_holder(
+        &self,
+        holder: EntityId,
+        period_secs: u64,
+    ) -> Result<EntityId> {
+        if period_secs == 0 {
+            return Err(invalid());
+        }
+        let receipt = self.apply_engine_control(
+            crate::federation::EngineControlActor::Holder(holder),
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_PROACTIVITY_CADENCE",
+            &crate::federation::rendered_change(&serde_json::json!({
+                "period_secs": period_secs,
+            }))?,
+            |txn| {
+                let cadence = load_cadence(self, &*txn)?;
+                CADENCE.put(
+                    &self.store,
+                    txn,
+                    &(),
+                    &ProactivityCadence {
+                        period_secs,
+                        ..cadence
+                    },
+                )?;
+                Ok(())
+            },
+        )?;
+        self.store.notify_proactivity_changes();
+        Ok(receipt)
+    }
     /// An agent may draft this row in chat; only the authenticated owner's
     /// confirmation writes it. Edits affect the next digest, not past rows.
     pub fn set_proactivity_presentation(

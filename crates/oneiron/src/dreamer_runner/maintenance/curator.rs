@@ -120,6 +120,39 @@ impl Vault {
             Ok(())
         })
     }
+
+    /// A holder of `engine.controls` sets the curator's cadence: the minimum age and the period. The
+    /// factors and the questions stay as the owner set them (untangle 6.6b; maintenance cadence),
+    /// through the one check, with a receipt naming it. Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `holder` holds no live `engine.controls`; the
+    /// row's own validation; store failures.
+    pub fn set_curator_cadence_as_holder(
+        &self,
+        holder: EntityId,
+        minimum_age_secs: u64,
+        cadence_secs: u64,
+    ) -> Result<EntityId> {
+        self.apply_engine_control(
+            crate::federation::EngineControlActor::Holder(holder),
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_CURATOR_RUBRIC",
+            &crate::federation::rendered_change(&serde_json::json!({
+                "minimum_age_secs": minimum_age_secs,
+                "cadence_secs": cadence_secs,
+            }))?,
+            |txn| {
+                let mut rubric = rubric_in_txn(self, &*txn)?;
+                rubric.minimum_age_secs = minimum_age_secs;
+                rubric.cadence_secs = cadence_secs;
+                rubric.validate()?;
+                RUBRIC.put(self, txn, &(), &rubric)?;
+                Ok(())
+            },
+        )
+    }
     /// One curator pass per rubric cadence, whichever trigger asks first.
     pub fn schedule_curator(
         &self,

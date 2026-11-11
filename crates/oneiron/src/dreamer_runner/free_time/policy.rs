@@ -5,9 +5,12 @@
 //! or an agent whose live Grant names the act (`free_time_policy_set`, FIX
 //! 5660), its Grant checked again in the write; the engine stamps the
 //! revision, who set it and the time. Neither the agent's words nor a hosted
-//! root stand in for the owner. Every set and clear is also signed as a
-//! `PolicySettingSet` every machine the owner admits folds and checks, best
-//! effort: the row stands whatever that meets.
+//! root stand in for the owner. Every set and clear by the owner or by such
+//! an agent is also signed as a `PolicySettingSet` every machine the owner
+//! admits folds and checks, best effort: the row stands whatever that meets.
+//! A holder of `engine.controls` moves only the schedule of a policy that
+//! stands; that move leaves no signed act, and its record is the
+//! engine-control receipt.
 
 use serde::{Deserialize, Serialize};
 
@@ -97,9 +100,10 @@ pub struct FreeTimePolicy {
     /// agent's set (`set_by_agent`), and once that owner was erased (FIX
     /// 8875). Audit only; no rule reads it.
     pub set_by: Option<EntityId>,
-    /// The agent whose act within its live Grant set it (FIX 5660), its
-    /// signed record naming the Grant; `None` for the owner's own set, and
-    /// once that agent was erased. Audit only; no rule reads it.
+    /// The agent whose act set it: within its live Grant (FIX 5660), its
+    /// signed record naming the Grant, or a holder's schedule move, whose
+    /// record is the engine-control receipt; `None` for the owner's own set,
+    /// and once that agent was erased. Audit only; no rule reads it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set_by_agent: Option<EntityId>,
     /// The Grant the agent's set acted under (FIX 11608); `None` for the
@@ -468,6 +472,90 @@ impl Vault {
         // The home's timer arms on the policy's next boundary.
         self.store.notify_proactivity_changes();
         Ok(policy)
+    }
+
+    /// A holder of `engine.controls` moves the schedule of `agent`'s
+    /// free-time policy (untangle 6.6b, the B2 family; wake cadence;
+    /// S66B-BUDGETS B2 = A), replacing revision `expected_revision`. The
+    /// policy must stand: setting or clearing one chooses a cap, which is the
+    /// owner's act. Its `total_units`, `cap_shown_at_ms` and pinned split
+    /// stay as the owner set them. The row stamps the holder and its grant
+    /// (`set_by_agent`, `set_grant`), and the record of the move is the
+    /// engine-control receipt, as for every other holder door. Unlike the
+    /// owner's set or a set by an agent whose Grant names
+    /// `free_time_policy_set`, a holder's move leaves no signed
+    /// `PolicySettingSet` (review of #6918). Returns the receipt and the
+    /// policy now in force.
+    ///
+    /// # Errors
+    /// `InvalidConfig` when `holder` holds no live `engine.controls` or no
+    /// policy stands; an invalid schedule; an unknown agent;
+    /// [`Error::ConcurrentWrite`] for a stale revision; storage errors.
+    pub fn set_free_time_schedule_as_holder(
+        &self,
+        holder: EntityId,
+        agent: EntityId,
+        expected_revision: u64,
+        schedule: FreeTimeSchedule,
+    ) -> Result<(EntityId, FreeTimePolicy)> {
+        let mut set = None;
+        let receipt = self.apply_engine_control(
+            crate::federation::EngineControlActor::Holder(holder),
+            crate::federation::EngineControlClass::WakeCadence,
+            "DREAMER_FREE_TIME_POLICY",
+            &crate::federation::rendered_change(&serde_json::json!({
+                "agent": agent.to_hex(),
+                "schedule": &schedule,
+            }))?,
+            |txn| {
+                let grant = self.engine_controls_grant_in(txn, holder)?.ok_or_else(|| {
+                    Error::InvalidConfig("this holder holds no live engine.controls".into())
+                })?;
+                self.read_agent_definition_in_txn(txn, &agent)?;
+                let record = current_revision_in_txn(self, txn, agent, expected_revision)?;
+                let Some(prior) = record.as_ref().and_then(|record| record.policy.clone()) else {
+                    return Err(Error::InvalidConfig(
+                        "a holder moves the schedule of a policy that stands; setting or clearing one is the owner's act"
+                            .into(),
+                    ));
+                };
+                FreeTimePolicyInput {
+                    total_units: prior.total_units,
+                    schedule: schedule.clone(),
+                    pinned_split: prior.pinned_split,
+                    cap_shown_at_ms: prior.cap_shown_at_ms,
+                }
+                .validate()?;
+                let set_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                let policy = FreeTimePolicy {
+                    revision: expected_revision
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow("free-time policy revision"))?,
+                    schedule: schedule.clone(),
+                    set_by: None,
+                    set_by_agent: Some(holder),
+                    set_grant: Some(grant),
+                    set_at,
+                    surface: None,
+                    prior: policy_digest(Some(&prior))?,
+                    ..prior.clone()
+                };
+                let record =
+                    FreeTimePolicyRecord::after(record, agent, Some(policy.clone()), holder, set_at)?;
+                POLICY.put(&self.store, txn, &agent, &record)?;
+                // No signed `PolicySettingSet` here: the authority checker
+                // admits an agent's free-time act only under a grant that
+                // names `free_time_policy_set`, which is the whole set and
+                // clear, and `engine.controls` must not give that. The
+                // receipt this door returns is the record of the move.
+                set = Some(policy);
+                Ok(())
+            },
+        )?;
+        // The home's timer arms on the policy's next boundary.
+        self.store.notify_proactivity_changes();
+        let policy = set.ok_or_else(|| Error::InvalidConfig("no schedule was set".into()))?;
+        Ok((receipt, policy))
     }
 
     /// Clears `agent`'s free-time policy as the owner (FIX 4453), at
