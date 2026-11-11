@@ -22,8 +22,8 @@ use oneiron::learning_setting_doors::{
 };
 use oneiron::memory::{MemoryError, MemoryResult};
 
-use super::host_doors::support::{Listed, internal};
 use super::engine_control_doors::engine_controller;
+use super::host_doors::support::{Listed, internal};
 use super::substrate_read_doors::{as_reader, substrate_reader};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -122,7 +122,11 @@ pub(crate) async fn vault_settings_learning_put(
         }
         Ok(None) => {
             let answer = as_reader(server, auth, VERB, move |server, holder| {
-                learning_setting_doors::put_learning_setting_as_holder(server.vault(), holder, input)
+                learning_setting_doors::put_learning_setting_as_holder(
+                    server.vault(),
+                    holder,
+                    input,
+                )
             })
             .await;
             let rows = answer.as_ref().map_or_else(|_| Vec::new(), settings_rows);
@@ -144,7 +148,11 @@ pub(crate) async fn vault_settings_learning_clear(
     match engine_controller(server, auth, VERB) {
         Ok(Some(_)) => {
             as_owner_listing(server, auth, VERB, move |server, owner| {
-                learning_setting_doors::clear_learning_setting_as_owner(server.vault(), owner, input)
+                learning_setting_doors::clear_learning_setting_as_owner(
+                    server.vault(),
+                    owner,
+                    input,
+                )
             })
             .await
         }
