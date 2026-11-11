@@ -162,16 +162,18 @@ pub(super) fn stage_in_txn(
     }
 }
 
-/// Whether `read` serves every one of `rows` in `txn`.
+/// Whether `read` serves every one of `rows` in `txn`. A read whose
+/// credential no longer stands serves no row.
 fn reads_every_row(
     read: &crate::claim::ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     rows: &[EntityId],
 ) -> Result<bool> {
-    Ok(read
-        .get_entities_parts_in_txn(txn, rows)?
-        .iter()
-        .all(Option::is_some))
+    match read.get_entities_parts_in_txn(txn, rows) {
+        Ok(served) => Ok(served.iter().all(Option::is_some)),
+        Err(Error::InvalidClaimBody(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn refuse(
