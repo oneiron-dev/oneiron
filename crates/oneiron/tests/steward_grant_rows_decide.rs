@@ -22,10 +22,12 @@
 
 use std::collections::BTreeSet;
 
-use oneiron::federation::{SystemAgentGrantNarrowing, SystemFunction};
+use oneiron::federation::{ScopeAxis, SystemAgentGrantNarrowing, SystemFunction};
+use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::test_doors::steward::{
     STEWARD_READ_VERB, STEWARD_VERBS, WeaveReach, dreamer, drop_dreamer_rows,
-    open_owner_carrier_vault, owner, receive_steward_grant_row, steward_grant_rows, weave_reach,
+    open_owner_carrier_vault, owner, receive_steward_grant_row, stand_steward_grant_in_bands,
+    steward_grant_rows, steward_reach_scope, weave_reach,
 };
 
 const READS_AND_LANDS: WeaveReach = WeaveReach {
@@ -206,6 +208,68 @@ fn a_whole_revoke_leaves_one_row_with_no_verbs() {
         "one row stands after the grant back, with the whole default"
     );
     assert_eq!(weave_reach(&vault).expect("reach"), READS_AND_LANDS);
+}
+
+/// Narrows the Dreamer's grant to `keep` through the owner's door, confirming
+/// the breaks it warns of.
+fn narrow_confirming(
+    vault: &oneiron::Vault,
+    owner: &oneiron::consent::AuthenticatedOwner,
+    dreamer: oneiron::EntityId,
+    keep: &BTreeSet<String>,
+) {
+    let SystemAgentGrantNarrowing::ConfirmRequired { confirm, .. } = vault
+        .narrow_system_agent_grant(owner, dreamer, keep, None)
+        .expect("the narrowing door")
+    else {
+        panic!("a narrowing that stops a function of the Dreamer warns first");
+    };
+    assert!(matches!(
+        vault
+            .narrow_system_agent_grant(owner, dreamer, keep, Some(confirm))
+            .expect("the confirmed narrowing"),
+        SystemAgentGrantNarrowing::Narrowed { .. }
+    ));
+}
+
+/// Review of #7057: the narrowing door revoked every standing row and stood
+/// the narrower grant with every data axis whole. Taking a verb from a grant
+/// held to one record kind gave the Dreamer every kind back.
+#[test]
+fn a_narrowing_keeps_the_data_axes_the_standing_rows_hold() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    let owner = owner(&vault).expect("owner proof");
+    // The Dreamer's grant with every Steward verb, held to claims alone.
+    stand_steward_grant_in_bands(&vault, dreamer, &STEWARD_VERBS, &[ENTITY_TYPE_CLAIM])
+        .expect("the grant held to one record kind");
+    let claims_alone: ScopeAxis<u8> = [ENTITY_TYPE_CLAIM].into_iter().collect();
+    let held = || {
+        steward_reach_scope(&vault, dreamer)
+            .expect("the rows' scope")
+            .expect("a row stands")
+    };
+    assert_eq!(held().bands, claims_alone);
+
+    // The owner takes every verb but `read`.
+    narrow_confirming(&vault, &owner, dreamer, &read_alone());
+    let narrowed = held();
+    let read_verb_alone: ScopeAxis<String> = read_alone().into_iter().collect();
+    assert_eq!(
+        narrowed.verbs, read_verb_alone,
+        "the narrower grant gives `read` alone"
+    );
+    assert_eq!(
+        narrowed.bands, claims_alone,
+        "taking a verb gives back no record kind: the narrower grant is held to claims as the grant it replaced"
+    );
+
+    // He revokes it whole: the record of his opt-out keeps the axes too.
+    narrow_confirming(&vault, &owner, dreamer, &BTreeSet::new());
+    let opted_out = held();
+    assert!(opted_out.verbs.is_bottom(), "the opt-out gives no verb");
+    assert_eq!(opted_out.bands, claims_alone);
 }
 
 #[test]
