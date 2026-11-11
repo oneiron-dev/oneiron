@@ -21,13 +21,16 @@ use oneiron::{Vault, VaultConfig};
 
 #[test]
 fn a_steward_grant_stood_after_a_checkpoint_does_not_block_its_restore() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    // A directory a restore accepts as its destination's parent.
+    let dir = oneiron::test_support::restore_tempdir();
     let home = dir.path().join("vault");
     std::fs::create_dir_all(&home).expect("vault dir");
     let live = open_owner_carrier_vault(&home).expect("owner carrier vault");
-    // The Dreamer's principal and the checkpoint key are there before the
-    // checkpoint, so the grant is the one thing that changes after it.
+    // The Dreamer's principal, the vault's data key and the checkpoint key
+    // are there before the checkpoint, so the grant is the one thing that
+    // changes after it. A fresh vault has no data key until one is asked for.
     let dreamer = dreamer(&live).expect("the Dreamer");
+    live.ensure_vault_key().expect("the vault data key");
     let key = live.checkpoint_key().expect("the checkpoint key");
     let image = dir.path().join("backup");
     live.snapshot_checkpoint(&image, 100).expect("a checkpoint");
@@ -51,6 +54,6 @@ fn a_steward_grant_stood_after_a_checkpoint_does_not_block_its_restore() {
     assert_eq!(
         grant_mark(&restored, dreamer).expect("mark"),
         mark,
-        "the restored vault holds the grant and its marker as the live vault does"
+        "the restored vault holds the same standing grant as the live vault"
     );
 }
