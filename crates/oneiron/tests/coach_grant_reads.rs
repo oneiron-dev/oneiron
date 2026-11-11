@@ -205,7 +205,12 @@ fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
 #[test]
 fn the_owner_reads_without_a_grant() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = open(&dir);
+    // The owner's handle carries its proof on the vault this process owns
+    // (the writer lease), as an embedded host's does. A reader door takes no
+    // owner by actor id (review of #6999), so a handle that only names the
+    // owner reads nothing here.
+    let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("an owned vault");
+    oneiron::test_support::provision_engine_machines(&vault);
     let agent = define_agent(&vault).expect("an agent");
     let owner = vault.ensure_embedded_owner_actor().expect("the owner");
     for (verb, input) in evidence_reads(agent) {

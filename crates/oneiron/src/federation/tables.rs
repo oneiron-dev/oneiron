@@ -72,16 +72,6 @@ crate::side_table::side_tables! {
     /// (the ruling).
     FEDERATION_RULING_WITNESS: VaultMeta b"federation:ruling_witness:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Each base agent's Steward grant as the first mint left it (untangle 6.3): `minted` with
-    /// the grant's id, or `opted_out` when the owner had removed every policy row the grant
-    /// replaces. While a row stands, the policy fold reads the agent's reach from that grant and
-    /// no longer from manifest rows that name it, and the agent's read keys are held to it. Local
-    /// to this vault. Key: id16 (the agent's principal).
-    FEDERATION_SYSTEM_AGENT_GRANT: VaultMeta b"federation:system_agent_grant:v1:" Named
-        // Restore class: the marker names a Steward grant row, and those rows stay as the live
-        // vault holds them: the marker stays with them, never naming a grant the restored vault
-        // does not hold.
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Each narrowing the owner applied to a base agent's Steward grant (untangle 6.3c): the
     /// owner, the grant revoked, the narrower grant minted (none for a whole revoke), the verbs
     /// before and after, and the breaks he confirmed. The record that he chose it. Key: id16 (the
@@ -92,12 +82,6 @@ crate::side_table::side_tables! {
         // holds it, with the live grant rows: a restore never brings a narrowing back undone.
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::federation::erase_narrowing_actor_in_txn;
-    /// The vault functions each system-critical grant keeps running (untangle 6.3c): narrowing
-    /// one shows the one system-agent warning and waits for the owner's confirm. Key: id16 (the
-    /// grant).
-    FEDERATION_SYSTEM_CRITICAL_GRANT: VaultMeta b"federation:system_critical_grant:v1:" Named
-        // Restore class: a mark names a live grant row and stays with it.
-        [restore: live] [family: unclassified] [tier: canonical];
     /// The facet a verified Connect origin position names for an imported ASSET or ASSET_TEXT. This
     /// vault holds no edge to the sender's FACET, so the facet is kept here, written beside the
     /// record-scope stamp and retired with it (FIX 22223). Key: id16 (record). Value: id16 (facet).

@@ -160,12 +160,15 @@ impl Vault {
         Ok(grants)
     }
     /// Every live membership grant record over `vault_id`, delegates
-    /// included: [`Self::vault_grants_in_txn`] without a base agent's Steward
-    /// grant. That row is the engine's actor's reach, not a membership
-    /// (untangle 6.3; review of #6913): the host mints it by default, and
-    /// only the owner moves it, through its own door, which shows what
-    /// breaks and waits for his confirm. So no membership door reads it as a
-    /// role, lists it on the roster, re-roles it or drops it.
+    /// included: [`Self::vault_grants_in_txn`] without the rows that were
+    /// never minted as a membership. A base agent's Steward grant is the
+    /// engine's actor's reach (untangle 6.3; review of #6913): the host
+    /// mints it by default, and only the owner moves it, through its own
+    /// door, which shows what breaks and waits for his confirm. An owner's
+    /// `engine.controls` grant to a principal that is no Steward member is
+    /// his grant to that principal (6.6), taken back through its own door.
+    /// So no membership door reads either as a role, lists it on the
+    /// roster, re-roles it or drops it.
     fn member_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -173,6 +176,22 @@ impl Vault {
     ) -> Result<Vec<(EntityId, FederationGrant)>> {
         let mut grants = self.vault_grants_in_txn(txn, vault_id)?;
         grants.retain(|(_, grant)| !crate::federation::holds_system_agent_grant(grant.member_ref));
+        // An owner's `engine.controls` grant goes with a Steward's
+        // membership and is none on its own (ruling on FIX
+        // ENGINE-CONTROLS-GRANT-READS-AS-MEMBERSHIP, Engine 11 Nov): beside
+        // a Steward membership row it is read with it, so a demotion or a
+        // removal takes it too; for anyone else it is skipped.
+        let stewards: BTreeSet<EntityId> = grants
+            .iter()
+            .filter(|(_, grant)| {
+                grant.role == Role::Steward && !crate::federation::is_engine_controls_grant(grant)
+            })
+            .map(|(_, grant)| grant.member_ref)
+            .collect();
+        grants.retain(|(_, grant)| {
+            !crate::federation::is_engine_controls_grant(grant)
+                || stewards.contains(&grant.member_ref)
+        });
         Ok(grants)
     }
     /// `member`'s one membership role in the vault, delegate grants aside.

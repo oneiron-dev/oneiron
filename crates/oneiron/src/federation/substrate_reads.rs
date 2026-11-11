@@ -8,6 +8,13 @@
 //! grant reads nothing from its next call on. The Coach holds both by
 //! default (6.6a); the owner can give them to any agent.
 //!
+//! The owner reads under its proof: a server takes it from the request and
+//! calls the read's owner door, and an embedded handle carries its own
+//! ([`Memory::embedded_owner`]). A caller's actor id is never that proof
+//! (review of #6999). The holder and reader doors admit by the grant alone,
+//! so an owner credential the owner doors refuse, attenuated or handed to
+//! another key, reads none of these rows through them.
+//!
 //! These rows are the engine's own, kept for the whole vault, and no reader
 //! here filters them by project, world, band or sensitivity. So the grant
 //! must reach the whole vault: one narrowed to part of it (a vault or holder
@@ -15,6 +22,7 @@
 
 use super::grant_scope;
 use super::system_agent_grant::SystemAgent;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, Vault, WriteActor};
@@ -44,10 +52,35 @@ impl SubstrateRead {
 }
 
 impl Vault {
-    /// Whether `reader` may make the substrate read `read` now: the vault's
-    /// human owner, or the holder of a live Steward grant that names the verb
-    /// the read needs and reaches the whole vault
-    /// ([`Self::whole_vault_steward_grant_with_verb_in`]).
+    /// Whether `holder` holds a live Steward grant that names a verb the
+    /// substrate read `read` needs and reaches the whole vault
+    /// ([`Self::whole_vault_steward_grant_with_verb_in`]). The one rule of
+    /// every holder and reader door: who the holder is plays no part, the
+    /// vault's owner included.
+    pub(crate) fn substrate_read_granted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+        read: SubstrateRead,
+    ) -> Result<bool> {
+        for verb in read.grants() {
+            if self
+                .whole_vault_steward_grant_with_verb_in(txn, holder, verb)?
+                .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether the engine makes the substrate read `read` for `reader`, a
+    /// reader the engine names itself (its own goal reads,
+    /// [`Self::project_intake_goal_as_in_txn`]): the vault's human owner, or
+    /// a holder of the grant ([`Self::substrate_read_granted_in_txn`]). Never
+    /// the admission of a request's caller, whose actor id proves no owner:
+    /// those go through [`admit_substrate_read`] and
+    /// [`admit_substrate_read_by`].
     pub(crate) fn substrate_read_allowed_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -59,15 +92,7 @@ impl Vault {
         {
             return Ok(true);
         }
-        for verb in read.grants() {
-            if self
-                .whole_vault_steward_grant_with_verb_in(txn, reader.entity_ref(), verb)?
-                .is_some()
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        self.substrate_read_granted_in_txn(txn, reader.entity_ref(), read)
     }
 
     /// Whether the Coach's own review and trend jobs read now (untangle
@@ -85,42 +110,52 @@ impl Vault {
         self.system_agent_reads_live_in(&txn, coach)
     }
 
-    /// [`Self::substrate_read_allowed_in_txn`] in a snapshot of its own.
+    /// [`Self::substrate_read_granted_in_txn`] in a snapshot of its own.
     ///
     /// # Errors
     ///
     /// A store failure.
-    pub(crate) fn substrate_read_allowed(
+    pub(crate) fn substrate_read_granted(
         &self,
-        reader: WriteActor,
+        holder: EntityId,
         read: SubstrateRead,
     ) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        self.substrate_read_allowed_in_txn(&txn, reader, read)
+        self.substrate_read_granted_in_txn(&txn, holder, read)
     }
 }
 
-/// Admits `memory`'s caller to the substrate read `read` of verb `verb`, or
-/// refuses it without saying what the rows hold.
+/// Admits the caller of a read that has no owner door of its own (the agent
+/// health rows) to the substrate read `read` of verb `verb`: the embedded
+/// owner under the proof its own handle carries
+/// ([`Memory::embedded_owner`]), else as a holder
+/// ([`admit_substrate_read_by`]). It refuses without saying what the rows
+/// hold.
 pub(crate) fn admit_substrate_read(
     memory: &Memory<'_>,
     verb: &str,
     read: SubstrateRead,
 ) -> MemoryResult<()> {
-    let reader = WriteActor::new(memory.actor(), memory.actor_class());
-    admit_substrate_read_by(memory.vault(), reader, verb, read)
+    if memory.embedded_owner(verb).is_ok() {
+        return Ok(());
+    }
+    let holder = WriteActor::new(memory.actor(), memory.actor_class());
+    admit_substrate_read_by(memory.vault(), holder, verb, read)
 }
 
-/// Admits `reader` to the substrate read `read` of verb `verb` in `vault`,
-/// or refuses it without saying what the rows hold.
+/// Admits `holder` to the substrate read `read` of verb `verb` in `vault` by
+/// its grant alone ([`Vault::substrate_read_granted_in_txn`]), or refuses it
+/// without saying what the rows hold. The reader side of every read with an
+/// owner door: the vault's owner, named here by its actor id, holds no such
+/// grant and is refused as anyone is (review of #6999).
 pub(crate) fn admit_substrate_read_by(
     vault: &Vault,
-    reader: WriteActor,
+    holder: WriteActor,
     verb: &str,
     read: SubstrateRead,
 ) -> MemoryResult<()> {
     if vault
-        .substrate_read_allowed(reader, read)
+        .substrate_read_granted(holder.entity_ref(), read)
         .map_err(MemoryError::from)?
     {
         return Ok(());
@@ -128,12 +163,13 @@ pub(crate) fn admit_substrate_read_by(
     Err(MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         &format!(
-            "{verb} reads for the vault owner, or for a holder of a Steward grant naming `{}` that reaches the whole vault",
+            "{verb} reads for the vault owner under its proof, or for a holder of a Steward grant naming `{}` that reaches the whole vault",
             read.grants().join("` or `")
         ),
         &[
             "Ask the owner for the grant; the Coach holds it by default.",
             "A grant narrowed to some projects, worlds, bands or a sensitivity ceiling does not read these vault-wide rows.",
+            "The owner reads with its own verified, unattenuated credential.",
         ],
     ))
 }
