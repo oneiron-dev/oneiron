@@ -139,8 +139,8 @@ impl PartitionStages {
         let finish = within(self.finish_started, window);
         self.call_ms = ms_between(run_started, prefix).min(self.extract_ms);
         self.prefix_ready_ms = ms_between(prefix, window).min(self.extract_ms - self.call_ms);
-        self.finish_start_ms = ms_between(window, finish)
-            .min(self.extract_ms - self.call_ms - self.prefix_ready_ms);
+        self.finish_start_ms =
+            ms_between(window, finish).min(self.extract_ms - self.call_ms - self.prefix_ready_ms);
         self.finish_ms =
             self.extract_ms - self.call_ms - self.prefix_ready_ms - self.finish_start_ms;
     }
@@ -196,12 +196,7 @@ impl PartitionStages {
 impl PartitionStages {
     /// Sets the stages timed inside the model run, for the test door
     /// (FIX 21929).
-    pub(crate) fn set_inner_stage_ms(
-        &mut self,
-        corrections_ms: u64,
-        resolve_ms: u64,
-        gap_ms: u64,
-    ) {
+    pub(crate) fn set_inner_stage_ms(&mut self, corrections_ms: u64, resolve_ms: u64, gap_ms: u64) {
         self.corrections_ms = corrections_ms;
         self.resolve_ms = resolve_ms;
         self.gap_ms = gap_ms;
