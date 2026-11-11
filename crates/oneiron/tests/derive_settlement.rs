@@ -290,6 +290,66 @@ fn a_replacement_still_proposed_closes_nothing() {
 }
 
 #[test]
+fn a_stale_replacement_closes_nothing() {
+    let fixture = fixture();
+    let old = landed_claim(&fixture, "an oat milk flat white");
+    let mut body = ClaimBody::new(
+        "preference.coffee",
+        ClaimSubject::Entity(fixture.person),
+        rmpv::Value::from("a cortado"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("a claim body");
+    body.source = Some(ClaimSource::Observed);
+    body.stale = true;
+    let new = EntityId::now();
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .put_claim(&new, &body, TimeRange { start: at, end: at }, at)
+        .expect("a stale observed claim");
+    let stored = fixture
+        .vault
+        .get_claim(&new)
+        .expect("read")
+        .expect("the replacement");
+    assert!(stored.stale, "the stored replacement is stale");
+    assert!(matches!(
+        stored.approval,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    ));
+    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-stale-replacement",
+        &[Derived::Supersede(Supersede {
+            local: "replace_with_stale",
+            new: Named::Stored(new),
+            old: Named::Stored(old),
+        })],
+    )
+    .expect("commit");
+    let [replace] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(
+        !replace.landed,
+        "a stale replacement closes no accepted claim: {replace:?}"
+    );
+    assert_eq!(replace.reasons, vec![REPLACEMENT_UNSETTLED.to_owned()]);
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, old).expect("read"),
+        Some("active".to_owned()),
+        "the accepted claim stands while its replacement is stale"
+    );
+}
+
+#[test]
 fn a_supersession_needs_the_derive_grant() {
     let fixture = fixture();
     let first = landed_claim(&fixture, "an oat milk flat white");
