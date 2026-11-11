@@ -28,6 +28,7 @@ import { Route as AppTasksRouteImport } from './routes/app/tasks'
 import { Route as AppThreadsRouteImport } from './routes/app/threads'
 import { Route as AppTodayRouteImport } from './routes/app/today'
 import { Route as AppVaultRouteImport } from './routes/app/vault'
+import { Route as LibraryIndexRouteImport } from './routes/library/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as SettingsAccountRouteImport } from './routes/settings/account'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings/appearance'
@@ -137,6 +138,11 @@ const AppVaultRoute = AppVaultRouteImport.update({
   path: '/vault',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const LibraryIndexRoute = LibraryIndexRouteImport.update({
+  id: '/library/',
+  path: '/library/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -234,6 +240,7 @@ export interface FileRoutesByFullPath {
   '/settings/packs': typeof SettingsPacksRoute
   '/settings/usage': typeof SettingsUsageRoute
   '/settings/vault': typeof SettingsVaultRoute
+  '/library/': typeof LibraryIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/app/lens/supplier-watch': typeof AppLensSupplierWatchRoute
 }
@@ -267,6 +274,7 @@ export interface FileRoutesByTo {
   '/settings/packs': typeof SettingsPacksRoute
   '/settings/usage': typeof SettingsUsageRoute
   '/settings/vault': typeof SettingsVaultRoute
+  '/library': typeof LibraryIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/app/lens/supplier-watch': typeof AppLensSupplierWatchRoute
 }
@@ -302,6 +310,7 @@ export interface FileRoutesById {
   '/settings/packs': typeof SettingsPacksRoute
   '/settings/usage': typeof SettingsUsageRoute
   '/settings/vault': typeof SettingsVaultRoute
+  '/library/': typeof LibraryIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/app/lens/supplier-watch': typeof AppLensSupplierWatchRoute
 }
@@ -338,6 +347,7 @@ export interface FileRouteTypes {
     | '/settings/packs'
     | '/settings/usage'
     | '/settings/vault'
+    | '/library/'
     | '/settings/'
     | '/app/lens/supplier-watch'
   fileRoutesByTo: FileRoutesByTo
@@ -371,6 +381,7 @@ export interface FileRouteTypes {
     | '/settings/packs'
     | '/settings/usage'
     | '/settings/vault'
+    | '/library'
     | '/settings'
     | '/app/lens/supplier-watch'
   id:
@@ -405,6 +416,7 @@ export interface FileRouteTypes {
     | '/settings/packs'
     | '/settings/usage'
     | '/settings/vault'
+    | '/library/'
     | '/settings/'
     | '/app/lens/supplier-watch'
   fileRoutesById: FileRoutesById
@@ -415,6 +427,7 @@ export interface RootRouteChildren {
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   MintRoute: typeof MintRoute
   SigninRoute: typeof SigninRoute
+  LibraryIndexRoute: typeof LibraryIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -551,6 +564,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/app/vault'
       preLoaderRoute: typeof AppVaultRouteImport
       parentRoute: typeof AppRouteRoute
+    }
+    '/library/': {
+      id: '/library/'
+      path: '/library'
+      fullPath: '/library/'
+      preLoaderRoute: typeof LibraryIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/settings/': {
       id: '/settings/'
@@ -726,6 +746,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
   MintRoute: MintRoute,
   SigninRoute: SigninRoute,
+  LibraryIndexRoute: LibraryIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

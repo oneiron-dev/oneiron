@@ -1,0 +1,47 @@
+/* Hover and focus brighten the word and draw a quiet underline; colour
+   changes are instant, only the press moves. */
+.sl-verb {
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-verb:hover,
+.sl-verb:focus-visible,
+.sl-verb[aria-expanded="true"] {
+  color: var(--sl-ink-1);
+  outline: none;
+  text-decoration: underline;
+  text-decoration-color: var(--sl-ink-4);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+.sl-verb[data-tone="consent"]:hover,
+.sl-verb[data-tone="consent"]:focus-visible {
+  color: var(--sl-safelight);
+  text-decoration-color: var(--sl-safelight);
+}
+
+.sl-verb:active {
+  transform: scale(0.96);
+}
+
+.sl-verb:disabled {
+  color: var(--sl-ink-2);
+  cursor: default;
+  text-decoration: none;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-verb {
+    transition: none;
+  }
+  .sl-verb:active {
+    transform: none;
+  }
+}

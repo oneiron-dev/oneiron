@@ -77,14 +77,26 @@ fn reach_in(
 }
 
 /// The rows a Dreamer write that takes back what it landed is judged by (X02): its Auto actor ceiling and its
-/// `Generated` permit. A receipt of such a write names them in its grant field.
+/// `Generated` permit. A receipt of such a write names them in its grant field while no host has minted the Dreamer's
+/// Steward grant.
 pub(crate) const DREAMER_LANDING_ROWS_REF: &str =
     "policy:dreamer:actor_ceiling_auto+generated_permit";
 
+/// The live policy's verdict on a Dreamer write that takes back what it landed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DreamerLandingVerdict {
+    /// The policy frontier hash it was judged under.
+    pub(crate) frontier: [u8; 32],
+    /// What it was judged by, for the receipt's grant field: the Steward grant's id once a host minted it (untangle
+    /// 6.3), else [`DREAMER_LANDING_ROWS_REF`].
+    pub(crate) grant_ref: String,
+}
+
 /// The live policy's verdict, in the caller's transaction, on a Dreamer write that takes back what it landed (the
-/// strength archive, X02): the policy frontier hash it was judged under while `actor` still holds its Auto actor
-/// ceiling and its `Generated` permit, `None` once the owner narrowed or removed either. Its read grant is the scoped
-/// read's to apply. Slice 6.3 judges the Steward grant here instead.
+/// strength archive, X02): `None` once the owner narrowed or removed what lets it land. While no host has minted the
+/// Dreamer's Steward grant, that is its Auto actor ceiling and its `Generated` permit; after, the grant's `derive`
+/// (which yields those rows) and its `archive` ("archive inside its grant", the Steward ruling). Its read grant is the
+/// scoped read's to apply.
 ///
 /// # Errors
 ///
@@ -93,15 +105,16 @@ pub(crate) fn dreamer_landing_verdict_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     actor: crate::WriteActor,
-) -> Result<Option<[u8; 32]>> {
-    let policy = super::resolve_policy_manifest(store, txn)?;
-    if !policy.lands_generated_auto(
-        actor.actor_class().gate_actor_class(),
-        &actor.entity_ref().to_hex(),
-    ) {
-        return Ok(None);
-    }
-    policy.read_frontier_hash().map(Some)
+) -> Result<Option<DreamerLandingVerdict>> {
+    // One judge (untangle 6.7a): the archive case of the derive verdict.
+    Ok(
+        super::derive_verdict_in_txn(store, txn, actor, super::DeriveCapability::Archive, None)?
+            .ok()
+            .map(|allowance| DreamerLandingVerdict {
+                frontier: allowance.frontier,
+                grant_ref: allowance.grant_ref,
+            }),
+    )
 }
 
 /// The trusted pack the grant edits, and its body: the one owner-authored
@@ -157,11 +170,24 @@ impl Vault {
         Ok(reach_in(&policy, &key, &actor_ref))
     }
 
-    /// Owner act: adds the Dreamer's three rows to one trusted policy pack.
-    /// Returns whether the policy changed; refuses, changing nothing, when
-    /// the edit would not let the Dreamer work or would move other policy.
+    /// Owner act: lets the Dreamer read and land. Once a host has minted the
+    /// Dreamer's Steward grant (untangle 6.3), the owner's whole Steward
+    /// default, minted as his signed act when no grant standing with it is
+    /// there, opted out or revoked before included. On a vault no host has
+    /// opened, as before: adds the Dreamer's three rows to one trusted policy
+    /// pack. Returns whether anything changed; refuses, changing nothing,
+    /// when the edit would not let the Dreamer work or would move other
+    /// policy.
     pub fn grant_dreamer_weave(&self, owner: &AuthenticatedOwner, now: u64) -> Result<bool> {
-        let actor_ref = self.dreamer_authority()?.entity_ref().to_hex();
+        let dreamer = self.dreamer_authority()?.entity_ref();
+        let marked = {
+            let txn = self.store.env.read_txn()?;
+            self.system_agent_grant_state_in(&txn, dreamer)?.is_some()
+        };
+        if marked {
+            return self.grant_dreamer_steward(owner);
+        }
+        let actor_ref = dreamer.to_hex();
         let key = ScopedReadActorKey::with_actor_class(actor_ref.clone(), DREAMER_ACTOR_CLASS)
             .ok_or_else(|| invalid("dreamer read key"))?;
         let mut txn = self.store.env.write_txn()?;
@@ -218,6 +244,25 @@ fn names_actor(row: &Value, actor_ref: &str) -> bool {
     })
 }
 
+/// Whether `row` binds the actor `actor_ref` names, by its written
+/// `actor_ref` or by the id that decodes to: the source-trust decode reads an
+/// actor id whatever its hex case, so a permit spelt in upper case is the
+/// same actor's and goes out with the rest (review of #6913, round 2).
+fn binds_actor(row: &Value, actor_ref: &str) -> bool {
+    let actor = EntityId::from_hex(actor_ref).ok();
+    row.as_map().is_some_and(|fields| {
+        fields.iter().any(|(name, field)| {
+            name.as_str() == Some(ACTOR_REF_KEY)
+                && field.as_str().is_some_and(|written| {
+                    written == actor_ref
+                        || actor.is_some_and(|actor| {
+                            EntityId::from_hex(written).is_ok_and(|bound| bound == actor)
+                        })
+                })
+        })
+    })
+}
+
 /// Adds `row` to the list (a lone row becomes a one-row list) unless a row
 /// already names the Dreamer. Returns whether it added.
 fn push_unless_bound(list: &mut Value, actor_ref: &str, row: Value) -> Result<bool> {
@@ -244,32 +289,357 @@ pub(super) fn with_shipped_dreamer_rows(manifest: Vec<u8>) -> Result<Vec<u8>> {
 /// The live manifest with the Dreamer's rows added, or `None` when every
 /// one is already there.
 fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
-    let Value::Map(mut entries) =
+    let mut entries = decode_live(live)?;
+    let whole = crate::federation::scope_codec::read_preset();
+    if !push_dreamer_rows(&mut entries, actor_ref, Some(&whole), true)? {
+        return Ok(None);
+    }
+    encode_live(entries).map(Some)
+}
+
+/// `live` as the policy fold reads it once base agents hold their reach
+/// through Steward grants (untangle 6.3, 6.6), one rewrite per agent:
+/// - the Dreamer: every row that names it in `actor_ceilings`,
+///   `scoped_grants` and `source_trust` taken out, then the rows its grant's
+///   verbs give put back. `read` gives the read grant; `derive` gives the
+///   Auto actor ceiling and the `Generated` permit. They are the rows
+///   [`with_dreamer_rows`] writes, so a grant with both verbs and every data
+///   axis whole, as the host mints it, reads exactly as the three rows did.
+/// - the Coach: only its core-read rows taken out, then one read row put
+///   back when its grant holds `read`. Its offer row
+///   (`tasks.ask.training_offer_owner`) is not the grant's, and stays.
+///
+/// Each read row is over the agent's `read_scope`: its standing grant's own
+/// scope met with the read preset (S67-READ-AXES = C), so a grant the owner
+/// narrowed on worlds, bands, audience or sensitivity reads inside them.
+///
+/// `None` when nothing moved.
+///
+/// Taking the rows out never fails on a shape the policy decode accepts, so
+/// a pack that decodes is never read as it was written (review of #6913).
+/// Putting them back holds on the `Generated` shorthand too
+/// ([`list_generated_shorthand`]).
+///
+/// # Errors
+///
+/// A live policy that is not a map.
+pub(crate) fn body_with_steward_rows(
+    live: &[u8],
+    rewrites: &[crate::federation::StewardRows],
+) -> Result<Option<Vec<u8>>> {
+    let mut entries = decode_live(live)?;
+    let changed = match rewrite_steward_rows(&mut entries, rewrites, true) {
+        Ok(changed) => changed,
+        // A list that will not take a grant's rows leaves the pack with the
+        // agents' written rows out, never as it was written: the written
+        // rows are not the grants'.
+        Err(_) => {
+            entries = decode_live(live)?;
+            rewrite_steward_rows(&mut entries, rewrites, false)?
+        }
+    };
+    if !changed {
+        return Ok(None);
+    }
+    encode_live(entries).map(Some)
+}
+
+/// Takes each agent's written rows out and, when `grant`, puts the rows its
+/// grant gives back. Returns whether any row moved.
+fn rewrite_steward_rows(
+    entries: &mut Vec<(Value, Value)>,
+    rewrites: &[crate::federation::StewardRows],
+    grant: bool,
+) -> Result<bool> {
+    use crate::federation::SystemAgent;
+    use crate::federation::grant_scope::{STEWARD_DERIVE_VERB, STEWARD_READ_VERB};
+    let mut changed = false;
+    for rewrite in rewrites {
+        let read = rewrite
+            .read_scope
+            .as_ref()
+            .filter(|_| grant && rewrite.verbs.contains(STEWARD_READ_VERB));
+        match rewrite.agent {
+            SystemAgent::Dreamer => {
+                changed |= strip_actor_rows(entries, &rewrite.actor_ref);
+                let derive = grant && rewrite.verbs.contains(STEWARD_DERIVE_VERB);
+                if derive {
+                    list_generated_shorthand(entries);
+                }
+                changed |= push_dreamer_rows(entries, &rewrite.actor_ref, read, derive)?;
+            }
+            SystemAgent::Coach => {
+                changed |= rewrite_read_row(entries, &rewrite.actor_ref, read)?;
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// Takes `actor_ref`'s core-read rows out of `scoped_grants`, its other
+/// scoped grants left as they are, and puts one read row back, over the
+/// scope `read`, when there is one. Returns whether the list moved.
+fn rewrite_read_row(
+    entries: &mut Vec<(Value, Value)>,
+    actor_ref: &str,
+    read: Option<&crate::federation::Scope>,
+) -> Result<bool> {
+    let list = entry_mut(entries, POLICY_SCOPED_GRANTS_KEY);
+    let mut rows = match std::mem::replace(list, Value::Nil) {
+        Value::Nil => Vec::new(),
+        Value::Array(rows) => rows,
+        single @ Value::Map(_) => vec![single],
+        _ => return Err(invalid("policy rows are not a list")),
+    };
+    let before = rows.clone();
+    rows.retain(|row| !(binds_actor(row, actor_ref) && is_core_read(row)));
+    if let Some(scope) = read {
+        rows.push(read_row(actor_ref, scope)?);
+    }
+    let changed = rows != before;
+    if rows.is_empty() {
+        entries.retain(|(name, _)| name.as_str() != Some(POLICY_SCOPED_GRANTS_KEY));
+    } else {
+        *entry_mut(entries, POLICY_SCOPED_GRANTS_KEY) = Value::Array(rows);
+    }
+    Ok(changed)
+}
+
+fn is_core_read(row: &Value) -> bool {
+    row.as_map().is_some_and(|fields| {
+        fields.iter().any(|(name, field)| {
+            name.as_str() == Some("effector")
+                && field.as_str() == Some(SCOPED_READ_EFFECTOR_CORE_READ)
+        })
+    })
+}
+
+/// A base agent's receipt-free read grant over `scope`: the Dreamer's
+/// shipped read row over the whole read preset, and each agent's from its
+/// grant's `read`, inside the grant's own data axes.
+fn read_row(actor_ref: &str, scope: &crate::federation::Scope) -> Result<Value> {
+    Ok(Value::Map(vec![
+        (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+        (
+            Value::from(ACTOR_CLASS_KEY),
+            Value::from(DREAMER_ACTOR_CLASS),
+        ),
+        (
+            Value::from("effector"),
+            Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
+        ),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(scope)?,
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ]))
+}
+
+/// Writes a lone `Generated` shorthand row (`false`, a band number or a band
+/// name: one class-wide row, bound to no writer) as a one-row list, so the
+/// grant's permit can sit beside it as beside any other row. The decode reads
+/// that pair as it reads any class-wide row beside a bound one: no Auto for
+/// either. So the pack's own "never lands by itself" stands under a grant with
+/// `derive`, and the grant's read row stays (review of #6913, round 2: the
+/// push refused the shorthand, and the fallback read the pack with every row
+/// of the agent out, its read row with them). Only the fold's reading does
+/// this; the owner's grant on a vault no host has opened still refuses such a
+/// pack and writes nothing.
+fn list_generated_shorthand(entries: &mut [(Value, Value)]) {
+    let Some((_, Value::Map(sources))) = entries
+        .iter_mut()
+        .find(|(name, _)| name.as_str() == Some(POLICY_SOURCE_TRUST_KEY))
+    else {
+        return;
+    };
+    let Some((_, generated)) = sources
+        .iter_mut()
+        .find(|(name, _)| name.as_str() == Some(ClaimSource::Generated.as_str()))
+    else {
+        return;
+    };
+    if matches!(
+        generated,
+        Value::Boolean(false) | Value::Integer(_) | Value::String(_)
+    ) {
+        *generated = Value::Array(vec![std::mem::replace(generated, Value::Nil)]);
+    }
+}
+
+/// Whether the live policy holds the rows of `actor_ref` (untangle 6.3, the
+/// first mint's copy): its read row, and its two landing rows together.
+pub(crate) fn dreamer_rows_held(
+    policy: &super::PolicyManifestResolution,
+    actor_ref: &str,
+) -> Result<(bool, bool)> {
+    let key = ScopedReadActorKey::with_actor_class(actor_ref.to_owned(), DREAMER_ACTOR_CLASS)
+        .ok_or_else(|| invalid("dreamer read key"))?;
+    let reach = reach_in(policy, &key, actor_ref);
+    Ok((reach.reads, reach.lands_auto))
+}
+
+fn decode_live(live: &[u8]) -> Result<Vec<(Value, Value)>> {
+    let Value::Map(entries) =
         rmpv::decode::read_value(&mut &live[..]).map_err(|_| invalid("decode live policy"))?
     else {
         return Err(invalid("live policy is not a map"));
     };
-    let mut changed = push_unless_bound(
+    Ok(entries)
+}
+
+fn encode_live(entries: Vec<(Value, Value)>) -> Result<Vec<u8>> {
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries))
+        .map_err(|_| invalid("encode dreamer weave grant"))?;
+    Ok(data)
+}
+
+/// Takes every row that binds `actor_ref` ([`binds_actor`]) out of one row
+/// list, a lone row included. Returns whether it took any. A row that is not a map binds no
+/// actor (the source-trust shorthand: `false`, a band number or a band name),
+/// so it stays. An emptied list stays as an empty list when `keep_empty` (a
+/// pack must carry `actor_ceilings`); otherwise its entry is removed (a
+/// source with no row does not decode).
+fn strip_rows(
+    entries: &mut Vec<(Value, Value)>,
+    key: &str,
+    actor_ref: &str,
+    keep_empty: bool,
+) -> bool {
+    let Some(index) = entries
+        .iter()
+        .position(|(name, _)| name.as_str() == Some(key))
+    else {
+        return false;
+    };
+    let value = &mut entries[index].1;
+    let stripped = if let Value::Array(rows) = value {
+        let before = rows.len();
+        rows.retain(|row| !binds_actor(row, actor_ref));
+        rows.len() != before
+    } else if binds_actor(value, actor_ref) {
+        // A lone row that names the actor.
+        *value = Value::Array(Vec::new());
+        true
+    } else {
+        false
+    };
+    if stripped && !keep_empty && matches!(&entries[index].1, Value::Array(rows) if rows.is_empty())
+    {
+        entries.remove(index);
+    }
+    stripped
+}
+
+/// Takes `actor_ref`'s rows out of `actor_ceilings`, `scoped_grants` and
+/// every `source_trust` source. Returns whether any moved. A source trust
+/// that is not a map holds no row to take and keeps its own decode verdict.
+fn strip_actor_rows(entries: &mut Vec<(Value, Value)>, actor_ref: &str) -> bool {
+    let mut changed = strip_rows(entries, POLICY_ACTOR_CEILINGS_KEY, actor_ref, true);
+    changed |= strip_rows(entries, POLICY_SCOPED_GRANTS_KEY, actor_ref, false);
+    if let Some((_, Value::Map(sources))) = entries
+        .iter_mut()
+        .find(|(name, _)| name.as_str() == Some(POLICY_SOURCE_TRUST_KEY))
+    {
+        let names: Vec<String> = sources
+            .iter()
+            .filter_map(|(name, _)| name.as_str().map(str::to_owned))
+            .collect();
+        for name in names {
+            changed |= strip_rows(sources, &name, actor_ref, false);
+        }
+    }
+    changed
+}
+
+/// Adds the Dreamer's read row (over the scope `read`, when there is one)
+/// and its two landing rows (`derive`) unless a row already names it.
+/// Returns whether it added any.
+fn push_dreamer_rows(
+    entries: &mut Vec<(Value, Value)>,
+    actor_ref: &str,
+    read: Option<&crate::federation::Scope>,
+    derive: bool,
+) -> Result<bool> {
+    let mut changed = false;
+    if derive {
+        changed |= push_unless_bound(
+            entry_mut(entries, POLICY_ACTOR_CEILINGS_KEY),
+            actor_ref,
+            Value::Map(vec![
+                (
+                    Value::from(ACTOR_CLASS_KEY),
+                    Value::from(DREAMER_ACTOR_CLASS),
+                ),
+                (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+                (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+            ]),
+        )?;
+    }
+    if let Some(scope) = read {
+        changed |= push_unless_bound(
+            entry_mut(entries, POLICY_SCOPED_GRANTS_KEY),
+            actor_ref,
+            read_row(actor_ref, scope)?,
+        )?;
+    }
+    if derive {
+        let sources = entry_mut(entries, POLICY_SOURCE_TRUST_KEY);
+        if matches!(sources, Value::Nil) {
+            *sources = Value::Map(Vec::new());
+        }
+        let Value::Map(sources) = sources else {
+            return Err(invalid("live source trust is not a map"));
+        };
+        // The Dreamer's permit sits beside any row already bound to another
+        // writer; decode keeps each binding in its own slot.
+        changed |= push_unless_bound(
+            entry_mut(sources, ClaimSource::Generated.as_str()),
+            actor_ref,
+            Value::Map(vec![
+                (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+                (
+                    Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                    Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                ),
+                (
+                    Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                    Value::Boolean(true),
+                ),
+                (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+            ]),
+        )?;
+    }
+    Ok(changed)
+}
+
+/// TEST-ONLY (untangle 6.7d): `live` with the rows an owner's policy gives
+/// an ordinary agent that derives: its `core:read` grant, an `agent` Auto
+/// ceiling, and the actor-bound, receipted and warned `generated` permit.
+/// The last two are its landing rows, as [`push_dreamer_rows`] writes the
+/// Dreamer's under the `system` class.
+///
+/// # Errors
+///
+/// A live policy that is not a map, or rows that are not lists.
+#[cfg(oneiron_test_support)]
+pub(crate) fn body_with_agent_derive_rows(live: &[u8], actor_ref: &str) -> Result<Vec<u8>> {
+    let mut entries = decode_live(live)?;
+    push_unless_bound(
         entry_mut(&mut entries, POLICY_ACTOR_CEILINGS_KEY),
         actor_ref,
         Value::Map(vec![
-            (
-                Value::from(ACTOR_CLASS_KEY),
-                Value::from(DREAMER_ACTOR_CLASS),
-            ),
+            (Value::from(ACTOR_CLASS_KEY), Value::from("agent")),
             (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
             (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
         ]),
     )?;
-    changed |= push_unless_bound(
+    push_unless_bound(
         entry_mut(&mut entries, POLICY_SCOPED_GRANTS_KEY),
         actor_ref,
         Value::Map(vec![
             (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
-            (
-                Value::from(ACTOR_CLASS_KEY),
-                Value::from(DREAMER_ACTOR_CLASS),
-            ),
             (
                 Value::from("effector"),
                 Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
@@ -290,9 +660,7 @@ fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
     let Value::Map(sources) = sources else {
         return Err(invalid("live source trust is not a map"));
     };
-    // The Dreamer's permit sits beside any row already bound to another
-    // writer; decode keeps each binding in its own slot.
-    changed |= push_unless_bound(
+    push_unless_bound(
         entry_mut(sources, ClaimSource::Generated.as_str()),
         actor_ref,
         Value::Map(vec![
@@ -308,11 +676,5 @@ fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
             (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
         ]),
     )?;
-    if !changed {
-        return Ok(None);
-    }
-    let mut data = Vec::new();
-    rmpv::encode::write_value(&mut data, &Value::Map(entries))
-        .map_err(|_| invalid("encode dreamer weave grant"))?;
-    Ok(Some(data))
+    encode_live(entries)
 }
