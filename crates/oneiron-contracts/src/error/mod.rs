@@ -273,6 +273,8 @@ pub enum ErrorKind {
     IdentityTopologyUnarmed,
     IdentityProposalAmendmentOutOfScope,
     DeltaCaptureUnavailable,
+    /// A seat-available write did not answer the seat's current unavailable generation.
+    ModelSeatAvailableRefused,
     InvalidIdentityTopologyEventBody,
     ReservedEdgeKind,
     #[cfg(feature = "sync")]

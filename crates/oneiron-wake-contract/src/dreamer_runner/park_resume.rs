@@ -124,11 +124,13 @@ pub enum ParkResumer {
     OwnerRelease,
     /// A top-up of the spend scope a budget wait names; it wakes the park's trap.
     BudgetTopUp,
+    /// The durable seat-available write of the seat a seat wait names; it resumes that seat's parks in its own write.
+    SeatAvailable,
 }
 
 impl ParkResumer {
     /// Every resumer, in table order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::LaterPass,
         Self::TrapConsume,
         Self::OutageSweep,
@@ -143,6 +145,7 @@ impl ParkResumer {
         Self::FeedbackTriage,
         Self::OwnerRelease,
         Self::BudgetTopUp,
+        Self::SeatAvailable,
     ];
 }
 
@@ -168,6 +171,7 @@ impl ParkResume {
     /// | FeedbackTriage | any | FeedbackTriage |
     /// | OwnerRelease | ExecutorError, Other | DreamerServer, AgentRuns, Workflows, Other |
     /// | BudgetTopUp | none here: only [`Self::admits_wait`] admits it, for a Budget wait on a Trap park | none |
+    /// | SeatAvailable | none here: only [`Self::admits_wait`] admits it, for a Seat wait | none |
     ///
     /// Typed waits narrow these rows through [`Self::admits_wait`]:
     ///
@@ -175,9 +179,12 @@ impl ParkResume {
     /// |---|---|---|
     /// | Budget | BudgetTopUp, TrapConsume | Trap |
     /// | Consent, Peer, Human | TrapConsume through the wait's own delivery | Trap; none for other owners |
+    /// | Seat | SeatAvailable, OwnerRelease | any |
     ///
     /// No later pass, boot recovery, outage sweep, provider recovery, owner release, program restart,
     /// payer funding or budget top-up resumes a Consent, Peer or Human delivery wait (constraint C5).
+    /// A Seat wait admits only SeatAvailable and OwnerRelease, under any park owner; every other
+    /// resumer refuses it, for any cause (constraint C5).
     #[must_use]
     pub const fn admits(
         cause: DreamerParkCause,
@@ -226,8 +233,9 @@ impl ParkResume {
                         Owner::DreamerServer | Owner::AgentRuns | Owner::Workflows | Owner::Other
                     )
             }
-            // Only admits_wait can admit a top-up: the scope named by its typed wait is required.
-            ParkResumer::BudgetTopUp => false,
+            // Only admits_wait can admit a top-up or a seat-available write: the scope or seat
+            // named by its typed wait is required.
+            ParkResumer::BudgetTopUp | ParkResumer::SeatAvailable => false,
         }
     }
 
@@ -245,6 +253,9 @@ impl ParkResume {
     /// the wait's own delivery wakes its bound trap. Every other owner fails closed. No later
     /// pass, boot recovery, outage sweep, provider recovery, owner release, program restart,
     /// payer funding or budget top-up resumes these delivery waits, for any cause (constraint C5).
+    /// With a `Seat` wait, only `SeatAvailable` and `OwnerRelease` admit, under any owner and for
+    /// any cause: the seat's own available write wakes every park of the seat, and the owner may
+    /// release one park at a time. Every other resumer refuses (constraint C5).
     #[must_use]
     pub const fn admits_wait(
         cause: DreamerParkCause,
@@ -254,7 +265,10 @@ impl ParkResume {
     ) -> bool {
         match wait {
             None => {
-                !matches!(resumer, ParkResumer::BudgetTopUp) && Self::admits(cause, owner, resumer)
+                !matches!(
+                    resumer,
+                    ParkResumer::BudgetTopUp | ParkResumer::SeatAvailable
+                ) && Self::admits(cause, owner, resumer)
             }
             Some(DreamerParkWaitClass::Budget) => {
                 if matches!(owner, ParkOwnerClass::Trap) {
@@ -269,6 +283,12 @@ impl ParkResume {
                 | DreamerParkWaitClass::Human,
             ) => {
                 matches!(owner, ParkOwnerClass::Trap) && matches!(resumer, ParkResumer::TrapConsume)
+            }
+            Some(DreamerParkWaitClass::Seat) => {
+                matches!(
+                    resumer,
+                    ParkResumer::SeatAvailable | ParkResumer::OwnerRelease
+                )
             }
         }
     }
@@ -825,6 +845,12 @@ mod tests {
                 release,
                 "{cause:?} {owner:?}"
             );
+            // Like a top-up, a seat-available write admits nothing untyped: only admits_wait
+            // admits it, for the Seat wait that names its seat.
+            assert!(
+                !ParkResume::admits(cause, owner, ParkResumer::SeatAvailable),
+                "{cause:?} {owner:?}"
+            );
         }
     }
 
@@ -900,12 +926,15 @@ mod tests {
 
     #[test]
     fn a_typed_budget_wait_narrows_a_trap_park_to_its_top_up_and_trap_consume() {
-        assert_eq!(ParkResumer::ALL.len(), 14);
+        assert_eq!(ParkResumer::ALL.len(), 15);
         for cause in CAUSES {
             for owner in ParkOwnerClass::ALL {
                 for resumer in ParkResumer::ALL {
                     let untyped = ParkResume::admits_wait(cause, owner, None, resumer);
-                    if resumer == ParkResumer::BudgetTopUp {
+                    if matches!(
+                        resumer,
+                        ParkResumer::BudgetTopUp | ParkResumer::SeatAvailable
+                    ) {
                         assert!(!untyped, "{cause:?} {owner:?} {resumer:?}");
                     } else {
                         assert_eq!(
@@ -937,6 +966,19 @@ mod tests {
                             "{cause:?} {owner:?} {class:?} {resumer:?}"
                         );
                     }
+                    assert_eq!(
+                        ParkResume::admits_wait(
+                            cause,
+                            owner,
+                            Some(DreamerParkWaitClass::Seat),
+                            resumer
+                        ),
+                        matches!(
+                            resumer,
+                            ParkResumer::SeatAvailable | ParkResumer::OwnerRelease
+                        ),
+                        "{cause:?} {owner:?} {resumer:?}"
+                    );
                 }
             }
         }
@@ -958,6 +1000,41 @@ mod tests {
                     ),
                     "{cause:?} {resumer:?}"
                 );
+            }
+        }
+        // A Seat wait admits only its seat's available write and the owner's release, under any
+        // owner and for any cause; every blind resumer and the trap consume refuse it (C5).
+        for cause in CAUSES {
+            for owner in ParkOwnerClass::ALL {
+                for resumer in [
+                    ParkResumer::LaterPass,
+                    ParkResumer::BootRecovery,
+                    ParkResumer::OutageSweep,
+                    ParkResumer::ProviderRecovery,
+                    ParkResumer::TrapConsume,
+                    ParkResumer::BudgetTopUp,
+                ] {
+                    assert!(
+                        !ParkResume::admits_wait(
+                            cause,
+                            owner,
+                            Some(DreamerParkWaitClass::Seat),
+                            resumer
+                        ),
+                        "{cause:?} {owner:?} {resumer:?}"
+                    );
+                }
+                for resumer in [ParkResumer::SeatAvailable, ParkResumer::OwnerRelease] {
+                    assert!(
+                        ParkResume::admits_wait(
+                            cause,
+                            owner,
+                            Some(DreamerParkWaitClass::Seat),
+                            resumer
+                        ),
+                        "{cause:?} {owner:?} {resumer:?}"
+                    );
+                }
             }
         }
     }
