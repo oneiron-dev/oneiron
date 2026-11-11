@@ -21,7 +21,7 @@ mod log;
 mod policy;
 mod receipt;
 mod record;
-mod tables;
+pub(crate) mod tables;
 
 pub(crate) use log::erase_inquiry_log_actor_in_txn;
 pub use log::{InquiryDecider, InquiryLogEntry};
