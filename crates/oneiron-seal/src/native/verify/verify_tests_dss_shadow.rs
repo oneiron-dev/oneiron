@@ -67,6 +67,23 @@ mod tests {
             .to_vec()
     }
 
+    /// A same-subject/key copy with chosen KeyUsage, signed under the
+    /// holder's name by an unrelated key that no anchor or covered cert holds.
+    fn unauthenticated_key_usage_copy(
+        holder: &TestCa,
+        key_usages: Vec<rcgen::KeyUsagePurpose>,
+    ) -> Vec<u8> {
+        let unrelated_key = rcgen::KeyPair::generate().unwrap();
+        let issuer = rcgen::Issuer::from_params(&holder.rcgen_params, &unrelated_key);
+        let mut params = holder.rcgen_params.clone();
+        params.key_usages = key_usages;
+        params
+            .signed_by(&holder.rcgen_key, &issuer)
+            .unwrap()
+            .der()
+            .to_vec()
+    }
+
     #[test]
     fn dss_crl_shadow_beside_covered_target_is_possible_tampering() {
         // Hostile input, one row per shape. In each, the anchor's genuine CRL
@@ -287,6 +304,138 @@ mod tests {
         );
         let checks = material_check(&doc, &[&issuer], &[&leaf_der]);
         assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
+    }
+
+    /// An unauthenticated copy cannot withhold an anchor key's cRLSign or
+    /// suppress its genuine revocation of the covered leaf.
+    #[test]
+    fn dss_crl_revocation_survives_an_unauthenticated_issuer_copy_without_crl_sign() {
+        let anchor = test_ca("issuer");
+        let leaf_der = leaf_under(&anchor, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        let crl = build_crl(
+            &anchor,
+            THIS_UPDATE,
+            NEXT_UPDATE,
+            None,
+            vec![leaf.tbs_certificate.serial_number],
+        );
+        let expected = (
+            VerifyCheckStatus::Fail,
+            Some(VerifyFindingCode::ValidationMaterialInvalid),
+        );
+        let control = dss_doc(
+            std::slice::from_ref(&leaf_der),
+            std::slice::from_ref(&crl),
+            &[],
+        );
+        let control_checks = material_check(&control, &[&anchor], &[&leaf_der]);
+        assert_eq!(
+            dss_finding(&control_checks),
+            expected,
+            "FAILBEFORE SEAL-CRL-SIGNER-UNAUTHENTICATED-COPY: anchor revocation control"
+        );
+        let copy_der =
+            unauthenticated_key_usage_copy(&anchor, vec![rcgen::KeyUsagePurpose::DigitalSignature]);
+        let doc = dss_doc(&[copy_der, leaf_der.clone()], &[crl], &[]);
+        let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
+        assert_eq!(
+            dss_finding(&checks),
+            expected,
+            "FAILBEFORE SEAL-CRL-SIGNER-UNAUTHENTICATED-COPY: a copy withheld the anchor's cRLSign"
+        );
+    }
+
+    /// An unauthenticated copy cannot grant cRLSign to an anchor key whose
+    /// authenticated certificate forbids CRL signing.
+    #[test]
+    fn dss_crl_gains_no_crl_sign_from_an_unauthenticated_issuer_copy() {
+        let anchor = ca_with_kus(
+            "issuer",
+            vec![
+                rcgen::KeyUsagePurpose::KeyCertSign,
+                rcgen::KeyUsagePurpose::DigitalSignature,
+            ],
+        );
+        let leaf_der = leaf_under(&anchor, "leaf");
+        let crl = build_crl(&anchor, THIS_UPDATE, NEXT_UPDATE, None, vec![]);
+        let expected = (
+            VerifyCheckStatus::NotRun,
+            Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
+        );
+        let control = dss_doc(
+            std::slice::from_ref(&leaf_der),
+            std::slice::from_ref(&crl),
+            &[],
+        );
+        let control_checks = material_check(&control, &[&anchor], &[&leaf_der]);
+        assert_eq!(
+            dss_finding(&control_checks),
+            expected,
+            "FAILBEFORE SEAL-CRL-SIGNER-UNAUTHENTICATED-COPY: anchor without cRLSign control"
+        );
+        let copy_der = unauthenticated_key_usage_copy(
+            &anchor,
+            vec![
+                rcgen::KeyUsagePurpose::KeyCertSign,
+                rcgen::KeyUsagePurpose::DigitalSignature,
+                rcgen::KeyUsagePurpose::CrlSign,
+            ],
+        );
+        let doc = dss_doc(&[copy_der, leaf_der.clone()], &[crl], &[]);
+        let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
+        assert_eq!(
+            dss_finding(&checks),
+            expected,
+            "FAILBEFORE SEAL-CRL-SIGNER-UNAUTHENTICATED-COPY: a copy lent the anchor cRLSign"
+        );
+    }
+
+    /// An unauthenticated holder copy cannot withhold cRLSign from the
+    /// separate CRL-signing key the leaf's own issuer certified.
+    #[test]
+    fn dss_crl_revocation_by_a_separate_key_survives_an_unauthenticated_holder_copy() {
+        let anchor = test_ca("issuer");
+        let leaf_der = leaf_under(&anchor, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        let crl_signer = child_ca(&anchor, "issuer");
+        let crl = build_crl(
+            &crl_signer,
+            THIS_UPDATE,
+            NEXT_UPDATE,
+            None,
+            vec![leaf.tbs_certificate.serial_number],
+        );
+        let expected = (
+            VerifyCheckStatus::Fail,
+            Some(VerifyFindingCode::ValidationMaterialInvalid),
+        );
+        let control = dss_doc(
+            &[crl_signer.cert_der.clone(), leaf_der.clone()],
+            std::slice::from_ref(&crl),
+            &[],
+        );
+        let control_checks = material_check(&control, &[&anchor], &[&leaf_der]);
+        assert_eq!(
+            dss_finding(&control_checks),
+            expected,
+            "FAILBEFORE SEAL-CRL-SIGNER-UNAUTHENTICATED-COPY: separate CRL-signing key control"
+        );
+        let copy_der = unauthenticated_key_usage_copy(
+            &crl_signer,
+            vec![rcgen::KeyUsagePurpose::DigitalSignature],
+        );
+        let doc = dss_doc(
+            &[copy_der, crl_signer.cert_der, leaf_der.clone()],
+            &[crl],
+            &[],
+        );
+        let checks = material_check(&doc, &[&anchor], &[&leaf_der]);
+        assert_eq!(
+            dss_finding(&checks),
+            expected,
+            "FAILBEFORE SEAL-CRL-SIGNER-UNAUTHENTICATED-COPY: a copy withheld the certified key's cRLSign"
+        );
     }
 
     #[test]
