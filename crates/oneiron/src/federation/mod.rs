@@ -208,14 +208,18 @@ mod system_agent_grant;
 pub(crate) use system_agent_grant::SystemAgentGrantState;
 pub(crate) use system_agent_grant::erase_narrowing_actor_in_txn;
 pub(crate) use system_agent_grant::is_system_agent_steward_grant;
-#[cfg(any(test, oneiron_test_support))]
-pub(crate) use system_agent_grant::standing_steward_verbs_in;
 pub use system_agent_grant::{
     SYSTEM_AGENT_GRANT_NARROWING_WARNING, SystemAgentGrantNarrowing, SystemAgentNarrowing,
     SystemFunction,
 };
 pub(crate) use system_agent_grant::{
-    holds_system_agent_grant, standing_steward_grant_in, steward_grant_of_in, steward_rows_rewrite,
+    StewardRows, SystemAgent, holds_system_agent_grant, standing_steward_grant_in,
+    standing_steward_verbs_in, steward_grant_of_in, steward_rows_rewrite,
+};
+mod engine_controls;
+pub(crate) use engine_controls::erase_engine_control_actor_in_txn;
+pub use engine_controls::{
+    ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
 };
 #[cfg(test)]
 mod shared_creation_tests;

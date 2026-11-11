@@ -23,14 +23,30 @@ pub(crate) const STEWARD_ARCHIVE_VERB: &str = "archive";
 /// A Steward deletes in scope.
 pub(crate) const STEWARD_DELETE_VERB: &str = "delete";
 
-/// The verbs a Steward's grant can carry, and the shipped default gives it:
-/// read and derive across its vault root, archive inside its grant, delete
-/// in scope.
+/// A Steward tunes the engine's knobs (untangle 6.6, S66-1): maintenance
+/// cadence, work budgets inside the owner's caps, system-agent wake cadence
+/// and which recipe a knowledge job runs. Owner acts stay outside it. No
+/// role default gives it: the Coach's default grant names it, and an owner
+/// can give it to any agent.
+pub(crate) const ENGINE_CONTROLS_VERB: &str = "engine.controls";
+
+/// The verbs the shipped Steward default gives: read and derive across its
+/// vault root, archive inside its grant, delete in scope.
 pub(crate) const STEWARD_VERBS: [&str; 4] = [
     STEWARD_READ_VERB,
     STEWARD_DERIVE_VERB,
     STEWARD_ARCHIVE_VERB,
     STEWARD_DELETE_VERB,
+];
+
+/// Every verb a Steward's grant can carry: the default four and
+/// `engine.controls`.
+pub(crate) const STEWARD_CEILING_VERBS: [&str; 5] = [
+    STEWARD_READ_VERB,
+    STEWARD_DERIVE_VERB,
+    STEWARD_ARCHIVE_VERB,
+    STEWARD_DELETE_VERB,
+    ENGINE_CONTROLS_VERB,
 ];
 
 pub(crate) fn membership_preset(role: super::FederationGrantRole) -> Scope {
@@ -43,13 +59,14 @@ pub(crate) fn membership_preset(role: super::FederationGrantRole) -> Scope {
         // ceiling; the vault minting writer resolves the policy row instead.
         super::FederationGrantRole::Delegate => super::scope_codec::read_preset(),
         // The Steward's ceiling (ARCH-0043, owner 9 Nov): read and derive
-        // across the vault root, archive inside its grant, delete in scope.
-        // It names no admin power and no `write`, so no vault or holder row
-        // can raise a Steward to membership acts or general content writes.
+        // across the vault root, archive inside its grant, delete in scope,
+        // and engine.controls (6.6). It names no admin power and no `write`,
+        // so no vault or holder row can raise a Steward to membership acts or
+        // general content writes.
         super::FederationGrantRole::Steward => {
             let mut scope = Scope::top();
             scope.verbs = ScopeAxis::Some(
-                STEWARD_VERBS
+                STEWARD_CEILING_VERBS
                     .iter()
                     .map(|verb| (*verb).to_owned())
                     .collect(),

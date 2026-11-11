@@ -70,7 +70,8 @@ impl SystemFunction {
                 grant_scope::STEWARD_DERIVE_VERB,
                 grant_scope::STEWARD_ARCHIVE_VERB,
             ],
-            Self::CoachChecks | Self::EngineControlsJobs => &[grant_scope::STEWARD_READ_VERB],
+            Self::CoachChecks => &[grant_scope::STEWARD_READ_VERB],
+            Self::EngineControlsJobs => &[grant_scope::ENGINE_CONTROLS_VERB],
         }
     }
 
@@ -97,6 +98,13 @@ impl SystemFunction {
 /// The functions the Dreamer's grant serves: what its rows ran.
 pub(super) const DREAMER_FUNCTIONS: [SystemFunction; 2] =
     [SystemFunction::Consolidation, SystemFunction::RecallUpkeep];
+
+/// The functions the Coach's grant serves (6.6): its checks read the vault,
+/// and its jobs tune the engine.
+pub(super) const COACH_FUNCTIONS: [SystemFunction; 2] = [
+    SystemFunction::CoachChecks,
+    SystemFunction::EngineControlsJobs,
+];
 
 /// The one warning every system-critical narrowing shows.
 pub const SYSTEM_AGENT_GRANT_NARROWING_WARNING: &str = "This grant belongs to a system agent that keeps your vault working. Narrowing \
@@ -231,10 +239,11 @@ impl Vault {
     ) -> Result<SystemAgentGrantNarrowing> {
         if keep
             .iter()
-            .any(|verb| !grant_scope::STEWARD_VERBS.contains(&verb.as_str()))
+            .any(|verb| !grant_scope::STEWARD_CEILING_VERBS.contains(&verb.as_str()))
         {
             return Err(Error::InvalidConfig(
-                "a Steward grant holds read, derive, archive and delete only".into(),
+                "a Steward grant holds read, derive, archive, delete and engine.controls only"
+                    .into(),
             ));
         }
         let narrowing = self.with_write_txn_grouped(|txn| {
