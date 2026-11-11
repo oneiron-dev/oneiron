@@ -1,4 +1,4 @@
-//! Consent lifecycle host doors, on the same owner proof as Gate policy.
+//! Consent lifecycle host doors: owner-authorized acts and a grantee's own revoke.
 use std::sync::Arc;
 
 use oneiron::Vault;
@@ -198,10 +198,28 @@ pub(crate) async fn vault_consent_revoke(
     auth: &CoreAuth,
     input: RevokeGrantRequest,
 ) -> Listed<ConsentActReceipt> {
-    as_owner(server, auth, "vault.consent.revoke", move |vault, owner| {
-        lifecycle::revoke(vault, owner, input)
-    })
-    .await
+    const VERB: &str = "vault.consent.revoke";
+    let answer = match owner_proof(auth, server, VERB) {
+        Ok(owner) => {
+            let server = Arc::clone(server);
+            clock_ingress::run_blocking(move || lifecycle::revoke(server.vault(), &owner, input))
+                .await
+        }
+        Err(refusal) => {
+            let (actor, class) =
+                match super::owner_binding::facade_caller_or(server, auth, || refusal) {
+                    Ok(caller) => caller,
+                    Err(error) => return (Err(error), Vec::new()),
+                };
+            let server = Arc::clone(server);
+            clock_ingress::run_blocking(move || {
+                lifecycle::revoke_as_grantee(server.vault(), actor, class, input)
+            })
+            .await
+        }
+    }
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    (answer, Vec::new())
 }
 
 pub(crate) async fn vault_consent_bypass_grant_warning(

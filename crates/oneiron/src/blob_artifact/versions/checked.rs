@@ -51,6 +51,7 @@ impl Vault {
         learned_at: u64,
         producer_position: BirthPosition,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
+        claim_id: Option<EntityId>,
     ) -> Result<CheckedAppend> {
         let later = read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?.is_some();
         let content_hash = content.blake3();
@@ -118,6 +119,7 @@ impl Vault {
             None,
             producer_position,
             lane,
+            claim_id,
         )?;
         Ok((Some(version), None, staged.map(StagedAssetBody::into_hold)))
     }
@@ -132,7 +134,8 @@ impl Vault {
     /// `producer_position` is the position the producing Memory's host bound
     /// (FIX 3171). A landed version's claim is born there. A proposal keeps
     /// it for Keep, so the claim is born at the producer's position, never
-    /// at the keeper's.
+    /// at the keeper's. `claim_id` reserves an unlabelled machine append's
+    /// version claim, also used as its proposal key until Keep births it.
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn append_blob_artifact_version_checked_in_txn(
         &self,
@@ -146,7 +149,9 @@ impl Vault {
         learned_at: u64,
         producer_position: BirthPosition,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
+        claim_id: Option<EntityId>,
     ) -> Result<(BlobArtifactAppendOutcome, Option<StagedHold>)> {
+        super::validate_provenance(provenance)?;
         let (version, fork_base, hold) = self.decide_blob_artifact_append_in_txn(
             wtxn,
             artifact_id,
@@ -160,6 +165,7 @@ impl Vault {
             learned_at,
             producer_position,
             lane,
+            claim_id,
         )?;
         if let Some(version) = version {
             return Ok((BlobArtifactAppendOutcome::Landed(version), hold));
@@ -177,6 +183,7 @@ impl Vault {
             (actor, learned_at),
             fork_base,
             producer_position,
+            claim_id,
         )
         .map(|(proposal, hold)| (BlobArtifactAppendOutcome::Proposed(proposal), hold))
     }

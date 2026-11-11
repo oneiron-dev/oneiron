@@ -56,7 +56,7 @@ crate::side_table::side_tables! {
     /// concatenated 32-byte digests. Key: id16 (document) + string (recipient id).
     ESIGN_RECIPIENT_CAPABILITY_INDEX: VaultMeta b"esign.recipient_capability.v1/" Raw
         [restore: refuse "e-sign capabilities"] [family: unclassified] [tier: canonical];
-    /// Completed seal attempt result. Key: id16.
+    /// Successful seal or failed verification result. Key: id16 (attempt).
     ESIGN_SEAL_RESULT: VaultMeta b"esign.seal_result.v1/" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];
     /// Sealed document manifest. Key: id16.
