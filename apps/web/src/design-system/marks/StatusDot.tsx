@@ -16,9 +16,9 @@ export interface StatusDotProps extends Omit<React.ComponentPropsWithRef<'span'>
   label?: string
 }
 
-/* A state as a mark. `live` is the only red mark: small, breathing, at most
-   one at rest in a view. `approved` is filled, `proposed` hollow, `idle` a
-   faint filled dot. */
+/* A state as a mark, every state the same 8 px dot. `live` is the only red
+   mark, solid at full strength, at most one at rest in a view. `approved`
+   is filled, `proposed` hollow, `idle` a faint filled dot. */
 export function StatusDot({ state, label, className, ...props }: StatusDotProps) {
   return (
     <span

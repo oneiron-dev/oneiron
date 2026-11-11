@@ -7,10 +7,7 @@
 }
 
 .sl-status-dot[data-state="live"] {
-  width: 6px;
-  height: 6px;
   background: var(--sl-safelight);
-  animation: sl-breathe 2.6s ease-in-out infinite;
 }
 
 .sl-status-dot[data-state="approved"] {
@@ -23,10 +20,4 @@
 
 .sl-status-dot[data-state="idle"] {
   background: var(--sl-ink-4);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sl-status-dot[data-state="live"] {
-    animation: none;
-  }
 }
