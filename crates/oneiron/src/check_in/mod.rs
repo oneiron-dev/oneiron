@@ -16,23 +16,54 @@
 //!   unsure test (rung 1) the caller injects.
 //! * [`verb_act_class()`], the act class each verb row states (PR 2, P2.1);
 //!   nothing reads it to decide an act yet.
+//! * [`PendingCheckIn`], the durable handle of an act that waits (PR 2,
+//!   P2.2: 2b and 2d): its rungs above rung 1, the wait per person rung from
+//!   the `check_in` policy row ([`CheckInPolicy`]), the asker's longer wait
+//!   and `until`, a holder's extension and answer, and canon's table "When
+//!   nobody answers", each transition receipted (`check_in` receipts).
 //!
 //! Fan-out admission is the first caller, through [`check_in_with_mode`],
-//! because its mode comes from its own manifest rows. The ladder above rung 1,
-//! a proposal handle on `Wait`, the change path and the key, quorum and
-//! delay-window proofs are later builds.
+//! because its mode comes from its own manifest rows. The resolver that
+//! names each rung's holders from verified records (2c), the host that wakes
+//! a due check-in (2e), the agent verbs (2f, 2l), the change path and the
+//! key and quorum proofs are later builds.
 
 mod act_class;
 mod mode;
+mod pending;
+mod policy;
+mod receipt;
 mod resolve;
 mod role_preset;
+mod tables;
 mod verb_act_class;
+mod waits;
 
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
 pub use mode::CheckInMode;
+pub(crate) use pending::erase_pending_check_in_actor_in_txn;
+pub use pending::{
+    CapturedWait, DelayWindow, DelayWindowOpen, Extension, HolderAnswer, HolderKind, Objection,
+    OpenPendingCheckIn, PendingCheckIn, PendingState, Rung, RungEntry, RungHolder, RungMembers,
+};
+// The doors 2c and 2e-2l call; until then only `test_doors::check_in` does.
+#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
+pub(crate) use pending::{
+    RungResolver, answer_pending_check_in_in_txn, extend_pending_check_in_in_txn,
+    open_pending_check_in_in_txn, record_objection_in_txn,
+};
+pub(crate) use policy::{CHECK_IN_ROW_KEY, CheckInPolicyRead};
+pub use policy::{
+    CHECK_IN_ROW_VERSION, CheckInPolicy, CheckInScope, ClassWait, DEFAULT_RUNG_WAIT_SECS,
+    RungWaitRow, WaitSource,
+};
+pub(crate) use receipt::{check_in_receipts, erase_check_in_receipt_actor_in_txn};
 pub use resolve::{
     CheckInAnswer, CheckInRequest, GoReason, ModeSource, ResolvedMode, UnsureTest, WaitReason,
     check_in, check_in_with_mode, resolve_mode,
 };
 pub use role_preset::{ROLE_PRESET, RoleDefault, RolePreset, RolePresetRow};
 pub use verb_act_class::{VerbActClass, verb_act_class};
+pub use waits::CheckInTransition;
+#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
+pub(crate) use waits::advance_pending_check_in_in_txn;

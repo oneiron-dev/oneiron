@@ -5,6 +5,7 @@
 //! build reaches them. Hidden; never API.
 
 pub mod callable_skill;
+pub mod check_in;
 pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod consolidation;
