@@ -193,16 +193,19 @@ pub struct BackupHolds {
     /// How the standing holds show to the owner, read in the same walk;
     /// `None` when none stands.
     held_visibility: Option<BackupHoldVisibility>,
+    /// Whether the vault's Owners deleted it, read in the same transaction
+    /// (FIX 11432): under [`Vault::with_backup_hold_exclusion`] no deletion
+    /// commits while it is read.
+    vault_deleted: bool,
 }
 
 /// How the holds that keep a vault's backups show to its owner, coarse on
 /// purpose (FIX 9500): no order, issuer, count, date or ordering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackupHoldVisibility {
-    /// A hold the owner may see stands, whatever else stands beside it.
+    /// A hold the owner may see stands. Only customer holds keep backups, and
+    /// the owner sees each one.
     Visible,
-    /// Only host orders whose silence still runs stand.
-    SilentOnly,
 }
 
 impl BackupHolds {
@@ -210,6 +213,15 @@ impl BackupHolds {
     #[must_use]
     pub fn keeps_backups(&self) -> bool {
         self.standing > 0
+    }
+
+    /// Whether the vault's Owners deleted it, as the same transaction read
+    /// it: a caller that spares a deleted vault's backups until their
+    /// retention ends reads it here, where no deletion commits meanwhile
+    /// (FIX 11432).
+    #[must_use]
+    pub fn vault_deleted(&self) -> bool {
+        self.vault_deleted
     }
 
     /// How the standing holds show to the owner at the read
@@ -222,23 +234,14 @@ impl BackupHolds {
 }
 
 fn backup_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<BackupHolds> {
-    let now = vault.store.clock.now_recorded_at();
-    let mut standing = 0_u64;
-    let mut visible = false;
-    for hold in crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
+    let standing = crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
         .iter()
         .filter(|hold| hold.keeps_vault_data())
-    {
-        standing = standing.saturating_add(1);
-        visible |= hold.owner_may_see(now);
-    }
-    let held_visibility = (standing > 0).then_some(if visible {
-        BackupHoldVisibility::Visible
-    } else {
-        BackupHoldVisibility::SilentOnly
-    });
+        .count() as u64;
+    let held_visibility = (standing > 0).then_some(BackupHoldVisibility::Visible);
     Ok(BackupHolds {
         standing,
         held_visibility,
+        vault_deleted: vault.shared_vault_deletion_in_txn(txn)?.is_some(),
     })
 }

@@ -31,10 +31,10 @@ use super::{
     LensActivateRequest, LensEvaluatedRevision, LensProposeRequest, LensRegenFailurePhase,
     LensRegenOutcome, LensRegenerator, LensSlot,
 };
+use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryResult};
 use crate::receipt::{LensActivationReceipt, LensProposalReceipt};
-use crate::{EntityId, Error};
 
 /// One regeneration decision and the selection it was made against: the
 /// slot's active lens when the decision read it (FIX 9897). Its outcome
@@ -164,8 +164,7 @@ impl Memory<'_> {
         let proposal = self.lenses_propose(LensProposeRequest {
             slot: slot.clone(),
             pack_content_hash,
-            compiled: serde_json::to_value(&candidate)
-                .map_err(|_| Error::InvalidConfig("regenerated lens did not encode".into()))?,
+            compiled: candidate,
             intent_prompt: intent.prompt().to_owned(),
             // An upgrade, not a task, ask, run or skill, caused it.
             trigger: None,

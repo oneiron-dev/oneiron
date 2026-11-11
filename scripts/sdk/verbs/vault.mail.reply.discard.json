@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.reply.discard",
+  "description": "Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends.",
+  "input": "crate::mail_pack::MailReplyDraftRef",
+  "output": "crate::mail_pack::MailReplyDraftView",
+  "call": "memory.mail_reply_discard(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

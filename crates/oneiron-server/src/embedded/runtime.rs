@@ -72,9 +72,7 @@ where
 {
     let caller = workers.is_none().then(Handle::current);
     let (finished, done) = oneshot::channel();
-    std::thread::Builder::new()
-        .stack_size(crate::ENGINE_THREAD_STACK_BYTES)
-        .name("oneiron-engine-serve".to_owned())
+    crate::engine_thread("oneiron-engine-serve".to_owned())
         .spawn(move || {
             let served = match caller {
                 Some(caller) => caller.block_on(serve()),

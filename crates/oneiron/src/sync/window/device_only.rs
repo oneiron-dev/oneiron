@@ -426,6 +426,11 @@ fn carries_device_only(
         &doc.get_map(crate::sync::row_birth::ROW_BIRTHS_MAP),
         |key, _| ids.extend(EntityId::from_hex(key).ok()),
     );
+    // So does a source audience binding; a policy id names no row.
+    map_for_each_value_bytes(
+        &doc.get_map(crate::sync::source_audiences::SOURCE_AUDIENCES_MAP),
+        |key, _| ids.extend(crate::sync::source_audiences::record_owner(key)),
+    );
     Ok(carried || stored_withheld_among(vault, flagged, ids)?)
 }
 
@@ -439,6 +444,10 @@ fn history_inserts_device_only(
     let entities = ContainerID::new_root("entities", ContainerType::Map);
     let edges = ContainerID::new_root("edges", ContainerType::Map);
     let births = ContainerID::new_root(crate::sync::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
+    let source_audiences = ContainerID::new_root(
+        crate::sync::source_audiences::SOURCE_AUDIENCES_MAP,
+        ContainerType::Map,
+    );
     let mut ids = BTreeSet::new();
     for op in history.changes.iter().flat_map(|change| &change.ops) {
         let JsonOpContent::Map(MapOp::Insert { key, value }) = &op.content else {
@@ -457,6 +466,8 @@ fn history_inserts_device_only(
             ids.extend([src, tgt]);
         } else if op.container == births {
             ids.extend(EntityId::from_hex(key).ok());
+        } else if op.container == source_audiences {
+            ids.extend(crate::sync::source_audiences::record_owner(key));
         }
     }
     stored_withheld_among(vault, flagged, ids)

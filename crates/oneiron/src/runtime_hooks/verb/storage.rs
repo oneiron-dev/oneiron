@@ -51,11 +51,9 @@ use crate::code_run::{
 };
 use crate::error::{Error, GateError, OffRecordError};
 use crate::off_record::{OffRecordSession, SessionWriteRoute};
-use crate::receipt::ReceiptRecord;
 use crate::runtime_hooks::runner::bounded;
-use crate::runtime_hooks::store::{self, RunKey};
 use crate::session_overlay::{SessionOverlay, TxnSegmentGuard};
-use crate::side_table::{RoutedDbs, SideTableDbs};
+use crate::side_table::RoutedDbs;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::store::SessionStoreView;
 use crate::task_verb::{
@@ -64,15 +62,16 @@ use crate::task_verb::{
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, MemoryError, Result, Vault};
 
-use super::record::{self, HookVerbRunRecord};
 use super::{VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, chain};
 
+mod held;
 mod invocation_claims;
 mod named_pause;
 mod room_pause;
 mod room_tail;
 mod session_ask;
 
+pub(super) use held::HeldRun;
 pub(super) use room_pause::PausedRoute;
 pub(crate) use room_pause::RoomHookCall;
 
@@ -139,18 +138,6 @@ pub(crate) struct SessionCarry {
     key: Option<SessionHookKey>,
     runs: Vec<HeldRun>,
     notes: Vec<SessionHookDisposition>,
-}
-
-/// One run as a session keeps it: its receipt and its saved copy under its
-/// run key, and what the call's answer says of it, but for its receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct HeldRun {
-    pub(super) key: RunKey,
-    pub(super) receipt: ReceiptRecord,
-    pub(super) saved: HookVerbRunRecord,
-    pub(super) hook: String,
-    pub(super) phase: SessionHookPhase,
-    pub(super) state: SessionHookState,
 }
 
 /// What became of one call's records in a session's store.
@@ -487,7 +474,7 @@ impl SessionHookKeep {
             return None;
         }
         Some(f(kept.entry(key.clone()).or_insert_with(|| Kept {
-            overlay: SessionOverlay::new(vault.config.off_record_overlay_budget_bytes),
+            overlay: SessionOverlay::new(vault.runtime().off_record_overlay_budget_bytes()),
             invocations: None,
             asks: HashMap::new(),
             ask_records: HashMap::new(),
@@ -632,54 +619,6 @@ impl<'s> SessionHooks<'s> {
             self.notes.borrow_mut().extend(carry.notes);
         }
     }
-
-    /// Keeps every run held, in one segment of their own, and records what
-    /// each hook did, then what the call noted. A store that keeps none
-    /// fails nothing.
-    fn keep(&self) -> Result<()> {
-        let runs = self.held.take();
-        if runs.is_empty() {
-            self.dispositions.borrow_mut().extend(self.notes.take());
-            return Ok(());
-        }
-        let rows = |txn: &mut heed::RwTxn<'_>, read: RoutedDbs<'_>, write: RoutedDbs<'_>| {
-            runs.iter()
-                .try_for_each(|run| put_run(&read, &write, txn, run))
-        };
-        let kept = match &self.target {
-            HooksTarget::Room { session, route, .. } => session.stage_hook_records(route, rows)?,
-            HooksTarget::Kept { vault, key } => {
-                vault.verb_hook_state.session.stage(vault, key, rows)?
-            }
-        };
-        self.dispositions
-            .borrow_mut()
-            .extend(runs.into_iter().map(|run| SessionHookDisposition {
-                hook: Some(run.hook),
-                phase: run.phase,
-                state: run.state,
-                receipt: match &kept {
-                    HookRecordsKept::Kept => SessionHookReceipt::Kept {
-                        id: store::receipt_id(&run.key),
-                    },
-                    HookRecordsKept::NotKept(why) => SessionHookReceipt::NotKept { why: *why },
-                },
-            }));
-        self.dispositions.borrow_mut().extend(self.notes.take());
-        Ok(())
-    }
-}
-
-/// One run's receipt and saved copy: its earlier saved copy read through
-/// `read`, and its rows written along `write`.
-fn put_run(
-    read: &impl SideTableDbs,
-    write: &impl SideTableDbs,
-    txn: &mut heed::RwTxn<'_>,
-    run: &HeldRun,
-) -> Result<()> {
-    store::RECEIPTS.put(write, txn, &run.key, &run.receipt)?;
-    record::put_in_txn(read, write, txn, &run.key, &run.saved)
 }
 
 impl VerbHookPre {
@@ -775,7 +714,7 @@ impl Vault {
                 Ok(Ok(pre))
             }
             Err(stop) => {
-                hooks.keep()?;
+                hooks.keep(self)?;
                 Ok(Err(stop))
             }
         }
@@ -811,7 +750,7 @@ impl Vault {
                 Ok(result)
             }
         };
-        hooks.keep()?;
+        hooks.keep(self)?;
         Ok(ended)
     }
 
@@ -830,6 +769,6 @@ impl Vault {
             return Ok(());
         };
         hooks.resume(&mut pre);
-        hooks.keep()
+        hooks.keep(self)
     }
 }

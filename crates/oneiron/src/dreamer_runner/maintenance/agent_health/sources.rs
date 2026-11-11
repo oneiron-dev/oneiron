@@ -1,7 +1,7 @@
 //! The rows a Coach answer on an agent-health card was drafted from (FIX
-//! 9220). The brief's numbers are review state that names no rows, so the
-//! brief's own source set stays unknown (FIX 6997); the rows it is known to
-//! read are kept beside it, frozen with the answer: the agent and its TASK,
+//! 9220). The brief's host-local input-row union may be known for witnessed
+//! Loop cards (FIX 6997). Its separate known-source erase witness is frozen
+//! with the answer: the agent and its TASK,
 //! the skills its run loaded and that run, the observed brief's TASK or the
 //! CLAIM its text came from, the pad read's row and each pad it returned. An
 //! erase of any of them clears the draft's text (`erase.rs`), on the live

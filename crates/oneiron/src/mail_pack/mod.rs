@@ -27,22 +27,71 @@
 //! newest first, headers before bodies, live through the provider's change
 //! feed; each message lands as imported evidence bound to its thread's
 //! audience ([`landing`]), and a provider delete applies the source's setting
-//! ([`provider_delete`]). Provider wires land per provider row, Google
-//! Workspace first.
+//! ([`provider_delete`]). Provider wires land per provider row: Gmail for
+//! Google Workspace and Google ([`gmail`]), Microsoft Graph for Microsoft 365
+//! ([`microsoft365`]), and IMAP4rev1 over TLS for any other mailbox
+//! ([`imap`], on the engine's own client [`imap_client`]). Calendar sources land through the calendar engine's
+//! connector admission, each EVENT bound to its source at birth
+//! ([`calendar`]), read from Google Calendar ([`google_calendar`]), Microsoft 365
+//! ([`microsoft365_calendar`]) or an ICS subscription ([`ics_calendar`]).
+//! The owner runs a step on this device through [`local_sync`], and imports
+//! an mbox file or a Google Takeout export through [`mbox_import`], read by
+//! the engine's own MIME reader ([`mime`]).
 
+mod attachments;
+mod caldav_calendar;
+mod calendar;
+pub(crate) mod claim_recheck;
 mod compliance;
+mod credential;
+mod dav_xml;
 mod doors;
-mod importer;
+mod gmail;
+mod google_calendar;
+mod header_retire;
+mod ics_calendar;
+mod imap;
+mod imap_client;
+#[doc(hidden)]
+pub mod importer;
 mod inbox;
 mod landing;
-mod pack;
+#[doc(hidden)]
+pub mod local_sync;
+mod mbox;
+mod mbox_import;
+mod microsoft365;
+mod microsoft365_calendar;
+mod mime;
+#[doc(hidden)]
+pub mod pack;
 mod provider_delete;
+mod reply;
+mod reply_ask;
+mod reply_mime;
+mod reply_recipients;
+mod reply_send;
+mod rest;
+mod search;
 mod share;
-mod source;
+mod smtp_client;
+#[doc(hidden)]
+pub mod source;
 mod state;
+pub(crate) mod tables;
+mod tls_stream;
 mod wire;
 
 pub use crate::source_audience::{SourceAudienceEventView, SourceAudienceOp};
+pub(crate) use attachments::collect_after_delete;
+pub use attachments::{MailAttachmentOpenRequest, MailAttachmentState, MailAttachmentView};
+pub use caldav_calendar::{CALDAV_CALENDAR_CONNECTOR_EFFECTOR, HttpCalDavCalendarWire};
+pub use calendar::{MailCalendarFeed, MailCalendarPull, MailCalendarRead, MailCalendarWire};
+pub(crate) use calendar::{
+    calendar_source_landing_in, calendar_source_occupancy, calendar_source_of_system_in,
+    calendar_source_person_in, merge_busy,
+};
+pub(crate) use claim_recheck::{claim_recheck_current_in, erase_claim_recheck_ids_in_txn};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub use compliance::{
     MailComplianceEventKind, MailComplianceEventView, MailComplianceHit, MailComplianceSearchReply,
@@ -53,13 +102,29 @@ pub use doors::{
     MailSourceConnectReceipt, MailSourceConnectRequest, MailSourceMembersRequest, MailSourceRef,
     MailSourceSettingsRequest,
 };
+pub use gmail::HttpGmailMailWire;
+pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
+pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};
+pub use imap::{IMAP_CONNECTOR_EFFECTOR, ImapMailWire};
 pub use importer::{MailSyncBudget, MailSyncReport};
 pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
 };
+pub use local_sync::MailSourceSyncRequest;
+pub use mbox_import::{MailMboxImportReport, MailMboxImportRequest};
+pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
+pub use microsoft365_calendar::{HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR};
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };
+pub use reply::{
+    MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
+    MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
+};
+pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
+pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
+pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
+pub use search::{MailSearchReport, MailSourceSearchRequest};
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{
     CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting,
@@ -68,6 +133,7 @@ pub use source::{
 pub(crate) use state::erase_occurrence_rows_in_txn;
 pub use state::{MailPresence, MailStage, MailSyncStatusView};
 pub use wire::{
-    MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
-    MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
+    MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange,
+    MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery, MailMessageRef, MailProviderWire,
+    MailSyncSource,
 };

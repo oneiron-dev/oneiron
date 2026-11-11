@@ -393,10 +393,13 @@ impl Running {
             if let Ok(Some(status)) = self.child.try_wait() {
                 return Err(format!("serve exited {status} before it was ready"));
             }
+            // A server still starting answers `"starting"` (FIX 22117); it
+            // is ready once its own router answers `"ok"`.
             if client
                 .get(&url)
                 .send()
-                .is_ok_and(|r| r.status().is_success())
+                .and_then(reqwest::blocking::Response::json::<Value>)
+                .is_ok_and(|health| health["status"] == "ok")
             {
                 self.ready_ms = started.elapsed().as_secs_f64() * 1000.0;
                 return Ok(());

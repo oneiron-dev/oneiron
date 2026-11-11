@@ -21,6 +21,7 @@ pub(crate) async fn handle_mcp_request(
     server: &Arc<SyncServer>,
     request: McpJsonRpcRequest,
     raw_arguments: Option<&str>,
+    held: Option<super::blob_body::McpHeld>,
 ) -> Result<Value, McpGatewayError> {
     if request.jsonrpc != "2.0" {
         return Err(
@@ -61,8 +62,17 @@ pub(crate) async fn handle_mcp_request(
                 .ok()
                 .flatten()
                 .map(|id| crate::owner::vault_key::hex(&id));
+            // The version the client asks for when this server speaks it,
+            // else the newest (FIX 4902).
+            let protocol_version = mcp_negotiated_version(
+                request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("protocolVersion"))
+                    .and_then(Value::as_str),
+            );
             let result = json!({
-                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "protocolVersion": protocol_version,
                 "serverInfo": {
                     "name": crate::mcp::MCP_SERVER_NAME,
                     "version": env!("CARGO_PKG_VERSION"),
@@ -81,7 +91,7 @@ pub(crate) async fn handle_mcp_request(
                 "actor": mcp_actor_result(&actor),
                 "vault_id": vault_id,
             });
-            super::device_release::mcp_release_result(server, &actor, &[], false, result)
+            super::device_release::mcp_release_result(server, &actor, &[], false, result, false)
         }
         // Actor-free, but a caller is still REQUIRED, as for every method.
         "notifications/initialized" => {
@@ -151,8 +161,14 @@ pub(crate) async fn handle_mcp_request(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned();
-            let request_digest =
-                oneiron::receipt::call_json_digest(request.params.as_ref().unwrap_or(&Value::Null));
+            // A body whose content is held as a file states its params as
+            // they arrived (FIX 22074).
+            let request_digest = match &held {
+                Some(held) => held.params_digest().to_owned(),
+                None => oneiron::receipt::call_json_digest(
+                    request.params.as_ref().unwrap_or(&Value::Null),
+                ),
+            };
             // OF-568: what the call reads, captured before it runs.
             let inputs =
                 crate::api::call_receipt::action_inputs(server, &tool, request.params.as_ref());
@@ -200,12 +216,34 @@ pub(crate) async fn handle_mcp_request(
                         ),
                         ..actor.clone()
                     };
-                    let args =
+                    let mut args =
                         mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
+                    // The held content rides the call of the tool it arrived
+                    // for, with that call's page argument digest (FIX 22074).
+                    if let (Some(held), crate::mcp::McpValidatedToolArgs::Verb(call)) =
+                        (held, &mut args)
+                    {
+                        call.held = held.content_for(call).map_err(|error| {
+                            McpGatewayError::new(-32603, "engine_error", error.to_string())
+                        })?;
+                    }
                     ensure_mcp_actor_matches(&args, &actor)?;
                     mcp_admit_scoped_call(server, &args, &actor)?;
+                    // A named verb call keeps its admission intent, as the
+                    // facade's does, unless it sits off the record (FIX 4735).
+                    let intent = super::super::admission_intent::McpIntent::of(
+                        server, &args, &actor, anonymous,
+                    );
                     // The tool fan-out, on the heap (FIX 12072).
-                    Box::pin(execute_mcp_tool(server, args, &actor, headers, connection)).await
+                    let run = execute_mcp_tool(server, args, &actor, headers, connection);
+                    Box::pin(super::super::admission_intent::observed(
+                        server,
+                        &actor,
+                        intent,
+                        run,
+                        |result| result,
+                    ))
+                    .await
                 })
                 .await;
             // ONE-1704 M4: ONE chokepoint. Everything inside that block happened

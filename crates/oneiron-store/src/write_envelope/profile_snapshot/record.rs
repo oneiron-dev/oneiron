@@ -3,14 +3,20 @@
 use super::codec::{
     canonical_source_revision_ids, invalid_profile, validate_confidence, validate_text,
 };
+use crate::revision_ref::RevisionRef;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::Result;
 
-/// Current PsychProfile record body schema version.
-pub const PSYCH_PROFILE_SCHEMA_VERSION: u64 = 2;
+/// Current PsychProfile record body schema version. Schema 3: every source
+/// carries the exact version and words it was read from (FIX 11766); a row
+/// of an earlier schema is known from its envelope and never decoded.
+pub const PSYCH_PROFILE_SCHEMA_VERSION: u64 = 3;
+
+/// Domain of [`psych_profile_words_pin`].
+pub const PSYCH_PROFILE_WORDS_PIN_DOMAIN: &[u8] = b"oneiron:psych-profile:source-words:v1";
 
 /// Pinned on-disk MessagePack key set for PSYCH_PROFILE bodies. Source
-/// revisions and source placements are paged codec frames (FIX 10054).
+/// revisions and sources are paged codec frames (FIX 10054).
 pub const PSYCH_PROFILE_BODY_KEYS: [&str; 9] = [
     "schemaVersion",
     "subjectRef",
@@ -164,18 +170,122 @@ pub enum PsychProfileState {
     },
 }
 
-/// Where one source a snapshot was built from lives (FIX 8141): the
-/// revision it cites, the record that revision is of, and the WORLD that
-/// record lies in. A recipient read honours the owner's recipient choice for
-/// every source's world, as for the world the read names.
+/// One half-open byte range `start..end` of a source text (FIX 11766).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PsychProfileByteRange {
+    /// First byte of the range.
+    pub start: u64,
+    /// One past the last byte of the range.
+    pub end: u64,
+}
+
+/// The text of a source's exact version that a span's byte ranges are
+/// measured over (FIX 11766).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PsychProfileSpanText {
+    /// The record document's text at this incarnation-qualified frontier,
+    /// in the form `entity_doc::source_frontier_in_txn` names one.
+    Document {
+        /// Incarnation-qualified document frontier.
+        frontier: Vec<u8>,
+    },
+    /// The top-level string field `field` of the record body at the
+    /// version: a record with no document, so no frontier is recorded.
+    Field {
+        /// Name of the body field.
+        field: String,
+    },
+}
+
+/// What the words a span selects were pinned as when the profile was
+/// built (FIX 11766), each a [`psych_profile_words_pin`] hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PsychProfileWordsPin {
+    /// The selected words as stored.
+    Content([u8; 32]),
+    /// The selected words as the producer's read projected them: each
+    /// lifted key read as its handle.
+    Projection([u8; 32]),
+}
+
+/// The exact words of one source version a snapshot was built from (FIX
+/// 11766): the whole record, or spans of its text.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PsychProfileSourceWords {
+    /// Record-native: the whole record at the version, pinned by the
+    /// `swarm_evidence_content_hash` of the body that version reads as.
+    Record {
+        /// Content hash of the version's body.
+        content: [u8; 32],
+    },
+    /// Document spans: ascending, non-overlapping, non-empty byte ranges of
+    /// `text`, and the pin of the words they select, in range order.
+    Spans {
+        /// The text the ranges are measured over.
+        text: PsychProfileSpanText,
+        /// The ranges, at least one.
+        ranges: Vec<PsychProfileByteRange>,
+        /// The pin of the selected words.
+        pin: PsychProfileWordsPin,
+    },
+}
+
+impl PsychProfileSourceWords {
+    fn validate(&self) -> Result<()> {
+        let Self::Spans { text, ranges, .. } = self else {
+            return Ok(());
+        };
+        let text_named = match text {
+            PsychProfileSpanText::Document { frontier } => !frontier.is_empty(),
+            PsychProfileSpanText::Field { field } => !field.is_empty(),
+        };
+        if !text_named
+            || ranges.is_empty()
+            || ranges.iter().any(|range| range.start >= range.end)
+            || !ranges.windows(2).all(|pair| pair[0].end <= pair[1].start)
+        {
+            return Err(invalid_profile(
+                "source spans must name their text and hold ascending, non-overlapping, \
+                 non-empty half-open byte ranges",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The pin of `words`, the words a span's ranges select in range order
+/// (FIX 11766): the producer and every reader hash them alike.
+#[must_use]
+pub fn psych_profile_words_pin<S: AsRef<str>>(words: impl IntoIterator<Item = S>) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(PSYCH_PROFILE_WORDS_PIN_DOMAIN);
+    for word in words {
+        let word = word.as_ref();
+        hasher.update(&(word.len() as u64).to_be_bytes());
+        hasher.update(word.as_bytes());
+    }
+    *hasher.finalize().as_bytes()
+}
+
+/// One source a snapshot was built from (FIX 8141, 11766): the generation
+/// input it belongs to, the record whose words that input carried, the
+/// exact version of that record read, the words of it the profile was
+/// built from, and the WORLD the record lies in. A recipient read honours
+/// the owner's recipient choice for every source's world, as for the world
+/// the read names, and a reader's own credential is judged on the exact
+/// words.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PsychProfileSource {
-    /// The source revision the snapshot cites.
+    /// The generation input, one of the snapshot's source revision ids.
     pub revision_ref: EntityId,
-    /// The record that revision is of.
+    /// The record whose words the input carried.
     pub document_ref: EntityId,
     /// The WORLD the record lies in; None for a world-free record.
     pub world_ref: Option<EntityId>,
+    /// The exact stored revision of `document_ref` read.
+    pub document_revision: RevisionRef,
+    /// The words of that revision the profile was built from.
+    pub words: PsychProfileSourceWords,
 }
 
 /// Persisted PsychProfile snapshot record.
@@ -195,14 +305,17 @@ pub struct PsychProfile {
     pub confidence: PsychProfileConfidence,
     /// Stored freshness marker.
     pub status: PsychProfileSnapshotStatus,
-    /// Where the sources live, canonical; each cites one of
-    /// `source_revision_ids`. Empty for a snapshot built without placements.
+    /// The exact words behind each source and where it lives, canonical;
+    /// each cites one of `source_revision_ids`. A stored snapshot holds at
+    /// least one for every source revision id (FIX 11766).
     pub sources: Vec<PsychProfileSource>,
 }
 
 impl PsychProfile {
     /// Builds a fresh PsychProfile snapshot and canonicalizes source revisions
-    /// by sorting and deduplicating them.
+    /// by sorting and deduplicating them. It has no sources yet: it is
+    /// stored only once [`Self::with_sources`] gives every source revision
+    /// the exact words it was read from (FIX 11766).
     pub fn new(
         subject_ref: EntityId,
         compact: impl Into<String>,
@@ -225,9 +338,9 @@ impl PsychProfile {
         Ok(profile)
     }
 
-    /// This snapshot with where its sources live (FIX 8141), canonicalized
-    /// by sorting and deduplicating them. Each must cite one of the
-    /// snapshot's own source revisions.
+    /// This snapshot with its sources (FIX 8141, 11766), canonicalized by
+    /// sorting and deduplicating them. Each must cite one of the snapshot's
+    /// own source revisions.
     pub fn with_sources(mut self, mut sources: Vec<PsychProfileSource>) -> Result<Self> {
         sources.sort_unstable();
         sources.dedup();
@@ -291,7 +404,31 @@ impl PsychProfile {
                 "sources must be canonical and cite the snapshot's own source revisions",
             ));
         }
+        for source in &self.sources {
+            source.words.validate()?;
+        }
         self.confidence.validate()?;
         Ok(())
+    }
+
+    /// Refuses a snapshot any of whose source revisions (its generation
+    /// inputs) has no source carrying the exact words it was read from
+    /// (FIX 11766). Every stored snapshot meets it.
+    pub fn validate_source_words(&self) -> Result<()> {
+        let covered = |revision: &EntityId| {
+            let at = self
+                .sources
+                .partition_point(|source| source.revision_ref < *revision);
+            self.sources
+                .get(at)
+                .is_some_and(|source| source.revision_ref == *revision)
+        };
+        if self.source_revision_ids.iter().all(covered) {
+            Ok(())
+        } else {
+            Err(invalid_profile(
+                "every source revision needs a source carrying the exact words it was read from",
+            ))
+        }
     }
 }

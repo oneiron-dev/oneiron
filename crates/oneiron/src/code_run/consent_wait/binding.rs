@@ -23,10 +23,10 @@ const WAITS: SideTable<EntityId, CodeConsentWaitRow, Named> =
     SideTable::new(&side_table::CODE_RUN_CONSENT_WAIT);
 
 /// The derivation domain of a wait id: its write receipt and call identity.
-const CODE_CONSENT_WAIT_DOMAIN: &[u8] = b"oneiron:code-consent-wait:v1";
+const CODE_CONSENT_WAIT_DOMAIN: &[u8] = crate::entity_id::derived_domains::CODE_CONSENT_WAIT;
 
 /// The hash domain of a binding digest.
-const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v2";
+const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v3";
 
 /// Whether a code-mode call of `verb` binds a code consent wait when its
 /// effect is held for consent alone (CALLS: first adapter). 1a binds
@@ -120,7 +120,16 @@ pub(super) fn put_code_consent_wait_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     row: &mut CodeConsentWaitRow,
+    command: crate::consent::CodeWaitCommand,
 ) -> Result<()> {
+    // The code-wait table (ConsentLifecycle) judges every write of the control row: the edge from the
+    // stored state to the new row's state must be one the writer's command holds.
+    let from = WAITS
+        .get(&vault.store, &*txn, &row.binding.wait_id)?
+        .map(|stored| stored.state());
+    crate::consent::ConsentLifecycle::code_wait(from, command, row.state()).map_err(|_| {
+        Error::InvariantViolation("a code consent wait write outside the lifecycle table")
+    })?;
     row.revision = row
         .revision
         .checked_add(1)
@@ -136,8 +145,11 @@ pub(crate) struct CodeConsentDraft {
     pub(crate) principal: CodeConsentPrincipal,
     pub(crate) pending: CodeConsentPendingEffect,
     pub(crate) frozen_input_digest: [u8; 32],
+    pub(crate) holder_settlement:
+        Option<crate::consent::code_settlement::FrozenCodeConsentSettlement>,
     pub(crate) hold_reasons: Vec<String>,
     pub(crate) remember_offer: Option<CodeConsentRememberOffer>,
+    pub(crate) standing_offer: Option<super::CodeConsentStandingOffer>,
 }
 
 /// Mints the provisional binding of a consent-only hold in the caller's
@@ -165,11 +177,9 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         let slip = verified.claims().slip_id;
         // Only the very slip the witness verifies as: an instrument that
         // names none beside a slip's witness is no instrument of this call.
-        if credential
-            .instrument
-            .as_ref()
-            .is_some_and(|instrument| instrument.slip() != Some(slip))
-        {
+        if credential.instrument.as_ref().is_some_and(|instrument| {
+            crate::runtime_hooks::verb::verb_ask_instrument_slip(&instrument) != Some(slip)
+        }) {
             return Ok(None);
         }
         principal.opener_slip = Some(slip);
@@ -177,7 +187,12 @@ pub(crate) fn mint_code_consent_wait_in_txn(
     let owners: BTreeSet<EntityId> = crate::policy_model::owners_in_txn(vault, txn)?
         .into_iter()
         .collect();
-    if owners.is_empty() {
+    if owners.is_empty()
+        && draft
+            .holder_settlement
+            .as_ref()
+            .is_none_or(|settlement| settlement.holders.is_empty())
+    {
         return Ok(None);
     }
     let question = CodeConsentQuestion {
@@ -201,17 +216,22 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         verb_row: draft.verb.as_str().to_owned(),
         request_digest: draft.site.request_digest,
         frozen_input_digest: draft.frozen_input_digest,
+        holder_settlement: draft.holder_settlement,
         binding_digest: [0; 32],
         effect_digest: [0; 32],
         original: principal,
         pending: draft.pending,
         hold_reasons: draft.hold_reasons,
         remember_offer: draft.remember_offer,
+        standing_offer: draft.standing_offer,
         question,
         policy_frontier,
         created_at_ms: super::settle::now_ms(),
+        // The admitted MCP caller its host bound on the run (FIX 4606):
+        // sealed with the wait by the parked step's commit.
+        origin: draft.site.origin,
     };
-    binding.binding_digest = binding_digest(&binding);
+    binding.binding_digest = binding_digest(&binding)?;
     let Some(effect_digest) = approval_digest(&binding.binding_digest) else {
         return Ok(None);
     };
@@ -224,17 +244,26 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         admission: None,
         settlement: None,
         consumption: None,
+        resume_refusal: None,
         revision: 0,
+        rebind_proposal: None,
+        rebinds: Vec::new(),
     };
-    put_code_consent_wait_in_txn(vault, txn, &mut row)?;
+    put_code_consent_wait_in_txn(vault, txn, &mut row, crate::consent::CodeWaitCommand::Mint)?;
     Ok(Some(wait_id))
 }
 
 /// The binding digest: BLAKE3 over the stable call site, the request and
 /// frozen digests, the frozen owner audience, the original caller's instrument
 /// and the pending effect. It names no effect digest, ask, time, checkpoint or receipt, so nothing
-/// computed from it later feeds back into it.
-pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
+/// computed from it later feeds back into it. It covers the admitted MCP
+/// caller's origin too (FIX 4606), so the seal binds the caller a re-entry
+/// is made for.
+pub(super) fn binding_digest(binding: &CodeConsentBinding) -> Result<[u8; 32]> {
+    let origin = binding
+        .origin
+        .as_ref()
+        .map(crate::code_run::consent_wait::resume::code_consent_run_origin_digest);
     let mut hasher = blake3::Hasher::new();
     let mut field = |bytes: &[u8]| {
         hasher.update(&(bytes.len() as u64).to_le_bytes());
@@ -252,6 +281,15 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     field(binding.verb_row.as_bytes());
     field(&binding.request_digest);
     field(&binding.frozen_input_digest);
+    match &binding.holder_settlement {
+        Some(settlement) => {
+            field(&[1]);
+            let bytes = rmp_serde::to_vec_named(settlement)
+                .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+            field(&bytes);
+        }
+        None => field(&[0]),
+    }
     field(&(binding.question.owners.len() as u64).to_le_bytes());
     for owner in &binding.question.owners {
         field(owner.as_bytes());
@@ -372,7 +410,20 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     if let Some(offer) = &binding.remember_offer {
         field(offer.settings_act.as_bytes());
     }
-    *hasher.finalize().as_bytes()
+    field(&[u8::from(binding.standing_offer.is_some())]);
+    if let Some(offer) = &binding.standing_offer {
+        field(offer.actor_ref.as_bytes());
+        field(offer.verb_class.as_bytes());
+        field(&(offer.selectors.len() as u64).to_le_bytes());
+        for selector in &offer.selectors {
+            field(selector.as_bytes());
+        }
+        field(&[u8::from(offer.target.is_some())]);
+        field(offer.target.as_deref().unwrap_or_default().as_bytes());
+    }
+    field(&[u8::from(origin.is_some())]);
+    field(origin.as_ref().map_or(&[][..], |origin| &origin[..]));
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// Whether wait `wait_id` is bound to the held call `call_ref` and still
@@ -423,7 +474,12 @@ pub(crate) fn attach_code_consent_ask_in_txn(
         return Ok(());
     }
     row.ask = Some(group);
-    put_code_consent_wait_in_txn(vault, txn, &mut row)
+    put_code_consent_wait_in_txn(
+        vault,
+        txn,
+        &mut row,
+        crate::consent::CodeWaitCommand::AttachAsk,
+    )
 }
 
 /// Records the effect gate's admission of wait `wait_id`'s effect, in the
@@ -448,7 +504,12 @@ pub(crate) fn record_code_consent_admission_in_txn(
         gate_decision,
         admitted_at_ms: super::settle::now_ms(),
     });
-    put_code_consent_wait_in_txn(vault, txn, &mut row)
+    put_code_consent_wait_in_txn(
+        vault,
+        txn,
+        &mut row,
+        crate::consent::CodeWaitCommand::RecordAdmission,
+    )
 }
 
 /// Seals a provisional wait with its parked step, in the executor's replay
@@ -473,5 +534,5 @@ pub(super) fn seal_code_consent_wait_in_txn(
         None => {}
     }
     row.checkpoint = Some(checkpoint);
-    put_code_consent_wait_in_txn(vault, txn, &mut row)
+    put_code_consent_wait_in_txn(vault, txn, &mut row, crate::consent::CodeWaitCommand::Seal)
 }

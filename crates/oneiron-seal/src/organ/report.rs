@@ -29,6 +29,7 @@ pub(super) struct Verdict {
     achieved: Option<PadesProfile>,
     self_verify_ok: bool,
     report_json: ByteBuf,
+    active_content: crate::api::ActiveContentFacts,
     classification: SealRevisionClassification,
 }
 
@@ -55,6 +56,7 @@ impl Verdict {
             achieved: report.achieved_profile(),
             self_verify_ok: report.passes_self_verify(),
             report_json: ByteBuf::from(json),
+            active_content: report.active_content,
             classification: classification(report, pdf),
         })
     }

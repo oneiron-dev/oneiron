@@ -137,8 +137,8 @@ impl HttpAnchor {
             }
         };
         std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
+            crate::engine_thread("backup-custody-anchor".into())
+                .spawn_scoped(scope, || {
                     let mut builder = Client::builder()
                         .timeout(CALL_TIMEOUT)
                         .redirect(reqwest::redirect::Policy::none());
@@ -161,6 +161,7 @@ impl HttpAnchor {
                         .json::<T>()
                         .map_err(|_| failed("answered outside its contract"))
                 })
+                .expect("failed to spawn thread")
                 .join()
         })
         .map_err(|_| failed("call stopped"))?

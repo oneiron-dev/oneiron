@@ -1,5 +1,7 @@
 //! Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites.
 
+use std::collections::BTreeMap;
+
 use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn};
 use crate::error::{Error, RecordError, Result};
 use crate::provenance::ActorStamp;
@@ -222,10 +224,10 @@ impl NoteDocument {
                 let canonical =
                     super::document::NoteDocument::from_loro(self.note, self.doc.fork())?;
                 let candidate = canonical.fork_at(&base)?;
-                let original = candidate.doc.get_text(TEXT).to_string();
-                if candidate
-                    .doc
-                    .get_text(TEXT)
+                let before = candidate.doc.oplog_frontiers();
+                let body = candidate.doc.get_text(TEXT);
+                let original = body.to_string();
+                if body
                     .update(
                         text,
                         UpdateOptions {
@@ -237,7 +239,12 @@ impl NoteDocument {
                 {
                     return Ok(None);
                 }
-                text_change(&original, text)
+                // The refined update already chose the smallest op set: admit
+                // its own hunks, so unchanged text between separate edits keeps
+                // its operation identities and anchors (FIX 7785).
+                let edits = refined_hunks(&candidate.doc, &before, &original, text)
+                    .unwrap_or_else(|| vec![text_change(&original, text)]);
+                return Ok(Some((base, edits)));
             }
             NoteProgramEdit::Rewrite { .. } => return Ok(None),
         };
@@ -423,6 +430,7 @@ pub(crate) fn store_doc(
             crate::batch::secret_scan::scan_write_payload(pin.quote_text.as_bytes())?;
         }
     }
+    admit_value_fields_in_txn(&vault.store, txn, &canonical.metadata()?)?;
     let found = canonical.title()?;
     let original = doc.text();
     let (mut text, mut title) = (original.clone(), found.clone());
@@ -436,7 +444,15 @@ pub(crate) fn store_doc(
     let masked = admitted && (text != original || title != found);
     let (bytes, stored) = if masked {
         // Never retain the operations that contained the secret's plain bytes.
-        let bytes = snapshot(&proposal_value(doc.note, &text, title.as_deref())?)?;
+        // The value keeps every editable field, its title as admitted.
+        let mut metadata = canonical.metadata()?;
+        if let Some(title) = &title {
+            metadata.insert(
+                super::document::TITLE.to_owned(),
+                super::document::encode_title(title)?,
+            );
+        }
+        let bytes = snapshot(&proposal_value(doc.note, &text, &metadata)?)?;
         (bytes, StoredProposal::Value(text))
     } else {
         super::token_uses::record_token_uses_in_txn(vault, txn, doc.note, &doc.doc, None)?;
@@ -558,10 +574,7 @@ pub(crate) fn load_retained_head(
             super::storage::import_complete(&doc, &bytes)?;
             doc
         }
-        None => match super::document_birth_in_txn(vault, txn, note)? {
-            Some(doc) => doc,
-            None => return Ok(None),
-        },
+        None => return Ok(None),
     };
     for update in vault.store.port_document_updates(txn, slot)? {
         if !matches!(update.seq, Some(UpdateSeq::Sequence(_))) {
@@ -586,6 +599,75 @@ fn measure_retained(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId, doc: &
     ) {
         tracing::warn!(kind = ?error.kind(), "retained NOTE head was not measured");
     }
+}
+
+/// The refined update's own hunks against `original`, highest start first:
+/// a hunk never moves the text before it, so the ordered batch applies each
+/// at its base position. Unchanged text between hunks keeps its CRDT
+/// identities and anchors (FIX 7785). `None` when the scratch history does
+/// not replay to exactly `text`; the caller keeps the conservative span.
+fn refined_hunks(
+    doc: &LoroDoc,
+    before: &Frontiers,
+    original: &str,
+    text: &str,
+) -> Option<Vec<super::NoteScalarEdit>> {
+    doc.commit();
+    let after = doc.oplog_frontiers();
+    let diff = doc.diff(before, &after).ok()?;
+    let body = loro::ContainerID::new_root(TEXT, loro::ContainerType::Text);
+    let mut hunks = Vec::new();
+    let mut open: Option<super::NoteScalarEdit> = None;
+    let mut at = 0_usize;
+    for (container, change) in diff.iter() {
+        let loro::event::Diff::Text(deltas) = change else {
+            return None;
+        };
+        if *container != body {
+            return None;
+        }
+        for delta in deltas {
+            match delta {
+                loro::TextDelta::Retain { retain, .. } => {
+                    if *retain > 0 {
+                        hunks.extend(open.take());
+                        at = at.checked_add(*retain)?;
+                    }
+                }
+                loro::TextDelta::Insert { insert, .. } => {
+                    open.get_or_insert_with(|| super::NoteScalarEdit {
+                        start: at,
+                        delete: 0,
+                        insert: String::new(),
+                    })
+                    .insert
+                    .push_str(insert);
+                }
+                loro::TextDelta::Delete { delete } => {
+                    let hunk = open.get_or_insert_with(|| super::NoteScalarEdit {
+                        start: at,
+                        delete: 0,
+                        insert: String::new(),
+                    });
+                    hunk.delete = hunk.delete.checked_add(*delete)?;
+                    at = at.checked_add(*delete)?;
+                }
+            }
+        }
+    }
+    hunks.extend(open);
+    hunks.reverse();
+    let mut replayed: Vec<char> = original.chars().collect();
+    for hunk in &hunks {
+        let end = hunk.start.checked_add(hunk.delete)?;
+        if end > replayed.len() {
+            return None;
+        }
+        replayed
+            .splice(hunk.start..end, hunk.insert.chars())
+            .for_each(drop);
+    }
+    (!hunks.is_empty() && replayed.into_iter().eq(text.chars())).then_some(hunks)
 }
 
 /// Conservative Unicode diff. A wide changed span is reviewed if it crosses
@@ -646,20 +728,41 @@ impl Vault {
     }
 }
 
+/// Each editable field other than the title, its whole encoded value read
+/// by the write door's structured payload rules, under the owner's scan
+/// switch (FIX 7784): no writer on this host masks these fields, so a hit
+/// refuses, as a citation's quote does. Every door that persists a NOTE
+/// document or value calls it; loads stay shape-only.
+pub(crate) fn admit_value_fields_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    metadata: &BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    if crate::batch::secret_scan::secret_scan_mode_in_txn(store, txn)?
+        != crate::batch::secret_scan::SecretScanMode::On
+    {
+        return Ok(());
+    }
+    for (field, bytes) in metadata {
+        if field != super::document::TITLE {
+            crate::batch::secret_scan::scan_write_payload(bytes)?;
+        }
+    }
+    Ok(())
+}
+
 /// Proposal content is a value, never an authenticated document snapshot.
 /// Fresh IDs and no pins/authorship prevent it retaining erased quote history.
-pub(crate) fn proposal_value(note: EntityId, text: &str, title: Option<&str>) -> Result<LoroDoc> {
+/// `metadata` is every editable field the value carries, each one value in
+/// the common encoding (FIX 7784).
+pub(crate) fn proposal_value(
+    note: EntityId,
+    text: &str,
+    metadata: &BTreeMap<String, Vec<u8>>,
+) -> Result<LoroDoc> {
     super::validate_markdown(text)?;
     let doc = LoroDoc::new();
-    doc.get_map("note")
-        .insert("id", note.to_hex())
-        .map_err(|_| invalid("proposal identity"))?;
-    if let Some(title) = title {
-        super::document::validate_title(title)?;
-        doc.get_map("note")
-            .insert("title", title)
-            .map_err(|_| invalid("proposal title"))?;
-    }
+    super::document::insert_value_meta(&doc, note, metadata)?;
     doc.get_text("body")
         .insert(0, text)
         .map_err(|_| invalid("proposal text"))?;
@@ -668,15 +771,17 @@ pub(crate) fn proposal_value(note: EntityId, text: &str, title: Option<&str>) ->
     Ok(doc)
 }
 
-/// Text and title projected from a trusted, locally stored proposal snapshot.
-/// Its pins and authenticated operations are not authority in a value carrier.
+/// Text and editable fields projected from a trusted, locally stored
+/// proposal snapshot. Its pins and authenticated operations are not
+/// authority in a value carrier.
 pub(crate) fn stored_proposal_values(
     note: EntityId,
     doc: &LoroDoc,
-) -> Result<(String, Option<String>)> {
-    let view = super::document::NoteDocument::from_loro(note, doc.fork())?.view()?;
+) -> Result<(String, BTreeMap<String, Vec<u8>>)> {
+    let canonical = super::document::NoteDocument::from_loro(note, doc.fork())?;
+    let view = canonical.view()?;
     super::validate_markdown(&view.markdown)?;
-    Ok((view.markdown, view.title))
+    Ok((view.markdown, canonical.metadata()?))
 }
 
 #[cfg(feature = "sync")]

@@ -2,13 +2,18 @@
 //! to Deferred with the task's handle, and its settlement by what the
 //! provider later reports of that task.
 
-use super::super::settlement::{RemoteTaskHandle, RemoteTaskObservation, keep_remote_task_in_txn};
+use super::super::settlement::{
+    RemoteTaskHandle, RemoteTaskObservation, RemoteTaskSettlement, keep_remote_task_in_txn,
+};
 use super::super::types::{
     IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
     RecordedOutboundOutcome,
 };
 use super::transition::{Transitioned, transition_record_in_txn};
-use super::{force_sync, get_ledger_record, open_payload_in_txn, transition_record_with_outcome};
+use super::{
+    IntentCompletion, force_sync, get_ledger_record, open_payload_in_txn, put_ledger_record,
+    transition_record_with_outcome_and,
+};
 use crate::Vault;
 use crate::error::Error;
 
@@ -30,17 +35,30 @@ pub(crate) fn defer_record(
         RecordedOutboundOutcome::Deferred,
         now_ms,
     )? {
-        Transitioned::Moved(record) => record,
+        Transitioned::Moved(record, _) => record,
         Transitioned::Replayed(mut record) => {
-            open_payload_in_txn(vault, &wtxn, &mut record)?;
+            drop(wtxn);
+            // No state write to keep: the replay only re-reads, so the open
+            // runs on a snapshot past the dropped writer (FIX 12497), as in
+            // `record_possible_delivery`'s no-op arm.
+            let rtxn = vault.store.custody_snapshot()?;
+            open_payload_in_txn(vault, &rtxn, &mut record)?;
             return Ok(record);
         }
     };
+    // FIX 11023: a task its host can poll gets its first poll.
+    super::super::remote_task_poll::schedule_first_poll_in_txn(
+        vault, &mut wtxn, &id, &handle, now_ms,
+    )?;
     keep_remote_task_in_txn(vault, &mut wtxn, &id, handle)?;
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
     vault.wake_owner_shed();
+    // Open only after the state write is durable (FIX 12497), as in
+    // `record_possible_delivery`: a sealed row whose key will not open must
+    // not lose the deferral.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
     synced?;
     Ok(record)
 }
@@ -52,7 +70,7 @@ fn settle_deferred_record(
     id: [u8; 32],
     observation: RemoteTaskObservation,
     now_ms: u64,
-) -> IntentLedgerResult<IntentLedgerRecord> {
+) -> IntentLedgerResult<IntentCompletion> {
     let (next, outcome) = match observation {
         RemoteTaskObservation::Completed => (IntentState::Done, RecordedOutboundOutcome::Acked),
         RemoteTaskObservation::Failed => (
@@ -74,7 +92,50 @@ fn settle_deferred_record(
             });
         }
     }
-    transition_record_with_outcome(vault, id, next, outcome, now_ms)
+    transition_record_with_outcome_and(vault, id, next, outcome, now_ms, |_, _| {})
+}
+
+/// Stops a Deferred row whose remote task ended without its provider
+/// proving whether it delivered (FIX 11023): failed, cancelled, or no
+/// longer known to the provider. Its delivery is marked uncertain first,
+/// in the same writer, so it is abandoned as a failed remote task with its
+/// reserved budget kept, never released as certainly not sent. Returns the
+/// row's state after; its payload is not opened (FIX 10959: nothing opens
+/// before the write is durable).
+pub(crate) fn abandon_unconfirmed_remote_task(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentState> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut current = get_ledger_record(vault, &wtxn, &id)?.ok_or(
+        IntentLedgerError::InvalidRecord("deferred outbound intent is missing"),
+    )?;
+    if current.state != IntentState::Deferred {
+        return Err(IntentLedgerError::InvalidTransition {
+            from: current.state,
+            to: IntentState::Abandoned,
+        });
+    }
+    if !current.delivery_uncertain {
+        current.delivery_uncertain = true;
+        put_ledger_record(vault, &mut wtxn, &current)?;
+    }
+    let state = match transition_record_in_txn(
+        vault,
+        &mut wtxn,
+        id,
+        IntentState::Abandoned,
+        RecordedOutboundOutcome::Abandoned(IntentEscalationReason::RemoteTaskFailed),
+        now_ms,
+    )? {
+        Transitioned::Moved(record, _) | Transitioned::Replayed(record) => record.state,
+    };
+    wtxn.commit().map_err(Error::from)?;
+    let synced = force_sync(vault);
+    vault.wake_owner_shed();
+    synced?;
+    Ok(state)
 }
 
 impl Vault {
@@ -83,7 +144,9 @@ impl Vault {
     /// task is the send's Done and settles its reserved budget; a failed one
     /// stops the send and gives that budget back. The caller is the trusted
     /// transport that read the provider's own status answer. Returns the
-    /// row's state after.
+    /// row's state and newly fired budget thresholds after commit. The caller
+    /// forwards their steering to its existing next-turn queue. A replay
+    /// emits no thresholds.
     ///
     /// # Errors
     /// A row that is missing, is not Deferred, or does not read; storage
@@ -92,8 +155,12 @@ impl Vault {
         &self,
         intent_id: &[u8; 32],
         observation: RemoteTaskObservation,
-    ) -> IntentLedgerResult<IntentState> {
-        settle_deferred_record(self, *intent_id, observation, self.now_recorded_at())
-            .map(|record| record.state)
+    ) -> IntentLedgerResult<RemoteTaskSettlement> {
+        settle_deferred_record(self, *intent_id, observation, self.now_recorded_at()).map(
+            |completion| RemoteTaskSettlement {
+                state: completion.record.state,
+                budget_events: completion.budget_events,
+            },
+        )
     }
 }

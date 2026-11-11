@@ -77,6 +77,7 @@ fn sample_request() -> LlmRequest {
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: "You classify memory writes.".to_owned(),
+                    signature: None,
                 }],
             },
             LlmMessage {
@@ -84,6 +85,7 @@ fn sample_request() -> LlmRequest {
                 content: vec![
                     ContentPart::Text {
                         text: "Classify this claim.".to_owned(),
+                        signature: None,
                     },
                     ContentPart::Image {
                         media_type: "image/png".to_owned(),
@@ -203,6 +205,7 @@ fn semantic_mutations(request: &LlmRequest) -> Vec<(&'static str, LlmRequest)> {
     let mut message = request.clone();
     message.messages[1].content[0] = ContentPart::Text {
         text: "Classify a different claim.".to_owned(),
+        signature: None,
     };
     mutations.push(("messages", message));
 
@@ -272,6 +275,7 @@ fn sample_envelope() -> CallEnvelope {
             vault_policy: Some(ModelTierRef("cheap".to_owned())),
             purpose_default: Some(ModelTierRef("tiny".to_owned())),
             global_default: ModelTierRef("standard".to_owned()),
+            seat: None,
         },
         response_format: ResponseFormat::Json {
             schema: json!({
@@ -283,17 +287,75 @@ fn sample_envelope() -> CallEnvelope {
             }),
         },
         locality: ModelLocality::ThirdParty,
+        host_keyless: false,
+        host_paid: false,
     }
 }
 
-// ---------------------------------------------------------------------------
-// ONE-1296 auto-check seam: the request contract and the bounded wrapper's
-// failure mapping. Every fixture stays local to this module; the tests above
-// are untouched.
-// ---------------------------------------------------------------------------
+/// The auto check reads the candidate the write gate saw: its predicate, source, actor class,
+/// value preview and burst inputs. Rewritten from `besteffort_rejected_stale_canon` (rule D with
+/// a successor): 16a66ff161c (#2496) removed the auto-check request builder, and the typed
+/// `AutoCheckDecisions` (4c541a578f5, #1608) hands the candidate to its provider as the decision
+/// call's state. The request-envelope checks (call class, JSON schema, purpose tier, model id)
+/// have no successor and are not carried.
+#[test]
+fn the_auto_checker_reads_the_candidate_the_gate_saw() {
+    use crate::llm::decision::{
+        DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial,
+        DecisionProvider, DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
+    };
+    use std::sync::{Arc, Mutex};
 
-fn auto_check_candidate() -> AutoCheckCandidateOwned {
-    AutoCheckCandidateOwned {
+    /// Records the state of the one call it answers, and allows.
+    struct Capture(Mutex<Option<serde_json::Value>>);
+    impl DecisionProvider for Capture {
+        fn pin(&self) -> ProviderPin {
+            ProviderPin {
+                rung: DecisionRung::Big,
+                model: "test-auto-checker".into(),
+                version: "1".into(),
+            }
+        }
+        fn decide(&self, call: &DecisionCall<'_>) -> crate::Result<ProviderDecision> {
+            *self.0.lock().unwrap() = Some(call.state.clone());
+            Ok(ProviderDecision {
+                answer: DecisionAnswer::Choice("allow".into()),
+                probability: Some(1.0),
+                paired: None,
+                person: None,
+                served: None,
+                cost_per_thousand: None,
+            })
+        }
+    }
+    struct NoNotes;
+    impl AutoCheckNotes for NoNotes {
+        fn hold_reasons(
+            &self,
+            _: &AutoCheckCandidate<'_>,
+            _: std::time::Instant,
+        ) -> crate::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+    }
+
+    let capture = Arc::new(Capture(Mutex::new(None)));
+    let mut ladder = HeldLadder::unstaffed();
+    ladder.big = Some(Arc::clone(&capture) as Arc<dyn DecisionProvider>);
+    let checker = BoundedAutoChecker::new(AutoCheckDecisions {
+        ladder,
+        principal: crate::test_util::entity(0x5e),
+        dial: DecisionDial {
+            first: DecisionRung::Big,
+            ceiling: DecisionRung::Big,
+            band: DecisionBand::default(),
+        },
+        bands: DecisionBandPolicy::default(),
+        wording: "May this write approve itself?".into(),
+        notes: Arc::new(NoNotes),
+        calibrated: None,
+    });
+    let candidate = AutoCheckCandidateOwned {
         signals: crate::llm::AutoCheckSignals::default(),
         predicate: "profile.name".to_owned(),
         value_preview: "Ada".to_owned(),
@@ -305,125 +367,28 @@ fn auto_check_candidate() -> AutoCheckCandidateOwned {
             rate_ratio: 2.5,
             streak: 3,
         }),
-    }
-}
-
-/// OF-037 is the CURRENT ruling and the older `BestEffort` line is stale
-/// canon: an auto check is a DURABLE `AutoCheck` call answering in a JSON
-/// schema on the purpose-default cheap tier. This test is what stops
-/// `BestEffort` coming back.
-#[test]
-fn besteffort_rejected_stale_canon() {
-    let candidate = auto_check_candidate();
-    let request = auto_check_llm_request(
-        "host-checker-v1",
-        &candidate.borrowed(),
-        "Host-provided checker instructions.",
-    );
-
-    assert_eq!(request.envelope.purpose, CallPurpose::AutoCheck);
-    assert!(
-        matches!(request.envelope.class, CallClass::Durable { .. }),
-        "OF-037: an auto check is a durable call, not a best-effort one"
-    );
-    assert_ne!(
-        request.envelope.class,
-        CallClass::BestEffort,
-        "BestEffort is stale canon for this purpose and must not return"
-    );
-    assert!(matches!(
-        request.envelope.response_format,
-        ResponseFormat::Json { .. }
-    ));
-
-    // The cheap tier arrives as the PURPOSE default, so a seat pin or a
-    // vault policy still wins through `TierPrecedence::resolved`.
-    assert!(request.envelope.tier.per_seat.is_none());
-    assert!(request.envelope.tier.vault_policy.is_none());
-    assert_eq!(
-        request
-            .envelope
-            .tier
-            .purpose_default
-            .as_ref()
-            .map(ModelTierRef::as_str),
-        Some(AUTO_CHECK_PURPOSE_DEFAULT_TIER)
-    );
-    assert_eq!(
-        request.envelope.tier.resolved().as_str(),
-        AUTO_CHECK_PURPOSE_DEFAULT_TIER
-    );
-
-    // The manifest's opaque ref is carried through as the request's model
-    // identity; the engine selects no model of its own.
-    assert_eq!(
-        request.model.as_str(),
-        "auto-check/ref-686f73742d636865636b65722d7631@configured",
-        "the original selector bytes ride the request without lossy sanitization"
-    );
+    };
+    checker.check(&candidate.borrowed());
+    let state = capture
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the auto check asked its provider");
 
     // The candidate the gate saw is what the request describes.
-    let rendered = format!("{:?}", request.messages);
+    let rendered = serde_json::to_string_pretty(&state).unwrap();
     for expected in [
         "profile.name",
         "generated",
         "agent",
         "Ada",
-        "rate_ratio: 2.5",
-        "streak: 3",
+        "\"rate_ratio\": 2.5",
+        "\"streak\": 3",
     ] {
         assert!(
             rendered.contains(expected),
             "the auto-check request must describe {expected}"
         );
-    }
-}
-
-#[test]
-fn opaque_auto_checker_refs_have_distinct_model_pins_and_durable_identities() {
-    let candidate = auto_check_candidate();
-    let refs = [
-        "checker:a",
-        "checker/a",
-        "checker?a",
-        "checker.a",
-        "checker_a",
-        "",
-        "configured",
-        "ref-",
-        "é",
-        "e\u{301}",
-        "a",
-        " a",
-        "a ",
-        "\0",
-        "0",
-        "00",
-    ];
-    let requests: Vec<_> = refs
-        .iter()
-        .map(|selector| auto_check_llm_request(selector, &candidate.borrowed(), "Host policy."))
-        .collect();
-    let mut models = std::collections::BTreeSet::new();
-    let mut hashes = std::collections::BTreeSet::new();
-    for (index, request) in requests.iter().enumerate() {
-        assert!(
-            models.insert(request.model.clone()),
-            "aliased {:?}",
-            refs[index]
-        );
-        assert!(hashes.insert(request.canonical_hash().expect("canonical request")));
-        assert_eq!(
-            &auto_check_llm_request(refs[index], &candidate.borrowed(), "Host policy."),
-            request,
-            "the encoding is deterministic"
-        );
-        let pin = PinnedModelConfig {
-            allowed: [request.model.clone()].into_iter().collect(),
-            background_tier_enabled: true,
-        };
-        for (other_index, other) in requests.iter().enumerate() {
-            assert_eq!(pin.admit(other).is_ok(), index == other_index);
-        }
     }
 }

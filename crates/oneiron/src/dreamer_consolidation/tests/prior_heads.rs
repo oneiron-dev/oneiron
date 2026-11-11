@@ -2286,6 +2286,7 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
         reserve_units: 100,
         now: 23,
         host_scope: Some(fx.scope.clone()),
+        destination_bound: None,
     };
     let report = {
         let cancellation = crate::dreamer_wake::WakeCancellation::new();

@@ -4,7 +4,10 @@
 //! reply is `{lines: [{text, turn_refs}], keep, open_turns}`, each line
 //! citing the TURNs it came from by their `T` labels (P7a's checked lines).
 //!
-//! The model decides where a line and the claims disagree: a reply naming
+//! The host may lend a typed line-versus-claim verdict before a narrative
+//! call. Its advisory openings must still fit the original call; otherwise
+//! the narrative reader runs unchanged, including on typed read failures.
+//! The narrative model can always ask for more: a reply naming
 //! `open_turns` writes nothing. The engine opens those turns through their
 //! handles ([`super::arc_turns`]) and composes again with their words, and
 //! again while a reply names turns not yet open: each round opens more, so
@@ -33,6 +36,7 @@ use crate::model_step_error::DurableStepError;
 use crate::scope_summary::{ArcPendingCause, ComposedSummary, ScopeSummaryPlan};
 use oneiron_model::llm::LlmResponse;
 use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 
 /// The identity an Arc's composition is known by.
 const ARC_DOMAIN: &str = "oneiron:arc-summary-composition:v1";
@@ -69,7 +73,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let Some(first) = evidence.covers.first().copied() else {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         };
         let schema = arc_schema();
@@ -89,7 +93,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Ok(true) => {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
             Ok(false) => {}
@@ -103,7 +107,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             && self.arc_work_open(ctx, plan, evidence, instruction, window)?
         {
             return self
-                .compose_arc_work(attempt, ctx, plan, evidence, instruction, (window, none))
+                .compose_arc_work(attempt, ctx, plan, evidence, instruction, (window, none, 0))
                 .await;
         }
         let step_ctx = DurableStepContext {
@@ -119,6 +123,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let mut charges = StepChargeTally::default();
         let mut opened = view.opened.clone();
         let mut words = String::new();
+        let mut calls = 0_u32;
+        let limit = ctx
+            .vault
+            .dreamer_recipe_policy()
+            .ok()
+            .map(|policy| policy.arc_child_calls_per_wake);
         let lines = loop {
             let user = match arc_input(plan, view, &words) {
                 Ok(user) => user,
@@ -137,13 +147,52 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                             plan,
                             evidence,
                             instruction,
-                            (window, charges),
+                            (window, charges, calls),
                         )
                         .await;
                 }
             }
             if ctx.deadline.expired() {
                 return Ok(charges.checkpoint());
+            }
+            let candidates: Vec<_> = view
+                .labels
+                .labelled(super::super::call_labels::LabelKind::Turn)
+                .map(|(_, turn)| turn)
+                .filter(|turn| covers.contains(turn) && !opened.contains(turn))
+                .collect();
+            let ask = match self
+                .arc_open_turns(
+                    ctx,
+                    &step_ctx,
+                    evidence,
+                    &user,
+                    &view.labels,
+                    &candidates,
+                    &mut calls,
+                    limit,
+                    &mut charges,
+                )
+                .await?
+            {
+                ControlFlow::Continue(ask) => ask,
+                ControlFlow::Break(exit) => return Ok(exit),
+            };
+            if !ask.is_empty()
+                && let Ok(Opened::Turns(turns)) = open_turns(ctx.vault, evidence, view, &ask)
+            {
+                let expanded = format!("{words}{}", opened_text(&turns));
+                let fits = arc_input(plan, view, &expanded).is_ok_and(|next| {
+                    self.session_window(ctx.vault).is_none_or(|window| {
+                        framed_tokens(instruction, &next, &schema)
+                            .is_ok_and(|tokens| tokens <= window)
+                    })
+                });
+                if fits {
+                    words = expanded;
+                    opened.extend(ask);
+                    continue;
+                }
             }
             let mut request = match self.summary_request(
                 ctx.vault,
@@ -177,11 +226,17 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 call_as_step_checked(&step_ctx, self.backend, self.guard, request, &check).await;
             let response = match outcome {
                 Ok(StepOutcome::Finished {
-                    response, memoized, ..
+                    response,
+                    memoized,
+                    binding,
+                    ..
                 }) => {
-                    if let Err(error) =
-                        charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
-                    {
+                    if let Err(error) = charges.record_terminal(
+                        ctx.vault,
+                        binding.attempt_id,
+                        binding.step_hash,
+                        &response.usage,
+                    ) {
                         if !memoized {
                             charges.record_usage(&response.usage);
                         }
@@ -216,9 +271,10 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     {
                         charges.record_usage(usage);
                     }
-                    return Ok(
-                        charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other))
-                    );
+                    return Ok(charges.park_for(
+                        &other.to_string(),
+                        crate::dreamer_runner::dreamer_park_cause_of_step(&other),
+                    ));
                 }
             };
             let ask = match arc_output(&response, &view.labels, (&opened, &view.inherited), &covers)
@@ -243,7 +299,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     return Ok(residency_deferral(
                         ctx.now_ms,
                         charges.units,
-                        charges.step_hashes.clone(),
+                        charges.step_bindings.clone(),
                     ));
                 }
                 Err(error) => return Ok(charges.park_on_error(&error)),
@@ -274,13 +330,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         {
             Ok(_) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
             Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
                 ctx.now_ms,
                 charges.units,
-                charges.step_hashes.clone(),
+                charges.step_bindings.clone(),
             )),
             Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
         }
@@ -314,7 +370,7 @@ pub(super) fn owe_bare(
     ctx.vault.record_arc_pending(&plan.input, cause)?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     })
 }
 

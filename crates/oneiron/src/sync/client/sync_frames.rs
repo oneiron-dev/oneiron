@@ -3,7 +3,7 @@
 use loro::{LoroDoc, VersionVector};
 
 use super::base::SyncClient;
-use super::types::{SVF_FRESH, SyncEvent, SyncResidenceMode};
+use super::types::{SVF_FRESH, SyncClientConfig, SyncEvent, SyncResidenceMode};
 use crate::error::Result;
 use crate::sync::loro_support::doc_version_vector;
 use crate::sync::transport;
@@ -27,6 +27,9 @@ impl SyncClient {
         self.root_bootstrapped = false;
         self.leaf_key_sends = Default::default();
         self.sealed_updates.restart();
+        // A grant or a replacement on an earlier socket proves nothing on this one (FIX 20202).
+        self.promotions_granted.clear();
+        self.replacements_installed.clear();
     }
 
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b
@@ -56,6 +59,7 @@ impl SyncClient {
         self.root_bootstrapped = false;
         self.residence_acks.clear();
         self.reset_window_pads();
+        self.reset_root_parts();
         let root_doc = LoroDoc::new();
         let _meta = root_doc.get_map("meta");
         // Same peer-id pinning as `new`: the client never authors root ops,
@@ -115,24 +119,31 @@ impl SyncClient {
         // residence); authentication uses a paired capability.
         // Device lease requests are retired (C07); the NOTE session bind
         // (HEAD) still rides along when configured.
-        let mut messages = vec![if self.config.federation_peer.is_some() {
-            transport::encode_protocol_hello()
-        } else {
-            match self.config.residence_mode {
-                SyncResidenceMode::Opened => {
-                    transport::encode_replacement_residence_protocol_hello()
-                }
-                SyncResidenceMode::All => {
-                    transport::encode_replacement_full_window_protocol_hello()
-                }
-            }
-        }];
+        let mut messages = vec![Self::session_hello(&self.config)];
+        // A peer session binds the socket's actor too, so the peer admits its
+        // promotion and document requests as the home does; only the NOTE
+        // authority side of the bind stays the home's (FIX 4748,
+        // `note_session_bound`).
         if let Some(session) = &self.config.note_session {
             messages.push(super::note_session::bind_frame(session)?);
         }
         messages
             .extend(self.generate_phase_frames_with_extra_windows(std::iter::empty::<String>())?);
         Ok(messages)
+    }
+
+    /// The protocol hello a sync session over `config` opens with: the
+    /// federation lane's, or its residence mode's lane with window
+    /// replacement. A peer session's probe of the home opens with it too
+    /// (FIX 4748).
+    pub(in crate::sync) fn session_hello(config: &SyncClientConfig) -> Vec<u8> {
+        if config.federation_peer.is_some() {
+            return transport::encode_protocol_hello();
+        }
+        match config.residence_mode {
+            SyncResidenceMode::Opened => transport::encode_replacement_residence_protocol_hello(),
+            SyncResidenceMode::All => transport::encode_replacement_full_window_protocol_hello(),
+        }
     }
 
     fn generate_phase_frames_with_extra_windows<I>(
@@ -318,11 +329,17 @@ impl SyncClient {
         }
 
         self.owner_note_requests()?;
+        // A peer session asks for no NOTE: the NOTE lane is its authority's,
+        // the home's (FIX 4748).
+        let requests = self
+            .manager
+            .documents()
+            .request_frames()
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
         messages.extend(
-            self.manager
-                .documents()
-                .request_frames()
-                .map_err(|error| TransportError::Storage(error.to_string()))?,
+            requests
+                .into_iter()
+                .filter(|frame| self.peer_session.is_none() || !self.note_document_frame(frame)),
         );
         Ok(messages)
     }
@@ -428,7 +445,7 @@ impl SyncClient {
                 .map_err(|e| TransportError::Storage(e.to_string()))?;
             let frame =
                 transport::encode_window_sync(key.as_str(), window_sub_tags::VV_REQUEST, &vv)
-                    .into_result()?;
+                    .into_own_frame()?;
             self.requested_windows
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -443,6 +460,75 @@ impl SyncClient {
         }
         self.root_bootstrapped = true;
         Ok(frames)
+    }
+
+    /// The version requests this connection owes the home for the windows a
+    /// policy wake readied here (fix list row 19634): up to `budget` windows
+    /// whose ready generation `progress` has not asked for, from the one after
+    /// where its last pass ended, each with the generation read and its
+    /// `VV_REQUEST`. Only a window this connection exchanged already goes, on
+    /// the gates the home's answers meet as they come in: this lane follows or
+    /// promoted it, may exchange its whole window, and the home may read its
+    /// world; and this vault still stores it. No federation lane asks. Nothing
+    /// is stamped here: the caller stamps a window once its request is on the
+    /// socket. A window whose vector cannot be read now stays owed.
+    pub(in crate::sync) fn ready_window_requests(
+        &self,
+        progress: &mut crate::sync::manager::ReadyProgress,
+        budget: usize,
+    ) -> std::result::Result<Vec<(WindowKey, u64, Vec<u8>)>, TransportError> {
+        if self.config.federation_peer.is_some() {
+            return Ok(Vec::new());
+        }
+        // Read once a window is owed; worlds that cannot be read keep every
+        // owed window for a later pass.
+        let mut worlds = None;
+        let due = progress
+            .due(&self.manager, budget, |key| {
+                worlds
+                    .get_or_insert_with(|| self.effective_worlds().ok())
+                    .as_ref()
+                    .is_some_and(|effective| self.ready_window_requestable(key, effective))
+            })
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let mut requests = Vec::with_capacity(due.len());
+        for (key, generation) in due {
+            let vv = match self.window_vv_for_initial_sync(&key) {
+                Ok(vv) => vv,
+                Err(error) => {
+                    tracing::warn!(window = %key, %error, "ready window vector not read");
+                    continue;
+                }
+            };
+            let frame =
+                transport::encode_window_sync(key.as_str(), window_sub_tags::VV_REQUEST, &vv)
+                    .into_result()?;
+            requests.push((key, generation, frame));
+        }
+        Ok(requests)
+    }
+
+    /// Whether ready window `key` may be asked of the home on this
+    /// connection now ([`Self::ready_window_requests`]).
+    fn ready_window_requestable(
+        &self,
+        key: &WindowKey,
+        effective_worlds: &Option<std::collections::BTreeSet<crate::EntityId>>,
+    ) -> bool {
+        let exchanged = self
+            .requested_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(key);
+        exchanged
+            && !self.setup_catch_up(key.as_str())
+            && (Self::follows_window(key, effective_worlds)
+                || self.opened_window_promoted(key).unwrap_or(false))
+            && self
+                .full_window_exchange_allowed(key.as_str())
+                .unwrap_or(false)
+            && self.home_may_request(key)
+            && self.manager.window_stored(key).unwrap_or(false)
     }
 
     /// Resolves the wire VV (Loro binary `VersionVector::encode()` bytes)

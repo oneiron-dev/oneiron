@@ -43,6 +43,7 @@ pub enum VerifyFindingCode {
     InvalidByteRange,
     InvalidUnsignedGap,
     InvalidCms,
+    UnsupportedSignatureHandler,
     InvalidSignedAttributes,
     #[serde(rename = "HASH_FAILURE")]
     DigestMismatch,
@@ -54,6 +55,13 @@ pub enum VerifyFindingCode {
     TrustRootUnavailable,
     TrustCheckNotRun,
     ValidationMaterialInvalid,
+    ValidationMaterialUnavailable,
+    RevocationStatusUnknown,
+    /// Presented revocation material that is forged (a CRL signed by a
+    /// same-subject shadow of a covered certificate's issuer): the check is
+    /// NotRun, so the verdict is indeterminate, and this sub-indication is
+    /// always a reason (lead ruling F, SEAL-SHADOW-ETSI).
+    ValidationMaterialPossibleTampering,
     DocumentTimestampInvalid,
     ModificationNotAllowed,
     NoSignature,
@@ -72,6 +80,32 @@ pub enum Coverage {
     EntireRevision,
     EntireFile,
 }
+
+/// An unsigned byte range beyond the signature's required `/Contents` exclusion.
+/// Offsets are half-open: `start` is included and `end` is excluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UncoveredByteRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// Coverage of a proven structural revision, excluding the signature value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RevisionCoverage {
+    WholeRevision {
+        revision: usize,
+        byte_end: u64,
+    },
+    Partial {
+        revision: usize,
+        byte_end: u64,
+        /// A valid two-span signature starts at zero and excludes only
+        /// `/Contents`, so any additional unsigned bytes form one tail.
+        uncovered: [UncoveredByteRange; 1],
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SignatureKind {
@@ -134,6 +168,8 @@ pub struct SignatureReport {
     pub kind: SignatureKind,
     pub byte_range: ByteRangeEvidence,
     pub coverage: Coverage,
+    /// `None` when the byte range or structural revision cannot be established.
+    pub revision_coverage: Option<RevisionCoverage>,
     pub digest: Option<SignedRangeDigest>,
     pub profile: Option<PadesProfile>,
     pub integrity: VerifyVerdict,
@@ -146,10 +182,19 @@ impl SignatureReport {
         rollup(self.checks.iter().copied())
     }
 }
+/// Resolved action subtypes found anywhere in the parsed PDF object graph.
+/// These observations do not change verification or certify the PDF as safe.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveContentFacts {
+    pub javascript: bool,
+    pub launch: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct VerifyReport {
     /// Storage identifier only. A lawful archival append changes this hash.
     pub artifact_sha256: Sha256Digest,
+    pub active_content: ActiveContentFacts,
     pub revisions: Vec<RevisionReport>,
     pub signatures: Vec<SignatureReport>,
     pub modifications: Modifications,
@@ -161,10 +206,11 @@ pub struct VerifyReport {
 // serialization and never persisted as independently writable state.
 impl Serialize for VerifyReport {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut report = serializer.serialize_struct("VerifyReport", 8)?;
+        let mut report = serializer.serialize_struct("VerifyReport", 9)?;
         report.serialize_field("verdict", &self.verdict())?;
         report.serialize_field("reasons", &self.reasons())?;
         report.serialize_field("artifact_sha256", &self.artifact_sha256)?;
+        report.serialize_field("active_content", &self.active_content)?;
         report.serialize_field("revisions", &self.revisions)?;
         report.serialize_field("signatures", &self.signatures)?;
         report.serialize_field("modifications", &self.modifications)?;
@@ -208,14 +254,17 @@ impl VerifyReport {
     }
     #[must_use]
     pub fn reasons(&self) -> Vec<VerifyFindingCode> {
+        // Failed checks' findings, and a possible-tampering sub-indication
+        // though its check is NotRun: the user sees it (lead ruling F).
         let mut reasons: Vec<_> = self
             .checks()
-            .filter_map(|c| {
-                if c.status == VerifyCheckStatus::Fail {
-                    c.finding
-                } else {
-                    None
-                }
+            .filter_map(|c| match (c.status, c.finding) {
+                (VerifyCheckStatus::Fail, finding) => finding,
+                (
+                    VerifyCheckStatus::NotRun,
+                    Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
+                ) => Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
+                _ => None,
             })
             .collect();
         if self
@@ -260,6 +309,7 @@ mod tests {
     fn rollup_does_not_store_or_launder_unknown() {
         let mut r = VerifyReport {
             artifact_sha256: [0; 32],
+            active_content: ActiveContentFacts::default(),
             revisions: vec![],
             modifications: Modifications::NotRun,
             anomalies: vec![],
@@ -274,6 +324,7 @@ mod tests {
                     file_len: 0,
                 },
                 coverage: Coverage::Unclear,
+                revision_coverage: None,
                 digest: None,
                 profile: None,
                 integrity: VerifyVerdict::Indeterminate,
@@ -302,5 +353,60 @@ mod tests {
         json["verdict"] = serde_json::json!("failed");
         let back: VerifyReport = serde_json::from_value(json).unwrap();
         assert_eq!(back.verdict(), VerifyVerdict::Passed);
+    }
+
+    #[test]
+    fn possible_tampering_is_indeterminate_and_a_visible_reason() {
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50): forged presented
+        // revocation material rolls up to indeterminate, and its
+        // sub-indication is a reason the user sees, though its check is
+        // NotRun. Another NotRun finding stays out of the reasons.
+        let r = VerifyReport {
+            artifact_sha256: [0; 32],
+            active_content: ActiveContentFacts::default(),
+            revisions: vec![],
+            modifications: Modifications::NotRun,
+            anomalies: vec![],
+            checks: vec![
+                VerifyCheck {
+                    kind: VerifyCheckKind::ValidationMaterial,
+                    status: VerifyCheckStatus::NotRun,
+                    finding: Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
+                },
+                VerifyCheck {
+                    kind: VerifyCheckKind::CertificatePath,
+                    status: VerifyCheckStatus::NotRun,
+                    finding: Some(VerifyFindingCode::TrustRootUnavailable),
+                },
+            ],
+            signatures: vec![SignatureReport {
+                id: "sig-0".into(),
+                kind: SignatureKind::Signature,
+                byte_range: ByteRangeEvidence {
+                    values: [0; 4],
+                    well_formed: false,
+                    covers_to: None,
+                    file_len: 0,
+                },
+                coverage: Coverage::Unclear,
+                revision_coverage: None,
+                digest: None,
+                profile: None,
+                integrity: VerifyVerdict::Indeterminate,
+                trust: VerifyCheckStatus::NotRun,
+                checks: vec![],
+            }],
+        };
+        assert_eq!(r.verdict(), VerifyVerdict::Indeterminate);
+        assert_eq!(
+            r.reasons(),
+            vec![VerifyFindingCode::ValidationMaterialPossibleTampering]
+        );
+        let json = serde_json::to_value(&r).unwrap();
+        assert_eq!(json["verdict"], "indeterminate");
+        assert_eq!(
+            json["reasons"],
+            serde_json::json!(["validation_material_possible_tampering"])
+        );
     }
 }

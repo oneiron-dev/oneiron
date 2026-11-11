@@ -5,7 +5,7 @@ use super::document::{
     NoteSpanResolution, frontier, invalid,
 };
 use super::pin_index::NOTE_PIN_SOURCE;
-use super::{NoteBody, NoteKind, encode_note_body};
+use super::{NoteCore, NoteKind, encode_note_core};
 use crate::batch::secret_scan::{
     Lifted, Part, SecretScanMode, admit_parts_in_txn, scan_content_in_txn, scan_write_payload,
     secret_scan_mode_in_txn,
@@ -131,6 +131,7 @@ fn persist_structural_with_origin(
             scan_write_payload(pin.quote_text.as_bytes())?;
         }
     }
+    super::documents::admit_value_fields_in_txn(&vault.store, txn, &doc.metadata()?)?;
     let masked = admit_body(vault, txn, doc, masks)?;
     // Keep the live NOTE projection valid, including after concurrent
     // batches merge. A refused commit leaves the durable document unchanged.
@@ -141,14 +142,15 @@ fn persist_structural_with_origin(
     let _ = doc.snapshot()?;
     // A masked document is stored without the history that held the value,
     // as a citation scrub stores one.
+    let indexed_before = super::revision::indexed_input_in_txn(vault, txn, doc.id)?;
     super::storage::snapshot(vault, txn, doc.id, &doc.doc, masked)?;
-    let batch = match grant {
-        Some(grant) => crate::batch::BatchBuilder::promotion_replay(vault, Vec::new(), grant),
-        None => vault.batch_in(),
-    };
-    batch
-        .text(&doc.id, &[("markdown", markdown.as_str())])
-        .apply(txn)?;
+    super::revision::index_stored_note_in_txn(
+        vault,
+        txn,
+        doc.id,
+        indexed_before.as_deref(),
+        grant,
+    )?;
     // Reverse pins preserve every cited source frontier, including when the
     // citation is in a different document. They are written with the body.
     super::pin_index::remove_citing(&vault.store, txn, doc.id)?;
@@ -322,10 +324,9 @@ impl Memory<'_> {
         // The brief's commits after its birth name the actor's stamp token
         // (FIX 10930), read on a write of its own before the content write.
         let stamp = crate::provenance::actor_stamp(self.vault(), actor)?;
-        let body = encode_note_body(&NoteBody {
+        let body = encode_note_core(&NoteCore {
             kind,
             author_ref: super::NoteActor::Actor(self.actor()),
-            markdown: markdown.clone(),
             source_revision_ref: *id.as_bytes(),
         })?;
         self.with_actor_content_write_txn(|content| {
@@ -371,12 +372,12 @@ impl Memory<'_> {
             {
                 return Err(invalid("brief kind is not person-stamped").into());
             }
-            let doc = NoteDocument::birth(id, &markdown, &actor)?;
             for pin in pins {
                 validate_pin_source(self.vault(), content.read(), pin)?;
-                doc.add_pin(pin, stamp)?;
             }
             let now = self.vault().now_recorded_at();
+            // The birth op births the brief's document with its core; its
+            // citations and their authorship land on it in the same write.
             content.apply_batch(
                 self.vault()
                     .batch_in()
@@ -389,11 +390,16 @@ impl Memory<'_> {
                         },
                         now,
                         &body,
+                        &markdown,
                     )
                     .edge(&id, EdgeKind::AuthoredBy, &self.actor(), 1.0)
                     .made_by(&id, brief_birth(actor, pins, now)),
             )?;
-            content.update_note(id, |txn| {
+            content.update_note(id, |txn, _lane| {
+                let doc = load(self.vault(), txn, id)?;
+                for pin in pins {
+                    doc.add_pin(pin, stamp)?;
+                }
                 super::operations::record_authorship(
                     &doc,
                     &super::NoteAuthorship {
@@ -512,7 +518,7 @@ impl Memory<'_> {
         act: Option<&str>,
     ) -> MemoryResult<PurgeReceipt> {
         self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn| {
+            content.update_note(note, |txn, _lane| {
                 if let Some(owner) = owner
                     && owner.revalidate_in_txn(self.vault(), txn)? != self.actor()
                 {
@@ -593,6 +599,8 @@ impl Memory<'_> {
                     .export(loro::ExportMode::shallow_snapshot(&through))
                     .map_err(|_| invalid("NOTE history purge failed"))?;
                 let shallow = NoteDocument::load(note, &snapshot)?;
+                let indexed_before =
+                    super::revision::indexed_input_in_txn(self.vault(), txn, note)?;
                 let selected = doc
                     .doc
                     .frontiers_to_vv(&through)
@@ -604,6 +612,13 @@ impl Memory<'_> {
                     txn,
                     slot,
                     &shallow.doc.shallow_since_vv().to_vv().encode(),
+                )?;
+                super::revision::index_stored_note_in_txn(
+                    self.vault(),
+                    txn,
+                    note,
+                    indexed_before.as_deref(),
+                    None,
                 )?;
                 let applied = through.encode();
                 let receipt = PurgeReceipt {

@@ -188,13 +188,16 @@ fn empty_stats() -> PackStats {
     }
 }
 
+// The retired static COMPANION_REGISTER kind byte (OF-274, 7d892007139, #1940 deleted the constant).
+const RETIRED_COMPANION_REGISTER: u8 = 115;
+
 #[test]
 fn whole_vault_export_nulls_retired_companion_identity_carriers() {
     let person = EntityId::from_bytes_unchecked([0x71; 16]);
     let body = crate::companion::tests::support::retired_persona_facet_body(person);
     for kind in [
         crate::registry::ENTITY_TYPE_FACET,
-        crate::companion::ENTITY_TYPE_COMPANION_REGISTER,
+        RETIRED_COMPANION_REGISTER,
     ] {
         assert!(matches!(
             super::ExportBody::from_bytes(&body, kind),

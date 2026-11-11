@@ -49,6 +49,7 @@ struct ClassView<'b> {
     /// `scope` as MessagePack, as the key carries it.
     scope_bytes: Option<Vec<u8>>,
     generic_readable: bool,
+    exact_store: bool,
     mined_preference: bool,
     approval: ClaimApprovalStatus,
     lifecycle: ClaimLifecycleStatus,
@@ -92,6 +93,7 @@ impl<'b> ClassView<'b> {
             scope: body.scope.as_ref(),
             scope_bytes,
             generic_readable: crate::claim::claim_generic_readable(body),
+            exact_store: crate::claim::claim_exact_store(body),
             mined_preference: crate::edit_distance::miner::is_mined_preference(&body.predicate),
             approval: body.approval,
             lifecycle: body.lifecycle,
@@ -133,6 +135,7 @@ impl<'b> ClassView<'b> {
             None => key.push(0),
         }
         key.push(u8::from(self.generic_readable));
+        key.push(u8::from(self.exact_store));
         key.push(u8::from(self.mined_preference));
         put_bytes(&mut key, self.approval.as_str().as_bytes());
         put_bytes(&mut key, self.lifecycle.as_str().as_bytes());
@@ -338,7 +341,7 @@ fn class_judge_in(
         || (view.mined_preference && view.principal.is_none())
         || !reader.status.admits_status(
             reader.filter,
-            view.generic_readable,
+            (view.generic_readable, view.exact_store),
             view.approval,
             view.lifecycle,
             view.stale,
@@ -367,7 +370,11 @@ impl ScopedRead<'_> {
     /// a row whose class view does not build. `header` is the row's, a
     /// CLAIM's, whose type, band and filter the row admission met before
     /// this; `grant` and `filter` are as `Self::own_row_readable_in` takes
-    /// them.
+    /// them. An admitted row still meets the three per-row trailing conjuncts,
+    /// [`Self::provenance_cited_readable_in`],
+    /// [`Self::esign_document_readable_in`] and
+    /// [`Self::coreference_endpoints_readable_in`], judged last and never held as
+    /// the class's.
     #[expect(
         clippy::too_many_arguments,
         reason = "a claim row's admission under its filter, held authority and an optional Grant"
@@ -425,12 +432,24 @@ impl ScopedRead<'_> {
         if !self.per_item_judge_in(rtxn, id, raw, &body, principal, authority)? {
             return Ok(Some(false));
         }
-        if let Some(verdict) = held {
-            return Ok(Some(verdict));
-        }
-        let verdict = class_judge_in(self.vault, rtxn, &reader, &view, authority)?;
-        verdicts.hold(&reader, class, verdict);
-        Ok(Some(verdict))
+        let verdict = match held {
+            Some(verdict) => verdict,
+            None => {
+                let verdict = class_judge_in(self.vault, rtxn, &reader, &view, authority)?;
+                verdicts.hold(&reader, class, verdict);
+                verdict
+            }
+        };
+        // A provenance Claim's named records, an e-sign Claim's signing
+        // document and originals, and a coreference status Claim's endpoints
+        // are the row's own, never its class's: judged last, for an admitted
+        // row only.
+        Ok(Some(
+            verdict
+                && self.provenance_cited_readable_in(rtxn, policy, &body, authority)?
+                && self.esign_document_readable_in(rtxn, policy, &body)?
+                && self.coreference_endpoints_readable_in(rtxn, policy, id, &body, authority)?,
+        ))
     }
 
     /// Whether this lane's CLAIM rows may be judged by class: neither its

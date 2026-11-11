@@ -5,7 +5,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::claim::ScopedReadActorKey;
 use crate::conversation::AudienceCache;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 
 impl AgentDispatcher<'_> {
@@ -26,6 +26,7 @@ impl AgentDispatcher<'_> {
                         | ENTITY_TYPE_TURN
                         | ENTITY_TYPE_MESSAGE
                         | ENTITY_TYPE_SUMMARY
+                        | ENTITY_TYPE_NOTE
                 )
             ) && !content.contains(source)
             {
@@ -71,6 +72,24 @@ impl AgentDispatcher<'_> {
         }
         // Hydration intersects grants; a binder's selector also applies its
         // private-thread and own-entry rules before any words are selected.
+        for source in &content {
+            if !self.binder_cuts_admit_in_txn(txn, &readers, source)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether `source` passes the cuts each binder's selector applies
+    /// before any words are selected: its private-thread rules, and, for an
+    /// agent or system binder, its own-entry rule. A row no selector chose,
+    /// a sibling task's result (FIX 7742), must pass them here.
+    pub(super) fn binder_cuts_admit_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        readers: &StepReaders,
+        source: &EntityId,
+    ) -> Result<bool> {
         for binder in &readers.binders {
             let key = ScopedReadActorKey::with_actor_class(
                 binder.entity_ref().to_hex(),
@@ -79,11 +98,12 @@ impl AgentDispatcher<'_> {
             .ok_or(Error::InvariantViolation(
                 "a binder's id builds no read key",
             ))?;
-            let lane = self.vault.scoped_read(key);
-            for source in &content {
-                if !lane.private_threads_admit_in(txn, source)? {
-                    return Ok(false);
-                }
+            if !self
+                .vault
+                .scoped_read(key)
+                .private_threads_admit_in(txn, source)?
+            {
+                return Ok(false);
             }
         }
         let own_entry = readers
@@ -99,14 +119,9 @@ impl AgentDispatcher<'_> {
             .collect::<Vec<_>>();
         let entry = AudienceCache::default();
         let dbs = self.vault.store.read();
-        for source in content {
-            if !super::super::member_context::own_entry_admits_in(
-                self.vault, &entry, &dbs, txn, source, &own_entry,
-            )? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        super::super::member_context::own_entry_admits_in(
+            self.vault, &entry, &dbs, txn, *source, &own_entry,
+        )
     }
 
     fn workflow_tool_readers_in_txn(

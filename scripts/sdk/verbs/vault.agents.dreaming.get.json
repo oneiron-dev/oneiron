@@ -1,0 +1,16 @@
+{
+  "name": "vault.agents.dreaming.get",
+  "description": "The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot.",
+  "input": "crate::task_verb::sdk::AgentDreamingRequest",
+  "output": "crate::task_verb::sdk::AgentDreamingView",
+  "call": "crate::task_verb::sdk::read_agent_dreaming_as(memory.vault(), &memory.embedded_owner(\"vault.agents.dreaming.get\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

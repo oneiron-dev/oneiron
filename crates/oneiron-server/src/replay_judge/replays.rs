@@ -131,8 +131,11 @@ impl ServeReplayJudge {
         let Some((project, _)) = goal.project else {
             return Ok(None);
         };
-        Ok(self.vault.project_intake_goal(project)?.map(|record| {
-            let axes: Vec<Value> = record
+        Ok(self
+            .vault
+            .project_intake_goal_as(oneiron::dreamer_runner::authority::coach_reader()?, project)?
+            .map(|record| {
+                let axes: Vec<Value> = record
                 .primary_axes
                 .iter()
                 .chain(&record.floor_axes)
@@ -141,8 +144,8 @@ impl ServeReplayJudge {
                     |axis| json!({"name": axis.name, "measure": axis.measure, "bound": axis.bound}),
                 )
                 .collect();
-            json!({"goal": record.goal, "why": record.why, "axes": axes})
-        }))
+                json!({"goal": record.goal, "why": record.why, "axes": axes})
+            }))
     }
 
     /// A reserved receipt's run as a replay reads it: its kind, task and
@@ -161,7 +164,7 @@ impl ServeReplayJudge {
     /// evidence as its response; never the outcome, who set it or its label.
     /// `None` when no card holds it.
     fn health_review_texts(&self, receipt: &str) -> Result<Option<(String, String, String)>> {
-        let Some((card, held)) = self.vault.health_review_receipt(receipt)? else {
+        let Some((card, held, state)) = self.vault.health_review_receipt(receipt)? else {
             return Ok(None);
         };
         let hex = |ids: &[EntityId]| ids.iter().map(EntityId::to_hex).collect::<Vec<_>>();
@@ -171,8 +174,8 @@ impl ServeReplayJudge {
             "task": card.task.as_ref().map(EntityId::to_hex),
             "dial": held.dial,
             "measured": held.measured,
-            "diagnostics": hex(&held.diagnostics),
-            "evidence": hex(&held.evidence),
+            "diagnostics": hex(&state.diagnostics),
+            "evidence": hex(&state.evidence),
             "observed_brief": held.observed_brief,
         });
         let response = json!({

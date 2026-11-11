@@ -16,6 +16,7 @@ use crate::error::{Error, RecordError};
 use crate::gate::validate_canonical_witness_message_body;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::store::ManifestDbs;
+use crate::store::source_audience_obligation::SOURCE_AUDIENCE_REQUIRED_KEY;
 
 /// Tolerated clock skew for a witnessed turn's occurrence time (seconds), as
 /// for a reaction's.
@@ -358,7 +359,14 @@ fn message_pointer_order_envelope(body: &[u8]) -> crate::error::Result<Option<Ve
         let key = key.as_str().ok_or_else(fail)?;
         if !matches!(
             key,
-            "author" | "type" | "parts" | "metadata" | "is_visible" | "order" | "entity_doc_ref"
+            "author"
+                | "type"
+                | "parts"
+                | "metadata"
+                | "is_visible"
+                | "order"
+                | "entity_doc_ref"
+                | SOURCE_AUDIENCE_REQUIRED_KEY
         ) || !keys.insert(key)
         {
             return Err(fail());
@@ -388,6 +396,14 @@ fn message_pointer_order_envelope(body: &[u8]) -> crate::error::Result<Option<Ve
         } else if name != "metadata" && name != "parts" {
             return Err(fail());
         }
+    }
+    // A source-bound row's obligation rides its pointer body too, and stays
+    // last, where its canonical body holds it (fix list row 16256).
+    if let Some((key, value)) = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some(SOURCE_AUDIENCE_REQUIRED_KEY))
+    {
+        canonical.push((key.clone(), value.clone()));
     }
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &Value::Map(canonical)).map_err(|_| fail())?;

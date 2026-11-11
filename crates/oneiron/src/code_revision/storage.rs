@@ -15,6 +15,7 @@ use crate::store::Store;
 
 use super::codec::validate_code_revision_fork_shape;
 use super::codec::validate_code_revision_shape;
+use super::commit_metadata::{clear_author, erased_author_cleared, same_revision_content};
 use super::frontier::FrontierUpdate;
 use super::frontier::{
     delete_code_revision_frontier_for_revision_in_txn, get_code_revision_frontier_in_txn,
@@ -181,12 +182,18 @@ pub(super) fn write_code_revision_in_txn(
     wtxn: &mut RwTxn<'_>,
     revision: &CodeRevision,
 ) -> Result<(CodeRevisionWriteOutcome, bool)> {
+    // An author this vault erased is never persisted (FIX 6258): cleared in
+    // this writer, so an erase before or after it leaves no name behind.
+    let revision = erased_author_cleared(store, wtxn, revision)?;
+    let revision = &*revision;
     backfill_code_revision_integrity_for_session_in_txn(store, wtxn, &revision.session_id)?;
     let artifact_body = require_code_artifact_body(store, wtxn, &revision.revision_id)?;
     // A retained proposal stays retained even if its old parent later becomes
     // the head. Resolution must submit a new revision identity explicitly.
     if let Some(existing) = super::proposals::load(store, wtxn, &revision.revision_id)? {
-        if existing.revision != *revision || existing.artifact_body != artifact_body {
+        if !same_revision_content(&existing.revision, revision)
+            || existing.artifact_body != artifact_body
+        {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "stranded revision identity reused",
             )));
@@ -321,6 +328,35 @@ pub(super) fn write_code_revision_in_txn(
         ppr::increment_graph_version(store, wtxn)?;
     }
     Ok((CodeRevisionWriteOutcome::Finalized, true))
+}
+
+/// Erasing `actor` from the finalized revisions (FIX 6258): a revision it
+/// authored keeps its code, message, modes and ancestry, and names no
+/// author. The fold binds no author, so no integrity, frontier or
+/// descendant row changes. One-way, in the erase's own transaction. An id
+/// whose entity is no actor scans nothing.
+///
+/// # Errors
+/// Storage errors, or a record that cannot be read.
+pub(crate) fn erase_revision_author_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut named = Vec::new();
+    for row in RECORDS.iter_from(&vault.store, wtxn, &[])? {
+        let (revision_id, mut revision) = row?;
+        if clear_author(&mut revision, actor) {
+            named.push((revision_id, revision));
+        }
+    }
+    for (revision_id, revision) in named {
+        RECORDS.put(&vault.store, wtxn, &revision_id, &revision)?;
+    }
+    Ok(())
 }
 
 pub(super) fn get_code_revision_in_txn(

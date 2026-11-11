@@ -145,7 +145,13 @@ fn encode_part(
     calls: &std::collections::BTreeMap<&str, &str>,
 ) -> LlmResult<Option<Value>> {
     Ok(match part {
-        ContentPart::Text { text } => Some(json!({"text":text})),
+        ContentPart::Text { text, signature } => {
+            let mut value = json!({"text":text});
+            if let Some(signature) = signature {
+                value["thoughtSignature"] = json!(signature);
+            }
+            Some(value)
+        }
         ContentPart::Reasoning {
             text,
             signature,
@@ -163,7 +169,14 @@ fn encode_part(
             call_id,
             name,
             input,
-        } => Some(json!({"functionCall":{"id":call_id,"name":name,"args":input}})),
+            signature,
+        } => {
+            let mut v = json!({"functionCall":{"id":call_id,"name":name,"args":input}});
+            if let Some(s) = signature {
+                v["thoughtSignature"] = json!(s);
+            }
+            Some(v)
+        }
         ContentPart::ToolResult {
             call_id,
             output,

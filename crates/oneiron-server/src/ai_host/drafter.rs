@@ -62,7 +62,7 @@ mod process;
 use job::{JobDir, Verified};
 
 /// Who parks a night while its version trains, and alone resumes it.
-pub(super) const DRAFTER_PARK_OWNER: &str = "coach.drafter_retrain";
+pub(super) const DRAFTER_PARK_OWNER: &str = oneiron::dreamer_runner::DRAFTER_RETRAIN_PARK_OWNER;
 /// The parked row's reason.
 const DRAFTER_PARK_REASON: &str = "drafter.training: the night's version trains";
 /// How often a running job reads whether its version may still train.
@@ -247,8 +247,7 @@ fn train(
         generation,
         trainer,
     };
-    let spawned = std::thread::Builder::new()
-        .name(format!("drafter-training-{}", version.to_hex()))
+    let spawned = crate::engine_thread(format!("drafter-training-{}", version.to_hex()))
         .spawn(move || run.dispatched(&admission, permit));
     if spawned.is_err() {
         // The permit went with the closure that never ran: dropped
@@ -569,9 +568,9 @@ fn recover_all(server: &SyncServer, now: u64) -> oneiron::Result<()> {
         if waiters().contains(&mark.version) {
             continue;
         }
-        let parked = store
-            .parked_attempt(attempt)?
-            .is_some_and(|park| park.park_owner == DRAFTER_PARK_OWNER);
+        let parked = store.parked_attempt(attempt)?.is_some_and(|park| {
+            park.resumable_by(oneiron::dreamer_runner::ParkResumer::DrafterTrained)
+        });
         if parked {
             store.resume_parked(attempt, DRAFTER_PARK_OWNER, now)?;
         }
@@ -619,8 +618,7 @@ fn recover_job(server: &SyncServer, version: EntityId) {
         job,
         trainer,
     };
-    let spawned = std::thread::Builder::new()
-        .name(format!("drafter-recovery-{}", version.to_hex()))
+    let spawned = crate::engine_thread(format!("drafter-recovery-{}", version.to_hex()))
         .spawn(move || run.recovered(admission.as_ref()));
     if spawned.is_err() {
         waiters().remove(&version);

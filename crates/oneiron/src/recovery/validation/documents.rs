@@ -2,7 +2,7 @@
 
 use super::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, id, invalid, strict};
 use crate::error::Result;
-use crate::note::NoteBody;
+use crate::note::NoteCore;
 use crate::recovery::canonical::{CanonicalEntity, CanonicalSnapshot};
 use crate::recovery::document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,7 +15,7 @@ pub(in crate::recovery) struct DocumentRows {
     previous_document: Option<([u8; 16], [u8; 16])>,
     previous_id: Option<[u8; 16]>,
     last_core: Option<[u8; 16]>,
-    cores: BTreeMap<[u8; 16], NoteBody>,
+    cores: BTreeMap<[u8; 16], NoteCore>,
     docs: BTreeSet<([u8; 16], [u8; 16])>,
     heads: BTreeMap<[u8; 16], [u8; 16]>,
     retained: BTreeSet<([u8; 16], [u8; 16])>,
@@ -202,7 +202,7 @@ impl DocumentRows {
         {
             cores.insert(
                 entity.id,
-                crate::note::decode_note_body_using(
+                crate::note::decode_note_core_using(
                     &entity.blob[ENTITY_METADATA_HEADER_LEN..],
                     crate::note::NoteKind::wire,
                 )?,
@@ -242,7 +242,8 @@ impl DocumentRows {
             return Err(invalid("document birth timestamp binding"));
         }
         // The head's own value carries its birth; any other value, a retained
-        // parent among them (FIX 8829), claims no authority.
+        // parent among them (FIX 8829), claims no authority. The birth text is
+        // the document's alone (FIX 7783): the core binds its author.
         let current = heads.get(&row.entity_id) == Some(&row.head);
         if row.head == row.entity_id && current {
             let birth = row
@@ -250,10 +251,13 @@ impl DocumentRows {
                 .iter()
                 .find(|record| record.operation.as_bytes() == &row.entity_id)
                 .ok_or(invalid("NOTE birth provenance missing"))?;
-            if birth.actor != core.author_ref
-                || birth.actor_class != "ledger"
-                || birth.grant.is_some()
-                || birth.command_hash != *blake3::hash(core.markdown.as_bytes()).as_bytes()
+            // An imported author is source provenance: the canonical birth
+            // names no one for it, as native birth history does (FIX 7777).
+            let birth_author = match core.author_ref {
+                crate::note::NoteActor::Imported(_) => crate::note::NoteActor::Erased,
+                author => author,
+            };
+            if birth.actor != birth_author || birth.actor_class != "ledger" || birth.grant.is_some()
             {
                 return Err(invalid("NOTE birth provenance binding"));
             }

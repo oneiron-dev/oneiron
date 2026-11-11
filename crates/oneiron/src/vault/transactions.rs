@@ -18,7 +18,6 @@ use crate::store::{
 /// Advisory threshold row for the sync-state and sync-queue prefix scans and
 /// deletion's window update-key read: past it the scan raises one check and
 /// reads on (rule 5). It bounds no result.
-#[cfg(feature = "sync")]
 pub(crate) const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
 /// Generic sync diagnostics may not edit the inputs to an authority fold.
@@ -35,7 +34,6 @@ pub(crate) const MAX_SYNC_STATE_KEYS: usize = 10_000;
 /// write them. Nor a peer-origin digest: only the peer import records what it
 /// brought. Nor the record of which machine wrote a MESSAGE row: only the put
 /// that stages the row writes it (FIX 12113).
-#[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
         return Err(Error::InvalidConfig(
@@ -147,7 +145,19 @@ impl Vault {
     /// Checks if a directed edge exists in the LMDB vault.
     pub fn edge_exists(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(self.store.port_edge_get(&rtxn, src, kind, tgt)?.is_some())
+        self.edge_exists_in_txn(&rtxn, src, kind, tgt)
+    }
+
+    /// [`Self::edge_exists`] in `txn`, so a door proves an edge in the
+    /// snapshot it serves from (FIX 10782).
+    pub fn edge_exists_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+    ) -> Result<bool> {
+        Ok(self.store.port_edge_get(txn, src, kind, tgt)?.is_some())
     }
 
     /// Returns the `learned_at` timestamp from an entity's header (bytes 17-24).
@@ -500,7 +510,6 @@ impl Vault {
     /// every generic host door checks the same declaration list a bound
     /// `SideTable` is checked against at compile time.
     #[doc(hidden)]
-    #[cfg(feature = "sync")]
     pub fn sync_state_get(&self, key: &str) -> Result<Option<Vec<u8>>> {
         crate::side_table::host_declared_sync_state(key)?;
         let rtxn = self.store.env.read_txn()?;
@@ -513,7 +522,6 @@ impl Vault {
 
     /// Reads a value from `sync_state` using an existing write transaction.
     #[doc(hidden)]
-    #[cfg(feature = "sync")]
     pub fn sync_state_get_in_write_txn(
         &self,
         wtxn: &heed::RwTxn<'_>,
@@ -534,7 +542,6 @@ impl Vault {
     /// sync-state updates stay atomic. Refuses an undeclared key (see
     /// [`Self::sync_state_get`]) instead of writing it.
     #[doc(hidden)]
-    #[cfg(feature = "sync")]
     pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
         check_generic_sync_state_key(key)?;
         self.with_write_txn_grouped(|wtxn| {
@@ -566,7 +573,6 @@ impl Vault {
 
     /// Writes a value to `sync_state` using an existing write transaction.
     #[doc(hidden)]
-    #[cfg(feature = "sync")]
     pub fn sync_state_put_in_write_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -580,7 +586,6 @@ impl Vault {
     /// Deletes a key from the sync_state database for diagnostics and
     /// server-side sync metadata cleanup.
     #[doc(hidden)]
-    #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
         check_generic_sync_state_key(key)?;
         self.with_write_txn_grouped(|wtxn| {
@@ -599,7 +604,6 @@ impl Vault {
     /// whole-table diagnostic sweep are both accepted; see
     /// [`side_table::host_declared_sync_state_scan`].
     #[doc(hidden)]
-    #[cfg(feature = "sync")]
     pub fn sync_state_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
         crate::side_table::host_declared_sync_state_scan(prefix)?;
         let rtxn = self.store.env.read_txn()?;
@@ -625,7 +629,6 @@ impl Vault {
     /// `prefix` must overlap a declared `SyncState` table, the same as
     /// [`Self::sync_state_keys_with_prefix`].
     #[doc(hidden)]
-    #[cfg(feature = "sync")]
     pub fn sync_state_visit_prefix_in_write_txn<E>(
         &self,
         txn: &heed::RwTxn<'_>,

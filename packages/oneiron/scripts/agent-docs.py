@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Generate/check the Memory Wire agent mirror from the shipped SDK contract."""
+"""Generate/check the Memory Wire agent mirror from the shipped SDK contract.
+
+The mirror has two parts (untangle slice 4.3, D4 = a):
+- committed: quickstart.md, errors.md and the root llms.txt, made from authored text. `--check` checks them.
+- generated: types.md, facade-types.md and verbs.md, made from the verb table and the generated SDK outputs.
+  They are not in git. CI publishes them at PUBLISHED (`--site`), and every build keeps a local copy
+  (the SDK generator's `--out-dir`, crates/oneiron-sdk-generator, writes the same text itself; see README.md,
+  "Building from source"). `generated_artifacts` below and the generator's `generate/docs.rs` must agree.
+"""
 from pathlib import Path
 import argparse
 import os
@@ -7,6 +15,10 @@ import re
 import json
 
 ROOT = Path(__file__).resolve().parents[3]
+# Where CI's docs job publishes the mirror (.github/workflows/agent-sdk-docs.yml).
+PUBLISHED = "https://oneiron-dev.github.io/oneiron/"
+REPOSITORY = "https://github.com/oneiron-dev/oneiron/blob/main/"
+GENERATED = ("docs/agent-sdk/types.md", "docs/agent-sdk/facade-types.md", "docs/agent-sdk/verbs.md")
 
 def mirrored(markdown, source, target):
     """Rewrites each relative link of `source` so it resolves from `target`."""
@@ -19,14 +31,43 @@ def mirrored(markdown, source, target):
         return "](" + moved + ("#" + anchor if anchor else "") + ")"
     return re.sub(r"\]\(([^)\s]+)\)", relink, markdown)
 
-def artifacts():
-    readme = (ROOT / "packages/oneiron/README.md").read_text()
+def site_links(markdown, source):
+    """Rewrites each relative link of `source` for the published site: a mirror file stays relative,
+    anything else in the repository becomes its GitHub URL."""
+    def relink(match):
+        link = match.group(1)
+        if re.match(r"[a-z][a-z0-9+.-]*:|#|/", link):
+            return match.group(0)
+        path, anchor = (link.split("#", 1) + [""])[:2]
+        target = os.path.normpath(os.path.join(os.path.dirname(source), path))
+        if target.startswith("docs/agent-sdk/") or target == "llms.txt":
+            moved = os.path.relpath(target.removeprefix("docs/"), os.path.dirname(source.removeprefix("docs/")) or ".")
+        else:
+            moved = REPOSITORY + target
+        return "](" + moved + ("#" + anchor if anchor else "") + ")"
+    return re.sub(r"\]\(([^)\s]+)\)", relink, markdown)
+
+def generated_artifacts(src):
+    """The mirror files made from the verb table and the generated SDK outputs, which `src` holds
+    (the tree after the generator's `--package`, or an `oneiron-sdk-generator --out-dir` directory)."""
     ts = (ROOT / "packages/oneiron/src/types.ts").read_text()
     py = (ROOT / "crates/oneiron-py/python/oneiron/__init__.pyi").read_text()
-    facade_ts = (ROOT / "packages/oneiron/src/facade-types.ts").read_text()
-    manifest = json.loads((ROOT / "scripts/sdk/agent-verbs.json").read_text())
-    verbs = [row["name"] for row in manifest["verbs"] if row.get("context", "memory") == "memory"]
-    errors = (ROOT / "crates/oneiron-contracts/src/memory/error.rs").read_text()
+    py += (src / "crates/oneiron-py/python/oneiron/_facade_verbs.pyi").read_text()
+    facade_ts = (src / "packages/oneiron/src/facade-types.ts").read_text()
+    rows = [json.loads(path.read_text()) for path in sorted((ROOT / "scripts/sdk/verbs").glob("*.json"))]
+    verbs = [row["name"] for row in rows if row.get("context", "memory") == "memory"]
+    census = "# Memory Wire facade census\n\nThis is the complete **shipped SDK facade**, in verb-name order. It is\nnot a claim that every engine-internal method is a public SDK verb.\n`scripts/sdk/verbs/` owns this list.\nNames are stable: a new export or rename must update the engine catalog,\nboth bindings and their export-census tests in one change.\n\n"
+    census += "\n".join(f"- `{verb}`" for verb in verbs) + "\n"
+    return {
+        "docs/agent-sdk/types.md": "# Memory Wire type contract\n\n## JavaScript / TypeScript\n\n```ts\n" + ts + "```\n\n## Python\n\n```python\n" + py + "```\n",
+        "docs/agent-sdk/facade-types.md": "# Memory Wire facade types\n\nThe Python stubs carry the same names in the generated `facade_types.pyi`.\n\n```ts\n" + facade_ts + "```\n",
+        "docs/agent-sdk/verbs.md": census,
+    }
+
+def committed_artifacts():
+    """The mirror files made from authored text: in git, and checked by `--check`."""
+    readme = (ROOT / "packages/oneiron/README.md").read_text()
+    errors =(ROOT / "crates/oneiron-contracts/src/memory/error.rs").read_text()
     codes = re.findall(r'pub const MEMORY_CODE_\w+: &str = "([A-Z_]+)";', errors)
     remedies = {
         "BAD_REQUEST": "Correct input fields, types and units. Timestamps are Unix seconds.",
@@ -80,30 +121,39 @@ def artifacts():
     error_doc += "\n## Server refusal codes\n\nA server door refuses with these too; they pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
     error_doc += "".join(f"| `{code}` | {server_remedies[code]} |\n" for code in server_codes)
     error_doc += "\nRemote server-specific codes and HTTP schemas are also indexed by\n[the engine API reference](../../oneiron.skills.md).\n"
-    census = "# Memory Wire facade census\n\nThis is the complete **shipped SDK facade**, in manifest order. It is\nnot a claim that every engine-internal method is a public SDK verb.\n`scripts/sdk/agent-verbs.json` owns this list.\nNames are stable: a new export or rename must update the engine catalog,\nboth bindings and their export-census tests in one change.\n\n"
-    census += "\n".join(f"- `{verb}`" for verb in verbs) + "\n"
     return {
         "docs/agent-sdk/quickstart.md": mirrored(readme, "packages/oneiron/README.md", "docs/agent-sdk/quickstart.md"),
-        "docs/agent-sdk/types.md": "# Memory Wire type contract\n\n## JavaScript / TypeScript\n\n```ts\n" + ts + "```\n\n## Python\n\n```python\n" + py + "```\n",
-        "docs/agent-sdk/facade-types.md": "# Memory Wire facade types\n\nThe Python stubs carry the same names in the generated `facade_types.pyi`.\n\n```ts\n" + facade_ts + "```\n",
         "docs/agent-sdk/errors.md": error_doc,
-        "docs/agent-sdk/verbs.md": census,
         "llms.txt": (ROOT / "scripts/sdk/llms.txt.in").read_text(),
     }
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true")
-    args = parser.parse_args()
-    stale = []
-    for name, contents in artifacts().items():
-        path = ROOT / name
+def write(files, out):
+    for name, contents in files.items():
+        path = out / name
         if path.exists() and path.read_text() == contents:
             continue
-        if args.check:
-            stale.append(name)
-        else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(contents)
-    if stale:
-        raise SystemExit("SDK-MIRROR-STALE: " + ", ".join(stale))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true", help="check the committed mirror files; write nothing")
+    parser.add_argument("--generated", action="store_true", help="also write the generated mirror files in the tree (not in git)")
+    parser.add_argument("--from", dest="src", type=Path, default=ROOT, help="where the generated SDK outputs are (default: the tree)")
+    parser.add_argument("--out", type=Path, help="write only the generated mirror files, under this directory")
+    parser.add_argument("--site", type=Path, help="write the published site (every mirror file and llms.txt) under this directory")
+    args = parser.parse_args()
+    if args.site is not None:
+        files = {**committed_artifacts(), **generated_artifacts(args.src)}
+        write({name.removeprefix("docs/"): site_links(contents, name) for name, contents in files.items()}, args.site)
+    elif args.out is not None:
+        write(generated_artifacts(args.src), args.out)
+    elif args.check:
+        stale = [name for name, contents in committed_artifacts().items()
+                 if not (ROOT / name).exists() or (ROOT / name).read_text() != contents]
+        if stale:
+            raise SystemExit("SDK-MIRROR-STALE: " + ", ".join(stale))
+    else:
+        write(committed_artifacts(), ROOT)
+        if args.generated:
+            write(generated_artifacts(args.src), ROOT)

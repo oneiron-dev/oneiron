@@ -1,0 +1,16 @@
+{
+  "name": "vault.drafters.revert_as",
+  "description": "An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert.",
+  "input": "crate::drafter::DrafterRevertRequest",
+  "output": "crate::drafter::DrafterRevertReceipt",
+  "call": "crate::drafter::revert_drafter_as_agent(memory, input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

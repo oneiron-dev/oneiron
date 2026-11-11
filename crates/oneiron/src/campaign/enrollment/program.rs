@@ -81,8 +81,16 @@ pub(crate) fn put_campaign_program(vault: &Vault, program: &CampaignProgram) -> 
 /// Storage errors propagate; a malformed row is [`Error::CorruptedIndex`].
 pub fn campaign_program(vault: &Vault, program_ref: EntityId) -> Result<Option<CampaignProgram>> {
     let rtxn = vault.store.env.read_txn()?;
+    campaign_program_in_txn(vault, &rtxn, program_ref)
+}
+
+pub(super) fn campaign_program_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    program_ref: EntityId,
+) -> Result<Option<CampaignProgram>> {
     PROGRAM
-        .get(&vault.store, &rtxn, &program_ref)?
+        .get(&vault.store, txn, &program_ref)?
         .map(|row| decode_program(program_ref, row))
         .transpose()
 }
@@ -192,8 +200,17 @@ pub fn campaign_program_step(
     step_ref: EntityId,
 ) -> Result<Option<CampaignProgramStep>> {
     let rtxn = vault.store.env.read_txn()?;
+    campaign_program_step_in_txn(vault, &rtxn, program_ref, step_ref)
+}
+
+pub(super) fn campaign_program_step_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    program_ref: EntityId,
+    step_ref: EntityId,
+) -> Result<Option<CampaignProgramStep>> {
     PROGRAM_STEP
-        .get(&vault.store, &rtxn, &(program_ref, step_ref))?
+        .get(&vault.store, txn, &(program_ref, step_ref))?
         .map(|row| decode_program_step(program_ref, step_ref, row))
         .transpose()
 }
@@ -458,14 +475,23 @@ pub(super) fn require_program_step_enrolls(
     program: &CampaignProgram,
     step_ref: EntityId,
 ) -> Result<()> {
-    let campaign_kind = campaign_type_byte(vault)?;
     let rtxn = vault.store.env.read_txn()?;
-    if !program_enrolls_in_txn(vault, &rtxn, campaign_kind, program)? {
+    require_program_step_enrolls_in_txn(vault, &rtxn, program, step_ref)
+}
+
+pub(super) fn require_program_step_enrolls_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    program: &CampaignProgram,
+    step_ref: EntityId,
+) -> Result<()> {
+    let campaign_kind = campaign_type_byte(vault)?;
+    if !program_enrolls_in_txn(vault, txn, campaign_kind, program)? {
         return Err(invalid(
             "the campaign program or its campaign is not active (draft, paused or archived); nothing enrolls into it",
         ));
     }
-    let dropped = stored_program_in_txn(vault, &rtxn, program.program_ref)?
+    let dropped = stored_program_in_txn(vault, txn, program.program_ref)?
         .and_then(|(_, definition)| definition)
         .is_some_and(|definition| !definition.step_refs.contains(&step_ref));
     if dropped {

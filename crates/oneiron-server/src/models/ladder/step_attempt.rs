@@ -16,6 +16,19 @@ impl OfferLadder {
         run: &RunAdmission,
         request: LlmRequest,
     ) -> LlmResult<LlmResponse> {
+        self.generate_step_attempt_while(run, request, &|| true)
+            .await
+    }
+
+    /// [`Self::generate_step_attempt`] that asks `may_send` before each
+    /// physical admission and again before its send, as the walks do: a
+    /// `false` ends the attempt with nothing more sent.
+    pub(crate) async fn generate_step_attempt_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LlmResponse> {
         self.admits(&request)?;
         if !self.picked || self.rungs.len() != 1 {
             return Err(FatalLlmError::InvalidRequest.into());
@@ -42,10 +55,19 @@ impl OfferLadder {
         // A managed worker's lease is held through settlement (FIX 8315),
         // and the offer's probation slot through the request.
         match self
-            .send(call, 0, &|| true, None, RungPrompt::Configured, &mut walk)
+            .send(
+                call,
+                0,
+                may_send,
+                None,
+                None,
+                false,
+                RungPrompt::Configured,
+                &mut walk,
+            )
             .await?
         {
-            Sent::Answer(response) => Ok(response),
+            Sent::Answer(response, _) => Ok(response),
             Sent::Failed | Sent::Held | Sent::Stopped => {
                 Err(self.record_step_offer_result(call, walk))
             }

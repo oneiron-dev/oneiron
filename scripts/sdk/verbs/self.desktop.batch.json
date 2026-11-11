@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.batch",
+  "description": "Runs one batched program of desktop steps for a subgoal, stopping at the first failing step or after 3 acting steps leave the window unchanged; its last observation edits the caller's base, a long one paged, read on with observe and next.",
+  "input": "oneiron_browser::BatchInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::BatchOutput>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.batch(input)?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

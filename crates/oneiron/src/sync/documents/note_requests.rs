@@ -2,7 +2,7 @@
 use super::DocumentRegistry;
 use crate::note::{NoteOperation, NoteOperationReceipt, PendingNoteRequest};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
-use crate::sync::transport::{decode_document, document_sub_tags, encode_document};
+use crate::sync::transport::{decode_unsplit_document, document_sub_tags, encode_unsplit_document};
 use crate::{EntityId, Result};
 
 /// Durable pending semantic NOTE-operation request (`qn:e:{id}:{request_id}`).
@@ -44,8 +44,8 @@ impl DocumentRegistry {
                     std::slice::from_ref(pin),
                 )?;
             }
-            // Also refuses soft-erased shells and malformed birth records.
-            crate::note::document_birth_in_txn(&self.vault, txn, id)?;
+            // Also refuses soft-erased shells and malformed NOTE cores.
+            crate::note::note_core_in_txn(&self.vault, txn, id)?;
             let key = format!("{}:{}", id.to_hex(), operation.request_id.to_hex()).into_bytes();
             let frame = match QN_E.get(&self.vault.store, txn, &key)? {
                 Some(previous) => {
@@ -59,8 +59,7 @@ impl DocumentRegistry {
                     let admitted =
                         crate::note::admit_note_operation_in_txn(&self.vault, txn, id, operation)?;
                     let bytes = admitted.encode()?;
-                    let frame = encode_document(id, document_sub_tags::NOTE_OPS, &bytes)
-                        .into_result()
+                    let frame = encode_unsplit_document(id, document_sub_tags::NOTE_OPS, &bytes)
                         .map_err(|_| denied())?;
                     let pending = PendingNoteRequest {
                         input,
@@ -90,14 +89,24 @@ impl DocumentRegistry {
         crate::note::ensure_citations_ready(&self.vault.store, &txn, id)?;
         let prefix = format!("{}:", id.to_hex());
         let rows = QN_E.scan_from(&self.vault.store, &txn, prefix.as_bytes())?;
-        // What is sent again is each request's frame as admitted.
-        rows.into_iter()
-            .map(|(_, stored)| {
-                PendingNoteRequest::decode(&stored)
-                    .map(|pending| pending.frame.to_vec())
-                    .ok_or(crate::Error::CorruptedIndex("pending NOTE request"))
-            })
-            .collect()
+        // What is sent again is each request's frame as admitted; a fork
+        // upload sends the fork as it stands now (FIX 12789), or nothing once
+        // it is no longer uploadable.
+        let mut frames = Vec::with_capacity(rows.len());
+        for (_, stored) in rows {
+            let pending = PendingNoteRequest::decode(&stored)
+                .ok_or(crate::Error::CorruptedIndex("pending NOTE request"))?;
+            match super::note_fork_upload::queued_fork_upload(pending.frame) {
+                Some(upload) => {
+                    match crate::note::fork_upload_frame_in_txn(&self.vault, &txn, id, &upload?) {
+                        Ok(frame) => frames.extend(frame),
+                        Err(error) => tracing::warn!(%error, "NOTE fork upload not sent"),
+                    }
+                }
+                None => frames.push(pending.frame.to_vec()),
+            }
+        }
+        Ok(frames)
     }
 
     pub(crate) fn accept_note_receipt(
@@ -115,7 +124,7 @@ impl DocumentRegistry {
                 .ok_or_else(denied)?
                 .frame;
             let body = frame.get(1..).ok_or_else(denied)?;
-            let request = decode_document(body).map_err(|_| denied())?;
+            let request = decode_unsplit_document(body).map_err(|_| denied())?;
             let operation = NoteOperation::decode(request.payload)?;
             let digest = blake3::hash(&operation.encode()?);
             if digest.as_bytes() != &receipt.command_hash {

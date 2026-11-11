@@ -10,6 +10,7 @@
 //! result shapes are Afterglow's `search_web` tool's, so it can move in later.
 mod provider;
 mod setting;
+pub(crate) mod tables;
 mod usage;
 
 pub use provider::{FetchRoute, ResultRetention, WebProvider, WebProviderProfile};

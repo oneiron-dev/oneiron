@@ -83,7 +83,9 @@ impl HouseProbe {
     ) -> Self {
         let mut provider = provider.clone();
         if let Some(endpoint) = endpoint {
-            endpoint.clone_into(&mut provider.base_url);
+            endpoint
+                .trim_end_matches('/')
+                .clone_into(&mut provider.base_url);
         }
         // A VoxCPM2 worker's paths sit at its root, as its media client
         // reaches them.

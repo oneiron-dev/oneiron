@@ -513,3 +513,24 @@ fn a_scoped_member_still_steps_back_from_its_own_standing_grant() {
     );
     assert_eq!(demotion_receipts_via_public_query(&vault).len(), 1);
 }
+
+/// CONSENT-RAMP: a scope whose graduation bound names the catastrophe floor
+/// is never offered, since the mint must refuse it (no tap can graduate it).
+#[test]
+fn catastrophe_class_scopes_are_never_offered_graduation() {
+    let (_dir, vault) = open_vault();
+    let owner = owner(&vault);
+    // A scope whose graduation bound names the catastrophe floor. Shape-valid,
+    // graduatable by op-kind rule (not identity-topology), measurable like any scope.
+    let scope = RampScope::new("mass_secret_export", "vault", "agent-a").expect("scope");
+    for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
+        vault
+            .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedUntouched)
+            .expect("record");
+    }
+    // The offer is a promise the tap can keep: a floor class must never surface.
+    assert!(
+        vault.graduation_offers().expect("offers").is_empty(),
+        "a catastrophe-floor class must never surface a graduation offer: no tap can mint it"
+    );
+}

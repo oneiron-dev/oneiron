@@ -30,13 +30,164 @@ loops and other long builtins still have unpolled work; this adds no hard time b
 RATE, IRR and XIRR also poll the same token between solver iterations; IRR additionally
 polls its bracket probes and initial Brent NPV phases. Cancellation propagates as a typed
 error, not a non-convergence result or another solver attempt. Existing guesses,
-iteration counts, tolerances and arithmetic order are unchanged. Cashflow intake and
-individual NPV scans remain unpolled; this does not bound every financial builtin.
+iteration counts, tolerances and arithmetic order are unchanged. NPV, IRR, XNPV and XIRR
+also poll that same token during cashflow/date intake, date truncation and the individual
+NPV/derivative scans. Typed cancellation escapes each private helper through its actual
+caller, not a NUM result, another solver attempt or a boxed success. Financial builtins
+outside the named families, allocation internals and remaining bond/coupon paths still
+have unpolled work; this does not bound every financial builtin.
 
 YIELD and ODDFYIELD poll the same token between Newton iterations and before their final
 valuations. Cancellation escapes as a typed error before numeric-result boxing. Original
 guesses, iteration counts, tolerances, arithmetic order and the YIELD single-coupon path
-are unchanged. Bond intake and individual coupon price/slope scans remain unpolled.
+are unchanged. Coupon price/slope scans use the same token as described below;
+bond intake and calendar/schedule helpers still have unpolled work.
+
+MIRR polls the same full token during cashflow intake and its discount/compounding
+scan. CUMIPMT and CUMPRINC poll before each payment period, retaining the existing
+floating-point summation and numeric helpers. FVSCHEDULE polls during schedule
+traversal and returns typed cancellation before numeric-result boxing. These checks
+reuse the caller's token; no clock or work quota is added. NPV no longer refuses solely
+because its variadic argument count exceeds 255; its minimum arity, coercion, traversal
+and cancellation checks are unchanged. Allocation and other unpolled inner work remain
+outside this cooperative checkpoint coverage.
+
+ACCRINT, PRICE, YIELD, DURATION and MDURATION also use the same full token inside
+accrued-interest periods, coupon-price sums, YIELD price/slope valuations and duration
+cashflow sums. Cancellation propagates through the real fallible helpers and escapes
+before numeric-result boxing. Numeric formulas, traversal order, solver guesses,
+iteration counts and ordinary error results stay unchanged. Calendar/schedule helpers,
+allocation internals and other financial builtins still contain unpolled work; this is
+not a hard time bound.
+
+NETWORKDAYS, WORKDAY and their .INTL variants poll the same full caller token
+while collecting holiday arguments, range slices and cells, recursive array cells,
+and each day they visit. Their private helpers return typed cancellation through
+all four evaluators, before result boxing. Calendar arithmetic, weekend masks,
+holiday coercion and ordinary skipped range errors are unchanged. Holiday sorting,
+allocation and other calendar/financial work still have unpolled spans; these are
+cooperative checks, not a hard time bound.
+
+DB, VDB and AMORDEGRC poll that same full token in their period-by-period
+calculations. Both VDB switch/no-switch paths and its two real helper calls carry
+typed cancellation through the evaluator before numeric-result boxing. Numeric
+formulas, period/fraction handling, switch rules, rounding and ordinary errors
+stay unchanged. Their intake/allocation internals and other financial builtins
+remain outside this cooperative coverage.
+
+ODDFPRICE, ODDFYIELD, ODDLPRICE and ODDLYIELD carry the same full token
+through coupon-date walks, quasi-period counts and odd-coupon valuations.
+ODDFYIELD propagates cancellation from each price and finite-difference slope
+valuation, not only between solver iterations. Typed cancellation leaves all
+four evaluators before numeric-result boxing. Date rules, coupon arithmetic,
+iteration order and ordinary errors stay unchanged. Intake, allocation and
+remaining financial work still have unpolled spans.
+
+The twelve database D-functions capture that token once in their four shared
+evaluation paths. Header lookup, criteria parsing and row matching poll it at
+natural column, criteria and row boundaries. Their sum, product, extrema, mean
+and variance passes poll the same token without changing numeric order or
+ordinary criteria/error behavior. Cancellation returns through the native error
+path before result boxing. Range materialization, individual cell/predicate work
+and allocation remain outside this cooperative coverage.
+
+SUMPRODUCT captures that full token once and polls at argument, range-row,
+row, column and inner multiplication boundaries. SUMIF, SUMIFS, COUNTIF,
+COUNTIFS, AVERAGEIF and AVERAGEIFS reuse it through their shared evaluator's
+criteria intake and fallible chunk, column, fallback-cell and matched-error
+scans. Cancellation follows the native error path before scalar-result boxing.
+The range iterator's separate cancellation flag remains in place. Arithmetic,
+criteria, cache and ordinary-error order stay unchanged. The shared evaluator
+also polls the same borrowed token for each mask-count value, logical-tail
+criterion and scalar-fallback criterion. Mask counts keep the same validity/value
+checks and integer cast; logical-tail matching keeps its COUNT-only evaluation
+and first-false short circuit. Arrow kernels, individual cell/predicate work,
+prior row buffering and allocation still have unpolled spans.
+
+Cached criteria-mask construction carries that same borrowed token through its
+existing get/build/memo path. It polls tag, chunk, row and null-fill traversal.
+Cancellation returns a typed error; ordinary unavailable masks and Arrow errors
+still return no optimized mask and use the existing fallback. Only a completed
+build result enters the memo, preserving cached masks and cached unavailability.
+Numeric, blank/text, predicate and cache-key semantics stay unchanged. Arrow
+kernel internals, individual cell/predicate work, buffering and allocation still
+have unpolled spans; this is not a hard time or heap bound.
+
+COUNTA and COUNTBLANK capture the same full caller token once per evaluation.
+Their argument, range-chunk, column and cell walks poll it, including cells
+inside an iterator chunk. COUNTBLANK also polls before counting the unvisited
+logical tail; both functions poll before numeric-result boxing. Cancellation
+uses the native error path. Counts, blank/text rules, reference and ordinary
+error behavior, closed-workbook precedence and no-token behavior stay unchanged.
+This does not cover Arrow kernel internals, buffering, allocation, remaining
+builtins or all native work-budget and hard-time spans.
+
+MAP, BYROW and BYCOL capture that full caller token once per evaluation and
+poll their natural argument, row, column and cell walks before result boxing.
+MAP also polls each input binding; BYCOL polls each row copied into a column.
+Their shared private invocation helper propagates native cancellation errors
+instead of boxing them as ordinary error cells, including on the final call.
+Ordinary errors still become the same cell values. Broadcasting, range-origin
+bindings, blank-to-zero and nested-array rules, traversal order and normal
+no-token execution stay unchanged. Grid materialization internals, cloning,
+allocation and the other LAMBDA helpers remain outside this partial coverage.
+
+XLOOKUP and XMATCH capture the full caller token once for each value or
+reference evaluation and borrow it through their local searches. Their empty,
+exact, wildcard, approximate and sorted-verification walks poll at each entry;
+XLOOKUP also polls its output row and column walks before result boxing.
+Native cancellation from argument-range reads stays a typed error rather than
+an ordinary error cell. First/last selection, numeric and blank-tail rules,
+reference and fallback results, ordinary error cells and no-token behavior stay
+unchanged. Existing lookup-index and forward Arrow paths remain in use with
+checks around the call, not inside their cache-build or kernel internals.
+Individual cell work, allocation, other lookup functions and native work-budget
+and hard-time coverage remain partial.
+
+FILTER and UNIQUE capture that full token once after their original input and
+shape/flag checks. FILTER polls include flags, rows and every candidate output
+column. UNIQUE polls each input line and cell, key construction, retained-line
+selection and output transposition. Both poll before final result boxing.
+UNIQUE keeps native cancellation from range/flag argument reads distinct from
+ordinary error cells, including value-level errors passed to flag coercion.
+The range-read guards for UNIQUE, XLOOKUP and XMATCH consult the argument's
+cached resolution so a stored scalar cancellation error remains a cell value,
+not a new evaluation cancellation; this does not evaluate the argument again.
+Selection order, case/numeric keys, duplicate counts, eager ordinary flag checks,
+blank and error behavior, fallback values and no-token execution stay unchanged.
+Individual cell reads, string conversion, hashing, cloning and allocation still
+have unpolled spans; this is not full native work-budget or hard-time coverage.
+
+RANDARRAY and SEQUENCE capture the full caller token once after their original
+argument, dimension and generated-cell checks. They poll at each row and cell,
+and before final result boxing. SEQUENCE also polls before its outer allocation.
+RANDARRAY keeps its single RNG-counter advance and the same row-major draws;
+SEQUENCE keeps its original numeric expressions and accumulation order.
+Defaults, ordinary errors, existing size guards and no-token behavior stay
+unchanged. Individual RNG and cell operations, allocation, coercion and boxing
+internals still have unpolled spans; native work-budget and hard-time coverage
+remain partial.
+
+GCD and LCM poll the same full token through argument reduction and their
+Euclidean recursion. COMBIN, PERMUT, FACTDOUBLE and COMBINA poll their product
+loops. SUMSQ polls argument and range-cell traversal. SUMX2MY2, SUMX2PY2 and
+SUMXMY2 poll their shared numeric input collection and pairwise reductions,
+retaining Rust's original sum path rather than a different floating accumulator.
+Typed cancellation exits before ordinary result boxing. Numeric expressions,
+coercion, limits, rounding and evaluation order stay unchanged. Range/input
+materialization, individual cell operations, allocation and other numeric
+builtins remain outside this cooperative coverage.
+
+MULTINOMIAL polls that full token through argument and range-cell intake,
+value conversion, its original integer-sum path and denominator traversal.
+SERIESSUM polls coefficient intake and its original power-series accumulation.
+MIN and MAX poll argument, slice, column and error-lane cell traversal before
+calling their unchanged Arrow kernels. Typed cancellation leaves through the
+native error path before result boxing. Numeric order, error precedence absent
+cancellation, coercion, ignored values and result-format selection are unchanged.
+The bounded factorial helper is unchanged. Literal-array flattening, Arrow
+kernel internals, individual cell/conversion work and allocation still have
+unpolled spans.
 
 The recalculation behaves like Excel recalculating at edit time. Its caller passes a
 `RecalcClock`: the instant NOW() and TODAY() read (sampled once, so every call agrees), the
@@ -231,7 +382,7 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.17): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.33): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
@@ -282,7 +433,7 @@ The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` 
 linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
 natively and match Excel on every scored cell.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.17`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.33`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 

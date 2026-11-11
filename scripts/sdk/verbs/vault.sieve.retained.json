@@ -1,0 +1,16 @@
+{
+  "name": "vault.sieve.retained",
+  "description": "The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence.",
+  "input": "crate::dreamer_wake::sieve_doors::SievePageRequest",
+  "output": "crate::dreamer_wake::sieve_doors::SieveRetainedPage",
+  "call": "crate::dreamer_wake::sieve_doors::sieve_retained_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.retained\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "area": "hooks-host",
+  "assets": [
+    {
+      "id": "hooks-host-PACK-md",
+      "path": "PACK.md",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "6b0edb9a9058166df591d861559fe4b267be3654dd13a6346aac15994a74e792",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-hooks-budget-followup-HOOK-md",
+      "path": "hooks/budget-followup/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "650169d6a3c71f38ae4260b3064e2bb462347c3fd76298e586c1724e8a49d7a2",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-hooks-budget-followup-body-js",
+      "path": "hooks/budget-followup/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "6b8eaa4472a14db1308a4d22c9df409739e4261ac9df5d6df66aa20d15d097e7",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-hooks-budget-followup-intent-md",
+      "path": "hooks/budget-followup/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "54ef4881625ecd1208e00e939c6183dc2125d908356ff7a5f4e3287055019ecc",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-hooks-compact-pins-HOOK-md",
+      "path": "hooks/compact-pins/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "0afa55320d3fa176db0a6bd74426e0a54a10fb48efd89600e40534be5d464ffd",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-hooks-compact-pins-body-js",
+      "path": "hooks/compact-pins/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "60ab737faa2d98460f58d565781f9e0bd0f7a748c17f020a912dec687bd9302e",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-hooks-compact-pins-intent-md",
+      "path": "hooks/compact-pins/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "0b200786424c7f3819916748a967fdfd8a08b8a30f309b7f44c0c017c241aa31",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-hooks-quiet-wake-HOOK-md",
+      "path": "hooks/quiet-wake/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "6c688287915c5e1742b60825e81c717516d7bb44001443caaf29e2a66b8ec736",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-hooks-quiet-wake-body-js",
+      "path": "hooks/quiet-wake/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "f5d61217ffc560c64d85518012ee17effaa1c9077b85434fc2f65222d0d77a9c",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-hooks-quiet-wake-intent-md",
+      "path": "hooks/quiet-wake/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "910e332a8fe2211e955972d8af7db45057eb90b753468fd76182c15a8dc37f08",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-prompts-blocks-engine-executor-compaction-md",
+      "path": "prompts/blocks/engine-executor-compaction.md",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "3d8bbd2cd8f314fadfc5e92cbb66b51d98bd13a598f5cd18f460562ba4bde218",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-prompts-blocks-engine-executor-wire-md",
+      "path": "prompts/blocks/engine-executor-wire.md",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "5d5104b8718b270eee5789a633834ff76f313ccced5027ffdd3d49d7ec782f46",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-host-scenario",
+      "path": "scenario.json",
+      "source": {
+        "uri": "independent-oracle:hooks-host-contract",
+        "revision": "R17-host-1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "3b9cb06e10dcc13ecd2b6ab862c4fe2edb22fec5fef4c12a8a4c9ef31480d46b",
+      "expectedFacts": {
+        "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
+      },
+      "scenarios": [
+        "HOOKS-06"
+      ],
+      "requires": []
+    }
+  ]
+}

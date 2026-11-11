@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `build.rs` | src | s | — | — | Generates the SDK outputs oneiron-code-check includes at build time (crates/oneiron-sdk-build) |
 | `examples/backend_screen.rs` | src | m | — | — | Fleet-only, sequential direction screen; no fallback and no default switch |
 | `examples/latency.rs` | src | s | — | — | Check latency on the synthetic fixtures, per backend: `cargo run --release -p oneiron-code-check --example… |
 | `src/lib.rs` | src | m | 7 struct · 5 enum · 1 trait · 8 fn · 1 const · 1 mod · 4 re-export · 1 crate-vis | BackendId, BackendKind, CheckConfigError, CheckFailure, CheckInput, CheckMode, CheckReport, CodeCheck +5 | A type check of code-mode programs, run beside them as feedback |
@@ -19,5 +20,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/output.rs` | src | s | 2 crate-vis | — | Reads `tsc --pretty false` output |
 | `src/tsc_rs.rs` | src | s | 2 struct · 1 fn · 1 const | TscRsBudget, TscRsWasm | tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime… |
 | `src/tsrs.rs` | src | s | 1 struct · 1 fn · 2 const | TsrsWasm | tsrs in process: the pinned Wasm build of oxc's Rust port of TypeScript 7 (`@tsrs/wasm`, vendored in… |
-| `src/wasm.rs` | src | m | 7 crate-vis | — | The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`) |
+| `src/wasm.rs` | src | m | 9 crate-vis | — | The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`) |
 | `tests/golden.rs` | test | s | — | — | Oracle comparison: the synthetic code-mode programs of the tsc-check evidence give the same diagnostics on… |

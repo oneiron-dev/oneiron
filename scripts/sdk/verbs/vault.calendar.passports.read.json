@@ -1,0 +1,14 @@
+{
+  "name": "vault.calendar.passports.read",
+  "description": "Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence.",
+  "input": "crate::calendar::query::passport::CalendarPassportReadRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::calendar::query::passport::CalendarPassportRevision>>",
+  "call": "memory.calendar_passport_read(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

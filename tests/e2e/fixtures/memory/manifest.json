@@ -7,10 +7,10 @@
       "path": "cases.json",
       "source": {
         "uri": "independent-oracle:oneiron-memory-canonical-cases",
-        "revision": "sha256:664702fd4593cbcc17d4d9349c394be805d0e9da45870054dd069a32276efbca"
+        "revision": "sha256:ec42e77237e2dc9207d1cb73d8c8609863054f3ad72969cdcb69df4f1938c78d"
       },
       "licence": "CC0-1.0",
-      "sha256": "664702fd4593cbcc17d4d9349c394be805d0e9da45870054dd069a32276efbca",
+      "sha256": "ec42e77237e2dc9207d1cb73d8c8609863054f3ad72969cdcb69df4f1938c78d",
       "expectedFacts": {
         "description": "Original synthetic people, opinions, observations, dates, task tree and scope facts authored from the cited canon. These are design inputs and independent oracles, not engine exports, responses or storage records.",
         "people": 2,

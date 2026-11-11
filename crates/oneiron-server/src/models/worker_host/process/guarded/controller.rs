@@ -33,18 +33,16 @@ pub(super) fn start(
 )> {
     let (ready_tx, ready) = oneshot::channel();
     let (failed_tx, failed) = oneshot::channel();
-    std::thread::Builder::new()
-        .name("worker-guardian".to_owned())
-        .spawn(move || {
-            let mut ready = Some(ready_tx);
-            if let Err(error) = control(state, exit, start, &mut ready) {
-                if let Some(ready) = ready.take() {
-                    let _ = ready.send(Err(error));
-                } else {
-                    let _ = failed_tx.send(error);
-                }
+    crate::engine_thread("worker-guardian".to_owned()).spawn(move || {
+        let mut ready = Some(ready_tx);
+        if let Err(error) = control(state, exit, start, &mut ready) {
+            if let Some(ready) = ready.take() {
+                let _ = ready.send(Err(error));
+            } else {
+                let _ = failed_tx.send(error);
             }
-        })?;
+        }
+    })?;
     Ok((ready, failed))
 }
 

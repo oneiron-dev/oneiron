@@ -45,7 +45,7 @@ struct Streak<T> {
 /// and every diagnostic, inline in its feedback row or from the run's body
 /// that keeps them whole. `None` for a check that has not landed complete,
 /// or whose diagnostics do not read.
-fn check_report(
+pub(super) fn check_report(
     vault: &Vault,
     key: StepKey,
     row: &StoredStepFeedback,
@@ -332,11 +332,14 @@ fn finding(
         task,
         attempt,
         generation,
+        source_rows: None,
         evidence,
         window,
         actual: count as i64,
         dial: fails as i64,
         measured: count as i64,
+        exact_dial: None,
+        exact_measured: None,
         counter: Vec::new(),
         confession: None,
         blocked: false,

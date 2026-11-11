@@ -18,6 +18,12 @@ impl ManagedArgs {
     /// before touching a descriptor, a socket or the data directory.
     pub fn from_serve_args(args: &ServeArgs) -> Result<Option<Self>, ManagedError> {
         if !args.managed_by_hypnos {
+            if args.host_legal_listen_fd.is_some() || args.host_legal_uid.is_some() {
+                return Err(ManagedError::ConflictingFlag {
+                    flag: "host-legal-listen-fd/host-legal-uid",
+                    reason: "the HOST legal handoff requires --managed-by-hypnos",
+                });
+            }
             if args.organization_owner.is_some() || args.member_vault {
                 return Err(ManagedError::VaultRoutingRejected {
                     reason: "organization flags require managed mode".into(),
@@ -88,6 +94,26 @@ impl ManagedArgs {
             .custody_anchor_credentials_fd
             .map(|fd| require_fd(Some(fd), "custody-anchor-credentials-fd"))
             .transpose()?;
+        let host_legal = match (args.host_legal_listen_fd, args.host_legal_uid) {
+            (None, None) => None,
+            (Some(_), Some(_)) if args.vsock_guest => {
+                return Err(ManagedError::ConflictingFlag {
+                    flag: "host-legal-listen-fd/host-legal-uid",
+                    reason: "a HOST legal listener is inherited only by a native managed process",
+                });
+            }
+            (Some(fd), Some(uid)) => Some((require_fd(Some(fd), "host-legal-listen-fd")?, uid)),
+            (Some(_), None) => {
+                return Err(ManagedError::MissingFlag {
+                    flag: "host-legal-uid",
+                });
+            }
+            (None, Some(_)) => {
+                return Err(ManagedError::MissingFlag {
+                    flag: "host-legal-listen-fd",
+                });
+            }
+        };
         let start_mode = ManagedStartMode::of(args)?;
         let managed = Self {
             vault_name,
@@ -107,6 +133,11 @@ impl ManagedArgs {
             ready_fd,
             credentials_fd,
             custody_anchor_credentials_fd,
+            checkpoint_host_holds_recipient_fd: args
+                .checkpoint_host_holds_recipient_fd
+                .map(|fd| require_fd(Some(fd), "checkpoint-host-holds-recipient-fd"))
+                .transpose()?,
+            host_legal,
             vm_anchor,
             start_mode,
             vsock_guest: args.vsock_guest,
@@ -216,6 +247,20 @@ impl ManagedArgs {
                     refuse_fd_alias(("--custody-anchor-credentials-fd", anchor), other)?;
                 }
             }
+            if let Some((legal, _)) = managed.host_legal {
+                for other in [
+                    ("--ready-fd", managed.ready_fd),
+                    ("--credentials-fd", managed.credentials_fd),
+                ]
+                .into_iter()
+                .chain(
+                    managed
+                        .custody_anchor_credentials_fd
+                        .map(|fd| ("--custody-anchor-credentials-fd", fd)),
+                ) {
+                    refuse_fd_alias(("--host-legal-listen-fd", legal), other)?;
+                }
+            }
             // A cold restore's two pipes are adopted the same way: each is
             // refused when it names any descriptor before it.
             if let ManagedStartMode::Restore {
@@ -232,6 +277,11 @@ impl ManagedArgs {
                         .custody_anchor_credentials_fd
                         .map(|anchor| ("--custody-anchor-credentials-fd", anchor)),
                 );
+                taken.extend(
+                    managed
+                        .host_legal
+                        .map(|(fd, _)| ("--host-legal-listen-fd", fd)),
+                );
                 for pipe in [
                     ("--restore-input-fd", input_fd),
                     ("--restore-result-fd", result_fd),
@@ -241,6 +291,35 @@ impl ManagedArgs {
                     }
                     taken.push(pipe);
                 }
+            }
+        }
+        if let Some(recipient) = managed.checkpoint_host_holds_recipient_fd {
+            let mut taken = vec![
+                ("--ready-fd", managed.ready_fd),
+                ("--credentials-fd", managed.credentials_fd),
+            ];
+            taken.extend(
+                managed
+                    .custody_anchor_credentials_fd
+                    .map(|fd| ("--custody-anchor-credentials-fd", fd)),
+            );
+            taken.extend(
+                managed
+                    .host_legal
+                    .map(|(fd, _)| ("--host-legal-listen-fd", fd)),
+            );
+            if let ManagedStartMode::Restore {
+                input_fd,
+                result_fd,
+            } = managed.start_mode
+            {
+                taken.extend([
+                    ("--restore-input-fd", input_fd),
+                    ("--restore-result-fd", result_fd),
+                ]);
+            }
+            for other in taken.into_iter().filter(|(_, fd)| *fd >= 0) {
+                refuse_fd_alias(("--checkpoint-host-holds-recipient-fd", recipient), other)?;
             }
         }
         managed.vault_binding()?;
@@ -261,6 +340,18 @@ impl ManagedArgs {
     /// storage is touched on the way to the refusal.
     pub fn refuse_listen_fd_alias(&self, listen_fd: RawFd) -> Result<(), ManagedError> {
         refuse_fd_alias((HYPNOS_LISTEN_FD, listen_fd), ("--ready-fd", self.ready_fd))?;
+        if let Some(recipient) = self.checkpoint_host_holds_recipient_fd {
+            refuse_fd_alias(
+                (HYPNOS_LISTEN_FD, listen_fd),
+                ("--checkpoint-host-holds-recipient-fd", recipient),
+            )?;
+        }
+        if let Some((legal, _)) = self.host_legal {
+            refuse_fd_alias(
+                (HYPNOS_LISTEN_FD, listen_fd),
+                ("--host-legal-listen-fd", legal),
+            )?;
+        }
         if let Some(anchor) = self.custody_anchor_credentials_fd {
             refuse_fd_alias(
                 (HYPNOS_LISTEN_FD, listen_fd),

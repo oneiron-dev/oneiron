@@ -4,7 +4,8 @@
 pub(crate) use oneiron_store::batch::secret_scan::container::pdf::*;
 
 use super::{
-    Budget, Stop, Walked, encode_failed, expanded_floor, hidden_member, over_budget, unreadable,
+    Budget, ReadProgress, Stop, Walked, encode_failed, expanded_floor, hidden_member, over_budget,
+    unreadable,
 };
 use crate::blob_artifact::esign::render::{PdfPreparationError, decode_stream};
 use crate::file_secret_marks::MemberStep;
@@ -60,6 +61,7 @@ fn load(
                 Some((id, Object::Null))
             }),
             max_decompressed_size: budget.decompressed_ceiling(),
+            decode_admission: budget.pacing.decoder(),
             ..LoadOptions::default()
         },
     )
@@ -78,6 +80,7 @@ fn load(
         .map(|(id, _)| *id)
         .collect();
     for id in carriers {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
         let (decoded, dict) = match document.objects.get(&id).map(Object::as_stream) {
             Some(Ok(stream)) => (decode(stream, budget)?, stream.dict.clone()),
             _ => return Err(unreadable()),
@@ -86,10 +89,15 @@ fn load(
         let mut plain = Stream::new(dict, decoded);
         plain.dict.remove(b"Filter");
         plain.dict.remove(b"DecodeParms");
-        let objects = ObjectStream::new(&mut plain)
-            .map_err(|_| unreadable())?
-            .objects;
+        let admission = budget.pacing.decoder();
+        let objects = match admission.as_deref() {
+            Some(admission) => ObjectStream::new_admitted(&mut plain, None, Some(admission)),
+            None => ObjectStream::new(&mut plain),
+        }
+        .map_err(|_| unreadable())?
+        .objects;
         for (held, object) in objects {
+            budget.pacing.checkpoint(ReadProgress::Member)?;
             // As lopdf places them: a copy the cross-reference puts in
             // another stream is stale, and a direct object wins.
             let stale = matches!(
@@ -104,6 +112,7 @@ fn load(
     // lopdf passes over an object it cannot parse: each one the
     // cross-reference names must be there.
     for (number, entry) in &document.reference_table.entries {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
         let id = match entry {
             XrefEntry::Normal { generation, .. } => (*number, *generation),
             XrefEntry::Compressed { .. } => (*number, 0),
@@ -127,6 +136,7 @@ pub(super) fn members(
     };
     let document = load(bytes, budget, &mut carrier)?;
     for (id, object) in &document.objects {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
         if frames(object) {
             continue;
         }
@@ -157,6 +167,7 @@ fn superseded(
     each: &mut dyn FnMut(MemberStep, &[u8], &mut Budget) -> Walked<()>,
 ) -> Walked<()> {
     for offset in xref_offsets(bytes) {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
         if offset == latest.xref_start {
             continue;
         }
@@ -166,7 +177,7 @@ fn superseded(
         let mut visited_stop = false;
         let mut carrier =
             |id: ObjectId, decoded: Vec<u8>, budget: &mut Budget| -> Walked<Vec<u8>> {
-                if hidden_member(&decoded) {
+                if hidden_member(&decoded, budget) {
                     each(objstm_step(id), &decoded, budget).inspect_err(|_| visited_stop = true)?;
                 }
                 Ok(decoded)
@@ -178,12 +189,13 @@ fn superseded(
             Err(Stop::Refuse(_)) => continue,
         };
         for (id, object) in &revision.objects {
+            budget.pacing.checkpoint(ReadProgress::Member)?;
             if frames(object) || latest.objects.get(id) == Some(object) {
                 continue;
             }
             if let Ok(stream) = object.as_stream() {
                 match decode(stream, budget) {
-                    Ok(Some(decoded)) if hidden_member(&decoded) => {
+                    Ok(Some(decoded)) if hidden_member(&decoded, budget) => {
                         each(step(*id), &decoded, budget)?;
                     }
                     Ok(_) | Err(Stop::Refuse(_)) => {}
@@ -209,6 +221,7 @@ pub(super) fn rebuilt(
     let mut document = load(bytes, budget, &mut carrier)?;
     let ids: Vec<ObjectId> = document.objects.keys().copied().collect();
     for id in ids {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
         let Some(object) = document.objects.get_mut(&id) else {
             continue;
         };

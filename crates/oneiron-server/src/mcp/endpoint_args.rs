@@ -313,6 +313,12 @@ pub struct McpVerbArguments {
     /// `tasks.create`'s parent TASK ref (DOOR-113), resolved by the engine.
     #[serde(default)]
     pub parent_ref: Option<String>,
+    /// `tasks.create`'s due time (FIX 4749), decoded with the input.
+    #[serde(default)]
+    pub due_at: Option<Value>,
+    /// `tasks.create`'s watch flag (FIX 22121), decoded with the input.
+    #[serde(default)]
+    pub watch: Option<Value>,
     /// `describe`'s task highway handle (OF-220), decoded with the input.
     #[serde(default)]
     pub handle: Option<Value>,
@@ -322,7 +328,7 @@ pub struct McpVerbArguments {
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 20] {
+    fn present_fields(&self) -> [(&'static str, bool); 22] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -342,6 +348,8 @@ impl McpVerbArguments {
             ("brief", self.brief.is_some()),
             ("ttl", self.ttl.is_some()),
             ("parent_ref", self.parent_ref.is_some()),
+            ("due_at", self.due_at.is_some()),
+            ("watch", self.watch.is_some()),
             ("handle", self.handle.is_some()),
             ("after", self.after.is_some()),
         ]
@@ -415,6 +423,75 @@ pub struct McpVerbToolArgs {
     #[serde(skip)]
     pub tool: McpGeneratedVerbTool,
     pub payload: McpVerbToolPayload,
+    /// The content its HTTP body held as a file, when it held one for this
+    /// call: never a wire value (FIX 22074).
+    #[serde(skip)]
+    pub(crate) held: Option<McpHeldContent>,
+}
+
+impl McpVerbToolArgs {
+    /// The digest a page cursor and an admission intent bind this call's
+    /// arguments by ([`super::mcp_page_argument_digest`]), held content and
+    /// all.
+    #[must_use]
+    pub(crate) fn page_argument_digest(&self) -> [u8; 32] {
+        self.held.as_ref().map_or_else(
+            || super::mcp_page_argument_digest(&self.payload),
+            McpHeldContent::page_digest,
+        )
+    }
+}
+
+/// A generated artifact write's `arguments.spec.content_base64` its HTTP
+/// body held as a file, decoded, for the one call it arrived with (FIX
+/// 22074): its tool, the file, and the call's page argument digest with
+/// the content in it. Only the endpoint that read the body builds one; a
+/// clone shares the file.
+#[derive(Clone)]
+pub(crate) struct McpHeldContent {
+    tool: String,
+    file: std::sync::Arc<std::fs::File>,
+    page_digest: [u8; 32],
+}
+
+impl McpHeldContent {
+    pub(crate) fn new(tool: &str, file: std::fs::File, page_digest: [u8; 32]) -> Self {
+        Self {
+            tool: tool.to_owned(),
+            file: std::sync::Arc::new(file),
+            page_digest,
+        }
+    }
+
+    /// The tool whose call the content arrived for.
+    pub(crate) fn tool(&self) -> &str {
+        &self.tool
+    }
+
+    /// The decoded content's file.
+    pub(crate) fn file(&self) -> &std::fs::File {
+        &self.file
+    }
+
+    /// The call's page argument digest with the content in it.
+    pub(crate) fn page_digest(&self) -> [u8; 32] {
+        self.page_digest
+    }
+}
+
+impl std::fmt::Debug for McpHeldContent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("McpHeldContent")
+            .field("tool", &self.tool)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for McpHeldContent {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.file, &other.file)
+    }
 }
 
 /// Validates arguments for a tool THIS endpoint registered. With no
@@ -501,6 +578,7 @@ fn validate_endpoint_tool_args(
             Ok(McpValidatedToolArgs::Verb(Box::new(McpVerbToolArgs {
                 tool,
                 payload,
+                held: None,
             })))
         }
     }

@@ -87,6 +87,13 @@ async fn contained_rung<F: Future<Output = Result<DreamerAttemptExecution>>>(
     .await
 }
 
+/// `job`'s output and the instant it ended (FIX 21929: a slot's own
+/// prefix end, apart from the window's).
+async fn with_end<F: Future>(job: F) -> (F::Output, Instant) {
+    let output = job.await;
+    (output, Instant::now())
+}
+
 /// Polls `first` and `second` together until both end.
 async fn both<A: Future, B: Future>(first: A, second: B) -> (A::Output, B::Output) {
     let mut first = pin!(first);
@@ -144,14 +151,14 @@ impl ConsolidationExecutor<'_> {
                     started, run_id, ..
                 } => jobs.push((
                     index,
-                    self.extract_partition_prefix(
+                    with_end(self.extract_partition_prefix(
                         &started.payload,
                         &started.resources,
                         ctx,
                         attempt.status.attempt.id,
                         run_id.clone(),
                         &mut started.charges,
-                    ),
+                    )),
                 )),
                 WindowSlotRun::Rung(_) => rungs.push((
                     index,
@@ -169,14 +176,17 @@ impl ConsolidationExecutor<'_> {
             super::super::sieve_ports::ordered_slots(rung_runs, rung_width),
         )
         .await;
+        let side_by_side_ended = Instant::now();
         for (index, outcome) in rung_indices.into_iter().zip(rung_outcomes) {
             if let WindowSlotRun::Rung(done) = &mut slots[index] {
                 *done = Some(outcome);
             }
         }
-        for (index, outcome) in indices.into_iter().zip(outcomes) {
-            if let WindowSlotRun::Running { prefix, .. } = &mut slots[index] {
+        for (index, (outcome, ended)) in indices.into_iter().zip(outcomes) {
+            if let WindowSlotRun::Running { prefix, stages, .. } = &mut slots[index] {
                 *prefix = Some(outcome);
+                stages.mark_prefix_ended(ended);
+                stages.mark_window_prefixes_ended(side_by_side_ended);
             }
         }
         // The finishes, one by one in admission order. Each finish is
@@ -354,6 +364,7 @@ impl ConsolidationExecutor<'_> {
                 run_started,
                 prefix,
             } => {
+                stages.mark_finish_started(Instant::now());
                 let PartitionStarted {
                     payload,
                     resources,
@@ -413,7 +424,6 @@ impl ConsolidationExecutor<'_> {
                             stages.close_model_run(run_started);
                             match super::super::step_charge::tally_extracted_outcomes(
                                 ctx.vault,
-                                attempt.status.attempt.id,
                                 *extracted,
                                 &mut charges,
                             ) {
@@ -474,7 +484,6 @@ impl ConsolidationExecutor<'_> {
                                     } else {
                                         match super::super::step_charge::tally_extracted_outcomes(
                                             ctx.vault,
-                                            attempt.status.attempt.id,
                                             *extracted,
                                             &mut charges,
                                         ) {
@@ -525,7 +534,6 @@ impl ConsolidationExecutor<'_> {
                                     let trapped =
                                         super::super::step_charge::tally_extracted_outcomes(
                                             ctx.vault,
-                                            attempt.status.attempt.id,
                                             *extracted,
                                             &mut charges,
                                         )?;

@@ -13,13 +13,13 @@ use super::taxonomy::{
 };
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
-use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, amendment_delta};
+use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, EndpointRef, amendment_delta};
 use crate::edit_distance::{RetainedProposal, TextRead, retained_proposal};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
     AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, JudgeTrace,
-    UnclearAttribution, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
+    UnclearAttribution, UnclearContext, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
     ground_attempt_receipt, mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor_sourced,
     withdraw_edit_proposal_in_txn,
 };
@@ -485,11 +485,29 @@ fn persist_amendment_split(
         share: preference_share,
         at: judgment.at,
     });
+    // The notes freeze the context they were written in (FIX 7824): the
+    // judgment's own routing facts, and the two documents whose hunks the
+    // judge read; their world is read in the writer (FIX 22064).
     let unclear_row = (!split.unclear.is_empty()).then(|| UnclearAttribution {
         lane: AttributionLane::Amendment,
         reference: receipt_id.to_owned(),
         evidence_receipts: judgment.evidence_receipts.clone(),
         notes: split.unclear.clone(),
+        context: UnclearContext {
+            actor: judgment.actor,
+            skill: judgment.skill,
+            scope: Some(judgment.scope.clone()),
+            project: judgment.project,
+            world: None,
+            type_ref: judgment.type_ref.clone(),
+            attempt_receipt: judgment.attempt_receipt.clone(),
+            judge_revision: judgment.judge.clone(),
+            judge_model: judgment.judge_model.clone(),
+            sources: [&delta.proposed_ref, &delta.final_ref]
+                .into_iter()
+                .filter_map(EndpointRef::entity)
+                .collect(),
+        },
         at: judgment.at,
     });
 
@@ -519,7 +537,11 @@ fn persist_amendment_split(
             }
         }
         match unclear_row.as_ref() {
-            Some(row) => put_unclear_in_txn(vault, wtxn, row)?,
+            Some(row) => {
+                let mut row = row.clone();
+                row.context.world = amended_world_in_txn(vault, wtxn, &row.context)?;
+                put_unclear_in_txn(vault, wtxn, &row)?;
+            }
             None => {
                 delete_unclear_in_txn(vault, wtxn, AttributionLane::Amendment, &receipt_id_owned)?;
             }
@@ -527,6 +549,34 @@ fn persist_amendment_split(
         Ok(())
     })?;
     Ok(Some(judgment))
+}
+
+/// The one world the amended documents stand in (FIX 22064): each source row
+/// the judge read, by the world its record proves, base reality explicit.
+/// Sources in no row this vault proves a world for (a retained proposal text)
+/// leave it to the grounded attempt's run world. Two worlds, or none
+/// proved, is `None`.
+fn amended_world_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    context: &UnclearContext,
+) -> Result<Option<EntityId>> {
+    let mut worlds = std::collections::BTreeSet::new();
+    for source in &context.sources {
+        if let Some(world) = vault.record_world_in_txn(txn, source)? {
+            worlds.insert(world.unwrap_or_else(crate::claim::base_world_id));
+        }
+    }
+    if worlds.is_empty()
+        && let Some(receipt) = context.attempt_receipt.as_deref()
+    {
+        return crate::skill_attribution::outcome_world_in_txn(vault, txn, receipt);
+    }
+    let mut worlds = worlds.into_iter();
+    Ok(match (worlds.next(), worlds.next()) {
+        (Some(world), None) => Some(world),
+        _ => None,
+    })
 }
 
 /// The stored row of `judgment`; the discovery proposal's sequence is settled

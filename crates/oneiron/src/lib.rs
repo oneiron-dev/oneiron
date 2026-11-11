@@ -14,6 +14,8 @@
 pub mod batch;
 pub use oneiron_store::config;
 pub mod deletion;
+/// The derivation transaction (untangle 6.7, primitive C).
+pub mod derive;
 pub(crate) mod engine_store_hooks;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
@@ -37,6 +39,7 @@ pub mod edge {
 mod edge_regeneration;
 pub mod entity_id;
 pub use oneiron_base::error;
+pub use oneiron_base::host_descriptors;
 pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
@@ -74,7 +77,8 @@ pub(crate) use oneiron_store::session_overlay;
 #[global_allocator]
 static SESSION_OVERLAY_TEST_ALLOCATOR: session_overlay::hygiene_tests::ObservedAllocator =
     session_overlay::hygiene_tests::ObservedAllocator;
-pub(crate) mod side_table;
+#[doc(hidden)]
+pub mod side_table;
 pub mod slim;
 pub mod store;
 pub(crate) mod sweep;
@@ -148,6 +152,7 @@ pub mod consent;
 pub mod consent_graduation;
 pub mod federation;
 pub(crate) mod gate;
+pub use gate::code_consent_settlement;
 pub use gate::policy_manifest_doors;
 pub mod policy_model;
 pub mod receipt;
@@ -192,7 +197,8 @@ pub mod task_authority;
 pub mod task_type;
 pub mod task_verb;
 pub mod team;
-pub mod verb_catalog;
+pub mod verb_names;
+pub mod verb_table;
 pub mod verbs;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;
@@ -224,6 +230,7 @@ pub mod dispatch_byoa;
 pub mod engine_executor;
 pub mod failure_ladder;
 pub mod failure_signals;
+pub mod feeds;
 pub mod run_tree;
 pub mod runtime_hooks;
 pub mod self_heal;
@@ -257,6 +264,9 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+// Primitive A (slice 6.4): scoped reads with source versions any agent makes
+// behind its own grant.
+pub mod snapshot_read;
 pub mod training_pack;
 // FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
 pub mod drafter;
@@ -310,6 +320,8 @@ pub mod agent_inbox_lens;
 pub mod board_verb;
 pub mod context_board;
 pub mod genui;
+pub mod guest_error;
+pub mod host_net_floor;
 pub mod lens;
 pub mod memory;
 pub use oneiron_base::panic_report;
@@ -635,9 +647,10 @@ pub use crate::memory::web_acquisition::{
     WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult,
 };
 pub use crate::vault::{
-    ActorBound, HydratedShortId, IdScanPage, RawEntityPut, ReaderTableShortfall, TextIndexStatus,
-    VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault, VaultDoctorDbManifestReport,
-    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport, VaultWriterLease,
+    ActorBound, HydratedShortId, IdScanPage, OpenOptions, RawEntityPut, ReaderTableShortfall,
+    RuntimeHandle, TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault,
+    VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport,
+    VaultDoctorReport, VaultStorageId, VaultWriterLease,
 };
 pub use crate::vault_cleanup::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,
@@ -693,6 +706,15 @@ mod m8_forward_oracle;
 #[cfg(test)]
 pub(crate) mod test_util;
 
+/// Doors from the integration tests to crate-private items. Compiled only under
+/// `--cfg oneiron_test_support`, which only the test command sets. Not API.
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub mod test_doors;
+/// The fixture writes `test_util`, `test_support` and `test_doors` share,
+/// compiled under any of their gates. Not API.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) mod test_fixtures;
 /// Doors for tests that drive the engine from another crate. Not API.
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]

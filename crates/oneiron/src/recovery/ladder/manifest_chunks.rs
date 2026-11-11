@@ -1,4 +1,5 @@
 //! The native manifest chunks, in their original serialization and error order.
+//! Each packed buffer is retained until its paged BLAKE3 hash completes.
 
 use super::RecoveryManifest;
 use crate::error::Result;
@@ -10,6 +11,14 @@ pub(in crate::recovery) struct ManifestChunks {
     stage: Stage,
     next_document: usize,
     chunks: BTreeMap<String, [u8; 32]>,
+    hashing: Option<ChunkHash>,
+}
+
+struct ChunkHash {
+    key: String,
+    bytes: Vec<u8>,
+    hasher: blake3::Hasher,
+    next: usize,
 }
 
 #[derive(Default)]
@@ -26,6 +35,7 @@ enum Stage {
     RowBirths,
     WithdrawnCutoffs,
     AssetBodyRefs,
+    SourceAudiences,
     SchemaManifest,
     ContainerManifests,
     Documents,
@@ -54,6 +64,20 @@ impl ManifestChunks {
     }
 
     fn advance_row(&mut self, snapshot: &CanonicalSnapshot) -> Result<bool> {
+        if let Some(hashing) = self.hashing.as_mut() {
+            let end = hashing
+                .next
+                .saturating_add(blake3::CHUNK_LEN)
+                .min(hashing.bytes.len());
+            hashing.hasher.update(&hashing.bytes[hashing.next..end]);
+            hashing.next = end;
+            if end == hashing.bytes.len() {
+                let hashing = self.hashing.take().expect("completed manifest chunk hash");
+                self.chunks
+                    .insert(hashing.key, *hashing.hasher.finalize().as_bytes());
+            }
+            return Ok(false);
+        }
         let (key, bytes, next_stage) = match self.stage {
             Stage::EntityBlobs => ("entities", pack(&snapshot.entity_blobs)?, Stage::BaseEdges),
             Stage::BaseEdges => ("edges", pack(&snapshot.base_edges)?, Stage::Tombstones),
@@ -100,6 +124,11 @@ impl ManifestChunks {
             Stage::AssetBodyRefs => (
                 "asset_body_refs",
                 pack(&snapshot.asset_body_refs)?,
+                Stage::SourceAudiences,
+            ),
+            Stage::SourceAudiences => (
+                "source_audiences",
+                pack(&snapshot.source_audiences)?,
                 Stage::SchemaManifest,
             ),
             Stage::SchemaManifest => (
@@ -130,7 +159,11 @@ impl ManifestChunks {
     }
 
     fn add(&mut self, key: &str, bytes: Vec<u8>) {
-        self.chunks
-            .insert(key.to_owned(), *blake3::hash(&bytes).as_bytes());
+        self.hashing = Some(ChunkHash {
+            key: key.to_owned(),
+            bytes,
+            hasher: blake3::Hasher::new(),
+            next: 0,
+        });
     }
 }

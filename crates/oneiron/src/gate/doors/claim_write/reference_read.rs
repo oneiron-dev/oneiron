@@ -35,7 +35,21 @@ pub(crate) fn unresolved_claim_reference(
     if !reader.claim_edge_subject_admitted_in_txn(txn, &body.subject)? {
         return Ok(Some("/subject".to_owned()));
     }
-    let refs = claim_record_references(body);
+    let mut refs = claim_record_references(body);
+    // The resolver's evidence may name a cleanup-archived subject, under the
+    // same conditions the pre-call admission read, judged again here in the
+    // final snapshot (FIX 21997).
+    if let ClaimSubject::Entity(subject) = body.subject
+        && crate::gate::record_references::archived_evidence_subject_in_txn(
+            reader.vault(),
+            txn,
+            reader.actor_key().reads_as_vault_owner(),
+            &body.predicate,
+            &subject,
+        )?
+    {
+        refs.retain(|named| named.pointer != "/subject");
+    }
     let unresolved = validate_record_references_with(&refs, |reference| -> Result<bool> {
         let Ok(id) = EntityId::from_hex(reference) else {
             return Ok(false);

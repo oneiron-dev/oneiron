@@ -10,7 +10,7 @@ use super::config::{ROW_VERSION, SKILL_EDIT_VERDICT_ACCEPTED, SKILL_EDIT_VERDICT
 use super::target::CompilationTarget;
 use crate::edit_distance::attribution::AmendmentJudgment;
 use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, EndpointRef};
-use crate::edit_distance::{RetainedProposal, StoredProposal};
+use crate::edit_distance::{JoinedProposal, RetainedProposal};
 use crate::entity_id::EntityId;
 use crate::write_envelope::WriteActor;
 
@@ -297,7 +297,7 @@ pub(super) enum SourceEnds {
 /// resolves it and the opened row is kept for the rest of the pass (one
 /// snapshot-parse per artifact per pass).
 pub(super) struct ArtifactIndex {
-    pub(super) records: BTreeMap<EntityId, StoredProposal>,
+    pub(super) records: BTreeMap<EntityId, JoinedProposal>,
     pub(super) opened: RefCell<BTreeMap<EntityId, Arc<RetainedProposal>>>,
 }
 

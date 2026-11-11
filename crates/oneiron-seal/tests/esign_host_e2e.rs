@@ -12,16 +12,24 @@
 //! commits, whatever the organ's verdicts say.
 #![cfg(unix)]
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
+use oneiron::blob_artifact::esign::render::{PdfPreparation, PreparedEsignPdf};
 use oneiron::blob_artifact::esign::{
     DocumentKind, DocumentStatus, ESIGN_NOTICE_ATTEMPT_KIND, ESIGN_SEAL_ATTEMPT_KIND,
-    EsignAuditActor, EsignCapability, EsignDocument, EsignItem, EsignNotice, EsignRecipient,
-    EsignSealError, EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,
-    EsignVerdict, RecipientRole, SealProfile, SealVerdict, SigningAction, SigningOutcome,
+    EsignAuditActor, EsignCapability, EsignDocument, EsignInputBudget, EsignItem, EsignNotice,
+    EsignRecipient, EsignSealError, EsignSealInput, EsignSealProducer, EsignSealRequest,
+    EsignSealed, EsignSealer, EsignSealerError, EsignVerdict, RecipientRole, SealProfile,
+    SealVerdict, SigningAction, SigningOutcome,
 };
+use oneiron::connector_key::{PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier};
+use oneiron::office_body::Resources;
+use oneiron::secret_custody::{
+    CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
+};
+use oneiron::skill_hub::pack_catalog::{PackInstallStatus, PackSetupAnswer};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_organ_host::seal::{
     ASK_SIGN, HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings,
@@ -31,6 +39,11 @@ use oneiron_organ_host::{FetchGrant, HostConfig, OrganHost, OrganState};
 use oneiron_seal::organ::MAX_REPORT_JSON_BYTES;
 use p256::ecdsa::signature::hazmat::PrehashSigner;
 use p256::pkcs8::DecodePrivateKey;
+use sha2::{Digest, Sha256};
+
+mod support;
+
+use support::GrantAllFloor;
 
 const ORGAN: &str = env!("CARGO_BIN_EXE_oneiron-seal-organ");
 const ORIGINAL: &[u8] = include_bytes!(concat!(
@@ -117,10 +130,10 @@ struct RejectVerify<'a>(&'a dyn EsignSealer);
 impl EsignSealer for RejectVerify<'_> {
     fn seal(
         &self,
-        input: &EsignSealInput,
         request: &EsignSealRequest,
-    ) -> Result<EsignSealed, EsignSealerError> {
-        self.0.seal(input, request)
+        producer: &mut dyn EsignSealProducer,
+    ) -> Result<EsignSealed, EsignSealError> {
+        self.0.seal(request, producer)
     }
 
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError> {
@@ -129,6 +142,40 @@ impl EsignSealer for RejectVerify<'_> {
         verdict.reasons.push("digest_mismatch".to_owned());
         verdict.self_verify_ok = false;
         Ok(verdict)
+    }
+
+    fn prepare_esign_pdf(
+        &self,
+        original: &[u8],
+        request: &PdfPreparation<'_>,
+        chain: [u8; 32],
+        trail: &[String],
+    ) -> Result<Option<PreparedEsignPdf>, EsignSealerError> {
+        self.0.prepare_esign_pdf(original, request, chain, trail)
+    }
+}
+
+/// Lends one prepared input, written before the call, to the sealer's
+/// dispatch, under the budget the sealer's admitted call books for it.
+struct LentInput<'a>(&'a EsignSealInput);
+
+impl EsignSealProducer for LentInput<'_> {
+    fn source_bytes(&self) -> u64 {
+        u64::try_from(self.0.pdf.len()).unwrap_or(u64::MAX)
+    }
+
+    fn with_input(
+        &mut self,
+        resources: &Resources,
+        planned_bytes: u64,
+        measured_bytes: u64,
+        dispatch: &mut dyn FnMut(
+            &EsignSealInput,
+            &EsignInputBudget,
+        ) -> Result<EsignSealed, EsignSealError>,
+    ) -> Result<EsignSealed, EsignSealError> {
+        let budget = EsignInputBudget::new(resources, planned_bytes, measured_bytes)?;
+        dispatch(self.0, &budget)
     }
 }
 
@@ -166,6 +213,30 @@ fn unix_seconds_now() -> u64 {
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// The host's Gmail profile check, offline: the provider boundary of the
+/// built-in email pack's setup. Installation, custody, permission grants and
+/// qualification still run through the engine's own doors. The account and
+/// the evidence are synthetic.
+struct FixtureGmailProfile;
+
+impl PackConnectionVerifier for FixtureGmailProfile {
+    fn verify(
+        &self,
+        _vault: &Vault,
+        check: &PackConnectionCheck<'_>,
+    ) -> Result<PackConnectionEvidence, String> {
+        assert_eq!(check.pack, "oneiron.email");
+        assert_eq!(check.connection, "gmail");
+        assert_eq!(check.check, "gmail.profile");
+        Ok(PackConnectionEvidence {
+            account: "sender@example.test".into(),
+            provider_account: Some("sender@example.test".into()),
+            scopes: vec!["https://www.googleapis.com/auth/gmail.readonly".into()],
+            evidence: format!("{:x}", Sha256::digest(b"fixture-gmail-profile")),
+        })
+    }
+}
+
 /// One document its one recipient has completed, awaiting its seal: the
 /// real ceremony, not a fabricated ready flag.
 struct Ready {
@@ -183,6 +254,9 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     let vault = Vault::open(dir, config)?;
+    // The host installs this install's keystore after each open (P6c); the
+    // owner's credential registration below stores through it.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let at = TimeRange {
         start: now,
         end: now,
@@ -220,6 +294,7 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
         title: "Agreement".into(),
         sequential: false,
         expires_at: now + 3600,
+        token_expires_at: None,
         items: vec![EsignItem {
             artifact_ref: id.to_hex(),
             original_version: 1,
@@ -233,10 +308,12 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
             expires_at: now + 3600,
             principal_ref: None,
             automated: false,
+            natural_person: None,
         }],
         fields: vec![],
         full_trail_appendix: true,
         lifecycle: None,
+        project: None,
     };
     let actor = EsignAuditActor {
         actor: owner.to_hex(),
@@ -296,7 +373,7 @@ fn claim(vault: &Vault, lease_owner: &str) -> TestResult<AttemptRecord> {
 #[test]
 fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original() -> TestResult {
     let (keys, cert) = synthetic_keys()?;
-    let host = OrganHost::new(HostConfig::default());
+    let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
     host.install(seal_spec(ORGAN, FetchGrant::default()));
     let dir = tempfile::tempdir()?;
     let Ready {
@@ -318,7 +395,7 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
             SealProfile::BaselineB,
             url
         ),
-        Err(EsignSealError::Verification)
+        Err(EsignSealError::Verification { .. })
     ));
     assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Pending);
     assert!(vault.sealed_esign_document(id)?.is_none());
@@ -348,14 +425,16 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     assert_eq!(receipt.revision, Some(0));
     assert!(receipt.signature_sha256.is_some());
     assert!(lines[0].refused.is_none() && lines[0].unanswered.is_none());
-    // Each verification runs in a process of its own: the warm seal
-    // process stays as it was, and one more process starts and ends.
-    let warm = host.status("seal").ok_or("not installed")?;
-    assert_eq!(warm.state, OrganState::Warm);
+    // Each verification runs in a process of its own: one more process
+    // starts and ends. Rule 5 conversion (ab3e569e3ae, #3193): every seal
+    // call is sized by what it lends and runs in a process of its own that
+    // ends with it, so no warm seal process stays before or after.
+    let before = host.status("seal").ok_or("not installed")?;
+    assert_eq!((before.state, before.pid), (OrganState::Cold, None));
     assert!(vault.verify_esign_item(id, 0, &sealer)?.valid());
     let after = host.status("seal").ok_or("not installed")?;
-    assert_eq!(after.spawns, warm.spawns + 1);
-    assert_eq!((after.state, after.pid), (OrganState::Warm, warm.pid));
+    assert_eq!(after.spawns, before.spawns + 1);
+    assert_eq!((after.state, after.pid), (OrganState::Cold, None));
     let notices = AttemptQueue::new(&vault).list()?;
     let completion = notices
         .iter()
@@ -474,6 +553,46 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
         EntityId::now(),
         &rmp_serde::to_vec_named(&mail_policy)?,
     )?;
+    // The email channel runs as its built-in pack (OF-519): install
+    // `oneiron.email` Active with its connection checked, through the
+    // owner's setup doors, before either notice reaches the dispatch gate.
+    let setup = vault.prepare_pack_setup(&owner, "oneiron.email", None)?;
+    vault.register_secret_as_owner(
+        &owner,
+        &OwnerSecretRegistration {
+            name: "gmail.oauth",
+            class: CustodyClass::CustodyDeviceBound,
+            device_only: true,
+            rung: CustodyTier::T0Doored,
+            bindings: vec![RequestedBinding {
+                effector: "connector:gmail".into(),
+                tier_ceiling: None,
+                scopes: vec!["read".into()],
+            }],
+            manifest: None,
+            value: b"fixture-gmail-oauth",
+        },
+        unix_seconds_now(),
+    )?;
+    vault.answer_pack_setup(
+        &owner,
+        "oneiron.email",
+        Some(&setup.content_hash),
+        &PackSetupAnswer::Allow {
+            connection: "gmail".into(),
+            permissions: vec!["read".into(), "identity".into(), "inbound".into()],
+        },
+    )?;
+    let checked = vault.verify_pack_connection(
+        &owner,
+        "oneiron.email",
+        Some(&setup.content_hash),
+        "gmail",
+        &FixtureGmailProfile,
+    )?;
+    assert!(checked.ready);
+    assert_eq!(checked.status, PackInstallStatus::Active);
+    vault.require_builtin_channel_pack("email")?;
     let outgoing = |notice: &EsignNotice, key: &str| {
         oneiron::outbound::OutboundDispatchRequest::new(
             format!("receipt:{key}"),
@@ -596,7 +715,7 @@ fn a_key_that_signs_and_then_fails_leaves_its_prehash_on_record() -> TestResult 
             keys: &keys,
             panics,
         };
-        let host = OrganHost::new(HostConfig::default());
+        let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
         host.install(seal_spec(ORGAN, FetchGrant::default()));
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
@@ -604,7 +723,7 @@ fn a_key_that_signs_and_then_fails_leaves_its_prehash_on_record() -> TestResult 
         let sealer = HostedSealer::new(&host, &vault, &lost, settings);
         let before = keys.signed().len();
         let sealed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            sealer.seal(&input, &request)
+            sealer.seal(&request, &mut LentInput(&input))
         }));
         assert!(!matches!(sealed, Ok(Ok(_))), "panics: {panics}");
         let signed = keys.signed()[before..].to_vec();
@@ -637,7 +756,7 @@ fn a_call_refused_before_it_asks_shows_no_earlier_lines() -> TestResult {
         keys: &keys,
         panics: false,
     };
-    let host = OrganHost::new(HostConfig::default());
+    let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
     host.install(seal_spec(ORGAN, FetchGrant::default()));
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
@@ -647,13 +766,17 @@ fn a_call_refused_before_it_asks_shows_no_earlier_lines() -> TestResult {
         profile: SealProfile::BaselineB,
     };
     let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-    assert!(sealer.seal(&input, &request).is_err());
+    assert!(sealer.seal(&request, &mut LentInput(&input)).is_err());
     assert!(!sealer.asked().is_empty());
     let mut bad = input;
     bad.revisions.clear();
-    let refused = sealer.seal(&bad, &request);
+    let refused = sealer.seal(&request, &mut LentInput(&bad));
     assert!(
-        matches!(&refused, Err(EsignSealerError::Fatal { code, .. }) if code == "invalid_revision"),
+        matches!(
+            &refused,
+            Err(EsignSealError::Sealer(EsignSealerError::Fatal { code, .. }))
+                if code == "invalid_revision"
+        ),
         "{refused:?}"
     );
     assert!(sealer.asked().is_empty());
@@ -664,7 +787,7 @@ fn a_call_refused_before_it_asks_shows_no_earlier_lines() -> TestResult {
 fn a_tsa_url_with_a_query_is_refused_before_the_organ_starts()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (keys, cert) = synthetic_keys()?;
-    let host = OrganHost::new(HostConfig::default());
+    let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
     host.install(seal_spec(ORGAN, FetchGrant::default()));
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
@@ -679,9 +802,14 @@ fn a_tsa_url_with_a_query_is_refused_before_the_organ_starts()
         operation_id: "op".to_owned(),
         profile: SealProfile::BaselineT,
     };
-    let refused = sealer.seal(&EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?, &request);
+    let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
+    let refused = sealer.seal(&request, &mut LentInput(&input));
     assert!(
-        matches!(&refused, Err(EsignSealerError::Fatal { code, .. }) if code == "invalid_configuration"),
+        matches!(
+            &refused,
+            Err(EsignSealError::Sealer(EsignSealerError::Fatal { code, .. }))
+                if code == "invalid_configuration"
+        ),
         "{refused:?}"
     );
     assert_eq!(host.status("seal").map(|status| status.spawns), Some(0));
@@ -725,7 +853,7 @@ fn many_long_named_fields() -> Vec<u8> {
 fn a_verdict_whose_report_is_too_large_still_crosses()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (keys, cert) = synthetic_keys()?;
-    let host = OrganHost::new(HostConfig::default());
+    let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
     host.install(seal_spec(ORGAN, FetchGrant::default()));
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
@@ -733,7 +861,13 @@ fn a_verdict_whose_report_is_too_large_still_crosses()
     let verdict = sealer.verify(&many_long_named_fields())?;
     assert_eq!(verdict.verdict, SealVerdict::Failed);
     let report: serde_json::Value = serde_json::from_slice(&verdict.report_json)?;
-    assert_eq!(report["omitted_over_bytes"], MAX_REPORT_JSON_BYTES);
+    // Rule 5 conversion (7de2f0302b4, #3372): the verify report travels
+    // whole, and MAX_REPORT_JSON_BYTES is the `[limits]` row's threshold,
+    // not a cut. The report past it crosses in full: no omission stub, and
+    // its own verdict inside.
+    assert!(verdict.report_json.len() > MAX_REPORT_JSON_BYTES);
+    assert!(report.get("omitted_over_bytes").is_none());
+    assert_eq!(report["verdict"], "failed");
     Ok(())
 }
 
@@ -749,7 +883,7 @@ mod hostile {
 
     /// The hostile organ installed as the seal, in one of its modes.
     fn rogue_host(mode: &str) -> OrganHost {
-        let host = OrganHost::new(HostConfig::default());
+        let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
         let mut spec = seal_spec(ROGUE, FetchGrant::default());
         spec.args = vec![mode.into()];
         host.install(spec);
@@ -763,8 +897,12 @@ mod hostile {
         }
     }
 
-    fn unbound(result: &Result<EsignSealed, EsignSealerError>) -> bool {
-        matches!(result, Err(EsignSealerError::Fatal { code, .. }) if code == "unbound_output")
+    fn unbound(result: &Result<EsignSealed, EsignSealError>) -> bool {
+        matches!(
+            result,
+            Err(EsignSealError::Sealer(EsignSealerError::Fatal { code, .. }))
+                if code == "unbound_output"
+        )
     }
 
     /// Astra's witness on #1379: the organ asks the key to sign an
@@ -779,7 +917,7 @@ mod hostile {
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
         let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
         let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-        assert!(sealer.seal(&input, &request()).is_err());
+        assert!(sealer.seal(&request(), &mut LentInput(&input)).is_err());
         assert!(keys.signed().is_empty());
         let signs: Vec<_> = sealer
             .asked()
@@ -849,7 +987,7 @@ mod hostile {
             let sealer = HostedSealer::new(&host, &vault, &keys, settings);
             let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
             let before = keys.signed().len();
-            let refused = sealer.seal(&input, &request());
+            let refused = sealer.seal(&request(), &mut LentInput(&input));
             assert!(unbound(&refused), "{mode}: {refused:?}");
             let signed = keys.signed()[before..].to_vec();
             assert_eq!(signed.len(), 1, "{mode}");
@@ -875,7 +1013,7 @@ mod hostile {
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
         let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
         let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-        let refused = sealer.seal(&input, &request());
+        let refused = sealer.seal(&request(), &mut LentInput(&input));
         assert!(unbound(&refused), "{refused:?}");
         assert_eq!(keys.signed().len(), 1);
         Ok(())
@@ -907,7 +1045,7 @@ mod hostile {
             let sealer =
                 HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
             let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-            let result = sealer.seal(&input, &request());
+            let result = sealer.seal(&request(), &mut LentInput(&input));
             if !unbound(&result) {
                 admitted.push(format!("{mode}: {:?}", result.as_ref().err()));
             }
@@ -924,19 +1062,19 @@ mod hostile {
     #[test]
     fn a_signature_stripped_of_its_chain_is_not_admitted() -> TestResult {
         let (keys, cert) = synthetic_keys_with_chain()?;
-        let honest = OrganHost::new(HostConfig::default());
+        let honest = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
         honest.install(seal_spec(ORGAN, FetchGrant::default()));
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), VaultConfig::device())?;
         let settings = SealSettings::new(vec![cert], "seal");
         let sealer = HostedSealer::new(&honest, &vault, &keys, settings);
         let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
-        sealer.seal(&input, &request())?;
+        sealer.seal(&request(), &mut LentInput(&input))?;
 
         let (keys, cert) = synthetic_keys_with_chain()?;
         let host = rogue_host("leaf-only");
         let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
-        let refused = sealer.seal(&input, &request());
+        let refused = sealer.seal(&request(), &mut LentInput(&input));
         assert!(unbound(&refused), "{:?}", refused.as_ref().err());
         assert_eq!(keys.signed().len(), 1);
         Ok(())

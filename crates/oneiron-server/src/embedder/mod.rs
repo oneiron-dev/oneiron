@@ -16,6 +16,7 @@ mod endpoint;
 pub(crate) use endpoint::reported_mark;
 pub(crate) use endpoint::{PodRelease, VaultRelease};
 mod remote;
+pub(crate) use local::checkpoint::CheckpointEmbedder;
 pub(crate) use local::model_manager;
 pub(crate) use local::prepare as prepare_local;
 pub(crate) use remote::build_remote_rung;
@@ -458,12 +459,14 @@ impl EmbedderSlot {
         // warning, never a refusal.
         if let Some(check) = self.models.ref_check(&resolved) {
             let warning = Arc::clone(&self.ref_warning);
-            std::thread::spawn(move || {
-                let found = check.run();
-                *warning
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = found;
-            });
+            crate::engine_thread("embedder-ref-check".into())
+                .spawn(move || {
+                    let found = check.run();
+                    *warning
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = found;
+                })
+                .expect("failed to spawn thread");
         }
         let embedder = local as Arc<dyn QueryEmbedder>;
         if self.ready.set(Arc::clone(&embedder)).is_ok()

@@ -117,14 +117,13 @@ impl SyncClient {
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name
-        // (FIX 922 item 11): the thin cache stays read-only, as with no home.
+        // (FIX 922 item 11): the promotion is refused and the thin cache stays
+        // read-only (FIX 22217).
         if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::Storage(
-                "home may not read this world".into(),
-            ));
+            return Err(TransportError::world_unreadable_by_home());
         }
         let reply: PromotionReply = serde_json::from_value(
             rpc.request(
@@ -201,6 +200,10 @@ impl SyncClient {
                             .store
                             .sync_state
                             .delete(txn, &format!("ri:d:{id}"))?;
+                        self.vault
+                            .store
+                            .sync_state
+                            .delete(txn, &format!("ri:s:{id}"))?;
                         self.vault
                             .store
                             .sync_state
@@ -282,7 +285,7 @@ impl SyncClient {
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name or
         // the selector (FIX 3872): the window stays on disk, marked for the
@@ -402,14 +405,13 @@ impl SyncClient {
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name or
-        // the selector (FIX 3872): the window stays promoted here.
+        // the selector (FIX 3872): the demotion is refused and the window
+        // stays promoted here (FIX 22217).
         if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::Storage(
-                "home may not read this world".into(),
-            ));
+            return Err(TransportError::world_unreadable_by_home());
         }
         let reply: WindowVvReply = serde_json::from_value(
             rpc.request(

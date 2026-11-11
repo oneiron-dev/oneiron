@@ -21,7 +21,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::{TimeRange, Vault};
-use oneiron_authority::federation::{FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope};
+use oneiron_authority::federation::{
+    FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope, WalletRef,
+};
 
 use super::machine_standing::{InstallCounted, Standing};
 use super::*;
@@ -48,7 +50,12 @@ pub(crate) enum AgentGrantAct {
     /// `grant` is the new FEDERATION_GRANT row's id; `repo_bounds` the repo
     /// bounds he gave besides, signed with the rest (FIX 6867). A `GitPush`
     /// `grant_kind` grants raw git push to the `git_push_bounds` repos alone
-    /// (G1-PUSH); the same act, signer and fold carry it.
+    /// (G1-PUSH); the same act, signer and fold carry it. `verb_classes`
+    /// names the verb classes he gave beside the scope's exact verbs (FIX
+    /// 8735); empty when he named none. `wallet_ref` names the host wallet
+    /// the work the Grant funds draws on (FIX 7766); `None` when he named
+    /// none. `steward` marks his Steward grant to a base agent (untangle
+    /// 6.3): the row is a Steward, never a Delegate.
     Mint {
         grant: EntityId,
         member: EntityId,
@@ -57,6 +64,9 @@ pub(crate) enum AgentGrantAct {
         repo_bounds: Option<RepoAccessBounds>,
         grant_kind: FederationGrantKind,
         git_push_bounds: Option<GitPushBounds>,
+        verb_classes: BTreeSet<String>,
+        wallet_ref: Option<WalletRef>,
+        steward: bool,
     },
     /// The owner revokes the Grant `grant`, acknowledging exactly the
     /// topology decision tokens the writer collected (FIX 5114).
@@ -78,6 +88,9 @@ impl AgentGrantAct {
                 repo_bounds,
                 grant_kind,
                 git_push_bounds,
+                verb_classes,
+                wallet_ref,
+                steward,
             } => (
                 grant,
                 AgentGrantChange::Mint {
@@ -87,6 +100,9 @@ impl AgentGrantAct {
                     repo_bounds,
                     grant_kind,
                     git_push_bounds,
+                    verb_classes,
+                    wallet_ref,
+                    steward,
                 },
             ),
             Self::Revoke {

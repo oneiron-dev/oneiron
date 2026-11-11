@@ -53,8 +53,9 @@ mod debug;
 ///   forgets its least recently requested window subscription (the window's
 ///   next change reaches the peer as `WINDOW_INVALIDATE`) and the row asks
 ///   its OF-520 question once; no socket is refused for the count.
-/// - `max_ephemeral_payload_bytes` — ENFORCED on each ephemeral frame. The
-///   hub itself is charged to `limits.retained_memory_bytes`, never capped.
+/// - Ephemeral (presence) frames carry no byte bound of their own (FIX 161):
+///   a frame is bounded by the socket's message floor, and the hub is charged
+///   to `limits.retained_memory_bytes`, never capped.
 /// - `max_ephemeral_snapshot_bytes` — the most one late-join presence frame
 ///   carries; a larger hub is sent in parts.
 /// - `max_connections_per_user` — not enforced until auth has per-user
@@ -132,8 +133,6 @@ pub struct SyncServerConfig {
     pub max_messages_per_sec: u32,
     /// Loro ephemeral-store inactivity timeout in milliseconds.
     pub ephemeral_timeout_ms: i64,
-    /// Maximum Loro-native ephemeral payload bytes accepted from one frame.
-    pub max_ephemeral_payload_bytes: usize,
     /// Maximum presence bytes in one late-join frame; a larger hub is sent in
     /// parts.
     pub max_ephemeral_snapshot_bytes: usize,
@@ -150,6 +149,10 @@ pub struct SyncServerConfig {
     /// `[feedback.inbox]`: whether this server keeps the keyless open inbox,
     /// and its flood cap.
     pub feedback_inbox: FeedbackInboxConfig,
+    /// The deployment's publisher configuration, also used by owner status.
+    pub failure_signals: FailureSignalsConfig,
+    /// The startup posture used to select the failure-signal destination.
+    pub privacy_posture: HostingPrivacyPosture,
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
@@ -239,13 +242,14 @@ impl Default for SyncServerConfig {
             max_windows_per_connection: 65_536,
             max_messages_per_sec: 200,
             ephemeral_timeout_ms: 30_000,
-            max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
             max_ephemeral_snapshot_bytes: 256 * 1024, // 256 KB
             max_entity_blob: 64 * 1024,               // 64 KB
             max_lfs_object_bytes: oneiron::origin::lfs::LFS_DEFAULT_OBJECT_CAP,
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
             limits: LimitsConfig::default(),
             feedback_inbox: FeedbackInboxConfig::default(),
+            failure_signals: FailureSignalsConfig::default(),
+            privacy_posture: HostingPrivacyPosture::SelfHostLocal,
             runtime: RuntimeConfig::default(),
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
@@ -273,13 +277,6 @@ impl SyncServerConfig {
             return Err(oneiron::Error::sync_protocol(
                 oneiron::SyncProtocolValidation::InvalidConfig {
                     field: oneiron::SyncConfigField::EphemeralTimeoutMs,
-                },
-            ));
-        }
-        if self.max_ephemeral_payload_bytes == 0 {
-            return Err(oneiron::Error::sync_protocol(
-                oneiron::SyncProtocolValidation::InvalidConfig {
-                    field: oneiron::SyncConfigField::MaxEphemeralPayloadBytes,
                 },
             ));
         }
@@ -368,7 +365,6 @@ pub struct ServeConfig {
     pub max_windows_per_connection: usize,
     pub max_messages_per_sec: u32,
     pub ephemeral_timeout_ms: i64,
-    pub max_ephemeral_payload_bytes: usize,
     pub max_ephemeral_snapshot_bytes: usize,
     pub max_entity_blob: usize,
     /// Per-object LFS upload cap in bytes, `LFS_DEFAULT_OBJECT_CAP` unless
@@ -418,6 +414,8 @@ pub struct ServeConfig {
     /// The `[desktop]` section, absent until the config file names it.
     /// Absent means code runs have no desktop.
     pub desktop: Option<super::DesktopConfig>,
+    /// Explicit host profile for published backends. Absent: static serving only.
+    pub artifact_backend: Option<super::ArtifactBackendConfig>,
     /// The `[merge_queue]` section: the queue checker's executor.
     pub merge_queue: Option<super::MergeQueueCheckerConfig>,
     /// The `[gpu]` section: the batch lane's rented pods, absent until the
@@ -547,7 +545,6 @@ impl Default for ServeConfig {
             max_windows_per_connection: server.max_windows_per_connection,
             max_messages_per_sec: server.max_messages_per_sec,
             ephemeral_timeout_ms: server.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: server.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: server.max_ephemeral_snapshot_bytes,
             max_entity_blob: server.max_entity_blob,
             max_lfs_object_bytes: server.max_lfs_object_bytes,
@@ -568,6 +565,7 @@ impl Default for ServeConfig {
             models: None,
             browser: None,
             desktop: None,
+            artifact_backend: None,
             merge_queue: None,
             gpu: None,
             native_mail: None,
@@ -634,13 +632,14 @@ impl ServeConfig {
             max_windows_per_connection: self.max_windows_per_connection,
             max_messages_per_sec: self.max_messages_per_sec,
             ephemeral_timeout_ms: self.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: self.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: self.max_ephemeral_snapshot_bytes,
             max_entity_blob: self.max_entity_blob,
             max_lfs_object_bytes: self.max_lfs_object_bytes,
             max_bulk_decompressed: self.max_bulk_decompressed,
             limits: self.limits.clone(),
             feedback_inbox: self.feedback.inbox,
+            failure_signals: self.failure_signals.clone(),
+            privacy_posture: self.privacy_posture,
             runtime: self.runtime.clone(),
             skills: self.skills.clone(),
             line: self.line,
@@ -680,6 +679,12 @@ impl ServeConfig {
     /// (FIX 2544, 2709).
     pub fn base_vault_config(&self) -> oneiron::VaultConfig {
         let mut config = oneiron::VaultConfig::server();
+        // `[runtime] clock`: the clock the vault reads. A manual clock stays
+        // manual even if its file has gone since validation; it never falls
+        // back to the host's clock.
+        if let Some(clock) = self.runtime.store_clock() {
+            config.store_clock = clock;
+        }
         config.dimensions = self.dimensions;
         config.fast_dims = self.fast_dims;
         config.map_size = self.map_size;
@@ -690,6 +695,9 @@ impl ServeConfig {
         config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
+        // Retrieval-run capture stays off unless this server's owner turns it
+        // on (`[recall] retrieval_telemetry_capture`, FIX 21998).
+        config.retrieval_telemetry_capture = self.recall.retrieval_telemetry_capture;
         // A plain serve is self-run whatever posture it declares, so "Help
         // improve Oneiron" and training on what it sends stay off until its
         // owner turns them on; only the managed serve entry sets the managed

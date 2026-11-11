@@ -1,0 +1,16 @@
+{
+  "name": "vault.reports.disclosure",
+  "description": "The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny.",
+  "input": "crate::task_verb::sdk::ReportDisclosureRequest",
+  "output": "crate::feedback::ReportIssue",
+  "call": "crate::task_verb::sdk::decide_report_disclosure_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.disclosure\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

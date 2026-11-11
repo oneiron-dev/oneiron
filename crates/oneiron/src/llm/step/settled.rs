@@ -3,7 +3,8 @@
 //! a page of one attempt's committed step refs (DOOR-101). Neither
 //! executes, admits or spends a lease; a step with no completion claim
 //! reads as absent, never as a success synthesized from a live progression
-//! row or a completed queue row.
+//! row or a completed queue row. A self-written compaction's filed step
+//! reads the same way, by the job it was filed under (FIX 4816).
 use std::ops::Bound;
 
 pub use crate::model_step_record::{SettledStepRequest, SettledStepView};
@@ -12,8 +13,10 @@ use super::super::{LlmResponse, LlmUsage};
 use super::codec::decode_hash_hex;
 use super::step_claim::{
     DecodedStepClaim, STEP_INDEX_FORWARD, StepIndexKey, decode_step_claim_value,
-    load_step_response_in_txn, step_index_lookup_in_txn, terminal_step_identity,
+    load_step_response_in_txn, load_step_response_sighted_in_txn, step_index_lookup_in_txn,
+    terminal_step_identity,
 };
+use super::step_index::step_claim_is_runner_execution;
 use super::types::{DurableStepError, ENVELOPE_PROVENANCE_RUN_KEY};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -46,8 +49,8 @@ pub fn settled_step_as_owner(
     let Some(body) = vault.get_claim_in_txn(&txn, &claim_id)? else {
         return Ok(None);
     };
-    // Terminal-step binding and Finished only: the claim must be the
-    // runner's own record of exactly this attempt's step.
+    // Terminal-step binding and Finished only: the claim must be its
+    // producer's own record of exactly this job's step (FIX 4816).
     let Some((bound_attempt, bound_hash, model)) = terminal_step_identity(&body) else {
         return Ok(None);
     };
@@ -86,6 +89,27 @@ pub(crate) fn settled_step_for_caller(
     attempt: AttemptId,
     step_hash: [u8; 32],
 ) -> MemoryResult<Option<CallerSettledStep>> {
+    settled_step_read(memory, attempt, step_hash, false)
+}
+
+/// [`settled_step_for_caller`] with the response read as `memory`'s bound
+/// reader reads it (primitive A, slice 6.4c; review of #6968): for a masked
+/// reader each lifted key of the response reads as its handle, the pin
+/// checked on the stored bytes first.
+pub(crate) fn settled_step_for_reader(
+    memory: &Memory<'_>,
+    attempt: AttemptId,
+    step_hash: [u8; 32],
+) -> MemoryResult<Option<CallerSettledStep>> {
+    settled_step_read(memory, attempt, step_hash, true)
+}
+
+fn settled_step_read(
+    memory: &Memory<'_>,
+    attempt: AttemptId,
+    step_hash: [u8; 32],
+    sighted: bool,
+) -> MemoryResult<Option<CallerSettledStep>> {
     let vault = memory.vault();
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let Some(claim_id) = step_index_lookup_in_txn(vault, &txn, attempt, &step_hash)? else {
@@ -115,7 +139,13 @@ pub(crate) fn settled_step_for_caller(
         }
     }
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    let response = load_step_response_in_txn(vault, &txn, &decoded).map_err(step_error)?;
+    let response = if sighted {
+        let sight = memory.secret_sight_in_txn(&txn)?;
+        load_step_response_sighted_in_txn(vault, &txn, &decoded, sight)
+    } else {
+        load_step_response_in_txn(vault, &txn, &decoded)
+    }
+    .map_err(step_error)?;
     drop(txn);
     Ok(Some(CallerSettledStep::Readable(Box::new(
         SettledStepView {
@@ -134,7 +164,8 @@ pub(crate) fn settled_step_for_caller(
 /// The stored response's `usage` of the terminal claim that records exactly
 /// this step, read in the given txn with no lane gate (FIX 11450): the spend
 /// a crash left unsettled. `None` when no terminal claim records this step.
-/// A write txn passes as `&*wtxn`.
+/// A write txn passes as `&*wtxn`. Only the runner's own record counts: a
+/// compaction step's call settled once on its run's meter (FIX 4816).
 pub(crate) fn settled_step_usage_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -154,15 +185,18 @@ pub(crate) fn settled_step_usage_in_txn(
         return Ok(None);
     }
     let decoded = decode_step_claim_value(&body.value)?;
+    if !step_claim_is_runner_execution(&decoded, &body) {
+        return Ok(None);
+    }
     let response = load_step_response_in_txn(vault, txn, &decoded).map_err(step_error)?;
     Ok(Some(response.usage))
 }
 
 /// One page of `attempt`'s committed steps in the caller's snapshot: its
 /// memo-index rows in step-hash order from `from_step` (64-hex, inclusive),
-/// each kept only while its claim is still the runner's finished record of
-/// exactly that step, and the hash the next page starts at. Refs only: no
-/// response is loaded.
+/// each kept only while its claim is still its producer's finished record
+/// of exactly that step (FIX 4816), and the hash the next page starts at.
+/// Refs only: no response is loaded.
 pub(crate) fn committed_steps_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -205,6 +239,18 @@ pub(crate) fn committed_steps_in_txn(
         }
     }
     Ok((steps, next))
+}
+
+/// The attempt and step hash a [`SettledStepRequest`] names, parsed as
+/// [`settled_step_as_owner`] parses them (slice 6.4c's caller form reads the
+/// same request).
+pub(crate) fn settled_step_target(
+    input: &SettledStepRequest,
+) -> MemoryResult<(AttemptId, [u8; 32])> {
+    let attempt = attempt_ref(&input.job_ref)?;
+    let step_hash = decode_hash_hex(input.step_hash.trim())
+        .map_err(|_| MemoryError::bad_request("step_hash must be 64 hex characters"))?;
+    Ok((attempt, step_hash))
 }
 
 fn attempt_ref(job_ref: &str) -> MemoryResult<AttemptId> {

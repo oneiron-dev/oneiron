@@ -96,3 +96,36 @@ pub(crate) struct ViewQuery {
     #[param(example = "standard")]
     pub(super) view: Option<View>,
 }
+
+/// Query parameters for a memory timeline read.
+#[derive(Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct MemoryTimelineQuery {
+    /// Optional projection view. Timeline reads default to `summary`.
+    #[schema(example = "summary")]
+    #[param(example = "summary")]
+    pub(super) view: Option<View>,
+    /// Optional caller retrieval filter (FIX 3977): the URL-encoded JSON of
+    /// a read filter, as a request body carries it. It only narrows.
+    #[serde(default)]
+    #[schema(example = "{\"entity_types\":[0]}")]
+    #[param(example = "{\"entity_types\":[0]}")]
+    pub(super) filter: Option<String>,
+}
+
+/// A GET door's `filter` query parameter (FIX 3977): the JSON of a read
+/// filter, decoded as a request body's `filter` field is, a malformed one a
+/// typed 400 naming `filter`. Absent, the read keeps the caller's floor.
+pub(super) fn read_filter_param(
+    raw: Option<&str>,
+) -> Result<Option<oneiron::memory::ReadFilterInput>, ApiError> {
+    raw.map(|raw| {
+        serde_json::from_str(raw).map_err(|_| {
+            ApiError::bad_request(
+                "filter must be the JSON of a retrieval filter",
+                Some("filter"),
+            )
+        })
+    })
+    .transpose()
+}

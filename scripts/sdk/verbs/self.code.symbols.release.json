@@ -1,0 +1,8 @@
+{
+  "name": "self.code.symbols.release",
+  "input": "crate::memory::repo_doors::RepoSymbolsReleaseInput",
+  "output": "crate::memory::repo_doors::RepoSymbolsReleaseOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "RepoSymbolsRelease"
+}

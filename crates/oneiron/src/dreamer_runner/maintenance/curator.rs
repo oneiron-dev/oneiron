@@ -120,6 +120,59 @@ impl Vault {
             Ok(())
         })
     }
+
+    /// The owner, by its proof, or a holder of `engine.controls` sets the curator's cadence: the
+    /// minimum age and the period. The factors and the questions stay as the owner set them
+    /// (untangle 6.6b; maintenance cadence), through the one check, with a receipt naming it.
+    /// Untangle 6.6d gives it its verb. Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
+    /// holder of `engine.controls`; the row's own validation; store failures.
+    pub fn set_curator_cadence_by(
+        &self,
+        actor: crate::federation::EngineControlActor<'_>,
+        minimum_age_secs: u64,
+        cadence_secs: u64,
+    ) -> Result<EntityId> {
+        self.apply_engine_control(
+            actor,
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_CURATOR_RUBRIC",
+            &crate::federation::rendered_change(&serde_json::json!({
+                "minimum_age_secs": minimum_age_secs,
+                "cadence_secs": cadence_secs,
+            }))?,
+            |txn| {
+                let mut rubric = rubric_in_txn(self, &*txn)?;
+                rubric.minimum_age_secs = minimum_age_secs;
+                rubric.cadence_secs = cadence_secs;
+                rubric.validate()?;
+                RUBRIC.put(self, txn, &(), &rubric)?;
+                Ok(())
+            },
+        )
+    }
+
+    /// [`Self::set_curator_cadence_by`] for a holder of `engine.controls` (untangle
+    /// 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_curator_cadence_by`].
+    pub fn set_curator_cadence_as_holder(
+        &self,
+        holder: EntityId,
+        minimum_age_secs: u64,
+        cadence_secs: u64,
+    ) -> Result<EntityId> {
+        self.set_curator_cadence_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            minimum_age_secs,
+            cadence_secs,
+        )
+    }
     /// One curator pass per rubric cadence, whichever trigger asks first.
     pub fn schedule_curator(
         &self,
@@ -159,7 +212,7 @@ impl DreamerRunnerStore<'_> {
     }
 }
 /// The owner-set rubric as `txn` reads it, else the shipped defaults.
-fn rubric_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<CuratorRubric> {
+pub(super) fn rubric_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<CuratorRubric> {
     let rubric = match RUBRIC.get(&vault.store, txn, &())? {
         Some(rubric) => rubric,
         None => serde_json::from_str::<CuratorRubric>(include_str!("curator_defaults.json"))
@@ -367,6 +420,14 @@ pub(super) struct CuratorInverse {
     after_revision: [u8; 32],
 }
 
+impl CuratorInverse {
+    /// The claim that carries the rung after it applied: the target, or a
+    /// weakening's successor.
+    pub(super) const fn after(&self) -> EntityId {
+        self.after
+    }
+}
+
 /// The target's ClaimOf weight on its own subject, if it has one.
 fn claim_of_weight_in_txn(
     vault: &Vault,
@@ -396,7 +457,7 @@ fn claim_of_weight_in_txn(
 /// Applies one finding's rung as the Dreamer, in the finding's own write.
 /// The target must still be the body the finding graded, and active.
 /// Returns the target's before-state as the inverse.
-fn apply_in_txn(
+pub(super) fn apply_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     value: &serde_json::Value,

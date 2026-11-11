@@ -8,12 +8,15 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
-use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::{ManifestDbs, Rows, Store};
 use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::query::DeferredPprCacheWrite;
 use super::walk::{PprCacheState, PprFrontierEntry, SCORE_EPSILON};
+
+mod invalidation_plan;
+pub(crate) use invalidation_plan::{PprInvalidationProjection, PreparedPprInvalidation};
+use invalidation_plan::{delete_dep_rows_for_seed_hash, invalidate_ppr_caches};
 
 mod purge;
 pub(crate) use purge::purge_ppr_for_erase_in_txn;
@@ -362,45 +365,6 @@ pub(crate) fn cleanup_ppr_cache(
         dep_keys_to_delete.len() as u64,
     ))
 }
-fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &EntityId) -> Result<()> {
-    let mut hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
-    let mut dep_keys_to_delete = Vec::new();
-    for entry in store
-        .ppr_cache_deps
-        .prefix_iter(&*wtxn, entity_id.as_bytes())?
-    {
-        let (key, _) = entry?;
-        if key.len() != CACHE_DEP_KEY_LEN {
-            dep_keys_to_delete.push(key.to_vec());
-            continue;
-        }
-
-        let mut seed_hash = [0_u8; SEED_HASH_LEN];
-        seed_hash.copy_from_slice(&key[ENTITY_ID_LEN..CACHE_DEP_KEY_LEN]);
-        hashes.insert(seed_hash);
-    }
-
-    for key in &dep_keys_to_delete {
-        store.ppr_cache_deps.delete(wtxn, key)?;
-    }
-
-    for seed_hash in hashes {
-        let Some(raw) = store.ppr_cache().get(&*wtxn, &seed_hash)? else {
-            delete_dep_rows_for_seed_hash(store, wtxn, &seed_hash)?;
-            continue;
-        };
-        if raw.len() < CACHE_HEADER_LEN {
-            store.ppr_cache().delete(wtxn, &seed_hash)?;
-            delete_dep_rows_for_seed_hash(store, wtxn, &seed_hash)?;
-            continue;
-        }
-        let mut patched = raw.to_vec();
-        patched[CACHE_STALE_OFFSET] = 1;
-        store.ppr_cache().put(wtxn, &seed_hash, &patched)?;
-    }
-
-    Ok(())
-}
 pub(super) fn seed_is_live_for_ppr(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -448,29 +412,6 @@ pub(super) fn store_cache_entry(
     }
 
     Ok(true)
-}
-/// Every dependency row is read: past the table's threshold row the scan
-/// raises one check and deletes on.
-fn delete_dep_rows_for_seed_hash(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    seed_hash: &[u8; SEED_HASH_LEN],
-) -> Result<()> {
-    let mut rows = ScanCount::start(store, wtxn, EngineScan::PprCacheDepRows, &[])?;
-    let mut dep_keys = Vec::new();
-    for entry in store.ppr_cache_deps.iter(&*wtxn)? {
-        let (key, _) = entry?;
-        rows.row();
-        if key.len() == CACHE_DEP_KEY_LEN && &key[ENTITY_ID_LEN..] == seed_hash {
-            dep_keys.push(key.to_vec());
-        }
-    }
-    rows.defer(store);
-
-    for key in dep_keys {
-        store.ppr_cache_deps.delete(wtxn, &key)?;
-    }
-    Ok(())
 }
 pub(crate) fn invalidate_ppr_for_edge(
     store: &Store,

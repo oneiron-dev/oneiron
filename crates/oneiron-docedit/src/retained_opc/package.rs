@@ -494,14 +494,10 @@ mod tests {
             original,
             Limits {
                 archive_bytes: 32 * 1024 * 1024,
-                entries: 1000,
                 part_bytes: 16 * 1024 * 1024,
                 expanded_bytes: 32 * 1024 * 1024,
-                xml: XmlLimits {
-                    max_depth: 256,
-                    max_nodes: 100_000,
-                },
             },
+            &Resources::measuring(),
         )
         .expect("fixture operation");
         package
@@ -512,14 +508,10 @@ mod tests {
             &edited,
             Limits {
                 archive_bytes: 32 * 1024 * 1024,
-                entries: 1000,
                 part_bytes: 16 * 1024 * 1024,
                 expanded_bytes: 32 * 1024 * 1024,
-                xml: XmlLimits {
-                    max_depth: 256,
-                    max_nodes: 100_000,
-                },
             },
+            &Resources::measuring(),
         )
         .expect("fixture operation");
         for (before, after) in package.entries.iter().zip(&reopened.entries) {
@@ -546,16 +538,12 @@ mod tests {
         let original = include_bytes!("../../tests/fixtures/retained.xlsx");
         let limits = Limits {
             archive_bytes: 1024 * 1024,
-            entries: 100,
             part_bytes: 64 * 1024,
             expanded_bytes: 1024 * 1024,
-            xml: XmlLimits {
-                max_depth: 64,
-                max_nodes: 10_000,
-            },
         };
         let sheet = "xl/worksheets/sheet1.xml";
-        let mut package = Package::open(original, limits).expect("fixture opens");
+        let mut package =
+            Package::open(original, limits, &Resources::measuring()).expect("fixture opens");
         for (name, bytes, reason) in [
             (sheet, &b"<root><unclosed></root>"[..], "malformed XML"),
             ("[Content_Types].xml", b"<Types/>", "package metadata"),
@@ -574,7 +562,8 @@ mod tests {
             .replace_xml_part(sheet, edited.to_vec())
             .expect("valid replacement");
         let output = package.export().expect("edited export");
-        let reopened = Package::open(&output, limits).expect("output opens");
+        let reopened =
+            Package::open(&output, limits, &Resources::measuring()).expect("output opens");
         assert_eq!(reopened.part(sheet).expect("sheet"), Some(edited.to_vec()));
         for name in [
             "[Content_Types].xml",
@@ -613,13 +602,8 @@ mod tests {
     fn limits() -> Limits {
         Limits {
             archive_bytes: 1024 * 1024,
-            entries: 100,
             part_bytes: 64 * 1024,
             expanded_bytes: 1024 * 1024,
-            xml: XmlLimits {
-                max_depth: 64,
-                max_nodes: 10_000,
-            },
         }
     }
 
@@ -635,7 +619,8 @@ mod tests {
             ("xl/", b""),
             ("xl/sheet.xml", b"<root><item>old</item></root>"),
         ]);
-        let mut package = Package::open(&source, limits()).expect("directory entries open");
+        let mut package = Package::open(&source, limits(), &Resources::measuring())
+            .expect("directory entries open");
         assert_eq!(
             package.names().collect::<Vec<_>>(),
             ["[Content_Types].xml", "_rels/.rels", "xl/sheet.xml"]
@@ -647,7 +632,8 @@ mod tests {
             .replace_text("xl/sheet.xml", &["root", "item"], "old", "new")
             .expect("edit beside directory entries");
         let edited = package.export().expect("edited export");
-        let reopened = Package::open(&edited, limits()).expect("output opens");
+        let reopened =
+            Package::open(&edited, limits(), &Resources::measuring()).expect("output opens");
         assert_eq!(
             reopened.part("xl/sheet.xml").expect("part"),
             Some(b"<root><item>new</item></root>".to_vec())
@@ -692,7 +678,8 @@ mod tests {
             zip.write_all(b"<root><item>old</item></root>")
                 .expect("entry bytes");
             let source = zip.finish().expect("archive").into_inner();
-            let mut package = Package::open(&source, limits()).expect("package opens");
+            let mut package =
+                Package::open(&source, limits(), &Resources::measuring()).expect("package opens");
             assert_eq!(
                 package.entries.iter().map(|e| e.method).collect::<Vec<_>>(),
                 [0, 0, 8],
@@ -707,7 +694,8 @@ mod tests {
                 .replace_text("xl/sheet.xml", &["root", "item"], "old", "new")
                 .expect("edit beside an empty signature folder");
             let edited = package.export().expect("edited export");
-            let reopened = Package::open(&edited, limits()).expect("output opens");
+            let reopened =
+                Package::open(&edited, limits(), &Resources::measuring()).expect("output opens");
             assert_eq!(
                 reopened.part("xl/sheet.xml").expect("part"),
                 Some(b"<root><item>new</item></root>".to_vec())
@@ -745,13 +733,15 @@ mod tests {
         ]);
         // Excel's hint mismatch: the local header says maximum compression.
         let hinted = flip_local_flags(source.clone(), sheet, 0x0002);
-        let mut package = Package::open(&hinted, limits()).expect("hint bits differ only");
+        let mut package = Package::open(&hinted, limits(), &Resources::measuring())
+            .expect("hint bits differ only");
         assert_eq!(package.export().expect("no-op export"), hinted);
         package
             .replace_text("xl/other.xml", &["root", "item"], "old", "new")
             .expect("edit beside the hinted entry");
         let edited = package.export().expect("edited export");
-        let reopened = Package::open(&edited, limits()).expect("output opens");
+        let reopened =
+            Package::open(&edited, limits(), &Resources::measuring()).expect("output opens");
         let find = |package: &Package| {
             package
                 .entries
@@ -767,7 +757,11 @@ mod tests {
         );
         // Any other differing bit (bit 11 here: UTF-8 names) stays refused.
         assert!(matches!(
-            Package::open(&flip_local_flags(source, sheet, 0x0800), limits()),
+            Package::open(
+                &flip_local_flags(source, sheet, 0x0800),
+                limits(),
+                &Resources::measuring()
+            ),
             Err(Error::Invalid("local header mismatch"))
         ));
     }
@@ -789,7 +783,7 @@ mod tests {
             let names: Vec<_> = entries.iter().map(|(name, _)| *name).collect();
             assert!(
                 matches!(
-                    Package::open(&archive(entries), limits()),
+                    Package::open(&archive(entries), limits(), &Resources::measuring()),
                     Err(Error::Invalid(_))
                 ),
                 "{names:?}"

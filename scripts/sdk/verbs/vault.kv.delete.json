@@ -1,0 +1,28 @@
+{
+  "name": "vault.kv.delete",
+  "description": "Withdraws only the caller's current key; absent is a no-op and claim history stays.",
+  "input": "crate::memory::KeyValueAddress",
+  "output": "crate::memory::KeyValueDeleteReceipt",
+  "call": "memory.key_value_delete(&input)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "output_fields": {
+      "existed": "bool",
+      "receipt_refs": "Vec<String>"
+    },
+    "docs": {
+      "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+      "ts": "/** Retracts only the caller's current key; preserves claim history. */",
+      "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+    }
+  }
+}

@@ -2,6 +2,11 @@
 
 use super::*;
 
+pub(super) enum SendFailure {
+    Transport(oneiron::Error),
+    Refused,
+}
+
 /// One socket and the lease its audio is metered on.
 pub(super) struct Segment {
     pub(super) stream: LeasedAsrStream<SonioxAsrClient<queues::Outbox>>,
@@ -58,15 +63,23 @@ impl Segment {
     /// Sends what the outbox holds, as far as the socket takes it now.
     /// Each frame leaves the outbox only once the socket has room for it,
     /// so a poll dropped part-way loses none. Whether any frame went out.
-    pub(super) fn send(&mut self, cx: &mut Context<'_>) -> oneiron::Result<bool> {
+    pub(super) fn send(
+        &mut self,
+        door: &dyn VoiceStreamDoor,
+        cx: &mut Context<'_>,
+    ) -> Result<bool, SendFailure> {
         let mut sent = false;
         loop {
             if self.stream.inner_mut().transport().frames.is_empty() {
                 break;
             }
+            // Readiness may flush a frame buffered by an earlier poll.
+            door.release_stream().map_err(|_| SendFailure::Refused)?;
             match Pin::new(&mut self.socket).poll_ready(cx) {
                 Poll::Ready(Ok(())) => {}
-                Poll::Ready(Err(error)) => return Err(socket_error(&error)),
+                Poll::Ready(Err(error)) => {
+                    return Err(SendFailure::Transport(socket_error(&error)));
+                }
                 Poll::Pending => break,
             }
             let Some(frame) = self.stream.inner_mut().transport_mut().pop() else {
@@ -85,7 +98,7 @@ impl Segment {
                             .inner_mut()
                             .transport_mut()
                             .push_front(queues::OutFrame::Audio(audio));
-                        return Err(error);
+                        return Err(SendFailure::Transport(error));
                     }
                 },
                 queues::OutFrame::Text(text) => {
@@ -93,14 +106,16 @@ impl Segment {
                     Message::text(text)
                 }
             };
+            door.release_stream().map_err(|_| SendFailure::Refused)?;
             Pin::new(&mut self.socket)
                 .start_send(frame)
-                .map_err(|error| socket_error(&error))?;
+                .map_err(|error| SendFailure::Transport(socket_error(&error)))?;
             sent = true;
         }
         // Also carries the pong a ping is answered with.
+        door.release_stream().map_err(|_| SendFailure::Refused)?;
         if let Poll::Ready(Err(error)) = Pin::new(&mut self.socket).poll_flush(cx) {
-            return Err(socket_error(&error));
+            return Err(SendFailure::Transport(socket_error(&error)));
         }
         Ok(sent)
     }
@@ -110,16 +125,22 @@ impl Segment {
     /// frame that does not parse is an error, not a drop.
     pub(super) fn poll_heard(
         &mut self,
+        door: &dyn VoiceStreamDoor,
         quiet: &mut Pin<Box<tokio::time::Sleep>>,
         cx: &mut Context<'_>,
     ) -> Poll<oneiron::Result<Heard>> {
         loop {
-            match self.send(cx) {
+            match self.send(door, cx) {
                 Ok(true) => quiet
                     .as_mut()
                     .reset(tokio::time::Instant::now() + KEEPALIVE_AFTER),
                 Ok(false) => {}
-                Err(error) => return Poll::Ready(Ok(Heard::Dropped(error))),
+                Err(SendFailure::Transport(error)) => {
+                    return Poll::Ready(Ok(Heard::Dropped(error)));
+                }
+                Err(SendFailure::Refused) => {
+                    return Poll::Ready(Err(invalid("stream release refused")));
+                }
             }
             if !self.ending && quiet.as_mut().poll(cx).is_ready() {
                 self.stream
@@ -131,6 +152,9 @@ impl Segment {
                     .reset(tokio::time::Instant::now() + KEEPALIVE_AFTER);
                 continue;
             }
+            // Reading can also flush the WebSocket's queued writes.
+            door.release_stream()
+                .map_err(|_| invalid("stream release refused"))?;
             let text = match Pin::new(&mut self.socket).poll_next(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Some(Ok(Message::Text(text)))) => text,

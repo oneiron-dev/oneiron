@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 mod ask_selection;
+mod changes;
 mod history;
 mod live;
 mod manual;
@@ -36,9 +37,8 @@ use super::refresh::{hold_failed, standing_asker};
 use super::saved_reader::{SavedArtifactReads, saved_artifact_reads};
 use super::{records::*, store::*};
 use crate::blob_artifact::{ArtifactAskUnits, read_blob_artifact_head_in_txn};
-use crate::edit_roundtrip::judgment_cells::named_sheet_cells;
 use crate::edit_roundtrip::slides_review::SlideReviewLabels;
-use crate::edit_roundtrip::{ArtifactAsk, CellRef, CellValue, FolderItem, RangeRef, UnitDecider};
+use crate::edit_roundtrip::{ArtifactAsk, FolderItem, RangeRef, SheetRowSelection, UnitDecider};
 use crate::edit_settle::PendingProposalView;
 use crate::llm::decision::{DecisionBandPolicy, Reversibility};
 use crate::office_body::LivePin;
@@ -70,6 +70,10 @@ pub(super) struct ArtifactAsked {
     /// never exported moves no version, and arrives as a move of the body (FIX 2115).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     live: Vec<(EntityId, LivePin)>,
+    /// Hash of the exact original selection, never the trimmed suffix.
+    selection_ref: Option<[u8; 32]>,
+    /// Explicit incomplete work, not a whole-selection completion stamp.
+    remaining_sheet_rows: Option<SheetRowSelection>,
 }
 
 /// One question a pass could not ask, at the artifact it stopped on; it is held, then
@@ -98,6 +102,7 @@ enum Selection<'a> {
     },
     Paragraphs {
         blocks: &'a [String],
+        scope: Option<&'a oneiron_docedit::docx_body::DocxStoryScope>,
         author: &'a str,
         labels: SlideReviewLabels,
     },
@@ -127,10 +132,12 @@ impl<'a> Selection<'a> {
             },
             ArtifactAskUnits::Paragraphs {
                 blocks,
+                scope,
                 author,
                 labels,
             } => Self::Paragraphs {
                 blocks,
+                scope: scope.as_ref(),
                 author,
                 labels: labels.clone(),
             },
@@ -167,7 +174,7 @@ impl<'a> Selection<'a> {
 
 /// The units of a selection whose reads moved, which an arrival asks again.
 enum Changed {
-    Rows(BTreeSet<u32>),
+    Rows(SheetRowSelection),
     Blocks(Vec<String>),
     Items(Vec<FolderItem>),
 }
@@ -325,6 +332,7 @@ impl Asking<'_> {
         let vault = self.vault;
         let artifact = units.artifact;
         let selection = Selection::resolve(&units.selection)?;
+        let selection_ref = artifact_selection_ref(&units.selection)?;
         let mut files = selection.files();
         let mut observed = Vec::with_capacity(files.len() + 1);
         let mut observed_live = Vec::new();
@@ -347,41 +355,82 @@ impl Asking<'_> {
             ASKED.get(&vault.store, &txn, &(self.question, artifact))?
         };
         let mut only = None;
-        if let Some(stamp) = stamp.filter(|stamp| stamp.question_version == self.version) {
+        if let Some(mut stamp) = stamp.filter(|stamp| {
+            stamp.question_version == self.version && stamp.selection_ref == Some(selection_ref)
+        }) {
             let Some(baseline) = baseline(vault, artifact, &stamp)? else {
                 return Ok(None);
             };
-            let refresh = &self.record.definition.refresh;
-            let arrived = refresh.on_arrival
-                && (baseline != observed || stamp.live != observed_live)
-                && self.now >= changed_at.saturating_add(self.quiet);
-            let scheduled = refresh
-                .every_seconds
-                .is_some_and(|every| self.now >= stamp.asked_at.saturating_add(every));
-            if !(arrived || scheduled) {
-                return Ok(None);
-            }
-            if !scheduled {
-                only =
-                    self.changed_units(artifact, &selection, &baseline, &observed, &stamp.live)?;
-                // An edit to a live body never exported moves no version (FIX 2115).
-                if let Some(only) = only.as_mut()
-                    && let Some(live) =
-                        self.live_changed_units(artifact, &selection, &stamp.live)?
-                {
-                    only.merge(live);
+            if let Some(mut remaining) = stamp.remaining_sheet_rows.take() {
+                let Selection::SheetRows { rows, .. } = &selection else {
+                    return Err(Error::CorruptedIndex("partial sheet selection"));
+                };
+                if remaining.is_empty() {
+                    remaining = SheetRowSelection::range(rows.start.row, rows.end.row);
                 }
-                // Nothing it reads moved: the question follows the head unasked.
-                if only.as_ref().is_some_and(Changed::is_empty) {
-                    let stamp = ArtifactAsked {
-                        versions: observed,
-                        live: observed_live,
-                        ..stamp
-                    };
-                    vault.with_write_txn(|wtxn| {
-                        ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)
-                    })?;
+                // Keep advances the pending-proposal baseline, not the
+                // snapshot that completed rows were actually read from.
+                if stamp.versions != observed || stamp.live != observed_live {
+                    let mut changed = self.changed_units(
+                        artifact,
+                        &selection,
+                        &stamp.versions,
+                        &observed,
+                        &stamp.live,
+                    )?;
+                    let live = self.live_changed_units(artifact, &selection, &stamp.live)?;
+                    if stamp.live != observed_live && live.is_none() {
+                        changed = None;
+                    } else if let Some(more) = live
+                        && let Some(changed) = changed.as_mut()
+                    {
+                        changed.merge(more);
+                    }
+                    match changed {
+                        Some(Changed::Rows(changed)) => remaining.merge(changed),
+                        _ => remaining = SheetRowSelection::range(rows.start.row, rows.end.row),
+                    }
+                }
+                remaining.intersect(rows.start.row, rows.end.row);
+                only = Some(Changed::Rows(remaining));
+            } else {
+                let answered = if matches!(&selection, Selection::SheetRows { .. }) {
+                    &stamp.versions
+                } else {
+                    &baseline
+                };
+                let refresh = &self.record.definition.refresh;
+                let arrived = refresh.on_arrival
+                    && (*answered != observed || stamp.live != observed_live)
+                    && self.now >= changed_at.saturating_add(self.quiet);
+                let scheduled = refresh
+                    .every_seconds
+                    .is_some_and(|every| self.now >= stamp.asked_at.saturating_add(every));
+                if !(arrived || scheduled) {
                     return Ok(None);
+                }
+                if !scheduled {
+                    only =
+                        self.changed_units(artifact, &selection, answered, &observed, &stamp.live)?;
+                    // An edit to a live body never exported moves no version (FIX 2115).
+                    if let Some(only) = only.as_mut()
+                        && let Some(live) =
+                            self.live_changed_units(artifact, &selection, &stamp.live)?
+                    {
+                        only.merge(live);
+                    }
+                    // Nothing it reads moved: the question follows the head unasked.
+                    if only.as_ref().is_some_and(Changed::is_empty) {
+                        let stamp = ArtifactAsked {
+                            versions: observed,
+                            live: observed_live,
+                            ..stamp
+                        };
+                        vault.with_write_txn(|wtxn| {
+                            ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)
+                        })?;
+                        return Ok(None);
+                    }
                 }
             }
         }
@@ -401,233 +450,48 @@ impl Asking<'_> {
         // The recorded ceiling stands, as on a manual ask (FIX 9912).
         let dial = definition.dial;
         let budget = definition.deadline(vault)?;
-        self.ask_recorded(artifact, observed, "standing", |reference| {
-            let ask = ArtifactAsk {
-                question: &definition.question,
-                principal,
-                dial,
-                policy: self.policy,
-                reversibility: Reversibility::ReversibleRead,
-                decider: self.decider,
-                evidence: &[],
-                budget,
-                deadline: Instant::now() + ASK_DEADLINE,
-                run_ref: reference,
-            };
-            ask_selection(
-                vault,
-                artifact,
-                &selection,
-                &files,
-                only.as_ref(),
-                ask,
-                sight,
-            )
-        })
-    }
-
-    /// The units of `selection` whose reads moved between the `baseline` versions the
-    /// question answered and the `observed` heads: a row whose read cells (or header)
-    /// changed, its answer cell aside; a paragraph whose text changed; a folder item whose
-    /// file has a newer head. `None` when a version no longer reads, so all are asked.
-    /// An export of the live edit the last ask already read asks nothing again: reads
-    /// compare past the newest export since the baseline, as a held answer's split does
-    /// (FIX 12049).
-    fn changed_units(
-        &self,
-        artifact: EntityId,
-        selection: &Selection<'_>,
-        baseline: &[(EntityId, u64)],
-        observed: &[(EntityId, u64)],
-        pinned: &[(EntityId, LivePin)],
-    ) -> Result<Option<Changed>> {
-        let vault = self.vault;
-        let version = |versions: &[(EntityId, u64)], id: EntityId| {
-            versions
-                .iter()
-                .find(|(read, _)| *read == id)
-                .map_or(0, |(_, version)| *version)
-        };
-        let pin = |id: EntityId| {
-            pinned
-                .iter()
-                .find(|(read, _)| *read == id)
-                .map(|(_, pin)| pin)
-        };
-        if let Selection::FolderItems { items, .. } = selection {
-            let mut changed = Vec::new();
-            for item in items {
-                let (base, head) = (
-                    version(baseline, item.artifact),
-                    version(observed, item.artifact),
-                );
-                if base == head {
-                    continue;
-                }
-                if let Some(pin) = pin(item.artifact)
-                    && let Some(span) = vault.export_span(&item.artifact, Some(pin), base, head)?
-                {
-                    if vault.live_body_changed_until(
-                        &item.artifact,
-                        Some(pin),
-                        Some(span.frontier.as_slice()),
-                    )? {
-                        changed.push(*item);
-                        continue;
-                    }
-                    // The export holds what the last ask already read; versions after it
-                    // still ask, as today.
-                    if span.bytes.is_none() {
-                        continue;
-                    }
-                }
-                changed.push(*item);
+        let selected_rows = match &selection {
+            Selection::SheetRows { rows, .. } => {
+                let mut selected = match only.take() {
+                    Some(Changed::Rows(selected)) => selected,
+                    _ => SheetRowSelection::range(rows.start.row, rows.end.row),
+                };
+                selected.intersect(rows.start.row, rows.end.row);
+                Some(selected)
             }
-            return Ok(Some(Changed::Items(changed)));
-        }
-        let (then, now) = (version(baseline, artifact), version(observed, artifact));
-        // The newest export since the baseline holds the body as it stood at its
-        // frontier, compared with the pin the last ask read (FIX 12017).
-        let artifact_pin = pin(artifact);
-        let exported = vault.export_span(&artifact, artifact_pin, then, now)?;
-        let (Some(then), Some(now)) = (
-            vault.read_blob_artifact_version(&artifact, then)?,
-            vault.read_blob_artifact_version(&artifact, now)?,
-        ) else {
-            return Ok(None);
+            _ => None,
         };
-        Ok(match selection {
-            Selection::SheetRows {
-                sheet,
-                rows,
-                answer_col,
-                header_row,
-                ..
-            } => {
-                let cols: Vec<u32> = (rows.start.col..=rows.end.col)
-                    .filter(|col| col != answer_col)
-                    .collect();
-                let wanted = |cell: &CellRef| {
-                    cols.contains(&cell.col)
-                        && ((rows.start.row..=rows.end.row).contains(&cell.row)
-                            || Some(cell.row) == *header_row)
+        self.ask_recorded(
+            artifact,
+            observed,
+            "standing",
+            selection_ref,
+            selected_rows,
+            |reference, selected_rows| {
+                let ask = ArtifactAsk {
+                    question: &definition.question,
+                    principal,
+                    dial,
+                    policy: self.policy,
+                    reversibility: Reversibility::ReversibleRead,
+                    decider: self.decider,
+                    evidence: &[],
+                    budget,
+                    deadline: Instant::now() + ASK_DEADLINE,
+                    run_ref: reference,
                 };
-                let (Ok(then), Ok(now)) = (
-                    named_sheet_cells(&then, sheet, &wanted),
-                    named_sheet_cells(&now, sheet, &wanted),
-                ) else {
-                    return Ok(None);
-                };
-                let exported_sheet = match (&exported, artifact_pin) {
-                    (Some(span), Some(pin)) => vault.live_sheet_until(
-                        &artifact,
-                        Some(pin),
-                        sheet,
-                        Some((span.frontier.as_slice(), span.version)),
-                    )?,
-                    _ => None,
-                };
-                let export_cells = match exported.as_ref().and_then(|span| span.bytes.as_ref()) {
-                    Some(bytes) => match named_sheet_cells(bytes, sheet, &wanted) {
-                        Ok(cells) => Some(cells),
-                        Err(_) => return Ok(None),
-                    },
-                    None => None,
-                };
-                let read_from = match &exported {
-                    Some(span) if span.bytes.is_none() => &now,
-                    Some(_) => export_cells.as_ref().unwrap_or(&then),
-                    None => &then,
-                };
-                let moved = |row: u32| {
-                    cols.iter().any(|col| {
-                        let cell = CellRef { col: *col, row };
-                        read_from.get(&cell).unwrap_or(&CellValue::Blank)
-                            != now.get(&cell).unwrap_or(&CellValue::Blank)
-                    })
-                };
-                let live_moved = |row: u32| {
-                    exported_sheet
-                        .as_ref()
-                        .is_some_and(|sheet| cols.iter().any(|col| sheet.differs(*col, row)))
-                };
-                let header_moved = header_row.is_some_and(|row| moved(row) || live_moved(row))
-                    || exported_sheet
-                        .as_ref()
-                        .is_some_and(|sheet| sheet.whole().is_some());
-                Some(Changed::Rows(
-                    (rows.start.row..=rows.end.row)
-                        .filter(|row| header_moved || moved(*row) || live_moved(*row))
-                        .collect(),
-                ))
-            }
-            Selection::Paragraphs { blocks, .. } => {
-                let limits = {
-                    let txn = vault.store.env.read_txn()?;
-                    vault.docx_archive_limits_in_txn(&txn, Some(self.record.principal))?
-                };
-                // The DOCX reads run in the host's memory (FIX 10651); a resource
-                // refusal is the engine's error, never a quiet re-ask of all (FIX 10587).
-                let resources = crate::office_body::document_resources();
-                let texts = |bytes: &[u8]| {
-                    let read = match resources
-                        .docx(|| oneiron_docedit::docx_body::read_docx_blocks(bytes, limits))
-                    {
-                        Ok(read) => read,
-                        Err(error) => {
-                            if let Some(refusal) = error.resource() {
-                                return Err(crate::office_body::document_refused(refusal));
-                            }
-                            return Ok(None);
-                        }
-                    };
-                    Ok(Some(
-                        read.into_iter()
-                            .map(|block| {
-                                let text = *blake3::hash(block.text.as_bytes()).as_bytes();
-                                (block.id, text)
-                            })
-                            .collect::<std::collections::BTreeMap<_, _>>(),
-                    ))
-                };
-                let (Some(then), Some(now)) = (texts(&then)?, texts(&now)?) else {
-                    return Ok(None);
-                };
-                let exported_units = match (&exported, artifact_pin) {
-                    (Some(span), Some(pin)) => vault.live_paragraphs_until(
-                        &artifact,
-                        Some(pin),
-                        Some(span.frontier.as_slice()),
-                    )?,
-                    _ => None,
-                };
-                let export_texts = match exported.as_ref().and_then(|span| span.bytes.as_ref()) {
-                    Some(bytes) => match texts(bytes)? {
-                        Some(texts) => Some(texts),
-                        None => return Ok(None),
-                    },
-                    None => None,
-                };
-                let read_from = match &exported {
-                    Some(span) if span.bytes.is_none() => &now,
-                    Some(_) => export_texts.as_ref().unwrap_or(&then),
-                    None => &then,
-                };
-                Some(Changed::Blocks(
-                    blocks
-                        .iter()
-                        .filter(|block| {
-                            read_from.get(*block) != now.get(*block)
-                                || exported_units
-                                    .as_ref()
-                                    .is_some_and(|units| units.change(*block).is_some())
-                        })
-                        .cloned()
-                        .collect(),
-                ))
-            }
-            Selection::FolderItems { .. } => None,
-        })
+                ask_selection(
+                    vault,
+                    artifact,
+                    &selection,
+                    &files,
+                    only.as_ref(),
+                    selected_rows,
+                    ask,
+                    sight,
+                )
+            },
+        )
     }
 }
 
@@ -699,6 +563,9 @@ pub struct ArtifactAskRecord {
     /// the proposal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub units: Vec<ArtifactUnitReceipt>,
+    /// First selected sheet row left unfinished; this ask did not cover
+    /// the whole selection. No receipt is invented for the suffix.
+    pub next_sheet_row: Option<u32>,
 }
 
 /// Where one artifact ask's answers stand, by the same walk the next ask's baseline takes:
@@ -722,4 +589,10 @@ pub enum ArtifactAskStanding {
     /// The ask was logged with its ref details left out (FIX 9419): it names no proposal,
     /// so where its answers stand is not read here.
     DetailsOmitted,
+}
+
+fn artifact_selection_ref(units: &ArtifactAskUnits) -> Result<[u8; 32]> {
+    let bytes = serde_json::to_vec(units)
+        .map_err(|_| Error::InvariantViolation("artifact selection encoding"))?;
+    Ok(*blake3::hash(&bytes).as_bytes())
 }

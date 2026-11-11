@@ -8,7 +8,8 @@
 //! after them. The bind gate, the take and the TASK's settlement are the
 //! owner's own, run as the agent under its own class.
 
-use crate::claim::{ClaimReadStatus, PointRead, ScopedReadActorKey};
+use crate::EntityId;
+use crate::claim::ScopedReadActorKey;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
     AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
@@ -19,7 +20,6 @@ use crate::code_run::workflow_operations::{
 };
 use crate::error::{ArtifactError, Error, Result};
 use crate::task_verb::HostBinding;
-use crate::{EntityId, Vault};
 
 use super::HostSelfDispatcher;
 
@@ -47,6 +47,7 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<SelfDispatchOutcome> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: SelfEffect::WorkflowDispatch,
                 outcome: AGENT_VERB_SESSION_BOUND.to_owned(),
                 reason_codes: Vec::new(),
@@ -58,7 +59,11 @@ impl HostSelfDispatcher<'_> {
         let Some(reader) = read_as else {
             return Ok(refused(NEEDS_LANE));
         };
-        if !lane_reads(vault, &reader, &[call.task_ref, call.workflow_ref])? {
+        if !crate::task_verb::run_rows::workflow_dispatch::refs_readable(
+            vault,
+            &reader,
+            &[call.task_ref, call.workflow_ref],
+        )? {
             return Ok(refused(UNREADABLE));
         }
         let steps = match vault.get_workflow(&call.workflow_ref) {
@@ -66,7 +71,7 @@ impl HostSelfDispatcher<'_> {
             Ok(None) => return Ok(refused(UNREADABLE)),
             Err(error) => return Ok(refused(&error.to_string())),
         };
-        if !lane_reads(vault, &reader, &steps)? {
+        if !crate::task_verb::run_rows::workflow_dispatch::refs_readable(vault, &reader, &steps)? {
             return Ok(refused(UNREADABLE));
         }
         // A lease lost while the refs were read binds nothing; the binder
@@ -109,20 +114,6 @@ fn refused(message: &str) -> SelfDispatchOutcome {
         code: None,
         disk_floor: None,
     })
-}
-
-/// Whether `reader`'s lane reads every one of `refs`, bodies included, in
-/// one snapshot. Every ref is read, however many.
-fn lane_reads(vault: &Vault, reader: &ScopedReadActorKey, refs: &[EntityId]) -> Result<bool> {
-    let points: Vec<_> = refs.iter().copied().map(PointRead::id).collect();
-    let checked = vault
-        .scoped_read(reader.clone())
-        .with_claim_status(ClaimReadStatus::Recorded)
-        .read(&points, None)?;
-    Ok(checked
-        .value
-        .iter()
-        .all(|row| row.as_ref().is_some_and(|row| row.body.is_some())))
 }
 
 /// The rows the answer serves: the TASK, the workflow, every attempt the

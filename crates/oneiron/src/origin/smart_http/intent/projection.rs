@@ -21,6 +21,7 @@
 use std::path::Path;
 
 use heed::RoTxn;
+use rmpv::Value;
 
 use super::super::door::DoorAdmissionStamp;
 use super::super::evidence::{
@@ -38,6 +39,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::GitWire;
+use crate::git_wire::mutation_commands::{canonical_mutation_repo_ref, repo_mutation_repo_key};
+use crate::origin::lfs::{LfsOid, LfsPushedPointer};
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::store::code_snapshot::RepoRef;
 use crate::write_envelope::claim_body::ClaimBody;
@@ -203,6 +206,53 @@ impl Vault {
         Ok(if ingress.is_some() { None } else { authority })
     }
 
+    /// The repository whose retained edit ceiling judges a received push's
+    /// changed files (FIX 4299, review P1 #5919), as its mutation scope,
+    /// with the CODE anchor the push was admitted on. A push under a
+    /// projection ingress proof is judged on the canonical served
+    /// repository, never on the private ingress folder that no
+    /// registration names; as with G1, this holds for every proof stamp,
+    /// so a failed validation never skips the ceiling. Every other push is
+    /// judged on the physical repository at `root`.
+    ///
+    /// # Errors
+    /// A proof stamp with no admitted push, a repository that does not
+    /// resolve, or a store failure.
+    pub(in crate::origin) fn receive_pack_ceiling_repo_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        root: &Path,
+        attribution: &ReceivePackAttribution,
+    ) -> Result<(String, Option<EntityId>)> {
+        let body = self.receive_pack_evidence_in_txn(
+            txn,
+            attribution.provenance_claim_id,
+            RECEIVE_PACK_OUTCOME_PREDICATE,
+        )?;
+        let operation = receive_pack_field(&body, "operation_id")?
+            .as_str()
+            .and_then(|id| EntityId::from_hex(id).ok())
+            .ok_or_else(|| receive_pack_provenance_refused("invalid operation identity"))?;
+        let stamp = self.receive_pack_stamp_in_txn(txn, root, operation)?;
+        let push = stamp.as_ref().and_then(|stamp| stamp.push.as_ref());
+        let anchor = push.and_then(|push| push.code_repo()).map(|code| code.repo);
+        let folder = match &stamp {
+            Some(stamp) if stamp.ingress_proof.is_some() => {
+                let push = push.ok_or_else(|| {
+                    receive_pack_provenance_refused(
+                        "a projection-bound push names no admitted push",
+                    )
+                })?;
+                origin_repo_dir(self, push.served_name())?
+            }
+            _ => root.to_path_buf(),
+        };
+        Ok((
+            repo_mutation_repo_key(&canonical_mutation_repo_ref(&folder)?),
+            anchor,
+        ))
+    }
+
     /// Resume's check of a projection-bound intent: its proof validated
     /// and the canonical host it names standing. An ordinary intent is
     /// untouched.
@@ -218,5 +268,60 @@ impl Vault {
             return Ok(());
         }
         self.require_receive_pack_host_for(root, stamp)
+    }
+
+    /// The proof and host authority accepted for this physical ingress,
+    /// read from producer-pinned admission evidence even after intent pruning.
+    /// A missing or no-longer-standing ingress stays on the proposal path.
+    pub(in crate::origin::smart_http) fn forward_admission_for_operation(
+        &self,
+        root: &Path,
+        operation: EntityId,
+    ) -> Result<Option<(RepoProjectionIngressProof, Option<OriginAuthorityStamp>)>> {
+        let txn = self.store.env.read_txn()?;
+        super::super::push_projection::admitted_projection_ingress_in_txn(
+            self, &txn, root, operation,
+        )
+    }
+
+    /// The LFS pointers the ingress outcome `provenance` observed (FIX
+    /// 10270), for the exact-forward intake: decoded exactly as the
+    /// receive-pack publication gate decodes them; empty for a push that
+    /// carried none.
+    ///
+    /// # Errors
+    /// A store failure, or outcome evidence that does not decode.
+    pub(in crate::origin::smart_http) fn forward_lfs_pointers_for_outcome(
+        &self,
+        provenance: EntityId,
+    ) -> Result<Vec<LfsPushedPointer>> {
+        let txn = self.store.env.read_txn()?;
+        let body =
+            self.receive_pack_evidence_in_txn(&txn, provenance, RECEIVE_PACK_OUTCOME_PREDICATE)?;
+        receive_pack_field(&body, "lfs_pointers")?
+            .as_array()
+            .ok_or_else(|| receive_pack_provenance_refused("invalid LFS evidence"))?
+            .iter()
+            .map(|value| {
+                let fields = value
+                    .as_array()
+                    .filter(|fields| fields.len() == 3)
+                    .ok_or_else(|| receive_pack_provenance_refused("invalid LFS evidence"))?;
+                Ok(LfsPushedPointer {
+                    path: match &fields[0] {
+                        Value::Binary(path) => path.clone(),
+                        _ => return Err(receive_pack_provenance_refused("invalid LFS path")),
+                    },
+                    oid: LfsOid::parse_hex(
+                        fields[1]
+                            .as_str()
+                            .ok_or_else(|| receive_pack_provenance_refused("invalid LFS oid"))?,
+                    )?,
+                    size_bytes: fields[2]
+                        .as_u64()
+                        .ok_or_else(|| receive_pack_provenance_refused("invalid LFS size"))?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()
     }
 }

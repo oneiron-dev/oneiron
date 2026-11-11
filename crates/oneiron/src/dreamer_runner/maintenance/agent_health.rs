@@ -41,11 +41,13 @@ mod doors;
 mod duplicate;
 mod environment;
 mod erase;
+mod grant_reads;
 mod loaded;
 mod moves;
 mod outcomes;
 mod pipeline;
 mod policy;
+mod receipt_index;
 mod rollups;
 mod run_loop;
 mod silence;
@@ -82,12 +84,18 @@ pub use environment::HealthCauseSource;
 pub(crate) use erase::{
     erase_actor_sources_in_txn, erase_sources_in_txn, live_coach_draft_erased_in_txn,
 };
+pub use grant_reads::{
+    AgentCallReceipt, AgentHealthCallsRequest, AgentHealthCardsRequest, DiagnosticEvidence,
+    DiagnosticEvidenceRequest, agent_health_calls, agent_health_cards, diagnostic_evidence,
+};
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
 pub use moves::{
     ConcernMove, ConcernMoveBasis, ConcernMoveLink, ConcernMoveOutcome, ConcernMoveReceipt,
     ConcernMoveRequest,
 };
-pub use outcomes::{HEALTH_REVIEW_RECEIPT_PREFIX, HealthReviewReceipt};
+pub use outcomes::{
+    HEALTH_REVIEW_RECEIPT_PREFIX, HealthReviewReceipt, review_state::HealthReviewState,
+};
 pub(super) use pipeline::run;
 use pipeline::{add_recipients, land};
 pub(crate) use policy::reviewer_policy_seeds;

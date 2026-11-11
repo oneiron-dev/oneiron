@@ -149,4 +149,6 @@ pub struct GraphFsLinkView {
     pub mount: GraphFsMountRequest,
     pub path: String,
     pub target: Option<String>,
+    /// The actual scoped point-read receipt; absent when no read ran.
+    pub read_receipt: Option<ScopedReadReceipt>,
 }

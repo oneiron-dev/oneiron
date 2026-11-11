@@ -8,6 +8,10 @@
 //! because a build script cannot link the crate it is building against and
 //! re-declaring the constant would create the second source of truth this
 //! check exists to prevent.
+//!
+//! It also makes the crate's generated SDK outputs (untangle slice 4.3, crates/oneiron-sdk-build): the PyO3 verb
+//! methods into `OUT_DIR`, and the Python package's generated files into `python/oneiron/`, where maturin packs
+//! them with the hand-written ones (they are not in git).
 
 use std::path::{Path, PathBuf};
 
@@ -23,6 +27,22 @@ fn main() {
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set by cargo"),
     );
+    oneiron_sdk_build::generate(&["crates/oneiron-py/src/generated/agent_verbs.rs"]);
+    let package = manifest_dir.join("python/oneiron");
+    oneiron_sdk_build::place(&[
+        (
+            "crates/oneiron-py/python/oneiron/_facade_verbs.py",
+            package.join("_facade_verbs.py"),
+        ),
+        (
+            "crates/oneiron-py/python/oneiron/_facade_verbs.pyi",
+            package.join("_facade_verbs.pyi"),
+        ),
+        (
+            "crates/oneiron-py/python/oneiron/facade_types.pyi",
+            package.join("facade_types.pyi"),
+        ),
+    ]);
     let pack_source = manifest_dir.join(PACK_VERSION_SOURCE);
 
     println!("cargo:rerun-if-changed={}", pack_source.display());

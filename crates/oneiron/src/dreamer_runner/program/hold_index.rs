@@ -7,11 +7,10 @@
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::dreamer_runner::{DreamerParkCause, DreamerParkedAttemptRecord};
+use crate::dreamer_runner::DreamerParkedAttemptRecord;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 
-use super::PROGRAM_PARK_OWNER;
 use super::resume::ProgramHold;
 
 /// Each try the program runtime holds, keyed by its hold's kind (the
@@ -22,7 +21,10 @@ const PROGRAM_HOLD: SideTable<([u8; 1], AttemptId), (), Named> =
 /// The program hold `park` is, when it is the program runtime's own park
 /// under one hold's exact reason.
 fn hold_of(park: &DreamerParkedAttemptRecord) -> Option<ProgramHold> {
-    if park.park_owner != PROGRAM_PARK_OWNER || park.cause != DreamerParkCause::Other {
+    if !crate::dreamer_runner::ParkResume::is_program_hold(
+        park.cause,
+        crate::dreamer_runner::ParkOwnerClass::of(&park.park_owner),
+    ) {
         return None;
     }
     ProgramHold::of_reason(&park.reason)

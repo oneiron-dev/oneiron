@@ -60,6 +60,9 @@ pub(crate) struct ApplyOpsGateMode {
     /// The body file each ASSET put this batch stages as a manifest names,
     /// published before the batch (FIX 3677); consumed by that put.
     pub(super) asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
+    /// The bytes of each interpreted body file this batch puts, read by the
+    /// door's secret scan and mask in place of its manifest (FIX 22075).
+    pub(super) asset_file_bodies: HashMap<EntityId, Vec<u8>>,
     /// The rows this batch's replication applier put
     /// (`BatchBuilder::put_replicated`) and nothing else (FIX 7925): replay
     /// keeps its signed bytes for read quarantine instead of the local
@@ -72,6 +75,9 @@ pub(crate) struct ApplyOpsGateMode {
     /// Each bound raw CLAIM put's verified caller envelope
     /// (`BatchBuilder::caller_envelope`, FIX 8118), read by that put.
     pub(super) caller_envelopes: HashMap<EntityId, crate::WriteEnvelope>,
+    pub(super) prepared_person_substrate: Option<super::PreparedPersonSubstrate>,
+    pub(super) prepared_agent_birth: Option<crate::agent_def::PreparedAgentDefinitionBirth>,
+    pub(super) prepared_setup_owner: Option<crate::agent_def::PreparedSetupOwner>,
 }
 
 impl ApplyOpsGateMode {
@@ -94,9 +100,45 @@ impl ApplyOpsGateMode {
             nsw_plans: HashMap::new(),
             owner_authored: None,
             asset_files: HashMap::new(),
+            asset_file_bodies: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
             marked_carriers: std::collections::BTreeMap::new(),
             caller_envelopes: HashMap::new(),
+            prepared_person_substrate: None,
+            prepared_agent_birth: None,
+            prepared_setup_owner: None,
+        }
+    }
+
+    pub(crate) fn for_agent_setup(
+        birth: crate::agent_def::PreparedAgentDefinitionBirth,
+        owner: Option<crate::agent_def::PreparedSetupOwner>,
+    ) -> Self {
+        Self::new(false, true)
+            .with_prepared_agent_birth(Some(birth))
+            .with_prepared_setup_owner(owner)
+    }
+
+    pub(crate) fn with_prepared_setup_owner(
+        mut self,
+        owner: Option<crate::agent_def::PreparedSetupOwner>,
+    ) -> Self {
+        self.prepared_setup_owner = owner;
+        self
+    }
+
+    pub(super) fn take_setup_owner_before(
+        &mut self,
+        id: EntityId,
+    ) -> Option<crate::agent_def::PreparedSetupOwner> {
+        if self
+            .prepared_setup_owner
+            .as_ref()
+            .is_some_and(|owner| owner.is_before(id))
+        {
+            self.prepared_setup_owner.take()
+        } else {
+            None
         }
     }
 
@@ -140,12 +182,35 @@ impl ApplyOpsGateMode {
         self
     }
 
+    /// Hands the door the bytes of each interpreted body file this batch
+    /// puts (FIX 22075).
+    pub(super) fn with_asset_file_bodies(mut self, bodies: HashMap<EntityId, Vec<u8>>) -> Self {
+        self.asset_file_bodies = bodies;
+        self
+    }
+
     /// Binds each bound raw CLAIM put to its caller's envelope (FIX 8118).
     pub(super) fn with_caller_envelopes(
         mut self,
         envelopes: HashMap<EntityId, crate::WriteEnvelope>,
     ) -> Self {
         self.caller_envelopes = envelopes;
+        self
+    }
+
+    pub(super) fn with_prepared_agent_birth(
+        mut self,
+        birth: Option<crate::agent_def::PreparedAgentDefinitionBirth>,
+    ) -> Self {
+        self.prepared_agent_birth = birth;
+        self
+    }
+
+    pub(super) fn with_prepared_person_substrate(
+        mut self,
+        substrate: Option<super::PreparedPersonSubstrate>,
+    ) -> Self {
+        self.prepared_person_substrate = substrate;
         self
     }
 

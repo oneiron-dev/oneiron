@@ -657,6 +657,7 @@ impl Connection {
         }
         if self.own_machine_reply_stands(peer, routed)
             && !self.withholds(locality, peer, routed.rows.as_deref(), routed.frame)
+            && !self.off_carrier_withholds(routed)
         {
             return Some(routed.frame.to_vec());
         }
@@ -745,6 +746,21 @@ impl Connection {
             routed.incarnation == super::routing::OWN_MACHINE_RPC_INCARNATION
                 && routed.frame.first() == Some(&crate::protocol::TAG_RPC)
         })
+    }
+
+    /// Whether a forwarded search's reply to a caller off the carrying device
+    /// keeps a row from an unknown destination now (FIX 11991). The search
+    /// judged its hits for one; a world that withholds from it between the
+    /// search and the send keeps the reply, whatever machine carries it and
+    /// wherever that machine sits.
+    fn off_carrier_withholds(&self, routed: &super::routing::Routed<'_>) -> bool {
+        routed.incarnation == super::routing::OFF_CARRIER_RPC_INCARNATION
+            && self.withholds(
+                oneiron::claim::CallerLocality::OffDevice,
+                oneiron::authority::PeerMachine::Unknown,
+                routed.rows.as_deref(),
+                routed.frame,
+            )
     }
 
     fn own_machine_reply_stands(

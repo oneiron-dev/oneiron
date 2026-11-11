@@ -79,8 +79,8 @@ pub(crate) use self::remat_markers::{pending_remat_entities, unproven_remat_mark
 // re-export would trip `unused_imports` under the workspace `-D warnings`.
 pub(crate) use self::retention_reports::expire_stale_rows;
 pub(in crate::sync) use self::writes_batch::{
-    TerminalRejectionBatch, quarantine_rejected_op, quarantine_rejected_op_in_txn, record_in_txn,
-    remat_marker_entity_for_quarantine,
+    TerminalRejectionBatch, quarantine_once_in_txn, quarantine_rejected_op,
+    quarantine_rejected_op_in_txn, record_in_txn, remat_marker_entity_for_quarantine,
 };
 
 #[cfg(test)]

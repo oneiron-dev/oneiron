@@ -89,6 +89,11 @@ pub const ENGINE_EXECUTOR_WIRE_PROMPT_RELATIVE_PATH: &str = "blocks/engine-execu
 /// under (agent-runtime-v1 §d7), in the same package as the wire prompt.
 pub const ENGINE_EXECUTOR_COMPACTION_PROMPT_RELATIVE_PATH: &str =
     "blocks/engine-executor-compaction.md";
+/// The self-writer frame (FIX 4575): the words that make the house
+/// compaction call an agent's own. It is policy text, in the same package as
+/// the compaction prompt. A package without it leaves self-written summaries
+/// off.
+pub const COMPACTION_SELF_WRITER_PROMPT_RELATIVE_PATH: &str = "blocks/compaction-self-writer.md";
 pub use crate::receipt::prompt_stamp::PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION;
 
 pub use crate::receipt::prompt_stamp::PromptRecompileStamp;
@@ -173,6 +178,18 @@ pub fn resolve_engine_executor_compaction_prompt(
     )
 }
 
+/// Resolves the self-writer frame (FIX 4575) through the package resolver,
+/// as the compaction prompt is resolved.
+pub fn resolve_compaction_self_writer_prompt(
+    package_root: impl AsRef<Path>,
+) -> Result<ResolvedPrompt, io::Error> {
+    let package_root = package_root.as_ref();
+    resolve_prompt(
+        package_root.join(COMPACTION_SELF_WRITER_PROMPT_RELATIVE_PATH),
+        package_root,
+    )
+}
+
 pub fn resolve_prompt(
     path: impl AsRef<Path>,
     package_root: impl AsRef<Path>,
@@ -242,7 +259,10 @@ pub fn place_turn_context<S: AsRef<str>>(
         at,
         LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text }],
+            content: vec![ContentPart::Text {
+                text,
+                signature: None,
+            }],
         },
     );
     Some(at)
@@ -270,6 +290,7 @@ fn assemble_session(
         role: LlmMessageRole::System,
         content: vec![ContentPart::Text {
             text: system_prompt.clone(),
+            signature: None,
         }],
     });
     messages.extend(parts.history);

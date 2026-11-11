@@ -10,6 +10,7 @@ pub mod coping;
 mod processed;
 pub mod state_index;
 pub mod state_inputs;
+pub(crate) mod tables;
 mod trigger;
 
 pub(crate) use self::annotation::VadAnnotationCleanup;

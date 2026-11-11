@@ -11,7 +11,7 @@ use super::{
 use crate::embed::{EmbeddingProvenance, device, media, space_move};
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -207,8 +207,10 @@ pub(crate) async fn reuse_home_text_media_vectors(
 }
 
 fn body_text_record(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    Ok(vault
-        .store
-        .port_entity_record(txn, id)?
-        .is_some_and(|row| matches!(row.entity_type, ENTITY_TYPE_CLAIM | ENTITY_TYPE_SUMMARY)))
+    Ok(vault.store.port_entity_record(txn, id)?.is_some_and(|row| {
+        matches!(
+            row.entity_type,
+            ENTITY_TYPE_CLAIM | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TURN
+        )
+    }))
 }

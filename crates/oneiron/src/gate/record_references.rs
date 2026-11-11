@@ -4,7 +4,7 @@
 //! created, or cites, really exist; refuse invented ones and log the refusal.
 //!
 //! A verb-table row declares its typed ref slots as JSON pointers (`refs` in
-//! `scripts/sdk/agent-verbs.json`, where `*` takes every item of an array).
+//! `scripts/sdk/verbs/`, where `*` takes every item of an array).
 //! The row's generated engine fn calls [`admit_row_references`] before the
 //! engine call, so every door that reaches the row (the HTTP facade, the MCP
 //! dispatch, code mode and the SDK) meets this check once, and no door
@@ -40,6 +40,9 @@
 
 use serde_json::Value;
 
+use crate::authority::VerifiedSlip;
+use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
+use crate::entity_id::EntityId;
 use crate::memory::Memory;
 use crate::receipt::{ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals};
 use oneiron_contracts::memory::{
@@ -56,17 +59,42 @@ pub(crate) fn validate_record_references(
     read: &Memory<'_>,
     refs: &[NamedRecordRef],
 ) -> Result<(), ReferenceRefusal> {
-    let unresolved =
-        validate_record_references_with(refs, |reference| match read.get_entity(reference) {
-            Ok(result) => Ok(result.value.is_some()),
-            Err(error)
-                if error.code == MEMORY_CODE_NOT_FOUND || error.code == MEMORY_CODE_BAD_REQUEST =>
-            {
-                Ok(false)
-            }
-            Err(error) => Err(error),
-        })
-        .map_err(ReferenceRefusal::Read)?;
+    check_record_references(refs, |reference| {
+        read.get_entity(reference)
+            .map(|result| result.value.is_some())
+    })
+}
+
+/// [`validate_record_references`] read as [`Memory::peek_entity`] reads: the
+/// same scoped read with no grant time persisted, so the check writes nothing
+/// (FIX 22102). A preflight checks its refs this way.
+pub(crate) fn peek_record_references(
+    read: &Memory<'_>,
+    refs: &[NamedRecordRef],
+) -> Result<(), ReferenceRefusal> {
+    check_record_references(refs, |reference| {
+        read.peek_entity(reference)
+            .map(|result| result.value.is_some())
+    })
+}
+
+/// The first ref in `refs` that `resolves` does not find is the refusal; a
+/// ref named twice is read once. A ref the read refuses as not found or
+/// malformed does not resolve.
+fn check_record_references(
+    refs: &[NamedRecordRef],
+    resolves: impl Fn(&str) -> MemoryResult<bool>,
+) -> Result<(), ReferenceRefusal> {
+    let unresolved = validate_record_references_with(refs, |reference| match resolves(reference) {
+        Ok(found) => Ok(found),
+        Err(error)
+            if error.code == MEMORY_CODE_NOT_FOUND || error.code == MEMORY_CODE_BAD_REQUEST =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    })
+    .map_err(ReferenceRefusal::Read)?;
     match unresolved {
         None => Ok(()),
         Some(pointer) => Err(ReferenceRefusal::Unresolved {
@@ -97,6 +125,7 @@ pub(crate) fn admit_row_references<T: serde::Serialize>(
         MemoryError::bad_request("the verb input could not be read for the records it names")
     })?;
     let refs = record_references_at(&value, pointers);
+    let refs = without_archived_evidence_subject(memory, row, &value, refs)?;
     match validate_record_references(memory, &refs) {
         Ok(()) => Ok(()),
         Err(ReferenceRefusal::Read(error)) => Err(error),
@@ -114,6 +143,166 @@ pub(crate) fn admit_row_references<T: serde::Serialize>(
             Err(invented_reference(&pointer, recorded))
         }
     }
+}
+
+/// The check the run rows `vault.claims.put`, `vault.claims.supersede` and
+/// `vault.edges.put` run before their in-core write (FIX 1214). A run row
+/// carries no verb-table `refs`, so its adapter names them: `refs` holds a
+/// (field pointer, id) for each record `row`'s write names. Each must
+/// resolve under `read_as`, the key the run's door admitted the call with,
+/// else under `memory`'s own read key; and, when a slip woke the program,
+/// under `waking_slip`'s target key too. A slip with no target key resolves
+/// no record.
+///
+/// `Some(error)` is the row's refusal: the read key's own refusal, or the
+/// invented-reference refusal of the first record that does not resolve,
+/// which names the field, never the ref, and is receipted first. `None`
+/// when every record resolves.
+///
+/// # Errors
+/// Storage errors, and a receipt that could not be written.
+pub(crate) fn admit_run_row_references(
+    memory: &Memory<'_>,
+    row: &'static str,
+    read_as: Option<&ScopedReadActorKey>,
+    waking_slip: Option<&VerifiedSlip>,
+    refs: &[(&'static str, EntityId)],
+) -> crate::Result<Option<MemoryError>> {
+    let vault = memory.vault();
+    let key = match read_as {
+        Some(key) => key.clone(),
+        None => match memory.read_key() {
+            Ok(key) => key,
+            Err(error) => return Ok(Some(error)),
+        },
+    };
+    let slip_key = match waking_slip {
+        Some(proof) => Some(vault.credential_target_key(proof)?),
+        None => None,
+    };
+    // A record resolves on the recorded lane, as a facade row's ref does
+    // (`Memory::get_entity`): a superseded claim the writer may read is
+    // history it may name (REVIEW-6389).
+    let reads = |key: &ScopedReadActorKey, id: EntityId| {
+        vault
+            .scoped_read(key.clone())
+            .with_claim_status(ClaimReadStatus::Recorded)
+            .all_refs_readable(&[id])
+    };
+    for (pointer, id) in refs {
+        let resolves = reads(&key, *id)?
+            && match &slip_key {
+                Some(Some(slip_key)) => reads(slip_key, *id)?,
+                Some(None) => false,
+                None => true,
+            };
+        if !resolves {
+            let recorded = receipt_reference_refusals(
+                memory,
+                &[ReferenceRefusalFacts {
+                    actor: memory.actor(),
+                    actor_class: memory.actor_class(),
+                    row,
+                    field: (*pointer).to_owned(),
+                    outcome: ReferenceOutcome::Refused,
+                }],
+            )?;
+            return Ok(Some(invented_reference(pointer, recorded)));
+        }
+    }
+    Ok(None)
+}
+
+/// The one slot that may name a record a cleanup archive filed away (FIX
+/// 21997): the subject of the resolver's confidence evidence, a
+/// `provider.enrichment` CLAIM. ARCH-0073 §6 keeps the archive visible to
+/// entity resolution, and a re-mention restores the same record from that
+/// evidence (`ingest::resolution`), so the vault owner writes it on the
+/// archived subject without restoring it. Every other row, slot and
+/// predicate keeps the live-read rule.
+const ARCHIVED_EVIDENCE_SLOT: (&str, &str) = ("vault.claims.upsert", "/subject_ref");
+
+/// `refs` less the archived subject [`ARCHIVED_EVIDENCE_SLOT`] admits:
+/// `input` is resolver confidence evidence and
+/// [`archived_subject_admitted`] holds for its subject. A live subject, and
+/// every other ref, stays to be read as before.
+fn without_archived_evidence_subject(
+    memory: &Memory<'_>,
+    row: &str,
+    input: &Value,
+    refs: Vec<NamedRecordRef>,
+) -> MemoryResult<Vec<NamedRecordRef>> {
+    let (slot_row, slot_pointer) = ARCHIVED_EVIDENCE_SLOT;
+    if row != slot_row
+        || input.get("predicate").and_then(Value::as_str)
+            != Some(crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT)
+    {
+        return Ok(refs);
+    }
+    let mut kept = Vec::with_capacity(refs.len());
+    for named in refs {
+        if named.pointer == slot_pointer && archived_subject_admitted(memory, &named.reference)? {
+            continue;
+        }
+        kept.push(named);
+    }
+    Ok(kept)
+}
+
+/// Whether `reference` names the archived subject
+/// [`archived_evidence_subject_in_txn`] admits for a `predicate` CLAIM
+/// written under `memory`'s read. An unresolvable ref names no such record
+/// and stays for the ordinary refusal.
+fn archived_subject_admitted(memory: &Memory<'_>, reference: &str) -> MemoryResult<bool> {
+    let owner = memory
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)?
+        .actor_key()
+        .reads_as_vault_owner();
+    let vault = memory.vault();
+    let Ok(id) = crate::vault::entity_refs::resolve_entity_ref(vault, reference) else {
+        return Ok(false);
+    };
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    Ok(archived_evidence_subject_in_txn(
+        vault,
+        &txn,
+        owner,
+        crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT,
+        &id,
+    )?)
+}
+
+/// Whether `subject`, the subject of a `predicate` CLAIM, is the archived
+/// record the resolver's evidence may name, judged in `txn` (FIX 21997): the
+/// predicate is `provider.enrichment`, the writer reads as the vault owner
+/// (`owner`), the record's row is stored, its archive marker is a cleanup
+/// archive, and nothing else withholds its words (no removal, stale mark,
+/// legal-hold use limit or withdrawn source; `raw_exportable_in_txn`). The
+/// pre-call admission and the committing writer's own reference check both
+/// ask it, so the one exception holds in the final snapshot too.
+pub(crate) fn archived_evidence_subject_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: bool,
+    predicate: &str,
+    subject: &crate::EntityId,
+) -> crate::Result<bool> {
+    if !owner || predicate != crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT {
+        return Ok(false);
+    }
+    let cleanup_archive = vault
+        .archive_tombstone_in_txn(txn, subject)?
+        .is_some_and(|marker| {
+            marker.reason == Some(crate::deletion::TombstoneReason::ArchivedByCleanup)
+        });
+    if !cleanup_archive {
+        return Ok(false);
+    }
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, subject)?
+    else {
+        return Ok(false);
+    };
+    crate::ports::raw_exportable_in_txn(&vault.store, txn, subject, &raw)
 }
 
 /// The refusal a write naming an unresolved record ref gets: the field

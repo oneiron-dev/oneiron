@@ -75,6 +75,9 @@ pub struct InboxLensRow {
     pub receipt_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload_ref: Option<String>,
+    /// The held outbound receipt's approve-once digest, when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concern: Option<InboxLensConcern>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -151,6 +154,7 @@ impl From<AgentInboxLensItem> for InboxLensRow {
             occurred_at: item.occurred_at,
             receipt_ref: item.receipt_ref,
             payload_ref: item.payload_ref,
+            approval_digest: item.approval_digest,
             concern: item.concern.map(|c| InboxLensConcern {
                 agent: c.subject.to_hex(),
                 signal: c.signal.as_str().to_owned(),

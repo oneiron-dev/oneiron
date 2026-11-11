@@ -21,10 +21,14 @@
 //! step was served; instruction replay passes no capsule and keeps this gate
 //! alone.
 
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
 use super::publisher::{EngineAdmission, EngineCandidateRun, EngineNotRun, EnginePairState};
 use super::{CodeFixSettled, SealedRun};
 use crate::claim::ScopedReadActorKey;
-use crate::code_run::shadow_runner::ShadowSourceAdmission;
+use crate::code_run::shadow_runner::{ShadowSourceAdmission, ShadowSourceWitness};
 use crate::code_run::{captured_step_read_scopes_in_txn, step_replay_capsules_in_txn};
 use crate::dreamer_runner::shadow_values::ShadowRequestDigest;
 use crate::dreamer_runner::shadow_values::ShadowStepIdentity;
@@ -38,7 +42,8 @@ use crate::ports::EntityStoreRead;
 use crate::{EntityId, Error, Result, Vault};
 
 /// Where a failure's captured source sits, read before any of its bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A kept owner pair keeps one per step, as proof data (FIX 20607).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CaptureRefs {
     /// Every world the failing run touched.
     worlds: Vec<EntityId>,
@@ -65,6 +70,22 @@ impl CaptureRefs {
             rows
         });
         Self { worlds, rows }
+    }
+
+    /// The capture of `capsule`'s step (FIX 20607): every row its request
+    /// was read from (FIX 7104), unknown when the capsule keeps none. Each
+    /// row is judged at its own record position, which places its world, so
+    /// no other world is listed.
+    pub(crate) fn of_step(capsule: &StepReplayCapsule) -> Self {
+        Self {
+            worlds: Vec::new(),
+            rows: capsule.source_rows.clone(),
+        }
+    }
+
+    /// Every row the capture was taken from; `None`, unknown.
+    pub(crate) fn rows(&self) -> Option<&[EntityId]> {
+        self.rows.as_deref()
     }
 }
 
@@ -228,16 +249,22 @@ impl ShadowSourceAdmission for CoachReplayAdmission {
 /// One engine pair's recheck gate (FIX 7027): the pair's [`StepReplayCapsule`]
 /// held with the admission that runs under it, so every engine source, body
 /// or arm read rechecks the same captured-step proof the pair was selected
-/// with, never another.
-pub(crate) struct EngineStepGate<'a> {
-    admission: &'a CoachReplayAdmission,
-    capsule: &'a StepReplayCapsule,
+/// with, never another. The gate owns both (FIX 9446), so the host's worker
+/// that prepares each arm's source again holds this same proof.
+pub(crate) struct EngineStepGate {
+    admission: CoachReplayAdmission,
+    capsule: StepReplayCapsule,
 }
 
-impl<'a> EngineStepGate<'a> {
+impl EngineStepGate {
     /// The gate for a pair running under `admission` from `capsule`.
-    pub(crate) fn of(admission: &'a CoachReplayAdmission, capsule: &'a StepReplayCapsule) -> Self {
+    pub(crate) fn of(admission: CoachReplayAdmission, capsule: StepReplayCapsule) -> Self {
         Self { admission, capsule }
+    }
+
+    /// The captured step the pair runs from.
+    pub(crate) const fn capsule(&self) -> &StepReplayCapsule {
+        &self.capsule
     }
 
     /// Whether the pair may keep reading: [`CoachReplayAdmission::still_admits_capsule`].
@@ -246,11 +273,19 @@ impl<'a> EngineStepGate<'a> {
     ///
     /// Storage errors.
     pub(crate) fn check(&self, vault: &Vault) -> Result<std::result::Result<(), EngineAdmission>> {
-        self.admission.still_admits_capsule(vault, self.capsule)
+        self.admission.still_admits_capsule(vault, &self.capsule)
+    }
+
+    /// `gate` as the host's worker holds it (FIX 9446): the witness of the
+    /// pair's step, under which the host prepares each arm's source again,
+    /// asking this same proof before each raw read.
+    pub(crate) fn witness(gate: &Arc<Self>) -> ShadowSourceWitness {
+        let admission: Arc<Self> = Arc::clone(gate);
+        ShadowSourceWitness::new(ShadowStepIdentity::of(&gate.capsule), admission)
     }
 }
 
-impl ShadowSourceAdmission for EngineStepGate<'_> {
+impl ShadowSourceAdmission for EngineStepGate {
     fn admits_now(&self, vault: &Vault) -> Result<bool> {
         Ok(self.check(vault)?.is_ok())
     }
@@ -285,7 +320,8 @@ fn waiting_run_capsule_in(
 /// must hold every world of the run and every row's record position. With
 /// `capsule`, that same Grant must also admit every Scope the captured step
 /// was served (FIX 7027); `None` keeps the instruction-replay gate alone.
-fn admitting_grant_in(
+/// A contribution check's capture is judged by this same rule (FIX 20607).
+pub(crate) fn admitting_grant_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     coach: EntityId,
@@ -325,27 +361,38 @@ fn admitting_grant_in(
     let now = vault.instant_in_txn(txn)?.secs();
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let mut lapsed = false;
-    'grants: for standing in vault.agent_grants_in_txn(txn)? {
+    let grants = vault.agent_grants_in_txn(txn)?;
+    // A verb class a Coach Grant names that admits `read` lists it (FIX 8735).
+    let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+        &vault.store,
+        txn,
+        grants
+            .iter()
+            .filter(|standing| standing.grant.member_ref == coach)
+            .map(|standing| &standing.grant),
+    )?;
+    'grants: for standing in &grants {
         let grant = &standing.grant;
+        let read = grant.scope_for_verb("read", &classes);
         if only.is_some_and(|only| only != standing.id)
             || grant.member_ref != coach
             || !owners.contains(&standing.delegated_by)
-            || !grant.confers_at(now)
+            || !grant.confers_with_classes_at(now, &classes)
             || !refs
                 .worlds
                 .iter()
-                .all(|world| grant.authority_scope.worlds.contains(&ScopeId(*world)))
+                .all(|world| read.worlds.contains(&ScopeId(*world)))
         {
             continue;
         }
         for (id, raw) in &raws {
-            if !lane.grant_admits_position_in(txn, id, raw, &grant.authority_scope)? {
+            if !lane.grant_admits_position_in(txn, id, raw, &read)? {
                 continue 'grants;
             }
         }
         if let Some(scopes) = scopes.as_deref() {
             for scope in scopes {
-                if !grant.authority_scope.admits("read", scope, &Scope::top()) {
+                if !read.admits("read", scope, &Scope::top()) {
                     continue 'grants;
                 }
             }

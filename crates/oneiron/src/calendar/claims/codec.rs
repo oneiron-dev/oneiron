@@ -12,9 +12,10 @@ use super::predicates::{
 };
 use super::values::{
     CalendarAttendeeValue, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection,
-    CalendarPassportPresence, CalendarPassportValue, CalendarSeriesExceptionValue,
-    CalendarSeriesMasterValue, CalendarStatus, CalendarStatusBasis, CalendarStatusValue,
-    CalendarSuccessorValue, CalendarTimeKind, CalendarTimeKindValue, CalendarWallTimeValue,
+    CalendarPassportPresence, CalendarPassportSource, CalendarPassportValue,
+    CalendarSeriesExceptionValue, CalendarSeriesMasterValue, CalendarStatus, CalendarStatusBasis,
+    CalendarStatusValue, CalendarSuccessorValue, CalendarTimeKind, CalendarTimeKindValue,
+    CalendarWallTimeValue,
 };
 use crate::Vault;
 use crate::calendar::outcome::{
@@ -68,6 +69,12 @@ pub(super) const KEY_SYSTEM: &str = "system";
 pub(super) const KEY_LAST_SEQUENCE: &str = "last_sequence";
 
 pub(super) const KEY_CONTENT_HASH: &str = "content_hash";
+
+pub(super) const KEY_SOURCE: &str = "source";
+
+pub(super) const KEY_ARTIFACT: &str = "artifact";
+
+pub(super) const KEY_VERSION: &str = "version";
 
 pub(super) const KEY_DIRECTION: &str = "direction";
 
@@ -306,7 +313,8 @@ pub(in crate::calendar) fn decode_attendee_value(value: &Value) -> Result<Calend
 ///
 /// A missing `presence` key decodes as [`CalendarPassportPresence::Live`] for
 /// back-compat; new writes include it. The content hash is MessagePack binary
-/// of exactly 32 bytes.
+/// of exactly 32 bytes. An optional source names the exact archived content,
+/// with a canonical artifact id and a positive version; it adds no dependency.
 pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportValue> {
     let entries = value_map(value)?;
     let required = [
@@ -318,7 +326,7 @@ pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportVal
         KEY_LAST_SEEN_AT,
     ];
     let mut allowed = required.to_vec();
-    allowed.push(KEY_PRESENCE);
+    allowed.extend([KEY_PRESENCE, KEY_SOURCE]);
     validate_keys(entries, &allowed, &required)?;
     let system = required_string(entries, KEY_SYSTEM)?;
     let uid = required_string(entries, KEY_UID)?;
@@ -336,6 +344,21 @@ pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportVal
         uid: uid.to_owned(),
         last_sequence: required_u32(entries, KEY_LAST_SEQUENCE)?,
         content_hash: required_binary_32(entries, KEY_CONTENT_HASH)?,
+        source: optional_value(entries, KEY_SOURCE)?
+            .map(|value| {
+                let entries = value_map(value)?;
+                let keys = [KEY_ARTIFACT, KEY_VERSION];
+                validate_keys(entries, &keys, &keys)?;
+                let version = required_u64(entries, KEY_VERSION)?;
+                if version == 0 {
+                    return Err(invalid_claim("calendar source version must be positive"));
+                }
+                Ok(CalendarPassportSource {
+                    artifact: required_entity_ref(entries, KEY_ARTIFACT)?,
+                    version,
+                })
+            })
+            .transpose()?,
         direction,
         last_seen_at: required_u64(entries, KEY_LAST_SEEN_AT)?,
         presence,
@@ -490,7 +513,7 @@ fn required_entity_ref(entries: &[(Value, Value)], key: &str) -> Result<EntityId
 /// Rejects extra keys, missing required keys, and non-string keys.
 ///
 /// `allowed` is the full key set; `required` is the subset that must be present.
-/// The two differ only where a documented back-compat default exists.
+/// Documented optional fields may be absent.
 fn validate_keys(entries: &[(Value, Value)], allowed: &[&str], required: &[&str]) -> Result<()> {
     if entries.len() > allowed.len() {
         return Err(invalid_claim("calendar value key set invalid"));

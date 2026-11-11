@@ -1,0 +1,21 @@
+{
+  "name": "connector.outbound.schedule",
+  "description": "Schedules one send through a granted outbound connector, gated and held for delivery.",
+  "refs": [
+    "/content_ref"
+  ],
+  "input": "OutboundScheduleRequest",
+  "output": "crate::memory::OutboundIntentReceipt",
+  "call": "crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "uniffi": {
+    "args": {
+      "draft": "OutboundDraftInput"
+    },
+    "output": "OutboundIntentReceipt"
+  }
+}

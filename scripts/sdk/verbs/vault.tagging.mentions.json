@@ -1,0 +1,14 @@
+{
+  "name": "vault.tagging.mentions",
+  "description": "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt.",
+  "input": "crate::tagging::TaggingMentionsRequest",
+  "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingMentionsView>",
+  "call": "memory.tagging_mentions(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+  },
+  "section": false,
+  "openapi": true
+}

@@ -169,7 +169,7 @@ fn qualifies_in_txn(
     {
         return Ok(None);
     }
-    let Ok(body) = super::decode_note_body_in_txn(&vault.store, txn, &row.body) else {
+    let Ok(body) = super::decode_note_core_in_txn(&vault.store, txn, &row.body) else {
         return Ok(None);
     };
     let kind = body.kind.as_str().into_owned();

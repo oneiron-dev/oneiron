@@ -125,4 +125,14 @@ impl Vault {
             })
             .collect()
     }
+
+    /// The entity's kind in `txn`, without reading its body, so a caller
+    /// can compose metadata with its admission in the same snapshot.
+    ///
+    /// # Errors
+    ///
+    /// A failed entity metadata read.
+    pub fn entity_type_in_txn(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
+        self.get_entity_type_in_txn(txn, id)
+    }
 }

@@ -116,6 +116,8 @@
 //! and a receipt another device attested is that device's to complete and
 //! to audit (FIX 2596).
 
+#[cfg(feature = "sync")]
+mod carrier_facts;
 mod compact;
 // A corrupt CLAIM's erase asks for every carrier (FIX 7800).
 mod corrupt;
@@ -126,10 +128,13 @@ mod holds;
 pub(crate) mod owed;
 mod run;
 
+#[cfg(feature = "sync")]
+pub(crate) use self::carrier_facts::stage_carrier_scrub_facts_in_txn;
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use self::compact::compact_window_for_test;
 pub(crate) use self::run::{run_hard_erase_sweep, run_scheduled_hard_erase_sweep};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

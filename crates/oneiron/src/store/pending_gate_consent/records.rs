@@ -23,6 +23,13 @@ pub struct PendingGateConsentRecord {
     /// where the writer had no claim body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicate: Option<String>,
+    /// The deadline a locally attached critical confirm froze when the gate
+    /// attached it (FIX 8760): its creation time plus the policy's
+    /// `critical_confirm_lifetime_seconds` then. The binding, its signed
+    /// action, the listing, the sweep and an answer read it, so a later
+    /// policy edit never moves it. `None` on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
 }
 
 /// Internal RCPT-1 deletion state for one run-scoped pending-consent row.
@@ -128,6 +135,14 @@ pub(super) fn vet_pending_gate_consent_record(record: &PendingGateConsentRecord)
     }
     if let Some(dreamer_run_id) = record.dreamer_run_id.as_deref()
         && dreamer_run_id.trim().is_empty()
+    {
+        return Err(Error::CorruptedIndex("pending gate consent"));
+    }
+    // A frozen deadline comes after its row's creation: the lifetime is
+    // positive.
+    if record
+        .expires_at
+        .is_some_and(|expires_at| expires_at <= record.created_at)
     {
         return Err(Error::CorruptedIndex("pending gate consent"));
     }

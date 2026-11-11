@@ -1,20 +1,26 @@
 //! Shared typed agent-verb inputs and generated transport dispatch.
 mod act_answer;
 mod agent_grant;
+mod agent_run_effect;
 mod agents;
 mod anonymous_chat;
+mod answer_forward;
 mod asr;
 mod authority_history;
 mod board_layout;
 mod browser;
 mod calendar;
 mod campaign_archive;
+mod campaign_enrollment;
 mod campaign_split;
+mod can;
 mod catalog_fragment;
 mod comm_widen;
+mod connect_proposal;
 mod connector;
 mod connector_call;
 mod connector_pack;
+mod connector_reply_retry;
 mod connector_slate;
 mod connector_slate_revision;
 mod connector_witness_read_grant;
@@ -26,6 +32,7 @@ mod describe;
 mod diary;
 mod disclosure;
 mod embedding_space;
+mod engine_controls;
 mod eval_cohort;
 mod explain;
 mod fanout_launch;
@@ -34,6 +41,7 @@ mod federation;
 mod federation_burst;
 mod feedback;
 mod files;
+mod follower_keyframe;
 mod free_time_policy;
 mod git_push_grant;
 mod goal_optimize;
@@ -44,11 +52,16 @@ mod host;
 mod hub;
 mod identity_topology;
 mod legal_hold;
+// The build-time closure of the verb table over linked `self.*` operations.
+mod linked_self_surface;
 mod live_run;
 mod live_voice;
 mod mesh;
 mod model_manifest;
+mod model_pack;
+mod model_settings;
 mod note_history;
+mod oauth_authorization;
 mod off_record;
 mod off_record_rooms;
 mod off_record_runs;
@@ -60,6 +73,11 @@ mod proxy;
 mod receipts_page;
 mod record_erase;
 mod reply;
+// FIX 13274: the owner reviews and settles a retained document-copy edit.
+#[cfg(feature = "sync")]
+mod repo_copy_edit;
+#[cfg(feature = "sync")]
+mod repo_manifest_conflict;
 mod research;
 mod reservoir_sources;
 mod residence;
@@ -84,10 +102,14 @@ mod skill_fit;
 mod skill_fork;
 mod skills;
 mod standing;
+// FIX 17553: the owner resets a person's step-up passkeys.
+mod step_up;
 mod support_grant;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
 mod trusted_contact;
+mod uncertain_send;
+mod verb_table;
 mod voice_bank;
 mod weave;
 mod web_connector;
@@ -247,7 +269,6 @@ pub struct WorkCompanionSetRequest {
     pub workspace_ref: String,
     pub policy: crate::workspace_roster::WorkCompanionPolicy,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequest {
@@ -301,6 +322,17 @@ pub struct TaskCreateRequest {
     /// Milestone; absent is a root.
     #[serde(default)]
     pub parent_ref: Option<String>,
+    /// When the TASK falls due, Unix seconds (FIX 4749). A due TASK is a
+    /// watcher: it ticks once on `schedule.tick` after this time, and a hook
+    /// bound to that tick returns Nothing or Enqueue. A standard task, briefed
+    /// or not, carries one; absent is no tick.
+    #[serde(default)]
+    pub due_at: Option<u64>,
+    /// A watch TASK (FIX 22121): nothing realizes it at create; its `due_at`
+    /// tick runs its hooks and settles it Done. It needs `due_at`, and no
+    /// assignee or the Dreamer.
+    #[serde(default)]
+    pub watch: bool,
 }
 
 /// The create spec one `tasks.create` request names, owned by the
@@ -315,24 +347,17 @@ pub fn task_create_spec(
         .as_deref()
         .map(|reference| crate::memory::resolve_entity_ref(memory.vault(), reference))
         .transpose()?;
-    let spec = crate::task_verb::TaskCreateSpec::new(
+    let mut spec = crate::task_verb::TaskCreateSpec::new(
         crate::msgpack_value_from_json(&input.spec)?,
         input.label,
         Some(memory.actor()),
         Some(memory.vault().now_recorded_at()),
     );
-    let spec = match input.assignee {
-        Some(assignee) => spec.with_assignee(assignee),
-        None => spec,
-    };
-    let spec = match input.ttl {
-        Some(ttl) => spec.with_ttl(ttl),
-        None => spec,
-    };
-    let spec = match parent_ref {
-        Some(parent_ref) => spec.with_parent_ref(parent_ref),
-        None => spec,
-    };
+    spec.assignee = input.assignee;
+    spec.ttl = input.ttl;
+    spec.due_at = input.due_at;
+    spec.watch = input.watch;
+    spec.parent_ref = parent_ref;
     match (input.intent_key, input.brief) {
         (Some(intent_key), Some(brief)) => Ok(spec.with_brief(intent_key, brief)),
         (None, None) => Ok(spec),
@@ -427,22 +452,28 @@ pub use crate::memory::affect::QueryAffect;
 
 pub use self::act_answer::*;
 pub use self::agent_grant::*;
+pub use self::agent_run_effect::*;
 pub use self::agents::*;
 pub use self::anonymous_chat::*;
+pub use self::answer_forward::*;
 pub use self::asr::*;
 pub use self::authority_history::*;
 pub use self::board_layout::*;
 pub use self::browser::*;
 pub use self::calendar::*;
 pub use self::campaign_archive::*;
+pub use self::campaign_enrollment::*;
 pub use self::campaign_split::*;
+pub use self::can::*;
 pub use self::catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
 pub use self::comm_widen::*;
+pub use self::connect_proposal::*;
 pub use self::connector::*;
 pub use self::connector_call::*;
 pub use self::connector_pack::*;
+pub use self::connector_reply_retry::*;
 pub use self::connector_slate::*;
 pub use self::connector_slate_revision::*;
 pub use self::connector_witness_read_grant::*;
@@ -454,6 +485,7 @@ pub use self::describe::*;
 pub use self::diary::*;
 pub use self::disclosure::*;
 pub use self::embedding_space::*;
+pub use self::engine_controls::*;
 pub use self::eval_cohort::*;
 pub use self::explain::*;
 pub use self::fanout_launch::*;
@@ -462,6 +494,7 @@ pub use self::federation::*;
 pub use self::federation_burst::*;
 pub use self::feedback::*;
 pub use self::files::*;
+pub use self::follower_keyframe::*;
 pub use self::free_time_policy::*;
 pub use self::git_push_grant::*;
 pub use self::goal_optimize::*;
@@ -476,7 +509,10 @@ pub use self::live_run::*;
 pub use self::live_voice::*;
 pub use self::mesh::*;
 pub use self::model_manifest::*;
+pub use self::model_pack::*;
+pub use self::model_settings::*;
 pub use self::note_history::*;
+pub use self::oauth_authorization::*;
 pub use self::off_record::*;
 pub use self::off_record_rooms::*;
 pub use self::off_record_runs::*;
@@ -488,6 +524,10 @@ pub use self::proxy::*;
 pub use self::receipts_page::*;
 pub use self::record_erase::*;
 pub use self::reply::*;
+#[cfg(feature = "sync")]
+pub use self::repo_copy_edit::*;
+#[cfg(feature = "sync")]
+pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
@@ -511,10 +551,12 @@ pub use self::skill_execution::*;
 pub use self::skill_fit::*;
 pub use self::skills::*;
 pub use self::standing::*;
+pub use self::step_up::*;
 pub use self::support_grant::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
 pub use self::trusted_contact::*;
+pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
 pub use self::weave::*;
 pub use self::web_connector::*;
@@ -560,9 +602,14 @@ pub struct InboxMarkRequest {
 mod memory_requests;
 pub use memory_requests::*;
 
-include!("generated/verb_catalog.rs");
-include!("generated/run_verb_catalog.rs");
-include!("generated/sdk_generated.rs");
+mod blob_input;
+pub use blob_input::{invoke_blob_input, takes_blob_input};
+
+// Generated at build time from the verb table (crates/oneiron-sdk-build).
+include!(concat!(env!("OUT_DIR"), "/verb_catalog.rs"));
+include!(concat!(env!("OUT_DIR"), "/run_verb_catalog.rs"));
+include!(concat!(env!("OUT_DIR"), "/sdk_generated.rs"));
+pub use verb_table::{GeneratedVerbTable, VERB_TABLE};
 
 /// The verb table as code mode serves it, each row at its full path (`vault.recall`,
 /// `self.focus.refresh`, a bare `describe`): the rows a host door answers, then
@@ -684,7 +731,7 @@ fn verb_leaves(name: &str, written: bool) -> Vec<&str> {
 /// `describe`) with its typed input and reply, one overload first for each
 /// input field that selects its own reply (`describe({fold})`,
 /// `tasks.update({resultRef})`), and every type they reach in one namespace.
-/// `scripts/sdk/generate.py` writes that one text from the table to both
+/// The SDK generator (`crates/oneiron-sdk-generator`) writes that one text from the table to both
 /// `catalog_fragment.d.ts` and `code-mode.d.ts`, so the methods a model is
 /// shown are exactly the rows the host serves.
 #[must_use]
@@ -799,6 +846,7 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         format: format.map(str::to_owned),
         as_of: None,
         deadline_ms: None,
+        filter: None,
     };
     let call = |deadline_ms| RecallRequest {
         effort: Some(crate::memory::RecallEffort::Call),
@@ -856,7 +904,7 @@ fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
-    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let question = crate::task_verb::tests::support::consult_turn(&vault, 0x81);
     let memory = vault.memory(actor, crate::EdgeActorClass::Human);
     let short = serde_json::json!({
         "who": {"responder": {"human": {"actor_ref": actor}}},
@@ -984,8 +1032,8 @@ fn short_ask_retry_identity_includes_recipient_deadline_and_branch() {
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     let other = crate::EntityId::from_bytes([0xE2; 16]).unwrap();
-    super::tests::support::put_person(&vault, other);
-    let question = super::tests::support::consult_turn(&vault, 0x81);
+    crate::task_verb::tests::support::put_person(&vault, other);
+    let question = crate::task_verb::tests::support::consult_turn(&vault, 0x81);
     let memory = vault.memory(actor, crate::EdgeActorClass::Human);
     let base = serde_json::json!({
         "who": {"people": [actor]},
@@ -1041,5 +1089,5 @@ fn describe_self_shares_the_typed_sdk_result_and_mcp_arguments() {
         card
     );
 }
-
+pub(crate) mod tables;
 pub mod voice_records;

@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.policy.evaluate",
+  "description": "The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on.",
+  "input": "crate::task_verb::sdk::RetrievalPolicyEvaluateRequest",
+  "output": "crate::store::RetrievalPolicyEvaluation",
+  "call": "crate::task_verb::sdk::retrieval_policy_evaluate_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.evaluate\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -100,11 +100,21 @@ pub enum SealVerdict {
     Indeterminate,
 }
 
+/// Action subtypes observed in the sealed bytes, not a safety certificate.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub struct SealActiveContentFacts {
+    pub javascript: bool,
+    pub launch: bool,
+}
+
 /// A sealed PDF's verification, derived from its evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EsignVerdict {
     pub verdict: SealVerdict,
-    /// The failed findings, by code.
+    /// Native finding and sub-indication codes, including
+    /// `validation_material_possible_tampering`, not only failed findings.
     pub reasons: Vec<String>,
     /// The lowest profile any ordinary signature reached.
     pub achieved: Option<SealProfile>,
@@ -114,6 +124,7 @@ pub struct EsignVerdict {
     /// The sealer's full report as JSON, kept as its word: carried and
     /// stored, never parsed here.
     pub report_json: Vec<u8>,
+    pub active_content: SealActiveContentFacts,
 }
 
 impl EsignVerdict {

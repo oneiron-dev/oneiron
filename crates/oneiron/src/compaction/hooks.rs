@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use super::{CompactionWindowMessage, SwapPlan};
 use crate::error::VerbHookStop;
+use crate::runtime_hooks::verb::RoomHookCall;
 use crate::store::pack_hook_actor_class::HookActorClass;
 use crate::store::verb_invocation::InvocationId;
 use crate::{EntityId, Vault};
@@ -50,66 +51,18 @@ impl Vault {
         &self,
         invocation: InvocationId,
         actor: EntityId,
+        reader: Option<crate::claim::ScopedReadActorKey>,
         window: &[CompactionWindowMessage],
         keep: &mut Vec<String>,
         token_ceiling: u64,
         fits: &dyn Fn(&[String]) -> bool,
     ) -> CompactHooks {
-        let args = json!({
-            "window": window
-                .iter()
-                .map(|message| json!({
-                    "turn": message.turn,
-                    "content": message.content,
-                    "tokens": message.tokens,
-                }))
-                .collect::<Vec<_>>(),
-            "keep_list": keep,
-            "token_ceiling": token_ceiling,
-        });
-        let call = VerbCall {
-            verb: HOST_COMPACT.to_owned(),
-            invocation,
-            actor,
-            // A write a host verb causes stamps the System class.
-            class: HookActorClass::System,
-            scope: None,
-            board_epoch: None,
-            turn: None,
-            domain: VerbDomain::Write,
-            // A host's own call reads as its actor.
-            reader: None,
-        };
+        let args = compact_args(window, keep, token_ceiling);
+        let call = compact_call(invocation, actor, reader);
         let contains = |pin: &str| window.iter().any(|message| message.content.contains(pin));
         let check = |rewritten: &Value| added_pins(&args, rewritten, &contains, fits).map(|_| ());
-        match self.pre_verb_hooks(call, args.clone(), &check) {
-            Ok(Ok(pre)) => {
-                if let Ok(added) = added_pins(&args, &pre.args, &contains, fits) {
-                    keep.extend(added);
-                }
-                CompactHooks {
-                    pre: Some(pre),
-                    pending: None,
-                }
-            }
-            Ok(Err(stop)) => {
-                if matches!(&stop, VerbHookStop::Pending { .. }) {
-                    return CompactHooks {
-                        pre: None,
-                        pending: Some(stop),
-                    };
-                }
-                tracing::warn!(%stop, "host.compact pre-hooks stopped; the pass keeps its own pins");
-                CompactHooks::default()
-            }
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    "host.compact pre-hooks failed; the pass keeps its own pins"
-                );
-                CompactHooks::default()
-            }
-        }
+        let ended = self.pre_verb_hooks(call, args.clone(), &check);
+        compact_hooks_ended(ended, &args, window, keep, fits)
     }
 
     /// Runs `host.compact`'s post chain once the pass landed `plan`'s
@@ -119,18 +72,170 @@ impl Vault {
         let Some(pre) = hooks.pre else {
             return;
         };
-        let result = json!({
-            "epoch": plan.epoch,
-            "summary": plan.summary_id.to_hex(),
-            "first_turn": first,
-            "last_turn": last,
-        });
-        if let Err(error) = self.post_verb_hooks(pre, result) {
+        if let Err(error) = self.post_verb_hooks(pre, compact_result(plan, first, last)) {
             tracing::warn!(
                 ?error,
                 "host.compact post-hooks failed on a landed keyframe"
             );
         }
+    }
+}
+
+/// One pass's args: its `window`, its `keep` list and its `token_ceiling`.
+fn compact_args(window: &[CompactionWindowMessage], keep: &[String], token_ceiling: u64) -> Value {
+    json!({
+        "window": window
+            .iter()
+            .map(|message| json!({
+                "turn": message.turn,
+                "content": message.content,
+                "tokens": message.tokens,
+            }))
+            .collect::<Vec<_>>(),
+        "keep_list": keep,
+        "token_ceiling": token_ceiling,
+    })
+}
+
+/// The `host.compact` call of one pass. `reader` is the run's verified
+/// credential-bound key, independent of the host's System write attribution,
+/// as a turn's does (REVIEW-4357 P1-1); `None` reads as the actor.
+fn compact_call(
+    invocation: InvocationId,
+    actor: EntityId,
+    reader: Option<crate::claim::ScopedReadActorKey>,
+) -> VerbCall {
+    VerbCall {
+        verb: HOST_COMPACT.to_owned(),
+        invocation,
+        actor,
+        // A write a host verb causes stamps the System class.
+        class: HookActorClass::System,
+        scope: None,
+        board_epoch: None,
+        turn: None,
+        domain: VerbDomain::Write,
+        reader,
+    }
+}
+
+/// A landed pass's result, as its post chain reads it.
+fn compact_result(plan: &SwapPlan, first: u64, last: u64) -> Value {
+    json!({
+        "epoch": plan.epoch,
+        "summary": plan.summary_id.to_hex(),
+        "first_turn": first,
+        "last_turn": last,
+    })
+}
+
+/// What a pass keeps of its pre chain's end, on the vault or in a room:
+/// the pins it added join `keep`, a Pending stands typed, and a stop or a
+/// storage error leaves the host's own list (a pass never waits on hooks).
+fn compact_hooks_ended(
+    ended: crate::Result<std::result::Result<VerbHookPre, VerbHookStop>>,
+    args: &Value,
+    window: &[CompactionWindowMessage],
+    keep: &mut Vec<String>,
+    fits: &dyn Fn(&[String]) -> bool,
+) -> CompactHooks {
+    let contains = |pin: &str| window.iter().any(|message| message.content.contains(pin));
+    match ended {
+        Ok(Ok(pre)) => {
+            if let Ok(added) = added_pins(args, &pre.args, &contains, fits) {
+                keep.extend(added);
+            }
+            CompactHooks {
+                pre: Some(pre),
+                pending: None,
+            }
+        }
+        Ok(Err(stop)) => {
+            if matches!(&stop, VerbHookStop::Pending { .. }) {
+                return CompactHooks {
+                    pre: None,
+                    pending: Some(stop),
+                };
+            }
+            tracing::warn!(%stop, "host.compact pre-hooks stopped; the pass keeps its own pins");
+            CompactHooks::default()
+        }
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "host.compact pre-hooks failed; the pass keeps its own pins"
+            );
+            CompactHooks::default()
+        }
+    }
+}
+
+/// [`Vault::pre_compact_hooks`] for a run bound to a room (FIX 1594): the
+/// pre chain runs in the room on the run's captured route, as a turn's
+/// does since FIX 5563, so its receipts land in the room, never on
+/// record. Hooks that cannot be read there leave the pass its own pins.
+pub(crate) fn pre_compact_hooks_in_room(
+    session: &crate::off_record::OffRecordSession<'_>,
+    route: &crate::session_overlay::SessionWriteRoute,
+    invocation: InvocationId,
+    actor: EntityId,
+    reader: Option<crate::claim::ScopedReadActorKey>,
+    window: &[CompactionWindowMessage],
+    keep: &mut Vec<String>,
+    token_ceiling: u64,
+    fits: &dyn Fn(&[String]) -> bool,
+) -> CompactHooks {
+    let args = compact_args(window, keep, token_ceiling);
+    let call = compact_call(invocation, actor, reader);
+    let contains = |pin: &str| window.iter().any(|message| message.content.contains(pin));
+    let check = |rewritten: &Value| added_pins(&args, rewritten, &contains, fits).map(|_| ());
+    let how = RoomHookCall {
+        answers_unread: true,
+        ..RoomHookCall::default()
+    };
+    let ended = session
+        .pre_verb_hooks_in_room(route, call, args.clone(), &check, how)
+        .map(|(ended, _)| ended);
+    compact_hooks_ended(ended, &args, window, keep, fits)
+}
+
+/// [`Vault::post_compact_hooks`] for a pass whose pre chain ran in a room
+/// (FIX 1594).
+pub(crate) fn post_compact_hooks_in_room(
+    session: &crate::off_record::OffRecordSession<'_>,
+    route: &crate::session_overlay::SessionWriteRoute,
+    hooks: CompactHooks,
+    plan: &SwapPlan,
+    first: u64,
+    last: u64,
+) {
+    let Some(pre) = hooks.pre else {
+        return;
+    };
+    if let Err(error) =
+        session.post_verb_hooks_in_room(route, pre, compact_result(plan, first, last), true)
+    {
+        tracing::warn!(
+            ?error,
+            "host.compact post-hooks failed on a landed keyframe"
+        );
+    }
+}
+
+/// [`Vault::post_compact_hooks`] for a pass whose pre chain ran in a room but
+/// which ends without landing (a backend refusal or a pre-swap-gate
+/// rejection, REVIEW-4357 P1-2): its pre chain's records are kept in the
+/// room, and no post chain runs.
+pub(crate) fn keep_compact_hooks_in_room(
+    session: &crate::off_record::OffRecordSession<'_>,
+    route: &crate::session_overlay::SessionWriteRoute,
+    hooks: CompactHooks,
+) {
+    let Some(pre) = hooks.pre else {
+        return;
+    };
+    if let Err(error) = session.keep_verb_hooks_in_room(route, pre) {
+        tracing::warn!(%error, "an unlanded room pass's verb hook records were not kept");
     }
 }
 
@@ -189,10 +294,6 @@ pub fn check_host_compact_rewrite(args: &Value, rewritten: &Value) -> Result<(),
         .get("window")
         .and_then(Value::as_array)
         .ok_or("a compaction window holds messages")?;
-    let ceiling = args
-        .get("token_ceiling")
-        .and_then(Value::as_u64)
-        .ok_or("a compaction token ceiling is an integer")?;
     let contains = |pin: &str| {
         window.iter().any(|message| {
             message
@@ -201,10 +302,35 @@ pub fn check_host_compact_rewrite(args: &Value, rewritten: &Value) -> Result<(),
                 .is_some_and(|content| content.contains(pin))
         })
     };
+    check_host_compact_rewrite_with(args, rewritten, &contains)
+}
+
+/// Replay-side host.compact rewrite check over a saved window that holds
+/// withheld placeholders instead of text: the window and ceiling presence,
+/// the immutable fields and the append-only keep list still apply, but pin
+/// membership in the window cannot run on placeholders and is skipped — the
+/// live chain admits against the restored window, which replay cannot
+/// rebuild.
+pub fn check_host_compact_rewrite_unverified_window(
+    args: &Value,
+    rewritten: &Value,
+) -> Result<(), String> {
+    check_host_compact_rewrite_with(args, rewritten, &|_| true)
+}
+
+fn check_host_compact_rewrite_with(
+    args: &Value,
+    rewritten: &Value,
+    contains: &dyn Fn(&str) -> bool,
+) -> Result<(), String> {
+    let ceiling = args
+        .get("token_ceiling")
+        .and_then(Value::as_u64)
+        .ok_or("a compaction token ceiling is an integer")?;
     let fits = |pins: &[String]| {
         crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 <= ceiling
     };
-    added_pins(args, rewritten, &contains, &fits).map(|_| ())
+    added_pins(args, rewritten, contains, &fits).map(|_| ())
 }
 
 /// A host's explicit compaction uses the same sealed request, cheap backend,

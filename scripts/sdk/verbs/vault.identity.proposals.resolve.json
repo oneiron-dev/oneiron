@@ -1,0 +1,17 @@
+{
+  "name": "vault.identity.proposals.resolve",
+  "description": "The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision.",
+  "input": "crate::task_verb::sdk::IdentityProposalResolveRequest",
+  "output": "crate::task_verb::sdk::IdentityProposalResolutionResult",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.proposals.resolve\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "self.budget",
+  "description": "The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money.",
+  "input": "crate::agent_dispatch::budget_doors::SelfBudgetRequest",
+  "output": "crate::agent_dispatch::budget_doors::AgentBudgetView",
+  "call": "crate::agent_dispatch::budget_doors::self_budget(memory, &input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

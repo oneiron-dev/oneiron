@@ -1,0 +1,12 @@
+{
+  "name": "self.board.replace",
+  "description": "Replaces the whole layout the bound actor's next turn applies to its context board.",
+  "input": "crate::task_verb::sdk::BoardReplaceRequest",
+  "output": "crate::task_verb::sdk::BoardLayoutState",
+  "call": "crate::task_verb::sdk::board_replace_reply(memory, &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

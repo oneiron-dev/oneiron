@@ -8,10 +8,10 @@
 //! types ARE the engine DTOs — so this projection and the in-process N-API
 //! binding cannot drift into two dialects of the same verb.
 //!
-//! The route projection is generated from `scripts/sdk/agent-verbs.json`.
+//! The route projection is generated from `scripts/sdk/verbs/`.
 //! Claim lifecycle, scoped reads, export, notes, artifacts, tasks and rooms
 //! all use the same inventory and engine DTOs as the native clients. Every
-//! route runs its row through the generated dispatch (`facade/generated/dispatch.rs`), the one
+//! route runs its row through the generated dispatch (`dispatch.rs`, built into `OUT_DIR`), the one
 //! the held socket's `rpc.req` runs too (OF-489), so a verb meets the same
 //! admission on both. Live subscriptions remain owned by the held socket
 //! rather than this router.
@@ -30,12 +30,16 @@ mod affect_doors;
 mod ag_ui_file_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
-#[path = "facade/generated/agent_verbs.rs"]
-mod agent_verbs;
+mod agent_run_effect_doors;
+mod agent_verb_class_doors;
+mod agent_verbs {
+    include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
+}
 mod aging_doors;
 mod artifact_hosting_doors;
 mod asr_doors;
 mod authority_history_doors;
+mod blob_body;
 mod board_stream_doors;
 mod booking_doors;
 mod browser_doors;
@@ -55,6 +59,7 @@ mod code_doors;
 mod code_import_doors;
 mod code_run_doors;
 mod code_run_secret_lift_doors;
+mod code_secret_doors;
 mod code_view_doors;
 mod code_wait_doors;
 mod codebase_doors;
@@ -63,6 +68,7 @@ mod commitment_doors;
 mod compliance_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
+mod connector_reply_doors;
 mod connector_revision_doors;
 mod connector_slate_doors;
 mod connector_witness_read_doors;
@@ -82,11 +88,15 @@ mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
+mod device_succession_doors;
 mod disclosure_doors;
-#[path = "facade/generated/dispatch.rs"]
-mod dispatch;
+mod dispatch {
+    include!(concat!(env!("OUT_DIR"), "/dispatch.rs"));
+}
 mod drafter_doors;
 mod embedding_space_doors;
+// Untangle 6.6d: the engine-control knob verbs, for the owner or a holder.
+mod engine_control_doors;
 mod errors;
 mod eval_doors;
 pub(super) mod export_transfer;
@@ -97,6 +107,7 @@ mod federation_connect_doors;
 mod feedback_doors;
 mod files_doors;
 mod fold_doors;
+mod follower_keyframe_doors;
 mod foreign_code_doors;
 pub(super) mod free_time_doors;
 mod gate_policy_doors;
@@ -107,11 +118,14 @@ mod grants_doors;
 mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
+mod hook_check_doors;
 mod hook_regen_doors;
 mod hook_session;
 mod hooks;
-#[path = "facade/generated/host_door_rows.rs"]
-mod host_door_rows;
+mod host_door_rows {
+    include!(concat!(env!("OUT_DIR"), "/host_door_rows.rs"));
+}
+pub(in crate::api) use host_door_rows::needs_caller_credential;
 pub(super) mod host_doors;
 mod host_trigger_doors;
 mod hub_doors;
@@ -128,14 +142,19 @@ mod lens_selection_doors;
 mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
+mod live_voice_settlement;
+mod mail_pack_doors;
 mod merge_queue_checker_doors;
 mod merge_queue_doors;
 mod mesh_doors;
 mod model_catalog_doors;
 mod model_manifest_doors;
+mod model_pack_doors;
+mod model_setting_doors;
 mod model_step_doors;
 mod model_stream_doors;
 mod note_doors;
+mod oauth_authorization_doors;
 mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
@@ -148,6 +167,7 @@ mod pack_preview_doors;
 mod persona_doors;
 mod plugin_section_doors;
 mod policy_doors;
+mod proactivity_digest_doors;
 mod program_read_doors;
 mod project_card_doors;
 mod proxy_doors;
@@ -156,12 +176,15 @@ mod receipts;
 mod release;
 mod reply_doors;
 mod repo_doors;
+mod repo_manifest_conflict_doors;
 mod research_doors;
 mod reservoir_source_doors;
 mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+// FIX 13274: the owner reviews and settles a retained document-copy edit.
+mod repo_copy_edit_doors;
 mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;
@@ -190,7 +213,13 @@ mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
 pub(crate) use slim_doors::is_slim_lifecycle_observation;
+mod snapshot_read_settings_doors;
 mod standing_doors;
+mod steward_doors;
+// Untangle 6.6c: who reads engine substrate rows through a host door.
+mod substrate_read_doors;
+// FIX 11694: a person's passkey step-up on their own credential (MFA-1 A).
+pub(super) mod step_up_doors;
 mod stream_recovery_doors;
 mod streamed_claims;
 mod summary_doors;
@@ -200,15 +229,12 @@ mod sync_quarantine_doors;
 pub(super) mod tests;
 mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
+mod uncertain_send_doors;
 mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;
 mod wave_doors;
-#[expect(
-    dead_code,
-    reason = "the trusted MFA step-up verifier (FIX 9431) binds the served Admin route to these"
-)]
 mod weave_admin_doors;
 mod weave_doors;
 mod web_connector_doors;
@@ -216,14 +242,19 @@ mod web_fetch_doors;
 mod widen_proposal_doors;
 mod wire_health_doors;
 
-pub(crate) use admission_doors::{admission_observer, call_verb};
+pub(crate) use admission_doors::{
+    admission_observer, call_verb, carrying_admission_observer, tracker_observer, tracks_admission,
+    with_admission_observer, with_admission_observer_sync,
+};
 pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{
     connector_answer_as, connector_call_listing_as, connector_call_listing_on,
 };
-pub(crate) use export_transfer::{ExportTransfers, mcp_export_transfer};
+pub(crate) use export_transfer::{
+    ExportTransfers, mcp_export_transfer, owner_whole_vault_export_admitted,
+};
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
@@ -284,12 +315,10 @@ use super::credential_memory;
 use super::write_facet::{SESSION_HEADER, landing_facet};
 use super::{host_action, owner_routes, pairing, scoped_read_for_core_auth};
 
-/// Request-body ceiling for the facade nest: 64 MiB.
-///
-/// Sized for the largest legal blob append (32 MiB raw) once base64 and JSON
-/// framing are paid for. Applied as a layer on THIS router, so the limit is a
-/// property of the facade projection and no other route's body handling moves.
-const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
+/// Request-body ceiling for the anonymous-chat SDK route: 64 MiB, its
+/// pre-auth bound. The authenticated facade nest reads up to the API's
+/// request floor instead (`limits.request_body_bytes`, ABC transport row T2).
+const ANONYMOUS_CHAT_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 
 /// The facade route table.
 ///
@@ -297,18 +326,19 @@ const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 /// request bodies (`vault.recall` has five inputs), and `/v1/core`'s own read
 /// routes — `/query`, `/context-pack`, `/hydrate` — already post their
 /// requests for the same reason. One method per verb also keeps the route
-/// census a flat list a contract test can compare against the catalog.
+/// census a flat list a contract test can compare against the catalog. Its
+/// bodies are read up to the API's request floor (`limits.request_body_bytes`,
+/// ABC transport row T2), the API router's own layer: the nest sets none.
 pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .merge(agent_verbs::routes())
         .fallback(facade_unknown_verb)
-        .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
 }
 
 /// The anonymous-chat SDK route, mounted with the existing standalone
 /// handler outside invocation claims, wire telemetry and call receipts.
 pub(crate) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
-    agent_verbs::anonymous_chat_routes().layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
+    agent_verbs::anonymous_chat_routes().layer(DefaultBodyLimit::max(ANONYMOUS_CHAT_MAX_BODY_BYTES))
 }
 
 /// [`facade_routes`] with every reply's call receipt (OF-538): one layer
@@ -416,6 +446,7 @@ fn unknown_verb(verb: &str) -> FacadeApiError {
 pub(crate) struct FacadeApiError {
     status: StatusCode,
     body: FacadeErrorEnvelope,
+    hook_notice: bool,
 }
 
 /// `{error: {...}}`, the same transport envelope shape `/v1/core` uses,
@@ -468,6 +499,9 @@ struct FacadeErrorBody {
     /// The typed legal-hold notice, when the engine supplied one.
     #[serde(rename = "legal_hold", skip_serializing_if = "Option::is_none")]
     legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
+    /// The engine's held room join, with its intent and missing consents.
+    #[serde(rename = "room_join_hold", skip_serializing_if = "Option::is_none")]
+    room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
     /// A failed run's program type feedback (FIX 10389), beside the refusal
     /// and never among its words: each item released whole, or withheld
     /// with none of its text when its own release check holds it.
@@ -508,6 +542,9 @@ pub(crate) struct MemoryErrorBodySchema {
     #[schema(value_type = Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>)]
     #[serde(rename = "legal_hold")]
     legal_hold: Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>,
+    #[schema(value_type = Option<crate::error::room_join_hold_schema::RoomJoinHoldSchema>)]
+    #[serde(rename = "room_join_hold")]
+    room_join_hold: Option<crate::error::room_join_hold_schema::RoomJoinHoldSchema>,
     #[schema(value_type = Option<Vec<Object>>)]
     program_steps: Option<Vec<serde_json::Value>>,
 }

@@ -241,16 +241,21 @@ impl Caller {
 }
 
 /// The two MCP routes, behind the same binding door and telemetry the API
-/// mounts them behind.
+/// mounts them behind, with the same methods: GET and DELETE answer 405
+/// (FIX 4902).
 fn mcp_routes(server: Arc<SyncServer>) -> Router {
     Router::new()
         .route(
             crate::cli::McpSurface::Primary.path(),
-            post(crate::api::mcp_gateway),
+            post(crate::api::mcp_gateway)
+                .get(crate::api::mcp_method_not_allowed)
+                .delete(crate::api::mcp_method_not_allowed),
         )
         .route(
             crate::cli::McpSurface::ToolFirst.path(),
-            post(crate::api::mcp_tool_first_gateway),
+            post(crate::api::mcp_tool_first_socket_gateway)
+                .get(crate::api::mcp_method_not_allowed)
+                .delete(crate::api::mcp_method_not_allowed),
         )
         .layer(axum::middleware::from_fn_with_state(
             server.clone(),
@@ -365,6 +370,8 @@ pub(super) fn upgrade(
     let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
+        // ABC transport row T25: the request floor bounds a message.
+        .max_message_size(server.socket_message_bytes())
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
@@ -382,7 +389,8 @@ pub(super) fn upgrade(
 /// The attested holder of an upgrade with no credential of anyone's beside
 /// him, whom the managed vault does not record as its live owner now: a
 /// stale owner sign-in (FIX 5935). `None` for the live owner, a slip's
-/// upgrade and any vault no supervisor manages.
+/// upgrade and any vault no supervisor manages. The MCP carrier's upgrade
+/// and the app tier's (FIX 11712) both recognize him by it.
 pub(super) fn stale_booking_holder(
     headers: &HeaderMap,
     extensions: &Extensions,
@@ -458,6 +466,8 @@ pub(super) fn booking_upgrade(
     let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
+        // ABC transport row T25: the request floor bounds a message.
+        .max_message_size(server.socket_message_bytes())
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
@@ -474,7 +484,7 @@ pub(super) fn booking_upgrade(
 
 /// The carrier's loop. Every frame it writes goes through the guarded
 /// transport, which re-consults the socket credential's revocation first (the
-/// owner's live ownership, for his own socket), and every read does too; each
+/// owner's live ownership, or a person's admitted membership), and every read does too; each
 /// call is admitted again on its own proof, or as the owner again. On the
 /// engine's `stop` (OF-237) the loop stops reading at its next wait and the
 /// transport closes; the carrier ends once every call it admitted has.
@@ -486,6 +496,11 @@ async fn serve(
     (session_jti, owner): (Option<String>, Option<CoreAuth>),
     caller: Caller,
 ) {
+    let person = match &caller.credential {
+        Credential::Person(session) => Some(session.holder()),
+        _ => None,
+    };
+    let mut membership_notices = server.vault().subscribe_credential_revocations();
     let transport = GuardedTransport::new(
         socket,
         Arc::clone(server.vault()) as Arc<dyn RevokedTokenJtis + Send + Sync>,
@@ -493,7 +508,8 @@ async fn serve(
         conn_id,
     )
     .with_inbound_cap(server.config.max_frame_size)
-    .with_live_owner(server.vault(), owner);
+    .with_live_owner(server.vault(), owner)
+    .with_live_person(person);
     // Its hello and sends give way to the engine's stop.
     let mut transport = StoppingTransport::new(transport, stop.clone());
     // On a managed vault every receipt and call below is admitted under the
@@ -530,12 +546,24 @@ async fn serve(
         let event = tokio::select! {
             biased;
             () = stop.turned() => break,
+            changed = membership_notices.changed(), if person.is_some() => {
+                if changed.is_err() {
+                    break;
+                }
+                Event::MembershipChanged
+            }
             Some(answered) = calls.join_next(), if !calls.is_empty() => Event::Answered(answered),
             inbound = transport.read_next(), if calls.len() < MAX_MCP_CALLS_IN_FLIGHT => {
                 Event::Inbound(inbound)
             }
         };
         let data = match event {
+            Event::MembershipChanged => {
+                if !transport.recheck_credential().await {
+                    break;
+                }
+                continue;
+            }
             Event::Answered(Ok(Ok(frames))) => {
                 for frame in frames {
                     if !transport.send_binary(frame).await {
@@ -675,6 +703,7 @@ async fn serve(
 
 /// What woke the carrier's loop.
 enum Event {
+    MembershipChanged,
     Answered(Result<Result<Vec<Vec<u8>>, crate::protocol::ProtocolError>, tokio::task::JoinError>),
     Inbound(Option<Result<WsMessage, axum::Error>>),
 }

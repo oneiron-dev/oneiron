@@ -35,7 +35,7 @@ use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead as _;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -55,13 +55,14 @@ const PINS: SideTable<EntityId, Vec<StepResponseRef>, Named> =
 
 /// Pins `claim`'s response to the exact version `pin` names, in the write
 /// that files the claim and appends the version: both commit or roll back
-/// with it.
+/// with it. `store` is where the claim lives: base, or a room's view for a
+/// step a room's run stages, whose pin drops with the room (FIX 4818).
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub(super) fn register_step_response_pin_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     claim: &EntityId,
     pin: &StepResponseRef,
@@ -232,6 +233,29 @@ fn pinned_elsewhere_in_txn(
         }
     }
     Ok(false)
+}
+
+/// Whether another retained step claim keeps an exact version a native
+/// archive owner is releasing. This is the same local and carried-pin
+/// walk as a step teardown, not authority to erase an archive.
+pub(crate) fn step_response_version_pinned_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    except: &EntityId,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; 32],
+) -> Result<bool> {
+    pinned_elsewhere_in_txn(
+        store,
+        txn,
+        except,
+        &StepResponseRef {
+            artifact_id: *artifact,
+            version,
+            content_hash: *content_hash,
+        },
+    )
 }
 
 /// A stored row of `kind` with its body, under no delete this vault holds.

@@ -15,7 +15,6 @@ use super::{
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::WakePassDeadline;
-use crate::entity_id::EntityId;
 use oneiron_model::llm::{BudgetGuard, BudgetLease, BudgetLeaseState};
 
 /// The wake passes running on one open vault, by wake ref (DOOR-144).
@@ -81,96 +80,33 @@ impl ActiveWakes {
     }
 }
 
-/// One running pass: the clock it runs on, and its admitted calls.
-pub(crate) struct ActiveWake {
-    clock: WakePassDeadline,
-    calls: Mutex<BTreeMap<EntityId, Weak<ActiveCall>>>,
-    attempt_lines: Mutex<BTreeMap<AttemptId, String>>,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_wake_contract::dreamer_wake::observation::live::{
+    ActiveCall, ActiveWake, WakeBinding,
+};
 
-impl ActiveWake {
-    /// Records the runner line `attempt` reserved on: the line an owed wake
-    /// call of that attempt charges (FIX 11450).
-    pub(crate) fn record_attempt_line(&self, attempt: AttemptId, line: &str) {
-        self.attempt_lines
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(attempt, line.to_owned());
-    }
-
-    /// The runner line `attempt` reserved on, while this pass runs it.
-    pub(crate) fn attempt_line(&self, attempt: AttemptId) -> Option<String> {
-        self.attempt_lines
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&attempt)
-            .cloned()
-    }
-
-    /// Registers one admitted call before its row is visible. Calls no
-    /// observer holds any more leave here.
-    fn register_call(
-        &self,
-        call: EntityId,
-        guard: &BudgetGuard,
-        lease: &BudgetLease,
-    ) -> Arc<ActiveCall> {
-        let live = Arc::new(ActiveCall {
-            call,
-            guard: guard.clone(),
-            lease_id: lease.id().to_owned(),
+/// The pass's clock and its calls still running, read now. The registry
+/// lock is released before any guard is read.
+pub(super) fn active_wake_sample(active_wake: &ActiveWake) -> WakeLiveState {
+    let running: Vec<Arc<ActiveCall>> = active_wake
+        .calls
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .values()
+        .filter_map(Weak::upgrade)
+        .collect();
+    let mut calls = Vec::with_capacity(running.len());
+    for call in &running {
+        calls.push(WakeLiveCall {
+            call: call.call,
+            lease_id: call.lease_id.clone(),
+            lease: call.guard.lease_observation(&call.lease_id),
         });
-        let mut calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
-        calls.retain(|_, held| held.strong_count() > 0);
-        calls.insert(call, Arc::downgrade(&live));
-        drop(calls);
-        live
     }
-
-    /// The pass's clock and its calls still running, read now. The registry
-    /// lock is released before any guard is read.
-    pub(super) fn sample(&self) -> WakeLiveState {
-        let running: Vec<Arc<ActiveCall>> = self
-            .calls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .values()
-            .filter_map(Weak::upgrade)
-            .collect();
-        let mut calls = Vec::with_capacity(running.len());
-        for call in &running {
-            calls.push(WakeLiveCall {
-                call: call.call,
-                lease_id: call.lease_id.clone(),
-                lease: call.guard.lease_observation(&call.lease_id),
-            });
-        }
-        WakeLiveState {
-            elapsed_ms: self.clock.elapsed_ms(),
-            remaining_ms: self.clock.remaining_ms(),
-            calls,
-        }
-    }
-}
-
-/// One admitted call: the guard that issued its lease, and the lease's id.
-pub(crate) struct ActiveCall {
-    call: EntityId,
-    guard: BudgetGuard,
-    lease_id: String,
-}
-
-/// What a bound deadline carries to its clones: the committed wake, and the
-/// hold that keeps the pass live while any clone runs.
-#[derive(Clone)]
-pub(crate) struct WakeBinding {
-    wake: WakeRef,
-    live: Arc<ActiveWake>,
-}
-
-impl WakeBinding {
-    pub(crate) const fn wake(&self) -> WakeRef {
-        self.wake
+    WakeLiveState {
+        elapsed_ms: active_wake.clock.elapsed_ms(),
+        remaining_ms: active_wake.clock.remaining_ms(),
+        calls,
     }
 }
 
@@ -194,10 +130,42 @@ impl<'a> StepCalls<'a> {
         lease: &BudgetLease,
         ordinal: u32,
     ) -> ObservedCall<'a> {
+        self.record_owed(guard, lease);
         ObservedCall {
             vault: self.vault,
             bound: self.bind(guard, lease, ordinal),
             stated_reset: None,
+        }
+    }
+
+    fn record_owed(&self, guard: &BudgetGuard, lease: &BudgetLease) {
+        let Some(line) = self
+            .deadline
+            .and_then(|deadline| deadline.admitted_budget_line(self.attempt_id))
+        else {
+            return;
+        };
+        let reserved_units = match guard.lease_observation(lease.id()) {
+            Some(BudgetLeaseState::Open { reserve_units, .. }) => reserve_units,
+            Some(BudgetLeaseState::Settled { .. }) | Some(BudgetLeaseState::Aborted) | None => 0,
+        };
+        let owed = crate::dreamer_wake::owed::WakeOwedCall {
+            boot: self.vault.active_wakes.boot(),
+            line: line.to_owned(),
+            lease: lease.id().to_owned(),
+            reserved_units,
+            at: crate::unix_seconds_now(),
+        };
+        if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_wake::owed::put_owed_call_in_txn(
+                self.vault,
+                wtxn,
+                self.attempt_id,
+                &self.step_hash,
+                &owed,
+            )
+        }) {
+            skipped(&error, "owed call");
         }
     }
 
@@ -228,35 +196,10 @@ impl<'a> StepCalls<'a> {
             lease_id: lease.id().to_owned(),
             admitted_elapsed_ms,
         };
-        match self.vault.with_write_txn_grouped(|wtxn| {
-            let bound = bind_call_in_txn(self.vault, wtxn, &admitted)?;
-            // The owed row for this send, beside its call row (FIX 11450): a
-            // crash before the attempt settles still charges it. None when the
-            // attempt reserved on no recorded line.
-            if let Some(line) = binding.live.attempt_line(self.attempt_id) {
-                let reserved_units = match guard.lease_observation(lease.id()) {
-                    Some(BudgetLeaseState::Open { reserve_units, .. }) => reserve_units,
-                    Some(BudgetLeaseState::Settled { .. })
-                    | Some(BudgetLeaseState::Aborted)
-                    | None => 0,
-                };
-                let owed = crate::dreamer_wake::owed::WakeOwedCall {
-                    boot: self.vault.active_wakes.boot(),
-                    line,
-                    lease: lease.id().to_owned(),
-                    reserved_units,
-                    at: crate::unix_seconds_now(),
-                };
-                crate::dreamer_wake::owed::put_owed_call_in_txn(
-                    self.vault,
-                    wtxn,
-                    self.attempt_id,
-                    &self.step_hash,
-                    &owed,
-                )?;
-            }
-            Ok(bound)
-        }) {
+        match self
+            .vault
+            .with_write_txn_grouped(|wtxn| bind_call_in_txn(self.vault, wtxn, &admitted))
+        {
             Ok(true) => Some(BoundCall {
                 key,
                 live,

@@ -1,7 +1,7 @@
 //! The reads a code run bound to an off-record session serves through the
 //! room's own view (WILL L11-01, S01-1): `vault.get`, `vault.hydrate`,
-//! `vault.refs.resolve`, `vault.search.bm25` and the run's own
-//! `vault.search`.
+//! `vault.refs.resolve`, `vault.search.bm25`, `vault.receipts` ([`receipts`],
+//! FIX 7355) and the run's own `vault.search`.
 //!
 //! Each call reads ONE view of the room ([`SessionReadContext`]), under the
 //! narrow key the run's host admitted for its caller, never a wider one:
@@ -43,12 +43,18 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct HydrateRequest {
     pub refs: Vec<String>,
+    /// The caller's retrieval filter: it only narrows what the refs read.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EntityRequest {
     pub entity_ref: String,
+    /// The caller's retrieval filter: it only narrows what the ref reads.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -56,9 +62,15 @@ pub struct EntityRequest {
 pub struct QueryBm25Request {
     pub query: String,
     pub limit: usize,
+    /// The caller's retrieval filter, applied inside the posting scan,
+    /// before the rank and the cut.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{Vault, WriteActor};
+
+mod receipts;
 
 /// One read a run bound to a room serves through the room's view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +83,8 @@ pub(crate) enum SessionRead {
     RefsResolve,
     /// `vault.search.bm25`.
     SearchBm25,
+    /// `vault.receipts` (FIX 7355).
+    Receipts,
 }
 
 /// What one read in the room answers.
@@ -136,18 +150,21 @@ impl<'s> SessionReadContext<'s> {
         let (output, rows) = match read {
             SessionRead::Get => {
                 let input: EntityRequest = decode(input)?;
+                let memory = memory.with_read_filter(input.filter.as_ref());
                 let (read, _) = self.get(&memory, &input.entity_ref)?;
                 let rows = read.value.iter().filter_map(view_id).collect();
                 (encode(&read)?, rows)
             }
             SessionRead::Hydrate => {
                 let input: HydrateRequest = decode(input)?;
+                let memory = memory.with_read_filter(input.filter.as_ref());
                 let read = self.hydrate(&memory, &input.refs)?;
                 let rows = read.value.iter().filter_map(view_id).collect();
                 (encode(&read)?, rows)
             }
             SessionRead::RefsResolve => {
                 let input: ResolveRecordRefRequest = decode(input)?;
+                let memory = memory.with_read_filter(input.filter.as_ref());
                 let read = self.resolve_record_ref(&memory, &input)?;
                 let rows = EntityId::from_hex(&read.value.record.id)
                     .ok()
@@ -157,8 +174,8 @@ impl<'s> SessionReadContext<'s> {
             }
             SessionRead::SearchBm25 => {
                 let input: QueryBm25Request = decode(input)?;
-                caps::check_query(&input.query)?;
                 caps::check_limit_nonzero(input.limit)?;
+                let memory = memory.with_read_filter(input.filter.as_ref());
                 let read = self.query_bm25(&memory, &input.query, input.limit)?;
                 let rows = read
                     .value
@@ -167,6 +184,11 @@ impl<'s> SessionReadContext<'s> {
                     .filter_map(|record| EntityId::from_hex(&record.id).ok())
                     .collect();
                 (encode(&read)?, rows)
+            }
+            SessionRead::Receipts => {
+                let page = self.receipts_page(&decode(input)?)?;
+                let rows = receipts::page_rows(&page);
+                (encode(&page)?, rows)
             }
         };
         Ok(SessionAnswer::Answered { output, rows })
@@ -185,19 +207,26 @@ impl<'s> SessionReadContext<'s> {
         query: &str,
         limit: usize,
         claims: ClaimReadStatus,
+        filter: Option<&crate::gate::RetrievalFilter>,
     ) -> crate::Result<Vec<ScoredEntity>> {
-        let lane = self.lane(claims);
+        let lane = self.lane(claims, filter);
         let hits = self
             .session
             .search_text_scoped_routed(self.route, &self.view, &lane, query, limit)?;
         Ok(lane.filter_scored_entities(hits)?.value)
     }
 
-    /// The key's lane over this call's view, serving `claims`.
-    fn lane(&self, claims: ClaimReadStatus) -> ScopedRead<'_> {
+    /// The key's lane over this call's view, serving `claims`, bound to
+    /// the caller's own retrieval filter `filter` (FIX 3977).
+    fn lane(
+        &self,
+        claims: ClaimReadStatus,
+        filter: Option<&crate::gate::RetrievalFilter>,
+    ) -> ScopedRead<'_> {
         self.vault
             .scoped_read_in_session(self.key.clone(), &self.view)
             .with_claim_status(claims)
+            .with_read_filter(filter)
     }
 
     /// `vault.get` in the room, on the Recorded lane (every claim status, as
@@ -208,7 +237,7 @@ impl<'s> SessionReadContext<'s> {
         memory: &Memory<'_>,
         reference: &str,
     ) -> MemoryResult<(ScopedReadResult<Option<EntityView>>, Option<String>)> {
-        let lane = self.lane(ClaimReadStatus::Recorded);
+        let lane = self.lane(ClaimReadStatus::Recorded, memory.read_filter());
         let target = self.target(reference)?;
         let reads: Vec<_> = target
             .iter()
@@ -247,7 +276,7 @@ impl<'s> SessionReadContext<'s> {
         memory: &Memory<'_>,
         refs: &[String],
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let lane = self.lane(ClaimReadStatus::Recorded);
+        let lane = self.lane(ClaimReadStatus::Recorded, memory.read_filter());
         let targets = refs
             .iter()
             .map(|reference| self.target(reference))
@@ -325,7 +354,7 @@ impl<'s> SessionReadContext<'s> {
         query: &str,
         limit: usize,
     ) -> MemoryResult<ScopedReadResult<Vec<LexicalHit>>> {
-        let lane = self.lane(ClaimReadStatus::Surfaceable);
+        let lane = self.lane(ClaimReadStatus::Surfaceable, memory.read_filter());
         let hits = self
             .session
             .search_text_scoped_routed(self.route, &self.view, &lane, query, limit)?;
@@ -375,8 +404,10 @@ impl<'s> SessionReadContext<'s> {
 
     /// The entity `reference` names in the room, at the frontier it names:
     /// a 32-hex id, the room's own short ref (`s<n>:<hash>`) or the vault's,
-    /// each optionally pinned as `<ref>@<revision>`. `None` is a ref that
-    /// names nothing here, never a withheld row: admission is the lane's.
+    /// each optionally pinned as `<ref>@<revision>`. A pinned room alias
+    /// names the revision this call's view holds (FIX 5162). `None` is a ref
+    /// that names nothing here, never a withheld row: admission is the
+    /// lane's.
     fn target(&self, reference: &str) -> MemoryResult<ReadTargetSlot> {
         let (reference, mode) = match reference.rsplit_once('@') {
             Some((reference, revision)) => (
@@ -386,12 +417,18 @@ impl<'s> SessionReadContext<'s> {
             None => (reference.trim(), ReadMode::Live),
         };
         if let Some((alias, hash)) = room_short_ref(reference) {
-            // A room's alias names its row's live body: a pin of one names
-            // no revision the room can check.
-            if mode != ReadMode::Live {
-                return Ok(None);
-            }
-            return Ok(self.room_alias(alias, hash)?.map(|id| (id, mode)));
+            // A room's alias names its row; a pin of one is checked by the
+            // lane's read of that revision on this view, as a pinned id is
+            // (FIX 5162). A revision the row does not hold reads as none. A
+            // pin whose hash names that revision's own bytes still names its
+            // row after an edit moved the live alias.
+            let id = match (self.room_alias(alias, hash)?, mode) {
+                (None, ReadMode::Pinned(revision)) => {
+                    self.room_pinned_alias(alias, hash, revision)?
+                }
+                (id, _) => id,
+            };
+            return Ok(id.map(|id| (id, mode)));
         }
         let id = match mode {
             // A pinned vault ref resolves against its pin, as on base; a
@@ -413,14 +450,10 @@ impl<'s> SessionReadContext<'s> {
     /// room, else what the ref names as the vault resolves it, with the
     /// vault's refusals. Nothing is read on the key's lane here: whether the
     /// row stands is the write's own check, in the transaction that stages
-    /// it.
+    /// it. The resolver is [`resolve_room_write_subject`], which a write
+    /// with no read key calls too (FIX 5302).
     pub(crate) fn write_subject(&self, reference: &str) -> MemoryResult<EntityId> {
-        if let Some((alias, hash)) = room_short_ref(reference.trim())
-            && let Some(id) = self.room_alias(alias, hash)?
-        {
-            return Ok(id);
-        }
-        resolve_entity_ref(self.vault, reference)
+        resolve_room_write_subject(self.vault, &self.view, reference)
     }
 
     /// The evidence refs a room write's caller supplied (FIX 4281; Engine
@@ -452,7 +485,7 @@ impl<'s> SessionReadContext<'s> {
             .map(|(id, mode)| PointRead::id(*id).at(*mode))
             .collect();
         let mut rows = self
-            .lane(ClaimReadStatus::Recorded)
+            .lane(ClaimReadStatus::Recorded, None)
             .read(&reads, None)?
             .value
             .into_iter();
@@ -474,21 +507,80 @@ impl<'s> SessionReadContext<'s> {
     /// The row the room's alias `alias` names at content hash `hash`, in this
     /// call's view of the room.
     fn room_alias(&self, alias: &str, hash: u8) -> MemoryResult<Option<EntityId>> {
+        room_alias_in_view(self.vault, &self.view, alias, hash)
+    }
+
+    /// The row the room's alias `alias` names at `revision`, whose bytes
+    /// hash to `hash`, in this call's view of the room (FIX 5162). Identity,
+    /// alias and bytes are read in one view and one transaction. The
+    /// resolver grants nothing: the lane admits the row and its revision.
+    fn room_pinned_alias(
+        &self,
+        alias: &str,
+        hash: u8,
+        revision: RevisionRef,
+    ) -> MemoryResult<Option<EntityId>> {
         let txn = self
             .vault
             .store
             .env
             .read_txn()
             .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
-        let mut key = alias.as_bytes().to_vec();
-        key.push(hash);
-        let Some(raw) = self.view.short_ids.get(&txn, &key)? else {
-            return Ok(None);
-        };
-        Ok(<[u8; 16]>::try_from(&raw[..])
-            .ok()
-            .and_then(|bytes| EntityId::from_bytes(bytes).ok()))
+        crate::vault::entity_revision::resolve_room_pinned_alias_in_txn(
+            self.vault, &self.view, &txn, alias, hash, revision,
+        )
+        .map_err(MemoryError::from)
     }
+}
+
+/// The row a room write names as its subject, in `view`, one view of the
+/// room (WILL L11-01 S01-2a; FIX 5302). The room's own alias for a row it
+/// staged comes first. Every other ref resolves as the vault resolves it,
+/// with the vault's refusals. It needs no read key. It answers only an id:
+/// it reads no body and admits no read. So a caller whose credential grants
+/// Write and no Read names the room's rows as a reader names them. Whether
+/// the row stands is the write's own check, in the transaction that stages
+/// it.
+///
+/// # Errors
+///
+/// The vault's refusal of a malformed ref or of one that names nothing;
+/// storage errors reading the room's aliases.
+pub(crate) fn resolve_room_write_subject(
+    vault: &Vault,
+    view: &SessionStoreView<'_>,
+    reference: &str,
+) -> MemoryResult<EntityId> {
+    if let Some((alias, hash)) = room_short_ref(reference.trim())
+        && let Some(id) = room_alias_in_view(vault, view, alias, hash)?
+    {
+        return Ok(id);
+    }
+    resolve_entity_ref(vault, reference)
+}
+
+/// The row the room's alias `alias` names at content hash `hash`, in
+/// `view`, one view of the room. The room's reads and its write-subject
+/// resolver share this one lookup (FIX 5302).
+fn room_alias_in_view(
+    vault: &Vault,
+    view: &SessionStoreView<'_>,
+    alias: &str,
+    hash: u8,
+) -> MemoryResult<Option<EntityId>> {
+    let txn = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
+    let mut key = alias.as_bytes().to_vec();
+    key.push(hash);
+    let Some(raw) = view.short_ids.get(&txn, &key)? else {
+        return Ok(None);
+    };
+    Ok(<[u8; 16]>::try_from(&raw[..])
+        .ok()
+        .and_then(|bytes| EntityId::from_bytes(bytes).ok()))
 }
 
 /// One BM25 search of `view`, a room's view, on `lane`, a narrow key's lane
@@ -522,6 +614,10 @@ pub(crate) fn scoped_session_text(
         lane.end_recall_plan()?;
         return Ok((Vec::new(), started));
     }
+    vault.measure_limit(
+        crate::limit_ask::EngineLimit::RecallQueryBytes,
+        query.len() as u64,
+    );
     // The count this room search serves, asked after the denial check and
     // before any clock or index work. Best effort: the search serves its
     // rows either way.

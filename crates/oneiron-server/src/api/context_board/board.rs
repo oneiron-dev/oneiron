@@ -9,6 +9,7 @@ use super::tasks_budget::TasksRowBudget;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::server::SyncServer;
+use crate::server::self_brief_custody::BriefResidence;
 use oneiron::EntityId;
 use oneiron::context_board::BoardFrameError;
 use oneiron::context_board::BoardSection;
@@ -40,7 +41,8 @@ pub(crate) struct ContextBoardRoomControls {
 }
 
 /// Where the ROOM rows this board rendered sit in the room's whole stream
-/// (FIX 9746, 9747): its members by actor id, then its rules by claim id.
+/// (FIX 9746, 9747): its members in the room record's order (FIX 10567),
+/// then its rules by claim id.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardRoomPage {
     /// Members on the room's whole roster.
@@ -219,6 +221,8 @@ pub(super) struct BoardParts {
     /// The task intents, worlds, room, room rules and project the board
     /// named: rows a keyed replay re-admits.
     pub(super) named: Vec<EntityId>,
+    /// Whether every named row reference was a valid entity id.
+    pub(super) named_complete: bool,
     /// The hook blocks whose task rows TASKS tagged.
     pub(super) hook_blocks: std::collections::BTreeSet<EntityId>,
     /// The rows each INBOX row kept rests on (FIX 8145): every identity of
@@ -254,6 +258,7 @@ pub(super) fn board_parts(
     let layout = &layout.layout;
     let vault: &oneiron::Vault = &server.vault;
     let mut named = Vec::new();
+    let mut named_complete = true;
 
     // WORLDS: the tiers the caller's planner reads, over the WORLD bodies
     // its read admits.
@@ -334,10 +339,10 @@ pub(super) fn board_parts(
     let room = room.map(|page| page.section);
     if let Some(room) = &room {
         named.push(room.room);
-        named.extend(
-            room.claims
-                .iter()
-                .filter_map(|claim| EntityId::from_hex(&claim.claim_ref).ok()),
+        super::source_rows::extend_source_rows(
+            &mut named,
+            &mut named_complete,
+            room.claims.iter().map(|claim| claim.claim_ref.as_str()),
         );
     }
 
@@ -406,12 +411,14 @@ pub(super) fn board_parts(
     };
     let hook_blocks = tasks.tag_hook_pins(hook_pins);
     let tasks_budget = tasks_budget.map(|budget_tok| TasksRowBudget::of(&tasks, budget_tok));
-    named.extend(
+    super::source_rows::extend_source_rows(
+        &mut named,
+        &mut named_complete,
         tasks
             .rows
             .iter()
             .filter(|row| row.is_intent)
-            .filter_map(|row| EntityId::from_hex(&row.id).ok()),
+            .map(|row| row.id.as_str()),
     );
     let project =
         match (targets.project, &room) {
@@ -641,6 +648,7 @@ pub(super) fn board_parts(
         room_page,
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
         named,
+        named_complete,
         hook_blocks,
         inbox: inbox_sources,
         memories_filter,
@@ -750,13 +758,9 @@ pub(super) async fn board_people(
         .and_then(|actor| EntityId::from_hex(actor).ok())
         .zip(session_id.map(str::to_owned));
     let resident = match run_key {
-        Some(key) => match server.self_brief_sessions.lock().await.get(&key) {
-            Some(run) if run.emitted_epoch == Some(run.epoch) => {
-                run.render.resident_people().clone()
-            }
-            Some(run) => {
-                let mut pinned = vec![run.state.self_ref, run.state.principal];
-                pinned.extend(run.state.cast.iter().copied());
+        Some(key) => match server.self_brief_sessions.lock().await.residence(&key) {
+            BriefResidence::Acknowledged(resident) => resident,
+            BriefResidence::Pending { pinned } => {
                 people
                     .residence_within(
                         &pinned,
@@ -765,7 +769,7 @@ pub(super) async fn board_people(
                     )
                     .resident
             }
-            None => BTreeSet::new(),
+            BriefResidence::Absent => BTreeSet::new(),
         },
         None => BTreeSet::new(),
     };
@@ -793,9 +797,11 @@ fn project_row(
     else {
         return Ok(None);
     };
+    // The goal and why show only when the caller's read admits the goal
+    // claim itself, not only the project (untangle 6.6d, F4).
     let (goal, why) = match server
         .vault
-        .project_intake_goal(project)
+        .project_intake_goal_through(read, project)
         .map_err(|error| core_engine_error("board project failed", error))?
     {
         Some(intake) => (Some(intake.goal), Some(intake.why)),

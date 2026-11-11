@@ -6,7 +6,6 @@
 
 use std::io::Cursor;
 
-use ed25519_dalek::Signature;
 use rmpv::Value;
 
 use super::{ClaimApprovalStatus, ClaimLifecycleStatus, decode_claim_body, encode_claim_body};
@@ -100,8 +99,31 @@ impl SignedClaimBirth {
             && self.machine_signature == other.machine_signature
     }
 
-    /// Fail closed on a changed body, signer, signature, actor evidence, or digest.
+    /// Verifies the birth. Verification is a pure function of the birth's
+    /// canonical bytes (all ten fields): a success on exactly these bytes is
+    /// remembered and answers again (FIX 21959).
     pub(crate) fn verify(&self) -> Result<()> {
+        let canonical = encode_map(self, true).ok();
+        if let Some(bytes) = canonical.as_deref()
+            && oneiron_authority::authority::verified_before(
+                oneiron_authority::authority::VerifiedFact::MachineClaimBirth,
+                &[bytes],
+            )
+        {
+            return Ok(());
+        }
+        self.verify_uncached()?;
+        if let Some(bytes) = canonical.as_deref() {
+            oneiron_authority::authority::remember_verified(
+                oneiron_authority::authority::VerifiedFact::MachineClaimBirth,
+                &[bytes],
+            );
+        }
+        Ok(())
+    }
+
+    /// Fail closed on a changed body, signer, signature, actor evidence, or digest.
+    fn verify_uncached(&self) -> Result<()> {
         if self.vault_id == [0; 32] || self.initial_body.len() > MAX_MACHINE_CLAIM_BIRTH_BYTES {
             return Err(invalid());
         }
@@ -159,10 +181,13 @@ impl SignedClaimBirth {
         let transcript =
             crate::authority::machine_claim_transcript(&self.vault_id, &self.target, &body)
                 .map_err(|_| invalid())?;
-        oneiron_authority::authority::strong_ed25519_key(&self.machine_public_key)
-            .map_err(|_| invalid())?
-            .verify_strict(&transcript, &Signature::from_bytes(&self.machine_signature))
-            .map_err(|_| invalid())?;
+        if !oneiron_authority::authority::strong_ed25519_verified_once(
+            &self.machine_public_key,
+            &transcript,
+            &self.machine_signature,
+        ) {
+            return Err(invalid());
+        }
         if self.compute_digest()? != self.digest {
             return Err(invalid());
         }

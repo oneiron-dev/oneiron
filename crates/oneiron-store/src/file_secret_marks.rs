@@ -21,6 +21,9 @@ pub enum MemberStep {
     Tar { entry: u32 },
     /// An xz file's decompressed payload (FIX 2471).
     Xz,
+    /// A 7z entry with data, by its place in the archive's file list (FIX
+    /// 11575).
+    SevenZip { entry: u32 },
     /// A PDF stream other than an object stream, by its object's id (FIX
     /// 11550): a page content stream and the like.
     PdfStream { object: u32, generation: u16 },

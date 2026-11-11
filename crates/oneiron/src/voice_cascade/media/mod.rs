@@ -42,8 +42,8 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 
 use super::{
-    AsrEvent, AsrEventKind, AsrStream, GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient,
-    speakable,
+    AsrEvent, AsrEventKind, AsrStream, GenerationEpoch, PcmFrame, SpeechAlignment, TtsCommand,
+    TtsSeamClient, speakable,
 };
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -181,7 +181,13 @@ pub enum VoiceMediaOutput {
     Cancelled { generation: GenerationEpoch },
     /// One spoken sentence's audio. Pass it through the session's
     /// `filter_pcm` at enqueue AND at playback; a stale epoch is dropped.
-    Pcm { submission: u64, frame: PcmFrame },
+    /// `alignment` places the sentence's text in its audio when the rung
+    /// reports one, for the host's heard ledger (FIX 4899).
+    Pcm {
+        submission: u64,
+        frame: PcmFrame,
+        alignment: Option<SpeechAlignment>,
+    },
     /// A sentence that was not spoken: stop the generation's output.
     SpeechFailed {
         generation: GenerationEpoch,
@@ -378,6 +384,9 @@ pub struct MediaAsrAdapter<Q> {
 /// `bound_ms` of audio, and starts it at the rung's media gate before any
 /// audio leaves.
 pub trait VoiceStreamDoor: Send + Sync {
+    /// Rechecks a continuing stream before its next physical send, after any wait.
+    fn release_stream(&self) -> crate::llm::LlmResult<()>;
+
     fn open_stream<'a>(
         &'a self,
         request: MediaRequest,

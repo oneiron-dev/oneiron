@@ -14,8 +14,10 @@ use oneiron_authority::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCe
 use super::grants::{
     PolicyScopedGrant, scoped_read_actor_matches, scoped_read_grant_has_read_effector,
 };
+use super::house_grant::is_shipped_house_read_row;
 use super::resolution::PolicyManifestResolution;
 
+use oneiron_contracts::gate::MAX_SENSITIVITY_BAND;
 pub use oneiron_contracts::gate::RetrievalFilter;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +41,11 @@ pub(crate) struct ResolvedRetrievalFilter {
     pub(crate) min_confidence: f32,
     pub(crate) min_salience: f32,
     pub(crate) deny_all: bool,
+    /// Whether the read's bound caller filter names `include_stale = false`
+    /// (FIX 3977, `ScopedRead::under_caller_filter`). A record lane reads
+    /// stale claims whatever the floor says, but never past the caller's own
+    /// exclusion. Narrowing never sets this; only the lane marks it.
+    pub(crate) caller_excludes_stale: bool,
     /// The verified credential a scoped read retrieves under, if any. A TASK
     /// the pipeline denies outside its worlds or facets adds to no
     /// suppression count (ARCH-0067 §5, DEC-0005).
@@ -62,10 +69,11 @@ impl ResolvedRetrievalFilter {
 
     /// The rows this filter reads and the rows `other` reads, as one
     /// prefilter (FIX 7528): kinds joined, the higher band, staleness if
-    /// either reads it, the lower minima. A deny-all side adds nothing. It
-    /// is a candidate envelope, never an authorization: each row it lets
-    /// through must still pass one whole alternative's own check. Both sides
-    /// retrieve under the same key, so this filter's credential is kept.
+    /// either reads it (a caller's stale exclusion only if both carry it),
+    /// the lower minima. A deny-all side adds nothing. It is a candidate
+    /// envelope, never an authorization: each row it lets through must
+    /// still pass one whole alternative's own check. Both sides retrieve
+    /// under the same key, so this filter's credential is kept.
     #[must_use]
     pub(crate) fn union_envelope(&self, other: &Self) -> Self {
         if other.deny_all {
@@ -88,6 +96,7 @@ impl ResolvedRetrievalFilter {
             min_confidence: self.min_confidence.min(other.min_confidence),
             min_salience: self.min_salience.min(other.min_salience),
             deny_all: false,
+            caller_excludes_stale: self.caller_excludes_stale && other.caller_excludes_stale,
             credential: self.credential.clone(),
         }
     }
@@ -142,6 +151,7 @@ impl PolicyManifestResolution {
         for grant in self.scoped_grants().iter().filter(|grant| {
             scoped_read_grant_has_read_effector(grant)
                 && scoped_read_actor_matches(grant, actor)
+                && (actor.authority_scope().is_none() || !is_shipped_house_read_row(grant))
                 && !grant.receipt_required
                 && grant.budget.is_none()
         }) {
@@ -195,16 +205,21 @@ impl PolicyManifestResolution {
             Some(_) if self.diagnostics().loaded_manifest_forces_fail_closed() => {
                 RetrievalPolicyFloor::deny_all()
             }
-            Some(actor) => {
-                let policy = RetrievalPolicyFloor::from_scoped_grants(self.scoped_grants(), actor);
-                match explicit_scope {
-                    Some(scope) => {
-                        let proof = RetrievalPolicyFloor::from_authority_scope(scope);
-                        policy.map_or(proof.clone(), |policy| policy.intersect(&proof))
-                    }
-                    None => policy.unwrap_or_else(RetrievalPolicyFloor::deny_all),
+            Some(actor) => match explicit_scope {
+                Some(scope) => {
+                    // The unchanged shipped house row opens only reads with no proof.
+                    // It does not cap a read carrying an explicit Scope.
+                    let policy = RetrievalPolicyFloor::from_scoped_grants_excluding(
+                        self.scoped_grants(),
+                        actor,
+                        is_shipped_house_read_row,
+                    );
+                    let proof = RetrievalPolicyFloor::from_authority_scope(scope);
+                    policy.map_or(proof.clone(), |policy| policy.intersect(&proof))
                 }
-            }
+                None => RetrievalPolicyFloor::from_scoped_grants(self.scoped_grants(), actor)
+                    .unwrap_or_else(RetrievalPolicyFloor::deny_all),
+            },
         }
     }
 }
@@ -236,11 +251,21 @@ impl RetrievalPolicyFloor {
         grants: &[PolicyScopedGrant],
         actor: &ScopedReadActorKey,
     ) -> Option<Self> {
+        Self::from_scoped_grants_excluding(grants, actor, |_| false)
+    }
+
+    /// The floor of `grants`, leaving out each row for which `excluded`
+    /// returns true, as if the manifest did not carry it.
+    fn from_scoped_grants_excluding(
+        grants: &[PolicyScopedGrant],
+        actor: &ScopedReadActorKey,
+        excluded: impl Fn(&PolicyScopedGrant) -> bool,
+    ) -> Option<Self> {
         let mut saw_read_grant = false;
         let mut floor: Option<Self> = None;
         for grant in grants
             .iter()
-            .filter(|grant| scoped_read_grant_has_read_effector(grant))
+            .filter(|&grant| !excluded(grant) && scoped_read_grant_has_read_effector(grant))
         {
             if !scoped_read_actor_matches(grant, actor) {
                 continue;
@@ -454,7 +479,7 @@ impl RetrievalPolicyFloor {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.max_sensitivity_band > 3
+        if self.max_sensitivity_band > MAX_SENSITIVITY_BAND
             || !valid_minimum(self.min_confidence)
             || !valid_minimum(self.min_salience)
         {
@@ -521,7 +546,9 @@ pub(crate) fn narrow_retrieval_filter(
         // These are meet identities, NOT a substitute authority floor.
         let request = RetrievalPolicyFloor {
             allowed_entity_types: requested.entity_types.clone(),
-            max_sensitivity_band: requested.max_sensitivity_band.unwrap_or(3),
+            max_sensitivity_band: requested
+                .max_sensitivity_band
+                .unwrap_or(MAX_SENSITIVITY_BAND),
             include_stale: requested.include_stale.unwrap_or(true),
             min_confidence: requested.min_confidence.unwrap_or(0.0),
             min_salience: requested.min_salience.unwrap_or(0.0),
@@ -537,6 +564,7 @@ pub(crate) fn narrow_retrieval_filter(
         min_confidence: narrowed.min_confidence,
         min_salience: narrowed.min_salience,
         deny_all: narrowed.deny_all,
+        caller_excludes_stale: false,
         credential: None,
     })
 }

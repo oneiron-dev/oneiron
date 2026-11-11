@@ -6,9 +6,10 @@
 //! stored history; a run, an agent, a model or an MCP tool reads the
 //! masked copy of a store that holds readable marks, and a store with none
 //! is today's for every recipient. A `git_push` authority never grants a
-//! read or a reveal. The context is a trusted-host contract like
+//! read or a reveal. The recipient identity is a trusted-host contract like
 //! `GitPushCaller`, not a grant: it holds no credential and is never read
-//! from a request.
+//! from a request. A request may supply a reason and a portable repo
+//! selection; neither proves a recipient or grants a read.
 //!
 //! The exact path delegates first, byte for byte; a masked context reaches
 //! the selection that serves a marked store's masked copy and receives its
@@ -35,6 +36,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::GitPushCaller;
+use crate::origin::RepoPortableId;
 use crate::origin::residence::OriginAuthorityLease;
 use crate::origin::secret_marks::{RepoSecretMarkLookup, for_each_repo_secret_mark_in_txn};
 use crate::origin::secret_projection::RepoRevealRecipient;
@@ -47,6 +49,7 @@ pub struct RepoGitReadContext {
     masked: bool,
     actual: Option<RepoRevealRecipient>,
     why: Option<String>,
+    portable_repo: Option<(RepoPortableId, EntityId)>,
 }
 
 impl RepoGitReadContext {
@@ -58,6 +61,7 @@ impl RepoGitReadContext {
             masked: false,
             actual: None,
             why: None,
+            portable_repo: None,
         }
     }
 
@@ -69,6 +73,7 @@ impl RepoGitReadContext {
             masked: true,
             actual,
             why: None,
+            portable_repo: None,
         }
     }
 
@@ -80,6 +85,21 @@ impl RepoGitReadContext {
     pub fn with_reveal_why(mut self, why: Option<&str>) -> Self {
         self.why = why.map(str::to_owned);
         self
+    }
+
+    /// Selects a portable repo in the requested project. This is request
+    /// data, not a grant or a proved recipient context: the selection must
+    /// name this same store and project before live file grants are checked.
+    #[must_use]
+    pub fn with_portable_repo(mut self, portable: RepoPortableId, project: EntityId) -> Self {
+        self.portable_repo = Some((portable, project));
+        self
+    }
+
+    pub(crate) fn portable_repo(&self) -> Option<(&RepoPortableId, EntityId)> {
+        self.portable_repo
+            .as_ref()
+            .map(|(portable, project)| (portable, *project))
     }
 
     /// The reader's reason, when its host passed one.
@@ -100,17 +120,21 @@ impl RepoGitReadContext {
     }
 }
 
-/// Whether the store `store` holds a readable mark, found in one walk with
-/// nothing written: a store with none serves every recipient today's
-/// history, with no copy made.
+/// Whether a masked reader of the store `store` may read a copy of it: the
+/// store holds a readable mark, or custody knows a value any of its blobs
+/// may hold (FIX 8966), found with nothing written. A store with neither
+/// serves every recipient today's history, with no copy made.
 ///
 /// # Errors
 /// A store failure, or a mark that does not decode.
-pub(crate) fn store_holds_readable_marks_in_txn(
+pub(crate) fn store_may_need_masked_copy_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     store: &EntityId,
 ) -> Result<bool> {
+    if vault.store.known_history_witness_in_txn(txn)?.is_some() {
+        return Ok(true);
+    }
     let mut found = false;
     for_each_repo_secret_mark_in_txn(
         vault,
@@ -141,12 +165,22 @@ pub fn serve_bounded_for_recipient(
     authority: Option<&OriginAuthorityLease>,
     caller: Option<&GitPushCaller>,
     read: &RepoGitReadContext,
+    push_selection: Option<(RepoPortableId, EntityId)>,
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
     if !read.reads_masked() {
         return serve_bounded_as(
-            vault, repo_name, request, seam, bounds, authority, caller, body, sink,
+            vault,
+            repo_name,
+            request,
+            seam,
+            bounds,
+            authority,
+            caller,
+            push_selection,
+            body,
+            sink,
         );
     }
     let terms = ServeTerms {
@@ -159,6 +193,7 @@ pub fn serve_bounded_for_recipient(
         push_wait: Some(bounds.repository_wait),
         caller: ServeCaller::Host(caller),
         read: Some(read),
+        push_selection,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }

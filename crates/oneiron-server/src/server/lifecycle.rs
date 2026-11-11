@@ -64,6 +64,7 @@ pub(super) enum LifecycleJobKind {
     AuthorityCheckpoint,
     OwnerWork,
     MergeQueueChecks,
+    HookRegen,
 }
 
 /// The lifecycle loop and the housekeeping pass it last started, beside the
@@ -199,6 +200,10 @@ impl SyncServer {
                 // same tick, with no interval of its own.
                 server.start_owner_work_drain(&admit).await;
                 server.start_merge_queue_checker(&admit).await;
+                // A verb-table or sandbox-contract change runs the due
+                // hooks' intents again (ARCH-0080 §8); the pass returns at
+                // once when none is due.
+                server.start_hook_regen_pass(&admit).await;
             }
         });
         LifecycleScheduler {

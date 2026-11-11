@@ -424,7 +424,7 @@ impl SonioxLive {
                 self.opening = Some(self.open());
                 continue;
             };
-            let frame = match segment.poll_heard(&mut self.quiet, cx) {
+            let frame = match segment.poll_heard(self.door.as_ref(), &mut self.quiet, cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(Heard::Frame(frame))) => frame,
                 Poll::Ready(Ok(Heard::Dropped(error))) => {

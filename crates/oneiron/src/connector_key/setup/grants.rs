@@ -47,7 +47,7 @@ impl Vault {
             withdrawn
         };
         for grant_ref in &withdrawn {
-            self.revoke_consent_grant(owner, grant_ref)?;
+            self.consent_revocation(owner, grant_ref)?;
         }
         self.with_write_txn_grouped(|txn| {
             let principal = owner.principal_ref_in_txn(self, txn)?.to_owned();
@@ -91,7 +91,8 @@ impl Vault {
                 session.grants.push(PackSetupGrantRef {
                     connection: declared.id.clone(),
                     permission: permission.id.clone(),
-                    grant_ref: receipt.grant_ref().unwrap_or(grant_ref),
+                    grant_ref: crate::consent::consent_receipt_grant_ref(&receipt)
+                        .unwrap_or(grant_ref),
                     decision_id: receipt.decision_id().to_hex(),
                     granted_at: at,
                 });

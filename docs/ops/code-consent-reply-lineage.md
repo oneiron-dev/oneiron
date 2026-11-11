@@ -109,9 +109,27 @@ and can retry on a later pass. Opening the question does not answer it or
 authorize a send. The original credential, grant, scope and frozen-input checks
 are unchanged.
 
-Sealed NoRecord calls keep their existing initial-question, generic fallback,
-release and expiry paths. This background repair does not reconstruct their
-live session context or write their hook and call receipts with a bare
-record-keeping Memory surface. Background typed-question recovery for those
-calls remains separate work. The connector hold expiry and settler interval are
-unchanged.
+A sealed NoRecord call (FIX 4520) captures its caller's live session binding
+before its first typed question can fail. If that question does not open, the
+binding stays in the RAM of the exact session instance, keyed by the wait,
+beside the held call's ref. It is never serialized beside the sealed arguments,
+and it is never rebuilt from a session name after a restart.
+
+The same settler pass then retries through that binding. It runs the same
+native question and ask as the first attempt, as the original caller, on the
+caller's own surface in the original session. Hooks and receipts are kept as the
+first attempt kept them, so an Anonymous route gets no ordinary durable receipt.
+The pass never uses a bare record-keeping Memory surface for a sealed call.
+Before each attempt, and in each commit that attaches the ask, the binding
+checks the exact session instance, the captured route generation, the caller's
+own proof and the caller's place in the session. The ask's own writers check the
+author's write authority. The binding is correlation, not authority. It adds no
+grant, consent, refusal, wait, retry clock or new error.
+
+The pass drops a kept binding when the ask is attached, when the call or its
+wait is terminal, or when the caller's binding is refused. Session close drops
+the rest. An actor erase does not touch the binding inside its transaction; the
+next pass finds the row gone and drops it. A sealed call with no kept binding
+(the capture failed, the process restarted, or the session closed) keeps its
+existing initial-question, generic fallback, release and expiry paths. The
+connector hold expiry and settler interval are unchanged.

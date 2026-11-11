@@ -45,6 +45,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut scope = None;
     let mut healer_case = None;
     let mut type_ref = None;
+    let mut type_parents = None;
     let mut budget = None;
     let mut launch = None;
     let mut room = None;
@@ -55,6 +56,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut comm = None;
     let mut direct_spawn = None;
     let mut requester = None;
+    let mut caller_origin = None;
+    let mut funding = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -233,6 +236,11 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     })?,
                 );
             }
+            KEY_TASK_TYPE_PARENTS => {
+                type_parents = value
+                    .as_str()
+                    .and_then(|json| serde_json::from_str(json).ok());
+            }
             KEY_BUDGET => {
                 budget = Some(value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("budget must be an integer"),
@@ -327,6 +335,37 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     ))
                 })?);
             }
+            KEY_CALLER_ORIGIN => {
+                let json = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "caller_origin must be a serialized caller origin",
+                    ),
+                ))?;
+                caller_origin = Some(serde_json::from_str(json).map_err(|_| {
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "caller_origin must decode as a caller origin",
+                    ))
+                })?);
+            }
+            KEY_FUNDING => {
+                let json = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "funding must be a serialized grant spend binding",
+                    ),
+                ))?;
+                let binding: crate::agent_dispatch::GrantSpendBinding = serde_json::from_str(json)
+                    .map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "funding must decode as a grant spend binding",
+                        ))
+                    })?;
+                if !binding.wallet_ref.is_valid() {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "funding must name a nonempty wallet",
+                    )));
+                }
+                funding = Some(binding);
+            }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
@@ -353,6 +392,11 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let direct_spawn =
         direct_spawn.ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             "missing required agent dispatch input key direct_spawn",
+        )))?;
+
+    let caller_origin =
+        caller_origin.ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "missing required agent dispatch input key caller_origin",
         )))?;
 
     // Cross-field target invariant (mirrors `resolve_scope` in agent_def.rs):
@@ -397,6 +441,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         // Rows written before OF-543 carry no stamp; they read as the
         // seeded root, the unsure placement, rather than failing decode.
         type_ref: type_ref.unwrap_or_default(),
+        type_parents,
         budget,
         launch,
         room,
@@ -407,5 +452,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         comm,
         direct_spawn,
         requester,
+        caller_origin,
+        funding,
     })
 }

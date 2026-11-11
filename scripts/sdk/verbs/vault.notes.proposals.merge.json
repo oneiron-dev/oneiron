@@ -1,0 +1,18 @@
+{
+  "name": "vault.notes.proposals.merge",
+  "description": "Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts.",
+  "input": "crate::note::NoteProposalRequest",
+  "output": "crate::note::NoteProposalView",
+  "call": "memory.settle_note_proposal(&input, crate::note::NoteVerdict::Merge)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "openapi": true
+}

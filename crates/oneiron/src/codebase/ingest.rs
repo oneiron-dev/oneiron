@@ -6,14 +6,20 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{CodeError, Error, Result};
+use crate::git_wire::git_path_text;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::secret_custody::SecretSight;
-use gix::bstr::ByteSlice;
 use gix::object::tree::EntryKind;
 use std::fmt;
 use std::io::Read;
 use std::path::PathBuf;
 
+/// What a caller names to import: the folder, and its own statement of the
+/// paths it means to edit. That statement is never edit authority (FIX
+/// 4299, CODE-CUSTODY-01): the importer never reads it. A registered
+/// repository's retained whitelist (`vault.repo.anchor.bind`) is the one
+/// edit ceiling, and an unregistered capture names no anchor and confers
+/// no edit authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RepoIngestConfig {
@@ -46,6 +52,28 @@ impl RepoIngestConfig {
 pub struct RepoIngestResult {
     pub code_artifact_id: EntityId,
     pub snapshot: CodebaseSnapshot,
+    /// The retained receipt of an authenticated owner's committed capture.
+    pub capture_receipt_ref: Option<String>,
+}
+
+pub(crate) const CODE_SNAPSHOT_CAPTURE_CONTENT_KIND: &str = "code_snapshot_capture";
+
+pub(crate) fn code_snapshot_capture_receipt_fields(
+    record: &crate::store::GateDecisionRecord,
+) -> std::collections::BTreeMap<String, String> {
+    let mut fields = std::collections::BTreeMap::new();
+    if record.content_kind == CODE_SNAPSHOT_CAPTURE_CONTENT_KIND
+        && record.redacted_at.is_none()
+        && let Some(id) = record.claim_id.and_then(|id| EntityId::from_bytes(id).ok())
+        && !record.diff_handle.is_empty()
+    {
+        fields.insert("repo".to_owned(), id.to_hex());
+        fields.insert(
+            "snapshot".to_owned(),
+            bytes_to_hex_lower(&record.diff_handle),
+        );
+    }
+    fields
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -233,13 +261,15 @@ pub(super) fn collect_repo_blobs(
                 "Git tree entry could not be decoded",
             ))
         })?;
-        let filename = entry.filename().to_str().map_err(|_| {
+        // A name outside UTF-8 keeps its exact bytes as a Git path's text
+        // (FIX 21326), never a lossy label or a skipped file.
+        let filename = git_path_text(entry.filename()).map_err(|_| {
             Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-                "Git tree path must be UTF-8",
+                "Git tree path must not contain NUL",
             ))
         })?;
         let path = if prefix.is_empty() {
-            filename.to_owned()
+            filename.into_owned()
         } else {
             format!("{prefix}/{filename}")
         };

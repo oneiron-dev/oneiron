@@ -24,7 +24,8 @@ pub struct PublishBookingPageGrantRequest {
     pub page_ref: EntityId,
     /// The principal publishing it; the grant's actor binding.
     pub publisher_principal: EntityId,
-    /// Mint time in Unix seconds.
+    /// The publish's time in Unix seconds; the grant's row records the
+    /// engine clock at mint.
     pub issued_at: u64,
 }
 

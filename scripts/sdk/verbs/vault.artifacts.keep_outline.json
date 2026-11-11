@@ -1,0 +1,17 @@
+{
+  "name": "vault.artifacts.keep_outline",
+  "description": "The owner keeps the exact outline frontier, freezing its version and content hash.",
+  "input": "crate::blob_artifact::deck_creation::DeckOutlineSettleRequest",
+  "output": "crate::edit_roundtrip::deck_create::KeptOutline",
+  "call": "memory.artifacts_keep_outline(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door": true,
+  "host_door_caller": true,
+  "host_door_lists": true,
+  "host_door_proof": "owner"
+}

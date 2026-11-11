@@ -135,7 +135,12 @@ impl Memory<'_> {
             credential: self.read_proof.as_ref(),
         };
         let visible = &mut |id: &EntityId| read.is_entity_readable(id);
-        let (receipt, rows) = self.vault.apply_shape_listing(applier, input, now, visible);
+        let (receipt, rows) = if let Some(issuer) = self.host_slip_issuer {
+            self.vault
+                .apply_shape_with_setup_issuer_listing(applier, input, now, visible, issuer)
+        } else {
+            self.vault.apply_shape_listing(applier, input, now, visible)
+        };
         // A resumed apply's receipt carries the learning outcome its creator's
         // apply stored (FIX 10752).
         let receipt = receipt.map_err(MemoryError::from).and_then(|mut receipt| {

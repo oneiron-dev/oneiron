@@ -1,7 +1,9 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
+mod agent_verb;
 mod reply_evidence;
 mod script_context;
+pub(crate) use agent_verb::{store_agent_verb_write_answer, write_receipt_result_output_path};
 pub(super) use script_context::load_script_context;
 pub(crate) use script_context::mask_known_text;
 
@@ -19,7 +21,7 @@ use crate::{Error, Result};
 use serde_json::json;
 use std::collections::BTreeSet;
 
-const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
+pub(super) const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
 
 pub(super) const CONFIG_OUTPUT_PATH: &str = "executor/repl/run.config.json";
 
@@ -147,7 +149,7 @@ impl std::io::Write for ByteCount {
 /// A verb answer whose JSON is longer than this is stored as a body of the
 /// run, and the guest and the replay row get its handle: no reply passes one
 /// message, and no answer is refused for its size.
-pub(crate) const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
+pub const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
 
 /// The guest's read path for a stored result body; `<path>/chunk/<offset>`
 /// reads up to [`RECOVERABLE_OUTPUT_CHUNK_BYTES`] from `offset`.
@@ -209,7 +211,7 @@ pub(crate) fn parse_result_read_path(path: &str) -> Option<(OutputRef, Option<En
 }
 
 /// Where the guest reads stored result bodies.
-pub(crate) const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
+pub const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
 
 /// What the guest gets in place of a result stored as a body: its handle,
 /// size, kind, completion and preview, where to read it, and the ref that
@@ -239,6 +241,9 @@ pub(crate) fn result_handle_json(owner: EntityId, output: &CodeRunRawOutput) -> 
     });
     if let Some(occurrence) = occurrence.as_ref() {
         card["ref"] = json!(format!("occurrence:{}", occurrence.id().to_hex()));
+    }
+    if let Some(step_start) = output.producing_step_start {
+        card["producing_step_start"] = json!(step_start);
     }
     card
 }
@@ -271,6 +276,7 @@ impl StreamedOutputs {
         &mut self,
         storage: &ExecutorStorage<'_>,
         exec_run: EntityId,
+        step_seq: Option<u64>,
         stream: JsCodeModeStream<'_>,
         frame: &[u8],
     ) -> Result<()> {
@@ -292,6 +298,12 @@ impl StreamedOutputs {
                 let at = match self.files.iter().position(|(held, _)| held == path) {
                     Some(at) => at,
                     None => {
+                        if let Some(seq) = step_seq {
+                            storage.begin_code_run_output(
+                                exec_run,
+                                &runtime_output_path(seq, self.files.len(), path),
+                            )?;
+                        }
                         self.files
                             .push((path.to_owned(), storage.code_run_output_sink_for(exec_run)?));
                         self.files.len() - 1
@@ -325,7 +337,7 @@ impl StreamedOutputs {
         exec_run: EntityId,
         outcome: &JsCodeModeStepOutcome,
     ) -> Result<StepBodies> {
-        let (observation, console) = if outcome.done {
+        let (observation, mut console) = if outcome.done {
             (self.finish, self.console)
         } else {
             (self.console, None)
@@ -335,6 +347,14 @@ impl StreamedOutputs {
             None => storage.code_run_output_sink_for(exec_run)?,
         };
         observation.write(outcome.observation.as_bytes())?;
+        // A runtime that returned its finished step's console in the
+        // outcome instead of streaming it (FIX 6885): keep it where the
+        // streamed console would have gone.
+        if console.is_none() && !outcome.console.is_empty() {
+            let mut sink = storage.code_run_output_sink()?;
+            sink.write(outcome.console.as_bytes())?;
+            console = Some(sink);
+        }
         let mut files = self.files;
         for output in &outcome.outputs {
             let mut sink = storage.code_run_output_sink_for(exec_run)?;
@@ -583,12 +603,15 @@ pub(super) fn scan_output_windows(
 pub(super) const IMPLICIT_SPEECH_TEXT_BYTES: u64 = COMPACTION_OBSERVATION_WINDOW_BYTES as u64;
 
 /// What a terminal checkpoint will say on a run's behalf (FIX 365): words,
-/// or the typed result that names a stored answer too large to say. Stored
-/// as its exact JSON, hashed into the checkpoint by those bytes, and decoded
-/// from them by a recovery, never rebuilt.
+/// the typed result that names a stored answer too large to say, or a
+/// result-only decision when the actor cannot witness a companion MESSAGE.
+/// Stored as its exact JSON, hashed into the checkpoint by those bytes, and
+/// decoded from them by a recovery, never rebuilt.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "intent", rename_all = "snake_case")]
 pub(super) enum ImplicitSpeechIntent {
+    /// The answer remains in the run's result; recovery must not witness it.
+    ResultOnly,
     Text {
         text: String,
     },
@@ -784,7 +807,7 @@ pub(super) fn resumed_output_path(seq: u64, wait_id: EntityId) -> String {
 }
 
 /// The step and the wait (lower-case hex) a resumed reply's path names.
-pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
+pub(crate) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
     let rest = path.strip_prefix(SCRIPT_OUTPUT_DIR)?.strip_prefix('/')?;
     let (seq, rest) = rest.split_once(RESUMED_OUTPUT_INFIX)?;
     let wait = rest.strip_suffix(".json")?;
@@ -799,11 +822,11 @@ pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
     Some((seq.parse().ok()?, wait))
 }
 
-pub(super) fn script_output_path(seq: u64) -> String {
+pub(crate) fn script_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.generated.js")
 }
 
-pub(super) fn observation_output_path(seq: u64) -> String {
+pub(crate) fn observation_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.observation.txt")
 }
 
@@ -859,7 +882,7 @@ pub(super) fn is_terminal_output_path(path: &str) -> bool {
 }
 
 /// The step a terminal marker's path names.
-pub(super) fn terminal_output_seq(path: &str) -> Option<u64> {
+pub(crate) fn terminal_output_seq(path: &str) -> Option<u64> {
     let seq = path
         .strip_prefix(SCRIPT_OUTPUT_DIR)?
         .strip_prefix('/')?

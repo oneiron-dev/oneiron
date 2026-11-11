@@ -9,6 +9,8 @@ pub enum ArchiveDeleteRole {
     Owner,
     /// A live Admin whose grant's resource axes hold the record.
     Admin,
+    /// A live Steward whose grant names `delete` and holds the record.
+    Steward,
     /// A live Admin or Member who provably owns the record.
     Member,
     /// An agent under one Grant that names `delete`.
@@ -21,6 +23,7 @@ impl ArchiveDeleteRole {
         match self {
             Self::Owner => "owner",
             Self::Admin => "admin",
+            Self::Steward => "steward",
             Self::Member => "member",
             Self::Agent => "agent",
         }

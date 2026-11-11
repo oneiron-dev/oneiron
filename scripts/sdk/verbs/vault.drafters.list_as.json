@@ -1,0 +1,16 @@
+{
+  "name": "vault.drafters.list_as",
+  "description": "An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read.",
+  "input": "crate::drafter::DrafterListRequest",
+  "output": "Vec<crate::drafter::DrafterVersionView>",
+  "call": "crate::drafter::list_drafters_as_agent(memory, input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

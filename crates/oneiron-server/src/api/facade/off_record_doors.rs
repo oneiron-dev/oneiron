@@ -508,6 +508,7 @@ pub(crate) async fn vault_off_record_recall(
         crate::api::credential_memory(&server.vault, Some(&held), actor, class)
             .at(held.locality())
             .listing_producers(producers)
+            .with_read_filter(input.filter.as_ref())
             .recall_in_session(
                 &session,
                 &input.query,

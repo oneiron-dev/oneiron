@@ -5,6 +5,7 @@
 //! not from this code.
 use super::fixture::*;
 use super::*;
+use crate::resource::Resources;
 
 const MASTER: &str = "ppt/slideMasters/slideMaster1.xml";
 const LAYOUT: &str = "ppt/slideLayouts/slideLayout1.xml";
@@ -195,7 +196,8 @@ fn parts() -> Vec<(&'static str, String)> {
 }
 
 fn read(parts: &[(&str, String)]) -> DeckView {
-    DeckView::read(&Package::open(&archive(parts), limits()).unwrap()).unwrap()
+    DeckView::read(&Package::open(&archive(parts), limits(), &Resources::measuring()).unwrap())
+        .unwrap()
 }
 
 /// The fixture with one part's text replaced.
@@ -434,7 +436,7 @@ fn groups_compose_parent_transforms_and_refuse_degenerate_ones() {
 #[test]
 fn ambiguous_ids_are_reported_and_reading_mutates_nothing() {
     let bytes = archive(&parts());
-    let package = Package::open(&bytes, limits()).unwrap();
+    let package = Package::open(&bytes, limits(), &Resources::measuring()).unwrap();
     let deck = DeckView::read(&package).unwrap();
     assert_eq!(package.export().unwrap(), bytes);
     assert_eq!((deck.slides[0].sld_id, deck.slides[1].sld_id), (256, 257));
@@ -570,8 +572,8 @@ fn pptarena_pair_reads_and_fingerprints_only_the_edited_slide() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pptarena-001");
     let original = std::fs::read(dir.join("original.pptx")).unwrap();
     let edited = std::fs::read(dir.join("ground_truth.pptx")).unwrap();
-    let before_package = Package::open(&original, limits()).unwrap();
-    let after_package = Package::open(&edited, limits()).unwrap();
+    let before_package = Package::open(&original, limits(), &Resources::measuring()).unwrap();
+    let after_package = Package::open(&edited, limits(), &Resources::measuring()).unwrap();
     let before = DeckView::read(&before_package).unwrap();
     let after = DeckView::read(&after_package).unwrap();
     assert_eq!(before_package.export().unwrap(), original);

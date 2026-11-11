@@ -13,9 +13,13 @@
 //! response as its stub, KS-2B1; an inline body without its bytes, KS-2A; a
 //! window's pads by reference, KS-5; a queue row unleased, FIX 7115), or
 //! when a restore reads references from it in the image's rows alone,
-//! before any compartment lands (a body's instance, file or descriptor,
-//! KS-2A; the known-value history, KS-3; an agent id pin, H215; a world key
-//! pad, KS-5; a credential, KS-6).
+//! before any compartment lands (a body's instance or file, KS-2A; the
+//! known-value history, KS-3; an agent id pin, H215; a world key pad, KS-5;
+//! a credential, KS-6). A body's descriptors and digest holders are sealed,
+//! so an owner's erase reaches them in every earlier checkpoint: their
+//! compartment carries only the rows the image holds as they rest, and the
+//! rows go back among the image's as it opens, before any reference pass
+//! reads them (FIX [PROVENANCE-BODY-OWNER-FAMILY-READ-BEFORE-LANDING]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -46,6 +50,7 @@ static REWRITTEN: &[&SideTableDecl] = &[
     &side_table::CODE_RUN_WAIT_DELIVERY,
     &side_table::CODE_RUN_WAIT_INDEX,
     &side_table::MODEL_STEP_SUBMISSION,
+    &side_table::COMPACTION_CHECK_MATERIAL,
     &side_table::SAVED_QUERY_MEMO,
     &side_table::SELF_HEAL_CENTROID_EVIDENCE,
     &side_table::MESSAGE_REPLY_ASSERTIONS,
@@ -74,16 +79,15 @@ static REWRITTEN_KINDS: &[u8] = &[ENTITY_TYPE_ASSET, ENTITY_TYPE_WORLD_KEY_PAD];
 static REWRITTEN_DATABASES: &[&str] = &["job_records"];
 
 /// The families a restore reads references from in the image's rows alone:
-/// body instances, files, descriptors and holders, which a retired body's
-/// prune rewrites, and a step response's pins (KS-2A,
+/// body instances and files, and a step response's pins (KS-2A,
 /// `carried_bodies::require`); the known-value history (KS-3); agent id pins
-/// (H215).
+/// (H215). A body's descriptors and holders are not among them: they land
+/// among the image's rows as their compartments open
+/// (`restore::open_image_payload`).
 static REFERENCES: &[&SideTableDecl] = &[
     &side_table::PROVENANCE_BODY_KEY,
     &side_table::PROVENANCE_BODY_INLINE,
     &side_table::PROVENANCE_BODY_RESPONSE,
-    &side_table::PROVENANCE_BODY,
-    &side_table::PROVENANCE_BODY_DIGEST,
     &side_table::PROVENANCE_BODY_RELEASED,
     &side_table::CODE_RUN_RAW_OUTPUT,
     &side_table::DREAMER_STEP_RESPONSE_PIN,
@@ -243,49 +247,31 @@ impl Preflight {
         self.entity_kinds.insert(name);
     }
 
-    /// Every declared family once, every family the registry names
-    /// declared, each not-imaged one left out by tier filtering, and no
-    /// owner family one the snapshot rewrites or a restore reads references
-    /// from.
+    /// Every declared table with a family (a row naming `unregistered` has
+    /// none), each not-imaged one left out by tier filtering, and no owner
+    /// family one the snapshot rewrites or a restore reads references from.
+    /// A table's family is on its own row, so no family is named twice or
+    /// names a table nothing declares.
     fn check_families(&mut self) {
-        let mut named: BTreeMap<(bool, &[u8]), (&'static SideTableDecl, Vec<Class>)> =
-            BTreeMap::new();
-        for (class, decls) in rows::families() {
-            for decl in *decls {
-                let entry = named.entry(rows::identity(decl));
-                entry.or_insert_with(|| (*decl, Vec::new())).1.push(*class);
-            }
-        }
         let declared: BTreeMap<(bool, &[u8]), &'static SideTableDecl> = side_table::declared()
             .map(|decl| (rows::identity(decl), decl))
             .collect();
-        for (identity, decl) in &declared {
-            if !named.contains_key(identity) {
+        for decl in declared.values() {
+            if decl.family.is_none() {
                 self.family(*decl, GapKind::Unregistered);
             }
         }
-        for (identity, (decl, classes)) in &named {
-            let canonical =
-                storage_tier(rows::db_name(decl.db), decl.prefix) == StorageTier::Canonical;
-            let kind = match classes[..] {
-                _ if !declared.contains_key(identity) => GapKind::Unknown,
-                [_, _, ..] => GapKind::NamedTwice,
-                [Class::NotImaged] if canonical => GapKind::Imaged,
-                _ => continue,
-            };
-            self.family(*decl, kind);
+        for decl in declared.values() {
+            if decl.family == Some(Class::NotImaged) && decl.tier == StorageTier::Canonical {
+                self.family(*decl, GapKind::Imaged);
+            }
         }
-        let owned = |decl: &SideTableDecl| {
-            named
-                .get(&rows::identity(decl))
-                .is_some_and(|(_, classes)| matches!(classes[..], [Class::Owner(_)]))
-        };
         for (decls, kind) in [
             (REWRITTEN, GapKind::Rewritten),
             (REFERENCES, GapKind::References),
         ] {
             for decl in decls {
-                if owned(*decl) {
+                if matches!(decl.family, Some(Class::Owner(_))) {
                     self.family(*decl, kind);
                 }
             }
@@ -391,6 +377,18 @@ impl Preflight {
     /// The manifest databases the projection reads, each once, by class.
     pub(super) fn databases(&self) -> &[(&'static str, DbClass)] {
         &self.databases
+    }
+
+    /// Every gap that holds a side table out of the compartments, as the
+    /// receipt names it: each family gap is one [`Self::holds_out`] answers
+    /// for (`tests/checkpoint_registry_rows.rs`).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn side_table_gaps(&self) -> Vec<String> {
+        self.gaps
+            .iter()
+            .filter(|gap| matches!(gap.place, Place::Family(_)))
+            .map(ToString::to_string)
+            .collect()
     }
 
     /// Whether a gap names `decl`: its rows stay in the image.

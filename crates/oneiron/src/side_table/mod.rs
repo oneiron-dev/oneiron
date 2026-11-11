@@ -8,11 +8,13 @@
 //! writes the base table through the same body.
 
 pub(crate) mod classified;
-mod codec;
+#[doc(hidden)]
+pub mod codec;
 mod decls;
 mod erased;
 use oneiron_store::side_table::key;
 mod raw_reverse;
+pub(crate) mod row_classes;
 #[cfg(test)]
 mod tests;
 
@@ -33,6 +35,7 @@ pub(crate) use codec::{
 pub(crate) use decls::*;
 pub(crate) use erased::{Erased, ErasedForm};
 pub(crate) use key::{FixedSideKey, HexId, SideKey};
+pub(crate) use row_classes::{RestoreClass, StorageTier};
 
 /// Where a side table's rows live: the two side databases of a write target.
 pub(crate) trait SideTableDbs {
@@ -135,6 +138,16 @@ pub(crate) struct StagedRow {
 }
 
 impl StagedRow {
+    /// The actual backing capacity of this row's encoded value.
+    pub(crate) fn value_capacity_bytes(&self) -> u64 {
+        self.value.capacity() as u64
+    }
+
+    /// The actual backing capacity of this row's encoded key.
+    pub(crate) fn key_capacity_bytes(&self) -> u64 {
+        self.key.capacity() as u64
+    }
+
     pub(crate) fn put(&self, dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>) -> Result<()> {
         let admitted = self
             .decl
@@ -245,9 +258,28 @@ pub(crate) struct SideTableDecl {
     /// The typed acceptance the historical lift sweep runs over a masked copy of
     /// a row (FIX 2680); a table that names none keeps the sweep's shape check.
     pub(crate) accepts: Option<MaskedAccepts>,
+    /// What a restore over a live vault does with this table's rows.
+    pub(crate) restore: RestoreClass,
+    /// The payload family a checkpoint capture places this table's rows in; `None` while the
+    /// table has none, which the payload preflight names as unregistered.
+    pub(crate) family: Option<crate::store::checkpoint_payload::rows::Class>,
+    /// Whether a checkpoint image carries this table's rows.
+    pub(crate) tier: StorageTier,
+    /// The key ranges of this table in another tier than [`Self::tier`]: the bytes after the
+    /// prefix a range's keys start with, and its tier.
+    pub(crate) key_tiers: &'static [(&'static [u8], StorageTier)],
 }
 
 impl SideTableDecl {
+    /// The storage tier of this table's row `key`: its key range's, else the table's.
+    pub(crate) fn tier_of(&self, key: &[u8]) -> StorageTier {
+        let rest = key.strip_prefix(self.prefix).unwrap_or(key);
+        self.key_tiers
+            .iter()
+            .find(|(range, _)| rest.starts_with(range))
+            .map_or(self.tier, |(_, tier)| *tier)
+    }
+
     /// The declared prefix as the `sync_state` key spelling.
     fn prefix_str(&self) -> Result<&'static str> {
         std::str::from_utf8(self.prefix)
@@ -293,6 +325,8 @@ pub(crate) fn decodes<V, C: SideCodec<V>>(bytes: &[u8]) -> bool {
 }
 
 type RawRows<'txn> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + 'txn>;
+type RawRowsWithBorrowedValues<'txn> =
+    Box<dyn Iterator<Item = Result<(Vec<u8>, Cow<'txn, [u8]>)>> + 'txn>;
 
 /// The exclusive upper bound of every key that starts with `prefix`; `None` when no byte string
 /// is above them all.
@@ -308,7 +342,7 @@ fn prefix_end(prefix: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// A typed view of one declared table.
-pub(crate) struct SideTable<K, V, C> {
+pub struct SideTable<K, V, C> {
     decl: &'static SideTableDecl,
     _types: TableTypes<K, V, C>,
 }
@@ -537,7 +571,7 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
 
     /// The rows under `key_prefix` in key order, decoded as the caller pulls them, so a scan
     /// that stops early reads no further.
-    pub(crate) fn iter_from<'txn>(
+    pub fn iter_from<'txn>(
         &self,
         dbs: &impl SideTableDbs,
         txn: &'txn RoTxn<'_>,
@@ -585,6 +619,33 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         Ok(self
             .raw_rows(dbs, txn, key_prefix, false)?
             .map(move |row| row.map(|(key, value)| (key[prefix_len..].to_vec(), value))))
+    }
+
+    /// Forward raw rows, retaining transaction-backed values as borrowed bytes.
+    /// Overlay-owned values remain owned; keys still name the suffix after the table prefix.
+    pub(crate) fn iter_raw_borrowed_values_from<'txn>(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &'txn RoTxn<'_>,
+        key_prefix: &[u8],
+    ) -> Result<RawRowsWithBorrowedValues<'txn>> {
+        let mut scan = self.decl.prefix.to_vec();
+        scan.extend_from_slice(key_prefix);
+        let prefix_len = self.decl.prefix.len();
+        Ok(match self.decl.db {
+            SideDb::VaultMeta => Box::new(
+                dbs.side_vault_meta()
+                    .prefix_iter(txn, &scan)?
+                    .map(move |row| row.map(|(key, value)| (key[prefix_len..].to_vec(), value))),
+            ),
+            SideDb::SyncState => Box::new(
+                dbs.side_sync_state()?
+                    .prefix_iter(txn, self.str_key(&scan)?)?
+                    .map(move |row| {
+                        row.map(|(key, value)| (key.as_bytes()[prefix_len..].to_vec(), value))
+                    }),
+            ),
+        })
     }
 
     /// The rows whose keys fall between `start` and `end`, ascending, decoded as the caller pulls
@@ -815,7 +876,6 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
 /// owns. For an exact key (`sync_state_get`, `sync_state_put` and their
 /// `_in_write_txn`/`delete` siblings): a lookup or a write always names one
 /// specific row, so it must name one a table actually declares.
-#[cfg(feature = "sync")]
 pub(crate) fn host_declared_sync_state(key: &str) -> Result<()> {
     declared_for(SideDb::SyncState, key.as_bytes())
         .map(|_| ())
@@ -838,7 +898,6 @@ pub(crate) fn host_declared_sync_state(key: &str) -> Result<()> {
 /// An overlapping prefix can also match undeclared rows planted by legacy or
 /// damaged writers. Scan callers must check each returned key with
 /// [`host_declared_sync_state`] before exposing it.
-#[cfg(feature = "sync")]
 pub(crate) fn host_declared_sync_state_scan(prefix: &str) -> Result<()> {
     if prefix.len() <= 1 || declared_overlaps(SideDb::SyncState, prefix.as_bytes()) {
         return Ok(());
@@ -851,7 +910,6 @@ pub(crate) fn host_declared_sync_state_scan(prefix: &str) -> Result<()> {
 /// The write half of the generic host door: checks [`host_declared_sync_state`],
 /// then puts through the same `sync_state` handle every declared table writes
 /// through, so the raw call lives here rather than in `vault/transactions.rs`.
-#[cfg(feature = "sync")]
 pub(crate) fn host_sync_state_put(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -871,7 +929,6 @@ pub(crate) fn host_sync_state_put(
 
 /// The delete half of the generic host door: checks [`host_declared_sync_state`],
 /// then deletes. `true` when a row was present.
-#[cfg(feature = "sync")]
 pub(crate) fn host_sync_state_delete(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,

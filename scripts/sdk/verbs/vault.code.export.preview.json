@@ -1,0 +1,18 @@
+{
+  "name": "vault.code.export.preview",
+  "description": "Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written.",
+  "input": "crate::memory::origin_doors::CodeExportPreviewRequest",
+  "output": "crate::memory::origin_doors::CodeExportPreviewAnswer",
+  "call": "memory.code_export_preview_as(&memory.code_export_preview_proof(\"vault.code.export.preview\"), input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "openapi": true,
+  "host_door_proof": "code_export_preview"
+}

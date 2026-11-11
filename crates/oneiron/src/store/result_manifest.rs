@@ -27,6 +27,10 @@ pub struct CodeRunRawOutput {
     /// Every row this occurrence's bytes were produced from; `None` when
     /// any constituent is unknown (FIX 7104).
     pub input_rows: Option<Vec<EntityId>>,
+    /// The bridge sequence where the producing executor step began. This
+    /// is occurrence metadata, not authority; non-executor producers carry
+    /// no coordinate.
+    pub producing_step_start: Option<u64>,
     pub preview: CodeRunOutputPreview,
 }
 
@@ -70,6 +74,7 @@ impl CodeRunRawOutput {
             lines: facts.lines,
             complete,
             input_rows: None,
+            producing_step_start: None,
             // A body the secret scan marked shows no preview: the view is
             // redacted, the stored body never rewritten.
             preview: CodeRunOutputPreview {
@@ -98,6 +103,7 @@ impl CodeRunRawOutput {
             lines: 0,
             complete: true,
             input_rows: None,
+            producing_step_start: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: String::new(),
@@ -120,7 +126,8 @@ impl CodeRunRawOutput {
 /// bind, as its authority does, never the bytes it shares with another. An
 /// owned output's occurrence is its owner and path, the id its body
 /// descriptor carries; an unowned body (a context output) has no occurrence
-/// beyond its content.
+/// beyond its content. A raw hold (`ResultOccurrence::raw`) is a descriptor
+/// id only: its marks stay on the owner and path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ResultOccurrence(EntityId);
 
@@ -142,6 +149,26 @@ impl ResultOccurrence {
         Ok(Self(EntityId::derive(
             b"oneiron:code-run-output-occurrence:v1",
             &[owner.as_bytes().as_slice(), path.as_bytes()],
+        )?))
+    }
+
+    /// The raw hold of the bytes `digest` names that run `owner` put at
+    /// `path` where its owner/path occurrence cannot take them (FIX 7364,
+    /// FIX 7430). It is a descriptor id, so an erase of the owner reaches
+    /// the bytes. The same owner, path and bytes give the same hold; other
+    /// bytes give another.
+    pub(crate) fn raw(
+        owner: EntityId,
+        path: &str,
+        digest: &[u8; CODE_RUN_REPLAY_HASH_LEN],
+    ) -> Result<Self> {
+        Ok(Self(EntityId::derive(
+            b"oneiron:code-run-output-raw-hold:v1",
+            &[
+                owner.as_bytes().as_slice(),
+                path.as_bytes(),
+                digest.as_slice(),
+            ],
         )?))
     }
 

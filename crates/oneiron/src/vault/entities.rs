@@ -29,10 +29,6 @@ pub(crate) fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
     .map_err(|_| Error::CorruptedIndex("type index key"))
 }
 
-/// One page of [`Vault::latest_entity_bodies_by_type_page`]: its
-/// `(id, learned_at, body)` rows and the cursor the next page resumes from.
-type LatestBodiesPage = (Vec<(EntityId, u64, Vec<u8>)>, Option<(EntityId, u64)>);
-
 /// Result of resolving a context-pack short reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HydratedShortId {
@@ -560,6 +556,20 @@ impl Vault {
             .collect()
     }
 
+    /// [`Self::entities_by_type_page`] in a caller-owned read snapshot.
+    pub(crate) fn entities_by_type_page_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity_type: u8,
+        after: Option<&EntityId>,
+        limit: usize,
+    ) -> Result<Vec<EntityId>> {
+        self.store
+            .port_entity_ids_by_type(txn, entity_type, after.copied())?
+            .take(limit.min(MAX_TYPE_QUERY_RESULTS))
+            .collect()
+    }
+
     /// Returns up to `limit` latest entity bodies of a given type.
     ///
     /// Scans at most `scan_limit` rows from the `temporal_learned` index in
@@ -611,44 +621,43 @@ impl Vault {
         Ok(rows)
     }
 
-    /// One newest-first page of a type's bodies: those among the next `scan`
-    /// rows of the `temporal_learned` index after the `(id, learned_at)`
-    /// cursor `after`, read from one snapshot as
-    /// [`Vault::latest_entity_bodies_by_type`] reads them, and the cursor the
-    /// next page resumes from, `None` once history ends. A walk that follows
-    /// the cursor reads every row once, with no whole-history ceiling.
-    pub fn latest_entity_bodies_by_type_page(
-        &self,
-        entity_type: u8,
-        after: Option<(EntityId, u64)>,
-        scan: usize,
-    ) -> Result<LatestBodiesPage> {
+    /// A type's ids, newest learned first, each with its `learned_at`, read
+    /// from the type index (FIX 9454). A walk over one type reads that
+    /// type's rows only, never the vault's whole `temporal_learned`
+    /// timeline. The order is the timeline's (`learned_at`, then id, both
+    /// descending), so a walk meets rows as
+    /// [`Vault::latest_entity_bodies_by_type`] meets them. Bodies are not
+    /// read: the caller reads each one under its own read. Every row is
+    /// read, as [`Self::entities_by_type`] reads them (rule 5).
+    /// SECRET_CUSTODY is refused as [`Vault::get_raw`] refuses it.
+    pub fn entity_ids_by_type_newest_first(&self, entity_type: u8) -> Result<Vec<(EntityId, u64)>> {
         if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_record::reject_secret_custody_byte());
         }
-        let scan = scan.max(1);
-        let txn = self.store.env.read_txn()?;
+        let rtxn = self.store.env.read_txn()?;
+        let mut count = ScanCount::start(
+            &self.store,
+            &rtxn,
+            EngineScan::TypeIndexRows,
+            &[entity_type],
+        )?;
         let mut rows = Vec::new();
-        let mut last = None;
-        let mut scanned = 0;
         for entry in self
             .store
-            .port_entity_timeline(
-                &txn,
-                crate::ports::TimelineQuery {
-                    after: after.map(|(id, timestamp)| crate::ports::EntityTime { id, timestamp }),
-                    reverse: true,
-                    ..Default::default()
-                },
-            )?
-            .take(scan)
+            .port_entity_ids_by_type(&rtxn, entity_type, None)?
         {
-            let entry = entry?;
-            scanned += 1;
-            last = Some((entry.id, entry.timestamp));
-            rows.extend(self.latest_body_in_txn(&txn, entity_type, entry)?);
+            count.row();
+            let id = entry?;
+            if let Some(record) = self.store.port_entity_record(&rtxn, &id)?
+                && record.entity_type == entity_type
+            {
+                rows.push((id, record.learned_at));
+            }
         }
-        Ok((rows, last.filter(|_| scanned == scan)))
+        drop(rtxn);
+        count.finish(self);
+        rows.sort_unstable_by_key(|&(id, learned_at)| std::cmp::Reverse((learned_at, id)));
+        Ok(rows)
     }
 
     /// The `(id, learned_at, body)` one timeline row holds when it is a live,
@@ -728,7 +737,7 @@ impl Vault {
     }
 
     /// Transaction-composable body of [`Vault::get_entity_type`].
-    pub(crate) fn get_entity_type_in_txn(
+    pub fn get_entity_type_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,

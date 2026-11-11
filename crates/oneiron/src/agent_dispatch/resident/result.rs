@@ -19,6 +19,10 @@ struct PreparedRunResult {
     id: EntityId,
     bytes: Vec<u8>,
     held: Option<OwnedBody>,
+    /// The answer's body, pinned from before its file is probed until the
+    /// TURN that names it has committed: the collector leaves the file, and
+    /// the pin's drop forgets its notes on the body (FIX 22101).
+    _pin: Option<crate::store::result_body_pins::ResultBodyPin>,
 }
 
 impl AgentDispatcher<'_> {
@@ -64,12 +68,7 @@ impl AgentDispatcher<'_> {
         run: &CodeRunReplayRecord,
         now: u64,
     ) -> Result<Option<EntityId>> {
-        let Some(answer) = run
-            .outputs
-            .iter()
-            .rev()
-            .find(|output| output.complete && output.path.ends_with(".observation.txt"))
-        else {
+        let Some(answer) = self.agent_run_output(attempt, run) else {
             return Ok(None);
         };
         if self.vault.get_code_run_raw_output(answer)?.is_none() {
@@ -83,9 +82,42 @@ impl AgentDispatcher<'_> {
             lease_owner,
             attempt.attempt_count,
         )?;
+        // FIX 4747: the run's result TURN, only while its run TASK names the
+        // holding its claim took.
+        crate::agent_dispatch::fence_agent_run_settlement_in_txn(self.vault, &txn, attempt.id)?;
         self.put_agent_run_result_in_txn(&mut txn, &result, now)?;
         txn.commit()?;
         Ok(Some(result.id))
+    }
+
+    fn agent_run_output<'run>(
+        &self,
+        attempt: &AttemptRecord,
+        run: &'run CodeRunReplayRecord,
+    ) -> Option<&'run crate::code_run::CodeRunRawOutput> {
+        let observation = run
+            .outputs
+            .iter()
+            .rev()
+            .find(|output| output.complete && output.path.ends_with(".observation.txt"));
+        if observation.is_some_and(|output| output.raw_len != 0) {
+            return observation;
+        }
+        // A decline without console or finish still publishes an empty REPL observation.
+        let decline = attempt
+            .task_ref
+            .as_deref()
+            .and_then(|task| crate::EntityId::from_hex(task).ok())
+            .and_then(|task| run.task_decline_output(task))
+            .filter(|output| {
+                // A retained path is not body evidence until its digest-checked read succeeds.
+                self.vault
+                    .get_code_run_raw_output(output)
+                    .ok()
+                    .flatten()
+                    .is_some()
+            });
+        decline.or(observation)
     }
 
     fn prepare_agent_run_result(
@@ -94,13 +126,9 @@ impl AgentDispatcher<'_> {
         run: &CodeRunReplayRecord,
     ) -> Result<PreparedRunResult> {
         let result_ref = EntityId::derive(RUN_RESULT, &[attempt.id.as_bytes().as_slice()])?;
-        // The finished step's observation, never a marker or a file the run
-        // wrote after it.
-        let answer = run
-            .outputs
-            .iter()
-            .rev()
-            .find(|output| output.complete && output.path.ends_with(".observation.txt"));
+        // The finished step's observation or its accepted native decline reason,
+        // never a marker or an unrelated file.
+        let answer = self.agent_run_output(attempt, run);
         let field = |key: &str, value: Value| (Value::from(key), value);
         let artifact = Value::Map(vec![
             field("kind", Value::from("agent.run_result")),
@@ -129,6 +157,7 @@ impl AgentDispatcher<'_> {
         rmpv::encode::write_value(&mut bytes, &artifact)
             .map_err(|error| Error::InvalidConfig(error.to_string()))?;
         // An inline body lives in the run's own rows; only a file needs a holder.
+        let pin = answer.map(|output| self.vault.pin_result_body(output.raw_blake3));
         let held = match answer {
             Some(output)
                 if self
@@ -136,12 +165,12 @@ impl AgentDispatcher<'_> {
                     .store
                     .body_file_present(&output.raw_blake3, output.raw_len)? =>
             {
+                let occurrence =
+                    EntityId::derive(RUN_RESULT_BODY, &[result_ref.as_bytes().as_slice()])?;
                 Some(OwnedBody {
                     owner: result_ref,
-                    occurrence: EntityId::derive(
-                        RUN_RESULT_BODY,
-                        &[result_ref.as_bytes().as_slice()],
-                    )?,
+                    occurrence,
+                    mark_occurrence: occurrence,
                     state: BodyState::Complete {
                         body: BodyRef {
                             blake3: output.raw_blake3,
@@ -150,6 +179,7 @@ impl AgentDispatcher<'_> {
                         },
                     },
                     result: None,
+                    code_run_output: None,
                 })
             }
             _ => None,
@@ -158,6 +188,7 @@ impl AgentDispatcher<'_> {
             id: result_ref,
             bytes,
             held,
+            _pin: pin,
         })
     }
 

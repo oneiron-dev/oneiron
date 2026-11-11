@@ -76,6 +76,7 @@ pub fn resolve_native_human_route_for_actor(
 mod followup_tests;
 #[cfg(test)]
 mod signal_tests;
+pub(crate) mod tables;
 
 // The flat human_task.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and

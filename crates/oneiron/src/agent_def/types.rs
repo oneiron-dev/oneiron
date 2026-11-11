@@ -91,6 +91,18 @@ impl MemoryProfile {
         }
     }
 
+    /// This profile written as its agent (FIX 7744): the same window, split,
+    /// hot window, decay and pins, with the reserved `SELF_COMPACTION_BACKEND`
+    /// key as its backend and the engine owning the window. An engine-run
+    /// agent whose definition carries no profile compacts by its host's
+    /// profile made so.
+    #[must_use]
+    pub fn as_self_writer(mut self) -> Self {
+        self.compaction_backend = ModelTierRef(SELF_COMPACTION_BACKEND.to_owned());
+        self.compaction = CompactionOwnership::Engine;
+        self
+    }
+
     /// Whether this agent writes its own compaction: its profile names the
     /// reserved `SELF_COMPACTION_BACKEND` key. Nothing else turns it on.
     #[must_use]

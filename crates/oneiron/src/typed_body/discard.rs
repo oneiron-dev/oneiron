@@ -3,7 +3,10 @@
 
 use heed::{RoTxn, RwTxn};
 
-use super::{BodyActor, FORK_DOCS, FORKS, TypedBodyFork, TypedForkState, invalid, validate_actor};
+use super::{
+    BodyActor, FORK_DOCS, FORKS, TypedBodyFork, TypedForkState, fork_doc_version, invalid,
+    queue_fork_mirror, validate_actor,
+};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -76,12 +79,19 @@ fn discard_open_fork_in_txn(
     actor: WriteActor,
 ) -> Result<TypedBodyFork> {
     let key = (record.entity, record.fork);
+    // FIX 12470: the fork keeps the version its document held before the
+    // document goes, and its row rides to the owner's other machines once
+    // the discard commits.
+    if let Some(version) = fork_doc_version(&vault.store, txn, &key)? {
+        record.version = version;
+    }
     record.state = TypedForkState::Discarded {
         by: BodyActor::Actor(actor.entity_ref()),
         at: vault.now_recorded_at(),
     };
     FORKS.put(&vault.store, txn, &key, &record)?;
     FORK_DOCS.delete(&vault.store, txn, &key)?;
+    queue_fork_mirror(vault, txn, &record.entity);
     Ok(record)
 }
 

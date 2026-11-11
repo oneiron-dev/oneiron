@@ -41,7 +41,9 @@ impl Line {
             let amount = match (row.line, &row.settlement) {
                 (RsiLine::Tokens, Some(RsiSettlement::Spent(amount)))
                 | (RsiLine::Exposure, Some(RsiSettlement::Exposure(amount))) => Some(*amount),
-                (_, None) | (_, Some(RsiSettlement::Refunded)) => None,
+                (RsiLine::Tokens, Some(RsiSettlement::Unknown))
+                | (_, None)
+                | (_, Some(RsiSettlement::Refunded)) => None,
                 _ => return Err(crate::Error::CorruptedIndex("RSI budget settlement line").into()),
             };
             if row.line != line {
@@ -49,7 +51,7 @@ impl Line {
             }
             if let Some(amount) = amount {
                 spent = spent.checked_add(amount).ok_or(RsiBudgetError::Exhausted)?;
-            } else if row.settlement.is_none() {
+            } else if row.settlement.is_none() || row.settlement == Some(RsiSettlement::Unknown) {
                 reserved = reserved
                     .checked_add(row.amount)
                     .ok_or(RsiBudgetError::Exhausted)?;
@@ -70,7 +72,7 @@ impl Line {
             let units = match row.settlement {
                 Some(RsiSettlement::Spent(units)) => units,
                 Some(RsiSettlement::Refunded) => 0,
-                None => row.amount,
+                None | Some(RsiSettlement::Unknown) => row.amount,
                 Some(RsiSettlement::Exposure(_)) => {
                     return Err(crate::Error::CorruptedIndex("RSI token settlement line").into());
                 }
@@ -251,6 +253,12 @@ impl Vault {
         purpose: Option<RsiSpendPurpose>,
         share: Option<String>,
     ) -> RsiResult<()> {
+        // A token reservation under a share may overdraw it, and an overdraft
+        // is signed by this install's device key: its keys load before the
+        // write transaction, as every signing door's do. A failure refuses
+        // only a reservation that overdraws.
+        let signing = (kind == RsiLine::Tokens && share.is_some())
+            .then(|| self.prepare_install_signing().map(|_| ()));
         let mut txn = self.store.env.write_txn()?;
         let mut line = load(self, &txn)?;
         if line.suspended {
@@ -307,10 +315,7 @@ impl Vault {
                             "RSI token pool missing before admission",
                         ))?;
                     if overdrawn > 0 {
-                        return Ok(Some(RsiOverdraftReceipt {
-                            share: share.clone(),
-                            units: overdrawn,
-                        }));
+                        return Ok(Some((share.clone(), overdrawn)));
                     }
                 }
             }
@@ -318,6 +323,22 @@ impl Vault {
         })();
         match admission {
             Ok(overdraft) => {
+                let overdraft = match overdraft {
+                    Some((share, units)) => {
+                        match signing {
+                            Some(Ok(())) => {}
+                            Some(Err(error)) => return Err(error.into()),
+                            None => {
+                                return Err(crate::Error::InvariantViolation(
+                                    "an RSI overdraft without a share",
+                                )
+                                .into());
+                            }
+                        }
+                        Some(self.sign_rsi_overdraft_in_txn(&mut txn, id, share, units)?)
+                    }
+                    None => None,
+                };
                 let row =
                     line.reservations
                         .get_mut(&key)
@@ -345,6 +366,12 @@ impl Vault {
         self.finish_rsi_reservation(id, RsiSettlement::Spent(spent))
     }
 
+    /// End token work with no token-denominated native spend total. Keep its
+    /// reservation committed without claiming that the amount was spent.
+    pub(crate) fn settle_rsi_budget_unknown(&self, id: EntityId) -> RsiResult<()> {
+        self.finish_rsi_reservation(id, RsiSettlement::Unknown)
+    }
+
     /// Settle exploration exposure once, releasing unused reserved exposure.
     pub fn settle_rsi_exploration(&self, id: EntityId, exposure: u64) -> RsiResult<()> {
         self.finish_rsi_reservation(id, RsiSettlement::Exposure(exposure))
@@ -364,8 +391,10 @@ impl Vault {
             .ok_or(RsiBudgetError::ReservationRequired)?;
         if !matches!(
             (row.line, &settlement),
-            (RsiLine::Tokens, RsiSettlement::Spent(_))
-                | (RsiLine::Exposure, RsiSettlement::Exposure(_))
+            (
+                RsiLine::Tokens,
+                RsiSettlement::Spent(_) | RsiSettlement::Unknown
+            ) | (RsiLine::Exposure, RsiSettlement::Exposure(_))
                 | (_, RsiSettlement::Refunded)
         ) {
             return Err(RsiBudgetError::WrongLine);
@@ -377,7 +406,9 @@ impl Vault {
                 Err(RsiBudgetError::ReservationRequired)
             };
         }
-        if let RsiSettlement::Spent(amount) | RsiSettlement::Exposure(amount) = settlement
+        // Token spend already happened: record it whole even past the
+        // reservation. Future admission still applies the configured caps.
+        if let RsiSettlement::Exposure(amount) = settlement
             && amount > row.amount
         {
             return Err(RsiBudgetError::Exhausted);
@@ -426,6 +457,50 @@ impl Vault {
             reserved_exposure,
             suspended: line.suspended,
         })
+    }
+
+    /// Signs the overdraft of `units` on `share` admitted for `reservation`,
+    /// bound to this vault's store, with this install's device key, in the
+    /// reservation's own write transaction.
+    fn sign_rsi_overdraft_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        reservation: EntityId,
+        share: String,
+        units: u64,
+    ) -> RsiResult<RsiOverdraftReceipt> {
+        use ed25519_dalek::Signer;
+        let identity = crate::identity::ensure_device_identity_in_txn(self, txn)?;
+        let mut receipt = RsiOverdraftReceipt {
+            share,
+            units,
+            reservation: crate::research_budget::hex_lower(reservation.as_bytes()),
+            vault: crate::research_budget::hex_lower(self.vault_id().as_bytes()),
+            public_key: crate::research_budget::hex_lower(
+                &identity.signing_key.verifying_key().to_bytes(),
+            ),
+            signature: String::new(),
+        };
+        let signature = identity.signing_key.sign(&receipt.transcript()?);
+        receipt.signature = crate::research_budget::hex_lower(&signature.to_bytes());
+        Ok(receipt)
+    }
+
+    /// Whether `receipt` is a verifiable overdraft receipt of this vault: its
+    /// signature holds, it names this vault's store, and its key is this
+    /// install's device key.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn verify_rsi_overdraft(&self, receipt: &RsiOverdraftReceipt) -> RsiResult<bool> {
+        if !receipt.verify()
+            || receipt.vault != crate::research_budget::hex_lower(self.vault_id().as_bytes())
+        {
+            return Ok(false);
+        }
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        let device = crate::identity::read_device_verifying_key_in_txn(self, &txn)?;
+        Ok(device.is_some_and(|key| receipt.public_key == crate::research_budget::hex_lower(&key)))
     }
 
     /// Reads the token-share overdraft stamped at reservation, including after settlement.

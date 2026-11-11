@@ -1,10 +1,10 @@
-//! Media vectors and device provenance, under each source document's entity tree.
-//! Refusal rows stay outside this getter so bare and kept-current restores retain
-//! their existing LIVE-row behavior.
+//! Media vectors, device provenance and refusals, under each source document's
+//! entity tree. A restore that carried current LIVE rows preserves its refusal
+//! rows and their absence instead of reviving captured refusals.
 
 use heed::{RoTxn, RwTxn};
 
-use super::MEDIA_VECTOR;
+use super::{MEDIA_REFUSED, MEDIA_VECTOR};
 use crate::embed::EmbeddingProvenance;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -25,11 +25,16 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     for row in rows::typed_rows(dbs, txn, MEDIA_DEVICE, &mut out)? {
         out.exact(OwnerRef::entity(&row.key.1), row.at, row.bytes);
     }
+    for row in rows::typed_rows(dbs, txn, MEDIA_REFUSED, &mut out)? {
+        out.exact(OwnerRef::entity(&row.key.1), row.at, row.bytes);
+    }
     Ok(out)
 }
 
 fn owns(at: &RowLocator) -> bool {
-    at.in_table(MEDIA_VECTOR.decl()) || at.in_table(MEDIA_DEVICE.decl())
+    at.in_table(MEDIA_VECTOR.decl())
+        || at.in_table(MEDIA_DEVICE.decl())
+        || at.in_table(MEDIA_REFUSED.decl())
 }
 
 pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
@@ -39,9 +44,19 @@ pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
 fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     if at.in_table(MEDIA_VECTOR.decl()) {
         rows::check_row(MEDIA_VECTOR, at, value)
-    } else {
+    } else if at.in_table(MEDIA_DEVICE.decl()) {
         rows::check_row(MEDIA_DEVICE, at, value)
+    } else {
+        rows::check_row(MEDIA_REFUSED, at, value)
     }
+}
+
+/// The restore already carried the current LIVE rows, including absence. Leave
+/// superseded refusal parts out before write budgeting and getter dispatch.
+pub(crate) fn preserve_current_refusals(opened: &mut OpenedOwnerRows) {
+    opened
+        .rows
+        .retain(|part| !part.at().in_table(MEDIA_REFUSED.decl()));
 }
 
 pub(crate) fn restore_in_txn(

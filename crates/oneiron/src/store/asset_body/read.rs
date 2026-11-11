@@ -2,16 +2,56 @@
 //! reader that streams a body file, checked as it is read, and the
 //! materializing readers the whole-body doors keep.
 
+use std::borrow::Cow;
 use std::io::Read;
 
 use heed::RoTxn;
 
-use super::{AssetFileManifest, CheckedAssetBody, asset_file_of_raw_in_txn};
+use super::{
+    AssetFileKind, AssetFileManifest, CheckedAssetBody, asset_file_in_txn,
+    asset_file_of_raw_in_txn, revision_file_in_txn,
+};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::store::Store;
+
+/// The bytes an owning adapter reads in ASSET `id`'s stored body `body`
+/// (its row after the metadata header), whichever plane holds them (FIX
+/// 22091): an inline body as it is, whatever its bytes; a carrier's body
+/// file ([`AssetFileKind::Carrier`]) read whole and checked against its
+/// manifest's length and BLAKE3, through the key row `txn` names. Any other
+/// body file comes back as its stored manifest, which no adapter's decoder
+/// takes for a carrier: a reader that walks every ASSET reads no file that
+/// holds none. This is storage, not a read grant: the caller has admitted
+/// the row.
+///
+/// The caller holds what a file read needs: a writer, whose snapshot keeps
+/// the file, or a read transaction, whose snapshot keeps it too: the
+/// collector unlinks no file a live read snapshot names (FIX 22101). The
+/// custody guard holds where the caller holds none already.
+///
+/// # Errors
+///
+/// [`crate::error::Error::CorruptedIndex`] when the row's descriptor and
+/// manifest disagree; a missing file, one whose bytes disagree with its
+/// manifest, and storage and filesystem errors.
+pub(crate) fn asset_carrier_body_in_txn<'b>(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    body: &'b [u8],
+) -> Result<Cow<'b, [u8]>> {
+    let Some(manifest) = asset_file_in_txn(store, txn, id, body)?
+        .filter(|manifest| manifest.kind == AssetFileKind::Carrier)
+    else {
+        return Ok(Cow::Borrowed(body));
+    };
+    let key = crate::store::body_key_row_in_txn(store, txn, &manifest.facts.blake3)?;
+    CheckedAssetBody::read_all(&store.body_dir()?, &manifest.facts, key.as_ref()).map(Cow::Owned)
+}
 
 impl crate::Vault {
     /// The whole body `manifest` names, read from its file and checked, as
@@ -48,7 +88,17 @@ impl crate::Vault {
         let Some(manifest) = asset_file_of_raw_in_txn(&self.store, txn, id, &raw)? else {
             return Ok(raw);
         };
-        let body = self.asset_file_body(txn, &manifest)?;
+        self.row_with_file_body_in_txn(txn, &manifest, &raw)
+    }
+
+    /// `raw`'s metadata header followed by the whole body `manifest` names.
+    fn row_with_file_body_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        manifest: &AssetFileManifest,
+        raw: &[u8],
+    ) -> Result<Vec<u8>> {
+        let body = self.asset_file_body(txn, manifest)?;
         let mut row = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
         row.extend_from_slice(&raw[..ENTITY_METADATA_HEADER_LEN]);
         row.extend_from_slice(&body);
@@ -57,8 +107,10 @@ impl crate::Vault {
 
     /// [`Self::materialized_row_in_txn`] for a selected revision `raw` of
     /// `id`: the one that is the live row reads as its body; an older one
-    /// keeps the manifest it was stored as, whose file a later write may have
-    /// released.
+    /// reads as the body of the file its manifest names while one of `id`'s
+    /// descriptors holds it ([`revision_file_in_txn`]): its revisions keep a
+    /// file a later write superseded (FIX 22091). Another keeps the manifest
+    /// it was stored as.
     ///
     /// # Errors
     ///
@@ -72,10 +124,13 @@ impl crate::Vault {
         let live = self
             .store
             .port_entity_with_raw(txn, id, |live| Ok(live == raw.as_slice()))?;
-        if live != Some(true) {
-            return Ok(raw);
+        if live == Some(true) {
+            return self.materialized_row_in_txn(txn, id, raw);
         }
-        self.materialized_row_in_txn(txn, id, raw)
+        match revision_file_in_txn(&self.store, txn, id, &raw)? {
+            Some(manifest) => self.row_with_file_body_in_txn(txn, &manifest, &raw),
+            None => Ok(raw),
+        }
     }
 
     /// Runs `read` over ASSET `id`'s body as it streams, whichever plane
@@ -84,9 +139,8 @@ impl crate::Vault {
     /// is checked against its manifest's length and BLAKE3 as it is read,
     /// and whatever `read` leaves is read too, so the whole body is checked
     /// whether or not `read` reaches its end. `None` when `id` holds no
-    /// readable ASSET. The file is pinned while it is read; a reader that
-    /// finds `id` in a transaction it opened earlier pins the body first
-    /// ([`crate::Vault::pin_all_result_bodies`]).
+    /// readable ASSET. The file is pinned while it is read; `txn`'s own
+    /// snapshot keeps the file it names until it ends (FIX 22101).
     ///
     /// # Errors
     ///
@@ -133,9 +187,9 @@ impl crate::Vault {
     /// the manifest's length and BLAKE3 as its end is read, as its key row
     /// in `txn`, the snapshot that found the manifest, names it (FIX 3677).
     /// It judges no admission: the caller has admitted the row the manifest
-    /// is, as its own door reads it. The caller pins the body before `txn`
-    /// opens ([`Self::pin_all_result_bodies`]) and holds the pin while it
-    /// reads.
+    /// is, as its own door reads it. `txn`'s snapshot keeps the file it
+    /// names while `txn` is live (FIX 22101); a caller that reads past
+    /// `txn` pins the body ([`Self::pin_result_body`]) before it ends.
     ///
     /// # Errors
     ///
