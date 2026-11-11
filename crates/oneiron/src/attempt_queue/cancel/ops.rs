@@ -9,14 +9,14 @@ use std::collections::HashSet;
 
 use crate::attempt_queue::encoding::decode_record;
 use crate::attempt_queue::engine::AttemptQueue;
+use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptRecord, AttemptState};
 use crate::attempt_queue::validate::{
-    CancelReceiptDraft, ERR_RESERVE_SPEND_ZERO, append_cancel_receipt, count_cancel_rejection,
-    count_cancel_request, validate_cancel_actor, validate_cancel_standing, validate_failure_reason,
-    validate_lease_owner, validate_optional_cancel_status, validate_optional_failure_reason,
-    validate_optional_resume_point, validate_reserve_percent, validate_resume_point,
-    validate_transition_lease,
+    CancelReceiptDraft, ERR_RESERVE_SPEND_ZERO, validate_cancel_actor, validate_cancel_standing,
+    validate_failure_reason, validate_lease_owner, validate_optional_cancel_status,
+    validate_optional_failure_reason, validate_optional_resume_point, validate_reserve_percent,
+    validate_resume_point, validate_transition_lease,
 };
 use crate::error::{Error, Result};
 
@@ -127,7 +127,7 @@ impl AttemptQueue<'_> {
         authorship: SoftRequestAuthorship,
         now: u64,
     ) -> Result<()> {
-        append_cancel_receipt(
+        RunLifecycle::append_cancel_receipt(
             &self.store.limit_watch,
             record,
             AttemptCancelReceiptKind::SoftRequested,
@@ -140,7 +140,7 @@ impl AttemptQueue<'_> {
             },
             now,
         )?;
-        count_cancel_request(&mut record.cancel_state.pressure);
+        RunLifecycle::count_cancel_request(record);
         let encoded = self.encode_in_txn(wtxn, record)?;
         self.store
             .attempt_records
@@ -187,8 +187,8 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("accept_landing", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Landing => {
+        match RunLifecycle::step(RunRow::of(&record), RunEvent::AcceptLanding) {
+            RunStep::Replay => {
                 validate_transition_lease(
                     &record,
                     &input.lease_owner,
@@ -197,8 +197,10 @@ impl AttemptQueue<'_> {
                 )?;
                 return Ok(LandingOutcome::AlreadyLanding(record));
             }
-            AttemptState::Leased => {}
-            state => return Err(invalid_transition("accept_landing", state.as_str())),
+            RunStep::Move { .. } => {}
+            RunStep::Note { .. } | RunStep::Keep | RunStep::Refuse => {
+                return Err(invalid_transition("accept_landing", record.state.as_str()));
+            }
         }
         validate_transition_lease(
             &record,
@@ -223,24 +225,19 @@ impl AttemptQueue<'_> {
         let requested_by = answered
             .map(|request| request.actor.clone())
             .unwrap_or(input.lease_owner.clone());
-        record.cancel_state.landing = Some(AttemptLanding {
-            trigger,
-            requested_by,
-            entered_at: input.now,
-            status: input.status.clone(),
-        });
-        if let Some(resume_point) = input.resume_point.clone() {
-            record.cancel_state.resume_point = Some(resume_point);
-        }
-        // Landing satisfies every outstanding ask — they all wanted the worker
-        // to stop, and it is stopping — so no request stays owed an answer.
-        // The receipt still names the ONE request this landing answers, so the
-        // trigger and the requester on it are the real ones.
-        record.cancel_state.pressure.pending = 0;
-        record.state = AttemptState::Landing;
+        let _ = RunLifecycle::accept_landing(
+            &mut record,
+            AttemptLanding {
+                trigger,
+                requested_by,
+                entered_at: input.now,
+                status: input.status.clone(),
+            },
+            input.resume_point.clone(),
+        );
         record.updated_at = input.now;
         let recorded_resume_point = record.cancel_state.resume_point.clone();
-        append_cancel_receipt(
+        RunLifecycle::append_cancel_receipt(
             &self.store.limit_watch,
             &mut record,
             AttemptCancelReceiptKind::LandingAccepted,
@@ -298,8 +295,8 @@ impl AttemptQueue<'_> {
         let trigger = answered.trigger;
         let answered_request_sequence = answered.sequence;
 
-        count_cancel_rejection(&mut record.cancel_state.pressure);
-        append_cancel_receipt(
+        RunLifecycle::count_cancel_rejection(&mut record);
+        RunLifecycle::append_cancel_receipt(
             &self.store.limit_watch,
             &mut record,
             AttemptCancelReceiptKind::SoftRejected,
@@ -370,9 +367,9 @@ impl AttemptQueue<'_> {
             "record_resume_point",
         )?;
 
-        record.cancel_state.resume_point = Some(input.resume_point.clone());
+        RunLifecycle::record_landing_checkpoint(&mut record, input.resume_point.clone());
         let trigger = record.cancel_state.landing.as_ref().map(|l| l.trigger);
-        append_cancel_receipt(
+        RunLifecycle::append_cancel_receipt(
             &self.store.limit_watch,
             &mut record,
             AttemptCancelReceiptKind::ResumePointRecorded,
@@ -446,11 +443,12 @@ impl AttemptQueue<'_> {
         if record.cancel_state.reserve.dial_generation == Some(record.attempt_count) {
             return Err(invalid_transition("dial_landing_reserve", "already_dialed"));
         }
-        record.cancel_state.reserve = AttemptLandingReserve::dialed_at_generation(
+        let reserve = AttemptLandingReserve::dialed_at_generation(
             input.limit_units,
             reserve_percent,
             record.attempt_count,
         );
+        RunLifecycle::dial_landing_reserve(&mut record, reserve);
         let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
@@ -522,14 +520,9 @@ impl AttemptQueue<'_> {
                 remaining_units,
             });
         }
-        record.cancel_state.reserve.spent_units = record
-            .cancel_state
-            .reserve
-            .spent_units
-            .checked_add(input.units)
-            .ok_or(Error::ArithmeticOverflow("landing reserve spend"))?;
+        RunLifecycle::spend_landing_reserve(&mut record, input.units)?;
         let trigger = record.cancel_state.landing.as_ref().map(|l| l.trigger);
-        append_cancel_receipt(
+        RunLifecycle::append_cancel_receipt(
             &self.store.limit_watch,
             &mut record,
             AttemptCancelReceiptKind::ReserveSpent,

@@ -1,5 +1,6 @@
 //! Erase asks (ARCH-0043 "Who may archive, delete and erase", 2026-10-09): in
-//! a shared vault a Member requests an erase and an Admin proposes one, while
+//! a shared vault a Member requests an erase and an Admin or a Deputy (which
+//! holds Admin's powers, ARCH-0082 #roles) proposes one, while
 //! only an Owner erases, by hand, through the erase doors and their veto
 //! window. An ask erases nothing, starts no window and lifts no hold. It is
 //! one durable record, an inbox ask to every live Owner, and the asker's own
@@ -17,12 +18,26 @@ pub const NOTIFICATION_PRODUCER_ERASE_ASK: &str = "shared_vault.erase_ask";
 /// The act name an Owner's erase runs under, which a closing answer names.
 const ERASE_ACT: &str = "erase";
 
-/// Who asked: a Member requests, an Admin proposes.
+/// Who asked: a Member requests, an Admin or a Deputy proposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EraseAskKind {
     Request,
     Proposal,
+}
+
+impl EraseAskKind {
+    /// What an erase ask from a live holder of `role` is, once its grant
+    /// carries `write`: a Member's request, or an Admin's or a Deputy's
+    /// proposal. `None` for every other role; an Owner erases instead of
+    /// asking, and the erase itself stays the Owner's.
+    pub(crate) const fn for_asker_role(role: Role) -> Option<Self> {
+        match role {
+            Role::Member => Some(Self::Request),
+            Role::Admin | Role::Deputy => Some(Self::Proposal),
+            _ => None,
+        }
+    }
 }
 
 /// Where an ask stands. Only an Owner closes one.
@@ -41,7 +56,8 @@ pub enum EraseAskStatus {
     },
 }
 
-/// One Member's request or Admin's proposal to erase a record.
+/// One Member's request, or an Admin's or a Deputy's proposal, to erase a
+/// record.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedEraseAsk {
@@ -76,10 +92,10 @@ impl Vault {
     }
 
     /// Ask the Owners to erase `record`, a live record of this vault: a live
-    /// Member requests it and a live Admin proposes it, each through their
-    /// grant's `write` verb. Every live Owner gets an inbox ask naming the
-    /// record. Asking again while the asker's ask for the record is open
-    /// answers that ask.
+    /// Member requests it and a live Admin or Deputy proposes it, each
+    /// through their grant's `write` verb. Every live Owner gets an inbox ask
+    /// naming the record. Asking again while the asker's ask for the record is
+    /// open answers that ask.
     pub fn ask_shared_erase(
         &self,
         asker: &AuthenticatedOwner,
@@ -95,10 +111,9 @@ impl Vault {
         let kind = holders
             .iter()
             .find(|holder| holder.member == actor)
-            .and_then(|holder| match holder.role {
-                Role::Member if holder.can(&[Role::Member], "write") => Some(EraseAskKind::Request),
-                Role::Admin if holder.can(&[Role::Admin], "write") => Some(EraseAskKind::Proposal),
-                _ => None,
+            .and_then(|holder| {
+                EraseAskKind::for_asker_role(holder.role)
+                    .filter(|_| holder.can(&[holder.role], "write"))
             })
             .ok_or_else(invalid)?;
         if !crate::vault::live_entity_row_in_txn(&self.store, &txn, &record)?.is_live() {

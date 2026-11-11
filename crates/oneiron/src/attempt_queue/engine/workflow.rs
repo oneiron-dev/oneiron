@@ -2,6 +2,7 @@
 
 use super::AttemptQueue;
 use crate::attempt_queue::encoding::ready_at;
+use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::validate::{lease_claimed_record, validate_lease_owner};
 use crate::attempt_queue::{
@@ -255,8 +256,14 @@ impl AttemptQueue<'_> {
         mut record: AttemptRecord,
         now: u64,
     ) -> Result<bool> {
+        if !matches!(
+            RunLifecycle::step(RunRow::of(&record), RunEvent::AdvanceRetry),
+            RunStep::Move { .. }
+        ) {
+            return Ok(false);
+        }
         self.delete_ready_entry_for_record(txn, &record)?;
-        record.scheduled_at = Some(now);
+        let _ = RunLifecycle::advance_retry(&mut record, now);
         record.backoff_until = None;
         let encoded = self.encode_in_txn(txn, &mut record)?;
         self.store
