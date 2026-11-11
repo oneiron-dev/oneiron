@@ -1,0 +1,450 @@
+/* The rail: places only. On the field it is bare (words in the on-field
+   ink, a halo by night and a soft shadow by day); on paper it sits on a
+   near-opaque strip of the ground. The ground sets the rail's own inks. */
+.sl-rail {
+  --sl-rail-ink: var(--sl-ink-2);
+  --sl-rail-ink-on: var(--sl-ink-1);
+  --sl-rail-quiet: var(--sl-ink-3);
+  --sl-rail-hover: var(--sl-hover);
+  --sl-rail-lit: var(--sl-lit);
+  --sl-rail-text-shadow: none;
+  --sl-rail-symbol-shadow: none;
+  --sl-rail-badge: var(--sl-ink-1);
+  --sl-rail-badge-ink: var(--sl-on-primary);
+  --sl-rail-rule: var(--sl-rule);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: var(--sl-rail-width, 248px);
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 6px 14px 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-rail-ink);
+}
+
+.sl-rail[data-ground="field"] {
+  --sl-rail-ink: var(--sl-on-field-word);
+  --sl-rail-ink-on: var(--sl-on-field-ink);
+  --sl-rail-quiet: var(--sl-on-field-quiet);
+  --sl-rail-hover: var(--sl-on-field-hover);
+  --sl-rail-lit: var(--sl-on-field-lit);
+  --sl-rail-text-shadow: var(--sl-on-field-text-halo);
+  --sl-rail-symbol-shadow: var(--sl-on-field-symbol-halo);
+  --sl-rail-badge: var(--sl-on-field-ink);
+  --sl-rail-badge-ink: var(--sl-on-field-badge-ink);
+  --sl-rail-rule: var(--sl-on-field-quiet);
+}
+
+.sl-rail[data-ground="paper"] {
+  background: var(--sl-paper);
+}
+
+@media (max-width: 1180px) {
+  .sl-rail {
+    --sl-rail-width: 220px;
+  }
+}
+
+/* ── head ─────────────────────────────────────────────────────────────── */
+
+.sl-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 2px 2px 0 6px;
+}
+
+.sl-rail-head > .sl-vault-switch {
+  margin-right: auto;
+}
+
+.sl-rail .sl-icon-action {
+  color: var(--sl-rail-ink);
+}
+
+.sl-rail .sl-icon-action:hover,
+.sl-rail .sl-icon-action:focus-visible,
+.sl-rail .sl-icon-action[aria-expanded="true"] {
+  color: var(--sl-rail-ink-on);
+  background: var(--sl-rail-hover);
+}
+
+.sl-rail .sl-icon-action > svg,
+.sl-rail-row-mark,
+.sl-rail-row-shared {
+  filter: var(--sl-rail-symbol-shadow);
+}
+
+.sl-rail .sl-vault-switch {
+  color: var(--sl-rail-ink-on);
+  text-shadow: var(--sl-rail-text-shadow);
+}
+
+.sl-rail .sl-vault-switch:hover,
+.sl-rail .sl-vault-switch[aria-expanded="true"] {
+  background: var(--sl-rail-hover);
+}
+
+.sl-rail .sl-vault-switch-chevron {
+  color: var(--sl-rail-ink);
+  filter: var(--sl-rail-symbol-shadow);
+}
+
+/* ── groups ───────────────────────────────────────────────────────────── */
+
+.sl-rail-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.sl-rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sl-rail-group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 2px 10px 5px;
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  color: var(--sl-rail-ink);
+  text-shadow: var(--sl-rail-text-shadow);
+  transition: color 120ms ease;
+}
+
+.sl-rail-group-label:hover,
+.sl-rail-group-label:focus-visible {
+  color: var(--sl-rail-ink-on);
+}
+
+.sl-rail-group-chevron {
+  display: block;
+  filter: var(--sl-rail-symbol-shadow);
+  transition: transform 160ms var(--sl-ease-out);
+}
+
+.sl-rail-group-label[aria-expanded="false"] .sl-rail-group-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Folds in place: rows 1fr to 0fr on the house curve. */
+.sl-rail-group-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 220ms var(--sl-ease-out);
+}
+
+.sl-rail-group-fold[data-state="closed"] {
+  grid-template-rows: 0fr;
+}
+
+.sl-rail-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── rows ─────────────────────────────────────────────────────────────── */
+
+.sl-rail-item {
+  position: relative;
+  --sl-rail-indent: 0px;
+}
+
+.sl-rail-item[data-depth="1"] {
+  --sl-rail-indent: 22px;
+}
+
+.sl-rail-item[data-depth="2"] {
+  --sl-rail-indent: 44px;
+}
+
+.sl-rail-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 3px 10px 3px calc(10px + var(--sl-rail-indent));
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-rail-ink);
+  text-align: left;
+  text-decoration: none;
+  text-shadow: var(--sl-rail-text-shadow);
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+/* The fold clips its rows, so the focus ring sits inside the row. */
+.sl-rail-row:focus-visible {
+  outline-offset: -1.5px;
+}
+
+.sl-rail-row:hover {
+  color: var(--sl-rail-ink-on);
+  background: var(--sl-rail-hover);
+}
+
+.sl-rail-row[aria-current="page"] {
+  color: var(--sl-rail-ink-on);
+  background: var(--sl-rail-lit);
+}
+
+.sl-rail-item[data-pinnable] > .sl-rail-row {
+  padding-right: 34px;
+}
+
+.sl-rail-row-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--sl-rail-ink);
+}
+
+.sl-rail-item[data-depth="1"] .sl-rail-row-mark,
+.sl-rail-item[data-depth="2"] .sl-rail-row-mark {
+  width: 16px;
+  height: 16px;
+}
+
+.sl-rail-item[data-depth="1"] .sl-rail-row-mark > .sl-icon,
+.sl-rail-item[data-depth="2"] .sl-rail-row-mark > .sl-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* The words: the label keeps its length and truncates only when it alone
+   overflows; the caption after it gives way first. */
+.sl-rail-row-words {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sl-rail-row-label {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* By day the field is bright sky and cloud: a resident's glyph on it prints
+   in the on-field ink like every other symbol; by night it keeps its own. */
+.sl-rail[data-ground="field"] .sl-glyph-line {
+  color: light-dark(var(--sl-on-field-word), var(--sl-glyph-ink, var(--sl-ink-2)));
+}
+
+.sl-rail-row-shared {
+  display: block;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-left: -3px;
+  overflow: visible;
+  color: var(--sl-rail-ink);
+}
+
+.sl-rail-row-shared path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+}
+
+.sl-rail-row-caption {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sl-rail-quiet);
+}
+
+.sl-rail-row-count {
+  flex: none;
+  min-width: 22px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-rail-badge);
+  color: var(--sl-rail-badge-ink);
+  line-height: 20px;
+  text-align: center;
+  text-shadow: none;
+}
+
+.sl-rail-row-words:has(> .sl-rail-row-caption) + .sl-rail-row-count {
+  margin-left: 8px;
+}
+
+.sl-rail-row-pin {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  margin-top: -13px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.sl-rail-item:hover > .sl-rail-row-pin,
+.sl-rail-item:focus-within > .sl-rail-row-pin {
+  opacity: 1;
+}
+
+/* ── reordering ───────────────────────────────────────────────────────── */
+
+/* While a drag is on, the neighbours slide to open the gap. */
+.sl-rail-groups[data-reorder-active] > .sl-rail-group:not([data-dragging]),
+.sl-rail-group-list[data-reorder-active] > .sl-rail-item:not([data-dragging]) {
+  transition: transform 150ms var(--sl-ease-out);
+}
+
+.sl-rail-group[data-dragging],
+.sl-rail-item[data-dragging] {
+  position: relative;
+  z-index: 1;
+  cursor: grabbing;
+}
+
+.sl-rail-item[data-dragging] > .sl-rail-row {
+  color: var(--sl-rail-ink-on);
+  background: var(--sl-rail-lit);
+}
+
+.sl-rail-group[data-dragging] > .sl-rail-group-label {
+  color: var(--sl-rail-ink-on);
+}
+
+.sl-rail[data-ground="paper"] .sl-rail-group[data-dragging] {
+  border-radius: var(--sl-radius);
+  background: var(--sl-paper);
+}
+
+/* Moves said in words for a screen reader. */
+.sl-rail-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── the icon rail: symbols only, names on hover and focus ────────────── */
+
+.sl-rail[data-collapsed] {
+  --sl-rail-width: 60px;
+  align-items: center;
+  padding: 14px 6px 14px 10px;
+}
+
+.sl-rail[data-collapsed] .sl-rail-head {
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 0 0;
+}
+
+.sl-rail[data-collapsed] .sl-vault-switch,
+.sl-rail[data-collapsed] .sl-rail-row-shared,
+.sl-rail[data-collapsed] .sl-rail-row-caption,
+.sl-rail[data-collapsed] .sl-rail-row-pin,
+.sl-rail[data-collapsed] .sl-rail-item[data-depth="1"],
+.sl-rail[data-collapsed] .sl-rail-item[data-depth="2"] {
+  display: none;
+}
+
+.sl-rail[data-collapsed] .sl-rail-groups,
+.sl-rail[data-collapsed] .sl-rail-group {
+  align-items: center;
+  width: 100%;
+}
+
+.sl-rail[data-collapsed] .sl-rail-group-label {
+  align-self: center;
+  width: 18px;
+  height: 1px;
+  margin: 2px auto 6px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--sl-rail-rule);
+  color: transparent;
+  text-shadow: none;
+  pointer-events: none;
+}
+
+.sl-rail[data-collapsed] .sl-rail-group-chevron {
+  display: none;
+}
+
+.sl-rail[data-collapsed] .sl-rail-group-list {
+  align-items: center;
+  overflow: visible;
+}
+
+.sl-rail[data-collapsed] .sl-rail-row {
+  justify-content: center;
+  width: 40px;
+  padding: 3px 0;
+}
+
+.sl-rail[data-collapsed] .sl-rail-row-words {
+  display: contents;
+}
+
+.sl-rail[data-collapsed] .sl-rail-row-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.sl-rail[data-collapsed] .sl-rail-row-count {
+  position: absolute;
+  top: -3px;
+  right: -2px;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 4px;
+  line-height: 17px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-rail-group-fold,
+  .sl-rail-group-chevron,
+  .sl-rail-row,
+  .sl-rail-row-pin,
+  .sl-rail-group-label,
+  .sl-rail-groups[data-reorder-active] > .sl-rail-group:not([data-dragging]),
+  .sl-rail-group-list[data-reorder-active] > .sl-rail-item:not([data-dragging]) {
+    transition: none;
+  }
+}
