@@ -20,6 +20,7 @@
 @import './marks/Seal.css';
 @import './marks/UrgencyMark.css';
 @import './marks/StepsBar.css';
+@import './marks/ProgressDonut.css';
 @import './marks/Glyph.css';
 @import './marks/Portrait.css';
 
@@ -41,8 +42,14 @@
 @import './patterns/FileGroup.css';
 @import './patterns/LedgerTable.css';
 @import './patterns/ClaimText.css';
+@import './patterns/TaskRow.css';
+@import './patterns/TaskList.css';
+@import './patterns/VersionSwitch.css';
+@import './patterns/SettledCard.css';
 
 @import './frame/Sidebar.css';
+@import './frame/MicroSidebar.css';
+@import './frame/AppFrame.css';
 @import './frame/VaultSwitch.css';
 @import './frame/ActivityList.css';
 @import './frame/SortCycle.css';
