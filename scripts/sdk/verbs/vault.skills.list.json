@@ -1,17 +1,17 @@
 {
   "name": "vault.skills.list",
-  "description": "Lists a page of the owner skill library, including inactive skills and their retained evidence.",
+  "description": "Lists a page of the skill library: the owner sees every skill with its retained evidence; another caller sees only the loadable skills it may read, as packages without the owner's evidence.",
   "input": "SkillLibraryListRequest",
   "output": "crate::task_verb::sdk::SkillLibraryPage",
-  "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_library_list_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.list\")?, &input))?",
+  "call": "memory.witness_skill_bodies(crate::snapshot_read::skill_library_list_embedded(memory, &input))?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {
-    "unrestricted_record_scope": true
+    "lane_record_scope": true
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "skill_reader"
 }

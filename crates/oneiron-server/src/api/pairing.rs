@@ -40,17 +40,28 @@ pub(super) async fn create_link(
     let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?;
     let link = match request.machine {
         // A link the owner makes records them: a holder that can propose has
-        // the OpenAI proxy admitted under that owner when it redeems.
+        // the OpenAI proxy admitted under that owner when it redeems. A named
+        // agent's link mints its default read Grant, an owner act from this
+        // request's surface (PAIR-GRANT-DESIGN Q3/Q4).
         None => match super::owner_routes::owner(&auth, &server).ok() {
-            Some(owner) => with_issuer(&server, |issuer| {
-                server.vault().issue_owner_pairing_link(
-                    issuer,
-                    &owner,
-                    request.scope,
-                    request.lifetime_secs,
-                    request.principal,
-                )
-            })?,
+            Some(owner) => {
+                let surface = super::owner_routes::machine_routes::act_surface_admitted(
+                    &server,
+                    &auth,
+                    &parts.headers,
+                    &parts.extensions,
+                );
+                with_issuer(&server, |issuer| {
+                    server.vault().issue_owner_pairing_link_from_surface(
+                        issuer,
+                        &owner,
+                        surface,
+                        request.scope,
+                        request.lifetime_secs,
+                        request.principal,
+                    )
+                })?
+            }
             None => with_issuer(&server, |issuer| {
                 server.vault().issue_pairing_link_for_principal(
                     issuer,
