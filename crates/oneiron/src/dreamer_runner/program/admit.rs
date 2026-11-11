@@ -28,6 +28,8 @@ use super::types::{
 use super::{ADMISSION, ARM, DECIDED, WAKE};
 
 const NOT_ARMED: &str = "the program is no longer armed";
+const TURN_ALREADY_WOKE_PROGRAM: &str =
+    "the turn already woke this program under another arming of it";
 const NOT_TRIGGERED: &str = "the waking turn or occurrence does not match the program's trigger";
 pub(super) const AUTHORITY_LAPSED: &str = "the waking actor's authority no longer stands";
 const PIN_MOVED: &str = "the pinned program changed since it was armed";
@@ -52,8 +54,9 @@ impl Vault {
     /// first receipt (one that differs is a conflict); otherwise the program
     /// must still be armed at the woken revision, the turn must be the live
     /// TURN of the trigger's conversation, landed at or after arming by the
-    /// armed actor, the waking actor's authority must still stand (an
-    /// attested owner's as the vault's live owner, FIX 11090), and the
+    /// armed actor, a turn that already woke the same program under another
+    /// arming of it is refused, the waking actor's authority must still stand
+    /// (an attested owner's as the vault's live owner, FIX 11090), and the
     /// pinned SKILL must still be the program pinned. The decision, allowed
     /// or refused, is a Gate receipt; an allowed one queues one Dreamer
     /// program attempt, stamped as the waking actor, the root of its run
@@ -90,7 +93,8 @@ impl Vault {
 }
 
 /// [`Vault::admit_turn_program`]'s writer body, also the one an owed wake's
-/// rebind admits through in its own writer (FIX 11833).
+/// rebind admits through in its own writer (FIX 11833). A turn's wake stays
+/// owed without a decision while its ChildOf edge is deferred here.
 pub(super) fn admit_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -130,6 +134,12 @@ pub(super) fn admit_in_txn(
     // rides there.
     #[cfg(feature = "sync")]
     if super::replica::wake_is_the_homes_in_txn(vault, &*txn, &wake)? {
+        return Ok(WakeAdmission::Held);
+    }
+    #[cfg(feature = "sync")]
+    if wake.occurrence.is_none()
+        && crate::sync::bridge::has_deferred_child_of_source_in_txn(vault, &*txn, &wake.turn.turn)?
+    {
         return Ok(WakeAdmission::Held);
     }
     let judged = judge_in_txn(vault, &*txn, &wake)?;
@@ -226,6 +236,28 @@ fn judge_in_txn(
     };
     if arming.revision != wake.revision || arming.definition.revision() != wake.revision {
         return Ok(Err(NOT_ARMED));
+    }
+    if wake.occurrence.is_none() {
+        for row in ARM.iter_from(vault, txn, actor.as_bytes())? {
+            let (_, sibling) = row?;
+            if sibling.registration == wake.registration {
+                continue;
+            }
+            if sibling.actor != arming.actor
+                || sibling.actor_class != arming.actor_class
+                || sibling.conversation != arming.conversation
+                || sibling.revision != arming.revision
+            {
+                continue;
+            }
+            let mut sibling_wake = wake.clone();
+            sibling_wake.registration = sibling.registration;
+            if ADMISSION.contains(vault, txn, &sibling_wake.admission_id())?
+                || DECIDED.contains(vault, txn, &(wake.turn.turn, sibling.registration))?
+            {
+                return Ok(Err(TURN_ALREADY_WOKE_PROGRAM));
+            }
+        }
     }
     if !triggered_in_txn(vault, txn, &arming, wake)? {
         return Ok(Err(NOT_TRIGGERED));
