@@ -782,12 +782,14 @@ function sidebarFor(id: string, specimen: string): React.ReactNode | null {
 /* A whole microsidebar on fixture data: the vault's mark (home), activity
    with its count, the vault, more; the divider; the pinned lenses (they
    reorder and unpin); the person at the foot. Inside a frame the foot
-   also holds the fold control, shown while the sidebar is folded. */
+   also holds the fold control, shown while the sidebar is folded. Alone,
+   it stands on a window ground of its own with the readout under it. */
 function MicroSidebarDemo({
   labels,
   current,
   onCurrent,
   inFrame = false,
+  alone = false,
   waiting = false,
   specimen,
 }: {
@@ -795,6 +797,7 @@ function MicroSidebarDemo({
   current: string
   onCurrent: (id: string) => void
   inFrame?: boolean
+  alone?: boolean
   /* Activity waits on the person: the waiting ring under its count. */
   waiting?: boolean
   specimen?: string
@@ -803,54 +806,64 @@ function MicroSidebarDemo({
   const item = (id: string, label: string, icon: React.ReactNode, extra: { count?: number; needsYou?: boolean } = {}) => (
     <MicroSidebar.Item id={id} icon={icon} label={label} current={current === id} onClick={() => onCurrent(id)} {...extra} />
   )
+  const strip = (
+    <MicroSidebar labels={labels} aria-label={`places, ${labels ?? 'symbols'}`} data-specimen={specimen}>
+      <MicroSidebar.VaultMark name="antevon" current={current === 'home'} onClick={() => onCurrent('home')} />
+      {item('activity', 'activity', <Icon name="activity" />, { count: 3, needsYou: waiting })}
+      {item('vault', 'vault', <Icon name="vault" />)}
+      <MicroSidebar.More current={MORE_PLACES.some((m) => m.id === current) && !pinned.includes(current)}>
+        {MORE_PLACES.map((m) => (
+          <MicroSidebar.MoreItem
+            key={m.id}
+            icon={<Icon name={m.icon} />}
+            label={m.label}
+            pinned={pinned.includes(m.id)}
+            onPinChange={(on) => setPinned((l) => (on ? [...l, m.id] : l.filter((x) => x !== m.id)))}
+            onOpen={() => onCurrent(m.id)}
+            data-place-id={m.id}
+          />
+        ))}
+      </MicroSidebar.More>
+      <MicroSidebar.Divider />
+      <MicroSidebar.Pinned onReorder={setPinned}>
+        {pinned.map((id) => {
+          const place = placeOf(id)
+          return (
+            <MicroSidebar.Item
+              key={id}
+              id={id}
+              icon={<Icon name={place.icon} />}
+              label={place.label}
+              current={current === id}
+              onClick={() => onCurrent(id)}
+              onUnpin={() => setPinned((l) => l.filter((x) => x !== id))}
+            />
+          )
+        })}
+      </MicroSidebar.Pinned>
+      <MicroSidebar.Foot>
+        {inFrame ? <AppFrame.Fold tooltipSide="right" /> : null}
+        <Menu>
+          <Menu.Trigger asChild>
+            <MicroSidebar.Item id="you" icon={<Glyph initial="o" label="Owen" size={24} />} label="Owen" />
+          </Menu.Trigger>
+          <Menu.Content side="right" align="end" width="wide" aria-label="account">
+            <AccountParts />
+          </Menu.Content>
+        </Menu>
+      </MicroSidebar.Foot>
+    </MicroSidebar>
+  )
   return (
     <>
-      <MicroSidebar labels={labels} aria-label={`places, ${labels ?? 'symbols'}`} data-specimen={specimen}>
-        <MicroSidebar.VaultMark name="antevon" current={current === 'home'} onClick={() => onCurrent('home')} />
-        {item('activity', 'activity', <Icon name="activity" />, { count: 3, needsYou: waiting })}
-        {item('vault', 'vault', <Icon name="vault" />)}
-        <MicroSidebar.More current={MORE_PLACES.some((m) => m.id === current) && !pinned.includes(current)}>
-          {MORE_PLACES.map((m) => (
-            <MicroSidebar.MoreItem
-              key={m.id}
-              icon={<Icon name={m.icon} />}
-              label={m.label}
-              pinned={pinned.includes(m.id)}
-              onPinChange={(on) => setPinned((l) => (on ? [...l, m.id] : l.filter((x) => x !== m.id)))}
-              onOpen={() => onCurrent(m.id)}
-              data-place-id={m.id}
-            />
-          ))}
-        </MicroSidebar.More>
-        <MicroSidebar.Divider />
-        <MicroSidebar.Pinned onReorder={setPinned}>
-          {pinned.map((id) => {
-            const place = placeOf(id)
-            return (
-              <MicroSidebar.Item
-                key={id}
-                id={id}
-                icon={<Icon name={place.icon} />}
-                label={place.label}
-                current={current === id}
-                onClick={() => onCurrent(id)}
-                onUnpin={() => setPinned((l) => l.filter((x) => x !== id))}
-              />
-            )
-          })}
-        </MicroSidebar.Pinned>
-        <MicroSidebar.Foot>
-          {inFrame ? <AppFrame.Fold tooltipSide="right" /> : null}
-          <Menu>
-            <Menu.Trigger asChild>
-              <MicroSidebar.Item id="you" icon={<Glyph initial="o" label="Owen" size={24} />} label="Owen" />
-            </Menu.Trigger>
-            <Menu.Content side="right" align="end" width="wide" aria-label="account">
-              <AccountParts />
-            </Menu.Content>
-          </Menu>
-        </MicroSidebar.Foot>
-      </MicroSidebar>
+      {alone ? (
+        <div className="lib-micro-stage">
+          <WindowGround />
+          {strip}
+        </div>
+      ) : (
+        strip
+      )}
       {specimen ? (
         <p className="lib-field-readout" data-specimen={`${specimen}-pinned`}>
           pinned {pinned.join(' ') || 'none'}, current {current}
@@ -870,10 +883,7 @@ function MicroSidebarAlone({ labels, waiting, specimen }: { labels?: 'none' | 'w
   const [current, setCurrent] = React.useState('home')
   return (
     <div className="lib-micro-demo">
-      <div className="lib-micro-stage">
-        <WindowGround />
-        <MicroSidebarDemo labels={labels} waiting={waiting} current={current} onCurrent={setCurrent} specimen={specimen} />
-      </div>
+      <MicroSidebarDemo labels={labels} waiting={waiting} current={current} onCurrent={setCurrent} specimen={specimen} alone />
     </div>
   )
 }
