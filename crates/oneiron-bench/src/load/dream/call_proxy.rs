@@ -6,7 +6,12 @@
 //! and end, its status and sizes, and what tells calls apart without their
 //! text. A call that fails in transport (no connection, a reset or close
 //! before its response ended) is recorded with status 0 when its connection
-//! ends, so a lost call still counts as a failed one. A call's `schema` is the
+//! ends, so a lost call still counts as a failed one. A request cut off after
+//! its head (the server gave up, or the gateway refused it early and closed)
+//! is a call too, recorded with the bytes that came and the early answer's
+//! status, if one came. When the server's side of a connection ends, no
+//! answer can reach it any more: the proxy ends the gateway connection whole,
+//! so nothing waits on a silent gateway. A call's `schema` is the
 //! digest of the JSON schema it asks for (one per role); `retry_of` names
 //! an earlier call with the same body digest, and `extends` an earlier call
 //! whose messages are a strict prefix of this one's (a corrective call).
@@ -254,7 +259,8 @@ fn with_host(head: &[u8], host: &str) -> Vec<u8> {
     out
 }
 
-/// A request whose last byte came from the server.
+/// A request from the server: whole, or cut off after its head when its
+/// connection ended.
 struct Pending {
     seq: u64,
     start: Instant,
@@ -289,6 +295,9 @@ impl Answer {
 struct Exchange {
     unanswered: VecDeque<Pending>,
     early: VecDeque<Answer>,
+    /// The proxy ended the gateway connection itself, so the gateway's end
+    /// of it is no clean close.
+    upstream_cancelled: bool,
 }
 
 impl Exchange {
@@ -496,7 +505,11 @@ fn relay(client: TcpStream, upstream: &str, host: &str, shared: &Arc<Shared>) {
 
 /// Server to gateway: forwards each request with its `Host` line naming the
 /// gateway. A request is queued as soon as all of it came and before its
-/// last bytes go on, so its response always finds it. Without a gateway it
+/// last bytes go on, so its response always finds it; one whose head came
+/// and whose rest never did is queued when the server's side ends. Then the
+/// gateway connection ends whole (the server never half-closes, so its end
+/// means it gave up on what is in flight, as at its timeout), which ends
+/// `responses` and fails what is still unanswered. Without a gateway it
 /// reads the first request only, and closes.
 fn requests(
     mut client: TcpStream,
@@ -563,9 +576,30 @@ fn requests(
             break;
         }
     }
+    // A request cut off after its head: an answer that already ended (an
+    // early refusal) is its own, else it fails with the connection.
+    if sent > 0 {
+        let body_at = head_end(&buffer).unwrap_or(buffer.len());
+        let call = Pending {
+            seq: shared.next_seq.fetch_add(1, Ordering::Relaxed),
+            start: started.take().unwrap_or_else(Instant::now),
+            bytes: buffer.len(),
+            shape: shape(&buffer[body_at..]),
+        };
+        settle(
+            shared,
+            exchange
+                .lock()
+                .ok()
+                .and_then(|mut exchange| exchange.request(call)),
+        );
+    }
     match gateway {
         Some(gateway) => {
-            let _ = gateway.shutdown(Shutdown::Write);
+            if let Ok(mut exchange) = exchange.lock() {
+                exchange.upstream_cancelled = true;
+            }
+            let _ = gateway.shutdown(Shutdown::Both);
         }
         None => {
             let _ = client.shutdown(Shutdown::Both);
@@ -625,10 +659,15 @@ fn responses(
         }
     }
     // A response begun and not ended: a body framed by the close ends here
-    // if the gateway closed cleanly; any other was cut off, and failed.
+    // if the gateway closed cleanly (not the proxy, for a server that gave
+    // up); any other was cut off, and failed.
+    let cancelled = exchange
+        .lock()
+        .map(|exchange| exchange.upstream_cancelled)
+        .unwrap_or(false);
     if let Some(end) = head_end(&buffer) {
         let parsed = head(&buffer[..end], true);
-        let whole = closed && parsed.body == Body::UntilClose;
+        let whole = closed && !cancelled && parsed.body == Body::UntilClose;
         let answer = Answer {
             first_byte: first_byte.take(),
             end: Instant::now(),
@@ -755,19 +794,7 @@ mod tests {
             // Drops the socket: the second request is never answered.
             heads
         });
-        let jsonl = std::env::temp_dir().join(format!("call-proxy-{}.jsonl", std::process::id()));
-        let proxy = CallProxy::start(
-            &format!("http://127.0.0.1:{gateway_port}/v1"),
-            Instant::now(),
-            jsonl.clone(),
-        )
-        .expect("proxy start")
-        .expect("an http gateway is proxied");
-        let proxy_authority = proxy
-            .base_url
-            .trim_start_matches("http://")
-            .trim_end_matches("/v1")
-            .to_owned();
+        let (proxy, proxy_authority, jsonl) = start_proxy(gateway_port, "dropped");
         let mut server = TcpStream::connect(&proxy_authority).expect("connect to the proxy");
         let body: &[u8] = br#"{"model":"m","messages":[]}"#;
         let request = [
@@ -790,11 +817,7 @@ mod tests {
         let mut rest = Vec::new();
         let _ = server.read_to_end(&mut rest);
         let heads = seen.join().expect("gateway thread");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while proxy.calls().len() < 2 && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        let calls: Vec<(u64, u16)> = proxy.calls().iter().map(|c| (c.seq, c.status)).collect();
+        let calls = wait_for_calls(&proxy, 2);
         let _ = std::fs::remove_file(&jsonl);
         let (gateway_host, proxy_host) = (
             format!("\r\nHost: 127.0.0.1:{gateway_port}\r\n"),
@@ -810,6 +833,123 @@ mod tests {
             ),
             (vec![(1, 429), (2, 0)], 2, true, false, true)
         );
+    }
+
+    /// A proxy for the gateway on loopback `gateway_port`, the authority the
+    /// server dials, and the proxy's calls file (`tag` keeps it apart from
+    /// the other tests' files).
+    fn start_proxy(gateway_port: u16, tag: &str) -> (CallProxy, String, PathBuf) {
+        let jsonl =
+            std::env::temp_dir().join(format!("call-proxy-{tag}-{}.jsonl", std::process::id()));
+        let proxy = CallProxy::start(
+            &format!("http://127.0.0.1:{gateway_port}/v1"),
+            Instant::now(),
+            jsonl.clone(),
+        )
+        .expect("proxy start")
+        .expect("an http gateway is proxied");
+        let authority = proxy
+            .base_url
+            .trim_start_matches("http://")
+            .trim_end_matches("/v1")
+            .to_owned();
+        (proxy, authority, jsonl)
+    }
+
+    /// Each recorded call's seq and status, once `count` calls ended or 5 s
+    /// went by.
+    fn wait_for_calls(proxy: &CallProxy, count: usize) -> Vec<(u64, u16)> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while proxy.calls().len() < count && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        proxy
+            .calls()
+            .iter()
+            .map(|call| (call.seq, call.status))
+            .collect()
+    }
+
+    /// The gateway refuses a request from its head alone with a whole 413
+    /// and closes while the server is still sending the body. The cut-off
+    /// call is recorded with the refusal's status (review round 2, P1 1).
+    #[test]
+    fn proxy_records_an_early_refusal_that_closes_during_the_upload() {
+        let gateway = TcpListener::bind("127.0.0.1:0").expect("gateway bind");
+        let gateway_port = gateway.local_addr().expect("gateway addr").port();
+        let refusing = std::thread::spawn(move || {
+            let (mut socket, _) = gateway.accept().expect("gateway accept");
+            let (mut buffer, mut chunk) = (Vec::new(), [0_u8; 4096]);
+            while head_end(&buffer).is_none() {
+                let read = socket.read(&mut chunk).expect("gateway read");
+                assert!(read > 0, "the request head came");
+                buffer.extend_from_slice(&chunk[..read]);
+            }
+            socket
+                .write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("gateway write");
+            socket.shutdown(Shutdown::Write).expect("gateway close");
+            // Reads on until the proxy closes: an unread byte would turn the
+            // close into a reset.
+            while socket.read(&mut chunk).is_ok_and(|read| read > 0) {}
+        });
+        let (proxy, authority, jsonl) = start_proxy(gateway_port, "refused");
+        let mut server = TcpStream::connect(&authority).expect("connect to the proxy");
+        let head_and_part = format!(
+            "POST /v1/chat/completions HTTP/1.1\r\nHost: {authority}\r\nContent-Length: 1000\r\n\r\n{{\"model\":"
+        );
+        server
+            .write_all(head_and_part.as_bytes())
+            .expect("send the head and a part of the body");
+        let mut answer = Vec::new();
+        let _ = server.read_to_end(&mut answer);
+        let calls = wait_for_calls(&proxy, 1);
+        drop(server);
+        refusing.join().expect("gateway thread");
+        let _ = std::fs::remove_file(&jsonl);
+        assert_eq!(calls, vec![(1, 413)]);
+    }
+
+    /// The gateway takes a whole request and never answers, its side left
+    /// open; the server gives up (as at its timeout) and closes. The proxy
+    /// ends the gateway connection and records the call as failed (review
+    /// round 2, P1 2).
+    #[test]
+    fn proxy_fails_a_call_the_server_gave_up_on() {
+        let gateway = TcpListener::bind("127.0.0.1:0").expect("gateway bind");
+        let gateway_port = gateway.local_addr().expect("gateway addr").port();
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let silent = std::thread::spawn(move || {
+            let (mut socket, _) = gateway.accept().expect("gateway accept");
+            let (mut buffer, mut chunk) = (Vec::new(), [0_u8; 4096]);
+            while message_end(&buffer, false).is_none() {
+                let read = socket.read(&mut chunk).expect("gateway read");
+                assert!(read > 0, "the request came whole");
+                buffer.extend_from_slice(&chunk[..read]);
+            }
+            // No answer, and the write side stays open until the test ends.
+            let _ = held.recv_timeout(Duration::from_secs(30));
+            drop(socket);
+        });
+        let (proxy, authority, jsonl) = start_proxy(gateway_port, "abandoned");
+        let mut server = TcpStream::connect(&authority).expect("connect to the proxy");
+        let body: &[u8] = br#"{"model":"m","messages":[]}"#;
+        let request = [
+            format!(
+                "POST /v1/chat/completions HTTP/1.1\r\nHost: {authority}\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+            body,
+        ]
+        .concat();
+        server.write_all(&request).expect("send the request");
+        drop(server);
+        let calls = wait_for_calls(&proxy, 1);
+        let _ = release.send(());
+        silent.join().expect("gateway thread");
+        let _ = std::fs::remove_file(&jsonl);
+        assert_eq!(calls, vec![(1, 0)]);
     }
 
     #[test]
