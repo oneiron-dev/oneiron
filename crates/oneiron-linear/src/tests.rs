@@ -486,7 +486,12 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     assert_eq!(first, replay);
     assert_eq!(linear_receipts(&vault), successful);
     assert_eq!(*writes.borrow(), 1);
-    assert!(egress.create_issue(op2, task2, &fields2).is_err());
+    assert!(matches!(
+        egress.create_issue(op2, task2, &fields2),
+        Err(oneiron::LinearSyncError::Waiting(
+            oneiron::linear_sync::LinearWait::RateWindow { .. }
+        ))
+    ));
     assert_eq!(*writes.borrow(), 1);
     assert_eq!(
         vault
@@ -494,10 +499,10 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
             .expect("key read")
             .expect("key")
             .status,
-        oneiron::connector_key::ConnectorKeyStatus::Suspended,
+        oneiron::connector_key::ConnectorKeyStatus::Active,
     );
     let budget_receipts = linear_receipts(&vault);
-    assert_eq!(budget_receipts.len(), 2);
+    assert_eq!(budget_receipts.len(), 1);
     assert_eq!(
         budget_receipts
             .iter()
@@ -506,7 +511,7 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
         1
     );
     assert!(
-        budget_receipts
+        !budget_receipts
             .iter()
             .any(|row| row.outcome == "suppressed")
     );
@@ -531,19 +536,25 @@ fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
     )
     .expect("denied door");
     let mut denied = LinearHostEgress::new(denied, config()).expect("egress");
-    assert!(denied.create_issue(op3, task3, &fields3).is_err());
+    // The same full count window paces before this door's Gate facts are evaluated.
+    assert!(matches!(
+        denied.create_issue(op3, task3, &fields3),
+        Err(oneiron::LinearSyncError::Waiting(
+            oneiron::linear_sync::LinearWait::RateWindow { .. }
+        ))
+    ));
     assert_eq!(*writes.borrow(), 1);
     let denied_receipts = linear_receipts(&vault);
-    assert_eq!(denied_receipts.len(), 3);
+    assert_eq!(denied_receipts.len(), 1);
     assert_eq!(
         denied_receipts
             .iter()
             .filter(|row| row.outcome != "delivered_to_channel")
             .count(),
-        2
+        0
     );
     assert!(
-        denied_receipts
+        !denied_receipts
             .iter()
             .any(|row| row.outcome == "suppressed")
     );
