@@ -81,7 +81,7 @@ fn models_within_grant(prior: &AgentDefinition, updated: &AgentDefinition) -> bo
 }
 
 /// Whether a definition names any model choice of its own.
-fn has_model_choice(def: &AgentDefinition) -> bool {
+pub(super) fn has_model_choice(def: &AgentDefinition) -> bool {
     !def.models.is_empty()
         || def.compaction_model.is_some()
         || def.model_tier.is_some()
