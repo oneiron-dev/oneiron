@@ -66,7 +66,7 @@ pub(super) fn owner_row(
 /// The log of `shape`: genesis, then the owner's rows.
 pub(super) fn scale_log(shape: &str, rows: usize) -> Vec<AuthorityLogEntry> {
     let owner = ed_key(91);
-    let genesis = genesis_entry(91, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(91, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let root = authority_entry_hash(&genesis).unwrap();
     let mut entries = vec![genesis];

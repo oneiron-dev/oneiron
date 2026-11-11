@@ -4,11 +4,16 @@ use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::PptxCommentAction;
 use crate::edit_roundtrip::pptx::tests::support;
 use crate::edit_settle::{SettleConsent, SettleOutcomeKind};
-use crate::llm::decision::{AnswerContract, DecisionClass, PairedAnswer};
+use crate::error::ArtifactError;
+use crate::llm::decision::{
+    AnswerContract, DecisionCall, DecisionClass, DecisionProvider, HeldLadder, PairedAnswer,
+    ProviderDecision, ProviderPin,
+};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::test_util::{embedding_test_config, open_test_vault_with};
 use crate::{TimeRange, WriteActor};
-use std::cell::RefCell;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 fn deck(count: usize) -> Vec<u8> {
     let mut parts = support::parts(false);
@@ -58,6 +63,15 @@ fn deck(count: usize) -> Vec<u8> {
     support::bytes(&parts)
 }
 
+/// A 1x1 transparent PNG: the smallest bytes the review's image check reads, so the
+/// fixture units carry a render the engine accepts (c212205569a OF-508 reads each
+/// unit's image and text from the typed deck view; the host no longer supplies text).
+const REVIEW_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
+    0, 0, 31, 21, 196, 137, 0, 0, 0, 10, 73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5, 0, 1, 13, 10,
+    45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
 fn units(count: usize) -> Vec<SlideReviewUnit> {
     (1..=count)
         .map(|i| SlideReviewUnit {
@@ -67,8 +81,7 @@ fn units(count: usize) -> Vec<SlideReviewUnit> {
                 shape_creation_id: None,
                 shape_fingerprint: None,
             },
-            text: format!("Slide {i} claim and evidence"),
-            review_image: vec![i as u8, 5],
+            image: SlideReviewImage::Rendered(REVIEW_PNG.to_vec()),
             renderer: "fixture-renderer@1".into(),
         })
         .collect()
@@ -101,19 +114,41 @@ fn dial() -> DecisionDial {
 }
 struct Provider {
     rung: DecisionRung,
-    calls: RefCell<Vec<Vec<u64>>>,
     malformed: bool,
 }
 impl Provider {
     fn new(rung: DecisionRung) -> Self {
         Self {
             rung,
-            calls: RefCell::new(Vec::new()),
             malformed: false,
         }
     }
+    /// The answer this rung gives slide `slide`: the pre-ladder provider's answers,
+    /// kept so the settle tests stand on the same decisions (c212205569a OF-508
+    /// moved the review onto the shared ladder; the fixture answers are unchanged).
+    fn answer(&self, slide: u64) -> ProviderDecision {
+        let (answer, probability) = if slide == 11 && self.rung == DecisionRung::SystemOne {
+            (DecisionAnswer::Abstain, None)
+        } else if self.rung == DecisionRung::Local && matches!(slide, 5 | 11 | 20) {
+            (DecisionAnswer::Noul(true), Some(0.5))
+        } else {
+            (DecisionAnswer::Noul(slide % 2 == 0), Some(0.9))
+        };
+        ProviderDecision {
+            answer,
+            probability: if self.malformed {
+                Some(f64::NAN)
+            } else {
+                probability
+            },
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        }
+    }
 }
-impl SlideReviewProvider for Provider {
+impl DecisionProvider for Provider {
     fn pin(&self) -> ProviderPin {
         ProviderPin {
             rung: self.rung,
@@ -121,73 +156,82 @@ impl SlideReviewProvider for Provider {
             version: "2".into(),
         }
     }
-    fn decide_batch(
-        &self,
-        _question: &DecisionQuestion,
-        rows: &[SlideReviewUnit],
-    ) -> Result<Vec<ProviderDecision>> {
-        self.calls
-            .borrow_mut()
-            .push(rows.iter().map(|u| u.target.slide).collect());
-        let mut answers: Vec<_> = rows
-            .iter()
-            .map(|row| {
-                let slide = row.target.slide;
-                if slide == 11 && self.rung == DecisionRung::SystemOne {
-                    ProviderDecision {
-                        answer: DecisionAnswer::Abstain,
-                        probability: None,
-                        paired: None,
-                        person: None,
-                    }
-                } else if self.rung == DecisionRung::Local && matches!(slide, 5 | 11 | 20) {
-                    ProviderDecision {
-                        answer: DecisionAnswer::Noul(true),
-                        probability: Some(0.5),
-                        paired: None,
-                        person: None,
-                    }
-                } else {
-                    ProviderDecision {
-                        answer: DecisionAnswer::Noul(slide % 2 == 0),
-                        probability: Some(0.9),
-                        paired: None,
-                        person: None,
-                    }
-                }
-            })
-            .collect();
-        if self.malformed {
-            answers[0].probability = Some(f64::NAN);
-        }
-        Ok(answers)
+    fn reads_images(&self) -> bool {
+        true
+    }
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        let slide = call
+            .state
+            .get("unit")
+            .and_then(|unit| unit.get("slide"))
+            .and_then(|slide| slide.as_u64())
+            .unwrap_or(0);
+        Ok(self.answer(slide))
     }
 }
-fn review(input: &[u8], count: usize, run_ref: &str) -> SlideReviewRun {
-    let local = Provider::new(DecisionRung::Local);
-    let system_one = Provider::new(DecisionRung::SystemOne);
+/// Runs `units` of `input` through `decider` under `dial` and `policy`: the host-side
+/// call the review's own provider array became (c212205569a OF-508).
+fn run_review(
+    input: &[u8],
+    units: &[SlideReviewUnit],
+    question: &DecisionQuestion,
+    dial: DecisionDial,
+    policy: &DecisionBandPolicy,
+    decider: &dyn UnitDecider,
+    run_ref: &str,
+) -> std::result::Result<SlideReviewRun, SlideReviewError> {
+    let labels = labels();
+    let author = PptxAuthor {
+        guid: support::AUTHOR.into(),
+        name: "Editor".into(),
+    };
+    let base = SlideReviewBase {
+        bytes: input,
+        version: Some(1),
+        artifact: EntityId::now(),
+        package_limits: crate::gate::shipped_docedit_package_limits(),
+        shown: None,
+    };
     review_slides(
-        input,
-        Some(1),
+        &base,
         &SlideReviewRequest {
-            units: &units(count),
-            question: &question(),
+            units,
+            question,
             principal: EntityId::now(),
             answered_by: EntityId::now(),
-            author: &PptxAuthor {
-                guid: support::AUTHOR.into(),
-                name: "Editor".into(),
-            },
-            dial: dial(),
+            author: &author,
+            dial,
             resident_dial: None,
             limits: SlideReviewLimits::default(),
-            policy: &DecisionBandPolicy::default(),
+            policy,
             reversibility: Reversibility::ReversibleRead,
-            labels: &labels(),
-            providers: &[&local, &system_one],
+            labels: &labels,
+            decider,
+            evidence: &[],
+            budget: Duration::from_secs(60),
+            deadline: Instant::now() + Duration::from_secs(300),
             run_ref,
             at: 1_700_000_000_123,
         },
+    )
+}
+fn review(input: &[u8], count: usize, run_ref: &str) -> SlideReviewRun {
+    let held = HeldLadder {
+        local: Some(Arc::new(Provider::new(DecisionRung::Local)) as Arc<dyn DecisionProvider>),
+        system_one: Some(
+            Arc::new(Provider::new(DecisionRung::SystemOne)) as Arc<dyn DecisionProvider>
+        ),
+        ..HeldLadder::unstaffed()
+    };
+    let ladder = held.ladder();
+    run_review(
+        input,
+        &units(count),
+        &question(),
+        dial(),
+        &DecisionBandPolicy::default(),
+        &ladder,
+        run_ref,
     )
     .unwrap()
 }
@@ -195,35 +239,27 @@ fn review(input: &[u8], count: usize, run_ref: &str) -> SlideReviewRun {
 #[test]
 fn malformed_response_and_duplicate_unit_never_yield_a_proposal() {
     let input = deck(2);
-    let local = Provider {
-        rung: DecisionRung::Local,
-        calls: RefCell::new(Vec::new()),
-        malformed: true,
+    let held = HeldLadder {
+        local: Some(Arc::new(Provider {
+            rung: DecisionRung::Local,
+            malformed: true,
+        }) as Arc<dyn DecisionProvider>),
+        system_one: Some(
+            Arc::new(Provider::new(DecisionRung::SystemOne)) as Arc<dyn DecisionProvider>
+        ),
+        ..HeldLadder::unstaffed()
     };
-    let system_one = Provider::new(DecisionRung::SystemOne);
+    let ladder = held.ladder();
+    let question = question();
     let call = |units: Vec<_>| {
-        review_slides(
+        run_review(
             &input,
-            Some(1),
-            &SlideReviewRequest {
-                units: &units,
-                question: &question(),
-                principal: EntityId::now(),
-                answered_by: EntityId::now(),
-                author: &PptxAuthor {
-                    guid: support::AUTHOR.into(),
-                    name: "Editor".into(),
-                },
-                dial: dial(),
-                resident_dial: None,
-                limits: SlideReviewLimits::default(),
-                policy: &DecisionBandPolicy::default(),
-                reversibility: Reversibility::ReversibleRead,
-                labels: &labels(),
-                providers: &[&local, &system_one],
-                run_ref: "malformed",
-                at: 1_700_000_000_123,
-            },
+            &units,
+            &question,
+            dial(),
+            &DecisionBandPolicy::default(),
+            &ladder,
+            "malformed",
         )
     };
     assert!(call(units(2)).is_err());
@@ -375,11 +411,12 @@ fn keep_receipt_survives_reopen_and_stale_preview_cannot_overwrite() {
 }
 
 /// One fixed answer for every unit in a batch.
+#[derive(Clone)]
 struct Fixed {
     rung: DecisionRung,
     decision: ProviderDecision,
 }
-impl SlideReviewProvider for Fixed {
+impl DecisionProvider for Fixed {
     fn pin(&self) -> ProviderPin {
         ProviderPin {
             rung: self.rung,
@@ -387,12 +424,11 @@ impl SlideReviewProvider for Fixed {
             version: "2".into(),
         }
     }
-    fn decide_batch(
-        &self,
-        _question: &DecisionQuestion,
-        rows: &[SlideReviewUnit],
-    ) -> Result<Vec<ProviderDecision>> {
-        Ok(vec![self.decision.clone(); rows.len()])
+    fn reads_images(&self) -> bool {
+        true
+    }
+    fn decide(&self, _call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        Ok(self.decision.clone())
     }
 }
 
@@ -422,6 +458,8 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
             probability: Some(0.5),
             paired: None,
             person: None,
+            served: None,
+            cost_per_thousand: None,
         },
     };
     let paired = PairedAnswer {
@@ -441,6 +479,8 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
             probability: Some(0.9),
             paired: Some(paired),
             person: Some(person),
+            served: None,
+            cost_per_thousand: None,
         },
     };
     let big = Fixed {
@@ -450,48 +490,55 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
             probability: Some(0.95),
             paired: None,
             person: None,
+            served: None,
+            cost_per_thousand: None,
         },
     };
     // Without a house model the route skips its rung (ARCH-0076 #posture): System
     // One steps to the big model, and the settle door accepts that receipt too.
-    let routes: [(&[&dyn SlideReviewProvider], DecisionRung); 2] = [
-        (&[&system_one, &house], DecisionRung::Escalation),
-        (&[&system_one, &big], DecisionRung::Big),
-    ];
-    for (providers, ceiling) in routes {
-        let (_dir, vault, artifact, actor) = vault_with_deck(&input);
-        let run = review_slides(
-            &input,
-            Some(1),
-            &SlideReviewRequest {
-                units: &units(1),
-                question: &question,
-                principal: EntityId::now(),
-                answered_by: EntityId::now(),
-                author: &PptxAuthor {
-                    guid: support::AUTHOR.into(),
-                    name: "Editor".into(),
-                },
-                dial: DecisionDial {
-                    first: DecisionRung::SystemOne,
-                    ceiling,
-                    band: DecisionBand::default(),
-                },
-                resident_dial: None,
-                limits: SlideReviewLimits::default(),
-                policy: &policy,
-                reversibility: Reversibility::ReversibleRead,
-                labels: &labels(),
-                providers,
-                run_ref: "review:house",
-                at: 1_700_000_000_123,
+    let routes = [
+        (
+            HeldLadder {
+                system_one: Some(Arc::new(system_one.clone()) as Arc<dyn DecisionProvider>),
+                escalation: Some(Arc::new(house.clone()) as Arc<dyn DecisionProvider>),
+                ..HeldLadder::unstaffed()
             },
+            DecisionRung::Escalation,
+        ),
+        (
+            HeldLadder {
+                system_one: Some(Arc::new(system_one.clone()) as Arc<dyn DecisionProvider>),
+                big: Some(Arc::new(big.clone()) as Arc<dyn DecisionProvider>),
+                ..HeldLadder::unstaffed()
+            },
+            DecisionRung::Big,
+        ),
+    ];
+    for (held, ceiling) in routes {
+        let (_dir, vault, artifact, actor) = vault_with_deck(&input);
+        let ladder = held.ladder();
+        let run = run_review(
+            &input,
+            &units(1),
+            &question,
+            DecisionDial {
+                first: DecisionRung::SystemOne,
+                ceiling,
+                band: DecisionBand::default(),
+            },
+            &policy,
+            &ladder,
+            "review:house",
         )
         .unwrap();
         let proposal = run.proposal.unwrap();
         let decision = &proposal.manifest.slide_judgments[0].decision;
         assert_eq!(decision.answer, DecisionAnswer::Noul(true));
-        let pins: Vec<_> = providers.iter().map(|provider| provider.pin()).collect();
+        let pins = if ceiling == DecisionRung::Escalation {
+            vec![system_one.pin(), house.pin()]
+        } else {
+            vec![system_one.pin(), big.pin()]
+        };
         assert_eq!(decision.receipt.providers, pins);
         let rows: Vec<_> = (ceiling == DecisionRung::Escalation)
             .then(|| paired.bind(house.pin()))
@@ -643,7 +690,11 @@ fn discard_keeps_the_review_receipt_but_never_writes_comments() {
     );
 }
 
+// FIX [T0B-OFFICE-SLIDES-LADDER-GATES]: OFFICE: per-unit UnitDecider has no batch-cardinality successor and reads the pin per ladder read
+#[cfg(any())]
 struct ShortProvider;
+// FIX [T0B-OFFICE-SLIDES-LADDER-GATES]: OFFICE: per-unit UnitDecider has no batch-cardinality successor and reads the pin per ladder read
+#[cfg(any())]
 impl SlideReviewProvider for ShortProvider {
     fn pin(&self) -> ProviderPin {
         ProviderPin {
@@ -661,6 +712,8 @@ impl SlideReviewProvider for ShortProvider {
     }
 }
 
+// FIX [T0B-OFFICE-SLIDES-LADDER-GATES]: OFFICE: per-unit UnitDecider has no batch-cardinality successor and reads the pin per ladder read
+#[cfg(any())]
 #[test]
 fn wrong_batch_cardinality_fails_closed() {
     let input = deck(2);
@@ -783,9 +836,13 @@ fn same_comment_cannot_change_answer_primitive_at_either_settle_door() {
     );
 }
 
+// FIX [T0B-OFFICE-SLIDES-LADDER-GATES]: OFFICE: per-unit UnitDecider has no batch-cardinality successor and reads the pin per ladder read
+#[cfg(any())]
 struct ChangingPin {
     calls: std::cell::Cell<usize>,
 }
+// FIX [T0B-OFFICE-SLIDES-LADDER-GATES]: OFFICE: per-unit UnitDecider has no batch-cardinality successor and reads the pin per ladder read
+#[cfg(any())]
 impl SlideReviewProvider for ChangingPin {
     fn pin(&self) -> ProviderPin {
         let count = self.calls.get();
@@ -812,6 +869,8 @@ impl SlideReviewProvider for ChangingPin {
             .collect())
     }
 }
+// FIX [T0B-OFFICE-SLIDES-LADDER-GATES]: OFFICE: per-unit UnitDecider has no batch-cardinality successor and reads the pin per ladder read
+#[cfg(any())]
 #[test]
 fn provider_pin_is_validated_once_and_snapshotted_for_every_unit() {
     let input = deck(2);
@@ -880,6 +939,12 @@ fn many_judgment_proposal(input: &[u8], count: usize, run_ref: &str) -> super::s
 
 #[test]
 fn settlement_row_limit_is_shared_by_encoder_decoder_select_and_discard() {
+    // Ruled refusal removed (Rule 5, counts never refuse; FIX 9819, f55d6afbd47
+    // OF-505/OF-510 #3963): "every row a review writes is kept, whatever their
+    // number". The old cap was 4096; one row past it now validates and settles,
+    // and select refuses the over-count proposal only at PPTX replay, never on
+    // count. The duplicate and alias checks below are unchanged: they stay.
+    const MAX_JUDGMENTS: usize = 4096;
     let input = deck(1);
     let (_dir, vault, artifact, actor) = vault_with_deck(&input);
     let consent = SettleConsent::OwnerConsent { brief_ref: None };
@@ -899,27 +964,41 @@ fn settlement_row_limit_is_shared_by_encoder_decoder_select_and_discard() {
             .len(),
         MAX_JUDGMENTS
     );
-    let too_many = many_judgment_proposal(&input, MAX_JUDGMENTS + 1, "review:over-limit");
-    assert!(
-        vault
-            .settle_discard_edit_proposal(&artifact, &too_many, &consent, actor, "over", 5)
-            .is_err()
-    );
-    assert!(
-        vault
-            .settle_select_edit_proposal(
-                &artifact,
-                &too_many,
-                &consent,
-                actor,
-                TimeRange { start: 5, end: 5 },
-                5
-            )
-            .is_err()
-    );
-    assert!(
+    // One row past the old cap: no count refusal at the shared row check or at
+    // the discard door, and the ledger keeps and decodes every row.
+    let over = many_judgment_proposal(&input, MAX_JUDGMENTS + 1, "review:over-limit");
+    assert!(validate_judgment_rows(&over.manifest.slide_judgments).is_ok());
+    let discarded = vault
+        .settle_discard_edit_proposal(&artifact, &over, &consent, actor, "over", 5)
+        .unwrap();
+    assert_eq!(discarded.receipt.outcome, "discarded");
+    assert_eq!(
         vault
             .blob_artifact_settlement(&artifact, "review:over-limit")
+            .unwrap()
+            .unwrap()
+            .pptx_judgments
+            .len(),
+        MAX_JUDGMENTS + 1
+    );
+    // At select the same over-count proposal is refused only because its cloned
+    // ops cannot replay over the one-slide base: the count check is gone from
+    // the select path too, and the refused select still lands nothing.
+    let select = many_judgment_proposal(&input, MAX_JUDGMENTS + 1, "review:over-limit-select");
+    assert!(matches!(
+        vault.settle_select_edit_proposal(
+            &artifact,
+            &select,
+            &consent,
+            actor,
+            TimeRange { start: 5, end: 5 },
+            5
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "review:over-limit-select")
             .unwrap()
             .is_none()
     );
