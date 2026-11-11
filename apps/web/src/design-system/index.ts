@@ -14,7 +14,19 @@ export { IconAction, type IconActionProps } from './primitives/IconAction'
 export { InfoMark, type InfoMarkProps } from './primitives/InfoMark'
 export { PrimaryButton, type PrimaryButtonProps } from './primitives/PrimaryButton'
 export { Figure, type FigureProps } from './primitives/Figure'
-export { Tabs, type TabsProps, type TabsListProps, type TabsTabProps, type TabsPanelProps } from './primitives/Tabs'
+export {
+  Tabs,
+  PIN_NOTE,
+  pinsFold,
+  pinPress,
+  type TabsProps,
+  type TabsListProps,
+  type TabsTabProps,
+  type TabsPinProps,
+  type TabsDividerProps,
+  type TabsAddProps,
+  type TabsPanelProps,
+} from './primitives/Tabs'
 export { Unfold, type UnfoldProps, type UnfoldTriggerProps, type UnfoldContentProps } from './primitives/Unfold'
 export { Icon, ICON_NAMES, type IconName, type IconProps } from './primitives/Icon'
 
@@ -85,6 +97,34 @@ export {
 } from './patterns/NeedsYou'
 export { formatAnswerTime } from './patterns/answer-time'
 export {
+  ComposedCard,
+  type ComposedCardProps,
+  type ComposedCardTableProps,
+  type ComposedCardHeadProps,
+  type ComposedCardRowProps,
+  type ComposedCardCellProps,
+  type ComposedCardPickCellProps,
+  type ComposedCardFootProps,
+  type ComposedCardPicksProps,
+  type ComposedCardReadingProps,
+  type ComposedCardFiguresProps,
+} from './patterns/ComposedCard'
+export { BarChart, BAR_SCREEN_MASK_ID, type BarChartProps } from './patterns/BarChart'
+export {
+  barChartLayout,
+  highestIndex,
+  valueLabelBaseline,
+  BAR_CHART_ASPECT,
+  type BarPeriod,
+  type BarRange,
+  type BarChartInput,
+  type BarChartLayout,
+  type BarMark,
+  type BarRing,
+  type BarLabel,
+} from './patterns/bar-chart-layout'
+export { TaskFlow, type TaskFlowProps, type TaskFlowTaskProps } from './patterns/TaskFlow'
+export {
   settleReducer,
   SETTLE_OPEN,
   type SettleState,
@@ -127,6 +167,9 @@ export {
   paneBounds,
   paneTrack,
   thingPlaceholder,
+  thingLiesOver,
+  thingOverWidth,
+  THING_OVER_GUTTER_PX,
   LIST_PANE_PX,
   THING_PANE_MIN_PX,
   THING_PANE_MAX_PX,
@@ -151,7 +194,8 @@ export {
 export { composerKeySends, composerSendText, type ComposerKeyState } from './patterns/composer-keys'
 export { OutsideLine, type OutsideLineProps, type OutsideLineGroupProps, type OutsideLineGuestProps } from './patterns/OutsideLine'
 export { ConnectionRow, type ConnectionRowProps } from './patterns/ConnectionRow'
-export { FileRow, type FileRowProps } from './patterns/FileRow'
+export { FileRow, type FileRowProps, type FileRowListProps } from './patterns/FileRow'
+export { PinnedList, PINNED_LIST_NOTE, type PinnedListProps } from './patterns/PinnedList'
 export { FileGroup, type FileGroupProps } from './patterns/FileGroup'
 export {
   LedgerTable,
@@ -211,6 +255,7 @@ export {
 export { splitChildRows, SIDEBAR_CHILD_ROWS_SHOWN, type ChildRowSplit } from './frame/sidebar-tree'
 export { AppFrame, type AppFrameProps, type AppFrameFoldProps } from './frame/AppFrame'
 export { PlaceHead, type PlaceHeadProps } from './frame/PlaceHead'
+export { RoomHead, ROOM_VIEWS, type RoomHeadProps, type RoomPins } from './frame/RoomHead'
 export { peekReducer, PEEK_CLOSED, PEEK_DELAY_MS, PEEK_WARM_MS, type PeekState, type PeekAction } from './frame/frame-peek'
 export { moveItem, dropIndex, leadingEdge, shiftFor } from './frame/reorder'
 export { VaultSwitch, type VaultSwitchProps, type VaultSwitchVault } from './frame/VaultSwitch'

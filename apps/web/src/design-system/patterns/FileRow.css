@@ -41,3 +41,64 @@
 .sl-file-time {
   text-align: right;
 }
+
+/* A mark in place of the kind: a portrait. */
+.sl-file-mark {
+  display: grid;
+  place-items: center;
+}
+
+/* ── in a list ── */
+
+/* The list: as wide as the messages column, its portrait gutter and the
+   row's own inset. Kind, name, pin mark, who, time. */
+.sl-file-list {
+  display: flex;
+  flex-direction: column;
+  max-width: calc(var(--sl-col) + 52px);
+}
+
+.sl-file-list-head,
+.sl-file-row[data-layout="list"] {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 16px 132px 52px;
+  column-gap: 12px;
+  align-items: center;
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 0 8px;
+}
+
+.sl-file-list-head {
+  padding-bottom: 4px;
+  font-size: var(--sl-t-figure);
+  line-height: 1.5;
+  color: var(--sl-ink-3);
+}
+
+.sl-file-list-time {
+  text-align: right;
+}
+
+.sl-file-row[data-layout="list"] {
+  min-height: 40px;
+  color: var(--sl-ink-1);
+}
+
+.sl-file-row[data-layout="list"] > .sl-icon {
+  justify-self: center;
+  width: 17px;
+  height: 17px;
+  color: var(--sl-ink-3);
+}
+
+.sl-file-row[data-layout="list"]:hover,
+.sl-file-row[data-layout="list"]:focus-visible {
+  background: var(--sl-lit);
+}
+
+.sl-file-pin {
+  display: grid;
+  place-items: center;
+  color: var(--sl-ink-3);
+}

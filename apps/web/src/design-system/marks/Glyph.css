@@ -10,6 +10,11 @@
   vertical-align: middle;
 }
 
+.sl-glyph[data-size="16"] {
+  width: 16px;
+  height: 16px;
+}
+
 .sl-glyph[data-size="18"] {
   width: 18px;
   height: 18px;
@@ -40,6 +45,11 @@
   font-family: var(--sl-serif);
   font-size: var(--sl-t-do);
   line-height: 1;
+}
+
+/* At 16 px a person's initial takes the badge size. */
+.sl-glyph[data-kind="person"][data-size="16"] {
+  font-size: var(--sl-t-badge);
 }
 
 .sl-glyph[data-shape="rounded"] {
