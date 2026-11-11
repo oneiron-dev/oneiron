@@ -6,7 +6,7 @@ use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
 use crate::outbound_chokepoint::{PreparedAuthorization, PreparedEffect};
 use crate::outbound_consent::{DataClass, OutboundBindingAuthority, ScopedMcpCallContext};
-use crate::outbound_grant::ScopedMcpGrantMintIntent;
+use crate::outbound_grant::StandingOutboundGrantScope;
 use crate::outbound_intent_ledger::BudgetClass;
 
 pub(super) fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -37,24 +37,25 @@ pub(super) fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixtur
 
     let grant_id = EntityId::from_bytes([0x90; 16]).expect("grant id");
     let principal_ref = "principal:oracle".to_owned();
+    let grant_owner = crate::test_util::embedded_owner_proof(vault);
     vault
-        .mint_scoped_mcp_outbound_grant(
-            &grant_id,
-            &ScopedMcpGrantMintIntent {
-                principal_ref: principal_ref.clone(),
-                origin_component_id: "consent:oracle".to_owned(),
-                origin_action_id: "grant:oracle".to_owned(),
-                origin_receipt_ref: Some("gate:oracle".to_owned()),
-                server: "files".to_owned(),
-                tool: "read_file".to_owned(),
-                data_class_ceiling: DataClass::Personal,
-                tool_data_classes: vec![
-                    crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-                ],
-                endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-            },
-            10,
-        )
+        .with_write_txn(|wtxn| {
+            vault.mint_standing_outbound_grant_in_txn(
+                wtxn,
+                &grant_owner,
+                grant_id,
+                &principal_ref,
+                StandingOutboundGrantScope::ScopedMcp {
+                    server: "files".to_owned(),
+                    tool: "read_file".to_owned(),
+                    data_class_ceiling: DataClass::Personal,
+                    tool_data_classes: vec![
+                        crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+                    ],
+                    endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+                },
+            )
+        })
         .expect("mint oracle scoped grant");
     let key_id = EntityId::from_bytes([0x92; 16]).expect("connector key id");
     vault
@@ -138,7 +139,7 @@ pub(super) fn oracle_prepared_effect(
     idempotency_supported: bool,
 ) -> PreparedEffect {
     let call = fixture.call.clone();
-    let prepared = vault
+    let crate::outbound_consent::tool_call::ConnectorToolCallPreparation::Ready(prepared) = vault
         .prepare_connector_tool_call(
             &fixture.key_id,
             call.clone(),
@@ -153,7 +154,10 @@ pub(super) fn oracle_prepared_effect(
             &serde_json::json!({"fixture_bytes": payload}),
             crate::outbound_consent::tool_call::MutationIntent::default(),
         )
-        .expect("prepare oracle tool call");
+        .expect("prepare oracle tool call")
+    else {
+        panic!("the oracle tool call is ready without an owner press");
+    };
     PreparedEffect {
         attempt_id,
         call_seq,
@@ -186,6 +190,7 @@ pub(super) fn oracle_prepared_effect(
             has_opted_in: false,
             has_permission: false,
             policy_risk: crate::gate::ExternalEffectPolicyRisk::Normal,
+            send_autonomy: None,
         },
         budget_class: BudgetClass::Send,
         authorization: PreparedAuthorization::ScopedMcp {
@@ -198,5 +203,7 @@ pub(super) fn oracle_prepared_effect(
         dedupe_key: None,
         suppression_receipt: None,
         admission_ceiling: None,
+        co_actor: None,
+        exclusive_route: None,
     }
 }

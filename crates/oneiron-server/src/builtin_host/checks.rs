@@ -19,7 +19,7 @@ use oneiron::Vault;
 use oneiron::channel_identity_provider::stalwart::StalwartClient;
 use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::egress::EgressConfig;
-use oneiron::code_sandbox::microvm::select_backend_for_session;
+use oneiron::code_sandbox::microvm::{SandboxBackends, select_backend_for_session};
 use oneiron::connector_key::qualification::QualificationConnector;
 use oneiron::connector_key::{
     BROWSER_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK, PackConnectionCheck, PackConnectionEvidence,
@@ -73,6 +73,7 @@ impl PackConnectionVerifier for HostConnectionChecks {
                     .ok_or_else(|| "this host has no [browser] runtime bound".to_owned())?;
                 browser_session_ready(
                     guest,
+                    &*vault.runtime().sandbox_backends(),
                     self.browser_handles.charge(),
                     &self.browser_readiness,
                     vault.host_net_floor(),
@@ -165,14 +166,17 @@ pub(super) fn native_mail_authorization(
 /// evidence is the digest of what the guest's fence proved. Each phase's
 /// outcome moves `readiness` (FIX 7670), and leaves the check's own answer
 /// as it was. The session's sockets and threads charge `floor`, the vault's
-/// host floor (FIX 6300).
+/// host floor (FIX 6300). Its backend comes from `backends`, the set the
+/// vault carries (F1-6).
 fn browser_session_ready(
     guest: &BrowserGuest,
+    backends: &dyn SandboxBackends,
     retention: Box<dyn HandleRetention>,
     readiness: &BrowserReadinessCell,
     floor: Arc<dyn HostNetFloor>,
 ) -> Result<PackConnectionEvidence, String> {
     let backend = select_backend_for_session(
+        backends,
         SandboxGuestTier::Untrusted,
         guest.runtime.clone(),
         &guest.image,

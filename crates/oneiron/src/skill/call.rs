@@ -5,8 +5,6 @@ use serde_json::Value as JsonValue;
 mod answer;
 mod frozen;
 mod json_tokens;
-#[cfg(test)]
-mod tests;
 
 pub use self::answer::CallableSkillAnswer;
 pub use self::frozen::{
@@ -123,7 +121,8 @@ pub(crate) fn callable_script(args: &JsonValue, source: &str) -> Result<String> 
     ))
 }
 
-/// Lends a tier other than first-party its isolated lane's egress proxy for
+/// Lends a tier other than first-party its isolated lane: the isolating
+/// backends the vault's host installed (F1-6), the egress proxy for
 /// `run_id`, and its proposal spool.
 fn bind_isolated_lane(
     vault: &std::sync::Arc<Vault>,
@@ -134,6 +133,7 @@ fn bind_isolated_lane(
     if tier == SandboxGuestTier::FirstPartyDreamer {
         return Ok(());
     }
+    runtime.bind_sandbox_backends(vault.runtime().sandbox_backends());
     runtime.bind_foreign_egress(std::sync::Arc::new(
         crate::code_sandbox::egress::OpenEgressProxy::new(
             std::sync::Arc::clone(vault),

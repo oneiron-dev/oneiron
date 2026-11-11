@@ -154,13 +154,7 @@ pub fn unit_interval_f32(value: &Value) -> Option<f32> {
     let parsed = match value {
         Value::F32(v) => f64::from(*v),
         Value::F64(v) => *v,
-        Value::Integer(v) => {
-            if let Some(i) = v.as_i64() {
-                i as f64
-            } else {
-                return None;
-            }
-        }
+        Value::Integer(v) => v.as_i64()? as f64,
         _ => return None,
     };
 

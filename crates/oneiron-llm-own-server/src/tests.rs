@@ -21,6 +21,7 @@ fn response() -> LlmResponse {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text {
                 text: "answer".into(),
+                signature: None,
             }],
         },
         usage: LlmUsage {
@@ -34,8 +35,11 @@ fn response() -> LlmResponse {
                 reasoning: 0,
             },
             raw_provider: json!({}),
+            call_metadata: None,
         },
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 fn fixture() -> (tempfile::TempDir, Vault, LlmRequest) {
@@ -57,12 +61,16 @@ fn fixture() -> (tempfile::TempDir, Vault, LlmRequest) {
                     output_per_million: "0".into(),
                     cache_read_per_million: None,
                     cache_write_per_million: None,
+                    currency: None,
                 }),
                 capabilities: vec![LlmCapability::Streaming],
                 metadata: BTreeMap::new(),
             },
             scores: BTreeMap::new(),
             fetched_at: BTreeMap::new(),
+            tokens_per_o200k: None,
+            stale_since: None,
+            source_rows: None,
         })
         .unwrap();
     let request = LlmRequest {
@@ -78,6 +86,8 @@ fn fixture() -> (tempfile::TempDir, Vault, LlmRequest) {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -102,6 +112,7 @@ fn malformed_stream_events_are_refused_before_publication() {
                 message: terminal.message,
                 usage: terminal.usage,
                 finish_reason: terminal.finish_reason,
+                reply_assertions: Default::default(),
             }));
             Ok(LlmStream::new(Sequence(events.into())))
         }
@@ -120,6 +131,7 @@ fn malformed_stream_events_are_refused_before_publication() {
             call_id: "call".into(),
             name: "f".into(),
             input: json!({}),
+            signature: None,
         }],
         vec![
             tool_start.clone(),
@@ -128,6 +140,7 @@ fn malformed_stream_events_are_refused_before_publication() {
                 call_id: "call".into(),
                 name: "f".into(),
                 input: json!(42),
+                signature: None,
             },
         ],
         vec![
@@ -137,12 +150,14 @@ fn malformed_stream_events_are_refused_before_publication() {
                 call_id: "other".into(),
                 name: "f".into(),
                 input: json!({}),
+                signature: None,
             },
         ],
         vec![
             tool_start,
             LlmStreamEvent::TextEnd {
                 part_id: "t".into(),
+                signature: None,
             },
         ],
         vec![
@@ -203,6 +218,7 @@ fn malformed_stream_events_are_refused_before_publication() {
             call_id: "call".into(),
             name: "f".into(),
             input: json!({}),
+            signature: None,
         },
         LlmStreamEvent::ImageStart {
             part_id: "i".into(),

@@ -516,6 +516,69 @@ fn wide(bytes: usize) -> u64 {
     u64::try_from(bytes).unwrap_or(u64::MAX)
 }
 
+/// The memory the crate's unit tests run under: a service that grants every
+/// reservation, and one operation's limits and ledger over it.
+#[cfg(test)]
+pub(crate) mod testing {
+    #![allow(clippy::expect_used)]
+
+    use std::sync::{Arc, LazyLock};
+
+    use super::{
+        AdmittedBytes, MemoryLedger, SealMemory, SealMemoryProvider, SealMemoryRefusal, SharedBytes,
+    };
+    use crate::api::SealResourceLimits;
+    use crate::error::SealStage;
+
+    /// Grants every reservation and holds nothing.
+    pub(crate) struct GrantAllMemory;
+
+    impl SealMemory for GrantAllMemory {
+        fn reserve(&self, _bytes: u64) -> Result<Box<dyn Send>, SealMemoryRefusal> {
+            Ok(Box::new(()))
+        }
+    }
+
+    /// The default limits, naming [`GrantAllMemory`] as their memory service:
+    /// what an engine's config carries.
+    pub(crate) fn grant_all_limits() -> SealResourceLimits {
+        SealResourceLimits {
+            memory: SealMemoryProvider::new(Arc::new(GrantAllMemory)),
+            ..SealResourceLimits::default()
+        }
+    }
+
+    /// [`grant_all_limits`], opened as one operation with its own ledger.
+    pub(crate) fn operation_limits() -> SealResourceLimits {
+        grant_all_limits()
+            .operation(SealStage::Verification)
+            .expect("a configured memory service opens an operation")
+    }
+
+    /// One operation over [`GrantAllMemory`] that lives as long as the test
+    /// process, for a helper that returns something borrowing its limits
+    /// (a verifier's `Checks`).
+    pub(crate) fn process_operation_limits() -> &'static SealResourceLimits {
+        static LIMITS: LazyLock<SealResourceLimits> = LazyLock::new(operation_limits);
+        &LIMITS
+    }
+
+    /// The ledger of one fresh operation over [`GrantAllMemory`].
+    pub(crate) fn operation_ledger() -> Arc<MemoryLedger> {
+        operation_limits()
+            .memory
+            .ledger()
+            .expect("an operation has a ledger")
+    }
+
+    /// A copy of `bytes` admitted under [`GrantAllMemory`] and shared, as a
+    /// fetch response or a gathered CRL holds its bytes.
+    pub(crate) fn shared_bytes(bytes: &[u8]) -> SharedBytes {
+        let memory = SealMemoryProvider::new(Arc::new(GrantAllMemory));
+        Arc::new(AdmittedBytes::copy_from(&memory, bytes).expect("grant-all memory admits a copy"))
+    }
+}
+
 /// The ledger changes in one step under its lock, so a holder that panicked
 /// left it whole.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

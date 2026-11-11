@@ -13,6 +13,7 @@ fn put_replay(vault: &crate::Vault, entry: &AuthorityLogEntry, learned: u64) -> 
             ENTITY_TYPE_AUTHORITY_LOG,
             TimeRange { start: 1, end: 1 },
             learned,
+            None,
             &body,
         )
         .commit()
@@ -46,7 +47,7 @@ fn stale_approval_fixture() -> (Vec<AuthorityLogEntry>, AuthorityKey, EntityId) 
     let witness = ed_key(186);
     let owner_key = authority_key_from_ed(&owner);
     let successor_key = authority_key_from_ed(&successor);
-    let mut genesis = genesis_entry(184, DEFAULT_PENDING_WIDEN_DELAY_SECS, u64::MAX);
+    let mut genesis = genesis_entry(184, u64::MAX);
     if let AuthorityOp::Genesis { device, .. } = &mut genesis.op {
         device.tier = AuthorityTier::Hardware;
     }
@@ -196,7 +197,7 @@ fn stale_approval_expires_by_first_seen_age_without_losing_descendant_revoke() {
 fn signer_hwm_survives_reopen_without_rejecting_original_withdrawals() {
     let dir = tempfile::tempdir().unwrap();
     let owner = ed_key(181);
-    let genesis = genesis_entry(181, DEFAULT_PENDING_WIDEN_DELAY_SECS, u64::MAX);
+    let genesis = genesis_entry(181, u64::MAX);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let first = slip_withdrawal(vault_id, &genesis, &owner, 1, 1);
     let high = slip_withdrawal(vault_id, &first, &owner, 10, 2);
@@ -244,7 +245,7 @@ fn signer_hwm_survives_reopen_without_rejecting_original_withdrawals() {
 #[test]
 fn late_causal_withdrawal_ancestors_heal_without_unrelated_rollback() {
     let owner = ed_key(181);
-    let genesis = genesis_entry(181, DEFAULT_PENDING_WIDEN_DELAY_SECS, u64::MAX);
+    let genesis = genesis_entry(181, u64::MAX);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let middle = slip_withdrawal(vault_id, &genesis, &owner, 5, 11);
     let tip = slip_withdrawal(vault_id, &middle, &owner, 10, 12);
@@ -270,6 +271,7 @@ fn late_causal_withdrawal_ancestors_heal_without_unrelated_rollback() {
                     ENTITY_TYPE_AUTHORITY_LOG,
                     TimeRange { start: 1, end: 1 },
                     1,
+                    None,
                     &encode_authority_log_entry_body(&outsider).unwrap(),
                 )
                 .commit()
@@ -299,7 +301,7 @@ fn store_re_rooted_confirm(vault: &crate::Vault) -> (AuthorityEntryHash, Authori
     let owner = ed_key(194);
     let owner_key = authority_key_from_ed(&owner);
     let host_key = authority_key_from_ed(&ed_key(195));
-    let genesis = genesis_entry(194, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(194, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let confirm = sign_ed(
         unsigned_entry(

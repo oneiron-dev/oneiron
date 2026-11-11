@@ -14,7 +14,7 @@ fn bind_rebind_revoke_ops_roundtrip_and_golden_vectors() {
         rebind_op(&key, actor, "agent", 2),
         revoke_actor_op(&key, 3),
     ] {
-        let decoded = decode_op(&op_value_with_genesis_delay(&op, true)).unwrap();
+        let decoded = decode_op(&op_value(&op)).unwrap();
         assert_eq!(
             decoded, op,
             "op must survive a canonical encode/decode cycle"
@@ -84,7 +84,7 @@ fn bind_rebind_revoke_ops_roundtrip_and_golden_vectors() {
             ),
         ),
     ] {
-        let encoded = encode_value(&op_value_with_genesis_delay(&op, true)).unwrap();
+        let encoded = encode_value(&op_value(&op)).unwrap();
         assert_eq!(
             hex(&encoded),
             golden,
@@ -107,7 +107,7 @@ fn bind_rebind_revoke_ops_roundtrip_and_golden_vectors() {
     // bind body is the correct pre-release behavior, and the reverse (this
     // binary meeting a future kind) must stay a hard error, never a silent
     // default.
-    let mut unknown = op_value_with_genesis_delay(&bind_op(&key, actor, "human", 1), true)
+    let mut unknown = op_value(&bind_op(&key, actor, "human", 1))
         .as_map()
         .unwrap()
         .clone();
@@ -191,7 +191,7 @@ fn bind_op_validate_rows() {
     }
 
     // Reserved-sentinel actor_ref fails DECODE (from_hex routes from_bytes).
-    let mut fields = op_value_with_genesis_delay(&bind_op(&key, actor, "human", 1), true)
+    let mut fields = op_value(&bind_op(&key, actor, "human", 1))
         .as_map()
         .unwrap()
         .clone();
@@ -760,7 +760,7 @@ fn atomic_genesis_owner_binding_door() {
 
     // The genesis owner-binding ceremony: a single-key roster needs no cosign,
     // so [genesis, bind] is one atomic host call.
-    let genesis = genesis_entry(207, DEFAULT_PENDING_WIDEN_DELAY_SECS, 200);
+    let genesis = genesis_entry(207, 200);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let owner = ed_key(207);
     let owner_key = authority_key_from_ed(&owner);

@@ -22,7 +22,10 @@
 use core::assert_matches;
 use std::sync::Arc;
 
+use crate::sync_harness::bulk_state_envelope;
 use crate::sync_harness::make_entity_blob;
+use crate::sync_harness::open_vault_with_memory_keystore;
+use crate::sync_harness::window_update_frame;
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode};
@@ -48,7 +51,7 @@ fn test_config() -> VaultConfig {
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
     (temp, vault)
 }
 
@@ -104,7 +107,7 @@ fn remote_window_update_materializes_entity_and_survives_restart() {
     server_doc.commit();
     let update = server_doc.export(ExportMode::all_updates()).unwrap();
 
-    let msg = transport::encode_window_sync("2026-03", window_sub_tags::UPDATE, &update);
+    let msg = window_update_frame("2026-03", &update);
     let responses = client.handle_server_message(&msg).unwrap();
     assert!(responses.is_empty());
 
@@ -116,10 +119,10 @@ fn remote_window_update_materializes_entity_and_survives_restart() {
     );
 
     // The accepted remote update was persisted under the contract row
-    // format `u:w:{key}:{seq:08x}` (ARCH-0023b key table).
+    // format `u:w:{key}:{seq:016x}` (ARCH-0023b key table).
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_some(),
         "accepted remote update must persist as a u:w: row"
@@ -165,11 +168,7 @@ fn remote_tombstone_purges_entity_and_survives_restart() {
     server_doc.commit();
     let v1 = server_doc.export(ExportMode::all_updates()).unwrap();
     client
-        .handle_server_message(&transport::encode_window_sync(
-            "2026-03",
-            window_sub_tags::UPDATE,
-            &v1,
-        ))
+        .handle_server_message(&window_update_frame("2026-03", &v1))
         .unwrap();
     assert!(vault.get(&id).unwrap().is_some());
 
@@ -183,11 +182,7 @@ fn remote_tombstone_purges_entity_and_survives_restart() {
     server_doc.commit();
     let v2 = server_doc.export(ExportMode::all_updates()).unwrap();
     client
-        .handle_server_message(&transport::encode_window_sync(
-            "2026-03",
-            window_sub_tags::UPDATE,
-            &v2,
-        ))
+        .handle_server_message(&window_update_frame("2026-03", &v2))
         .unwrap();
 
     assert!(
@@ -248,11 +243,7 @@ fn failed_update_persist_discards_live_window_instead_of_running_ahead() {
         .unwrap();
 
     let err = client
-        .handle_server_message(&transport::encode_window_sync(
-            "2026-03",
-            window_sub_tags::UPDATE,
-            &update,
-        ))
+        .handle_server_message(&window_update_frame("2026-03", &update))
         .expect_err("a failed u:w: persist must surface, not be swallowed");
     assert!(
         matches!(err, TransportError::Storage(_)),
@@ -268,7 +259,7 @@ fn failed_update_persist_discards_live_window_instead_of_running_ahead() {
     // The whole persist txn aborted: no u:w: row for the failed update.
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_none()
     );
@@ -285,7 +276,7 @@ fn failed_update_persist_discards_live_window_instead_of_running_ahead() {
     // server's peer is absent from its VV, so the ONE-1127/1128 VV
     // exchange re-delivers the bytes instead of skipping them.
     vault
-        .sync_state_put("m:u_seq:w:2026-03", &0u32.to_le_bytes())
+        .sync_state_put("m:u_seq:w:2026-03", &0u64.to_le_bytes())
         .unwrap();
     let reopened = client.ensure_window("2026-03").unwrap();
     assert!(
@@ -300,7 +291,7 @@ fn failed_update_persist_discards_live_window_instead_of_running_ahead() {
 
 /// ONE-1151 reconnect dedupe: a server UPDATE frame whose ops the live doc
 /// already holds (each reconnect echoes frames the client persisted long
-/// ago) must NOT persist again — no new `u:w:{key}:{seq:08x}` row, no
+/// ago) must NOT persist again — no new `u:w:{key}:{seq:016x}` row, no
 /// `m:u_seq:w:{key}` bump, no `svf:w:{key}` stale flip, no WindowUpdated
 /// event. A frame carrying ANY new op still persists in full (the
 /// over-skip direction would silently drop accepted remote data).
@@ -324,15 +315,11 @@ fn reconnect_echo_update_is_not_repersisted_and_svf_stays_fresh() {
 
     // First delivery: persisted under the contract row + svf flipped stale.
     client
-        .handle_server_message(&transport::encode_window_sync(
-            "2026-03",
-            window_sub_tags::UPDATE,
-            &frame_one,
-        ))
+        .handle_server_message(&window_update_frame("2026-03", &frame_one))
         .unwrap();
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_some()
     );
@@ -351,7 +338,7 @@ fn reconnect_echo_update_is_not_repersisted_and_svf_stays_fresh() {
     );
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_none()
     );
@@ -359,16 +346,12 @@ fn reconnect_echo_update_is_not_repersisted_and_svf_stays_fresh() {
 
     // Reconnect echo: the SAME frame again. Nothing may change.
     let responses = client
-        .handle_server_message(&transport::encode_window_sync(
-            "2026-03",
-            window_sub_tags::UPDATE,
-            &frame_one,
-        ))
+        .handle_server_message(&window_update_frame("2026-03", &frame_one))
         .unwrap();
     assert!(responses.is_empty());
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .is_none(),
         "an echoed frame must not append a duplicate u:w: row"
@@ -378,7 +361,7 @@ fn reconnect_echo_update_is_not_repersisted_and_svf_stays_fresh() {
             .sync_state_get("m:u_seq:w:2026-03")
             .unwrap()
             .as_deref(),
-        Some(1u32.to_le_bytes().as_slice()),
+        Some(1u64.to_le_bytes().as_slice()),
         "an echoed frame must not bump the u_seq high-water mark"
     );
     assert_eq!(
@@ -405,15 +388,11 @@ fn reconnect_echo_update_is_not_repersisted_and_svf_stays_fresh() {
     server_doc.commit();
     let frame_two = server_doc.export(ExportMode::all_updates()).unwrap();
     client
-        .handle_server_message(&transport::encode_window_sync(
-            "2026-03",
-            window_sub_tags::UPDATE,
-            &frame_two,
-        ))
+        .handle_server_message(&window_update_frame("2026-03", &frame_two))
         .unwrap();
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .as_deref(),
         Some(frame_two.as_slice()),
@@ -569,7 +548,7 @@ fn fast_reconnect_omits_nothing_when_a_survivor_exists() {
     let manager_a = make_manager(&vault);
     let window = manager_a.open_window(&current).unwrap();
 
-    // Pre-seed `u:w:{current}:00000001` with an op the freshly-opened doc
+    // Pre-seed `u:w:{current}:0000000000000001` with an op the freshly-opened doc
     // does NOT hold, so persist_state's merge import diffs (firing the
     // injection). This row IS in the merge inventory → pruned.
     let seed = create_window_doc("seed", &current);
@@ -583,10 +562,10 @@ fn fast_reconnect_omits_nothing_when_a_survivor_exists() {
     seed.commit();
     let seed_bytes = seed.export(ExportMode::all_updates()).unwrap();
     vault
-        .sync_state_put(&format!("u:w:{current}:00000001"), &seed_bytes)
+        .sync_state_put(&format!("u:w:{current}:0000000000000001"), &seed_bytes)
         .unwrap();
     vault
-        .sync_state_put(&format!("m:u_seq:w:{current}"), &1u32.to_le_bytes())
+        .sync_state_put(&format!("m:u_seq:w:{current}"), &1u64.to_le_bytes())
         .unwrap();
 
     // The survivor op (transient parallel writer): absent from the merge
@@ -617,10 +596,10 @@ fn fast_reconnect_omits_nothing_when_a_survivor_exists() {
                 return;
             }
             cb_vault
-                .sync_state_put(&format!("u:w:{cb_key}:00000002"), &cb_bytes)
+                .sync_state_put(&format!("u:w:{cb_key}:0000000000000002"), &cb_bytes)
                 .unwrap();
             cb_vault
-                .sync_state_put(&format!("m:u_seq:w:{cb_key}"), &2u32.to_le_bytes())
+                .sync_state_put(&format!("m:u_seq:w:{cb_key}"), &2u64.to_le_bytes())
                 .unwrap();
         }),
     );
@@ -642,7 +621,7 @@ fn fast_reconnect_omits_nothing_when_a_survivor_exists() {
     // The survivor remains and svf is STALE.
     assert!(
         vault
-            .sync_state_get(&format!("u:w:{current}:00000002"))
+            .sync_state_get(&format!("u:w:{current}:0000000000000002"))
             .unwrap()
             .is_some(),
         "the post-merge survivor row must remain after the prune"
@@ -795,7 +774,7 @@ fn failed_bulk_persist_discards_live_window_instead_of_running_ahead() {
         .sync_state_put("d:w:2026-03", b"corrupt-snapshot")
         .unwrap();
 
-    let done = transport::encode_bulk_transfer_done("2026-03", &snapshot);
+    let done = transport::encode_bulk_transfer_done("2026-03", &bulk_state_envelope(&snapshot));
     let err = client
         .handle_server_message(&done)
         .expect_err("a failed bulk persist must surface, not be swallowed");
@@ -880,17 +859,17 @@ fn coverage_heal_second_echo_appends_no_uw_row() {
         .unwrap();
     live.doc.commit();
     vault
-        .sync_state_put("m:u_seq:w:2026-03", &0u32.to_le_bytes())
+        .sync_state_put("m:u_seq:w:2026-03", &0u64.to_le_bytes())
         .unwrap();
 
     let echo = live.doc.export(ExportMode::all_updates()).unwrap();
-    let echo_msg = transport::encode_window_sync("2026-03", window_sub_tags::UPDATE, &echo);
+    let echo_msg = window_update_frame("2026-03", &echo);
 
     // First echo heals the durable gap -> exactly one u:w: row.
     client.handle_server_message(&echo_msg).unwrap();
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_some(),
         "first echo persists the missing live-doc delta into a u:w: row"
@@ -909,7 +888,7 @@ fn coverage_heal_second_echo_appends_no_uw_row() {
     client.handle_server_message(&echo_msg).unwrap();
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .is_none(),
         "a covered echo must NOT append a second u:w: row (dedupe preserved)"
@@ -927,7 +906,7 @@ fn coverage_heal_second_echo_appends_no_uw_row() {
             .sync_state_get("m:u_seq:w:2026-03")
             .unwrap()
             .as_deref(),
-        Some(1u32.to_le_bytes().as_slice()),
+        Some(1u64.to_le_bytes().as_slice()),
         "the u_seq high-water mark must not bump on a re-echo"
     );
 }
