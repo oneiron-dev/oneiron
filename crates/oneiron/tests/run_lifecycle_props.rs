@@ -1,5 +1,5 @@
-//! Real queue operations agree with the lifecycle table for E1 and E2 events.
-//! Completion, failure and cleanup are checked only for row invariants.
+//! Real queue operations agree with the lifecycle table for E1, E2 and E3.
+//! Cleanup compares every row with its own reclaim cell.
 //! Fan-out holds are not driven: their door needs a launch record.
 //! A fixed sequence proves that each covered door accepts in this fixture, so
 //! the random sequences compare real transitions and not refusals alone.
@@ -7,15 +7,18 @@
 
 use oneiron::Vault;
 use oneiron::attempt_queue::{
-    AcceptAttemptLanding, AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord,
-    AttemptResumePoint, AttemptState, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases,
-    CompleteAttempt, EnqueueAttempt, EnqueueOutcome, FailAttempt, FinishAttemptLanding,
-    FinishLandingOutcome, ForceAttemptCancel, ForceCancelOutcome, HoldAttemptForBudget,
-    InterveneAttempt, LandingOutcome, LandingTrigger, RetryAttempt, RetryOutcome,
+    AbandonAttempt, AbandonOutcome, AcceptAttemptLanding, AttemptId, AttemptInterventionKind,
+    AttemptPlacement, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptResumePoint,
+    AttemptState, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases, CompleteAttempt,
+    CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome,
+    FinishAttemptLanding, FinishLandingOutcome, ForceAttemptCancel, ForceCancelOutcome,
+    HoldAttemptForBudget, InterveneAttempt, LandingOutcome, LandingTrigger, RequeueAttempt,
+    RetryAttempt, RetryOutcome,
 };
 use oneiron::test_doors::run_hold;
 use oneiron::test_doors::run_lifecycle::{
-    TableAnswer, TableEvent, force_cancel_authority, pause_kind, release_lease, table_answer,
+    TableAnswer, TableEvent, advance_retry, defer_enqueued, force_cancel_authority, pause_kind,
+    release_lease, table_answer,
 };
 use oneiron_testkit::{FixtureVault, TestVault, fixture_cache};
 use proptest::prelude::*;
@@ -44,6 +47,11 @@ enum Operation {
     HookHold(u8, bool, u8),
     Complete(u8, bool),
     Fail(u8, bool),
+    Abandon(u8, bool),
+    Requeue(u8, bool, u16),
+    Redirect(u8, bool),
+    Defer(u8, u16),
+    AdvanceRetry(u8),
     Retry(u8, bool, u16),
     Release(u8, bool),
     AcceptLanding(u8, bool, bool),
@@ -64,6 +72,11 @@ impl Operation {
             | Self::HookHold(index, _, _)
             | Self::Complete(index, _)
             | Self::Fail(index, _)
+            | Self::Abandon(index, _)
+            | Self::Requeue(index, _, _)
+            | Self::Redirect(index, _)
+            | Self::Defer(index, _)
+            | Self::AdvanceRetry(index)
             | Self::Retry(index, _, _)
             | Self::Release(index, _)
             | Self::AcceptLanding(index, _, _)
@@ -124,6 +137,12 @@ fn operation_strategy() -> BoxedStrategy<Operation> {
             .prop_map(|(i, v, invocation)| Operation::HookHold(i, v, invocation)),
         2 => (index.clone(), valid.clone()).prop_map(|(i, v)| Operation::Complete(i, v)),
         2 => (index.clone(), valid.clone()).prop_map(|(i, v)| Operation::Fail(i, v)),
+        2 => (index.clone(), valid.clone()).prop_map(|(i, v)| Operation::Abandon(i, v)),
+        3 => (index.clone(), valid.clone(), 1_u16..=60)
+            .prop_map(|(i, v, delay)| Operation::Requeue(i, v, delay)),
+        3 => (index.clone(), any::<bool>()).prop_map(|(i, moved)| Operation::Redirect(i, moved)),
+        3 => (index.clone(), 0_u16..=60).prop_map(|(i, delay)| Operation::Defer(i, delay)),
+        3 => index.clone().prop_map(Operation::AdvanceRetry),
         4 => (index.clone(), valid.clone(), 1_u16..=60)
             .prop_map(|(i, v, delay)| Operation::Retry(i, v, delay)),
         3 => (index.clone(), valid.clone()).prop_map(|(i, v)| Operation::Release(i, v)),
@@ -191,6 +210,7 @@ struct TableObservation {
     accepted: bool,
     successor: Option<(AttemptId, Option<u64>)>,
     claimed_by: Option<&'static str>,
+    due: Option<u64>,
 }
 
 fn apply_intervention(
@@ -267,29 +287,155 @@ fn apply_settlement(
     queue: &AttemptQueue<'_>,
     record: &AttemptRecord,
     now: u64,
-) {
-    match operation {
+) -> Result<Option<(TableEvent, bool)>, TestCaseError> {
+    let answer = match operation {
         Operation::Complete(index, valid) => {
             let (lease_owner, attempt_count) = lease_input(record, valid, index);
-            let _ = queue.complete(CompleteAttempt {
+            let accepted = match queue.complete(CompleteAttempt {
                 id: record.id,
                 lease_owner,
                 attempt_count,
                 now,
-            });
+            }) {
+                Ok(CompleteOutcome::Completed(_) | CompleteOutcome::AlreadyCompleted(_)) => true,
+                Ok(_) => return Err(TestCaseError::fail("unknown complete outcome")),
+                Err(_) => false,
+            };
+            (TableEvent::Complete, accepted)
         }
         Operation::Fail(index, valid) => {
             let (lease_owner, attempt_count) = lease_input(record, valid, index);
-            let _ = queue.fail(FailAttempt {
+            let accepted = match queue.fail(FailAttempt {
                 id: record.id,
                 lease_owner,
                 attempt_count,
                 reason: "property-failure".to_owned(),
                 now,
-            });
+            }) {
+                Ok(FailOutcome::Failed(_) | FailOutcome::AlreadyFailed(_)) => true,
+                Ok(_) => return Err(TestCaseError::fail("unknown fail outcome")),
+                Err(_) => false,
+            };
+            (TableEvent::Fail, accepted)
         }
-        _ => {}
-    }
+        Operation::Abandon(index, valid) => {
+            let (lease_owner, attempt_count) = lease_input(record, valid, index);
+            let result_ref = AttemptResultRef::new("artifact:property-result")
+                .map_err(|error| TestCaseError::fail(format!("result reference: {error}")))?;
+            let accepted = match queue.abandon(AbandonAttempt {
+                id: record.id,
+                lease_owner,
+                attempt_count,
+                result_ref,
+                reason: "property-abandonment".to_owned(),
+                now,
+            }) {
+                Ok(AbandonOutcome::Abandoned(_) | AbandonOutcome::AlreadyAbandoned(_)) => true,
+                Ok(_) => return Err(TestCaseError::fail("unknown abandon outcome")),
+                Err(_) => false,
+            };
+            (TableEvent::Abandon, accepted)
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(answer))
+}
+
+fn apply_scheduling(
+    operation: Operation,
+    vault: &Vault,
+    record: &AttemptRecord,
+    target: usize,
+    now: u64,
+) -> Option<TableObservation> {
+    let queue = AttemptQueue::new(vault);
+    let mut due = None;
+    let (event, accepted) = match operation {
+        Operation::Requeue(index, valid, delay) => {
+            let (lease_owner, attempt_count) = lease_input(record, valid, index);
+            let due_at = now + u64::from(delay);
+            due = Some(due_at);
+            let accepted = queue
+                .requeue(RequeueAttempt {
+                    id: record.id,
+                    lease_owner,
+                    attempt_count,
+                    reason: "property-requeue".to_owned(),
+                    due_at,
+                })
+                .is_ok();
+            (TableEvent::Requeue, accepted)
+        }
+        Operation::Redirect(_, moved) => {
+            let old_worker = record
+                .placement
+                .as_ref()
+                .and_then(|old| old.worker.as_deref());
+            let worker = if moved {
+                Some(
+                    if old_worker == Some(WORKERS[0]) {
+                        WORKERS[1]
+                    } else {
+                        WORKERS[0]
+                    }
+                    .to_owned(),
+                )
+            } else {
+                old_worker.map(str::to_owned)
+            };
+            let placement = AttemptPlacement {
+                worker,
+                parent: None,
+            };
+            let worker_moved = placement.worker.as_deref()
+                != record
+                    .placement
+                    .as_ref()
+                    .and_then(|old| old.worker.as_deref());
+            let accepted = queue
+                .redirect(
+                    InterveneAttempt {
+                        id: record.id,
+                        kind: AttemptInterventionKind::Redirect,
+                        actor: OWNER.to_owned(),
+                        note: None,
+                        now,
+                    },
+                    placement,
+                )
+                .is_ok();
+            (TableEvent::Redirect { worker_moved }, accepted)
+        }
+        Operation::Defer(_, delay) => {
+            let scheduled_at = if delay == 0 {
+                record.created_at
+            } else {
+                record.created_at.max(now) + u64::from(delay)
+            };
+            due = Some(scheduled_at);
+            // No-op answers, including a Queued row already waiting or due by
+            // creation, use the unchanged-row check rather than the Move cell.
+            let moved = defer_enqueued(vault, record.id, scheduled_at)
+                .is_ok_and(|deferred| deferred != *record);
+            (TableEvent::Defer, moved)
+        }
+        Operation::AdvanceRetry(_) => {
+            due = Some(now);
+            // The table admits Scheduled, but the door also requires retry_of
+            // and a later ready instant. A false answer must change no row.
+            let moved = matches!(advance_retry(vault, record.id, now), Ok(true));
+            (TableEvent::AdvanceRetry, moved)
+        }
+        _ => return None,
+    };
+    Some(TableObservation {
+        target,
+        event,
+        accepted,
+        successor: None,
+        claimed_by: None,
+        due,
+    })
 }
 
 fn apply_finish_landing(
@@ -381,6 +527,7 @@ fn apply_landing(
         accepted,
         successor,
         claimed_by: None,
+        due: None,
     }))
 }
 
@@ -412,6 +559,7 @@ fn apply_claim(
                 accepted: true,
                 successor: None,
                 claimed_by: Some(claimed_by),
+                due: None,
             }))
         }
         ClaimOutcome::Empty => Ok(None),
@@ -432,6 +580,9 @@ fn apply_row(
         Operation::AcceptLanding(..) | Operation::FinishLanding(..) | Operation::ForceCancel(_)
     ) {
         return apply_landing(operation, vault, record, target, now);
+    }
+    if let Some(observation) = apply_scheduling(operation, vault, record, target, now) {
+        return Ok(Some(observation));
     }
     let mut successor = None;
     let answer = if let Some((kind, event, caller)) = operation.intervention() {
@@ -473,10 +624,7 @@ fn apply_row(
                     matches!(release_lease(vault, record.id, lease_owner, now), Ok(true));
                 Some((event, accepted))
             }
-            _ => {
-                apply_settlement(operation, &queue, record, now);
-                None
-            }
+            _ => apply_settlement(operation, &queue, record, now)?,
         }
     };
     Ok(answer.map(|(event, accepted)| TableObservation {
@@ -485,6 +633,7 @@ fn apply_row(
         accepted,
         successor,
         claimed_by: None,
+        due: None,
     }))
 }
 
@@ -544,6 +693,59 @@ fn apply_operation(
     Ok(observation)
 }
 
+fn check_e3_move_fields(
+    observation: &TableObservation,
+    before: &AttemptRecord,
+    after: &AttemptRecord,
+    now: u64,
+    context: &str,
+) -> Result<bool, TestCaseError> {
+    match observation.event {
+        TableEvent::Complete | TableEvent::Fail => {
+            prop_assert!(after.lease_owner.is_none(), "{}", context);
+            prop_assert_eq!(after.scheduled_at, before.scheduled_at, "{}", context);
+            prop_assert_eq!(after.settled_at, Some(after.updated_at), "{}", context);
+            prop_assert!(after.updated_at >= now, "settled before now: {}", context);
+        }
+        TableEvent::Abandon => {
+            prop_assert!(after.lease_owner.is_none(), "{}", context);
+            prop_assert_eq!(after.scheduled_at, None, "{}", context);
+            prop_assert_eq!(after.settled_at, Some(now), "{}", context);
+        }
+        TableEvent::Requeue => {
+            prop_assert!(after.lease_owner.is_none(), "{}", context);
+            prop_assert_eq!(after.scheduled_at, observation.due, "{}", context);
+            prop_assert_eq!(after.attempt_count, before.attempt_count, "{}", context);
+            prop_assert_eq!(after.settled_at, before.settled_at, "{}", context);
+        }
+        TableEvent::Redirect { .. } => {
+            prop_assert!(after.lease_owner.is_none(), "{}", context);
+            prop_assert_eq!(after.scheduled_at, None, "{}", context);
+            prop_assert_eq!(after.attempt_count, before.attempt_count + 1, "{}", context);
+            prop_assert_eq!(after.settled_at, before.settled_at, "{}", context);
+        }
+        TableEvent::Defer | TableEvent::AdvanceRetry => {
+            prop_assert_eq!(&after.lease_owner, &before.lease_owner, "{}", context);
+            prop_assert_eq!(after.scheduled_at, observation.due, "{}", context);
+            prop_assert_eq!(after.attempt_count, before.attempt_count, "{}", context);
+            prop_assert_eq!(after.settled_at, before.settled_at, "{}", context);
+            prop_assert_eq!(&after.cancel_state, &before.cancel_state, "{}", context);
+        }
+        TableEvent::Reclaim { .. } => {
+            prop_assert!(after.lease_owner.is_none(), "{}", context);
+            prop_assert_eq!(after.scheduled_at, None, "{}", context);
+            prop_assert_eq!(after.attempt_count, before.attempt_count, "{}", context);
+            if before.state == AttemptState::Landing {
+                prop_assert_eq!(after.settled_at, Some(now), "{}", context);
+            } else {
+                prop_assert_eq!(after.settled_at, before.settled_at, "{}", context);
+            }
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
 fn check_move_fields(
     observation: &TableObservation,
     before: &AttemptRecord,
@@ -552,6 +754,9 @@ fn check_move_fields(
     context: &str,
 ) -> TestCaseResult {
     let event = observation.event;
+    if check_e3_move_fields(observation, before, after, now, context)? {
+        return Ok(());
+    }
     if event == TableEvent::Claim {
         prop_assert_eq!(
             after.lease_owner.as_deref(),
@@ -606,6 +811,14 @@ fn check_move_fields(
             prop_assert_eq!(after.scheduled_at, before.scheduled_at, "{}", context);
         }
         TableEvent::Interrupt | TableEvent::BudgetHold | TableEvent::HookHold { .. } => {}
+        TableEvent::Complete
+        | TableEvent::Fail
+        | TableEvent::Abandon
+        | TableEvent::Requeue
+        | TableEvent::Redirect { .. }
+        | TableEvent::Defer
+        | TableEvent::AdvanceRetry
+        | TableEvent::Reclaim { .. } => unreachable!("E3 move checked"),
     }
     Ok(())
 }
@@ -647,15 +860,13 @@ fn check_successor(
     Ok(())
 }
 
-fn check_table_operation(
+fn check_table_row(
     observation: &TableObservation,
-    before: &[AttemptRecord],
-    after: &[AttemptRecord],
+    previous: &AttemptRecord,
+    current: &AttemptRecord,
     now: u64,
     context: &str,
 ) -> TestCaseResult {
-    let previous = &before[observation.target];
-    let current = &after[observation.target];
     let answer = table_answer(previous, observation.event);
     if observation.event == TableEvent::Claim {
         prop_assert!(
@@ -682,12 +893,23 @@ fn check_table_operation(
             TableAnswer::Stay => {
                 if matches!(
                     observation.event,
-                    TableEvent::AcceptLanding | TableEvent::ForceCancel
+                    TableEvent::AcceptLanding
+                        | TableEvent::ForceCancel
+                        | TableEvent::Complete
+                        | TableEvent::Fail
+                        | TableEvent::Abandon
+                        | TableEvent::Reclaim { .. }
                 ) {
                     prop_assert_eq!(current, previous, "replayed row changed: {}", context);
                 }
                 prop_assert_eq!(current.state, previous.state, "{}", context);
                 prop_assert_eq!(pause_kind(current), pause_kind(previous), "{}", context);
+                if matches!(observation.event, TableEvent::Redirect { .. }) {
+                    prop_assert_eq!(&current.lease_owner, &previous.lease_owner, "{}", context);
+                    prop_assert_eq!(current.scheduled_at, previous.scheduled_at, "{}", context);
+                    prop_assert_eq!(current.attempt_count, previous.attempt_count, "{}", context);
+                    prop_assert_eq!(current.settled_at, previous.settled_at, "{}", context);
+                }
             }
             TableAnswer::Refuse => {
                 return Err(TestCaseError::fail(format!(
@@ -696,12 +918,58 @@ fn check_table_operation(
             }
         }
     }
+    Ok(())
+}
+
+fn check_table_operation(
+    observation: &TableObservation,
+    before: &[AttemptRecord],
+    after: &[AttemptRecord],
+    now: u64,
+    context: &str,
+) -> TestCaseResult {
+    check_table_row(
+        observation,
+        &before[observation.target],
+        &after[observation.target],
+        now,
+        context,
+    )?;
     for (index, previous) in before.iter().enumerate() {
         if index != observation.target {
             prop_assert_eq!(&after[index], previous, "other row changed: {}", context);
         }
     }
     check_successor(observation, before, after, context)
+}
+
+fn check_cleanup(
+    before: &[AttemptRecord],
+    after: &[AttemptRecord],
+    now: u64,
+    context: &str,
+) -> TestCaseResult {
+    prop_assert_eq!(after.len(), before.len(), "{}", context);
+    for (target, previous) in before.iter().enumerate() {
+        // Exactly lease_expired's checked subtraction; held is false because
+        // cleanup_leases supplies an empty held set and this fixture is serial.
+        let expired = now
+            .checked_sub(previous.updated_at)
+            .is_some_and(|age| age >= LEASE_TIMEOUT);
+        let observation = TableObservation {
+            target,
+            event: TableEvent::Reclaim {
+                expired,
+                held: false,
+            },
+            accepted: true,
+            successor: None,
+            claimed_by: None,
+            due: None,
+        };
+        check_table_row(&observation, previous, &after[target], now, context)?;
+    }
+    Ok(())
 }
 
 fn check_row_invariants(
@@ -751,8 +1019,14 @@ fn run_sequence(operations: &[Operation]) -> Result<Vec<Option<bool>>, TestCaseE
         );
         let observation =
             result.map_err(|error| TestCaseError::fail(format!("{error}; {context}")))?;
-        accepted.push(observation.as_ref().map(|observation| observation.accepted));
-        if let Some(observation) = observation {
+        accepted.push(if matches!(operation, Operation::CleanupLeases) {
+            Some(true)
+        } else {
+            observation.as_ref().map(|observation| observation.accepted)
+        });
+        if matches!(operation, Operation::CleanupLeases) {
+            check_cleanup(&before, &after, now, &context)?;
+        } else if let Some(observation) = observation {
             check_table_operation(&observation, &before, &after, now, &context)?;
         } else if matches!(operation, Operation::Claim(_)) {
             // No row of this fixture has a TASK, so a claim's scan can put an
@@ -766,7 +1040,8 @@ fn run_sequence(operations: &[Operation]) -> Result<Vec<Option<bool>>, TestCaseE
 
 /// Every covered door accepts in this fixture: both interventions of the owner
 /// and of a caller, the budget and hook holds, a person's takeover of each
-/// hold, the lease release, the retry, cancel, landing hand-off and force cancel.
+/// hold, the lease release, retry, cancel, landing hand-off and force cancel,
+/// settlement, placement changes, same-try requeue, deferral and acceleration.
 /// Without it a run whose every operation is refused would pass the property
 /// and compare nothing.
 #[test]
@@ -797,10 +1072,50 @@ fn each_covered_door_accepts_in_a_fixed_sequence() {
         O::AcceptLanding(2, true, true),
         O::FinishLanding(2, true, true, true),
         O::ForceCancel(3),
+        O::Enqueue,
+        O::Claim(false),
+        O::Complete(4, true),
+        O::Complete(4, false),
+        O::Enqueue,
+        O::Claim(false),
+        O::Fail(5, true),
+        O::Fail(5, false),
+        O::Enqueue,
+        O::Claim(false),
+        O::AcceptLanding(6, true, true),
+        O::Abandon(6, true),
+        O::Abandon(6, false),
+        O::Enqueue,
+        O::Defer(7, 30),
+        O::Pause(7),
+        O::Resume(7),
+        O::ForceCancel(7),
+        O::Enqueue,
+        O::Claim(false),
+        O::Redirect(8, false),
+        O::Redirect(8, true),
+        O::Claim(false),
+        O::Requeue(8, true, 30),
+        O::Pause(8),
+        O::Resume(8),
+        O::ForceCancel(8),
+        O::Enqueue,
+        O::Claim(false),
+        O::Retry(9, true, 30),
+        O::AdvanceRetry(10),
+        O::Claim(false),
+        O::Requeue(10, true, 30),
+        O::AdvanceRetry(10),
+        O::Claim(false),
+        O::Redirect(10, true),
+        O::Claim(false),
+        O::AcceptLanding(10, true, true),
+        O::AdvanceClock(3_600),
+        O::CleanupLeases,
     ];
     let accepted = run_sequence(&operations).unwrap_or_else(|error| panic!("{error}"));
     for (index, operation) in operations.iter().enumerate() {
-        let expected = (!matches!(operation, O::Enqueue)).then_some(true);
+        let expected = (!matches!(operation, O::Enqueue | O::AdvanceClock(_))).then_some(true);
         assert_eq!(
             accepted[index], expected,
             "operation {index}: {operation:?}"
