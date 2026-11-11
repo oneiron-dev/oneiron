@@ -13,9 +13,7 @@ mod field_validators;
 // keeps those paths pointing at `attempt_queue::types` verbatim.
 use super::types;
 
-pub(super) use self::cancel_receipt_landing::{
-    CancelReceiptDraft, append_attempt_event, validate_cancel_state,
-};
+pub(super) use self::cancel_receipt_landing::{CancelReceiptDraft, append_attempt_event};
 pub(crate) use self::field_validators::validate_lease_owner;
 
 pub(super) use self::field_validators::{
