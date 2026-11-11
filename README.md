@@ -116,18 +116,27 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
 
 ## Building from source
 
-Python 3 must be on `PATH` (as `python3`; `python` on Windows; or name it in `ONEIRON_PYTHON`). The SDK's
-generated Rust files are not committed: the crates that include them (`oneiron`, `oneiron-server`,
-`oneiron-remote`, `oneiron-napi`, `oneiron-uniffi`, `oneiron-code-check`) run `scripts/sdk/generate.py` from
-their build scripts, once per change of the verb table (`scripts/sdk/verbs/`) or the Rust types it names, into
-the target directory. It uses the Python standard library only. A Rust port of the generator, which ends this
-requirement, is the first change after the untangle.
+The SDK's generated Rust files are not committed: the crates that include them (`oneiron`, `oneiron-server`,
+`oneiron-remote`, `oneiron-napi`, `oneiron-uniffi`, `oneiron-code-check`, `oneiron-py`) run the SDK generator
+(`crates/oneiron-sdk-generator`) inside their build scripts, once per change of the verb table
+(`scripts/sdk/verbs/`), the Rust types it names or the generator itself, into the target directory. No Python
+runs for this. The run key covers the generator's source, `Cargo.lock`, the manifests and the compiler. It does
+not see a local override of the generator's dependencies (`[patch]` to a path, `paths` in `.cargo/config`, or
+`--config`). After changing one, delete `target/<profile>/sdk-generated`.
 
-The SDK packages make their generated files in their own builds: `bun run build` in `packages/oneiron`, `bun run
-prepare` in `packages/oneiron-client`, and `maturin build` for `oneiron-py`. The agent-SDK reference generated from
-the verb table (`types.md`, `facade-types.md`, `verbs.md`) is published from main at
-https://oneiron-dev.github.io/oneiron/agent-sdk/, and every cargo build keeps a local copy in
-`target/debug/sdk-generated/agent-sdk/` (`target/release/...` for a release build).
+An incremental build reruns those build scripts only when a file the last run depended on changes: a verb file,
+`type_names.json`, a hand-written input, a crate source file that defined an item the generator resolved, or a
+module file it walked (the run directory's `.sdk-deps` lists them), and `Cargo.lock` or the manifests. A body edit in
+any other crate file reruns nothing. The limit: a new file, or a new same-named item in a file the generator did not
+resolve from, is not seen by an incremental build until a watched file changes; delete
+target/<profile>/sdk-generated to force. A clean build always regenerates, and the merge train regenerates the SDK
+outputs on every train top (TRAIN-REGEN).
+
+The SDK packages make their generated files in their own builds: `bun run build` in `packages/oneiron` and
+`bun run prepare` in `packages/oneiron-client` (each runs the generator with `cargo run`), and `maturin build`
+for `oneiron-py`. The agent-SDK reference generated from the verb table (`types.md`, `facade-types.md`,
+`verbs.md`) is published from main at https://oneiron-dev.github.io/oneiron/agent-sdk/, and every cargo build
+keeps a local copy in `target/debug/sdk-generated/agent-sdk/` (`target/release/...` for a release build).
 
 Debug information is adjustable (details in [build performance](./docs/ops/build-performance.md)):
 
