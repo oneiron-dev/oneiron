@@ -224,18 +224,29 @@ fn require_inquiry_edge_in_txn(
         .ok_or_else(|| refused("that grant is not a live inquiry edge of this vault"))
 }
 
+/// Drops the link `statement` was opened with, when it has one: when the
+/// member closes the statement. A link another opened statement holds to
+/// `statement` stays; it goes only with an erase.
+fn drop_inquiry_scope_link_of_statement_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    statement: &EntityId,
+) -> Result<()> {
+    if let Some(source) = SCOPE_LINK.get(store, wtxn, statement)? {
+        SCOPE_LINK.delete(store, wtxn, statement)?;
+        SCOPE_LINK_BY_SOURCE.delete(store, wtxn, &(source, *statement))?;
+    }
+    Ok(())
+}
+
 /// Drops every scope link `claim` stands in, as the opened statement or as
-/// the claim one was drawn from: when the member closes the statement, and
-/// when an erase removes either claim.
+/// the claim one was drawn from: when an erase removes either claim.
 pub(crate) fn drop_inquiry_scope_links_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     claim: &EntityId,
 ) -> Result<()> {
-    if let Some(source) = SCOPE_LINK.get(store, wtxn, claim)? {
-        SCOPE_LINK.delete(store, wtxn, claim)?;
-        SCOPE_LINK_BY_SOURCE.delete(store, wtxn, &(source, *claim))?;
-    }
+    drop_inquiry_scope_link_of_statement_in_txn(store, wtxn, claim)?;
     for (source, opened) in SCOPE_LINK_BY_SOURCE.scan_keys(store, wtxn, claim.as_bytes())? {
         SCOPE_LINK.delete(store, wtxn, &opened)?;
         SCOPE_LINK_BY_SOURCE.delete(store, wtxn, &(source, opened))?;
@@ -452,9 +463,10 @@ impl Vault {
     }
 
     /// Closes one opened statement, approved by `owner`, in one writer: the
-    /// statement's CLAIM is retracted and its member-local link dropped.
-    /// Only a statement of this edge's opened WORLD closes here; a closed
-    /// one closes again as a no-op.
+    /// statement's CLAIM is retracted and its own member-local link dropped;
+    /// a statement of another edge drawn from it keeps its link. Only a
+    /// statement of this edge's opened WORLD closes here; a closed one
+    /// closes again as a no-op.
     pub fn close_inquiry_scope_item(
         &self,
         owner: &AuthenticatedOwner,
@@ -478,7 +490,7 @@ impl Vault {
                 let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
                 self.retract_claim_in_txn(txn, &claim, now)?;
             }
-            drop_inquiry_scope_links_in_txn(&self.store, txn, &claim)
+            drop_inquiry_scope_link_of_statement_in_txn(&self.store, txn, &claim)
         })?;
         self.store.notify_proactivity_changes();
         Ok(())

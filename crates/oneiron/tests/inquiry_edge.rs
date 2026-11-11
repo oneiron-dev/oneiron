@@ -10,7 +10,8 @@
 //!   before;
 //! - the opened scope starts empty; a statement opens, lists and closes,
 //!   and its link to the claim it was drawn from stays out of the statement
-//!   and goes with an erase of that claim;
+//!   and goes with an erase of that claim; closing a statement keeps the
+//!   link another edge's statement holds to it;
 //! - revoking the edge withdraws the grant and leaves the member's
 //!   statements;
 //! - the company's reciprocal grant (`propose` alone over "Inquiry edge:
@@ -38,6 +39,7 @@ use oneiron::inquiry::{
 };
 use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::store::GateDecisionId;
+use oneiron::write_envelope::claim_body::encode_claim_body;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
     TimeRange, Vault, VaultConfig,
@@ -400,7 +402,7 @@ fn a_statement_opens_lists_and_closes_and_its_link_stays_out_of_it() {
     assert_eq!(body.source, Some(ClaimSource::UserStated));
     assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
     assert_eq!(body.value.as_str(), Some(OUT_THURSDAY));
-    let encoded = body.encode();
+    let encoded = encode_claim_body(&body).expect("encode the statement");
     assert!(
         !holds(&encoded, chemo.as_bytes()) && !holds(&encoded, chemo.to_hex().as_bytes()),
         "the drawn-from link stays out of the statement",
@@ -444,6 +446,44 @@ fn a_statement_opens_lists_and_closes_and_its_link_stays_out_of_it() {
             .close_inquiry_scope_item(&member.proof, edge.grant, chemo)
             .is_err(),
         "a claim outside the opened scope does not close here",
+    );
+}
+
+#[test]
+fn closing_a_statement_keeps_the_link_another_edge_drew_from_it() {
+    let member = side(0x11);
+    let vault = &member.vault;
+    let edge = mint_edge(&member, UNOPENED_COMPANY);
+    let other = vault
+        .mint_inquiry_edge(
+            &member.proof,
+            &InquiryEdgeRequest::member_defaults(UNOPENED_PEER, "Globex"),
+        )
+        .expect("an edge to a second company");
+    let out = vault
+        .open_inquiry_scope_item(&member.proof, edge.grant, OUT_THURSDAY, None)
+        .expect("open a statement to the first company");
+    let again = vault
+        .open_inquiry_scope_item(&member.proof, other.grant, OUT_THURSDAY, Some(out.claim))
+        .expect("open the words to the second company, drawn from the first statement");
+    assert_eq!(again.drawn_from, Some(out.claim));
+
+    vault
+        .close_inquiry_scope_item(&member.proof, edge.grant, out.claim)
+        .expect("close the first company's statement");
+    assert!(
+        vault
+            .inquiry_scope_items(&member.proof, edge.grant)
+            .expect("list the first opened scope")
+            .is_empty(),
+        "the closed statement leaves the first opened scope",
+    );
+    assert_eq!(
+        vault
+            .inquiry_scope_items(&member.proof, other.grant)
+            .expect("list the second opened scope"),
+        vec![again],
+        "the second company's statement keeps its link to the closed one",
     );
 }
 
