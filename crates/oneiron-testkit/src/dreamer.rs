@@ -19,13 +19,21 @@
 //! 4. hands each attempt the driver does not run itself to a
 //!    `ConsolidationExecutor` over the caller's backend, with a fresh
 //!    `PromotionWriterSink` for that attempt, and records what it came to and
-//!    what its sink promoted.
+//!    what its sink promoted. Three shapes never reach it: a compaction's
+//!    check, a claim source re-check and an urgent digest's harm question,
+//!    which the driver leaves to the host's executor to judge on a model or
+//!    ladder the host lends. The kit lends none, so each parks unrun, as a
+//!    host that lends none parks it ([`DreamerAttemptRun::unlent`]).
 //!
-//! A pass that parked, failed or landed an attempt, or stopped for any reason
-//! but an empty queue, is refused ([`DreamerPassReport::unfinished`]); its
-//! report rides the error, with every queued attempt's state and park
-//! reason. A deferred attempt is a timed retry the pass settled (the Nightly
-//! continuation defers until it is due), so it is reported, not refused.
+//! A pass that parked (other than unlent), failed or landed an attempt, or
+//! stopped for any reason but an empty queue, is refused
+//! ([`DreamerPassReport::unfinished`]); its report rides the error, with every
+//! queued attempt's state and park reason. A pass the engine ends on an error
+//! is refused with the attempts it ran and the queue it left
+//! ([`DreamerPassError::Failed`]). A deferred attempt is a timed retry the
+//! pass settled (the Nightly continuation defers until it is due), so it is
+//! reported, not refused. Each report also carries the wall time of the pass
+//! and of each attempt, a diagnostic only: the pass runs on the fake clock.
 //!
 //! A Timer wake plans from the Dreamer's interest queue: it may make no
 //! extraction call at all. The turn wake reads every turn the Dreamer has
@@ -70,12 +78,19 @@ use std::pin::pin;
 use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
+use std::time::Instant;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState};
 use oneiron::authority::{HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
 use oneiron::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
-use oneiron::dreamer_runner::DreamerAttemptPayload;
-use oneiron::dreamer_runner::maintenance::CoachSkillOptimizer;
+use oneiron::dreamer_runner::maintenance::digest::{
+    DIGEST_ASSESS_FACET, DIGEST_ASSESS_UNLENT_PARK_REASON,
+};
+use oneiron::dreamer_runner::maintenance::{
+    CLAIM_SOURCE_RECHECK_FACET, COMPACTION_CHECK_FACET, CoachSkillOptimizer, claim_source_recheck,
+    compaction_check,
+};
+use oneiron::dreamer_runner::{DreamerAttemptPayload, DreamerParkCause};
 use oneiron::dreamer_wake::{WakeTurnSubject, request_wake};
 use oneiron::llm::decision::{DecisionQuestion, TypedDecision};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
@@ -172,6 +187,12 @@ pub struct DreamerAttemptRun {
     pub pended: Vec<EntityId>,
     /// Candidates its sink refused, each with the reason.
     pub rejected: Vec<(EntityId, String)>,
+    /// Whether the kit's host parked it unrun: a compaction's check, a claim
+    /// source re-check or an urgent digest's harm question, which a host
+    /// judges on a model or ladder it lends. The kit lends none.
+    pub unlent: bool,
+    /// The wall milliseconds the executor took over it (a diagnostic only).
+    pub wall_ms: u64,
 }
 
 /// One row of the attempt queue after the pass.
@@ -205,6 +226,9 @@ pub struct DreamerPassReport {
     pub attempts: Vec<DreamerAttemptRun>,
     /// Every working-set attempt after the pass, in creation order.
     pub queue: Vec<QueueRow>,
+    /// The wall milliseconds the pass took, from its wake request to its
+    /// queue read (a diagnostic only).
+    pub wall_ms: u64,
 }
 
 impl DreamerPassReport {
@@ -215,16 +239,26 @@ impl DreamerPassReport {
     }
 
     /// Why the pass did not finish its work, one reason per entry: a stop
-    /// other than an empty queue, or any parked, failed or landed attempt.
-    /// Empty for a finished pass.
+    /// other than an empty queue, or any failed or landed attempt, or any
+    /// parked one but those the kit's host parked unlent
+    /// ([`DreamerAttemptRun::unlent`]). Empty for a finished pass.
     #[must_use]
     pub fn unfinished(&self) -> Vec<String> {
         let mut reasons = Vec::new();
         if self.tally.stop != WakePassStop::QueueEmpty {
             reasons.push(format!("the pass stopped {:?}", self.tally.stop));
         }
+        let unlent = self
+            .attempts
+            .iter()
+            .filter(|attempt| {
+                attempt.unlent
+                    && matches!(attempt.execution, Ok(DreamerAttemptExecution::Park { .. }))
+            })
+            .count();
+        let unlent = u32::try_from(unlent).unwrap_or(u32::MAX);
         for (count, what) in [
-            (self.tally.parked, "parked"),
+            (self.tally.parked.saturating_sub(unlent), "parked"),
             (self.tally.failed, "failed"),
             (self.tally.landed, "landed"),
         ] {
@@ -258,6 +292,25 @@ pub enum DreamerPassError {
     Stalled,
     /// The pass ran and left work undone ([`DreamerPassReport::unfinished`]).
     Unfinished(Box<DreamerPassReport>),
+    /// The engine ended the pass on an error.
+    Failed(Box<DreamerPassFailure>),
+}
+
+/// A pass the engine ended on an error: the error, the attempts the executor
+/// ran up to it (the one that raised it among them), and the queue it left.
+#[derive(Debug)]
+pub struct DreamerPassFailure {
+    /// The wake it ran.
+    pub wake: WakeKind,
+    /// The error the pass ended on.
+    pub error: oneiron::Error,
+    /// The attempts handed to the executor, in order.
+    pub attempts: Vec<DreamerAttemptRun>,
+    /// Every working-set attempt after the pass, or why the queue could not
+    /// be read.
+    pub queue: Result<Vec<QueueRow>, String>,
+    /// The wall milliseconds the pass took (a diagnostic only).
+    pub wall_ms: u64,
 }
 
 impl fmt::Display for DreamerPassError {
@@ -270,28 +323,54 @@ impl fmt::Display for DreamerPassError {
             Self::Unfinished(report) => {
                 write!(
                     f,
-                    "dreamer {:?} pass unfinished: {}; tally {:?}",
+                    "dreamer {:?} pass unfinished after {} ms: {}; tally {:?}",
                     report.wake,
+                    report.wall_ms,
                     report.unfinished().join("; "),
                     report.tally
                 )?;
-                for attempt in &report.attempts {
-                    write!(
-                        f,
-                        "\n- ran {} {}: {:?}",
-                        attempt.attempt_type, attempt.attempt_id, attempt.execution
-                    )?;
+                write_runs(f, &report.attempts)?;
+                write_queue(f, &report.queue)
+            }
+            Self::Failed(failure) => {
+                write!(
+                    f,
+                    "dreamer {:?} pass failed after {} ms: {}",
+                    failure.wake, failure.wall_ms, failure.error
+                )?;
+                write_runs(f, &failure.attempts)?;
+                match &failure.queue {
+                    Ok(queue) => write_queue(f, queue),
+                    Err(error) => write!(f, "\n- the queue could not be read: {error}"),
                 }
-                for row in report.queue.iter().filter(|row| row.state != "Completed") {
-                    write!(f, "\n- queue {} {} {}", row.kind, row.attempt_id, row.state)?;
-                    if let Some(reason) = &row.park_reason {
-                        write!(f, ": {reason}")?;
-                    }
-                }
-                Ok(())
             }
         }
     }
+}
+
+/// One line per attempt the executor ran: its type, id, wall time, whether
+/// the kit parked it unlent, and what it came to.
+fn write_runs(f: &mut fmt::Formatter<'_>, attempts: &[DreamerAttemptRun]) -> fmt::Result {
+    for attempt in attempts {
+        let unlent = if attempt.unlent { " (unlent)" } else { "" };
+        write!(
+            f,
+            "\n- ran {} {} in {} ms{unlent}: {:?}",
+            attempt.attempt_type, attempt.attempt_id, attempt.wall_ms, attempt.execution
+        )?;
+    }
+    Ok(())
+}
+
+/// One line per queued attempt that did not complete, with its park reason.
+fn write_queue(f: &mut fmt::Formatter<'_>, queue: &[QueueRow]) -> fmt::Result {
+    for row in queue.iter().filter(|row| row.state != "Completed") {
+        write!(f, "\n- queue {} {} {}", row.kind, row.attempt_id, row.state)?;
+        if let Some(reason) = &row.park_reason {
+            write!(f, ": {reason}")?;
+        }
+    }
+    Ok(())
 }
 
 impl std::error::Error for DreamerPassError {}
@@ -476,6 +555,7 @@ impl<'b> DreamerPass<'b> {
         clock: &FakeClock,
         wake: WakeKind,
     ) -> Result<DreamerPassReport, DreamerPassError> {
+        let started = Instant::now(); // testkit-lint: allow(wall-clock) diagnostic timing only
         let now = clock.now();
         let store = DreamerRunnerStore::new(vault);
         let home = store.local_home_node_candidate(true, true, true)?;
@@ -550,15 +630,30 @@ impl<'b> DreamerPass<'b> {
             destination_bound: None,
         };
         let cancel = WakeCancellation::new();
-        let tally = block_on(driver.run_wake_pass(input, &mut executor, &cancel))
-            .ok_or(DreamerPassError::Stalled)??;
+        let tally = match block_on(driver.run_wake_pass(input, &mut executor, &cancel))
+            .ok_or(DreamerPassError::Stalled)?
+        {
+            Ok(tally) => tally,
+            Err(error) => {
+                let queue = queue_rows(vault, &store).map_err(|read| read.to_string());
+                return Err(DreamerPassError::Failed(Box::new(DreamerPassFailure {
+                    wake,
+                    error,
+                    attempts: executor.attempts,
+                    queue,
+                    wall_ms: ms_since(started),
+                })));
+            }
+        };
+        let queue = queue_rows(vault, &store)?;
         let report = DreamerPassReport {
             wake,
             wake_queued,
             home_node,
             tally,
             attempts: executor.attempts,
-            queue: queue_rows(vault, &store)?,
+            queue,
+            wall_ms: ms_since(started),
         };
         if report.unfinished().is_empty() {
             Ok(report)
@@ -587,6 +682,22 @@ impl DreamerAttemptExecutor for PassExecutor<'_, '_> {
         attempt: &DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> oneiron::Result<DreamerAttemptExecution> {
+        let started = Instant::now(); // testkit-lint: allow(wall-clock) diagnostic timing only
+        let attempt_id = hex(attempt.status.attempt.id.as_bytes());
+        let attempt_type = attempt.status.payload.attempt_type.clone();
+        if let Some(parked) = unlent_park(&attempt_type) {
+            self.attempts.push(DreamerAttemptRun {
+                attempt_id,
+                attempt_type,
+                execution: Ok(parked.clone()),
+                landed: Vec::new(),
+                pended: Vec::new(),
+                rejected: Vec::new(),
+                unlent: true,
+                wall_ms: ms_since(started),
+            });
+            return Ok(parked);
+        }
         let mut sink = PromotionWriterSink::new(
             self.vault,
             DreamerRunContext {
@@ -612,15 +723,42 @@ impl DreamerAttemptExecutor for PassExecutor<'_, '_> {
             DreamerAttemptExecutor::execute(&mut inner, attempt, ctx).await
         };
         self.attempts.push(DreamerAttemptRun {
-            attempt_id: hex(attempt.status.attempt.id.as_bytes()),
-            attempt_type: attempt.status.payload.attempt_type.clone(),
+            attempt_id,
+            attempt_type,
             execution: execution.as_ref().cloned().map_err(ToString::to_string),
             landed: std::mem::take(&mut sink.outcome.landed),
             pended: std::mem::take(&mut sink.outcome.pended),
             rejected: std::mem::take(&mut sink.outcome.rejected),
+            unlent: false,
+            wall_ms: ms_since(started),
         });
         execution
     }
+}
+
+/// What a host that lends no judge answers for `attempt_type`, as
+/// oneiron-server's Dreamer host does with nothing lent: the driver leaves a
+/// compaction's check (FIX 4465 B), a claim source re-check (FIX 15414) and
+/// an urgent digest's harm question (OF-194) to the host's executor, and a
+/// `ConsolidationExecutor` runs none of them. `None` for every other shape.
+fn unlent_park(attempt_type: &str) -> Option<DreamerAttemptExecution> {
+    if attempt_type == COMPACTION_CHECK_FACET {
+        Some(compaction_check::unlent())
+    } else if attempt_type == CLAIM_SOURCE_RECHECK_FACET {
+        Some(claim_source_recheck::unlent())
+    } else if attempt_type == DIGEST_ASSESS_FACET {
+        Some(DreamerAttemptExecution::Park {
+            reason: DIGEST_ASSESS_UNLENT_PARK_REASON.to_owned(),
+            cause: DreamerParkCause::Retry,
+        })
+    } else {
+        None
+    }
+}
+
+/// The wall milliseconds since `started`.
+fn ms_since(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 /// The scripted backend as the host binds it: advertised at `model` on its
