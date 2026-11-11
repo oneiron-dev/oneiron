@@ -8,7 +8,12 @@
 //! main an agent's read is refused as the owner's door; the owner's read is
 //! unchanged. A reader is served the state its admitting read saw: an owner
 //! archive that commits while the read is held right after it admitted the
-//! row does not reach the view (#6976 review round 2).
+//! row does not reach the view (#6976 review round 2). A reader's page and
+//! its cursor name only skills it reads: a skill it does not read is never
+//! the cursor, and a library it reads nothing of answers as an empty one
+//! (#6984 review round 1). A reader that sees stored keys masked is never
+//! served a skill whose package files hold a key: it reads as absent, while
+//! the owner reads the package as stored (#6986 review round 2).
 //!
 //! Public paths only: the generated engine fns in `oneiron::verbs`.
 
@@ -18,6 +23,7 @@ use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
 use oneiron::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 use oneiron::memory::MEMORY_CODE_NOT_FOUND;
 use oneiron::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
+use oneiron::skill_hub::HubFile;
 use oneiron::verbs::{
     AgentGrantMintRequest, HubSkillRequest, SkillLibraryLifecycle, SkillLibraryListRequest,
 };
@@ -294,5 +300,176 @@ fn a_skill_list_serves_the_state_its_admitting_read_saw() -> TestResult {
 
     let after = oneiron::verbs::vault_skills_list(&reader, page())?;
     assert!(after.skills.iter().all(|listed| listed.entity != skill));
+    Ok(())
+}
+
+/// `vault.skills.list` names no skill the reader does not read
+/// (#6984 review round 1). With no read grant, a one-skill page is the empty
+/// library's reply: no skill and no cursor. With the owner's SKILL-band
+/// grant, a walk one skill at a time has each page's cursor be the one skill
+/// it served, never the owner's candidate, and serves the skills of one long
+/// page, in its order.
+#[test]
+fn a_readers_list_cursor_names_only_skills_it_reads() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let candidate = put_candidate(&vault)?;
+    let agent = dispatched_agent(&vault)?;
+    let reader = vault.memory(agent, EdgeActorClass::Agent);
+    let owner_actor = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.memory(owner_actor, EdgeActorClass::Human);
+    let one_skill = |after: Option<EntityId>| SkillLibraryListRequest { after, limit: 1 };
+
+    let unread = oneiron::verbs::vault_skills_list(&reader, one_skill(None))?;
+    assert!(
+        unread.skills.is_empty(),
+        "an agent with no read grant reads no skill"
+    );
+    assert_eq!(
+        unread.next_after, None,
+        "a reader that reads no skill is given no cursor, as for an empty library"
+    );
+
+    grant_skill_reads(&owner, agent)?;
+    let whole = oneiron::verbs::vault_skills_list(&reader, page())?;
+    assert!(!whole.skills.is_empty(), "the seeded skills are loadable");
+    if whole.skills.len() < page().limit {
+        assert_eq!(
+            whole.next_after, None,
+            "a page the index ends before is the last"
+        );
+    }
+    let mut walked = Vec::new();
+    let mut after = None;
+    for _ in 0..=whole.skills.len() {
+        let step = oneiron::verbs::vault_skills_list(&reader, one_skill(after))?;
+        let Some(cursor) = step.next_after else {
+            assert!(
+                step.skills.is_empty(),
+                "the page that ends the walk serves no skill"
+            );
+            break;
+        };
+        assert_eq!(
+            step.skills
+                .iter()
+                .map(|listed| listed.entity)
+                .collect::<Vec<_>>(),
+            vec![cursor],
+            "the cursor is the one skill the page served"
+        );
+        assert_ne!(
+            cursor, candidate,
+            "the owner's candidate is never the cursor"
+        );
+        walked.push(cursor);
+        after = Some(cursor);
+    }
+    assert_eq!(
+        walked,
+        whole
+            .skills
+            .iter()
+            .map(|listed| listed.entity)
+            .collect::<Vec<_>>(),
+        "the walk serves the long page's skills, in its order"
+    );
+    Ok(())
+}
+
+/// A credential in a skill's config file, in a shape the release scan reads.
+const CONFIG_KEY: &[u8] = b"ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+
+/// An owner-authored, approved skill whose `config.json` holds
+/// [`CONFIG_KEY`], landed and activated through the package store's door:
+/// a loadable skill whose stored package holds a key.
+fn put_keyed_skill(vault: &Vault) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let mut config = b"{\"token\": \"".to_vec();
+    config.extend_from_slice(CONFIG_KEY);
+    config.extend_from_slice(b"\"}\n");
+    let files = vec![
+        HubFile::new("SKILL.md", b"# a skill with a key in its config\n".to_vec()),
+        HubFile::new("config.json", config),
+    ];
+    let tree = canonical_skill_tree_hash(
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_slice())),
+    )?;
+    let record = SkillRecord::new(
+        "primitive-a.keyed",
+        "A skill whose config file holds a key",
+        "1.0.0",
+        ClaimApprovalStatus::Approved,
+        SkillLifecycle::Candidate,
+        ClaimSource::UserStated,
+        0.9,
+        false,
+        true,
+        Vec::new(),
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("source"),
+            rmpv::Value::from("primitive-a-fixture"),
+        )]),
+    )
+    .with_content_hash(tree);
+    Ok(oneiron::test_doors::skill_package::land_active_skill_with_files(vault, &record, files)?)
+}
+
+/// Whether `content` holds [`CONFIG_KEY`].
+fn holds_key(content: &[u8]) -> bool {
+    content
+        .windows(CONFIG_KEY.len())
+        .any(|window| window == CONFIG_KEY)
+}
+
+/// A reader other than the owner sees stored keys masked, and a skill
+/// package's files carry no custody marks to mask by: a skill whose package
+/// holds a key is never served to it (#6986 review round 2). Its get answers
+/// as an absent skill does and its list leaves the skill out, while the other
+/// skills it reads are still served. The owner reads the package as stored.
+#[test]
+fn a_reader_is_never_served_a_skill_package_that_holds_a_key() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let (agent, owner_actor, _) = granted_reader_fixture(&vault)?;
+    let owner = vault.memory(owner_actor, EdgeActorClass::Human);
+    let reader = vault.memory(agent, EdgeActorClass::Agent);
+    let keyed = put_keyed_skill(&vault)?;
+
+    let own = oneiron::verbs::vault_skills_get(&owner, HubSkillRequest { entity: keyed })?;
+    assert!(own.loadable, "the keyed skill is loadable");
+    assert!(
+        own.files
+            .iter()
+            .flatten()
+            .any(|file| file.path == "config.json" && holds_key(&file.content)),
+        "the owner reads the package as stored"
+    );
+
+    let Err(withheld) =
+        oneiron::verbs::vault_skills_get(&reader, HubSkillRequest { entity: keyed })
+    else {
+        return Err("a reader was served a skill package that holds a key".into());
+    };
+    assert_eq!(
+        withheld.code, MEMORY_CODE_NOT_FOUND,
+        "the keyed skill reads as absent"
+    );
+    let listed = oneiron::verbs::vault_skills_list(&reader, page())?;
+    assert!(
+        !listed.skills.is_empty(),
+        "the seeded skills are still served"
+    );
+    assert!(
+        listed.skills.iter().all(|skill| skill.entity != keyed),
+        "the list leaves the keyed skill out"
+    );
+    assert!(
+        listed
+            .skills
+            .iter()
+            .flat_map(|skill| skill.files.iter().flatten())
+            .all(|file| !holds_key(&file.content)),
+        "no listed file holds the key"
+    );
     Ok(())
 }

@@ -460,7 +460,7 @@ fn read_framed_stream(
         }
         if terminated {
             let mut end = [0_u8];
-            if stream.read(&mut end)? != 1 || end != [b'\n'] {
+            if stream.read(&mut end)? != 1 || end != *b"\n" {
                 return Err(serve_failed("door history record is not terminated").into());
             }
         }

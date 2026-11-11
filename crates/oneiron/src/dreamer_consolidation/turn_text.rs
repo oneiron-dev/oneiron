@@ -146,6 +146,13 @@ impl TurnText {
         self.text.as_deref()
     }
 
+    /// Every MESSAGE row this text was read from: the TURN's exact live
+    /// MESSAGE child set, each row read by the reader that projected it,
+    /// sorted by id. None for inline text.
+    pub(crate) fn message_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.messages.iter().flatten().map(|pin| pin.id)
+    }
+
     /// The MESSAGE-local slices a byte range of this text covers (the whole
     /// text when `range` is `None`), each at the revision it was read at.
     /// Inline TURN text has none. A range covering no MESSAGE byte (only the
