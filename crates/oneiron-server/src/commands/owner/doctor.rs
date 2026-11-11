@@ -219,7 +219,10 @@ fn layered_store_clock(serve: &ServeArgs) -> LayeredClock {
     else {
         return LayeredClock::Unknown;
     };
-    match table.get("runtime").and_then(|runtime| runtime.get("clock")) {
+    match table
+        .get("runtime")
+        .and_then(|runtime| runtime.get("clock"))
+    {
         None => LayeredClock::Host,
         Some(toml::Value::String(clock)) if clock == "system" => LayeredClock::Host,
         Some(_) => LayeredClock::Unknown,
