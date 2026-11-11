@@ -3,7 +3,7 @@
 //! blob or code output's scope is the one its own recorded claim carries:
 //! the exact blob version's `blob.version` claim, or the code revision's
 //! provenance claim. A CLAIM or document revision's (FIX 2783) is read by
-//! [`super::team_submit_entity`]. The review copies that scope, so it is
+//! [`super::entity`]. The review copies that scope, so it is
 //! never wider than the output; an output with no scope the review can carry
 //! is refused, and the vault's default scope never stands in for it. A
 //! scope whose relationship is no longer a live RELATIONSHIP is refused in
@@ -12,10 +12,10 @@
 use heed::RoTxn;
 use rmpv::Value;
 
-use super::team_submit_entity::{claim_revision_scope_in_txn, document_revision_scope_in_txn};
+use super::entity::{claim_revision_scope_in_txn, document_revision_scope_in_txn};
+use super::revision::OutputRevision;
 use crate::claim::ScopedRead;
 use crate::code_revision::CodeRevisionKind;
-use crate::code_run::team_submit::OutputRevision;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_RELATIONSHIP};
 use crate::vault::RevisionRef;
@@ -34,7 +34,7 @@ pub(super) const OUTPUT_UNSCOPED: &str = "team_submit_output_unscoped";
 const SCOPE_STALE: &str = "team_submit_scope_stale";
 
 /// A read of the output, or the guest's failure code.
-pub(super) type Read<T> = std::result::Result<T, &'static str>;
+pub(crate) type Read<T> = std::result::Result<T, &'static str>;
 
 /// Where a submitted output's scope was read from.
 #[derive(Debug, PartialEq)]
@@ -60,7 +60,7 @@ pub(super) struct OutputScope {
 /// A submitted output: the entity the review is about, and the scope the
 /// review stands in.
 #[derive(Debug, PartialEq)]
-pub(super) struct OutputDescriptor {
+pub(crate) struct OutputDescriptor {
     subject: EntityId,
     /// Where the scope below was read from.
     source: ScopeSource,
@@ -74,13 +74,13 @@ pub(super) struct OutputDescriptor {
 impl OutputDescriptor {
     /// The entity the review is about: the blob artifact, the code
     /// revision, the CLAIM, or the record that owns the document.
-    pub(super) const fn subject(&self) -> EntityId {
+    pub(crate) const fn subject(&self) -> EntityId {
         self.subject
     }
 
     /// `candidate` in the output's scope: its facet and project, its world,
     /// its relationship and its scope restrictions.
-    pub(super) fn scoped(&self, candidate: ClaimCandidate) -> ClaimCandidate {
+    pub(crate) fn scoped(&self, candidate: ClaimCandidate) -> ClaimCandidate {
         let mut candidate = candidate.with_scope_stamps(self.facet, self.project);
         if let Some(world) = self.world {
             candidate = candidate.with_world(world);
@@ -93,7 +93,7 @@ impl OutputDescriptor {
     }
 
     /// Whether `body` stands in exactly the output's scope.
-    pub(super) fn scopes(&self, body: &ClaimBody) -> bool {
+    pub(crate) fn scopes(&self, body: &ClaimBody) -> bool {
         body.world == self.world
             && body.rel == self.rel
             && crate::claim::without_initial_weight(body.scope.clone())
@@ -105,7 +105,7 @@ impl OutputDescriptor {
     /// Whether the output's scope still stands in `txn`: every relationship
     /// it names must still be a live RELATIONSHIP, as the review's own write
     /// requires. A refusal is the guest's failure code.
-    pub(super) fn scope_stands_in_txn(&self, vault: &Vault, txn: &RoTxn<'_>) -> Result<Read<()>> {
+    pub(crate) fn scope_stands_in_txn(&self, vault: &Vault, txn: &RoTxn<'_>) -> Result<Read<()>> {
         for rel in self.rel.iter().flatten() {
             let found = crate::vault::live_entity_row_in_txn(&vault.store, txn, rel)?.live_type();
             if found != Some(ENTITY_TYPE_RELATIONSHIP) {
