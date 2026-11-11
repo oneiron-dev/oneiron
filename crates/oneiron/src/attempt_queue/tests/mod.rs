@@ -5,6 +5,7 @@ use super::encoding::{
     ready_key,
 };
 use super::engine::{ERR_RETRY_CHAIN_CYCLE, ERR_RETRY_CHAIN_MISMATCH, ERR_RETRY_CHAIN_MISSING_ROW};
+use super::lifecycle::RunLifecycle;
 use super::telemetry::emit_attempt_queue_cleanup_span;
 use super::validate::{
     CancelReceiptDraft, ERR_ABANDONED_WITHOUT_REASON, ERR_ABANDONED_WITHOUT_RESULT,
@@ -16,7 +17,7 @@ use super::validate::{
     ERR_LANDING_RECORD_MISPLACED, ERR_LANDING_WITHOUT_LEASE, ERR_MANIFEST_REFERENCE_EMPTY,
     ERR_MANIFEST_REFERENCE_HAS_AT, ERR_MANIFEST_REFERENCE_TOO_LONG, ERR_MANIFEST_VERSION_EMPTY,
     ERR_MANIFEST_VERSION_TOO_LONG, ERR_RESULT_REF_REBOUND, MAX_FAILURE_REASON_LEN,
-    MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN, append_cancel_receipt,
+    MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN,
 };
 use super::*;
 use crate::error::{Error, Result};

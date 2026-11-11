@@ -3,13 +3,17 @@
 //! [`RunState`] a run reports, derived from its row.
 //!
 //! Each run writer that interrupts, pauses, holds, resumes, cancels, reclaims,
-//! releases or retries a row asks [`RunLifecycle::step`] what the event does
-//! in the row's current state. The writers of `engine/mutate.rs` (the
-//! interventions, the lease release, the retry) then write the row's
+//! releases, retries, lands or claims a row asks [`RunLifecycle::step`] what
+//! the event does in the row's current state. The writers of
+//! `engine/mutate.rs` (the interventions, the lease release, the retry),
+//! `cancel/ops.rs` (landing acceptance, checkpoints, reserve and pressure),
+//! `cancel/terminal.rs` (landing finish, force cancellation and its successor)
+//! and `validate/field_validators.rs` (the claim helper) write the row's
 //! lifecycle fields (`state`, `active_pause`, `lease_owner`, `scheduled_at`,
 //! `settled_at`, `cancel_state`, `attempt_count`) only through the write
-//! functions of [`RunLifecycle`] below; the other writers still write the
-//! table's answer themselves. The writer keeps its own
+//! functions of [`RunLifecycle`] below. Cancel receipt appends and pressure
+//! counts also live here; other writers still write the table's answer
+//! themselves. The writer keeps its own
 //! guards (the lease fence, input validation, the reserved hold actors) and
 //! its side writes (the ready and annotation-hold indexes, dedupe, pack
 //! receipts, settlement, notifications). The writers that consult it:
@@ -23,7 +27,12 @@
 //!   parked rows; boot recovery calls it too) and the lease release a parked
 //!   run resumes by (`release_lease_in_txn`);
 //! - the retry source, `retry_storage_in_txn`, through `Retry`; its fresh
-//!   successor is built by [`RunLifecycle::successor_row`].
+//!   successor is built by [`RunLifecycle::successor_row`];
+//! - landing acceptance, `accept_landing_in_txn`, through `AcceptLanding`;
+//! - landing finish, `finish_landing_in_txn`, through `FinishLanding`;
+//! - hard cancellation, `force_cancel_in_txn` and `force_cancel_record`,
+//!   through `ForceCancel` (lease cleanup also calls the latter);
+//! - ready-row claims, `lease_claimed_record`, through `Claim`.
 //!
 //! The table encodes today's transitions; no stored byte changes. Two of
 //! today's cells are known gaps, kept here as they are:
@@ -44,12 +53,18 @@ use super::types::{
     ManifestEntry, PlannedBinding,
 };
 use super::validate::{
-    append_attempt_event, validate_lease_owner, validate_resume_point, validate_transition_lease,
+    CancelReceiptDraft, append_attempt_event, validate_lease_owner, validate_resume_point,
+    validate_transition_lease,
 };
 use crate::entity_id::EntityId;
-use crate::error::Result;
-use crate::store::attempt_cancel::{AttemptCancelState, AttemptLandingReserve};
+use crate::error::{Error, Result};
+use crate::limit_ask::{EngineLimit, LimitWatch};
+use crate::store::attempt_cancel::{
+    AttemptCancelReceipt, AttemptCancelReceiptKind, AttemptCancelState, AttemptCancellation,
+    AttemptLanding, AttemptLandingReserve,
+};
 use crate::store::attempt_record::{AttemptReadSet, RequeuedFailure};
+use crate::store::attempt_record_codec::cancel_validators::validate_cancel_receipt_fields;
 use crate::store::attempt_run_signal::{RunAsk, RunBranchSignal, SignalIntent};
 
 /// The facts of an attempt row the table reads.
@@ -232,6 +247,14 @@ pub(crate) enum RunEvent {
     /// The lease holder's try failed and a successor row carries the next try:
     /// this row settles as failed.
     Retry,
+    /// Landing acceptance by `accept_landing_in_txn`.
+    AcceptLanding,
+    /// Landing completion by `finish_landing_in_txn`.
+    FinishLanding,
+    /// Hard cancellation by `force_cancel_record` and `force_cancel_in_txn`.
+    ForceCancel,
+    /// Ready-row leasing by `lease_claimed_record`.
+    Claim,
 }
 
 /// What an event does to a row in its current state.
@@ -366,6 +389,55 @@ impl RunLifecycle {
                 | S::Cancelled
                 | S::Abandoned => RunStep::Refuse,
             },
+            RunEvent::AcceptLanding => match row.state {
+                S::Leased => RunStep::Move {
+                    to: S::Landing,
+                    pause: row.pause,
+                },
+                S::Landing => RunStep::Replay,
+                S::Queued
+                | S::Paused
+                | S::Scheduled
+                | S::Completed
+                | S::Failed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Refuse,
+            },
+            RunEvent::FinishLanding => match row.state {
+                S::Landing => RunStep::Move {
+                    to: S::Cancelled,
+                    pause: row.pause,
+                },
+                S::Queued
+                | S::Leased
+                | S::Paused
+                | S::Scheduled
+                | S::Completed
+                | S::Failed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Refuse,
+            },
+            RunEvent::ForceCancel => match row.state {
+                S::Queued | S::Leased | S::Paused | S::Scheduled | S::Landing => RunStep::Move {
+                    to: S::Cancelled,
+                    pause: row.pause,
+                },
+                S::Cancelled => RunStep::Replay,
+                S::Completed | S::Failed | S::Abandoned => RunStep::Keep,
+            },
+            RunEvent::Claim => match row.state {
+                S::Queued | S::Scheduled => RunStep::Move {
+                    to: S::Leased,
+                    pause: row.pause,
+                },
+                S::Leased
+                | S::Paused
+                | S::Landing
+                | S::Completed
+                | S::Failed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Refuse,
+            },
             RunEvent::Release { lease_holder } => match row.state {
                 S::Leased if lease_holder => RunStep::Move {
                     to: S::Queued,
@@ -457,6 +529,223 @@ impl RunLifecycle {
             source.settled_at = Some(now);
         }
         step
+    }
+
+    /// Applies `AcceptLanding`, writing cancel_state.landing, an optional
+    /// cancel_state.resume_point, cancel_state.pressure.pending, state and
+    /// active_pause. The site keeps guards, provenance, receipts and updated_at.
+    pub(crate) fn accept_landing(
+        record: &mut AttemptRecord,
+        landing: AttemptLanding,
+        resume_point: Option<AttemptResumePoint>,
+    ) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::AcceptLanding);
+        if let RunStep::Move { to, pause } = step {
+            record.cancel_state.landing = Some(landing);
+            if let Some(resume_point) = resume_point {
+                record.cancel_state.resume_point = Some(resume_point);
+            }
+            // Landing satisfies every outstanding ask — they all wanted the worker
+            // to stop, and it is stopping — so no request stays owed an answer.
+            // The receipt still names the ONE request this landing answers, so the
+            // trigger and the requester on it are the real ones.
+            record.cancel_state.pressure.pending = 0;
+            record.state = to;
+            record.active_pause = pause;
+        }
+        step
+    }
+
+    /// Applies `FinishLanding`, writing state, active_pause, lease_owner,
+    /// scheduled_at, settled_at and cancel_state.cancellation. The site keeps
+    /// guards, the successor, receipts, indexes, backoff_until, last_error and
+    /// updated_at.
+    pub(crate) fn finish_landing(
+        record: &mut AttemptRecord,
+        now: u64,
+        cancellation: AttemptCancellation,
+    ) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::FinishLanding);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+            record.scheduled_at = None;
+            record.settled_at = Some(now);
+            record.cancel_state.cancellation = Some(cancellation);
+        }
+        step
+    }
+
+    /// Applies `ForceCancel`, writing state, active_pause, lease_owner,
+    /// scheduled_at, settled_at, cancel_state.pressure.pending and
+    /// cancel_state.cancellation. The site keeps authority, receipts, indexes,
+    /// backoff_until, last_error and updated_at.
+    pub(crate) fn force_cancel(
+        record: &mut AttemptRecord,
+        now: u64,
+        cancellation: AttemptCancellation,
+    ) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::ForceCancel);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+            record.scheduled_at = None;
+            record.settled_at = Some(now);
+            record.cancel_state.pressure.pending = 0;
+            record.cancel_state.cancellation = Some(cancellation);
+        }
+        step
+    }
+
+    /// Applies `Claim`, checking the next attempt_count before writing state,
+    /// active_pause, lease_owner, attempt_count and scheduled_at. The site keeps
+    /// admission, claimed_at, backoff_until, updated_at and indexes.
+    pub(crate) fn claim(record: &mut AttemptRecord, lease_owner: &str) -> Result<RunStep> {
+        let step = Self::step(RunRow::of(record), RunEvent::Claim);
+        if let RunStep::Move { to, pause } = step {
+            let attempt_count = record
+                .attempt_count
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("attempt lease count"))?;
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = Some(lease_owner.to_owned());
+            record.attempt_count = attempt_count;
+            record.scheduled_at = None;
+        }
+        Ok(step)
+    }
+
+    /// Builds a fresh landing successor with no state move: row writes state,
+    /// lease_owner, attempt_count, scheduled_at, settled_at, active_pause and
+    /// cancel_state, retaining the checkpoint and fresh reserve dial values.
+    /// The site keeps the id, payload, provenance, indexes and persistence.
+    pub(crate) fn landing_successor_row(
+        parts: NewAttempt,
+        scheduled_at: Option<u64>,
+        source: &AttemptRecord,
+    ) -> AttemptRecord {
+        row(
+            parts,
+            scheduled_at,
+            AttemptCancelState {
+                // The whole point of a designed landing: the successor starts from
+                // the exact recorded point, with a fresh reserve on the same dial.
+                resume_point: source.cancel_state.resume_point.clone(),
+                reserve: AttemptLandingReserve {
+                    spent_units: 0,
+                    // A NEW row inherits the dial's VALUES as its starting
+                    // accounting but not its one-shot mark: the successor's own
+                    // admission dials it against the successor's own generation,
+                    // and until then nothing has been told what it may spend.
+                    dial_generation: None,
+                    ..source.cancel_state.reserve
+                },
+                ..AttemptCancelState::default()
+            },
+        )
+    }
+
+    /// Moves no state; writes cancel_state.resume_point. The site keeps the
+    /// landing and lease guards, receipt, clock and persistence.
+    pub(crate) fn record_landing_checkpoint(
+        record: &mut AttemptRecord,
+        resume_point: AttemptResumePoint,
+    ) {
+        record.cancel_state.resume_point = Some(resume_point);
+    }
+
+    /// Moves no state; writes cancel_state.reserve. The site keeps the state
+    /// and generation guards, reserve arithmetic and persistence.
+    pub(crate) fn dial_landing_reserve(record: &mut AttemptRecord, reserve: AttemptLandingReserve) {
+        record.cancel_state.reserve = reserve;
+    }
+
+    /// Moves no state; writes cancel_state.reserve.spent_units after the
+    /// checked addition. The site keeps state, lease and remaining-unit guards,
+    /// the receipt, clock and persistence.
+    pub(crate) fn spend_landing_reserve(record: &mut AttemptRecord, units: u64) -> Result<()> {
+        record.cancel_state.reserve.spent_units = record
+            .cancel_state
+            .reserve
+            .spent_units
+            .checked_add(units)
+            .ok_or(Error::ArithmeticOverflow("landing reserve spend"))?;
+        Ok(())
+    }
+
+    /// Moves no state; writes cancel_state.receipts. The site keeps guards,
+    /// pressure accounting, clocks and persistence.
+    ///
+    /// Appends one protocol row. Never drains and never refuses on a count, so
+    /// `Landed` / `ForceCancelled` — including the runtime's lease-expiry cleanup
+    /// — always have room: landing finish and the hard rung settle atomically and
+    /// never silently omit their evidence.
+    ///
+    /// Past the `[limits]` `attempt_cancel_receipts` row the append asks through
+    /// `watch` whether everything is okay and lands (Rule 5); only storage
+    /// capacity (LMDB's value ceiling, a full map) refuses the record write.
+    pub(in crate::attempt_queue) fn append_cancel_receipt(
+        watch: &LimitWatch,
+        record: &mut AttemptRecord,
+        kind: AttemptCancelReceiptKind,
+        actor: String,
+        draft: CancelReceiptDraft,
+        now: u64,
+    ) -> Result<()> {
+        let sequence = match record.cancel_state.receipts.last() {
+            Some(receipt) => receipt
+                .sequence
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("attempt cancel receipt sequence"))?,
+            None => 1,
+        };
+        let receipt = AttemptCancelReceipt {
+            sequence,
+            at: now,
+            actor,
+            kind,
+            standing: draft.standing,
+            trigger: draft.trigger,
+            grounds: draft.grounds,
+            status: draft.status,
+            reason: draft.reason,
+            resume_point: draft.resume_point,
+            reserve_units: draft.reserve_units,
+            request_sequence: draft.request_sequence,
+        };
+        // The SAME per-kind contract `decode_record` enforces, applied before the
+        // row exists: a writer cannot persist a shape the reader would then refuse,
+        // and a malformed draft leaves the record — and storage — untouched.
+        validate_cancel_receipt_fields(&receipt)?;
+        record.cancel_state.receipts.push(receipt);
+        watch.measure(
+            EngineLimit::AttemptCancelReceipts,
+            record.cancel_state.receipts.len() as u64,
+        );
+        Ok(())
+    }
+
+    /// Moves no state; writes cancel_state.pressure.rejections and pending. The
+    /// site keeps the refusal guards, receipt, clocks and persistence.
+    ///
+    /// Counts one refused soft request. Saturating: the pathology signal is "many",
+    /// and an overflow must not reset it to "none". One refusal answers one
+    /// outstanding request; duplicate asks remain pending until answered.
+    pub(in crate::attempt_queue) fn count_cancel_rejection(record: &mut AttemptRecord) {
+        let pressure = &mut record.cancel_state.pressure;
+        pressure.rejections = pressure.rejections.saturating_add(1);
+        pressure.pending = pressure.pending.saturating_sub(1);
+    }
+
+    /// Moves no state; writes cancel_state.pressure.requests and pending. The
+    /// site keeps request provenance, receipts, clocks and persistence.
+    pub(in crate::attempt_queue) fn count_cancel_request(record: &mut AttemptRecord) {
+        let pressure = &mut record.cancel_state.pressure;
+        pressure.requests = pressure.requests.saturating_add(1);
+        pressure.pending = pressure.pending.saturating_add(1);
     }
 
     /// Builds a fresh successor, retaining the source's reserve dial values,
