@@ -5052,13 +5052,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/authority/machine_write.rs",
      "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 4
      }
     },
@@ -26991,7 +26991,7 @@
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -42123,7 +42123,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/gate/default_manifest.rs",
@@ -70827,7 +70827,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 6,
       "struct": 1
      }
@@ -70846,10 +70846,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/scope_summary/landing_reply.rs",
+     "purpose": "Shared admission of a reply against its stored, signed summary landing",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/landing_writer.rs",
+     "purpose": "The engine writer a scope summary lands under (Engine ruling SUMMARY-AS-RECORD-PERMIT-SHAPE = A): the merge…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 14,
       "re-export": 7
      }
     },
@@ -87183,13 +87203,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward.rs",
      "purpose": "Forward rematerialization of window state into the CRDT doc",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -87204,7 +87224,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward/edge_pass/apply.rs",
@@ -87274,7 +87294,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 6,
       "mod": 1,
       "re-export": 10,
@@ -90366,7 +90386,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 10
+      "mod": 11
      }
     },
     {
@@ -90387,6 +90407,16 @@
      "purpose": "Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override…",
      "surface": {
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/scope_summary.rs",
+     "purpose": "Doors for `tests/summary_as_record_permit.rs` (SUMMARY-AS-RECORD-PERMIT): a summary minted as the Dreamer…",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -99539,6 +99569,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/summary_as_record_permit.rs",
+     "purpose": "The owner's summary-as-record lands on a default vault (Engine ruling SUMMARY-AS-RECORD-PERMIT-SHAPE = A)",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -100289,7 +100327,7 @@
     "gate": {
      "files": 209,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
@@ -100840,7 +100878,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101099,7 +101137,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101267,10 +101305,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 242,
+   "over_bar": 244,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7257,
-   "test_files": 939
+   "source_files": 7260,
+   "test_files": 940
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -108854,7 +108892,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 100,
+      "const": 101,
       "crate-vis": 1
      }
     },
@@ -115038,7 +115076,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
