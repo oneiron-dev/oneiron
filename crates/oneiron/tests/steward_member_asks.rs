@@ -410,6 +410,11 @@ fn an_ask_is_not_applied_once_its_steward_has_lost_the_role() {
 fn a_hard_erase_deletes_the_asks_that_name_the_erased_person() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    // An erase signs its receipt with the install's device key, which the
+    // delete door loads from the keystore a host installs.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let steward = person(&vault);
     let erased = person(&vault);
