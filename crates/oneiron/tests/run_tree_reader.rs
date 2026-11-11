@@ -158,6 +158,7 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
     vault.initialize_shared_vault(&proof, SHARED, None, &[], 1)?;
     let steward = person(&vault, EntityId::now())?;
     let member = person(&vault, EntityId::now())?;
+    let other_agent = person(&vault, EntityId::now())?;
     stand_member_grant(&vault, steward, SHARED, FederationGrantRole::Steward)?;
     stand_member_grant(&vault, member, SHARED, FederationGrantRole::Member)?;
 
@@ -183,20 +184,18 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
     assert!(stewarded_try.signals.is_empty());
 
     // A member without the role, and another agent, stay refused.
-    assert!(
-        oneiron::verbs::vault_runs_branches_get(
-            &vault.memory(member, EdgeActorClass::Human),
-            request.clone()
-        )
-        .is_err()
-    );
-    assert!(
-        oneiron::verbs::vault_runs_branches_get(
-            &vault.memory(EntityId::now(), EdgeActorClass::Agent),
-            request.clone()
-        )
-        .is_err()
-    );
+    let refused = oneiron::verbs::vault_runs_branches_get(
+        &vault.memory(member, EdgeActorClass::Human),
+        request.clone(),
+    )
+    .expect_err("a member without the role stays refused");
+    assert_eq!(refused.code, oneiron::MEMORY_CODE_FORBIDDEN);
+    let refused = oneiron::verbs::vault_runs_branches_get(
+        &vault.memory(other_agent, EdgeActorClass::Agent),
+        request.clone(),
+    )
+    .expect_err("another agent stays refused");
+    assert_eq!(refused.code, oneiron::MEMORY_CODE_FORBIDDEN);
 
     // The owner reads every branch with its text, as before.
     let as_owner = oneiron::verbs::vault_runs_branches_get(
