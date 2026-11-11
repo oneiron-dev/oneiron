@@ -1,0 +1,285 @@
+/* The needs-you block: a sunk well in a room, bare on a popover or a desk.
+   One item open, the rest one line each. */
+.sl-needs-you {
+  display: flex;
+  flex-direction: column;
+  --sl-mark-ground: var(--sl-sunk);
+}
+
+.sl-needs-you[data-ground="well"] {
+  padding: 4px 14px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-sunk);
+}
+
+.sl-needs-you[data-ground="bare"] {
+  --sl-mark-ground: var(--sl-pop);
+}
+
+/* A settled item folds away on the same curve as an unfold. */
+.sl-needs-you-item {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 260ms var(--sl-ease-out),
+    opacity 200ms ease;
+}
+
+.sl-needs-you-item > .sl-needs-you-item-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sl-needs-you-item[data-settle="settled"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+/* Set aside: one quiet line in the question's column: its first words,
+   `set aside`, and `answer now` at the right. */
+.sl-needs-you-aside {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  padding: 6px 0 6px 34px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+}
+
+.sl-needs-you-aside-words {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--sl-ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-needs-you-aside-state {
+  flex: none;
+  color: var(--sl-ink-3);
+  white-space: nowrap;
+}
+
+.sl-needs-you-answer-now {
+  flex: none;
+  margin-left: auto;
+}
+
+/* The head: the asker's mark, the question, the urgency at the right. */
+.sl-needs-you-head.sl-unfold-trigger {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  column-gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 9px 0;
+  border-radius: var(--sl-radius);
+  text-align: left;
+}
+
+.sl-needs-you-head:focus-visible {
+  outline-offset: 0;
+}
+
+.sl-needs-you-item[data-state="open"] .sl-needs-you-head {
+  cursor: default;
+}
+
+.sl-needs-you-asker {
+  display: grid;
+  place-items: center;
+  color: var(--sl-ink-2);
+}
+
+.sl-needs-you-question {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--sl-t-say);
+  line-height: 1.4;
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sl-needs-you-head:hover .sl-needs-you-question,
+.sl-needs-you-item[data-state="open"] .sl-needs-you-question {
+  color: var(--sl-ink-1);
+}
+
+.sl-needs-you-item[data-state="open"] .sl-needs-you-question {
+  white-space: normal;
+  text-wrap: pretty;
+}
+
+.sl-needs-you-meta {
+  display: inline-flex;
+  max-width: 30ch;
+  overflow: hidden;
+}
+
+/* The body sits under the question, past the asker's column. */
+.sl-needs-you-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 0 12px 34px;
+}
+
+/* The picks line. */
+.sl-needs-you-picks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+  min-height: 30px;
+}
+
+.sl-needs-you-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-needs-you-pick:hover,
+.sl-needs-you-pick:focus-visible,
+.sl-needs-you-pick[aria-pressed="true"] {
+  color: var(--sl-ink-1);
+  outline: none;
+}
+
+.sl-needs-you-pick:focus-visible .sl-pick-diamond path {
+  stroke-width: 1.8;
+}
+
+.sl-needs-you-pick[data-tone="consent"]:hover,
+.sl-needs-you-pick[data-tone="consent"]:focus-visible {
+  color: var(--sl-safelight);
+}
+
+.sl-needs-you-pick:active {
+  transform: scale(0.96);
+}
+
+.sl-needs-you-pick:disabled {
+  cursor: default;
+  transform: none;
+}
+
+.sl-needs-you-later {
+  margin-left: auto;
+}
+
+.sl-needs-you-pending {
+  display: inline-block;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+}
+
+.sl-needs-you-pending > .sl-needs-you-undo {
+  color: var(--sl-ink-1);
+}
+
+.sl-needs-you-own {
+  flex: 1 1 260px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--sl-radius);
+  background: var(--sl-hover);
+  color: var(--sl-ink-1);
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-say);
+}
+
+.sl-needs-you-own::placeholder {
+  color: var(--sl-ink-2);
+  font-style: italic;
+}
+
+.sl-needs-you-own:focus {
+  outline: 1.5px solid var(--sl-ink-4);
+  outline-offset: 0;
+}
+
+/* Shapes: a command as one sentence, a plan as numbered steps. */
+.sl-needs-you-command {
+  max-width: 64ch;
+  font-size: var(--sl-t-say);
+  line-height: 1.5;
+  color: var(--sl-ink-2);
+}
+
+/* The steps read as one list; the hidden ones continue it when unfolded. */
+.sl-needs-you-plan {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  counter-reset: sl-plan-step;
+}
+
+.sl-needs-you-plan-rest {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  align-self: stretch;
+}
+
+.sl-needs-you-plan-rest .sl-needs-you-steps {
+  padding-top: 2px;
+}
+
+.sl-needs-you-plan-rest > .sl-verb {
+  margin-top: 6px;
+}
+
+.sl-needs-you-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+}
+
+.sl-needs-you-step {
+  display: grid;
+  grid-template-columns: 2.6ch minmax(0, 1fr);
+  counter-increment: sl-plan-step;
+  font-size: var(--sl-t-say);
+  line-height: 1.45;
+  color: var(--sl-ink-2);
+}
+
+.sl-needs-you-step::before {
+  content: counter(sl-plan-step);
+  padding-top: 2px;
+  font-family: var(--sl-mono);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--sl-t-figure);
+  color: var(--sl-ink-3);
+}
+
+.sl-needs-you-context {
+  display: block;
+  max-width: 420px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-needs-you-item {
+    transition: opacity 200ms ease;
+  }
+  .sl-needs-you-pick {
+    transition: none;
+  }
+  .sl-needs-you-pick:active {
+    transform: none;
+  }
+}

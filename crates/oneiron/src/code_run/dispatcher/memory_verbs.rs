@@ -15,7 +15,6 @@ use crate::{ClaimSubject, EdgeActorClass, EdgeKind, EntityId, ScoredEntity, Vaul
 use oneiron_base::edge::kind_tables::ensure_public_memory_edge_kind;
 
 use super::envelope::edge_operation_gate_id;
-use super::read_worlds::{ServedRows, served_row_in};
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::error::{CodeError, OffRecordError};
 
@@ -247,40 +246,19 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
         filter: Option<&crate::gate::RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
-        let mut scored = ServedRows::new();
-        let observe = |txn: &heed::RoTxn<'_>, hits: &[ScoredEntity]| {
-            scored = hits
-                .iter()
-                .map(|hit| (hit.id, served_row_in(vault, txn, hit.id)))
-                .collect();
-        };
-        let attempt = self.agent_lease.as_ref().map(|lease| lease.attempt);
-        let lane = read_as.map(|reader| {
-            vault
-                .scoped_read(reader)
-                .with_claim_status(self.keyed_claims())
-                .with_read_filter(filter)
-        });
-        // A caller filter is met inside the scan, before the rank and the
-        // cut, so a row it excludes takes no place an admitted row could
-        // fill (FIX 3977).
-        let hits = match (&lane, filter) {
-            (Some(lane), Some(_)) => {
-                vault.search_text_scoped_observed(lane, query, limit, observe, attempt)?
-            }
-            _ => vault.search_text_observed_for_attempt(query, limit, observe, attempt)?,
-        };
-        let (hits, admitted) = match lane {
-            Some(lane) => {
-                let mut admitted = ServedRows::new();
-                let hits = lane
-                    .filter_scored_entities_observed(hits, None, |txn, id| {
-                        admitted.insert(id, served_row_in(vault, txn, id));
-                    })?
-                    .value;
-                (hits, Some(admitted))
-            }
-            None => (self.own_entry_hits(hits)?, None),
+        let (hits, scored, admitted) = crate::task_verb::run_rows::search::search_observed(
+            vault,
+            query,
+            limit,
+            read_as,
+            self.keyed_claims(),
+            filter,
+            self.agent_lease.as_ref().map(|lease| lease.attempt),
+        )?;
+        let hits = if admitted.is_none() {
+            self.own_entry_hits(hits)?
+        } else {
+            hits
         };
         self.note_search_worlds(site, &hits, &scored, admitted.as_ref());
         Ok(hits)

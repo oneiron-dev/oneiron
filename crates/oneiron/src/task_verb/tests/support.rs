@@ -65,7 +65,7 @@ pub(super) fn task_entity_census_by_role(
         .count()
 }
 
-pub(in crate::task_verb) fn put_person(vault: &Vault, id: EntityId) {
+pub(crate) fn put_person(vault: &Vault, id: EntityId) {
     vault
         .put_entity(
             &id,
@@ -126,7 +126,7 @@ pub(in crate::task_verb) fn open_consult_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-pub(in crate::task_verb) fn consult_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
+pub(crate) fn consult_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
     let turn_ref = EntityId::from_bytes([seed; 16]).expect("turn id");
     let mut body = Vec::new();
     rmpv::encode::write_value(
