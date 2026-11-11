@@ -432,8 +432,20 @@ impl crate::Vault {
         act: OwnerActKind,
     ) -> crate::error::Result<GrantedAct> {
         let txn = self.store.env.read_txn()?;
-        let now = self.instant_in_txn(&txn)?.secs();
-        self.live_grant_names_act_in_txn(&txn, grant, agent, act, now)?;
+        self.granted_act_in_txn(&txn, agent, grant, act)
+    }
+
+    /// [`Self::granted_act`] in the caller's snapshot `txn` (untangle 6.7b):
+    /// a write that takes the act checks its Grant in that same write.
+    pub(crate) fn granted_act_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        grant: EntityId,
+        act: OwnerActKind,
+    ) -> crate::error::Result<GrantedAct> {
+        let now = self.instant_in_txn(txn)?.secs();
+        self.live_grant_names_act_in_txn(txn, grant, agent, act, now)?;
         Ok(GrantedAct { agent, grant, act })
     }
 

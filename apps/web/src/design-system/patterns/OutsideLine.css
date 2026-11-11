@@ -1,0 +1,56 @@
+/* The outside hue marks what comes from another vault: this line, its
+   group heads and the guest rings. Guest names stay in the reading ink. */
+.sl-outside-line {
+  display: flex;
+  flex-direction: column;
+}
+
+.sl-outside-line-head.sl-unfold-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  min-height: 26px;
+  margin-left: -4px;
+  padding: 2px 4px;
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-do);
+  color: var(--sl-outside);
+  text-align: left;
+}
+
+.sl-outside-line-head:hover {
+  background: var(--sl-hover);
+}
+
+.sl-outside-line-head:focus-visible {
+  outline: 1.5px solid var(--sl-outside);
+}
+
+.sl-outside-line-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 6px 22px;
+}
+
+.sl-outside-line-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sl-outside-line-origin {
+  padding-top: 4px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-outside);
+}
+
+.sl-outside-line-guest {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}

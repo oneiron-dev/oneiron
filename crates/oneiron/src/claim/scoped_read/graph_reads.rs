@@ -40,7 +40,9 @@ impl ScopedRead<'_> {
         max_body_bytes: usize,
     ) -> Result<Option<GraphAskNeighbors>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let admitted = self.admitted_edges_in(
+        // One held authority for the centre and every neighbor read in this txn (FIX 7462).
+        let held = self.held_for(None);
+        let admitted = self.admitted_edges_held_in(
             txn,
             &policy,
             &filter,
@@ -50,12 +52,11 @@ impl ScopedRead<'_> {
             scan_limit,
             scan_limit,
             true,
+            &held,
         )?;
         if !admitted.source.visible() {
             return Ok(None);
         }
-        // One held authority for every neighbor read in this txn (FIX 7462).
-        let held = self.held_for(None);
         let mut kept = Vec::new();
         for edge in admitted.edges {
             let edge = edge.info();

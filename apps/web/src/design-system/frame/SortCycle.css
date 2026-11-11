@@ -1,0 +1,4 @@
+/* The sort cycle is an icon action; it keeps its place in a header row. */
+.sl-sort-cycle {
+  flex: none;
+}
