@@ -522,6 +522,18 @@
   color: var(--sl-ink-2);
 }
 
+.lib-place-narrow {
+  max-width: 100%;
+}
+
+.lib-place-narrow[data-width="420"] {
+  width: 420px;
+}
+
+.lib-place-narrow[data-width="220"] {
+  width: 220px;
+}
+
 .lib-activity-compact {
   display: flex;
   flex-direction: column;
