@@ -342,7 +342,7 @@ suite.todo(test, "ARTIFACTS-09", "waits on typed artifact publish/repoint/unpubl
  * keeps the human maker's made_by actor, distinct from the agent's).
  * Doors used: vault.artifacts.put/append (act), vault.artifacts.view,
  * vault.artifacts.read and vault.artifacts.proposals (second-door read-backs),
- * vault.artifacts.keep/discard over WS plus vault.receipts.get (settle and
+ * vault.artifacts.keep/discard over typed HTTP plus vault.receipts.get (settle and
  * receipt chain), typed facade calls caught as PublicHttpError (wrong-actor
  * refusals), engine.restart() (survival), vault.authority.audit plus
  * POST /v1/core/slips/revoke (the agent
@@ -401,23 +401,21 @@ async function museLoop07ReadText(client: museLoop07Client, artifactRef: string,
   return content ? Buffer.from(content.content_base64, "base64").toString("utf8") : null;
 }
 
-async function museLoop07WsCall<V extends FacadeVerb>(
-  engine: EngineFixture,
-  actor: PairedActor,
+async function museLoop07CallWithReceipt<V extends Extract<FacadeVerb,
+  "vault.artifacts.keep" | "vault.artifacts.discard">>(
+  client: museLoop07Client,
   verb: V,
   input: FacadeInput<V>,
 ): Promise<{ value: FacadeResult<V>; receiptRef: string }> {
-  const socket = await engine.websocket(actor);
-  try {
-    const { value, frames } = await socket.call(verb, input);
-    const receiptRef = frames.find(
-      frame => frame.envelope.receipt_ref != null && frame.envelope.receipt_ref !== "",
-    )?.envelope.receipt_ref;
-    if (!receiptRef) throw new Error(`WS ${verb} returned no receipt_ref frame`);
-    return { value, receiptRef };
-  } finally {
-    socket.close();
+  const reply = await client.request<FacadeResult<V>>(
+    "POST", `/v1/core/facade/${verb}`, input,
+    { "x-oneiron-invocation": secretHex(16) },
+  );
+  const receiptRef = reply.headers.get("x-oneiron-receipt-ref");
+  if (!receiptRef?.startsWith("call:")) {
+    throw new Error(`HTTP ${verb} returned no call receipt header`);
   }
+  return { value: reply.body, receiptRef };
 }
 
 async function museLoop07CallReceipt(
@@ -425,7 +423,7 @@ async function museLoop07CallReceipt(
   receiptRef: string,
 ): Promise<NonNullable<FacadeResult<"vault.receipts.get">>> {
   const receipt = await client.call("vault.receipts.get", { receipt_ref: receiptRef });
-  if (!receipt) throw new Error("vault.receipts.get returned null for a frame receipt_ref");
+  if (!receipt) throw new Error("vault.receipts.get returned null for a call receipt_ref");
   return receipt;
 }
 
@@ -576,6 +574,7 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
   }
   const museLoop07RefusedKeepReceipt = await museLoop07CallReceipt(engine.client, museLoop07RefusedKeepReceiptRef);
   expect(museLoop07RefusedKeepReceipt.verb).toBe("vault.artifacts.keep");
+  expect(museLoop07RefusedKeepReceipt.transport).toBe("http_facade");
   expect(museLoop07RefusedKeepReceipt.actor_ref).toBe(museLoop07AgentSelf.actor_ref);
   expect(museLoop07RefusedKeepReceipt.actor_class).toBe(museLoop07AgentSelf.actor_class);
   const museLoop07RefusedOutcome = museLoop07RefusedKeepReceipt.outcome;
@@ -589,7 +588,7 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
 
   // P-LOOP-025: the owner Keeps it once. The kept version carries the agent's
   // maker stamp; the Keep call receipt names the owner who settled it.
-  const museLoop07KeptCall = await museLoop07WsCall(engine, engine.pairedActor, "vault.artifacts.keep", museLoop07Settle1);
+  const museLoop07KeptCall = await museLoop07CallWithReceipt(engine.client, "vault.artifacts.keep", museLoop07Settle1);
   const museLoop07Kept = museLoop07KeptCall.value;
   expect(museLoop07Kept.version.version).toBe(2);
   expect(museLoop07Kept.version.parent_version).toBe(1);
@@ -597,6 +596,7 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
   expect(museLoop07Kept.receipt.receipt_id.length > 0).toBe(true);
   const museLoop07KeepReceipt = await museLoop07CallReceipt(engine.client, museLoop07KeptCall.receiptRef);
   expect(museLoop07KeepReceipt.verb).toBe("vault.artifacts.keep");
+  expect(museLoop07KeepReceipt.transport).toBe("http_facade");
   expect(museLoop07KeepReceipt.actor_ref).toBe(museLoop07OwnerSelf.actor_ref);
   expect(museLoop07KeepReceipt.outcome).toBe("ok");
 
@@ -664,9 +664,10 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
   museLoop07ExpectHttpRefusal(museLoop07ReadOnlyDiscardRefusal, 403);
   expect(await engine.client.call("vault.artifacts.proposals", { artifact_ref: museLoop07ArtifactRef })).toHaveLength(1);
 
-  const museLoop07DiscardedCall = await museLoop07WsCall(engine, engine.pairedActor, "vault.artifacts.discard", museLoop07Settle2);
+  const museLoop07DiscardedCall = await museLoop07CallWithReceipt(engine.client, "vault.artifacts.discard", museLoop07Settle2);
   expect(museLoop07DiscardedCall.value.receipt.receipt_id.length > 0).toBe(true);
   const museLoop07DiscardReceipt = await museLoop07CallReceipt(engine.client, museLoop07DiscardedCall.receiptRef);
+  expect(museLoop07DiscardReceipt.transport).toBe("http_facade");
 
   const museLoop07ViewAfterDiscard = await museLoop07View(engine.client, museLoop07ArtifactRef);
   expect(museLoop07ViewAfterDiscard.head).toBe(3);

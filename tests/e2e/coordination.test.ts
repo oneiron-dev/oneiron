@@ -2688,7 +2688,7 @@ async function museLoopGrantAskAuthority(
       worlds: { kind: "all" }, facets: { kind: "all" },
       bands: { kind: "some", values: [1, 101] }, // TURN evidence and TASKs.
       audience: { kind: "all" }, verbs: { kind: "some", values: ["read"] },
-      sensitivity: { kind: "all" },
+      sensitivity: { kind: "at_most", value: "restricted" },
     },
     receipt_required: false,
   };
