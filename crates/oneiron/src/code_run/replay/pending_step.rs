@@ -42,6 +42,11 @@ pub struct PendingCodeStep {
     pub request_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
     /// The model whose response gave the program.
     pub model: ModelId,
+    /// The model id that response's served receipt named: the ladder rung
+    /// that answered. The correction record the step commits names it, else
+    /// `model` (CODE-CORRECTION-MODEL-ID-IS-SEAT-DIGEST). `None` when no
+    /// receipt named one, and for a step parked before this field was kept.
+    pub answered_by: Option<ModelId>,
     /// The repairs the ONE-1929 normalization made to that response. The
     /// response's correction record and heal tally commit from them, with
     /// the checkpoint the step commits once its program ends (FIX 4411).
