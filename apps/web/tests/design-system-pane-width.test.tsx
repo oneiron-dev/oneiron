@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { SplitPane } from '../src/design-system/patterns/SplitPane'
+import { Composer } from '../src/design-system/patterns/Composer'
+import { Menu } from '../src/design-system/overlays/Menu'
 import {
   COLUMN_ROOM_PX,
   LIST_PANE_PX,
@@ -94,6 +96,44 @@ describe('SplitPane.Thing', () => {
     assert.match(tagWith(html, 'class="sl-split-head sl-split-thing-head"'), /data-lines="2"/)
     assert.match(tagWith(html, 'class="sl-composer sl-split-thing-write"'), /data-size="small"/)
     assert.match(html, /aria-label="Close"/)
+  })
+
+  test('by default the write box is the field and send alone, its tools on focus', () => {
+    const box = tagWith(thing(), 'class="sl-composer sl-split-thing-write"')
+    assert.match(box, /data-tools="on focus"/)
+    const html = thing()
+    assert.doesNotMatch(html, /aria-label="Dictate"/)
+    assert.doesNotMatch(html, /sl-composer-add/)
+  })
+
+  test('writeBox reaches the small write box: its tools, the add action and dictation', () => {
+    const html = renderToStaticMarkup(
+      <SplitPane pane="thing">
+        <SplitPane.Pane>room</SplitPane.Pane>
+        <SplitPane.Handle />
+        <SplitPane.Thing
+          title="Q4 view"
+          onClose={() => {}}
+          writeBox={{
+            tools: 'always',
+            onDictate: () => {},
+            add: (
+              <Composer.Add label="Add to the message">
+                <Menu.Item>a file</Menu.Item>
+              </Composer.Add>
+            ),
+          }}
+        >
+          <p>the chart</p>
+        </SplitPane.Thing>
+      </SplitPane>,
+    )
+    const box = html.slice(html.indexOf('class="sl-composer sl-split-thing-write"'))
+    assert.match(tagWith(html, 'class="sl-composer sl-split-thing-write"'), /data-tools="always"/)
+    assert.match(box, /aria-label="Add to the message"/)
+    assert.match(box, /aria-label="Dictate"/)
+    /* With tools always, the add action sits before the field. */
+    assert.ok(box.indexOf('aria-label="Add to the message"') < box.indexOf('class="sl-composer-field"'))
   })
 
   test('the split draws the rule as its track before measuring', () => {

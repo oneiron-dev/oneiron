@@ -2,7 +2,7 @@ import * as React from 'react'
 import { Icon } from '../primitives/Icon'
 import { IconAction } from '../primitives/IconAction'
 import { cx, mergeRefs, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
-import { Composer } from './Composer'
+import { Composer, type ComposerTools } from './Composer'
 import { paneBounds, paneTrack, paneWidth, thingLiesOver, thingOverWidth, thingPlaceholder, type PaneKind } from './pane-width'
 import { SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, snapToMagnet } from './snap-to-magnet'
 
@@ -414,6 +414,18 @@ function SplitPaneHead({ ref, title, titleLines = 1, actions, onClose, closeLabe
   )
 }
 
+/* What the small write box at the foot of the pane carries besides its
+   field and send button. */
+export interface SplitPaneThingWriteBox {
+  /* When the add action and dictation show: `on focus` (the default) or
+     `always`. */
+  tools?: ComposerTools
+  /* The add action: one Composer.Add element with its menu items. */
+  add?: React.ReactNode
+  /* Shows the dictate action. */
+  onDictate?: () => void
+}
+
 export interface SplitPaneThingProps extends Omit<React.ComponentPropsWithRef<'div'>, 'title'> {
   /* The thing's title: up to two lines at the section size. */
   title: React.ReactNode
@@ -426,6 +438,9 @@ export interface SplitPaneThingProps extends Omit<React.ComponentPropsWithRef<'d
   thread?: React.ReactNode
   /* The text written at the foot; the caller starts or continues the thread. */
   onSend?: (text: string) => void
+  /* The write box's tools, add action and dictation. Without it the box is
+     the field and the send button alone. */
+  writeBox?: SplitPaneThingWriteBox
   /* Further head actions before close. */
   actions?: React.ReactNode
 }
@@ -436,7 +451,7 @@ export interface SplitPaneThingProps extends Omit<React.ComponentPropsWithRef<'d
    the small write box. Place it second in a SplitPane with pane="thing".
    In a work area too narrow for the column and the pane side by side it
    lies over the room from the right edge instead. */
-function SplitPaneThing({ title, onClose, note, thread, onSend, actions, className, children, ...props }: SplitPaneThingProps) {
+function SplitPaneThing({ title, onClose, note, thread, onSend, writeBox, actions, className, children, ...props }: SplitPaneThingProps) {
   const hasThread = React.Children.toArray(thread).length > 0
   const placeholder = thingPlaceholder(hasThread)
   return (
@@ -447,7 +462,16 @@ function SplitPaneThing({ title, onClose, note, thread, onSend, actions, classNa
         {note !== undefined ? <div className="sl-split-thing-note">{note}</div> : null}
         {hasThread ? <div className="sl-split-thing-thread">{thread}</div> : null}
       </div>
-      <Composer size="small" className="sl-split-thing-write" placeholder={placeholder} onSend={(text) => onSend?.(text)} />
+      <Composer
+        size="small"
+        className="sl-split-thing-write"
+        placeholder={placeholder}
+        tools={writeBox?.tools}
+        onDictate={writeBox?.onDictate}
+        onSend={(text) => onSend?.(text)}
+      >
+        {writeBox?.add}
+      </Composer>
     </div>
   )
 }
