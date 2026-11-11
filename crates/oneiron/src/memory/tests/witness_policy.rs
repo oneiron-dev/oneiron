@@ -448,6 +448,8 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
 /// all-or-nothing in the same way every other refusal is.
 #[test]
 fn witness_refuses_out_of_range_and_colliding_message_orders() {
+    // The old witness message-order bound, removed by dfe1c94bf0d (#5026: accept the native u32 message-order domain).
+    const MAX_WITNESS_MESSAGE_ORDER: u32 = 65_535;
     let (_dir, vault) = open_vault();
     let facade = facade_for(&vault, put_person(&vault, 0xB7));
     let edges_before = witness_edge_count(&vault);
@@ -458,7 +460,7 @@ fn witness_refuses_out_of_range_and_colliding_message_orders() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             messages: vec![WitnessMessage {
-                order: crate::gate::MAX_WITNESS_MESSAGE_ORDER + 1,
+                order: MAX_WITNESS_MESSAGE_ORDER + 1,
                 ..witness_message(0, WitnessAuthor::User, "way out there")
             }],
             occurred_at: 700,
@@ -640,7 +642,7 @@ fn witness_append_rejects_a_different_conversation_atomically() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x76);
     let facade = facade_for(&vault, actor);
-    mint_open_session(&vault, 400);
+    mint_open_session(&vault, actor, 400);
 
     let conversation_a_id = EntityId::from_bytes([0x77; 16]).expect("conv A");
     let conversation_b_id = EntityId::from_bytes([0x78; 16]).expect("conv B");
