@@ -181,6 +181,7 @@ export {
 export {
   MicroSidebar,
   type MicroSidebarProps,
+  type MicroSidebarVaultMarkProps,
   type MicroSidebarItemProps,
   type MicroSidebarMoreProps,
   type MicroSidebarMoreItemProps,
