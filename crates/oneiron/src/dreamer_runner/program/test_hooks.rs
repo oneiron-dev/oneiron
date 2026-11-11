@@ -7,7 +7,9 @@
 //! a machine holds and decided.
 
 use super::authority::TurnProgramAuthority;
-use super::types::{LandedTurnRef, OwedWakeHold, ProgramRecipePin, TurnProgramArming};
+use super::types::{
+    LandedTurnRef, OwedWakeHold, ProgramRecipePin, ProgramTrigger, TurnProgramArming,
+};
 use super::{ADMISSION, ARM, DISARMED, WAKE};
 use crate::authority::{InvocationSlipBinding, VerifiedSlip};
 use crate::error::{Error, Result};
@@ -48,6 +50,9 @@ pub(crate) fn plant_slip_wake(
         revision: definition.revision(),
         definition,
         armed_at,
+        trigger: ProgramTrigger::Turn,
+        sealed: None,
+        next_due: None,
     };
     let landed = LandedTurnRef {
         turn,
@@ -138,6 +143,9 @@ pub(crate) fn plant_arming(
         definition: definition.clone(),
         revision: definition.revision(),
         armed_at,
+        trigger: ProgramTrigger::Turn,
+        sealed: None,
+        next_due: None,
     };
     vault.with_write_txn_grouped(|txn| ARM.put(vault, txn, &(actor, registration), &arming))?;
     Ok(registration)
