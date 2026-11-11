@@ -126,8 +126,9 @@ pub(crate) fn standing_steward_verbs_in(
 /// met with the read preset. Its worlds, bands, audience and sensitivity
 /// bound the read as they bound the grant, and its one verb is `read`.
 /// `None` while the grant does not stand or does not name `read`. The host's
-/// mint leaves every data axis whole; the owner narrows one with a Steward
-/// holder override and a member-role change, which rewrite the marked row.
+/// mint leaves every data axis whole, and no membership door rewrites the
+/// row (a base agent's grant is no membership); a row narrowed on an axis is
+/// read inside it all the same.
 pub(crate) fn standing_steward_read_scope_in(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,

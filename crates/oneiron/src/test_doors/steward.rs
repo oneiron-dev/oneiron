@@ -73,8 +73,9 @@ pub fn stand_steward_grant(vault: &Vault, agent: EntityId, verbs: &[&str]) -> Re
 
 /// Stands `agent`'s Steward grant with `verbs` and marks it, as
 /// [`stand_steward_grant`] does, then holds the grant row to the record kinds
-/// `bands` and every other data axis whole: the row an owner's Steward holder
-/// override and a member-role change leave.
+/// `bands` and every other data axis whole. The host's mint leaves every axis
+/// whole, and no owner door narrows one yet: this door writes the row such a
+/// door would leave.
 ///
 /// # Errors
 ///
@@ -125,33 +126,17 @@ pub fn stand_steward_grant_in_bands(
     Ok(id)
 }
 
-/// The shipped policy with the owner's Steward holder override for the
-/// Dreamer on shared vault `vault_id`: its Steward grant there reaches the
-/// record kinds `bands` only, every other axis as the role default gives it.
-/// The override binds when a member-role change next resolves the grant.
+/// Every member the roster of shared vault `vault_id` lists, at their role.
 ///
 /// # Errors
 ///
 /// The vault's.
-pub fn write_dreamer_band_override(vault: &Vault, vault_id: u64, bands: &[u8]) -> Result<()> {
-    use crate::federation::grant_policy::{GrantPolicyRow, ROWS_KEY, encode_row};
-    let mut scope = crate::federation::Scope::top();
-    scope.bands = bands.iter().copied().collect();
-    let row = encode_row(&GrantPolicyRow::HolderOverride {
-        role: crate::federation::FederationGrantRole::Steward,
-        vault_id,
-        holder: dreamer(vault)?,
-        scope,
-    })?;
-    rewrite_shipped_policy(vault, |entries| {
-        let rmpv::Value::Array(rows) = policy_entry(entries, ROWS_KEY)? else {
-            return Err(Error::InvalidConfig(
-                "the grant policy rows are not a list".into(),
-            ));
-        };
-        rows.push(row);
-        Ok(())
-    })
+pub fn shared_roster(
+    vault: &Vault,
+    vault_id: u64,
+) -> Result<Vec<(EntityId, crate::federation::FederationGrantRole)>> {
+    let txn = vault.store.env.read_txn()?;
+    vault.shared_members_in_txn(&txn, vault_id)
 }
 
 /// Marks `agent` opted out of its Steward grant.
