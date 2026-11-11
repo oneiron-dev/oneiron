@@ -20,6 +20,7 @@ pub mod dreamer_stage_line;
 pub mod feeds;
 pub mod graph_ask_centre;
 pub mod label_writers;
+pub mod learning_claim_value;
 pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod membership;
