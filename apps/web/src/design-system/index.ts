@@ -161,6 +161,7 @@ export {
   type SplitPaneHandleProps,
   type SplitPaneHeadProps,
   type SplitPaneThingProps,
+  type SplitPaneThingWriteBox,
 } from './patterns/SplitPane'
 export {
   paneWidth,
