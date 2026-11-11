@@ -676,8 +676,6 @@ pub(super) fn summary(calls: &[CallRecord], from_ms: f64, to_ms: f64) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read as _, Write as _};
-
     use super::*;
 
     #[test]
