@@ -33,7 +33,10 @@ fn config_validate_rejects_base_ids_that_overflow_derived_length() {
 
     let over = WakeSupervisorConfig::new("b".repeat(MAX_PASS_BUDGET_BASE_LEN + 1), "owner", 1, 100);
     // Ruled refusal removed: #2709 (Rule 5) dropped the 106-byte base ceiling.
-    assert!(over.validate().is_ok(), "Rule 5 accepts the same 107-byte base");
+    assert!(
+        over.validate().is_ok(),
+        "Rule 5 accepts the same 107-byte base"
+    );
 }
 
 /// Pins the mirrored `MAX_RUNNER_BUDGET_ID_LEN` against the real store:
