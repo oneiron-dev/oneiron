@@ -291,6 +291,7 @@ fn remove_member_edges(
         if (all || map_contains_binary(edges, &format_edge_key(&source, kind, &target)))
             && store.port_remove_edge_rows(txn, &source, kind, &target)?
         {
+            crate::feeds::record_edge_change_in_txn(store, txn, &source, kind, &target, false)?;
             report.edges += 1;
         }
     }

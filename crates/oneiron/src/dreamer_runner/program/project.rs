@@ -11,7 +11,8 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 /// The project the code run `code_run` of a turn program sends in: the
 /// project of the room its waking turn landed in, that turn's thread's room
 /// where the turn is in a thread. `None` for a code run of no program, an
-/// admission that no longer reads, or a turn in any room no project homes.
+/// admission that no longer reads, a program a timer, idle stretch or feed
+/// woke, or a turn in any room no project homes.
 ///
 /// # Errors
 /// Storage errors, or a room row that does not decode.
@@ -26,6 +27,10 @@ pub(crate) fn program_run_project_in_txn(
     let Some(admission) = ADMISSION.get_lenient(vault, txn, &run.admission)? else {
         return Ok(None);
     };
+    // An occurrence (untangle slice 6.8c) landed in no room.
+    if admission.wake.occurrence.is_some() {
+        return Ok(None);
+    }
     let landed = admission.wake.turn;
     let room = match live_entity_row_in_txn(&vault.store, txn, &landed.turn)? {
         LiveEntityRow::Live { body, .. } => crate::workspace_roster::thread_binding(&body)?
