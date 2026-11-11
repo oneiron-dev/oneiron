@@ -34,6 +34,11 @@ crate::side_table::side_tables! {
     /// reconnected socket resumes the chain. Absent is off. Key: ().
     MODEL_OWNER_RESPONSES_STORE: VaultMeta b"settings:models:v1:responses_store" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The owner's bounds on primitive A's snapshot handles (slice 6.4b): open handles per actor,
+    /// the default and the most lifetime, rows and bytes per page, and rows per handle. Absent
+    /// reads as the defaults in `settings::snapshot_read`. Key: ().
+    SNAPSHOT_READ_SETTINGS: VaultMeta b"settings:snapshot_read:v1" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The owner's switch over an Admin deleting a private room thread (FIX 6382): `false` turns
     /// it off. Absent is on. Key: ().
     ROOM_THREADS_ADMIN_DELETE: VaultMeta b"settings:rooms:v1:admin_delete" Named
