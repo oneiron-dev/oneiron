@@ -393,6 +393,20 @@
   background: var(--sl-sunk);
 }
 
+.lib-thread-pane {
+  padding-top: 10px;
+}
+
+/* The reply line sits at the foot of the thread pane. */
+.lib-thread-reply {
+  margin-top: auto;
+  background: var(--sl-island);
+}
+
+.lib-split-closed {
+  justify-content: flex-start;
+}
+
 .lib-write-line {
   width: 360px;
 }

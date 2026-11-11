@@ -1,4 +1,6 @@
 import * as React from 'react'
+import { Icon } from '../primitives/Icon'
+import { IconAction } from '../primitives/IconAction'
 import { cx, mergeRefs, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, snapToMagnet } from './snap-to-magnet'
 
@@ -231,5 +233,65 @@ function SplitPaneHandle({ className, onPointerDown, onKeyDown, onDoubleClick, '
   )
 }
 
-/* Compound parts: SplitPane, .Pane, .Handle. */
-export const SplitPane = Object.assign(SplitPaneRoot, { Pane: SplitPanePane, Handle: SplitPaneHandle })
+export interface SplitPaneHeadProps extends Omit<React.ComponentPropsWithRef<'div'>, 'title'> {
+  /* The pane's title, at the section size; it truncates, never wraps. */
+  title: React.ReactNode
+  /* IconActions before the close control. */
+  actions?: React.ReactNode
+  /* Shows the close control (tooltip `Close`); Escape closes too while
+     focus is in the pane. The caller puts focus back where the pane was
+     opened from. */
+  onClose?: () => void
+  closeLabel?: string
+}
+
+/* The head line of a pane: its title, its actions, and the close control.
+   Place it first in a SplitPane.Pane. Escape in the pane closes it unless
+   another part took the key first (an undo window) or focus is in a menu
+   or popover opened from the pane. */
+function SplitPaneHead({ ref, title, actions, onClose, closeLabel = 'Close', className, ...props }: SplitPaneHeadProps) {
+  const headRef = React.useRef<HTMLDivElement | null>(null)
+  const latest = React.useRef(onClose)
+  useIsomorphicLayoutEffect(() => {
+    latest.current = onClose
+  })
+  const closes = !!onClose
+
+  React.useEffect(() => {
+    const head = headRef.current
+    const pane = head?.closest<HTMLElement>('.sl-split-pane-pane') ?? head?.parentElement
+    if (!closes || !pane) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return
+      const target = event.target instanceof Element ? event.target : null
+      if (target?.closest(':popover-open')) return
+      event.preventDefault()
+      latest.current?.()
+    }
+    pane.addEventListener('keydown', onKeyDown)
+    return () => pane.removeEventListener('keydown', onKeyDown)
+  }, [closes])
+
+  return (
+    <div ref={mergeRefs(ref, headRef)} className={cx('sl-split-head', className)} {...props}>
+      <h2 className="sl-split-head-title">{title}</h2>
+      {actions !== undefined || onClose ? (
+        <div className="sl-split-head-actions">
+          {actions}
+          {onClose ? (
+            <IconAction label={closeLabel} className="sl-split-head-close" onClick={onClose}>
+              <Icon name="x" />
+            </IconAction>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/* Compound parts: SplitPane, .Pane, .Handle, .Head. */
+export const SplitPane = Object.assign(SplitPaneRoot, {
+  Pane: SplitPanePane,
+  Handle: SplitPaneHandle,
+  Head: SplitPaneHead,
+})

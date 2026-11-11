@@ -487,30 +487,81 @@ function CrewDemo({ open }: { open?: boolean }) {
 
 function SplitDemo() {
   const [value, setValue] = React.useState(0.5)
+  const [threadOpen, setThreadOpen] = React.useState(true)
+  const [replies, setReplies] = React.useState<string[]>([])
+  const [log, setLog] = React.useState('')
+  const reopenRef = React.useRef<HTMLButtonElement | null>(null)
+  const close = () => {
+    setThreadOpen(false)
+    setLog('thread closed')
+    requestAnimationFrame(() => reopenRef.current?.focus())
+  }
+  const room = (
+    <>
+      <span className="lib-t-section">acme-forecast</span>
+      <span className="lib-t-say">Starting on the Q4 view Yuki asked for.</span>
+    </>
+  )
   return (
     <div className="lib-stack lib-split-wrap">
-      <SplitPane
-        className="lib-split"
-        defaultValue={0.5}
-        onValueChange={setValue}
-        min={0.25}
-        max={0.8}
-        storageKey="sl-library-split"
-        data-specimen="split"
-      >
-        <SplitPane.Pane className="lib-split-pane">
-          <span className="lib-t-section">acme-forecast</span>
-          <span className="lib-t-say">Starting on the Q4 view Yuki asked for.</span>
-        </SplitPane.Pane>
-        <SplitPane.Handle aria-label="resize the thread pane" />
-        <SplitPane.Pane className="lib-split-pane">
-          <span className="lib-t-section">Q4 forecast for Acme</span>
-          <span className="lib-t-say">The sales pull is done. 214 claims, three sources.</span>
-        </SplitPane.Pane>
-      </SplitPane>
+      {threadOpen ? (
+        <SplitPane
+          className="lib-split"
+          defaultValue={0.5}
+          onValueChange={setValue}
+          min={0.25}
+          max={0.8}
+          storageKey="sl-library-split"
+          data-specimen="split"
+        >
+          <SplitPane.Pane className="lib-split-pane">{room}</SplitPane.Pane>
+          <SplitPane.Handle aria-label="resize the thread pane" />
+          <SplitPane.Pane className="lib-split-pane lib-thread-pane" data-specimen="thread-pane">
+            <SplitPane.Head
+              title="Q4 forecast for Acme"
+              onClose={close}
+              actions={
+                <>
+                  <IconAction label="Outline" caption="the thread's branches">
+                    <Icon name="tree" />
+                  </IconAction>
+                  <IconAction label="Open as a room">
+                    <Icon name="page" />
+                  </IconAction>
+                </>
+              }
+            />
+            <span className="lib-t-say">The sales pull is done. 214 claims, three sources.</span>
+            {replies.map((r, i) => (
+              <span key={i} className="lib-t-say">
+                {r}
+              </span>
+            ))}
+            <WriteLine
+              className="lib-thread-reply"
+              placeholder="Reply in the thread"
+              onSend={(text) => setReplies((l) => [...l.slice(-1), text])}
+            />
+          </SplitPane.Pane>
+        </SplitPane>
+      ) : (
+        <div className="lib-split lib-split-pane lib-split-closed">{room}</div>
+      )}
       <span className="lib-readout">
         <span>room</span>
-        <Figure data-specimen="split-value">{Math.round(value * 100)}%</Figure>
+        <Figure data-specimen="split-value">{threadOpen ? `${Math.round(value * 100)}%` : '100%'}</Figure>
+        <span data-specimen="split-log">{log}</span>
+        {threadOpen ? null : (
+          <Verb
+            ref={reopenRef}
+            onClick={() => {
+              setThreadOpen(true)
+              setLog('thread open')
+            }}
+          >
+            open the thread
+          </Verb>
+        )}
       </span>
     </div>
   )
@@ -841,7 +892,7 @@ export function PatternSections() {
       </Section>
 
       <Section title="SplitPane">
-        <Specimen name="drag the edge: it leans to 25, 50 and 75; double-click resets; arrow keys move it" full>
+        <Specimen name="drag the edge: it leans to 25, 50 and 75; double-click resets; arrow keys move it. The thread pane's head: its title, outline, open as a room, close (Escape in the pane closes it); a WriteLine is its reply line" full>
           <SplitDemo />
         </Specimen>
       </Section>

@@ -107,7 +107,13 @@ export {
   type CrewStackListProps,
   type CrewStackListRowProps,
 } from './patterns/CrewStack'
-export { SplitPane, type SplitPaneProps, type SplitPanePaneProps, type SplitPaneHandleProps } from './patterns/SplitPane'
+export {
+  SplitPane,
+  type SplitPaneProps,
+  type SplitPanePaneProps,
+  type SplitPaneHandleProps,
+  type SplitPaneHeadProps,
+} from './patterns/SplitPane'
 export { snapToMagnet, SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, type MagnetSnap } from './patterns/snap-to-magnet'
 export {
   Composer,
