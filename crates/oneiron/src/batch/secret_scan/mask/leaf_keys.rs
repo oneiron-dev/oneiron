@@ -99,8 +99,9 @@ impl Masker {
             });
         }
         // A clean scan read every part of the leaf too: no phrase split over
-        // them is sought again (speed). The switch off seeks none (FIX 8644).
-        if !self.known_only && !self.shapes_read {
+        // them is sought again (speed). The switch off places a phrase
+        // custody already holds, and no other (FIX 8644).
+        if !self.shapes_read {
             self.place_split_phrases(path, leaf, &known, &mut placed)?;
         }
         for (span, custody) in known {
@@ -130,8 +131,9 @@ impl Masker {
 
     /// Each recovery phrase split over `leaf`'s parts (LABEL-04): one
     /// custody record holds the phrase (the record that holds it already,
-    /// if one does), and each of its words no span covers yet is marked
-    /// with it. The file's bytes stay as stored.
+    /// if one does; with the switch off, only such a phrase is placed), and
+    /// each of its words no span covers yet is marked with it. The file's
+    /// bytes stay as stored.
     fn place_split_phrases(
         &mut self,
         path: &[MemberStep],
@@ -167,6 +169,7 @@ impl Masker {
                     self.placed_known = true;
                     (REASON_KNOWN_VALUE, Some(custody))
                 }
+                None if self.known_only => continue,
                 None => {
                     self.handle(&phrase.value, REASON_MNEMONIC)?;
                     (REASON_MNEMONIC, None)
