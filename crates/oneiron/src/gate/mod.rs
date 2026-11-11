@@ -13,7 +13,6 @@ pub(crate) mod class_policy;
 pub(crate) mod consult_fanout_values;
 pub(crate) mod curator_proposal;
 pub(crate) mod failure_signal_delivery;
-pub(crate) mod fanout_mode;
 pub(crate) mod manifest_authenticity;
 pub(crate) mod task_assignee;
 pub(crate) mod training_ask_kind;
