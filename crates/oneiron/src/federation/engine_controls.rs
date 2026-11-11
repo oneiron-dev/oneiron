@@ -21,10 +21,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::system_agent_grant::{SystemAgent, steward_grant_of_in};
+use super::system_agent_grant::{SystemAgent, steward_reach_in};
 use super::{
     FederationGrantKind, FederationGrantPreset, FederationGrantRole, Scope, ScopeAxis,
-    decode_federation_grant_body, grant_scope, standing_steward_verbs_in,
+    decode_federation_grant_body, grant_scope,
 };
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -199,28 +199,15 @@ impl Vault {
         if SystemAgent::of(holder).is_none() {
             return self.root_steward_grant_with_verb_in(txn, holder, verb, reach);
         }
-        Ok(match steward_grant_of_in(&self.store, txn, holder)? {
-            Some(Some(grant))
-                if standing_steward_verbs_in(&self.store, txn, grant, holder)?.contains(verb)
-                    && self.system_agent_binding_live_in(txn, holder)?
-                    && (reach == GrantReach::Any
-                        || self.grant_reaches_whole_vault_in(txn, grant)?) =>
-            {
-                Some(grant)
-            }
-            _ => None,
-        })
-    }
-
-    /// Whether the stored grant `grant` reaches the whole vault
-    /// ([`reaches_whole_vault`]); a row that is gone or does not decode
-    /// reaches nothing.
-    fn grant_reaches_whole_vault_in(&self, txn: &heed::RoTxn<'_>, grant: EntityId) -> Result<bool> {
-        let Some(raw) = self.store.port_entity_record(txn, &grant)? else {
-            return Ok(false);
+        // A base agent holds the verb when every standing row gives it; a
+        // whole-vault reach is judged on the rows' meet.
+        let Some(standing) = steward_reach_in(&self.store, txn, holder)? else {
+            return Ok(None);
         };
-        Ok(decode_federation_grant_body(&raw.body)
-            .is_ok_and(|row| reaches_whole_vault(&row.authority_scope)))
+        let holds = standing.verbs.contains(verb)
+            && (reach == GrantReach::Any || reaches_whole_vault(&standing.scope))
+            && self.system_agent_binding_live_in(txn, holder)?;
+        Ok(holds.then_some(standing.grant))
     }
 
     /// The live Steward grant on this vault's root that names `holder` and

@@ -113,20 +113,18 @@ pub(crate) fn dreamer_landing_verdict_in_txn(
     ) {
         return Ok(None);
     }
-    let grant_ref = match crate::federation::steward_grant_of_in(store, txn, actor.entity_ref())? {
+    let grant_ref = match crate::federation::steward_reach_in(store, txn, actor.entity_ref())? {
         None => DREAMER_LANDING_ROWS_REF.to_owned(),
-        Some(None) => return Ok(None),
-        Some(Some(grant)) => {
-            let verbs = crate::federation::standing_steward_verbs_in(
-                store,
-                txn,
-                grant,
-                actor.entity_ref(),
-            )?;
-            if !verbs.contains(crate::federation::grant_scope::STEWARD_ARCHIVE_VERB) {
+        // Every standing row gives `archive`, or none is archived: an
+        // opt-out's row gives no verb.
+        Some(reach) => {
+            if !reach
+                .verbs
+                .contains(crate::federation::grant_scope::STEWARD_ARCHIVE_VERB)
+            {
                 return Ok(None);
             }
-            grant.to_hex()
+            reach.grant.to_hex()
         }
     };
     Ok(Some(DreamerLandingVerdict {

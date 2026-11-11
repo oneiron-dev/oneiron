@@ -2,33 +2,32 @@
 //! amended, owner 9 Nov 15:21: "we can make it opt-out, but give a big-ass
 //! warning that it might break shit").
 //!
-//! The owner may narrow or revoke a base agent's Steward grant. Some grants
-//! keep the vault working (the Dreamer's: consolidation and recall upkeep),
-//! so the vault marks them system-critical, naming the functions each
-//! serves. Narrowing a marked grant first returns what breaks and changes
-//! nothing; it applies only when the owner confirms that exact list. One
-//! warning serves every marked grant. The narrowing is the owner's signed
-//! revoke of the old grant and, when any verb stays, his signed mint of the
-//! narrower one; a narrowing record keeps the verbs before and after and the
-//! breaks he confirmed. The door never widens: a grant back is the owner's
-//! own grant ([`Vault::grant_dreamer_weave`] for the Dreamer).
+//! The owner may narrow or revoke a base agent's Steward grant. A base
+//! agent's grant keeps the vault working (the Dreamer's: consolidation and
+//! recall upkeep), so it is system-critical by what the agent is: the
+//! functions it serves are the agent's ([`SystemAgent::functions`]), on
+//! every machine, with no mark to carry. Narrowing it first returns what
+//! breaks and changes nothing; it applies only when the owner confirms that
+//! exact list. One warning serves every base agent. The narrowing is the
+//! owner's signed revoke of every grant row that stands and, when any verb
+//! stays, his signed mint of the narrower one. A whole revoke leaves one
+//! row with no verbs in their place: the record of his opt-out, which
+//! reaches his other machines as the rows do. A narrowing record keeps the
+//! verbs before and after and the breaks he confirmed. The door never
+//! widens: a grant back is the owner's own grant
+//! ([`Vault::grant_dreamer_weave`] for the Dreamer).
 
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::{SYSTEM_AGENT_GRANT, SystemAgentGrantState, standing_steward_verbs_in};
+use super::{SystemAgent, steward_reach_in};
 use crate::Vault;
-use crate::authority::{ActSurface, AgentGrantAct};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::grant_scope;
 use crate::side_table::{self, Named, SideTable};
-
-/// The functions each system-critical grant serves, by the grant.
-const SYSTEM_CRITICAL_GRANT: SideTable<EntityId, BTreeSet<SystemFunction>, Named> =
-    SideTable::new(&side_table::FEDERATION_SYSTEM_CRITICAL_GRANT);
 
 /// Each narrowing the owner applied, by the agent, the recording second and
 /// the grant it revoked. The second orders the history; the revoked grant
@@ -149,7 +148,8 @@ pub struct SystemAgentNarrowing {
     pub before: BTreeSet<String>,
     /// The verbs it holds after.
     pub after: BTreeSet<String>,
-    /// The breaks he confirmed (empty for a grant not marked system-critical).
+    /// The breaks he confirmed (empty when the narrowing stops none of the
+    /// agent's functions).
     pub confirmed: Vec<SystemFunction>,
 }
 
@@ -191,33 +191,6 @@ impl Vault {
             .collect())
     }
 
-    /// Marks `grant` system-critical for `functions`, in the caller's
-    /// writer.
-    pub(super) fn mark_system_critical_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        grant: EntityId,
-        functions: &[SystemFunction],
-    ) -> Result<()> {
-        SYSTEM_CRITICAL_GRANT.put(
-            &self.store,
-            txn,
-            &grant,
-            &functions.iter().copied().collect(),
-        )
-    }
-
-    /// Takes the system-critical mark off `grant`, in the caller's writer:
-    /// a grant that was revoked keeps no vault function running.
-    pub(super) fn unmark_system_critical_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        grant: EntityId,
-    ) -> Result<()> {
-        SYSTEM_CRITICAL_GRANT.delete(&self.store, txn, &grant)?;
-        Ok(())
-    }
-
     /// Owner act: narrows base agent `agent`'s Steward grant to the verbs in
     /// `keep` (empty revokes it whole). A grant the vault marks
     /// system-critical returns [`SystemAgentGrantNarrowing::ConfirmRequired`]
@@ -248,12 +221,17 @@ impl Vault {
         }
         let narrowing = self.with_write_txn_grouped(|txn| {
             let owner_ref = owner.revalidate_in_txn(self, &*txn)?;
-            let Some(SystemAgentGrantState::Minted { grant }) =
-                SYSTEM_AGENT_GRANT.get(&self.store, &*txn, &agent)?
-            else {
+            // A base agent's grant alone has this door, and only while a
+            // row of it stands with a verb to take.
+            let Some(system_agent) = SystemAgent::of(agent) else {
                 return Ok(SystemAgentGrantNarrowing::Unchanged);
             };
-            let before = standing_steward_verbs_in(&self.store, &*txn, grant, agent)?;
+            let Some(reach) = steward_reach_in(&self.store, &*txn, agent)? else {
+                return Ok(SystemAgentGrantNarrowing::Unchanged);
+            };
+            // The newest standing row names the grant in force: the confirm
+            // binds it, and the record keeps it.
+            let (grant, before) = (reach.grant, reach.verbs);
             if before.is_empty() {
                 return Ok(SystemAgentGrantNarrowing::Unchanged);
             }
@@ -265,11 +243,10 @@ impl Vault {
             if *keep == before {
                 return Ok(SystemAgentGrantNarrowing::Unchanged);
             }
-            let functions = SYSTEM_CRITICAL_GRANT
-                .get(&self.store, &*txn, &grant)?
-                .unwrap_or_default();
-            let breaks: Vec<SystemFunction> = functions
-                .into_iter()
+            let breaks: Vec<SystemFunction> = system_agent
+                .functions()
+                .iter()
+                .copied()
                 .filter(|function| {
                     function
                         .needs()
@@ -285,44 +262,18 @@ impl Vault {
                     confirm: token,
                 });
             }
-            // The owner's signed revoke of the grant in force, then, when a
-            // verb stays, his signed mint of the narrower one.
-            let acknowledged_topology =
-                crate::identity_topology::acknowledged_grant_seals_in_txn(&self.store, txn, grant)
-                    .unwrap_or_default();
-            self.append_agent_grant_act_in_txn(
-                txn,
-                owner,
-                ActSurface::ThisInstall,
-                AgentGrantAct::Revoke {
-                    grant,
-                    acknowledged_topology,
-                },
-            )?;
-            self.delete_agent_grant_row_in_txn(txn, grant)?;
+            // The owner's signed revoke of every row that stands, one
+            // another machine stood among them. Then, when a verb stays, his
+            // signed mint of the narrower grant; for a whole revoke, the row
+            // with no verbs that records his opt-out. Either way one row
+            // stands here after, and it reaches his other machines.
+            self.revoke_standing_steward_grants_in_txn(txn, owner, agent)?;
             let minted = if keep.is_empty() {
+                self.put_steward_grant_row_in_txn(txn, agent, BTreeSet::new())?;
                 None
             } else {
-                let narrower = self.mint_steward_grant_in_txn(txn, owner, agent, keep.clone())?;
-                let marked: Vec<SystemFunction> = SYSTEM_CRITICAL_GRANT
-                    .get(&self.store, &*txn, &grant)?
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect();
-                if !marked.is_empty() {
-                    self.mark_system_critical_in_txn(txn, narrower, &marked)?;
-                }
-                Some(narrower)
+                Some(self.mint_steward_grant_in_txn(txn, owner, agent, keep.clone())?)
             };
-            SYSTEM_CRITICAL_GRANT.delete(&self.store, txn, &grant)?;
-            SYSTEM_AGENT_GRANT.put(
-                &self.store,
-                txn,
-                &agent,
-                &minted.map_or(SystemAgentGrantState::OptedOut, |grant| {
-                    SystemAgentGrantState::Minted { grant }
-                }),
-            )?;
             let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             SYSTEM_AGENT_NARROWING.put(
                 &self.store,
