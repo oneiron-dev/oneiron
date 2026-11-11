@@ -26,7 +26,9 @@
 //! hook feeds once, by the fact-hook runner's rule (FIX 22180): a host that
 //! runs no runner still settles a watch TASK at its due time and keeps the
 //! feeds bounded, and `oneiron maintain` settles a stopped vault's due watch
-//! TASKs.
+//! TASKs. Such a pass also drops the task-held inquiry answers whose task
+//! has ended or whose `valid_until` has come (Engine ruling
+//! INQUIRE-HOLDER-EVICT), so they leave memory within one host tick.
 //!
 //! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
 //! when it must run the vault again for a retirement that comes due, a model
@@ -88,7 +90,8 @@ impl Vault {
     /// row of the report. Unless the host has asked it to stop, the pass
     /// first runs one capped communication projector pass, then releases
     /// the due watcher ticks and prunes the hook feeds once (FIX 22180),
-    /// whose failures are logged and never fail a sweep. The model pack
+    /// whose failures are logged and never fail a sweep, and drops the
+    /// task-held inquiry answers whose task has ended. The model pack
     /// retirement sweep runs against no model access: a host that binds
     /// model offers calls [`Self::housekeeping_with_access`].
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
@@ -111,14 +114,16 @@ impl Vault {
                 .run_comm_projector_housekeeping_step(self);
         }
         release_ticks_and_prune_hook_feeds(self, &deadline);
+        evict_ended_inquiry_answers(self, &deadline);
         self.housekeeping_pass(Selection::Due, budget, access)
     }
 
     /// Runs every engine sweep now, due or not, and reschedules each from
     /// now: the owner's "run housekeeping now". Unless the host has asked it
     /// to stop, it first releases the due watcher ticks and prunes the hook
-    /// feeds once, as [`Self::housekeeping`] does, so `oneiron maintain`
-    /// settles a stopped vault's due watch TASKs (FIX 22180). The model pack
+    /// feeds once and drops the ended tasks' inquiry answers, as
+    /// [`Self::housekeeping`] does, so `oneiron maintain` settles a stopped
+    /// vault's due watch TASKs (FIX 22180). The model pack
     /// retirement sweep runs against no model access: a host that holds model
     /// offers, `serve` or `oneiron maintain` with the offers its config and
     /// the vault's mesh discovery rows bind, calls
@@ -134,7 +139,9 @@ impl Vault {
         budget: HousekeepingBudget,
         access: &AccessSnapshot,
     ) -> Result<HousekeepingReport> {
-        release_ticks_and_prune_hook_feeds(self, &budget.deadline());
+        let deadline = budget.deadline();
+        release_ticks_and_prune_hook_feeds(self, &deadline);
+        evict_ended_inquiry_answers(self, &deadline);
         self.housekeeping_pass(Selection::All, budget, access)
     }
 
@@ -457,5 +464,18 @@ fn release_ticks_and_prune_hook_feeds(vault: &Vault, deadline: &Deadline) {
         crate::runtime_hooks::prune_hook_feeds(vault, crate::runtime_hooks::HOOK_PASS_ENTRIES)
     {
         tracing::warn!(%error, "housekeeping: passed hook feed rows wait for the next pass");
+    }
+}
+
+/// Drops the task-held inquiry answers whose task has ended or whose
+/// `valid_until` has come (Engine ruling INQUIRE-HOLDER-EVICT), unless the
+/// host asked the pass to stop. A failure is logged; the next pass, or the
+/// next send or read of an answer, drops them.
+fn evict_ended_inquiry_answers(vault: &Vault, deadline: &Deadline) {
+    if deadline.stopped() {
+        return;
+    }
+    if let Err(error) = vault.evict_inquiry_answers() {
+        tracing::warn!(%error, "housekeeping: ended inquiry answers wait for the next pass");
     }
 }
