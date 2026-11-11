@@ -1,0 +1,117 @@
+/* Two rows in one place: the working line and the receipt. When the run
+   ends the working line folds and the receipt unfolds, once. */
+.sl-run-foot {
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+  --sl-mark-ground: var(--sl-island);
+}
+
+.sl-run-foot-slot {
+  display: grid;
+}
+
+.sl-run-foot-slot > .sl-run-foot-slot-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sl-run-foot[data-status="working"] > [data-slot="working"],
+.sl-run-foot[data-status="done"] > [data-slot="done"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.sl-run-foot[data-status="working"] > [data-slot="done"],
+.sl-run-foot[data-status="done"] > [data-slot="working"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.sl-run-foot[data-animate] > .sl-run-foot-slot {
+  transition:
+    grid-template-rows 320ms var(--sl-ease-out),
+    opacity 220ms ease;
+}
+
+.sl-run-working {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0 4px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.sl-run-substate {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sl-run-working > .sl-run-elapsed {
+  min-width: 5ch;
+  color: var(--sl-ink-1);
+}
+
+.sl-run-calls {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--sl-ink-2);
+}
+
+.sl-run-interrupt {
+  margin-left: auto;
+}
+
+.sl-run-receipt-line.sl-unfold-trigger {
+  padding: 6px 0 2px;
+}
+
+.sl-run-calls-list {
+  display: flex;
+  flex-direction: column;
+  max-width: 640px;
+  padding: 4px 0 2px;
+}
+
+/* A call: a check, the tool id, who, how long. */
+.sl-run-call {
+  display: grid;
+  grid-template-columns: 16px 17ch 9ch minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: center;
+  padding: 3px 2px;
+}
+
+.sl-run-call-mark {
+  color: var(--sl-ink-2);
+}
+
+.sl-run-call-name {
+  overflow: hidden;
+  font-family: var(--sl-mono);
+  font-size: var(--sl-t-figure);
+  letter-spacing: 0.02em;
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sl-run-call-by {
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+}
+
+.sl-run-call-duration {
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-run-foot[data-animate] > .sl-run-foot-slot {
+    transition: opacity 200ms ease;
+  }
+}

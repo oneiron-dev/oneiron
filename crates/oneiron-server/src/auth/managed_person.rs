@@ -34,11 +34,12 @@ use crate::server::SyncServer;
 /// erase asks he may see), his receipts and notices (a receipt he was told
 /// of, outcomes, started and matured acts) and his own leave. Stage 2: the
 /// Admin powers (members added, changed, removed and delegated, invitations
-/// withdrawn and their slips, shared acts proposed and executed), the
+/// withdrawn and their slips, a Steward's member asks filed, read, applied
+/// and declined, shared acts proposed and executed), the
 /// invitee's accept and decline, objections and erase asks, his own record
 /// erase, the shared policy's proposal and answer, his trusted contacts and
 /// the workspace rows.
-pub(crate) const MANAGED_PERSON_DOORS: [&str; 39] = [
+pub(crate) const MANAGED_PERSON_DOORS: [&str; 43] = [
     "vault.members.invitations",
     "vault.shared.erase_asks",
     "vault.shared.receipt",
@@ -52,6 +53,10 @@ pub(crate) const MANAGED_PERSON_DOORS: [&str; 39] = [
     "vault.members.delegate",
     "vault.members.withdraw_invitation",
     "vault.members.invitation_slip",
+    "vault.members.ask",
+    "vault.members.asks",
+    "vault.members.asks.apply",
+    "vault.members.asks.decline",
     "vault.shared.propose_delete",
     "vault.shared.propose_transfer",
     "vault.shared.propose_remove_owner",
