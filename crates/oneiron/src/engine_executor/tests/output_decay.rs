@@ -1,27 +1,43 @@
 //! Model-facing output decay and successful native compaction on the real REPL path.
 use super::*;
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 use crate::agent_def::{CompactionOwnership, MemoryProfile};
 use crate::compaction::output::OutputAffordance;
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 use crate::compaction::output::OutputDecayPolicy;
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 use crate::compaction::{
     CompactionBackend, CompactionBackendRegistry, CompactionDriver, CompactionProduct,
     CompactionRequest, CompactionTierClass, CompactionWindowMessage,
 };
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 use crate::registry::ENTITY_TYPE_TURN;
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 use crate::session_lifecycle::SessionMintOutcome;
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 use std::{sync::Arc, time::Duration};
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 fn console(request: &LlmRequest, seq: usize) -> String {
     text_message(&request.messages[3 + seq * 2])
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 fn reexpand_action(request: &LlmRequest, original: &[u8]) -> OutputAffordance {
     use crate::compaction::output::OutputRef;
@@ -51,6 +67,8 @@ fn reexpand_action(request: &LlmRequest, original: &[u8]) -> OutputAffordance {
     OutputAffordance::Reexpand(source)
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 /// The frame a swapped epoch renders in place of its steps.
 #[cfg(feature = "code-sandbox-wasmtime")]
 fn compacted(request: &LlmRequest) -> String {
@@ -62,6 +80,8 @@ fn compacted(request: &LlmRequest) -> String {
         .expect("compacted frame")
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 /// The frame's typed read-file action for step 0, which re-expands its
 /// exact original.
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -88,6 +108,8 @@ fn reexpand_from_frame(request: &LlmRequest, original: &[u8]) -> OutputAffordanc
     OutputAffordance::Reexpand(source)
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 /// Step `seq`'s console once a one-step epoch covers step 0: the frame
 /// stands for step 0's program and console both.
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -95,8 +117,12 @@ fn console_after_frame(request: &LlmRequest, seq: usize) -> String {
     text_message(&request.messages[2 + seq * 2])
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 struct Cheap;
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 impl CompactionBackend for Cheap {
     fn backend_key(&self) -> &str {
@@ -157,6 +183,8 @@ fn terminal_replay_still_reexpands_exact_original() {
     );
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 /// A real first-party guest can restore a Unicode observation whose raw bytes
 /// fit the host limit but whose one-piece JSON byte array does not.
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -263,6 +291,8 @@ fn real_quickjs_restores_large_unicode_output_in_bounded_chunks() {
     );
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 #[test]
 fn guest_output_with_old_marker_bytes_cannot_create_compaction_coverage() {

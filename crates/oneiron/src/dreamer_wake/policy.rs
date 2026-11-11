@@ -490,6 +490,35 @@ impl Vault {
         })
     }
 
+    /// A holder of `engine.controls` sets the Dreamer's wake policy
+    /// (untangle 6.6b, the C1 family; wake cadence): its grain, triggers,
+    /// waits, quiet windows and role cadence, through the one check, with a
+    /// receipt naming it. The owner's own act record is the owner's door's
+    /// alone. Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `holder` holds no live `engine.controls`; a
+    /// policy its validation refuses; store failures.
+    pub fn set_dreamer_wake_policy_as_holder(
+        &self,
+        holder: crate::entity_id::EntityId,
+        policy: DreamerWakePolicy,
+    ) -> Result<crate::entity_id::EntityId> {
+        policy.validate()?;
+        self.apply_engine_control(
+            crate::federation::EngineControlActor::Holder(holder),
+            crate::federation::EngineControlClass::WakeCadence,
+            "DREAMER_WAKE_POLICY",
+            &crate::federation::rendered_change(&policy)?,
+            |txn| {
+                POLICY
+                    .put(&self.store, txn, &(), &policy)
+                    .map_err(|e| row_error(e, invalid()))
+            },
+        )
+    }
+
     /// [`Self::set_dreamer_wake_policy`], recording the owner's act with the
     /// policy it replaces when `surface` names where the owner said so
     /// (WILL-PLAN L13 row 01), in the same commit.
