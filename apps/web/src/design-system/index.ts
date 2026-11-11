@@ -67,6 +67,7 @@ export {
   donutSegments,
   donutCentre,
   donutLabel,
+  arcsDone,
   arcPath,
   DONUT_MAX_ARCS,
   type DonutArc,
