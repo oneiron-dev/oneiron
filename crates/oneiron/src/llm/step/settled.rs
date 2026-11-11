@@ -13,7 +13,8 @@ use super::super::{LlmResponse, LlmUsage};
 use super::codec::decode_hash_hex;
 use super::step_claim::{
     DecodedStepClaim, STEP_INDEX_FORWARD, StepIndexKey, decode_step_claim_value,
-    load_step_response_in_txn, step_index_lookup_in_txn, terminal_step_identity,
+    load_step_response_in_txn, load_step_response_sighted_in_txn, step_index_lookup_in_txn,
+    terminal_step_identity,
 };
 use super::step_index::step_claim_is_runner_execution;
 use super::types::{DurableStepError, ENVELOPE_PROVENANCE_RUN_KEY};
@@ -88,6 +89,27 @@ pub(crate) fn settled_step_for_caller(
     attempt: AttemptId,
     step_hash: [u8; 32],
 ) -> MemoryResult<Option<CallerSettledStep>> {
+    settled_step_read(memory, attempt, step_hash, false)
+}
+
+/// [`settled_step_for_caller`] with the response read as `memory`'s bound
+/// reader reads it (primitive A, slice 6.4c; review of #6968): for a masked
+/// reader each lifted key of the response reads as its handle, the pin
+/// checked on the stored bytes first.
+pub(crate) fn settled_step_for_reader(
+    memory: &Memory<'_>,
+    attempt: AttemptId,
+    step_hash: [u8; 32],
+) -> MemoryResult<Option<CallerSettledStep>> {
+    settled_step_read(memory, attempt, step_hash, true)
+}
+
+fn settled_step_read(
+    memory: &Memory<'_>,
+    attempt: AttemptId,
+    step_hash: [u8; 32],
+    sighted: bool,
+) -> MemoryResult<Option<CallerSettledStep>> {
     let vault = memory.vault();
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let Some(claim_id) = step_index_lookup_in_txn(vault, &txn, attempt, &step_hash)? else {
@@ -117,7 +139,13 @@ pub(crate) fn settled_step_for_caller(
         }
     }
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    let response = load_step_response_in_txn(vault, &txn, &decoded).map_err(step_error)?;
+    let response = if sighted {
+        let sight = memory.secret_sight_in_txn(&txn)?;
+        load_step_response_sighted_in_txn(vault, &txn, &decoded, sight)
+    } else {
+        load_step_response_in_txn(vault, &txn, &decoded)
+    }
+    .map_err(step_error)?;
     drop(txn);
     Ok(Some(CallerSettledStep::Readable(Box::new(
         SettledStepView {
@@ -211,6 +239,18 @@ pub(crate) fn committed_steps_in_txn(
         }
     }
     Ok((steps, next))
+}
+
+/// The attempt and step hash a [`SettledStepRequest`] names, parsed as
+/// [`settled_step_as_owner`] parses them (slice 6.4c's caller form reads the
+/// same request).
+pub(crate) fn settled_step_target(
+    input: &SettledStepRequest,
+) -> MemoryResult<(AttemptId, [u8; 32])> {
+    let attempt = attempt_ref(&input.job_ref)?;
+    let step_hash = decode_hash_hex(input.step_hash.trim())
+        .map_err(|_| MemoryError::bad_request("step_hash must be 64 hex characters"))?;
+    Ok((attempt, step_hash))
 }
 
 fn attempt_ref(job_ref: &str) -> MemoryResult<AttemptId> {
