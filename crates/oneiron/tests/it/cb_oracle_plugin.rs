@@ -723,6 +723,9 @@ mod plugin_fixture {
         pub(crate) fn open() -> Self {
             let dir = tempfile::tempdir().expect("temporary vault directory");
             let vault = Vault::open(dir.path(), Self::config()).expect("open the fixture vault");
+            vault.install_device_keystore(std::sync::Arc::new(
+                oneiron_keystore::MemoryKeystore::default(),
+            ));
 
             let actor = EntityId::from_bytes([0x11; 16]).expect("actor id");
             let hub_id = EntityId::from_bytes([0x22; 16]).expect("hub id");
@@ -856,8 +859,7 @@ mod plugin_fixture {
                         version: 1,
                     },
                     verbs: vec![
-                        SectionVerbRef("board.expand".to_owned()),
-                        SectionVerbRef("board.refresh".to_owned()),
+                        SectionVerbRef("self.focus.refresh".to_owned()),
                         SectionVerbRef("tasks.create".to_owned()),
                     ],
                     authority_lane: AuthorityLaneRef("plugin.crm".to_owned()),
