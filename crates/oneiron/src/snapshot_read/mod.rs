@@ -31,7 +31,8 @@ pub use policy_preflight::{
     PolicyPreflightRequest, policy_preflight, validate_policy_preflight,
 };
 pub use run_reader::{
-    checkpoint_as_reader, checkpoint_embedded, settled_step_as_reader, settled_step_embedded,
+    checkpoint_as_reader, checkpoint_embedded, reply_evidence_as_reader, reply_evidence_embedded,
+    settled_step_as_reader, settled_step_embedded,
 };
 pub(crate) use run_reader::{is_attempt_actor_in_txn, is_steward_in_txn, not_the_callers};
 pub use settings_doors::{read_snapshot_read_settings, replace_snapshot_read_settings};
