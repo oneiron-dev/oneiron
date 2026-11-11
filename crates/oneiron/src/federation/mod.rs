@@ -208,12 +208,14 @@ mod system_agent_grant;
 pub(crate) use system_agent_grant::SystemAgentGrantState;
 pub(crate) use system_agent_grant::erase_narrowing_actor_in_txn;
 pub(crate) use system_agent_grant::is_system_agent_steward_grant;
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use system_agent_grant::standing_steward_verbs_in;
 pub use system_agent_grant::{
     SYSTEM_AGENT_GRANT_NARROWING_WARNING, SystemAgentGrantNarrowing, SystemAgentNarrowing,
     SystemFunction,
 };
 pub(crate) use system_agent_grant::{
-    holds_system_agent_grant, standing_steward_verbs_in, steward_grant_of_in, steward_rows_rewrite,
+    holds_system_agent_grant, standing_steward_grant_in, steward_grant_of_in, steward_rows_rewrite,
 };
 #[cfg(test)]
 mod shared_creation_tests;
