@@ -38,9 +38,9 @@ crate::side_table::side_tables! {
         [restore: content] [family: unclassified] [tier: canonical];
     /// Every agent a signed owner-agent Grant mint of the authority log has ever named, revoked
     /// Grants included (Engine RULING PAIR-GRANT-DESIGN Q2 = A): written as each authority-log
-    /// row is staged, never removed, rebuilt from the log at open and after a restore. Value: the
-    /// mint's entry hash (32 bytes), so a reader counts only a mint the authority fold counts.
-    /// Key: id16 (member) + id16 (grant).
+    /// row is staged, never removed, rebuilt from the log at open and after a restore. One posting
+    /// per signed mint, so a reader counts a posting only while the authority fold counts its mint.
+    /// Key: id16 (member) + id16 (grant) + hash32 (the mint's entry hash). Value: empty.
     FEDERATION_AGENT_GRANT_MEMBER: VaultMeta b"federation:agent-grant-member:v1:" Raw
         [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// Schema-version byte gating the agent Grant member index's rebuild from the authority log.
