@@ -3336,8 +3336,11 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
     stage = 'owner whole-talk save and canonical read-back';
     const saved = await engine.client.call("vault.off_record.rooms.save", roomRequest);
     expect(saved.saved).toHaveLength(2);
+    // short_ids maps bare presentation ids (for example tn2), not the
+    // hash-suffixed refs vault.get accepts. Read every saved TURN and its
+    // replayed MESSAGE rows by the result's native hex ids, also after restart.
     const canonicalRefs = [...new Set(saved.saved
-      .flatMap((turn) => turn.short_ids.map((pair) => pair.vault)))];
+      .flatMap((turn) => [turn.turn, ...turn.replayed]))];
     expect(canonicalRefs.length).toBeGreaterThan(0);
     const savedText = await museDura07VaultRowsText(engine, canonicalRefs);
     expect(savedText.includes(keptAlpha)).toBe(true);
