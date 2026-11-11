@@ -1,11 +1,9 @@
 //! The one storage write every enqueue door ends in: a fresh row, its
 //! readiness, run and dedupe entries, in the caller's transaction.
 
-use crate::attempt_queue::cancel::AttemptCancelState;
 use crate::attempt_queue::encoding::{DedupeIndexKeys, ready_at, ready_key};
-use crate::attempt_queue::types::{
-    AttemptId, AttemptRecord, AttemptState, EnqueueAttempt, EnqueueOutcome,
-};
+use crate::attempt_queue::lifecycle::{NewAttempt, RunLifecycle};
+use crate::attempt_queue::types::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::attempt_queue::validate::{
     validate_kind, validate_optional_dedupe, validate_optional_dedupe_actor_ref,
     validate_optional_run_id,
@@ -58,16 +56,12 @@ impl AttemptQueue<'_> {
             None => AttemptId::from_bytes(&self.store.clock.ulid()?)?,
         };
         crate::attempt_queue::check_owner_retained_range(&input.kind, &id)?;
-        let mut record = AttemptRecord {
+        let mut record = RunLifecycle::new_row(NewAttempt {
             id,
             kind: input.kind,
             payload: input.payload,
-            state: AttemptState::Queued,
-            lease_owner: None,
-            attempt_count: 0,
             lease_expirations: Vec::new(),
             claimed_at: None,
-            scheduled_at: None,
             retry_of,
             folded_retries: 0,
             backoff_until: None,
@@ -78,7 +72,6 @@ impl AttemptQueue<'_> {
             dedupe_actor_ref: persisted_actor_ref,
             created_at: input.now,
             updated_at: input.now,
-            settled_at: None,
             events: Vec::new(),
             manifest: Vec::new(),
             executor_model: None,
@@ -86,16 +79,14 @@ impl AttemptQueue<'_> {
             executor_role: None,
             planned_binding: None,
             read_set: None,
-            cancel_state: AttemptCancelState::default(),
             signals: Vec::new(),
             asks: Vec::new(),
             placement: None,
             result_ref: None,
             history: Vec::new(),
-            active_pause: None,
             terminal_exhaust: None,
             signal_intents: Vec::new(),
-        };
+        });
 
         if self
             .store
