@@ -15,7 +15,10 @@ use super::act_admission::{EngineCause, ResolvedSeal, TopologySeal, resolve_seal
 use super::ledger_fold::fold_identity_topology_log;
 use super::lifecycle_state::EntityLifecycleState;
 use super::op_apply::{IdentityOpOutcome, IdentityOpWrite, facet_fork_id, facet_fork_writer};
-use super::reassignment_map::{ReassignmentTarget, clear_reassignment_rows_in_txn};
+use super::reassignment_map::{
+    ReassignmentTarget, clear_reassignment_rows_in_txn,
+    maintain_split_reassignment_projection_in_txn, merge_survivors_in_txn,
+};
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::IdentityTopologyRejection;
 use crate::error::SyncError;
@@ -184,7 +187,7 @@ impl Vault {
             .into_iter()
             .map(|entity| (entity, EntityLifecycleState::Active))
             .collect();
-        self.write_identity_event_in_txn(
+        let outcome = self.write_identity_event_in_txn(
             wtxn,
             self.store.clock.entity_id()?,
             write,
@@ -194,7 +197,22 @@ impl Vault {
             None,
             effects,
             transitions,
-        )
+        )?;
+        // A merge read its sources' claims through the survivor, so a split
+        // of the survivor, or of an entity it is merged into, may have
+        // assigned them. With the shell edges gone they are the sources'
+        // again: those splits' rows are re-derived from the fold, after the
+        // edges went, as a replica's reconcile re-derives them (#6924 review).
+        if write.is_effective()
+            && let StoredIdentityOpAction::Merge { survivor, .. } = &record.action
+        {
+            let survivors = merge_survivors_in_txn(&self.store, &*wtxn, survivor)?;
+            let fold = fold_identity_topology_log(
+                &self.fold_effective_identity_topology_events_in_txn(&*wtxn)?,
+            );
+            maintain_split_reassignment_projection_in_txn(&self.store, wtxn, &survivors, &fold)?;
+        }
+        Ok(outcome)
     }
 
     /// Undoes one applied FACET event (ARCH-0055 trio, r9). The facet op
