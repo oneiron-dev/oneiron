@@ -139,19 +139,24 @@ impl Fixture {
             config: self.config.clone(),
         })
         .expect("config");
+        let mut body = ClaimBody::new(
+            BOOKING_EVENT_TYPE_PREDICATE,
+            ClaimSubject::Entity(page),
+            value,
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        // A CLAIM birth stamps its body's facet, and the page is not a
+        // PERSON, so the constructor's derived substrate names no stored
+        // FACET. Every page's configuration takes the vault default instead.
+        body.scope_facet = self.server.vault.default_facet().expect("default facet");
         self.server
             .vault
             .put_claim(
                 &claim_id,
-                &ClaimBody::new(
-                    BOOKING_EVENT_TYPE_PREDICATE,
-                    ClaimSubject::Entity(page),
-                    value,
-                    1.0,
-                    ClaimApprovalStatus::Auto,
-                    ClaimLifecycleStatus::Active,
-                )
-                .unwrap(),
+                &body,
                 TimeRange { start: 1, end: 1 },
                 1,
             )
