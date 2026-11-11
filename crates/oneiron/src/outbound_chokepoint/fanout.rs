@@ -70,7 +70,9 @@ const FANOUT_VERB_CLASS: &str = "consult";
 /// Empty neighbour list for peers that send to nobody.
 const NO_PEERS: &[&str] = &[];
 
-pub use crate::gate::fanout_mode::FanoutApprovalMode;
+use crate::check_in::{
+    ActClass, CheckInAnswer, CheckInMode, GoReason, UnsureTest, check_in_with_mode,
+};
 
 /// One directed consult edge with the count it plans to spend.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -87,7 +89,7 @@ pub(crate) struct FanoutPlan {
     pub(crate) plan_ref: String,
     pub(crate) brief_ref: String,
     pub(crate) actor_ref: String,
-    pub(crate) mode: FanoutApprovalMode,
+    pub(crate) mode: CheckInMode,
     pub(crate) edges: Vec<FanoutPlanEdge>,
 }
 
@@ -160,6 +162,20 @@ pub(crate) trait FanoutAutoDecider {
     -> Result<FanoutAutoDisposition>;
 }
 
+/// The fan-out classifier as check-in's unsure test (rung 1): an allow is
+/// sure, a surface or an error is not.
+struct FanoutUnsureTest<'a> {
+    auto: &'a dyn FanoutAutoDecider,
+    plan: &'a FanoutPlan,
+    estimate: &'a FanoutEstimate,
+}
+
+impl UnsureTest for FanoutUnsureTest<'_> {
+    fn is_sure(&self) -> Result<bool> {
+        Ok(self.auto.decide(self.plan, self.estimate)? == FanoutAutoDisposition::Allow)
+    }
+}
+
 /// The receiptable choices a surfaced fan-out row offers. A pause row offers
 /// the first three; a width-question row offers only `Ack` and
 /// `AckAndRemember`, because there is nothing to keep paused or release.
@@ -214,7 +230,7 @@ pub(crate) struct FanoutApprovalRow {
     pub(crate) plan_ref: String,
     pub(crate) plan_digest: [u8; 32],
     pub(crate) estimate: FanoutEstimate,
-    pub(crate) mode: FanoutApprovalMode,
+    pub(crate) mode: CheckInMode,
     /// `Some` when the pause is a pathology; `None` when it is the approval
     /// ladder asking about size alone.
     pub(crate) pathology: Option<FanoutPathology>,
@@ -381,19 +397,24 @@ pub(crate) fn admit_fanout_plan(
     let threshold = threshold.ok_or_else(|| {
         Error::InvalidConfig("fan-out approval threshold policy row missing".into())
     })?;
-    // The mode gates the plan at any width. `true`: the classifier allowed it.
-    let cleared = match canonical.mode {
-        FanoutApprovalMode::Manual => return pause(&canonical, estimate, None, surface, now_ms),
-        // A classifier that is missing, unreachable, or wrong is not authority
-        // to start a fan-out, and is not authority to cancel one either: both
-        // failure and refusal land on the same human surface.
-        FanoutApprovalMode::Auto => match auto.decide(plan, &estimate) {
-            Ok(FanoutAutoDisposition::Allow) => true,
-            Ok(FanoutAutoDisposition::SurfaceHuman) | Err(_) => {
-                return pause(&canonical, estimate, None, surface, now_ms);
-            }
-        },
-        FanoutApprovalMode::FullAccess => false,
+    // The mode gates the plan at any width, as a check-in of act class
+    // `spawn` (ARCH-0082). The fan-out's standing row is read inside its
+    // classifier, so no rung-0 row is passed here. A classifier that is
+    // missing, unreachable, or wrong is not authority to start a fan-out, and
+    // is not authority to cancel one either: both failure and refusal wait on
+    // the same human surface. `true`: the classifier allowed it.
+    let unsure = FanoutUnsureTest {
+        auto,
+        plan,
+        estimate: &estimate,
+    };
+    let answer = check_in_with_mode(ActClass::Spawn, canonical.mode, None, &unsure);
+    let cleared = match answer {
+        CheckInAnswer::Go(GoReason::Sure) => true,
+        CheckInAnswer::Go(_) => false,
+        CheckInAnswer::Wait(_) | CheckInAnswer::Propose | CheckInAnswer::Absent => {
+            return pause(&canonical, estimate, None, surface, now_ms);
+        }
     };
     if estimate.total_count <= threshold {
         return Ok(FanoutAdmission::Proceed { estimate });
@@ -595,7 +616,7 @@ struct CanonicalPlan {
     plan_ref: String,
     brief_ref: String,
     actor_ref: String,
-    mode: FanoutApprovalMode,
+    mode: CheckInMode,
     peers: Vec<String>,
     edges: Vec<(String, String, u32)>,
     per_peer: BTreeMap<String, u32>,

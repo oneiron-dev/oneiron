@@ -31,6 +31,22 @@ export function paneWidth(kind: PaneKind, containerWidth: number, sidebarWidth =
   return Math.min(THING_PANE_MAX_PX, Math.max(THING_PANE_MIN_PX, left))
 }
 
+/* What the pane over a narrow room leaves of the work area at its left. */
+export const THING_OVER_GUTTER_PX = 56
+
+/* When the work area is narrower than the messages column, its gutter and
+   the pane's 380 px floor together, the pane for one thing lies over the
+   room instead of beside it, and the room keeps its column. */
+export function thingLiesOver(containerWidth: number, sidebarWidth = 0, column = COLUMN_PX): boolean {
+  return containerWidth - sidebarWidth - (column + COLUMN_ROOM_PX) - SPLIT_EDGE_PX < THING_PANE_MIN_PX
+}
+
+/* The width of the pane over the room: 680 px at most, never wider than
+   the work area less 56 px. */
+export function thingOverWidth(containerWidth: number, sidebarWidth = 0): number {
+  return Math.max(0, Math.min(THING_PANE_MAX_PX, containerWidth - sidebarWidth - THING_OVER_GUTTER_PX))
+}
+
 /* The same rule as a CSS grid track, for the first paint. */
 export function paneTrack(kind: PaneKind, sidebarWidth = 0): string {
   if (kind === 'list') return `${LIST_PANE_PX}px`

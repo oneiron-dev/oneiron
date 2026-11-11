@@ -3,7 +3,7 @@ import { Icon } from '../primitives/Icon'
 import { IconAction } from '../primitives/IconAction'
 import { cx, mergeRefs, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { Composer } from './Composer'
-import { paneBounds, paneTrack, paneWidth, thingPlaceholder, type PaneKind } from './pane-width'
+import { paneBounds, paneTrack, paneWidth, thingLiesOver, thingOverWidth, thingPlaceholder, type PaneKind } from './pane-width'
 import { SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, snapToMagnet } from './snap-to-magnet'
 
 /* Keyboard steps in CSS pixels; Shift takes the long step. */
@@ -26,6 +26,9 @@ interface SplitContextValue {
   reset: () => void
   setDragging: (dragging: boolean) => void
   rootRef: React.RefObject<HTMLDivElement | null>
+  /* The pane for one thing lies over the room (the work area is too
+     narrow for the column and the pane side by side). */
+  over: boolean
 }
 
 const SplitContext = React.createContext<SplitContextValue | null>(null)
@@ -122,6 +125,10 @@ function SplitPaneRoot({
   const bounds = pane ? paneBounds(pane) : null
   const current = React.useRef({ value, dragged })
   current.current = { value, dragged }
+
+  /* Too narrow for the column beside a pane for one thing: the pane lies
+     over the room, from the right edge, and the edge does not drag. */
+  const over = pane === 'thing' && rootWidth > 0 && thingLiesOver(rootWidth, sidebarWidth)
 
   /* The pane's width now: the dragged width, else the rule on the
      measured width (the CSS track draws the same rule before measuring). */
@@ -230,13 +237,16 @@ function SplitPaneRoot({
   )
 
   const ctx = React.useMemo(
-    () => ({ position, moveTo, nudge, toLimit, commit, reset, setDragging, rootRef }),
-    [position, moveTo, nudge, toLimit, commit, reset],
+    () => ({ position, moveTo, nudge, toLimit, commit, reset, setDragging, rootRef, over }),
+    [position, moveTo, nudge, toLimit, commit, reset, over],
   )
   const height = rootRef.current?.clientHeight ?? 0
-  const columns = pane
-    ? `minmax(0, 1fr) 1px ${dragged === null ? paneTrack(pane, sidebarWidth) : `${width}px`}`
-    : `minmax(0, ${value}fr) 1px minmax(0, ${1 - value}fr)`
+  const columns = over
+    ? 'minmax(0, 1fr)'
+    : pane
+      ? `minmax(0, 1fr) 1px ${dragged === null ? paneTrack(pane, sidebarWidth) : `${width}px`}`
+      : `minmax(0, ${value}fr) 1px minmax(0, ${1 - value}fr)`
+  const overStyle = over ? ({ '--sl-thing-over-width': `${thingOverWidth(rootWidth, sidebarWidth)}px` } as React.CSSProperties) : undefined
 
   return (
     <SplitContext.Provider value={ctx}>
@@ -244,8 +254,9 @@ function SplitPaneRoot({
         ref={mergeRefs(ref, rootRef)}
         className={cx('sl-split-pane', className)}
         data-pane={pane}
+        data-over={over ? '' : undefined}
         data-dragging={dragging ? '' : undefined}
-        style={{ gridTemplateColumns: columns, ...style }}
+        style={{ gridTemplateColumns: columns, ...overStyle, ...style }}
         {...props}
       >
         {children}
@@ -366,10 +377,14 @@ function SplitPaneHead({ ref, title, titleLines = 1, actions, onClose, closeLabe
     latest.current = onClose
   })
   const closes = !!onClose
+  const split = React.useContext(SplitContext)
+  const over = !!split?.over
 
   React.useEffect(() => {
     const head = headRef.current
-    const pane = head?.closest<HTMLElement>('.sl-split-pane-pane') ?? head?.parentElement
+    /* Over the room, Escape anywhere in the split closes the pane; beside
+       it, Escape in the pane does. */
+    const pane = (over ? head?.closest<HTMLElement>('.sl-split-pane') : null) ?? head?.closest<HTMLElement>('.sl-split-pane-pane') ?? head?.parentElement
     if (!closes || !pane) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return
@@ -380,7 +395,7 @@ function SplitPaneHead({ ref, title, titleLines = 1, actions, onClose, closeLabe
     }
     pane.addEventListener('keydown', onKeyDown)
     return () => pane.removeEventListener('keydown', onKeyDown)
-  }, [closes])
+  }, [closes, over])
 
   return (
     <div ref={mergeRefs(ref, headRef)} className={cx('sl-split-head', className)} data-lines={titleLines} {...props}>
@@ -418,7 +433,9 @@ export interface SplitPaneThingProps extends Omit<React.ComponentPropsWithRef<'d
 /* The pane for one thing, opened beside the room: the head (the title and
    close), a scrolling body (the thing itself with no card frame, its note,
    then its thread under a hairline), and at the foot, outside the scroll,
-   the small write box. Place it second in a SplitPane with pane="thing". */
+   the small write box. Place it second in a SplitPane with pane="thing".
+   In a work area too narrow for the column and the pane side by side it
+   lies over the room from the right edge instead. */
 function SplitPaneThing({ title, onClose, note, thread, onSend, actions, className, children, ...props }: SplitPaneThingProps) {
   const hasThread = React.Children.toArray(thread).length > 0
   const placeholder = thingPlaceholder(hasThread)
