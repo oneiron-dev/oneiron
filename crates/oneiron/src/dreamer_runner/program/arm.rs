@@ -101,9 +101,10 @@ pub(crate) fn arm_turn_program_in_txn(
 }
 
 /// Disarms one of `actor`'s programs; `true` when it was armed. A wake its
-/// turns already owed is refused at admission. The disarm is kept, with its
-/// time, so the arming another window of the vault still carries arms it
-/// nowhere again (FIX 5266).
+/// turns already owed is refused at admission. A turn program's disarm is
+/// kept, with its time, so the arming another window of the vault still
+/// carries arms it nowhere again (FIX 5266). An arming another trigger wakes
+/// never rides a window, so its disarm leaves no row.
 pub(crate) fn disarm_turn_program_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -111,14 +112,15 @@ pub(crate) fn disarm_turn_program_in_txn(
     registration: EntityId,
 ) -> Result<bool> {
     let key = (actor, registration);
-    if let Some(arming) = ARM.get(vault, &*txn, &key)? {
-        super::trigger::unindex_trigger_in_txn(vault, txn, &arming)?;
-    }
-    if !ARM.delete(vault, txn, &key)? {
+    let Some(arming) = ARM.get(vault, &*txn, &key)? else {
         return Ok(false);
+    };
+    super::trigger::unindex_trigger_in_txn(vault, txn, &arming)?;
+    ARM.delete(vault, txn, &key)?;
+    if arming.trigger.is_turn() {
+        let at = vault.store.clock.now_recorded_at();
+        DISARMED.put(vault, txn, &key, &TurnProgramDisarm { at })?;
     }
-    let at = vault.store.clock.now_recorded_at();
-    DISARMED.put(vault, txn, &key, &TurnProgramDisarm { at })?;
     Ok(true)
 }
 
