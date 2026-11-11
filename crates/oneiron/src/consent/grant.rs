@@ -1,530 +1,138 @@
 use crate::entity_id::EntityId;
-use crate::error::Result;
 use crate::store::{GateDecisionId, GateDecisionRecord};
 
-use super::bound::{ConsentDomain, GrantBound};
-use super::effect::{EffectDigest, EffectFacts};
-use super::support::invalid_bound;
+#[doc(hidden)]
+pub use oneiron_consent_state::consent::grant::{
+    ActionGrant, CONSENT_REASON_APPROVE_ONCE, CONSENT_REASON_BYPASS_CREATED,
+    CONSENT_REASON_BYPASSED, CONSENT_REASON_CODE_WAIT_CONSUMED, CONSENT_REASON_CODE_WAIT_SETTLED,
+    CONSENT_REASON_DENIED, CONSENT_REASON_REVOKED, CONSENT_REASON_STANDING_CREATED,
+    CONSENT_REASON_STANDING_USED, CodeWaitReceiptLinks, ConsentGrant, ConsentGrantRow,
+    ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal, ConsentReceipt,
+    DisclosureGrant, StandingConsentGrant,
+};
+#[doc(hidden)]
+use oneiron_consent_state::consent::grant::{CODE_WAIT_CONSUMED_KIND, CODE_WAIT_SETTLED_KIND};
 
-// ---------------------------------------------------------------------------
-// The two domain grant types — disjoint by construction (invariant 4)
-// ---------------------------------------------------------------------------
-
-/// A standing disclosure grant: data → audience.
-///
-/// The inner bound is private and only constructible through
-/// [`DisclosureGrant::new`], which re-checks the domain. There is no
-/// conversion from an [`ActionGrant`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DisclosureGrant {
-    bound: GrantBound,
-}
-
-impl DisclosureGrant {
-    /// Wraps a disclosure-domain bound.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the bound is an action bound.
-    ///
-    /// [`GateError::InvalidConsentBound`]: crate::error::GateError::InvalidConsentBound
-    pub fn new(bound: GrantBound) -> Result<Self> {
-        if bound.domain() != ConsentDomain::Disclosure {
-            return Err(invalid_bound(
-                "disclosure grant requires an audience/class/data-envelope bound",
-            ));
-        }
-        Ok(Self { bound })
-    }
-
-    /// The wrapped bound.
-    #[must_use]
-    pub const fn bound(&self) -> &GrantBound {
-        &self.bound
+/// The stable registry reference for this row: the bound digest hex, or
+/// for a bypass grant the digest of its bound, scope and floor version.
+#[must_use]
+pub fn consent_grant_row_grant_ref(consent_grant_row: &ConsentGrantRow) -> String {
+    match &consent_grant_row.bypass {
+        None => consent_grant_row.grant.bound().digest().to_hex(),
+        Some(extent) => crate::consent::bypass::bypass_extent_grant_ref(
+            &extent,
+            consent_grant_row.grant.bound(),
+        ),
     }
 }
 
-/// A standing action grant: actor → verb-class → target.
-///
-/// The inner bound is private and only constructible through
-/// [`ActionGrant::new`]. There is no conversion from a [`DisclosureGrant`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ActionGrant {
-    bound: GrantBound,
-}
-
-impl ActionGrant {
-    /// Wraps an action-domain bound.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the bound is a disclosure
-    /// bound.
-    ///
-    /// [`GateError::InvalidConsentBound`]: crate::error::GateError::InvalidConsentBound
-    pub fn new(bound: GrantBound) -> Result<Self> {
-        if bound.domain() != ConsentDomain::Action {
-            return Err(invalid_bound(
-                "action grant requires an actor/verb-class/target-envelope bound",
-            ));
-        }
-        Ok(Self { bound })
-    }
-
-    /// The wrapped bound.
-    #[must_use]
-    pub const fn bound(&self) -> &GrantBound {
-        &self.bound
-    }
-}
-
-/// The domain axis of a remembered grant.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum StandingConsentGrant {
-    /// A remembered disclosure grant.
-    Disclosure(DisclosureGrant),
-    /// A remembered action grant.
-    Action(ActionGrant),
-}
-
-impl StandingConsentGrant {
-    /// Builds the standing grant matching this bound's domain.
-    pub fn from_bound(bound: GrantBound) -> Result<Self> {
-        match bound.domain() {
-            ConsentDomain::Disclosure => Ok(Self::Disclosure(DisclosureGrant::new(bound)?)),
-            ConsentDomain::Action => Ok(Self::Action(ActionGrant::new(bound)?)),
-        }
-    }
-
-    /// The wrapped bound.
-    #[must_use]
-    pub const fn bound(&self) -> &GrantBound {
-        match self {
-            Self::Disclosure(grant) => grant.bound(),
-            Self::Action(grant) => grant.bound(),
-        }
-    }
-
-    /// The domain this grant covers.
-    #[must_use]
-    pub fn domain(&self) -> ConsentDomain {
-        self.bound().domain()
-    }
-}
-
-/// The lifetime axis: this op now, or a remembered bound.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ConsentGrant {
-    /// Authorizes exactly one op, identified by its engine-computed digest.
-    ApproveOnce(EffectDigest),
-    /// A remembered bound.
-    Standing(StandingConsentGrant),
-}
-
-// ---------------------------------------------------------------------------
-// Lifecycle + the persisted row
-// ---------------------------------------------------------------------------
-
-/// Lifecycle state of a persisted standing grant.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ConsentGrantStatus {
-    /// Live: in-bound reuse is Auto.
-    Active,
-    /// Revoked: immediately fails closed on every axis.
-    Revoked,
-}
-
-impl ConsentGrantStatus {
-    /// The pinned on-disk status string.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Revoked => "revoked",
-        }
-    }
-
-    /// Parses a pinned on-disk status string.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "active" => Some(Self::Active),
-            "revoked" => Some(Self::Revoked),
-            _ => None,
-        }
-    }
-}
-
-/// The owner stamp carried by every persisted grant row.
-///
-/// It records WHICH authenticated owner decision minted the row so the
-/// registry can show provenance. It holds references only — never key
-/// material, a bearer token, or a credential.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ConsentOwnerStamp {
-    /// The store-truth human actor entity.
-    pub actor: EntityId,
-    /// The GenUI principal reference that authenticated.
-    pub principal_ref: String,
-    /// The Gate decision this stamp was minted under.
-    pub decision_id: GateDecisionId,
-}
-
-/// One canonical standing consent-grant row.
-///
-/// Deliberately carries no expiry/duration field (invariant 9) and no
-/// credential material.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConsentGrantRow {
-    /// The normalized bound.
-    pub grant: StandingConsentGrant,
-    /// Lifecycle state.
-    pub status: ConsentGrantStatus,
-    /// The authenticated-owner decision that minted this row.
-    pub owner_stamp: ConsentOwnerStamp,
-    /// Creation time in Unix seconds.
-    pub created_at: u64,
-    /// Present only on a scoped catastrophe bypass grant (DEC-0006
-    /// invariant 7). Such a row is never an ordinary standing grant.
-    pub bypass: Option<super::bypass::BypassExtent>,
-}
-
-impl ConsentGrantRow {
-    /// Whether this row can authorize anything right now.
-    #[must_use]
-    pub const fn is_active(&self) -> bool {
-        matches!(self.status, ConsentGrantStatus::Active)
-    }
-
-    /// The stable registry reference for this row: the bound digest hex, or
-    /// for a bypass grant the digest of its bound, scope and floor version.
-    #[must_use]
-    pub fn grant_ref(&self) -> String {
-        match &self.bypass {
-            None => self.grant.bound().digest().to_hex(),
-            Some(extent) => extent.grant_ref(self.grant.bound()),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The receipt — invariant 2 ("one receipt")
-// ---------------------------------------------------------------------------
-
-/// The single receipt enum covering every consent outcome.
-///
-/// Approve-once and standing-grant creation/widening both land in
-/// [`ConsentReceipt::Approved`], distinguished by the `grant` arm — widening is
-/// a NEW owner decision minting a new `Approved`, never an edit of an existing
-/// row. [`ConsentReceipt::Used`] records quiet in-bound standing reuse and
-/// joins the grant row via `grant_ref` plus the exact effect digest. All four
-/// project into [`GateDecisionRecord`]; there is no second receipt ledger.
-///
-/// [`GateDecisionRecord`]: crate::store::GateDecisionRecord
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConsentReceipt {
-    /// The owner approved: once, or by minting/widening a standing grant.
-    Approved {
-        decision_id: GateDecisionId,
-        grant: ConsentGrant,
-    },
-    /// A standing grant was reused inside its bound.
-    Used {
-        decision_id: GateDecisionId,
-        grant_ref: String,
-        effect_digest: EffectDigest,
-    },
-    /// The owner denied this op.
-    Denied {
-        decision_id: GateDecisionId,
-        effect_digest: EffectDigest,
-    },
-    /// A standing grant was revoked.
-    Revoked {
-        decision_id: GateDecisionId,
-        grant_ref: String,
-    },
-    /// The owner created a scoped catastrophe bypass grant, after its one
-    /// warning.
-    BypassCreated {
-        decision_id: GateDecisionId,
-        grant_ref: String,
-        bound_digest: EffectDigest,
-    },
-    /// A catastrophe-floor op ran under a live bypass grant instead of
-    /// asking.
-    Bypassed {
-        decision_id: GateDecisionId,
-        grant_ref: String,
-        effect_digest: EffectDigest,
-    },
-    /// A code consent wait settled (DOOR-079): its held effect delivered,
-    /// refused or of unknown delivery, closing the answer `links` names.
-    CodeWaitSettled {
-        decision_id: GateDecisionId,
-        links: CodeWaitReceiptLinks,
-        outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome,
-    },
-    /// A code run consumed a settled wait's reply into its replay
-    /// (DOOR-079): it names the settlement it consumed.
-    CodeWaitConsumed {
-        decision_id: GateDecisionId,
-        links: CodeWaitReceiptLinks,
-    },
-}
-
-/// The joins one code consent wait receipt carries (DOOR-079): the wait,
-/// the person's word by reference, the receipt it follows and the digest of
-/// the immutable facts it closes. They project into the Gate record's
-/// `diff_handle` in one fixed 82-byte layout, so the record names the word
-/// without a field of its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CodeWaitReceiptLinks {
-    pub wait_id: EntityId,
-    pub word_ref: Option<EntityId>,
-    pub prior_receipt: Option<GateDecisionId>,
-    pub facts_digest: [u8; 32],
-}
-
-impl CodeWaitReceiptLinks {
-    /// One kind byte, one presence-flag byte (bit 0 the word, bit 1 the
-    /// prior receipt), the wait, the word slot and the prior slot (zeros
-    /// when absent), then the facts digest: 82 bytes.
-    fn diff_handle(&self, kind: u8) -> Vec<u8> {
-        let mut handle = Vec::with_capacity(82);
-        handle.push(kind);
-        handle.push(
-            u8::from(self.word_ref.is_some()) | (u8::from(self.prior_receipt.is_some()) << 1),
-        );
-        let word: &[u8; 16] = self.word_ref.as_ref().map_or(&[0; 16], EntityId::as_bytes);
-        handle.extend_from_slice(self.wait_id.as_bytes());
-        handle.extend_from_slice(word);
-        handle.extend_from_slice(&self.prior_receipt.map_or([0; 16], GateDecisionId::as_bytes));
-        handle.extend_from_slice(&self.facts_digest);
-        handle
-    }
-
-    /// The code wait receipt a consent Gate record holds, read back from its
-    /// `diff_handle`: the typed inverse of the encoder above, for these two
-    /// variants only (FIX 4608). `None` for any other record: another
-    /// content kind or receipt, a kind byte its outcome and reason code do
-    /// not name, or bytes this encoder would not write exactly.
-    pub(crate) fn from_gate_record(record: &GateDecisionRecord) -> Option<ConsentReceipt> {
-        let (&kind, rest) = record.diff_handle.split_first()?;
-        let (&flags, rest) = rest.split_first()?;
-        let slot = |at: usize| -> Option<[u8; 16]> { rest.get(at..at + 16)?.try_into().ok() };
-        let links = Self {
-            wait_id: EntityId::from_bytes(slot(0)?).ok()?,
-            word_ref: if flags & 1 == 0 {
-                None
-            } else {
-                Some(EntityId::from_bytes(slot(16)?).ok()?)
-            },
-            prior_receipt: if flags & 2 == 0 {
-                None
-            } else {
-                Some(GateDecisionId::from_bytes(slot(32)?))
-            },
-            facts_digest: rest.get(48..80)?.try_into().ok()?,
-        };
-        let receipt = if kind == CODE_WAIT_CONSUMED_KIND {
-            ConsentReceipt::CodeWaitConsumed {
-                decision_id: record.decision_id,
-                links,
-            }
+/// The code wait receipt a consent Gate record holds, read back from its
+/// `diff_handle`: the typed inverse of the encoder above, for these two
+/// variants only (FIX 4608). `None` for any other record: another
+/// content kind or receipt, a kind byte its outcome and reason code do
+/// not name, or bytes this encoder would not write exactly.
+pub(crate) fn code_wait_receipt_links_from_gate_record(
+    record: &GateDecisionRecord,
+) -> Option<ConsentReceipt> {
+    let (&kind, rest) = record.diff_handle.split_first()?;
+    let (&flags, rest) = rest.split_first()?;
+    let slot = |at: usize| -> Option<[u8; 16]> { rest.get(at..at + 16)?.try_into().ok() };
+    let links = CodeWaitReceiptLinks {
+        wait_id: EntityId::from_bytes(slot(0)?).ok()?,
+        word_ref: if flags & 1 == 0 {
+            None
         } else {
-            ConsentReceipt::CodeWaitSettled {
-                decision_id: record.decision_id,
-                links,
-                outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome::from_tag(
-                    kind & 0x0f,
-                )?,
-            }
-        };
-        (record.content_kind == CONSENT_CONTENT_KIND
-            && record.outcome == receipt.gate_outcome()
-            && record.reason_codes.first().map(String::as_str) == Some(receipt.reason_code())
-            && receipt.diff_handle() == record.diff_handle)
-            .then_some(receipt)
+            Some(EntityId::from_bytes(slot(16)?).ok()?)
+        },
+        prior_receipt: if flags & 2 == 0 {
+            None
+        } else {
+            Some(GateDecisionId::from_bytes(slot(32)?))
+        },
+        facts_digest: rest.get(48..80)?.try_into().ok()?,
+    };
+    let receipt = if kind == CODE_WAIT_CONSUMED_KIND {
+        ConsentReceipt::CodeWaitConsumed {
+            decision_id: record.decision_id,
+            links,
+        }
+    } else {
+        ConsentReceipt::CodeWaitSettled {
+            decision_id: record.decision_id,
+            links,
+            outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome::from_tag(
+                kind & 0x0f,
+            )?,
+        }
+    };
+    (record.content_kind == CONSENT_CONTENT_KIND
+        && record.outcome == receipt.gate_outcome()
+        && record.reason_codes.first().map(String::as_str) == Some(receipt.reason_code())
+        && crate::consent::consent_receipt_diff_handle(&receipt) == record.diff_handle)
+        .then_some(receipt)
+}
+
+/// The standing-grant row this receipt joins, when it has one.
+#[must_use]
+pub fn consent_receipt_grant_ref(consent_receipt: &ConsentReceipt) -> Option<String> {
+    match consent_receipt {
+        ConsentReceipt::Approved {
+            grant: ConsentGrant::Standing(grant),
+            ..
+        } => Some(grant.bound().digest().to_hex()),
+        ConsentReceipt::Used { grant_ref, .. }
+        | ConsentReceipt::Revoked { grant_ref, .. }
+        | ConsentReceipt::BypassCreated { grant_ref, .. }
+        | ConsentReceipt::Bypassed { grant_ref, .. } => Some(grant_ref.clone()),
+        ConsentReceipt::Approved {
+            grant: ConsentGrant::ApproveOnce(_),
+            ..
+        }
+        | ConsentReceipt::Denied { .. }
+        | ConsentReceipt::CodeWaitSettled { .. }
+        | ConsentReceipt::CodeWaitConsumed { .. } => None,
     }
 }
 
-/// The kind byte of a settled code wait's links: high nibble 1, low nibble
-/// the outcome's tag.
-const CODE_WAIT_SETTLED_KIND: u8 = 0x10;
-/// The kind byte of a consumed code wait's links.
-const CODE_WAIT_CONSUMED_KIND: u8 = 0x20;
-
-impl ConsentReceipt {
-    /// The Gate decision this receipt was recorded under.
-    #[must_use]
-    pub const fn decision_id(&self) -> GateDecisionId {
-        match self {
-            Self::Approved { decision_id, .. }
-            | Self::Used { decision_id, .. }
-            | Self::Denied { decision_id, .. }
-            | Self::Revoked { decision_id, .. }
-            | Self::BypassCreated { decision_id, .. }
-            | Self::Bypassed { decision_id, .. }
-            | Self::CodeWaitSettled { decision_id, .. }
-            | Self::CodeWaitConsumed { decision_id, .. } => *decision_id,
+/// The effect/bound digest this receipt projects into `diff_handle`.
+#[must_use]
+pub fn consent_receipt_diff_handle(consent_receipt: &ConsentReceipt) -> Vec<u8> {
+    match consent_receipt {
+        ConsentReceipt::Approved {
+            grant: ConsentGrant::ApproveOnce(digest),
+            ..
         }
-    }
-
-    /// The pinned Gate outcome string for this receipt.
-    #[must_use]
-    pub const fn gate_outcome(&self) -> &'static str {
-        match self {
-            Self::Approved { .. }
-            | Self::Used { .. }
-            | Self::BypassCreated { .. }
-            | Self::Bypassed { .. } => "approved",
-            Self::Denied { .. } => "denied",
-            Self::Revoked { .. } => "revoked",
-            Self::CodeWaitSettled { .. } => "settled",
-            Self::CodeWaitConsumed { .. } => "consumed",
+        | ConsentReceipt::Used {
+            effect_digest: digest,
+            ..
         }
-    }
-
-    /// The pinned `gate.`-namespaced reason code for this receipt.
-    #[must_use]
-    pub const fn reason_code(&self) -> &'static str {
-        match self {
-            Self::Approved {
-                grant: ConsentGrant::ApproveOnce(_),
-                ..
-            } => CONSENT_REASON_APPROVE_ONCE,
-            Self::Approved {
-                grant: ConsentGrant::Standing(_),
-                ..
-            } => CONSENT_REASON_STANDING_CREATED,
-            Self::Used { .. } => CONSENT_REASON_STANDING_USED,
-            Self::Denied { .. } => CONSENT_REASON_DENIED,
-            Self::Revoked { .. } => CONSENT_REASON_REVOKED,
-            Self::BypassCreated { .. } => CONSENT_REASON_BYPASS_CREATED,
-            Self::Bypassed { .. } => CONSENT_REASON_BYPASSED,
-            Self::CodeWaitSettled { .. } => CONSENT_REASON_CODE_WAIT_SETTLED,
-            Self::CodeWaitConsumed { .. } => CONSENT_REASON_CODE_WAIT_CONSUMED,
+        | ConsentReceipt::Denied {
+            effect_digest: digest,
+            ..
         }
-    }
-
-    /// The standing-grant row this receipt joins, when it has one.
-    #[must_use]
-    pub fn grant_ref(&self) -> Option<String> {
-        match self {
-            Self::Approved {
-                grant: ConsentGrant::Standing(grant),
-                ..
-            } => Some(grant.bound().digest().to_hex()),
-            Self::Used { grant_ref, .. }
-            | Self::Revoked { grant_ref, .. }
-            | Self::BypassCreated { grant_ref, .. }
-            | Self::Bypassed { grant_ref, .. } => Some(grant_ref.clone()),
-            Self::Approved {
-                grant: ConsentGrant::ApproveOnce(_),
-                ..
-            }
-            | Self::Denied { .. }
-            | Self::CodeWaitSettled { .. }
-            | Self::CodeWaitConsumed { .. } => None,
+        | ConsentReceipt::BypassCreated {
+            bound_digest: digest,
+            ..
         }
-    }
-
-    /// The effect/bound digest this receipt projects into `diff_handle`.
-    #[must_use]
-    pub fn diff_handle(&self) -> Vec<u8> {
-        match self {
-            Self::Approved {
-                grant: ConsentGrant::ApproveOnce(digest),
-                ..
-            }
-            | Self::Used {
-                effect_digest: digest,
-                ..
-            }
-            | Self::Denied {
-                effect_digest: digest,
-                ..
-            }
-            | Self::BypassCreated {
-                bound_digest: digest,
-                ..
-            }
-            | Self::Bypassed {
-                effect_digest: digest,
-                ..
-            } => digest.as_bytes().to_vec(),
-            Self::Approved {
-                grant: ConsentGrant::Standing(grant),
-                ..
-            } => grant.bound().digest().as_bytes().to_vec(),
-            // A revoke names the row, not an op: the row ref IS the bound
-            // digest, so the handle stays a digest rather than free text.
-            Self::Revoked { grant_ref, .. } => grant_ref.as_bytes().to_vec(),
-            Self::CodeWaitSettled { links, outcome, .. } => {
-                links.diff_handle(CODE_WAIT_SETTLED_KIND | outcome.tag())
-            }
-            Self::CodeWaitConsumed { links, .. } => links.diff_handle(CODE_WAIT_CONSUMED_KIND),
+        | ConsentReceipt::Bypassed {
+            effect_digest: digest,
+            ..
+        } => digest.as_bytes().to_vec(),
+        ConsentReceipt::Approved {
+            grant: ConsentGrant::Standing(grant),
+            ..
+        } => grant.bound().digest().as_bytes().to_vec(),
+        // A revoke names the row, not an op: the row ref IS the bound
+        // digest, so the handle stays a digest rather than free text.
+        ConsentReceipt::Revoked { grant_ref, .. } => grant_ref.as_bytes().to_vec(),
+        ConsentReceipt::CodeWaitSettled { links, outcome, .. } => {
+            links.diff_handle(CODE_WAIT_SETTLED_KIND | outcome.tag())
+        }
+        ConsentReceipt::CodeWaitConsumed { links, .. } => {
+            links.diff_handle(CODE_WAIT_CONSUMED_KIND)
         }
     }
 }
-
-/// Reason code for an approve-once decision.
-pub const CONSENT_REASON_APPROVE_ONCE: &str = "gate.consent.approve_once";
-/// Reason code for standing-grant creation (including a widening mint).
-pub const CONSENT_REASON_STANDING_CREATED: &str = "gate.consent.standing_created";
-/// Reason code for quiet in-bound standing reuse.
-pub const CONSENT_REASON_STANDING_USED: &str = "gate.consent.standing_used";
-/// Reason code for an owner denial.
-pub const CONSENT_REASON_DENIED: &str = "gate.consent.denied";
-/// Reason code for a registry revoke.
-pub const CONSENT_REASON_REVOKED: &str = "gate.consent.revoked";
-/// Reason code for an owner creating a scoped bypass grant.
-pub const CONSENT_REASON_BYPASS_CREATED: &str = "gate.consent.bypass_created";
-/// Reason code for an act that ran under a live bypass grant.
-pub const CONSENT_REASON_BYPASSED: &str = "gate.consent.bypassed";
-/// Reason code for a code consent wait's settlement (DOOR-079).
-pub const CONSENT_REASON_CODE_WAIT_SETTLED: &str = "gate.consent.code_wait_settled";
-/// Reason code for a code run's consumption of a settled wait (DOOR-079).
-pub const CONSENT_REASON_CODE_WAIT_CONSUMED: &str = "gate.consent.code_wait_consumed";
 
 /// The pinned Gate `content_kind` for consent-registry decisions.
 pub const CONSENT_CONTENT_KIND: &str = "consent_grant";
-
-// ---------------------------------------------------------------------------
-// The guard — invariant 5
-// ---------------------------------------------------------------------------
-
-/// What a guard may say about an effect.
-///
-/// A proposal is a SUGGESTION and nothing more. There is deliberately no
-/// `From<ConsentProposal> for ConsentGrant`, no guard-accessible persistence
-/// function, and no field here that is treated as an owner stamp — the type
-/// system, not a review checklist, is what stops inference from becoming
-/// authority. `confidence` may change the OFFER; it never changes authority.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConsentProposal {
-    /// The op the guard is proposing to remember.
-    pub effect_digest: EffectDigest,
-    /// The bound the guard suggests.
-    pub suggested_bound: GrantBound,
-    /// The guard's confidence, in `0.0..=1.0`.
-    pub confidence: f32,
-}
-
-/// The type-level guard contract: propose only.
-pub trait ConsentGuard {
-    /// Offers a bound the owner MIGHT want to remember.
-    fn propose(&self, facts: &EffectFacts) -> ConsentProposal;
-}

@@ -5,16 +5,19 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::lens::{PrepLensCopy, render_prep_lens};
-use super::pack::{PrepBuildRequest, build_prep_pack, prep_pack_source_refs};
+use super::pack::{
+    PrepBuildRequest, build_prep_pack, build_prep_pack_scoped, prep_pack_source_refs,
+};
 use super::wake::{PrepEvent, PrepPolicy, PrepWake, prep_fire_at};
 use crate::calendar::claims::{
     CalendarStatus, PREDICATE_CALENDAR_ATTENDEE, PREDICATE_CALENDAR_PREP_OPT_IN,
     PREDICATE_CALENDAR_STATUS, decode_attendee_value, decode_prep_opt_in_value,
     decode_status_value,
 };
-use crate::claim::claim_surfaceable;
+use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadActorKey, claim_surfaceable};
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::lens::GeneratedLens;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::vault::Vault;
@@ -123,6 +126,77 @@ pub fn run_due_home_node_prep_with_sources(
     Ok(Some((render_prep_lens(&pack, copy)?, sources)))
 }
 
+/// [`run_due_home_node_prep_with_sources`] for an EVENT `person`'s own pack
+/// calendar landed (FIX 16308): the pack is built on that person's own lane,
+/// so it holds only rows they read, and the card it renders is theirs alone.
+///
+/// The lane is the one their handle reads under with no credential: the
+/// vault owner's key for a vault owner, else their own grants. No owner
+/// proof is made for them. The EVENT is re-read on that lane as an on-demand
+/// prep reads it ([`crate::calendar::meeting::meeting_event_in_txn`]): live,
+/// readable to them with every deciding claim, and not cancelled. Its T-45
+/// must still be the instant the payload was planned for. A lane that reads
+/// nothing to say renders nothing.
+///
+/// # Errors
+///
+/// As [`run_due_home_node_prep`].
+pub(in crate::calendar) fn run_due_person_prep_with_sources(
+    vault: &Vault,
+    job: &PrepHomeNodeJob,
+    person: EntityId,
+    fired_at: u64,
+    policy: PrepPolicy,
+    copy: &PrepLensCopy,
+) -> Result<Option<(GeneratedLens, BTreeSet<EntityId>)>> {
+    let event_ref = EntityId::from_hex(&job.event_ref)?;
+    let lane = person_lane(vault, person)?;
+    let read = lane.read_projected(&[PointRead::id(event_ref)], None, |txn, _| {
+        crate::calendar::meeting::meeting_event_in_txn(vault, txn, &lane, event_ref)
+    })?;
+    let Some(event) = read.value else {
+        return Ok(None);
+    };
+    if prep_fire_at(&event, policy) != Some(job.scheduled_for) {
+        return Ok(None);
+    }
+    let request = PrepBuildRequest {
+        event,
+        fired_at,
+        policy,
+    };
+    let Some(pack) = build_prep_pack_scoped(&lane, &request)?.value else {
+        return Ok(None);
+    };
+    let sources = prep_pack_source_refs(&pack);
+    Ok(Some((render_prep_lens(&pack, copy)?, sources)))
+}
+
+/// The lane `person`'s own handle reads under with no credential, at the
+/// surfaceable claim status a retrieval reads: the vault owner's key for a
+/// vault owner, else that person's own grants.
+pub(in crate::calendar) fn person_lane(vault: &Vault, person: EntityId) -> Result<ScopedRead<'_>> {
+    let owner = {
+        let txn = vault.store.env.read_txn()?;
+        crate::policy_model::owners_in_txn(vault, &txn)?.contains(&person)
+    };
+    let key = if owner {
+        ScopedReadActorKey::vault_owner(person)
+    } else {
+        ScopedReadActorKey::with_actor_class(
+            person.to_hex(),
+            EdgeActorClass::Human.gate_actor_class(),
+        )
+        .ok_or(Error::InvariantViolation(
+            "a person's id builds no read key",
+        ))?
+        .require_access_grants(Some(person))
+    };
+    Ok(vault
+        .scoped_read(key)
+        .with_claim_status(ClaimReadStatus::Surfaceable))
+}
+
 /// Re-derives the EVENT facts prep is decided from, as they stand at due time.
 ///
 /// `None` means the EVENT is gone, is not an EVENT, is a shell, or has been
@@ -141,6 +215,16 @@ pub(in crate::calendar) fn live_prep_event(
     };
     if header.entity_type != ENTITY_TYPE_EVENT || vault.is_deleted_shell(&event_ref)? {
         return Ok(None);
+    }
+    // A pack calendar source's EVENT is its person's: no vault-owner card is
+    // built from its attendees or details (FIX 12559, MAIL-SHARE = A). Its
+    // person's own card is built on their lane
+    // ([`run_due_person_prep_with_sources`], FIX 16308).
+    {
+        let txn = vault.store.env.read_txn()?;
+        if crate::source_audience::binding_in(vault, &txn, &event_ref)?.is_some() {
+            return Ok(None);
+        }
     }
     let facts = live_event_facts(vault, &event_ref)?;
     if facts.cancelled {

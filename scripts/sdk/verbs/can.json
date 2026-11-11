@@ -1,0 +1,27 @@
+{
+  "name": "can",
+  "description": "Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of a scheduled send or connector call ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be, rechecked when it runs.",
+  "input": "crate::verbs::CanRequest",
+  "output": "crate::memory::CanAnswer",
+  "call": "memory.can(&input)?",
+  "scope": "Read",
+  "task_work": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Read-only ask preflight, or one effect's dated preflight.\n",
+      "ts": "/** Read-only ask routing, or one effect's dated allow, deny, would-ask or named hold. */",
+      "py": "Read-only ask routing, or one effect's dated allow, deny, would-ask or named hold."
+    }
+  }
+}

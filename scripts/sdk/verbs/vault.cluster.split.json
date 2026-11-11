@@ -1,0 +1,17 @@
+{
+  "name": "vault.cluster.split",
+  "description": "Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue.",
+  "input": "crate::memory::clustering::ClusterSplitRequest",
+  "output": "crate::memory::clustering::ClusterTopologyReceipt",
+  "call": "{ let owner = if input.grant_ref.is_none() { Some(memory.embedded_owner(\"vault.cluster.split\")?) } else { None }; memory.cluster_split(owner.as_ref(), &input)? }",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "openapi": true
+}

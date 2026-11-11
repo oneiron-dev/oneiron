@@ -24,8 +24,18 @@ and conflict-task checks before reading the original through the current credent
 The original must name the same repository, path, branch and conflict subject before
 any handle is resolved. Fresh actor/session/provenance and the same owner writer
 revalidation remain in force. The existing resolve door is unchanged for submissions
-without an original. A leased-run resolution caller, HTTP and SDK surfaces are not
-added here; the trusted core still accepts both ordinary operations.
+without an original. The trusted core still accepts both ordinary operations.
+
+Authenticated owners can also call `vault.code.proposal_rereview` and
+`vault.code.proposal_resolve_rereview` through the HTTP facade, MCP and SDK code mode.
+For HTTP, POST to `/v1/core/facade/<verb>`. The input has `original`, the approved
+proposal id, and `change`, the ordinary submission or resolution request respectively.
+For MCP, pass that same input under `arguments.spec`. The nested request supplies fresh
+attribution, message and review policy; its content is replaced by the engine's verified
+redacted projection. Both return the usual `CodeProposalSubmitted` record. The HTTP
+and MCP doors take the current request's authenticated owner proof; embedded code mode
+uses the existing owner handle with the vault's writer lease. The same owner precheck
+runs before verb hooks. These owner surfaces add no leased-run resolution caller.
 
 The owner caller validates the actual owner, repository and attribution sources, and
 reads the original through its current credential. The run caller admits the current

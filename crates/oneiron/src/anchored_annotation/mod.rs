@@ -48,6 +48,7 @@
 //! ARTL-3 reconciliation seam.
 mod anchor_text;
 mod body_anchor;
+mod code_units;
 mod codec;
 mod comment_parts;
 mod conversation;
@@ -80,11 +81,12 @@ pub use self::model::{
     A1Range, ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE,
     ANNOTATION_COMMENT_TEXT_MAX_BYTES, ANNOTATION_LOCATOR_RANGE_MAX_BYTES,
     ANNOTATION_LOCATOR_TEXT_MAX_BYTES, ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment,
-    AnnotationThread, BodyAnchor, DriftMarker, Locator, ReanchorOp, ReanchorOutcome,
-    ReanchorSummary, TaskBrief, ThreadState,
+    AnnotationThread, BodyAnchor, CODE_ANCHOR_VERSION, DriftMarker, Locator, ReanchorOp,
+    ReanchorOutcome, ReanchorSummary, TaskBrief, ThreadState,
 };
 pub use self::reanchor::replay_locator;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

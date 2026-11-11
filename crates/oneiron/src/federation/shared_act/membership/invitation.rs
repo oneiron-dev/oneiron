@@ -313,6 +313,7 @@ impl Vault {
             },
             grants: Vec::new(),
             revoked_slips: Vec::new(),
+            detach: None,
             notify: BTreeSet::from([member]),
         })
     }
@@ -450,40 +451,95 @@ impl Vault {
     ) -> Result<SharedActExecutionReceipt> {
         invitee.require_invitation_acceptor(invitation_id)?;
         self.change_shared_membership(invitee, vault_id, None, |txn, actor, now| {
-            let mut invitation = self.invitation_in_txn(txn, actor, invitation_id)?;
-            let inviter = EntityId::from_hex(&invitation.inviter)?;
-            if invitation.vault_id != vault_id
-                || invitation.state != SharedInvitationState::Pending
-                || now >= invitation.expires_at
-                || self.member_role_in_txn(txn, vault_id, actor)?.is_some()
-            {
-                return Err(invalid());
-            }
-            // Only a founding invitation may admit an Owner (OF-150's
-            // co-owned vault); until it is accepted the creator is the only
-            // one. Any other invitation admits no root role.
-            if !(invitation.founding && invitation.role == Role::Owner) {
-                non_root(Some(invitation.role))?;
-            }
-            self.authorize_shared_vault_write_in_txn(
-                txn,
-                vault_id,
-                &WriteActor::new(inviter, EdgeActorClass::Human),
-                &SharedVaultWrite::Admin(OrgAdminPower::AddMember),
-            )?;
-            let grants = self.set_member_role_in_txn(txn, vault_id, actor, invitation.role, now)?;
-            invitation.state = SharedInvitationState::Accepted { at: now };
-            self.put_invitation_in_txn(txn, &invitation)?;
-            Ok(Effect {
-                change: SharedVaultChange::InvitationAccepted {
-                    invitation: invitation.id,
-                    member: invitation.invitee,
-                    role: invitation.role,
-                },
-                grants,
-                revoked_slips: Vec::new(),
-                notify: BTreeSet::from([inviter]),
-            })
+            self.accept_shared_invitation_in_txn(txn, actor, vault_id, invitation_id, now)
+        })
+    }
+
+    /// Accepts the invitee's invitation and mints their regular credential in
+    /// the same writer. The key comes only from this person's live request
+    /// credential for that invitation, before acceptance spends it. The caller
+    /// chooses `expires_at`; a failed mint rolls the whole composite back.
+    pub fn accept_shared_invitation_with_credential(
+        &self,
+        invitee: &AuthenticatedOwner,
+        vault_id: u64,
+        invitation_id: &str,
+        issuer: &HostSlipIssuer,
+        expires_at: u64,
+    ) -> Result<(SharedActExecutionReceipt, CapabilitySlip)> {
+        let mut credential = None;
+        let receipt =
+            self.change_shared_membership(invitee, vault_id, None, |txn, actor, now| {
+                let holder_key =
+                    invitee.invitation_request_binding_key_in_txn(self, txn, invitation_id)?;
+                let effect =
+                    self.accept_shared_invitation_in_txn(txn, actor, vault_id, invitation_id, now)?;
+                let role = match &effect.change {
+                    SharedVaultChange::InvitationAccepted { role, .. } => *role,
+                    _ => return Err(invalid()),
+                };
+                let (grant_ref, grant) = self
+                    .vault_grants_in_txn(txn, vault_id)?
+                    .into_iter()
+                    .find(|(id, grant)| {
+                        effect.grants.contains(id)
+                            && grant.member_ref == actor
+                            && grant.role == role
+                    })
+                    .ok_or_else(invalid)?;
+                credential = Some(self.mint_accepted_member_slip_in_txn(
+                    txn, issuer, grant_ref, &grant, holder_key, expires_at,
+                )?);
+                Ok(effect)
+            })?;
+        let credential = credential.ok_or(crate::error::Error::InvariantViolation(
+            "accepted membership did not mint its requested credential",
+        ))?;
+        Ok((receipt, credential))
+    }
+
+    fn accept_shared_invitation_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        vault_id: u64,
+        invitation_id: &str,
+        now: u64,
+    ) -> Result<Effect> {
+        let mut invitation = self.invitation_in_txn(txn, actor, invitation_id)?;
+        let inviter = EntityId::from_hex(&invitation.inviter)?;
+        if invitation.vault_id != vault_id
+            || invitation.state != SharedInvitationState::Pending
+            || now >= invitation.expires_at
+            || self.member_role_in_txn(txn, vault_id, actor)?.is_some()
+        {
+            return Err(invalid());
+        }
+        // Only a founding invitation may admit an Owner (OF-150's
+        // co-owned vault); until it is accepted the creator is the only
+        // one. Any other invitation admits no root role.
+        if !(invitation.founding && invitation.role == Role::Owner) {
+            non_root(Some(invitation.role))?;
+        }
+        self.authorize_shared_vault_write_in_txn(
+            txn,
+            vault_id,
+            &WriteActor::new(inviter, EdgeActorClass::Human),
+            &SharedVaultWrite::Admin(OrgAdminPower::AddMember),
+        )?;
+        let grants = self.set_member_role_in_txn(txn, vault_id, actor, invitation.role, now)?;
+        invitation.state = SharedInvitationState::Accepted { at: now };
+        self.put_invitation_in_txn(txn, &invitation)?;
+        Ok(Effect {
+            change: SharedVaultChange::InvitationAccepted {
+                invitation: invitation.id,
+                member: invitation.invitee,
+                role: invitation.role,
+            },
+            grants,
+            revoked_slips: Vec::new(),
+            detach: None,
+            notify: BTreeSet::from([inviter]),
         })
     }
 
@@ -510,6 +566,7 @@ impl Vault {
                 },
                 grants: Vec::new(),
                 revoked_slips: Vec::new(),
+                detach: None,
                 notify: BTreeSet::from([inviter]),
             })
         })
@@ -546,6 +603,7 @@ impl Vault {
                     },
                     grants: Vec::new(),
                     revoked_slips: Vec::new(),
+                    detach: None,
                     notify: BTreeSet::from([invitee]),
                 })
             },

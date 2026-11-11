@@ -388,6 +388,17 @@ fn attach_evidence(
         crate::dreamer_consolidation::strength::record_verified_in_txn(
             vault, txn, head, evidence, run.now_ms,
         )?;
+        vault
+            .batch_in()
+            .append_lexical_hints_for_existing_head(
+                txn,
+                &head,
+                &envelope,
+                candidate.occurred,
+                candidate.learned_at,
+                candidate.candidate.lexical_hints(),
+            )?
+            .apply(txn)?;
         if vault.get_claim_in_txn(txn, &head)?.as_ref() != Some(&original) {
             return Err(Error::InvalidClaimBody(
                 "evidence attachment altered its head",

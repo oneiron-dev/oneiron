@@ -15,8 +15,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/extraction_eval/qa.rs` | src | s | 2 struct · 1 crate-vis | Of360GoldQa, Of360QaAnswer | Gold-anchored QA lane with exact normalized-answer scoring |
 | `src/extraction_eval/types.rs` | src | m | 17 struct · 6 enum · 4 fn | Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness, Of360DerivationEnvelope, Of360EvalError, Of360EvalReport +15 | Extraction-quality schemas and validation |
 | `src/lib.rs` | src | s | 4 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
-| `src/llm/assembly.rs` | src | m | 1 struct · 8 fn | StreamAssembly | Shared typed stream assembly |
-| `src/llm/backend.rs` | src | m | 2 struct · 1 enum · 3 trait · 10 fn · 4 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
+| `src/llm/assembly.rs` | src | m | 1 struct · 10 fn | StreamAssembly | Shared typed stream assembly |
+| `src/llm/backend.rs` | src | m | 2 struct · 1 enum · 3 trait · 13 fn · 5 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
 | `src/llm/backend_identity.rs` | src | s | 1 struct · 2 fn | LlamaAlias | The answering house llama.cpp process's launch alias (FIX 7895, 6567 PR1b): which incarnation answered a… |
 | `src/llm/budget/checkpoint.rs` | src | s | 1 struct · 2 fn | BudgetCheckpoint | Settled state of one budget meter across a workflow hook wait |
 | `src/llm/budget/dispatch.rs` | src | s | 1 struct · 1 enum · 13 fn · 1 const | DispatchBinding, DispatchRefused | Bound admissions and the one-use dispatch check: a lease that records what it was granted for, and is… |
@@ -33,7 +33,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/tests/per_call.rs` | test | s | — | — | — |
 | `src/llm/budget/types.rs` | src | s | 5 struct · 4 enum · 5 fn · 1 const | BudgetAdmission, BudgetExhaustionPolicy, BudgetLadderEvent, BudgetLeaseState, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal +1 | Public budget DTOs and the exhaustion policy |
 | `src/llm/burst_inputs.rs` | src | s | 1 struct · 1 fn | NormalizedBurstInputs | Peer-relative write velocity and structural-failure streaks for automatic verdicts |
-| `src/llm/bus.rs` | src | m | 2 struct · 1 trait · 7 fn | LlmEventBus, StreamSubscription, TerminalSink | Ephemeral one-producer fanout |
+| `src/llm/bus.rs` | src | m | 2 struct · 1 trait · 9 fn | LlmEventBus, StreamSubscription, TerminalSink | Ephemeral one-producer fanout |
 | `src/llm/cache.rs` | src | m | 6 struct · 5 enum · 7 fn | CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError, CacheIdentity, CacheOutcome +3 | What a backend reported about its prompt cache on one physical model call (FIX 6567, INF 2 step 1): for each… |
 | `src/llm/call.rs` | src | s | 5 struct · 6 enum · 7 fn | CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality, ModelTierRef, PinnedConfigViolation +3 | Per-call description: envelope, pin admission, roles, tier precedence, response format, and locality |
 | `src/llm/catalog.rs` | src | m | 2 struct · 2 enum · 10 fn · 2 const | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
@@ -41,8 +41,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/error.rs` | src | m | 3 struct · 7 enum · 10 fn | BudgetDenied, FatalLlmError, InterruptedMediaCall, LabelReadFailure, LlmError, RetryableLlmError, SpentKind, TransportFault +2 | Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail |
 | `src/llm/failure_policy.rs` | src | s | 2 struct · 3 enum · 9 fn | DreamerFailureClass, DreamerFailureDecision, DreamerFailurePrecedence, DreamerFailureRoute, DreamerFailureRule | Vault-resident Dreamer failure decisions; these restrict downstream use, never grant authority |
 | `src/llm/fallback.rs` | src | s | 1 struct · 1 enum · 1 trait · 4 fn | DeterministicRunner, FallbackError, FallbackRegistry | Named deterministic non-LLM fallback runners |
-| `src/llm/image.rs` | src | s | 5 struct · 1 trait · 2 fn · 1 type | ImageBackend, ImageBytes, ImageCatalog, ImageCatalogRow, ImageIntent, ImageResponse | Provider-neutral image generation and reference-edit intent |
-| `src/llm/inference.rs` | src | m | 5 struct · 7 enum · 6 fn · 1 const | InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence, WorkerDescriptor, WorkerFailure, WorkerFailureDetail, WorkerKind +4 | What a model worker is and what one physical call to it reported (FIX 8314, INFERENCE R1): the worker's… |
+| `src/llm/image.rs` | src | s | 5 struct · 1 trait · 3 fn · 1 type | ImageBackend, ImageBytes, ImageCatalog, ImageCatalogRow, ImageIntent, ImageResponse | Provider-neutral image generation and reference-edit intent |
+| `src/llm/inference.rs` | src | m | 5 struct · 7 enum · 7 fn · 1 const | InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence, WorkerDescriptor, WorkerFailure, WorkerFailureDetail, WorkerKind +4 | What a model worker is and what one physical call to it reported (FIX 8314, INFERENCE R1): the worker's… |
 | `src/llm/inference_observation.rs` | src | s | 1 struct · 1 enum · 3 fn · 4 crate-vis | InferenceCallObservation, InferenceObservationId | What each physical inference request measured, published by the adapter that sends it while the request is… |
 | `src/llm/inference_publisher.rs` | src | s | 1 struct · 3 fn | InferencePublisher | One physical request's observation, published by the adapter that sends it while the request is alive (FIX… |
 | `src/llm/label_read.rs` | src | s | 3 struct · 1 enum · 1 trait · 4 fn | LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet | Label-read seam: a host model scores a closed label set instead of generating text |
@@ -52,13 +52,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/media/caps.rs` | src | s | 1 struct · 3 enum · 10 fn · 1 const | AiOperation, MediaCaps, Modality, NativeUnit | Media call operations, modalities and row capabilities |
 | `src/llm/media/mod.rs` | src | s | 1 struct · 1 fn · 1 type · 1 mod · 6 re-export | NativeRate | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
 | `src/llm/media/replay.rs` | src | s | 1 enum · 3 fn | MediaReplayKey | A media call's replay key (FIX 465, FIX 2962): the name a repeat of one call shares with the first, so the… |
-| `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 10 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
+| `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 11 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
 | `src/llm/media/response.rs` | src | s | 3 struct · 1 enum · 6 fn | MediaCallProgress, MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
-| `src/llm/mod.rs` | src | s | 4 mod · 35 re-export | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 4 mod · 36 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
 | `src/llm/protocol.rs` | src | m | 8 struct · 8 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor, LlmInputUsage, LlmMessage +8 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/protocol/tests.rs` | test | s | — | — | — |
+| `src/llm/provider_usage.rs` | src | s | 1 struct · 3 fn | ProviderTokenMeasurement | Provider-reported token measurements, kept apart from budget charges and the normalized usage counters that… |
 | `src/llm/reply_assertions.rs` | src | s | 2 struct · 3 fn | ReplyAssertionRecord, ReplyAssertions | The typed records one reply cited or created (OF-063, FIX 3416), carried on its terminal |
 | `src/llm/safeguard.rs` | src | s | 2 enum · 5 fn · 2 const | SafeguardModelBinding, SafeguardModelBindingError | Safeguard-classifier binding selector with parsing, display, serde, and tier/model projections |
 | `src/llm/scheduling.rs` | src | m | 9 struct · 5 enum · 14 fn · 1 type · 3 const | AdmissionGrant, CallSchedule, ResourceClass, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate, SchedulingCapability +6 | The scheduling wire of a model worker (DESIGN-V2 R4, codec v1.3): the order a host asks a worker to run its… |

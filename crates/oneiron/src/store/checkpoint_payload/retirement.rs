@@ -184,6 +184,22 @@ fn ready_in_txn(
     }
 }
 
+/// Whether a committed payload erase would retire its leaf now. Retention
+/// intents still need the authenticated kept inventory, not just these rows.
+pub(crate) fn checkpoint_erase_ready_in_rows(
+    rows: &[(Vec<u8>, Vec<u8>)],
+    intent: &RetirementIntent,
+) -> Result<bool> {
+    if intent.cause != RetireCause::Erase {
+        return Ok(false);
+    }
+    let item = PayloadItem::decode(intent.subject.item()).ok_or_else(corrupt)?;
+    match held_record(&item) {
+        Some(record) => Ok(!crate::store::legal_hold::rows_keep_record(rows, &record)?),
+        None => Ok(true),
+    }
+}
+
 impl Store {
     /// Carries out every staged checkpoint payload leaf retirement, an
     /// interrupted process's included, in custody's finisher order (marker,

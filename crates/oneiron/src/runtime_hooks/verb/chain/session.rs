@@ -4,6 +4,8 @@
 //! what the call's answer will say of it. A hook's ask pauses its call in the
 //! in-memory keep (L13 PR-D, FIX 4283), a room's under its stretch (FIX 5524).
 
+use std::cell::RefCell;
+
 use serde_json::Value;
 
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
@@ -17,6 +19,7 @@ use super::super::ask;
 use super::super::storage::{
     HeldRun, SESSION_HOOK_UNAVAILABLE, SessionHookKey, SessionHooks, VerbHookStorage,
 };
+use super::storage::Landed;
 use super::{Chain, Hook, RunRecord, hook_name};
 
 /// The receipt word of a run whose outcome its room could not carry out.
@@ -119,9 +122,9 @@ impl<'c> Chain<'c> {
     /// ask, its paused call kept under `key` (a room's with the route its
     /// run captured) and the chain's blocks and intents written in the ask's
     /// own write ([`Self::consequences_in_txn`]; a room's chain holds none);
-    /// then the chain's runs held for the call to keep. A refused ask keeps
-    /// and writes nothing, and the chain goes on as after any ask that did
-    /// not open.
+    /// then the chain's runs held for the call to keep, as that write landed
+    /// them. A refused ask keeps and writes nothing, and the chain goes on
+    /// as after any ask that did not open.
     pub(super) fn ask_in_session(
         &self,
         hooks: &SessionHooks<'_>,
@@ -138,6 +141,7 @@ impl<'c> Chain<'c> {
                 Err(error)
             };
         }
+        let landed = RefCell::new(None);
         let group = match ask::session::open(
             self.vault,
             key,
@@ -148,12 +152,15 @@ impl<'c> Chain<'c> {
             label,
             self.turn.as_ref(),
             hooks.paused_route(),
-            &|txn: &mut heed::RwTxn<'_>| self.consequences_in_txn(txn),
+            &|txn: &mut heed::RwTxn<'_>| -> Result<()> {
+                *landed.borrow_mut() = self.consequences_in_txn(txn)?;
+                Ok(())
+            },
         )? {
             Ok(group) => group,
             Err(refusal) => return Ok(Err(refusal)),
         };
-        self.hold_in_session(hooks);
+        self.hold_in_session(hooks, landed.into_inner());
         Ok(Ok(ask::pending(self.call.invocation, group)))
     }
 
@@ -175,8 +182,12 @@ impl<'c> Chain<'c> {
 
     /// Holds the chain's receipts and saved runs, each with what the call's
     /// answer will say of it, for the call to keep in its session's own
-    /// store once its read is done.
-    pub(super) fn hold_in_session(&self, hooks: &SessionHooks<'_>) {
+    /// store once its read is done. Each is held as the vault's write lands
+    /// it ([`Self::landed_in_txn`]): `landed`, one per run in run order, as
+    /// the write of the chain's consequences landed them, else read here
+    /// once; one the vault cannot be read for keeps no payload. The keep
+    /// lands each through the erase fence again, in its own write.
+    pub(super) fn hold_in_session(&self, hooks: &SessionHooks<'_>, landed: Option<Vec<Landed>>) {
         let at = self
             .vault
             .store
@@ -188,18 +199,29 @@ impl<'c> Chain<'c> {
         } else {
             SessionHookPhase::Pre
         };
-        let rtxn = self.vault.store.env.read_txn().ok();
+        let rtxn = if landed.is_none() {
+            self.vault.store.env.read_txn().ok()
+        } else {
+            None
+        };
+        let mut written = landed.map(Vec::into_iter);
         hooks.hold(self.runs.iter().map(|run| {
-            let mut receipt = self.receipt(run);
-            let mut saved = self.saved(run, at);
-            let erased = rtxn.as_ref().map_or(true, |txn| {
-                store::dependencies_erased_in_txn(self.vault, txn, &run.hook_dependencies())
-                    .unwrap_or(true)
-            });
-            if erased {
-                store::scrub_receipt_payload(&mut receipt);
-                store::scrub_verb_payload(&mut saved);
-            }
+            let landed = match written.as_mut() {
+                Some(written) => written.next(),
+                None => rtxn
+                    .as_ref()
+                    .and_then(|txn| self.landed_in_txn(txn, run, at).ok()),
+            };
+            let (receipt, saved) = match landed {
+                Some((receipt, saved, _)) => (receipt, saved),
+                None => {
+                    let mut receipt = self.receipt(run);
+                    let mut saved = self.saved(run, at);
+                    store::scrub_receipt_payload(&mut receipt);
+                    store::scrub_verb_payload(&mut saved);
+                    (receipt, saved)
+                }
+            };
             HeldRun {
                 key: run.key,
                 receipt,

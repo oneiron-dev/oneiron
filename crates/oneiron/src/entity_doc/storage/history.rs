@@ -1,12 +1,34 @@
-//! The retained states of an entity's document, read as record bodies.
+//! The retained states of an entity's document, read as record bodies, and
+//! each committed state captured in the entity's revision ledger.
 
 use super::super::EntityDoc;
 use super::super::document::decode_frontier;
-use super::{TextField, body_with_document, has_record_head, head, load};
+use super::{Head, TextField, body_with_document, has_record_head, head, load};
 use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
-use heed::RoTxn;
+use crate::vault::entity_revision;
+use heed::{RoTxn, RwTxn};
+
+/// Captures `entity`'s committed document `doc` in its revision ledger. A
+/// commit that moves the live revision advances the vault's
+/// document-mutation head; a birth that restates its record's text moves no
+/// content (FIX 2860).
+pub(super) fn capture_document_revision_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &Head,
+    doc: &EntityDoc,
+    birth: bool,
+) -> Result<()> {
+    let restated = birth && h.birth_frontier == Some(doc.frontier());
+    let moved = entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
+    if let Some(revision) = moved.filter(|_| !restated) {
+        entity_revision::advance_document_mutation_head_in_txn(store, txn, entity, revision)?;
+    }
+    Ok(())
+}
 
 /// One state of an entity's document, as [`record_body_history_in_txn`]
 /// lists it.

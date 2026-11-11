@@ -95,7 +95,7 @@ impl super::CoreAuth {
     /// for that machine again in its own snapshot; only an unproved one is
     /// an unknown destination.
     pub(crate) fn destination(&self) -> oneiron::settings::ReadDestination {
-        oneiron::settings::ReadDestination::at(self.locality, self.peer)
+        oneiron::settings::read_destination_at(self.locality, self.peer)
     }
 }
 

@@ -22,7 +22,97 @@ use crate::authority::{ActSurface, RecoveryRootId, RootChange, authority_log_ent
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::memory::{MemoryError, MemoryResult};
+use crate::secret_custody::CustodyManifestCheck;
 use crate::world_keys::OwnerWorkReceipt;
+
+/// One owner work receipt with the holder's manifest judgment as a surface
+/// shows it (FIX 5446): the receipt (ids only) and, for a custody register
+/// whose result carries one, the words for what its holder checked.
+/// Reporting only: an unchecked registration stays accepted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OwnerWorkReceiptView {
+    #[serde(flatten)]
+    pub receipt: OwnerWorkReceipt,
+    /// `CustodyManifestCheck::Judged(check).text()`, when the receipt's
+    /// `manifest_check` names one; `None` before the result, and for any
+    /// other work.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_text: Option<String>,
+}
+
+impl From<OwnerWorkReceipt> for OwnerWorkReceiptView {
+    fn from(receipt: OwnerWorkReceipt) -> Self {
+        let manifest_text = receipt
+            .manifest_check
+            .clone()
+            .map(|check| CustodyManifestCheck::Judged(check).text());
+        Self {
+            receipt,
+            manifest_text,
+        }
+    }
+}
+
+/// One owner work receipt as a surface shows it: the receipt (ids only),
+/// the engine's words for where it stands, and, when no install could be
+/// named, the engine's words for why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OwnerWorkView {
+    #[serde(flatten)]
+    pub receipt: OwnerWorkReceipt,
+    /// The words for the holder's manifest judgment, when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_text: Option<String>,
+    /// `OwnerWorkStatus::text`: "recorded, awaiting a holder", "enacted by
+    /// its holder", "refused by its holder", "cancelled by the owner" or
+    /// "superseded by a newer request on its target".
+    pub status_text: String,
+    /// `OwnerWorkUnassigned::text`, when nothing was recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unassigned_text: Option<String>,
+    /// `OwnerWorkStatus::advice`, when a refusal names what the owner may do
+    /// next: a root request whose target may not have synced (FIX 4738).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advice_text: Option<String>,
+    /// `BundleHomeWarning::text`, when a publication's home may keep no
+    /// sealed copy (FIX 4786).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home_warning_text: Option<String>,
+    /// `OwnerWorkCancelState::text`, when the owner cancelled a root request:
+    /// "cancelled", or that its target answered it first, "already enacted"
+    /// (FIX 4739).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancel_text: Option<String>,
+}
+
+impl From<OwnerWorkReceipt> for OwnerWorkView {
+    fn from(receipt: OwnerWorkReceipt) -> Self {
+        let OwnerWorkReceiptView {
+            receipt,
+            manifest_text,
+        } = OwnerWorkReceiptView::from(receipt);
+        let status_text = receipt.status.text().to_owned();
+        let unassigned_text = receipt.unassigned.map(|why| why.text().to_owned());
+        let advice_text = receipt.status.advice().map(str::to_owned);
+        let home_warning_text = receipt
+            .home_warning
+            .as_ref()
+            .map(|warning| warning.text().to_owned());
+        let cancel_text = receipt
+            .cancel
+            .as_ref()
+            .map(|cancel| cancel.state.text().to_owned());
+        Self {
+            receipt,
+            manifest_text,
+            status_text,
+            unassigned_text,
+            advice_text,
+            home_warning_text,
+            cancel_text,
+        }
+    }
+}
 
 /// `vault.roots.requests.cancel`'s input: the root request to cancel, as
 /// the route's body names it.
@@ -112,7 +202,7 @@ impl From<RootChange> for RootChangeView {
 #[serde(deny_unknown_fields)]
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
-    pub receipt: OwnerWorkReceipt,
+    pub receipt: OwnerWorkView,
 }
 
 /// `vault.owner_work.get`'s input: one owner work request, by its signed
@@ -141,11 +231,13 @@ pub fn create_root_request_as(
     owner: &AuthenticatedOwner,
     surface: ActSurface,
     input: RootRequestCreateRequest,
-) -> MemoryResult<OwnerWorkReceipt> {
+) -> MemoryResult<OwnerWorkView> {
     let target = EntityId::from_hex(&input.target)
         .map_err(|_| MemoryError::bad_request("target must be 32 hex"))?;
     let change = root_change(&input)?;
-    Ok(vault.request_root_change(owner, surface, target, change)?)
+    Ok(vault
+        .request_root_change(owner, surface, target, change)?
+        .into())
 }
 
 /// `vault.roots.requests.list` (FIX 5598): the root requests naming this
@@ -165,7 +257,7 @@ pub fn list_root_requests_as(
         .into_iter()
         .map(|(_, change, receipt)| PendingRootRequestView {
             change: change.into(),
-            receipt,
+            receipt: receipt.into(),
         })
         .collect())
 }
@@ -183,14 +275,17 @@ pub fn owner_work_receipt_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &OwnerWorkGetRequest,
-) -> MemoryResult<OwnerWorkReceipt> {
+) -> MemoryResult<OwnerWorkView> {
     let request = request_entry(&input.request)?;
-    vault.owner_work_receipt(owner, request)?.ok_or_else(|| {
-        MemoryError::not_found(format!(
-            "this install folds no owner work request {}",
-            input.request
-        ))
-    })
+    vault
+        .owner_work_receipt(owner, request)?
+        .map(OwnerWorkView::from)
+        .ok_or_else(|| {
+            MemoryError::not_found(format!(
+                "this install folds no owner work request {}",
+                input.request
+            ))
+        })
 }
 
 /// The rows every pending root request's receipt names, ascending.
@@ -198,7 +293,7 @@ pub fn owner_work_receipt_as(
 pub fn pending_root_request_rows(pending: &[PendingRootRequestView]) -> Vec<EntityId> {
     let mut rows: Vec<EntityId> = pending
         .iter()
-        .flat_map(|view| root_request_receipt_rows(&view.receipt))
+        .flat_map(|view| root_request_receipt_rows(&view.receipt.receipt))
         .collect();
     rows.sort_unstable();
     rows.dedup();

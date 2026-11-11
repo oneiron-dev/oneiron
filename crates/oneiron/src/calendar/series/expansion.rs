@@ -39,13 +39,15 @@ pub struct ExpansionPage {
     pub resume: Option<ExpansionCursor>,
 }
 
-/// Where the next page of a deadline-ended expansion resumes.
+/// Where the next page of a deadline-ended expansion resumes, or the next
+/// of consecutive windows a series expands over (FIX 16174).
 ///
-/// It resumes only the rule, start and window whose page returned it. A
-/// rule with `COUNT` also carries the recurrence period its walk resumes at
-/// and the occurrences it yielded before that period, so a resumed page
-/// starts there instead of re-walking from the seed, and `COUNT` still
-/// bounds the whole series.
+/// It resumes only the rule and start whose expansion returned it: a page's
+/// cursor the rest of that page's window, a carried cursor the window that
+/// starts at its `from`. A rule with `COUNT` also carries the recurrence
+/// period its walk resumes at and the occurrences it yielded before that
+/// period, so a resumed walk starts there instead of re-walking from the
+/// seed, and `COUNT` still bounds the whole series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExpansionCursor {
     /// The next page walks the window from this instant on.
@@ -54,7 +56,18 @@ pub struct ExpansionCursor {
     walk: Option<CountedWalk>,
 }
 
+impl ExpansionCursor {
+    /// Whether `window` continues the walk this cursor carries: it starts
+    /// at the cursor's `from`.
+    pub(in crate::calendar) const fn continues(&self, window: TimeRange) -> bool {
+        self.from == window.start
+    }
+}
+
 /// A counted rule's walk position between pages.
+///
+/// A position that counted every occurrence the rule names (`counted` at
+/// its `COUNT`) is a walk that ended: no later window holds any of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CountedWalk {
     /// The start of the recurrence period the walk resumes at: its wall
@@ -119,7 +132,44 @@ pub fn expand_window(
     dtstart: SeriesDtStart<'_>,
     window: TimeRange,
 ) -> Result<Vec<u64>, CalendarError> {
-    expand(rrule, dtstart, window, None, GapPolicy::Refuse, None).map(|page| page.starts)
+    expand(rrule, dtstart, window, None, GapPolicy::Refuse, None, None).map(|(page, _)| page.starts)
+}
+
+/// [`expand_window`] over one of consecutive windows of a series (FIX
+/// 16174): `carried` is the cursor the expansion of the window before
+/// returned, and the cursor this returns resumes the window after, which
+/// starts at `next_from`. A rule with `COUNT` thus walks its prefix once
+/// across the windows instead of once in each. The starts and errors are
+/// [`expand_window`]'s for the same window.
+///
+/// A carried cursor resumes only a window that starts at its `from`, for
+/// the rule and start it came from; any other window walks from the seed.
+/// No cursor returns for a rule without `COUNT` (its walk already starts at
+/// the period that holds its window), for a `next_from` whose wall clock
+/// lies before this window's, or for a walk that stopped before it reached
+/// `next_from`'s wall clock.
+///
+/// # Errors
+///
+/// As [`expand_window`].
+pub(in crate::calendar) fn expand_window_carried(
+    rrule: &str,
+    dtstart: SeriesDtStart<'_>,
+    window: TimeRange,
+    carried: Option<ExpansionCursor>,
+    next_from: Option<u64>,
+) -> Result<(Vec<u64>, Option<ExpansionCursor>), CalendarError> {
+    let carried = carried.filter(|cursor| cursor.continues(window));
+    expand(
+        rrule,
+        dtstart,
+        window,
+        carried,
+        GapPolicy::Refuse,
+        None,
+        next_from,
+    )
+    .map(|(page, carry)| (page.starts, carry))
 }
 
 /// [`expand_window`] walked under `deadline`: one [`ExpansionPage`], and
@@ -145,7 +195,9 @@ pub fn expand_window_page(
         resume,
         GapPolicy::Refuse,
         Some(deadline),
+        None,
     )
+    .map(|(page, _)| page)
 }
 
 /// [`expand_window_page`] with RFC 5545 §3.3.5's reading of a spring-forward
@@ -175,7 +227,9 @@ pub(crate) fn expand_window_shifting_gaps_page(
         resume,
         GapPolicy::ShiftForward,
         Some(deadline),
+        None,
     )
+    .map(|(page, _)| page)
 }
 
 /// What the walk does with an occurrence a spring-forward gap removed.
@@ -194,7 +248,8 @@ fn expand(
     resume: Option<ExpansionCursor>,
     gaps: GapPolicy,
     deadline: Option<Instant>,
-) -> Result<ExpansionPage, CalendarError> {
+    carry_from: Option<u64>,
+) -> Result<(ExpansionPage, Option<ExpansionCursor>), CalendarError> {
     if window.start > window.end {
         return Err(CalendarError::InvalidRecurrenceWindow);
     }
@@ -227,9 +282,39 @@ fn expand(
     // bound on the clock and before it on the timeline.
     let end = until_utc.map_or(window.end, |until| until.min(window.end));
     let last = wall_clock_at(end, tz)?;
+    // The window after this one starts at `carry_from`: a counted walk
+    // carries on to it from its first occurrence at or past that wall
+    // clock, which must not lie before this window's (FIX 16174).
+    let count = rule.get_count();
+    let carry_to = carry_from
+        .filter(|_| count.is_some())
+        .and_then(|next_from| {
+            wall_clock_at(next_from, tz)
+                .ok()
+                .map(|next_first| (next_from, next_first))
+        })
+        .filter(|(_, next_first)| *next_first >= first);
+    let resumed_from = resume.and_then(|cursor| cursor.walk);
+    // A walk that counted every occurrence the rule names left none for
+    // this window or any after it.
+    if let (Some(walk), Some(count)) = (resumed_from, count)
+        && walk.counted >= count
+    {
+        let carry = carry_to.map(|(next_from, _)| ExpansionCursor {
+            from: next_from,
+            walk: Some(walk),
+        });
+        return Ok((
+            ExpansionPage {
+                starts: Vec::new(),
+                resume: None,
+            },
+            carry,
+        ));
+    }
     // A counted walk resumes at the period its last page stopped in, and
     // any other rule at the period that holds the page's first wall clock.
-    let resumed = resume.and_then(|cursor| cursor.walk).and_then(|walk| {
+    let resumed = resumed_from.and_then(|walk| {
         super::reseed::resumed_count(&parsed, &rule, walk.period, walk.counted)
             .map(|moved| (walk, moved))
     });
@@ -240,9 +325,10 @@ fn expand(
             (seed, rule, None)
         }
     };
-    // Only a counted walk a deadline may end tracks its period: the next
-    // page needs it to resume without re-walking from the seed.
-    let counted = deadline.is_some() && rule.get_count().is_some();
+    // Only a counted walk a deadline may end, or a window after it carries
+    // on, tracks its period: the next page or window needs it to resume
+    // without re-walking from the seed.
+    let counted = (deadline.is_some() || carry_to.is_some()) && rule.get_count().is_some();
     let (freq, week_start) = (rule.get_freq(), rule.get_week_start());
     // The engine's own `limit` keeps a rule that never fires from cycling; the
     // walk itself is bounded by the window and never by a step count.
@@ -255,6 +341,10 @@ fn expand(
     let mut latest: Option<u64> = None;
     let mut period: Option<WalkPeriod> = None;
     let mut next = None;
+    // Where the window after resumes, and whether the walk ran out of
+    // occurrences rather than stopping.
+    let mut carry = None;
+    let mut ran_out = true;
     for (step, occurrence) in (&series).into_iter().enumerate() {
         if counted
             && period
@@ -269,6 +359,16 @@ fn expand(
                 }
             });
         }
+        // The window after resumes at the period of its first occurrence.
+        if carry.is_none()
+            && let Some((next_from, next_first)) = carry_to
+            && occurrence >= next_first
+        {
+            carry = Some(ExpansionCursor {
+                from: next_from,
+                walk: resumed_walk(period.as_ref(), &seed, walk),
+            });
+        }
         if let (Some(deadline), Some(walked)) = (deadline, latest)
             && step % EXPANSION_DEADLINE_CHECK_STEPS == 0
             && Instant::now() >= deadline
@@ -280,6 +380,7 @@ fn expand(
                     from,
                     walk: resumed_walk(period.as_ref(), &seed, walk),
                 });
+            ran_out = false;
             break;
         }
         if step == EXPANSION_SCAN_CHECK_STEPS {
@@ -311,11 +412,15 @@ fn expand(
                 shifted_past_gap(&occurrence, tz)?
             }
             Err(error) if occurrence <= last => return Err(error),
-            Err(_) => break,
+            Err(_) => {
+                ran_out = false;
+                break;
+            }
         };
         // The recovered instants ascend, so the first one past the end is the
         // last one worth walking to.
         if start > end {
+            ran_out = false;
             break;
         }
         if start >= from {
@@ -328,14 +433,32 @@ fn expand(
     // consumers of this API read the output as a set of instants.
     starts.sort_unstable();
     starts.dedup();
-    Ok(ExpansionPage {
-        starts,
-        resume: next,
-    })
+    // A counted walk that ran out before the window after counted every
+    // occurrence the rule names.
+    if ran_out
+        && carry.is_none()
+        && let (Some((next_from, _)), Some(count)) = (carry_to, count)
+    {
+        carry = Some(ExpansionCursor {
+            from: next_from,
+            walk: Some(CountedWalk {
+                period: seed.timestamp(),
+                counted: count,
+            }),
+        });
+    }
+    Ok((
+        ExpansionPage {
+            starts,
+            resume: next,
+        },
+        carry,
+    ))
 }
 
-/// Where a counted walk the deadline ended resumes: at the period of the
-/// occurrence it stopped before, counting every occurrence the series
+/// Where a counted walk the deadline ended resumes, or the window after
+/// carries it on: at the period of the occurrence it stopped before (or
+/// first reached the next window at), counting every occurrence the series
 /// yielded before that period. A period that does not start past `seed` is
 /// the one this walk began in, so the walk resumes where this page did.
 fn resumed_walk(
@@ -477,4 +600,48 @@ fn parse_rule(rrule: &str, tz: &str) -> Result<(RRule<Unvalidated>, Option<u64>)
         .and_then(wall_clock)
         .ok_or_else(|| invalid_rule(rrule))?;
     Ok((parsed.until(bound), Some(until_utc)))
+}
+
+/// The rule a civil series steps on the UTC carrier (FIX 16568), from its
+/// source text: an `UNTIL` given as a date or a floating time is read on the
+/// carrier (a date at its midnight, so that day's occurrence stands), and an
+/// all-day series drops `BYHOUR`, `BYMINUTE` and `BYSECOND`, which no date
+/// has. Every other part stays as written; a malformed rule stays malformed
+/// for the expansion to refuse.
+#[must_use]
+pub fn civil_rule(rrule: &str, all_day: bool) -> String {
+    let (head, body) = match rrule.split_once(':') {
+        Some((property, body)) if property.eq_ignore_ascii_case(RRULE_PROPERTY) => {
+            (Some(property), body)
+        }
+        _ => (None, rrule),
+    };
+    let parts: Vec<String> = body
+        .split(';')
+        .filter_map(|part| {
+            let Some((name, value)) = part.split_once('=') else {
+                return Some(part.to_owned());
+            };
+            let name_upper = name.trim().to_ascii_uppercase();
+            if all_day && matches!(name_upper.as_str(), "BYHOUR" | "BYMINUTE" | "BYSECOND") {
+                return None;
+            }
+            if name_upper == "UNTIL" {
+                let value = value.trim();
+                let digits = value.as_bytes();
+                let carried = match digits.len() {
+                    8 => format!("{value}T000000Z"),
+                    15 if digits[8] == b'T' => format!("{value}Z"),
+                    _ => value.to_owned(),
+                };
+                return Some(format!("{name}={carried}"));
+            }
+            Some(part.to_owned())
+        })
+        .collect();
+    let body = parts.join(";");
+    match head {
+        Some(property) => format!("{property}:{body}"),
+        None => body,
+    }
 }

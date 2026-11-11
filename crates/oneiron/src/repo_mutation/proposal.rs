@@ -31,21 +31,36 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 pub(super) mod actor_erase;
+mod execution;
 mod files;
 mod guards;
+mod owner;
 pub(super) mod persist;
 mod queue_review;
+mod receipts;
+mod repair;
 pub(crate) mod resolve_handles;
 mod review;
 mod run;
 pub mod settlement;
 mod submit;
+pub(super) use execution::{bind_prepared, finish, for_operation};
 pub use files::RepoProposedFile;
 pub(super) use files::{native_bundle_queue_only, received_bundle_queue_only};
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
-pub use queue_review::{QueueReviewAdmission, RepoProposalCritique, RepoProposalReview};
+pub use queue_review::{
+    ContractReviewEvidence, ContractReviewRequest, ContractReviewSettlement, QueueReviewAdmission,
+    RepoProposalCritique, RepoProposalReview,
+};
 pub(super) use submit::ProposalBase;
+
+// The proposal and queue receipts (FIX 4338) and the repair link (FIX 4364).
+pub(crate) use receipts::{
+    proposal_admission_receipt_in_txn, put_receipt_once_in_txn, receipt_body, receipt_field,
+    stored_receipt_in_txn,
+};
+pub use repair::RepoProposalReplacement;
 
 /// Durable per-operation code proposal. Key: id16.
 pub(super) const PROPOSAL: SideTable<EntityId, RepoProposal, crate::side_table::Named> =
@@ -126,6 +141,10 @@ pub struct RepoProposal {
     /// The review its merge stack's admission sealed, if one admitted it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_review: Option<QueueReviewAdmission>,
+    /// The person reviews a removed public name routed it to, each with its
+    /// decision once made (FIX 4365).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contract_reviews: Vec<ContractReviewRequest>,
     pub status: RepoProposalStatus,
     /// The approved proposal this one resolves the lifted secret handles
     /// of (FIX 2938), when it was minted for exactly that at landing.
@@ -145,6 +164,11 @@ pub struct RepoProposal {
     /// Empty for a trusted, run or bundle proposal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub opener_lineage: Vec<[u8; 32]>,
+    /// The failed proposal this one replaces (FIX 4364, CODE-CUSTODY-04),
+    /// fixed at submission beside its `repo.proposal_replacement` link;
+    /// `None` for an ordinary proposal and a resolved successor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<EntityId>,
 }
 
 pub use crate::store::repo_proposal_record::RepoProposalOperation;
@@ -320,75 +344,10 @@ impl Vault {
             ProposalBase::CurrentCheckout,
             None,
             None,
-            |_| Ok(Ok(())),
-        )?;
-        Ok(proposed.unwrap_or_else(|never| match never {}))
-    }
-
-    /// Owner doors revalidate their proof in the proposal's writer, not in a
-    /// separate preflight transaction. Engine admission stays shared.
-    pub(crate) fn propose_repo_mutation_as_owner(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        repository: EntityId,
-        request: RepoMutationRequest,
-        review: RepoProposalReview,
-    ) -> Result<RepoProposal> {
-        let proposed = self.propose_repo_mutation_as_owner_checked::<std::convert::Infallible>(
-            owner,
-            repository,
-            request,
-            review,
-            |_| Ok(Ok(())),
-        )?;
-        Ok(proposed.unwrap_or_else(|never| match never {}))
-    }
-
-    fn propose_repo_mutation_as_owner_checked<R>(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        repository: EntityId,
-        request: RepoMutationRequest,
-        review: RepoProposalReview,
-        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
-    ) -> Result<std::result::Result<RepoProposal, R>> {
-        let actor = request.actor_id;
-        let repository_ref = request.repo_ref.clone();
-        let session = request.session_id;
-        let sources = [
-            request.op_provenance.turn,
-            request.op_provenance.activity,
-            request.op_provenance.intent,
-            request.op_provenance.substrate_ref,
-        ];
-        let proposed = self.propose_repo_mutation_checked(
-            request,
-            review,
-            ProposalBase::CurrentCheckout,
             None,
-            Some(owner),
-            |txn| {
-                guards::require_repo_artifact_in_txn(self, txn, repository, &repository_ref)?;
-                if let Some(session) = session {
-                    guards::require_entity_kind(
-                        self,
-                        txn,
-                        session,
-                        crate::registry::ENTITY_TYPE_SESSION,
-                    )?;
-                }
-                for id in sources.into_iter().flatten() {
-                    if !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &id)? {
-                        return Err(Error::EntityNotFound);
-                    }
-                }
-                if Some(owner.revalidate_in_txn(self, txn)?) != actor {
-                    return Err(invalid("proposal actor is not the authenticated owner"));
-                }
-                check(txn)
-            },
+            |_| Ok(Ok(())),
         )?;
-        Ok(proposed)
+        Ok(proposed.unwrap_or_else(|never| match never {}))
     }
     pub fn repo_proposal(&self, id: EntityId) -> Result<Option<RepoProposal>> {
         let txn = self.store.env.read_txn()?;
@@ -467,6 +426,7 @@ impl Vault {
                 "proposal requires unanimous independent multi-critic acceptance",
             ));
         }
+        row.require_registered_edit_at_acceptance_in_txn(self, &txn)?;
         row.status = RepoProposalStatus::Approved;
         store(self, &mut txn, &row)?;
         txn.commit()?;
@@ -567,92 +527,6 @@ pub(super) fn authorize(
     }
     validate_conflict(vault, &row, repo_root)
 }
-pub(super) fn bind_prepared(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    id: Option<EntityId>,
-    repo: &RepoRef,
-    seq: u64,
-) -> Result<()> {
-    let Some(id) = id else {
-        return Ok(());
-    };
-    let mut row = PROPOSAL
-        .get(&vault.store, txn, &id)?
-        .ok_or(Error::EntityNotFound)?;
-    if row.operation_seq.is_some() || row.status != RepoProposalStatus::Approved {
-        return Err(invalid("proposal already consumed"));
-    }
-    row.operation_seq = Some(seq);
-    store(vault, txn, &row)?;
-    PROPOSAL_OP.put(&vault.store, txn, &op_key(repo, seq), &id)?;
-    Ok(())
-}
-pub(super) fn for_operation(
-    vault: &Vault,
-    repo: &RepoRef,
-    seq: u64,
-) -> Result<Option<RepoProposal>> {
-    let txn = vault.store.env.read_txn()?;
-    let Some(id) = PROPOSAL_OP.get(&vault.store, &txn, &op_key(repo, seq))? else {
-        return Ok(None);
-    };
-    let row = PROPOSAL
-        .get(&vault.store, &txn, &id)?
-        .ok_or(Error::EntityNotFound)?;
-    if row.id != id || row.operation_seq != Some(seq) || RepoRef::parse(&row.repo)? != *repo {
-        return Err(invalid("proposal operation binding differs"));
-    }
-    Ok(Some(row))
-}
-
-pub(super) fn finish(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    repo: &RepoRef,
-    seq: u64,
-    status: RepoMutationStatus,
-) -> Result<()> {
-    let Some(id) = PROPOSAL_OP.get(&vault.store, txn, &op_key(repo, seq))? else {
-        return Ok(());
-    };
-    let mut row = PROPOSAL
-        .get(&vault.store, txn, &id)?
-        .ok_or(Error::EntityNotFound)?;
-    row.status = match status {
-        RepoMutationStatus::Applied => RepoProposalStatus::Applied,
-        RepoMutationStatus::Failed => RepoProposalStatus::Failed,
-        RepoMutationStatus::Prepared => RepoProposalStatus::Approved,
-    };
-    // An erased actor's applied write approves its journal naming no one (FIX 4479).
-    if status == RepoMutationStatus::Applied {
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
-            .ok_or(Error::EntityNotFound)?;
-        let bytes = raw
-            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-            .ok_or(Error::CorruptedIndex("proposal entity header"))?;
-        let mut claim = crate::claim::decode_claim_body(bytes, true)?;
-        if claim.predicate != "repo.proposed_diff"
-            || crate::claim::session_claim_producer(&claim) != row.actor.id()
-        {
-            return Err(Error::CorruptedIndex("proposal claim binding changed"));
-        }
-        claim.approval = ClaimApprovalStatus::Approved;
-        // Keep the producer envelope on the approval transition as well as
-        // admission. A reserved raw put is not a session-write capability.
-        // A stack member keeps the review its stack's admission sealed (FIX
-        // 8268); a proposal applied alone, its own catalog's critics.
-        let reviewed = match row.merge_stack.as_deref() {
-            Some(batch) => row.stack_review_admitted(batch)?,
-            None => row.eligible()?,
-        };
-        if !reviewed {
-            return Err(invalid("proposal approval lost critic coverage"));
-        }
-        put_journal_claim(vault, txn, id, row.actor.id(), &claim, row.created_at)?;
-    }
-    store(vault, txn, &row)
-}
 /// Whether a proposal of `repo` retained the snapshot `hash`. The walk reads
 /// every proposal it needs and never refuses for their number (rule 5, FIX
 /// 8832): past its threshold row it asks whether everything is okay.
@@ -699,10 +573,7 @@ pub(super) fn validate_conflict(
     let txn = vault.store.env.read_txn()?;
     validate_conflict_in_txn(vault, &txn, proposal)?;
     drop(txn);
-    let branch = super::support::utf8_trimmed(
-        super::git::run_git(root, &["branch".into(), "--show-current".into()])?,
-        "branch must be UTF-8",
-    )?;
+    let branch = super::conflict::current_branch(vault, root)?;
     if branch != *branch_name {
         return Err(invalid(
             "reviewed resolution requires its active conflict and branch",

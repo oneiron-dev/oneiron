@@ -26,11 +26,13 @@ fn request(model: &ModelId, locality: ModelLocality, parts: Vec<MediaPart>) -> M
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: false,
+            host_paid: false,
             seat_effort: None,
         },
         operation: AiOperation::Embed,
         parts,
         references: Vec::new(),
+        mask: None,
         // The first real answer supplies the native width; none is guessed or requested.
         params: BTreeMap::new(),
         voice: None,

@@ -8,6 +8,13 @@
 //! ([`held_at`]). The one position every other door reads
 //! ([`NoteWorlds::axis`]) never admits more than that, and a NOTE also in
 //! base reality stays where a base read finds it today.
+//!
+//! An ASSET takes its worlds the same way, from its own live `InWorld`
+//! edges, and a caption (ASSET_TEXT) sits in the worlds all its source
+//! ASSETs share, base reality where they share none (FIX 22223, owner
+//! 2026-11-08 ASSET-WORLD = A; DEC-0005 Fix 2: a derived thing follows its
+//! inputs). One ASSET in several worlds is one row with several edges
+//! ([`takes_live_worlds`], [`live_worlds_in`]).
 
 use super::{MachineHistoryScope, Scope, ScopeAxis, ScopeId};
 use crate::EntityId;
@@ -15,7 +22,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::registry::ENTITY_TYPE_NOTE;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_NOTE};
 use crate::store::ManifestDbs;
 use std::collections::BTreeSet;
 
@@ -91,6 +98,80 @@ pub(crate) fn note_worlds_in(
                 NoteWorlds::NoSingleWorld
             }
         },
+    }
+}
+
+/// Whether a row of `kind` takes its worlds live, at every read, rather than
+/// from its birth stamp: a NOTE and an ASSET by their own `InWorld` edges,
+/// a caption by its sources' (FIX 22223).
+pub(crate) const fn takes_live_worlds(kind: u8) -> bool {
+    matches!(
+        kind,
+        ENTITY_TYPE_NOTE | ENTITY_TYPE_ASSET | ENTITY_TYPE_ASSET_TEXT
+    )
+}
+
+/// The worlds the stored row `id` of `kind` sits in now, for a kind that
+/// [`takes_live_worlds`]: a NOTE's or an ASSET's own edges
+/// ([`note_worlds_in`]), a caption's sources' ([`caption_worlds_in`]).
+pub(crate) fn live_worlds_in(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> NoteWorlds {
+    if kind == ENTITY_TYPE_ASSET_TEXT {
+        caption_worlds_in(store, txn, id)
+    } else {
+        note_worlds_in(store, txn, id)
+    }
+}
+
+/// The worlds a caption sits in (FIX 22223): every world all of its
+/// `DerivedFrom` source ASSETs sit in, read live from theirs; base reality
+/// where they share none or it has no source. A source in no single world,
+/// or sources that do not read, put it in no single world.
+pub(crate) fn caption_worlds_in(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> NoteWorlds {
+    let base = || NoteWorlds::In(BTreeSet::from([ScopeId(crate::claim::base_world_id())]));
+    let sources = store
+        .port_edges(
+            txn,
+            &id,
+            EdgeDirection::Out,
+            Some(EdgeKind::DerivedFrom),
+            None,
+        )
+        .and_then(|rows| {
+            rows.map(|row| row.map(|row| row.target))
+                .collect::<Result<BTreeSet<_>>>()
+        });
+    let sources = match sources {
+        Ok(sources) => sources,
+        Err(error) => {
+            tracing::warn!(
+                error_kind = ?error.kind(),
+                "a caption's sources did not read; it sits in no single world (FIX 22223)"
+            );
+            return NoteWorlds::NoSingleWorld;
+        }
+    };
+    let mut shared: Option<BTreeSet<ScopeId>> = None;
+    for source in sources {
+        let NoteWorlds::In(worlds) = note_worlds_in(store, txn, source) else {
+            return NoteWorlds::NoSingleWorld;
+        };
+        shared = Some(match shared {
+            None => worlds,
+            Some(shared) => shared.intersection(&worlds).copied().collect(),
+        });
+    }
+    match shared {
+        Some(shared) if !shared.is_empty() => NoteWorlds::In(shared),
+        _ => base(),
     }
 }
 
@@ -189,11 +270,11 @@ pub(crate) fn served_worlds_in(
     data: &[u8],
 ) -> Result<Option<BTreeSet<EntityId>>> {
     let base = ScopeId(crate::claim::base_world_id());
-    if kind != ENTITY_TYPE_NOTE {
+    if !takes_live_worlds(kind) {
         return Ok(super::record_world_in(store, txn, id, kind, data)?
             .map(|world| BTreeSet::from([world.unwrap_or(base.0)])));
     }
-    Ok(match note_worlds_in(store, txn, id) {
+    Ok(match live_worlds_in(store, txn, id, kind) {
         NoteWorlds::In(worlds) if worlds.contains(&base) => Some(BTreeSet::from([base.0])),
         NoteWorlds::In(worlds) => Some(worlds.into_iter().map(|world| world.0).collect()),
         NoteWorlds::NoSingleWorld => None,
@@ -220,14 +301,15 @@ fn world_scope(worlds: ScopeAxis<ScopeId>) -> Scope {
     }
 }
 
-/// The live worlds of the stored row `id` of `kind` when it is a NOTE.
+/// The live worlds of the stored row `id` of `kind` when its kind
+/// [`takes_live_worlds`]: a NOTE, an ASSET or a caption.
 pub(crate) fn note_worlds_of(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
 ) -> Option<NoteWorlds> {
-    (kind == ENTITY_TYPE_NOTE).then(|| note_worlds_in(store, txn, id))
+    takes_live_worlds(kind).then(|| live_worlds_in(store, txn, id, kind))
 }
 
 /// `scope`, the position the stored row `id` of `kind` is stamped or derived
@@ -240,8 +322,8 @@ pub(crate) fn note_position(
     kind: u8,
     mut scope: Scope,
 ) -> Scope {
-    if kind == ENTITY_TYPE_NOTE {
-        scope.worlds = note_worlds_in(store, txn, id).axis();
+    if takes_live_worlds(kind) {
+        scope.worlds = live_worlds_in(store, txn, id, kind).axis();
     }
     scope
 }
@@ -255,8 +337,8 @@ pub(crate) fn every_world_position(
     kind: u8,
     mut scope: Scope,
 ) -> Scope {
-    if kind == ENTITY_TYPE_NOTE {
-        scope.worlds = note_worlds_in(store, txn, id).every();
+    if takes_live_worlds(kind) {
+        scope.worlds = live_worlds_in(store, txn, id, kind).every();
     }
     scope
 }
@@ -355,8 +437,8 @@ pub(crate) fn world_record_held_at(
     data: &[u8],
     ceiling: &Scope,
 ) -> Result<Option<Scope>> {
-    if kind == ENTITY_TYPE_NOTE {
-        let worlds = note_worlds_in(store, txn, id).axis_at(&ceiling.worlds);
+    if takes_live_worlds(kind) {
+        let worlds = live_worlds_in(store, txn, id, kind).axis_at(&ceiling.worlds);
         return Ok(Some(world_scope(worlds)));
     }
     let base = crate::claim::base_world_id();
@@ -383,13 +465,13 @@ pub(crate) fn record_world_where(
     data: &[u8],
     holds: Option<&dyn Fn(Option<EntityId>) -> bool>,
 ) -> Result<Option<Option<EntityId>>> {
-    if kind != ENTITY_TYPE_NOTE {
+    if !takes_live_worlds(kind) {
         return super::record_world_in(store, txn, id, kind, data);
     }
     let Some(holds) = holds else {
         return Ok(Some(None));
     };
-    let worlds = note_worlds_in(store, txn, id);
+    let worlds = live_worlds_in(store, txn, id, kind);
     let NoteWorlds::In(set) = &worlds else {
         return Ok(None);
     };
@@ -417,9 +499,9 @@ pub(crate) fn source_position(
     mut scope: Scope,
     ceilings: &[&ScopeAxis<ScopeId>],
 ) -> Scope {
-    if kind == ENTITY_TYPE_NOTE {
+    if takes_live_worlds(kind) {
         let base = ScopeId(crate::claim::base_world_id());
-        let world = note_worlds_in(store, txn, id)
+        let world = live_worlds_in(store, txn, id, kind)
             .held(&met(ceilings))
             .unwrap_or(base);
         scope.worlds = ScopeAxis::Some(BTreeSet::from([world]));
@@ -458,11 +540,12 @@ pub(super) fn admits_at(
     super::admits(&held, selector, slip, channel, verb)
 }
 
-/// Whether a NOTE's later put, derived at `proposed`, keeps the position its
-/// stamp holds, `prior`: every axis but its world, which its live edges give
-/// at every read and its stamp only snapshots (`NOTE_WORLD_SOURCE`).
+/// Whether a later put of a row whose kind [`takes_live_worlds`], derived at
+/// `proposed`, keeps the position its stamp holds, `prior`: every axis but
+/// its world, which its live edges give at every read and its stamp only
+/// snapshots (`NOTE_WORLD_SOURCE`).
 pub(super) fn live_world_kept(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
-    kind == ENTITY_TYPE_NOTE
+    takes_live_worlds(kind)
         && match NOTE_WORLD_SOURCE {
             NoteWorldSource::LiveInWorldEdgeOnRead => {
                 Scope {

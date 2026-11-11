@@ -114,11 +114,21 @@ impl AgentBirthSource {
         Ok(())
     }
 }
+/// The one field a body is read for to tell an agent's birth source.
+#[derive(Deserialize)]
+struct Marker {
+    format: String,
+}
+
+/// Whether `reader` holds what [`decode_birth_source`] reads as an agent's
+/// birth source, valid or not: one JSON value whose `format` names it. Such
+/// a body stays in its ASSET row, where its validator and readers read it,
+/// whatever its length or its shape (FIX 22075).
+pub(crate) fn is_birth_source_candidate(reader: impl std::io::Read) -> bool {
+    serde_json::from_reader::<_, Marker>(reader).is_ok_and(|marker| marker.format == FORMAT)
+}
+
 pub(crate) fn decode_birth_source(bytes: &[u8]) -> Result<Option<AgentBirthSource>> {
-    #[derive(Deserialize)]
-    struct Marker {
-        format: String,
-    }
     let Ok(marker) = serde_json::from_slice::<Marker>(bytes) else {
         return Ok(None);
     };
@@ -142,15 +152,29 @@ pub(crate) fn validate_birth_source_put(
 ) -> Result<()> {
     super::birth_custody::check_registered_birth_target(store, txn, id, kind, bytes)?;
     let old = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?;
-    if let Some(old) = &old {
-        let header =
-            EntityMetadataHeader::parse(old).ok_or(Error::CorruptedIndex("agent source header"))?;
-        if header.entity_type == ENTITY_TYPE_ASSET
-            && decode_birth_source(&old[ENTITY_METADATA_HEADER_LEN..])?.is_some()
-            && (kind != ENTITY_TYPE_ASSET || old[ENTITY_METADATA_HEADER_LEN..] != *bytes)
-        {
-            return Err(invalid("immutable source"));
+    // The bytes the old row holds, a carrier's read from its body file (FIX
+    // 22091): a source is compared by what it holds, never its manifest.
+    let old = match &old {
+        Some(raw) => {
+            let header = EntityMetadataHeader::parse(raw)
+                .ok_or(Error::CorruptedIndex("agent source header"))?;
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            Some(if header.entity_type == ENTITY_TYPE_ASSET {
+                (
+                    true,
+                    crate::store::asset_carrier_body_in_txn(store, txn, id, body)?,
+                )
+            } else {
+                (false, std::borrow::Cow::Borrowed(body))
+            })
         }
+        None => None,
+    };
+    if let Some((true, held)) = &old
+        && decode_birth_source(held)?.is_some()
+        && (kind != ENTITY_TYPE_ASSET || **held != *bytes)
+    {
+        return Err(invalid("immutable source"));
     }
     if kind == ENTITY_TYPE_ASSET
         && let Some(source) = decode_birth_source(bytes)?
@@ -161,8 +185,8 @@ pub(crate) fn validate_birth_source_put(
         if birth_source_id(&EntityId::from_hex(&source.child_id)?)? != *id {
             return Err(invalid("asset identity"));
         }
-        if let Some(old) = old
-            && old[ENTITY_METADATA_HEADER_LEN..] != *bytes
+        if let Some((_, held)) = &old
+            && **held != *bytes
         {
             return Err(invalid("asset collision"));
         }
@@ -232,6 +256,7 @@ pub(crate) fn read_birth_source(
     if entity_type != ENTITY_TYPE_ASSET {
         return Ok(None);
     }
+    let body = crate::store::asset_carrier_body_in_txn(store, txn, &asset, &body)?;
     let source = decode_birth_source(&body)?.ok_or_else(|| invalid("occupied carrier address"))?;
     if source.child_id != child.to_hex()
         || source.child_agent_id != current.agent_id

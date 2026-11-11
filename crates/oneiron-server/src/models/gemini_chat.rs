@@ -12,14 +12,14 @@ use oneiron::llm::{
     CacheIdentity, INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId,
     SingleRouteBackend, WorkerBuildEvidence, WorkerDescriptor, WorkerKind,
 };
-use oneiron::{BudgetLease, FatalLlmError, LlmCatalogEntry, LlmResult};
+use oneiron::{BudgetLease, FatalLlmError, LlmCatalogEntry, LlmError, LlmResult};
 use oneiron_llm_gemini::{
     GeminiBackend, GeminiFrame, GeminiFuture, GeminiHttpRequest, GeminiHttpResponse,
     GeminiProviderStream, GeminiTransport,
 };
 use serde_json::Value as JsonValue;
 
-use super::http::{KeyStyle, ProviderHttp, SseItem};
+use super::http::{HttpReleaseError, KeyStyle, ProviderHttp, SseItem};
 use super::output_cap::OutputCap;
 use super::rerank::transport;
 use crate::config::models::ProviderConfig;
@@ -34,6 +34,13 @@ pub(super) struct GeminiHttp {
 /// One `.send()` per call over [`ProviderHttp`], which follows no redirect
 /// and never resends: a run's gate may wrap this transport's adapter.
 impl oneiron::llm::SingleSend for GeminiHttp {}
+
+fn released_transport(error: HttpReleaseError) -> LlmError {
+    match error {
+        HttpReleaseError::Transport(error) => transport(error),
+        HttpReleaseError::Release(error) => error,
+    }
+}
 
 impl GeminiHttp {
     fn inference_model(&self, path: &str) -> Option<ModelId> {
@@ -55,9 +62,9 @@ impl GeminiTransport for GeminiHttp {
             let mut inference = InferenceUsage::new(lease, self.inference_model(&request.path));
             let mut reply = self
                 .http
-                .post_json(&request.path, &BTreeMap::new(), &request.body)
+                .post_json_leased(&request.path, &BTreeMap::new(), &request.body, lease)
                 .await
-                .map_err(transport)?;
+                .map_err(released_transport)?;
             // Failed responses can still carry native work measurements.
             inference.record(reply.body.get_mut("usageMetadata"));
             if (200..300).contains(&reply.status) {
@@ -80,15 +87,15 @@ impl GeminiTransport for GeminiHttp {
         }
         let mut inference = InferenceUsage::new(lease, self.inference_model(&request.path));
         let mut closed = false;
-        let events = self
-            .http
-            .post_sse(&request.path, &BTreeMap::new(), &request.body);
+        let events =
+            self.http
+                .post_sse_leased(&request.path, &BTreeMap::new(), &request.body, lease);
         let frames = events.map(move |item| -> LlmResult<GeminiFrame> {
             let item = match item {
                 Ok(item) => item,
                 Err(error) => {
                     closed = true;
-                    return Err(transport(error));
+                    return Err(released_transport(error));
                 }
             };
             match item {

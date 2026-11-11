@@ -1,0 +1,17 @@
+{
+  "name": "vault.authority.handoff_alarms",
+  "description": "Every saved authority handoff fork alarm, for the owner.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::authority::AuthorityHandoffAlarm>",
+  "call": "crate::task_verb::sdk::read_handoff_alarms(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms\")?)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "mcp_fields": {},
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

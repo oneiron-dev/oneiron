@@ -1,0 +1,16 @@
+{
+  "name": "ai.voice.asr.open",
+  "description": "Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline.",
+  "input": "crate::task_verb::sdk::AsrOpenRequest",
+  "output": "crate::task_verb::sdk::AsrSession",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.open\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

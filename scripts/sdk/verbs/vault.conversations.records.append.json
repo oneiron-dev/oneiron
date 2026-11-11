@@ -1,0 +1,19 @@
+{
+  "name": "vault.conversations.records.append",
+  "description": "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once.",
+  "input": "crate::core_write::DagRecordAppendInput",
+  "output": "crate::core_write::DagRecordAppendReceipt",
+  "call": "memory.conversations_records_append(&input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

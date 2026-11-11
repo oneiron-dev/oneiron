@@ -13,7 +13,7 @@ use crate::code_artifact::{
 };
 use crate::edge::EdgeKind;
 use crate::federation::record_scope::BirthPosition;
-use crate::note::{LENS_INTENT_NOTE_KIND, NoteActor, NoteBody, NoteKind, encode_note_body};
+use crate::note::{LENS_INTENT_NOTE_KIND, NoteActor, NoteCore, NoteKind, encode_note_core};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::{MadeByClass, MadeByTrigger};
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
@@ -56,12 +56,11 @@ impl LensArtifacts<'_> {
             start: self.at,
             end: self.at,
         };
-        let note = encode_note_body(&NoteBody {
+        let note = encode_note_core(&NoteCore {
             kind: NoteKind::parse(LENS_INTENT_NOTE_KIND).ok_or(Error::InvariantViolation(
                 "the lens intent NOTE kind is shipped",
             ))?,
             author_ref: NoteActor::Actor(author),
-            markdown: self.prompt.to_owned(),
             source_revision_ref: *self.lens_ref.as_bytes(),
         })?;
         let code = encode_code_artifact_body(&CodeArtifactBody::lens(
@@ -94,7 +93,14 @@ impl LensArtifacts<'_> {
                 self.at,
                 &code,
             )
-            .put_authored_note(&self.prompt_ref, &author, occurred, self.at, &note)
+            .put_authored_note(
+                &self.prompt_ref,
+                &author,
+                occurred,
+                self.at,
+                &note,
+                self.prompt,
+            )
             .edge(
                 &self.prompt_ref,
                 EdgeKind::AuthoredBy,
@@ -173,19 +179,15 @@ pub(super) fn lens_prompt_in(
     if raw.first() != Some(&crate::registry::ENTITY_TYPE_NOTE) {
         return Err(corrupt());
     }
-    let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
-    #[cfg(feature = "sync")]
-    let resolved = crate::entity_doc::resolve_record_body(&vault.store, txn, prompt_ref, bytes)?;
-    #[cfg(feature = "sync")]
-    let bytes = resolved.as_slice();
-    let bytes = crate::note::live_body_in_txn(
+    // The prompt is the intent NOTE's live text: its core and its document,
+    // read in this one transaction.
+    let note = crate::note::live_note_from_in_txn(
+        &vault.store,
         &vault.store,
         txn,
         prompt_ref,
-        crate::registry::ENTITY_TYPE_NOTE,
-        bytes,
+        &raw[ENTITY_METADATA_HEADER_LEN..],
     )?;
-    let note = crate::note::decode_note_body_in_txn(&vault.store, txn, &bytes)?;
     if note.kind.as_str() != LENS_INTENT_NOTE_KIND {
         return Err(corrupt());
     }

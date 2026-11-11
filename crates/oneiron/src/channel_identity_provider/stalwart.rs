@@ -299,14 +299,29 @@ impl StalwartClient {
     }
 
     pub(super) fn raw_call(&self, method: &str, arguments: Value) -> Result<Value> {
-        let response = self
+        self.raw_call_bounded(method, arguments, None)
+    }
+
+    /// One JMAP method call, its whole request bounded by `timeout` when one
+    /// is given, else by the client's own request bound.
+    fn raw_call_bounded(
+        &self,
+        method: &str,
+        arguments: Value,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<Value> {
+        let mut request = self
             .http
             .post(self.api_url.clone())
             .header(AUTHORIZATION, self.authorization.clone())
             .json(&json!({
                 "using": [CORE, MAIL, SUBMISSION, STALWART],
                 "methodCalls": [[method, arguments, "mail"]]
-            }))
+            }));
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
+        }
+        let response = request
             .send()
             .map_err(|_| transport("Stalwart JMAP request failed"))?;
         serde_json::from_slice(&read_response(response)?)
@@ -315,6 +330,21 @@ impl StalwartClient {
 
     pub(super) fn call(&self, method: &str, arguments: Value) -> Result<Value> {
         method_result(&self.raw_call(method, arguments)?, method).cloned()
+    }
+
+    /// [`Self::call`], its whole request bounded by `timeout`: a read that
+    /// answers quickly or not at all (FIX 4747's sent lookup).
+    pub(super) fn call_within(
+        &self,
+        method: &str,
+        arguments: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value> {
+        method_result(
+            &self.raw_call_bounded(method, arguments, Some(timeout))?,
+            method,
+        )
+        .cloned()
     }
 
     /// Streams one blob into `out` as the server sends it. No byte cap

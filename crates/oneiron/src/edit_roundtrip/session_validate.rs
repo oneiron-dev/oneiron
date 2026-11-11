@@ -121,6 +121,12 @@ pub trait EditSession {
         RecalcPolicy::NativeFirst
     }
 
+    /// The operation's resource port, including its caller-selected deadline.
+    /// A session without one keeps the host's ordinary untimed port.
+    fn recalc_resources(&self) -> Option<oneiron_docedit::resource::Resources> {
+        None
+    }
+
     /// The instant, local UTC offset and random seed the in-process recalc
     /// gives NOW(), TODAY() and the random functions, as Excel recalculating
     /// at edit time would. `None` (the default) samples the host's clock, its

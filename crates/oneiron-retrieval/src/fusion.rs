@@ -452,10 +452,8 @@ fn decode_numeric_value(value: Value) -> Option<f32> {
         Value::Integer(v) => {
             if let Some(i) = v.as_i64() {
                 i as f32
-            } else if let Some(u) = v.as_u64() {
-                u as f32
             } else {
-                return None;
+                v.as_u64()? as f32
             }
         }
         _ => return None,

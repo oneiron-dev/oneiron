@@ -56,6 +56,12 @@ pub struct SyncClientConfig {
     /// paired home machine's mesh connection (OF-535). The upgrade still
     /// names `server_url`, and every slip and machine proof is the same.
     pub mesh_dialer: Option<std::sync::Arc<dyn crate::sync::SyncDialer>>,
+    /// The carriers to this device's other machines while its home is down
+    /// (FIX 4748): set only where a mesh listener runs, and the connection
+    /// then syncs with a peer once the home has served it no sync for
+    /// [`crate::sync::peer_route::HOME_DOWN_AFTER_SECS`]. `None` never
+    /// counts the home down.
+    pub peer_dialer: Option<std::sync::Arc<dyn crate::sync::SyncPeerDialer>>,
     /// The authority checkpoint pin this machine's owner-authorized pairing
     /// returned (OF-469), never one the home hands over. Until this vault has
     /// adopted a checkpoint, each authority catch-up first fetches the image
@@ -129,6 +135,7 @@ impl Default for SyncClientConfig {
             reconnect_initial_ms: 1_000,
             ephemeral_timeout_ms: 30_000,
             mesh_dialer: None,
+            peer_dialer: None,
             authority_checkpoint_pin: None,
             staged_import_body_sources: Vec::new(),
         }
@@ -157,6 +164,7 @@ impl std::fmt::Debug for SyncClientConfig {
             .field("reconnect_initial_ms", &self.reconnect_initial_ms)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field("mesh_dialer", &self.mesh_dialer)
+            .field("peer_dialer", &self.peer_dialer)
             .field("authority_checkpoint_pin", &self.authority_checkpoint_pin)
             .field(
                 "staged_import_body_sources",
@@ -399,6 +407,11 @@ pub enum SyncEvent {
     /// machine's own profile among them) may read differently now. It does not
     /// say every row of history is here.
     AuthorityCaughtUp,
+    /// The home answered this device's sync upgrade with HTTP 401: it did
+    /// not accept the credential. A removed membership is one cause; the
+    /// event never proves it. A host holding a shared membership asks the
+    /// home through its signed leave check (FIX 12442).
+    UpgradeUnauthorized,
     Error(String),
 }
 

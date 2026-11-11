@@ -1,0 +1,16 @@
+{
+  "name": "vault.results.read",
+  "description": "The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone.",
+  "input": "crate::memory::result_doors::ResultOccurrenceRequest",
+  "output": "crate::memory::result_doors::ResultReadView",
+  "call": "memory.result_read_as_owner(&memory.embedded_owner(\"vault.results.read\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

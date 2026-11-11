@@ -146,6 +146,7 @@ fn human_context(
         predicate: None,
         lifecycle: Some(crate::ClaimLifecycleStatus::Active.as_str().to_owned()),
         limit: usize::MAX,
+        filter: None,
     }) {
         Ok(read) => read.value,
         Err(error) => return unread(error.code),
@@ -363,7 +364,7 @@ pub async fn run_free_time_for_human(
     else {
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     };
     if !ctx
@@ -373,7 +374,7 @@ pub async fn run_free_time_for_human(
     {
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     }
     let window = model
@@ -421,6 +422,7 @@ pub async fn run_free_time_for_human(
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
     let keyless = model.inference.selected_keyless();
+    let paid = model.inference.selected_paid();
     let request = LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
@@ -438,6 +440,7 @@ pub async fn run_free_time_for_human(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![
@@ -445,12 +448,14 @@ pub async fn run_free_time_for_human(
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: model.instruction.to_owned(),
+                    signature: None,
                 }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
                     text: format!("{context_text}{asks_text}{records}\n{FOR_HUMAN_ASK}"),
+                    signature: None,
                 }],
             },
         ],
@@ -483,8 +488,15 @@ pub async fn run_free_time_for_human(
     };
     let mut charges = StepChargeTally::default();
     let response = match call_as_step(&step_ctx, model.backend, model.guard, request).await {
-        Ok(StepOutcome::Finished { response, .. }) => {
-            charges.record_terminal_metered(ctx, attempt_id, step_hash, &response.usage)?;
+        Ok(StepOutcome::Finished {
+            response, binding, ..
+        }) => {
+            charges.record_terminal_metered(
+                ctx,
+                binding.attempt_id,
+                binding.step_hash,
+                &response.usage,
+            )?;
             response
         }
         Ok(StepOutcome::Trapped { .. }) => {
@@ -513,7 +525,7 @@ pub async fn run_free_time_for_human(
         Err(other) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),
-                cause: DreamerParkCause::of_step(&other),
+                cause: crate::dreamer_runner::dreamer_park_cause_of_step(&other),
             });
         }
     };
@@ -525,7 +537,7 @@ pub async fn run_free_time_for_human(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
@@ -538,6 +550,6 @@ pub async fn run_free_time_for_human(
     )?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     })
 }

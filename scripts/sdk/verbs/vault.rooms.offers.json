@@ -1,0 +1,21 @@
+{
+  "name": "vault.rooms.offers",
+  "description": "One page of the current offer cards in a room or one of its threads.",
+  "input": "crate::workspace_roster::OffersRequest",
+  "output": "crate::workspace_roster::OffersPage",
+  "call": "memory.rooms_offers(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$",
+    "room_ref": "=room"
+  },
+  "page": {
+    "rows": "rows",
+    "cursor": "next_after"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -24,7 +24,7 @@ pub(crate) fn admit_note_in_txn(
     {
         return Err(denied());
     }
-    let birth = crate::note::decode_note_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+    let birth = crate::note::decode_note_core(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
     let fold = &admission.fold;
     // An erased birth author is no one: it never authenticates a writer, who
     // then needs the independent owner check below.

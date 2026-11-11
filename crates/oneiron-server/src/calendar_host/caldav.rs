@@ -1,4 +1,5 @@
 //! Real CalDAV discovery, sync-collection and conditional resource writes.
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::sync::Arc;
 
@@ -116,7 +117,7 @@ impl HttpCalDav {
         content_type: &str,
         expected: Option<&str>,
         create: bool,
-        depth: bool,
+        depth: Option<&'static str>,
     ) -> Result<Response, CalendarConnectorError> {
         let auth = super::authorization(credential).map_err(|_| {
             CalendarConnectorError::CredentialUnavailable {
@@ -129,8 +130,8 @@ impl HttpCalDav {
             .header(reqwest::header::AUTHORIZATION, auth)
             .header(reqwest::header::CONTENT_TYPE, content_type)
             .body(body);
-        if depth {
-            request = request.header("Depth", "1");
+        if let Some(depth) = depth {
+            request = request.header("Depth", depth);
         }
         if let Some(etag) = expected {
             request = request.header(reqwest::header::IF_MATCH, etag);
@@ -151,7 +152,7 @@ impl HttpCalDav {
         content_type: &str,
         expected: Option<&str>,
         create: bool,
-        depth: bool,
+        depth: Option<&'static str>,
     ) -> Result<Response, CalendarConnectorError> {
         self.with_credential(|credential| {
             let url = self.url(href)?;
@@ -182,7 +183,7 @@ impl HttpCalDav {
             "application/xml; charset=utf-8",
             None,
             false,
-            true,
+            Some("1"),
         )?;
         if response.status().as_u16() != 207 {
             return Err(failure(
@@ -190,15 +191,45 @@ impl HttpCalDav {
                 format!("CalDAV returned HTTP {}", response.status().as_u16()),
             ));
         }
-        let mut bytes = Vec::new();
+        multistatus(response, "report")
+    }
+
+    /// GETs the calendar resource at `href`: its bytes and ETag, or `None`
+    /// when the server answers that it is gone (404 or 410). Any other
+    /// failure is an error.
+    fn read_calendar_resource(
+        &self,
+        href: &str,
+    ) -> Result<Option<CalendarResource>, CalendarConnectorError> {
+        let response = self.request(
+            Method::GET,
+            href,
+            Vec::new(),
+            "text/calendar",
+            None,
+            false,
+            None,
+        )?;
+        if matches!(response.status().as_u16(), 404 | 410) {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(failure("sync", "calendar resource unreadable"));
+        }
+        let etag = response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let mut ics = Vec::new();
         response
             .take(MAX_RESPONSE + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| failure("report", "DAV response unreadable"))?;
-        if bytes.len() as u64 > MAX_RESPONSE {
-            return Err(failure("report", "DAV response too large"));
+            .read_to_end(&mut ics)
+            .map_err(|_| failure("sync", "calendar resource unreadable"))?;
+        if ics.len() as u64 > MAX_RESPONSE {
+            return Err(failure("sync", "calendar resource too large"));
         }
-        xml::parse(&bytes).map_err(|error| failure("report", error))
+        Ok(Some(CalendarResource { ics, etag }))
     }
 
     fn property_href(
@@ -285,12 +316,60 @@ impl CalDavWire for HttpCalDav {
         })
     }
 
+    fn collection_timezone(
+        &self,
+        _secret_ref: &str,
+        discovery: &CalDavDiscovery,
+    ) -> Result<Option<String>, CalendarConnectorError> {
+        // Depth 0: the selected collection's own properties, not its
+        // members'. The zone is optional metadata (fix list row 19192): a
+        // server that refuses or lacks it names none, and the sync goes on.
+        let response = self.request(
+            Method::from_bytes(b"PROPFIND").map_err(|_| failure("method", "invalid method"))?,
+            &discovery.calendar_href,
+            format!("<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"{CAL}\"><d:prop><c:calendar-timezone-id/><c:calendar-timezone/></d:prop></d:propfind>").into_bytes(),
+            "application/xml; charset=utf-8",
+            None,
+            false,
+            Some("0"),
+        )?;
+        match response.status().as_u16() {
+            207 => {}
+            403 | 404 => return Ok(None),
+            status => {
+                return Err(failure(
+                    "timezone",
+                    format!("CalDAV returned HTTP {status}"),
+                ));
+            }
+        }
+        let document = multistatus(response, "timezone")?;
+        Ok(oneiron::calendar::caldav_collection_timezone(
+            collection_property(&document, "calendar-timezone-id"),
+            collection_property(&document, "calendar-timezone"),
+        ))
+    }
+
     fn sync_collection(
         &self,
         _secret_ref: &str,
         discovery: &CalDavDiscovery,
         sync_token: Option<&str>,
     ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+        // An empty token lists every member and no removed one (RFC 6578
+        // §3.4), so what this seat holds that the listing omits was removed
+        // (fix list row 19192). Its rows are read before the listing: a row
+        // a write makes during it is no member, and one a write changes
+        // during it fails the omission's admission.
+        let full_listing = sync_token.is_none_or(str::is_empty);
+        let members = if full_listing {
+            oneiron::calendar::connectors::calendar_collection_members_for_operation(
+                &self.vault,
+                &self.operation,
+            )?
+        } else {
+            Vec::new()
+        };
         let token = xml::escape(sync_token.unwrap_or_default());
         let document = self.report(&discovery.calendar_href, "REPORT", format!("<d:sync-collection xmlns:d=\"DAV:\" xmlns:c=\"{CAL}\"><d:sync-token>{token}</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/><c:calendar-data/></d:prop></d:sync-collection>"))?;
         let cursor = document
@@ -299,16 +378,28 @@ impl CalDavWire for HttpCalDav {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| failure("sync", "DAV sync token absent"))?;
         let mut changes = Vec::new();
+        let mut listed_hrefs = BTreeSet::new();
+        let mut listed_uids = BTreeSet::new();
         for row in document.children(DAV, "response") {
             let href = row
                 .child(DAV, "href")
                 .map(|n| n.text.trim())
                 .ok_or_else(|| failure("sync", "resource href absent"))?;
             let href = self.url(href)?.to_string();
-            let deleted = row
+            let status = row
                 .child(DAV, "status")
-                .is_some_and(|n| matches!(n.text.split_whitespace().nth(1), Some("404" | "410")));
-            if deleted {
+                .and_then(|n| n.text.split_whitespace().nth(1));
+            if status == Some("507") {
+                // The server truncated the listing (RFC 6578 §3.6). A delta
+                // resumes from the token it returned; a full listing that
+                // is not whole proves no omission, so it is no checkpoint.
+                if full_listing {
+                    return Err(failure("sync", "the full DAV listing was truncated"));
+                }
+                continue;
+            }
+            listed_hrefs.insert(href.clone());
+            if matches!(status, Some("404" | "410")) {
                 if let Some(uid) =
                     oneiron::calendar::connectors::calendar_remote_uid_for_href_for_operation(
                         &self.vault,
@@ -316,49 +407,48 @@ impl CalDavWire for HttpCalDav {
                         &href,
                     )?
                 {
+                    listed_uids.insert(uid.clone());
                     changes.push(RemoteCalendarChange::Delete { href, uid });
                 }
                 continue;
             }
+            let etag = row.property(DAV, "getetag").map(|n| n.text.clone());
             let ics = match row.property(CAL, "calendar-data") {
                 Some(data) => data.text.as_bytes().to_vec(),
                 None => {
-                    let response = self.request(
-                        Method::GET,
-                        &href,
-                        Vec::new(),
-                        "text/calendar",
-                        None,
-                        false,
-                        false,
-                    )?;
-                    if !response.status().is_success() {
-                        return Err(failure("sync", "calendar resource unreadable"));
-                    }
-                    let mut bytes = Vec::new();
-                    response
-                        .take(MAX_RESPONSE + 1)
-                        .read_to_end(&mut bytes)
-                        .map_err(|_| failure("sync", "calendar resource unreadable"))?;
-                    if bytes.len() as u64 > MAX_RESPONSE {
-                        return Err(failure("sync", "calendar resource too large"));
-                    }
-                    bytes
+                    self.read_calendar_resource(&href)?
+                        .ok_or_else(|| failure("sync", "calendar resource unreadable"))?
+                        .ics
                 }
             };
-            let feed = parse_ics_feed(&ics)?;
-            let event = feed
-                .events
-                .first()
-                .ok_or_else(|| failure("sync", "calendar resource has no VEVENT"))?;
-            changes.push(RemoteCalendarChange::Upsert(RemoteCalendarObject {
+            let change = upsert_change(href, etag, ics)?;
+            listed_uids.insert(change.uid().to_owned());
+            changes.push(change);
+        }
+        for member in members {
+            // A stored href that no longer resolves inside the installed
+            // origin cannot be compared with the listing; it is left alone.
+            let Ok(url) = self.url(&member.href) else {
+                continue;
+            };
+            let href = url.to_string();
+            if listed_hrefs.contains(&href) || listed_uids.contains(&member.uid) {
+                continue;
+            }
+            // A write settled content the archive does not hold, so the
+            // listing may predate it: the resource is read back first, and
+            // only a gone answer makes the omission.
+            if !member.read_observed
+                && let Some(resource) = self.read_calendar_resource(&href)?
+            {
+                changes.push(upsert_change(href, resource.etag, resource.ics)?);
+                continue;
+            }
+            changes.push(RemoteCalendarChange::Omitted {
                 href,
-                etag: row.property(DAV, "getetag").map(|n| n.text.clone()),
-                uid: event.uid.clone(),
-                sequence: event.sequence,
-                content_hash: event.content_hash,
-                ics,
-            }));
+                uid: member.uid,
+                observation: member.observation,
+            });
         }
         Ok(RemoteSyncBatch {
             next_cursor: Some(cursor),
@@ -404,7 +494,7 @@ impl CalDavWire for HttpCalDav {
                 "text/calendar; charset=utf-8",
                 request.expected_etag.as_deref(),
                 request.href.is_none(),
-                false,
+                None,
             )?;
             self.receipt(
                 response,
@@ -439,9 +529,61 @@ impl CalDavWire for HttpCalDav {
                 "text/calendar",
                 Some(expected),
                 false,
-                false,
+                None,
             )?;
             self.receipt(response, href, uid, sequence, [0; 32], Some(expected))
         })
     }
+}
+
+/// One calendar resource a GET read.
+struct CalendarResource {
+    ics: Vec<u8>,
+    etag: Option<String>,
+}
+
+/// Reads one multistatus body, bounded like every DAV response.
+fn multistatus(
+    response: Response,
+    operation: &'static str,
+) -> Result<Node, CalendarConnectorError> {
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_RESPONSE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| failure(operation, "DAV response unreadable"))?;
+    if bytes.len() as u64 > MAX_RESPONSE {
+        return Err(failure(operation, "DAV response too large"));
+    }
+    xml::parse(&bytes).map_err(|error| failure(operation, error))
+}
+
+/// The text of the CalDAV property `name` a Depth 0 multistatus carries in a
+/// successful propstat; a failed propstat carries none.
+fn collection_property<'d>(document: &'d Node, name: &str) -> Option<&'d str> {
+    document
+        .children(DAV, "response")
+        .find_map(|row| row.property(CAL, name))
+        .map(|node| node.text.as_str())
+}
+
+/// The upsert one read of the resource at `href` returns.
+fn upsert_change(
+    href: String,
+    etag: Option<String>,
+    ics: Vec<u8>,
+) -> Result<RemoteCalendarChange, CalendarConnectorError> {
+    let feed = parse_ics_feed(&ics)?;
+    let event = feed
+        .events
+        .first()
+        .ok_or_else(|| failure("sync", "calendar resource has no VEVENT"))?;
+    Ok(RemoteCalendarChange::Upsert(RemoteCalendarObject {
+        href,
+        etag,
+        uid: event.uid.clone(),
+        sequence: event.sequence,
+        content_hash: event.content_hash,
+        ics,
+    }))
 }

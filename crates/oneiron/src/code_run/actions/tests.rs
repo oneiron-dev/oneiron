@@ -561,6 +561,7 @@ fn agent_chat_action_needs_host_owner_proof_then_v1_policy_runs() -> Result<()> 
             reserve_units: 10,
             now: 100,
             host_scope: None,
+            destination_bound: None,
         },
         &mut PolicyReceiptExecutor,
         &WakeCancellation::new(),

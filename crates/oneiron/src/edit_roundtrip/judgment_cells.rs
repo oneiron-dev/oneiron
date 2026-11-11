@@ -18,7 +18,7 @@ use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) use read::named_sheet_cells;
+pub(crate) use read::{named_sheet_cells, named_sheet_cells_until};
 
 const SHEET_NS: &[u8] = b"http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL_NS: &[u8] = b"http://schemas.openxmlformats.org/package/2006/relationships";

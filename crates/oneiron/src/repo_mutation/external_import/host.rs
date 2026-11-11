@@ -8,11 +8,13 @@
 //! startup hook, no serializer and no owner fallback exist for it.
 
 use super::{ExternalImportLookup, ExternalImportSource};
+use crate::Vault;
 use crate::error::Result;
 use crate::federation::GitPushCaller;
 use crate::git_wire::{
     FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome, GitOid, GitRefName, GitWire,
 };
+use crate::origin::lfs::{LfsOid, LfsTransferReport};
 
 /// One authenticated call's Git transport for an outside import.
 pub trait ExternalGitSourceHost: Send + Sync {
@@ -40,6 +42,28 @@ pub trait ExternalGitSourceHost: Send + Sync {
         source: &ExternalImportSource,
         binding: Option<&str>,
     ) -> Result<GitImportFetchOutcome>;
+
+    /// Fetches each of `objects`, the Git-LFS objects the normalized
+    /// `source`'s fetched history names that `vault` lacks, from the
+    /// source's own batch API, and installs each through `vault`'s LFS
+    /// upload door at `now` (`crate::origin::lfs::download_lfs_objects`).
+    /// Every batch call and object action goes through the credential
+    /// broker (OSH-3, FIX 19876), each judged again first (the call's
+    /// credential, and the binding when one is named): a batch call under
+    /// the credential of the custody secret `binding`, which only the broker
+    /// installs, or under none when no binding is named; an object action
+    /// with the headers its batch answer named, as given. Never a fallback.
+    /// Answers the objects that did not arrive (or the batch failure that
+    /// stopped the fetch), how the broker is kept apart from this process,
+    /// and how many credential echoes it rewrote.
+    fn fetch_lfs_objects(
+        &self,
+        vault: &Vault,
+        source: &ExternalImportSource,
+        binding: Option<&str>,
+        objects: &[(LfsOid, u64)],
+        now: u64,
+    ) -> LfsTransferReport;
 
     /// Pushes exactly `commit` from `fetched` to `name` through this call's
     /// own authenticated door route `lookup` names, leased on `expected`.

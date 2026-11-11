@@ -1,0 +1,15 @@
+{
+  "name": "ai.options",
+  "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. An agent whose owner agent Grant names ai operations sees its granted rows.",
+  "input": "AiOptionsRequest",
+  "output": "crate::task_verb::sdk::AiOptions",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

@@ -42,10 +42,11 @@
 //!   loading the window doc.
 
 mod artifacts;
+mod ask_forward;
 mod base;
 mod connect;
 mod documents;
-mod endpoint;
+pub(in crate::sync) mod endpoint;
 mod federated;
 mod federation_replay;
 mod inbound;
@@ -55,6 +56,7 @@ mod note_session;
 mod own_device;
 mod repo_projection;
 mod residence;
+mod root_updates;
 mod sealed_updates;
 mod staged_bodies;
 mod staged_body_pull;
@@ -63,12 +65,14 @@ mod types;
 mod window_pads;
 
 pub use self::base::SyncClient;
+pub(crate) use self::connect::VerifiedConnectOrigin;
 pub use self::connect::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
 };
 pub use self::federated::ImportTier;
 pub(crate) use self::leaf_keys::send_leaf_key_requests;
 pub(in crate::sync) use self::own_device::OwnDeviceImport;
+pub(crate) use self::residence::IndexFetchFault;
 pub use self::residence::custody::drain_custody_residence_member_as;
 pub(crate) use self::residence::custody::relay_custody;
 pub(crate) use self::residence::default_claim_vector;
@@ -78,7 +82,7 @@ pub use self::residence::{
     OpenedItem, PadAdmissionReport, ResidenceHit, ResidenceIndexWindow, ResidenceSearch,
     ResidenceSearchPage, SealedBundleRelay, SealedBundleRelayObservation, SearchSource, ThinItem,
     UnmergedUpload, fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit,
-    sealed_bundle_relay_observation,
+    request_ask_option_link, sealed_bundle_relay_observation,
 };
 pub(crate) use self::residence::{
     catch_up_authority, exchange_checkpoint_roots, fetch_owed_machine_history,

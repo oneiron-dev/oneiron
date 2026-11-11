@@ -1,0 +1,15 @@
+{
+  "name": "vault.calendar.freebusy",
+  "description": "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue.",
+  "input": "crate::calendar::query::CalendarFreebusyPageRequest",
+  "output": "crate::claim::ScopedReadResult<crate::calendar::query::CalendarFreebusyPage>",
+  "call": "memory.calendar_freebusy_page(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

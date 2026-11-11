@@ -1,4 +1,4 @@
-//! An Owner handover in a shared vault as a signed AUTHORITY_LOG Owner action
+//! An Owner addition or handover in a shared vault as a signed AUTHORITY_LOG Owner action
 //! (ARCH-0043, "Last-Owner successor rule"). An Owner who leaves names a
 //! successor or signs their own removal; an organization root with no Owner
 //! left gets one on proof of control, the host writing the handover. The
@@ -37,9 +37,11 @@ const OPTIONAL_KEYS: [&str; 5] = ["to", "from_keeps", "act", "proof", "authorize
 /// A proof digest is a BLAKE3 hash, lowercase hex.
 const PROOF_HEX_LEN: usize = 64;
 
-/// Why the Owner role moved.
+/// Why the Owner roster changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OwnerHandoverCause {
+    /// An Owner added another Owner without giving up their own role.
+    Addition,
     /// An Owner handed the role to a successor (`transfer_ownership`).
     Transfer,
     /// An Owner was removed, or signed their own removal, with or without a
@@ -53,6 +55,7 @@ pub enum OwnerHandoverCause {
 impl OwnerHandoverCause {
     pub const fn wire(self) -> &'static str {
         match self {
+            Self::Addition => "addition",
             Self::Transfer => "transfer",
             Self::Removal => "removal",
             Self::ProofOfControl => "proof_of_control",
@@ -61,6 +64,7 @@ impl OwnerHandoverCause {
 
     pub fn parse(wire: &str) -> Option<Self> {
         match wire {
+            "addition" => Some(Self::Addition),
             "transfer" => Some(Self::Transfer),
             "removal" => Some(Self::Removal),
             "proof_of_control" => Some(Self::ProofOfControl),
@@ -69,16 +73,16 @@ impl OwnerHandoverCause {
     }
 }
 
-/// One Owner handover.
+/// One Owner addition or handover.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct OwnerHandover {
     /// The shared vault's federation id.
     pub shared_vault: u64,
     pub cause: OwnerHandoverCause,
-    /// The member who stops being an Owner.
+    /// The acting Owner for an addition; otherwise the Owner who leaves the role.
     pub from: EntityId,
-    /// The member who becomes Owner. A transfer and a proof-of-control
-    /// handover always name one; a removal may leave the other Owners.
+    /// The member who becomes Owner. An addition, transfer or proof-of-control
+    /// handover always names one; a removal may leave the other Owners.
     pub to: Option<EntityId>,
     /// The role `from` keeps, by its wire name; `None` when they leave.
     pub from_keeps: Option<String>,
@@ -123,21 +127,26 @@ impl OwnerHandover {
         let names_successor = self.to.is_some();
         let needs_successor = matches!(
             self.cause,
-            OwnerHandoverCause::Transfer | OwnerHandoverCause::ProofOfControl
+            OwnerHandoverCause::Addition
+                | OwnerHandoverCause::Transfer
+                | OwnerHandoverCause::ProofOfControl
         );
         let refs_ok = [Some(&self.receipt), self.act.as_ref()]
             .into_iter()
             .flatten()
             .all(|value| !value.is_empty() && value.len() <= OWNER_HANDOVER_REF_MAX);
-        // A role kept is a lesser one, by a lowercase wire name.
+        // Only an addition keeps the acting Owner in the Owner role.
         let role_ok = self.from_keeps.as_deref().is_none_or(|role| {
             !role.is_empty()
                 && role.len() <= OWNER_HANDOVER_REF_MAX
-                && role != "owner"
+                && (role != "owner" || self.cause == OwnerHandoverCause::Addition)
                 && role
                     .bytes()
                     .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
         });
+        let addition_ok = self.cause != OwnerHandoverCause::Addition
+            || (self.from_keeps.as_deref() == Some("owner")
+                && self.retired_own_device_grants.is_empty());
         // Only the host's proof-of-control judgement carries a proof digest.
         let proof_ok = self.proof.as_deref().is_none_or(|proof| {
             self.cause == OwnerHandoverCause::ProofOfControl
@@ -151,6 +160,7 @@ impl OwnerHandover {
             || !proof_ok
             || !refs_ok
             || !role_ok
+            || !addition_ok
             || !canonical_ids(&self.affected_grants)
             || !canonical_ids(&self.retired_own_device_grants)
         {

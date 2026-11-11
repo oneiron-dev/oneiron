@@ -7,7 +7,6 @@ use rmpv::Value;
 use std::collections::BTreeMap;
 
 pub(crate) const ROWS_KEY: &str = "federation_grant_rows";
-const MAX_ROWS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum GrantPolicyRow {
@@ -109,9 +108,6 @@ pub(crate) fn parse_rows(value: &Value) -> Option<Vec<GrantPolicyRow>> {
     let Value::Array(values) = value else {
         return None;
     };
-    if values.len() > MAX_ROWS {
-        return None;
-    }
     if values.is_empty() {
         return Some(Vec::new());
     }

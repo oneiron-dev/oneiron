@@ -1,4 +1,7 @@
+mod captured;
+
 use super::*;
+use captured::CapturedEntityDeindex;
 
 use std::collections::HashSet;
 
@@ -209,6 +212,16 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    capture_entity_deindex(write, wtxn, id)?.apply(write, wtxn)
+}
+
+// This prefix has already staged cleanup and callbacks. The captured row is
+// consumed immediately in the same writer; it is not a read-only preview.
+fn capture_entity_deindex(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<CapturedEntityDeindex> {
     let store = write.store;
     // The lexical-hint cascade tears dependent ids through here.
     store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
@@ -291,6 +304,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     had_graph_mutation |= room_graph;
     neighbors.extend(room_neighbors);
     crate::task_verb::index_owner_fact(store, wtxn, id, None)?;
+    crate::runtime_hooks::index_task_due_in_txn(store, wtxn, *id, None)?;
     crate::task_verb::forget_task_mirror(store, wtxn, *id)?;
     crate::task_verb::forget_symbols(store, wtxn, *id)?;
     crate::store::text_index::deindex_text(store, wtxn, id)?;
@@ -325,7 +339,16 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::deletion::tear_derived_rows_in_txn(write, wtxn, id, true)?;
     crate::store::pending_comm_stop::clear_pending_stop_for_delete(store, wtxn, id)?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
-    crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
+    // Only a TURN takes part in a thread chain, as the put path asks
+    // (`put_staging`). A live row of another kind is no thread record: the
+    // chain's own check refuses one, which refused every delete of it.
+    if !matches!(
+        crate::vault::live_entity_row_in_txn(store, wtxn, id)?,
+        crate::vault::LiveEntityRow::Live { entity_type, .. }
+            if entity_type != crate::registry::ENTITY_TYPE_TURN
+    ) {
+        crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
+    }
     let related_neighbors = delete_related_edges(write, wtxn, id)?;
     had_graph_mutation |= !related_neighbors.is_empty();
     neighbors.extend(related_neighbors);
@@ -333,81 +356,14 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     delete_short_id_rows_for_id(store, wtxn, id)?;
     store.scope_stamps.retire_stamp(store, wtxn, *id)?;
 
-    let Some(entity_record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)?
-    else {
-        let cleanup =
-            crate::store::vad_annotation::delete_vad_annotation_metadata_in_txn(write, wtxn, id)?;
-        had_vector |= cleanup.had_vector;
-        had_graph_mutation |= cleanup.had_graph_mutation;
-        neighbors.extend(cleanup.neighbors);
-        neighbors.sort_unstable();
-        neighbors.dedup();
-        return Ok((false, had_vector, had_graph_mutation, neighbors));
-    };
-    had_graph_mutation = true;
-
-    let (entity_type, occurred, learned_at) = parse_entity_metadata(&entity_record)?;
-    // A definition that reached the store without a put leaves no pin behind
-    // it; its delete pins it first, so the id comes back no wider (H215).
-    if entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF {
-        crate::agent_def::pin_stored_row_in_txn(store, wtxn, id)?;
-    }
-    // A purged epoch summary keeps its place in its session's count (OF-013).
-    crate::compaction::raise_epoch_floor_in_txn(store, wtxn, &entity_record)?;
-    if entity_type == ENTITY_TYPE_SKILL {
-        let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
-        if let Some(content_hash) =
-            crate::write_envelope::skill_record::decode_skill_record(body)?.content_hash
-        {
-            crate::store::skill_content_index::maintain_skill_content_hash_index_for_delete(
-                store,
-                wtxn,
-                id,
-                content_hash,
-            )?;
-        }
-    }
-    crate::channel_identity::clear_assignment_for_delete(store, wtxn, id, entity_type)?;
-    let mut cleanup = crate::write_envelope::vad_annotation::VadAnnotationCleanup::default();
-    crate::store::vad_annotation::delete_vad_annotation_metadata_for_type_in_txn(
-        write,
-        wtxn,
-        id,
-        entity_type,
-        &mut cleanup,
-    )?;
-    had_vector |= cleanup.had_vector;
-    had_graph_mutation |= cleanup.had_graph_mutation;
-    neighbors.extend(cleanup.neighbors);
-    neighbors.sort_unstable();
-    neighbors.dedup();
-
-    delete_entity_index_rows(store, wtxn, id, entity_type, occurred, learned_at)?;
-
-    crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
-    crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
-    crate::store::identity_hints::reindex_identity_hints(store, wtxn, id, None)?;
-    crate::ports::reindex_named_entities(store, wtxn, id, None)?;
-    crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
-    TRUSTED_MANIFEST_ORIGIN.delete(store, wtxn, &HexId(*id))?;
-    SEEDED_MANIFEST_CONFIDENCE.delete(store, wtxn, &HexId(*id))?;
-    crate::store::claim_projection::remove_claim_projection_index(store, wtxn, *id)?;
-    store.port_remove_entity_row(wtxn, id)?;
-    crate::ports::audit_mutation_in_txn(
-        store,
-        wtxn,
-        crate::ports::MutationAudit {
-            entity: *id,
-            op: crate::ports::ChangeOp::Delete,
-            actor_principal: None,
-            occurred_at: store.clock.now_recorded_at(),
-            input: id.as_bytes(),
-            reason: None,
-        },
-    )?;
-    neighbors.sort_unstable();
-    neighbors.dedup();
-    Ok((true, had_vector, had_graph_mutation, neighbors))
+    let entity_record = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)?;
+    Ok(CapturedEntityDeindex {
+        id: *id,
+        entity_record,
+        had_vector,
+        had_graph_mutation,
+        neighbors,
+    })
 }
 
 /// Drops one seeded actor's row and the rows its put derived from it, so the
@@ -432,7 +388,6 @@ pub(crate) fn drop_seeded_actor_row(
     store.port_remove_entity_row(wtxn, id)?;
     Ok(())
 }
-
 #[cfg(test)]
 pub(crate) fn deindex_entity_for_test(
     store: &Store,

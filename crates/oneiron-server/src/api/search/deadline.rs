@@ -21,6 +21,9 @@ pub(super) struct SearchPage {
     pub(super) page_limit: usize,
     /// The credential the door admitted; the page reads under its key.
     pub(super) auth: CoreAuth,
+    /// The caller's own retrieval filter (FIX 3977), bound on the page's
+    /// reader before the search.
+    pub(super) filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 /// Reads and projects one page under the request's deep-retrieval
@@ -31,7 +34,12 @@ pub(super) fn search_page(
     admission: Option<&DeepAdmission>,
     deadline: Option<&RetrievalDeadline>,
 ) -> Result<ScopedSearchResponse, ApiError> {
-    let scoped_read = scoped_read_for_legacy_api(server, &page.auth)?;
+    let request = page
+        .filter
+        .as_ref()
+        .map(oneiron::memory::ReadFilterInput::to_filter);
+    let scoped_read =
+        scoped_read_for_legacy_api(server, &page.auth)?.with_read_filter(request.as_ref());
     let results = run_depth_search(
         &scoped_read,
         page.probe,
@@ -67,8 +75,11 @@ fn cut_page(
     server: &SyncServer,
     auth: &CoreAuth,
     count_mode: CountMode,
+    filter: Option<&oneiron::memory::ReadFilterInput>,
 ) -> Result<ScopedSearchResponse, ApiError> {
+    let request = filter.map(oneiron::memory::ReadFilterInput::to_filter);
     let receipt = scoped_read_for_legacy_api(server, auth)?
+        .with_read_filter(request.as_ref())
         .read_receipt(None, 0)
         .map_err(|_| ApiError::internal_server_error("read receipt failed"))?;
     let mut page = unread_page(count_mode);
@@ -102,12 +113,14 @@ pub(super) async fn search_page_by_deadline(
         Some(budget) => {
             let count_mode = page.count_mode;
             let auth = page.auth.clone();
+            let filter = page.filter.clone();
             read_by_deadline(
                 server,
                 arrived,
                 budget,
                 count_mode,
                 auth,
+                filter,
                 move |server, deadline| {
                     search_page(server, page, admission.as_ref(), Some(deadline))
                 },
@@ -125,13 +138,15 @@ pub(super) async fn search_page_by_deadline(
 /// else with the cut page. When the read has not reached even that (the
 /// blocking pool had not started it, or proving the host's root slip waits
 /// on a writer), the door answers with no hits and no receipt, marked
-/// partial: nothing was read.
+/// partial: nothing was read. The cut page's receipt names the caller's
+/// own `filter` (FIX 3977), as the read's does.
 pub(super) async fn read_by_deadline(
     server: Arc<SyncServer>,
     arrived: Instant,
     budget: Duration,
     count_mode: CountMode,
     auth: CoreAuth,
+    filter: Option<oneiron::memory::ReadFilterInput>,
     read: impl FnOnce(&SyncServer, &RetrievalDeadline) -> Result<ScopedSearchResponse, ApiError>
     + Send
     + 'static,
@@ -147,7 +162,7 @@ pub(super) async fn read_by_deadline(
         if Instant::now() >= deadline.answer_at() {
             return Ok(unread_page(count_mode));
         }
-        let cut = cut_page(&server, &auth, count_mode)?;
+        let cut = cut_page(&server, &auth, count_mode, filter.as_ref())?;
         if Instant::now() >= deadline.answer_at() {
             return Ok(cut);
         }

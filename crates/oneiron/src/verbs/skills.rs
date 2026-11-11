@@ -427,7 +427,10 @@ pub fn skill_archive_as_owner(
     input: &HubSkillRequest,
 ) -> MemoryResult<SkillLibraryView> {
     lifecycle_as_owner(vault, owner, input.entity, SkillLifecycle::Quarantined)?;
-    vault.skill_invocations.cancel_skill(&input.entity);
+    vault
+        .runtime()
+        .skill_invocations()
+        .cancel_skill(&input.entity);
     skill_library_get_as_owner(vault, owner, input)
 }
 

@@ -1,0 +1,9 @@
+{
+  "name": "self.team.start",
+  "input": "crate::team::TeamStartInput",
+  "output": "crate::team::TeamRunAnswer",
+  "scope": "Write",
+  "context": "run",
+  "effect": "Team",
+  "run_surface": "live"
+}

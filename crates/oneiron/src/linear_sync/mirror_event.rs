@@ -395,6 +395,77 @@ pub(crate) fn put_control_in(
     CONTROLS.put(vault, txn, &task, control)
 }
 
+/// The owner's discard of TASK `task`'s local copy (FIX 14534 rule 4): each
+/// mirror event its index names keeps its key, direction, refs, delivery,
+/// operation, digests, statuses, field names and times, so a consumed
+/// delivery is still never applied again and a replay still answers, and
+/// loses the words it held: the values both sides moved, the provider's
+/// actor, and those in the receipt it answers ([`discarded_receipt`]).
+/// Rewritten in place, in the discard's transaction; the link, the webhook
+/// bindings and the control row stay.
+///
+/// # Errors
+///
+/// Storage errors, or an index row whose event is missing.
+pub(crate) fn discard_task_event_payload_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+) -> Result<()> {
+    let hex = task.to_hex();
+    let keys: Vec<EventKey> = BY_TASK
+        .iter_from(store, txn, task.as_bytes())?
+        .map(|row| row.map(|((_, _, key), ())| key))
+        .collect::<Result<_>>()?;
+    for key in keys {
+        let mut event = EVENTS
+            .get(store, txn, &key)?
+            .ok_or(Error::CorruptedIndex("linear mirror event index"))?;
+        if event.task_ref.as_deref() != Some(hex.as_str()) {
+            continue;
+        }
+        for conflict in &mut event.conflicts {
+            conflict.task_value = None;
+            conflict.issue_value = None;
+        }
+        event.external_actor = None;
+        event.receipt = event.receipt.as_deref().and_then(discarded_receipt);
+        EVENTS.put(store, txn, &key, &event)?;
+    }
+    Ok(())
+}
+
+/// The receipt JSON `json` with the words it holds taken out: the two
+/// values of each conflict it names, and each lifecycle record's fields
+/// that hold a call's words ([`crate::task_verb::lifecycle_field_holds_words`]).
+/// Ids, statuses, digests and times stay, so the receipt still reads as its
+/// own type and a replay still answers it. `None` for JSON that does not
+/// read.
+fn discarded_receipt(json: &str) -> Option<String> {
+    fn scrub(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for name in ["task_value", "issue_value"] {
+                    if let Some(words) = map.get_mut(name) {
+                        *words = serde_json::Value::Null;
+                    }
+                }
+                if let Some(serde_json::Value::Object(lifecycle)) = map.get_mut("lifecycle")
+                    && let Some(serde_json::Value::Object(fields)) = lifecycle.get_mut("fields")
+                {
+                    fields.retain(|name, _| !crate::task_verb::lifecycle_field_holds_words(name));
+                }
+                map.values_mut().for_each(scrub);
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(scrub),
+            _ => {}
+        }
+    }
+    let mut value: serde_json::Value = serde_json::from_str(json).ok()?;
+    scrub(&mut value);
+    serde_json::to_string(&value).ok()
+}
+
 /// Drops a deleted TASK's control row in its delete's transaction. Its event
 /// rows stay, so a consumed delivery is never applied again.
 pub(crate) fn forget_mirror_control_in(

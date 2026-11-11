@@ -19,7 +19,7 @@ use serde_json::Value as JsonValue;
 
 use super::cache_usage::carry_chat_evidence;
 use super::exl3_evidence::{Tie, external_tie};
-use super::http::{HttpFailure, ProviderHttp, SseItem};
+use super::http::{HttpFailure, HttpReleaseError, ProviderHttp, SseItem};
 use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
@@ -84,7 +84,7 @@ impl OpenAiHttp {
             );
             let mut reply = self
                 .http
-                .post_json(&request.path, &request.headers, &body)
+                .post_json_leased(&request.path, &request.headers, &body, lease)
                 .await?;
             let answering = match reply.body.get("model").and_then(JsonValue::as_str) {
                 Some(returned) if (200..300).contains(&reply.status) => {
@@ -142,7 +142,9 @@ impl OpenAiHttp {
                 .and_then(|wire| self.engine_models.get(wire))
                 .cloned(),
         );
-        let events = self.http.post_sse(&request.path, &request.headers, &body);
+        let events = self
+            .http
+            .post_sse_leased(&request.path, &request.headers, &body, lease);
         let frames = futures_util::stream::unfold(
             Frames {
                 transport: self,
@@ -183,6 +185,15 @@ impl From<HttpFailure> for OpenAiCompatTransportError {
     }
 }
 
+impl From<HttpReleaseError> for OpenAiCompatTransportError {
+    fn from(error: HttpReleaseError) -> Self {
+        match error {
+            HttpReleaseError::Transport(error) => error.into(),
+            HttpReleaseError::Release(error) => Self::DispatchRelease(error),
+        }
+    }
+}
+
 impl OpenAiCompatTransport for OpenAiHttp {
     fn execute<'a>(
         &'a self,
@@ -201,21 +212,6 @@ impl OpenAiCompatTransport for OpenAiHttp {
     }
 }
 
-/// The receipts a reply's or a chunk's usage carries (FIX 9417), as
-/// [`carry_chat_evidence`] wrote them.
-fn carried_receipts(body: &JsonValue) -> Vec<InferenceCallReceipt> {
-    body.get("usage")
-        .and_then(|usage| usage.get(INFERENCE_CALLS_KEY))
-        .and_then(JsonValue::as_array)
-        .map(|records| {
-            records
-                .iter()
-                .filter_map(|record| InferenceCallReceipt::deserialize(record).ok())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Whether the reply itself supplied an inference key, before llama.cpp
 /// evidence is added. Even an empty or invalid native list takes precedence.
 fn has_inference_calls(body: &JsonValue) -> bool {
@@ -224,7 +220,7 @@ fn has_inference_calls(body: &JsonValue) -> bool {
 }
 
 /// Every measured call carried by one physical send (FIX 15015, 9417).
-struct InferenceUsage {
+pub(super) struct InferenceUsage {
     lease: BudgetLease,
     model: Option<ModelId>,
     calls: Vec<ObservedCall>,
@@ -238,7 +234,7 @@ struct ObservedCall {
 }
 
 impl InferenceUsage {
-    fn new(lease: &BudgetLease, model: Option<ModelId>) -> Self {
+    pub(super) fn new(lease: &BudgetLease, model: Option<ModelId>) -> Self {
         Self {
             lease: lease.clone(),
             model,
@@ -251,7 +247,7 @@ impl InferenceUsage {
         }
     }
 
-    fn record(&mut self, body: &mut JsonValue, native: bool) {
+    pub(super) fn record(&mut self, body: &mut JsonValue, native: bool) {
         self.saw_native_key |= native;
         if self.saw_native_key && !native {
             return;
@@ -311,7 +307,7 @@ impl InferenceUsage {
         }
     }
 
-    fn finish(&mut self, worker: Option<&InferenceWorker>) {
+    pub(super) fn finish(&mut self, worker: Option<&InferenceWorker>) {
         for call in &mut self.calls {
             if let Some(receipt) = call.measured.take() {
                 if let Some(worker) = worker {
@@ -480,7 +476,7 @@ type Frame = Result<OpenAiCompatStreamFrame, OpenAiCompatTransportError>;
 
 impl<S> Frames<'_, S>
 where
-    S: futures_util::Stream<Item = Result<SseItem, HttpFailure>>,
+    S: futures_util::Stream<Item = Result<SseItem, HttpReleaseError>>,
 {
     async fn next(mut self) -> Option<(Frame, Self)> {
         if self.closed {
@@ -514,7 +510,7 @@ where
         Some((frame, self))
     }
 
-    async fn frame(&mut self, item: Result<SseItem, HttpFailure>) -> Frame {
+    async fn frame(&mut self, item: Result<SseItem, HttpReleaseError>) -> Frame {
         match item? {
             SseItem::Status(mut reply) => {
                 let native = has_inference_calls(&reply.body);

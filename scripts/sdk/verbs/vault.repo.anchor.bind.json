@@ -1,0 +1,16 @@
+{
+  "name": "vault.repo.anchor.bind",
+  "description": "The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership.",
+  "input": "crate::task_verb::sdk::RepoAnchorBindInput",
+  "output": "crate::task_verb::sdk::RepoAnchorBindOutput",
+  "call": "crate::task_verb::sdk::bind_repo_anchor_as(memory.vault(), &memory.embedded_owner(\"vault.repo.anchor.bind\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

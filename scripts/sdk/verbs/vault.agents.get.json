@@ -1,0 +1,16 @@
+{
+  "name": "vault.agents.get",
+  "description": "The owner reads one saved agent composition, including its declared refusal dial, version and approval state.",
+  "input": "crate::task_verb::sdk::AgentDefinitionRequest",
+  "output": "crate::task_verb::sdk::AgentDefinitionView",
+  "call": "crate::task_verb::sdk::read_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.get\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

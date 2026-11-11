@@ -17,11 +17,13 @@ use crate::outbound_intent_ledger::{
 use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
 use super::connector_call::escalation_code;
 use super::connector_elicitation_asks::ConnectorElicitationAnswer;
-use super::result_scrub::{OutboundResultSender, scrub_outbound_result};
+use super::raw_body::RawOutboundBody;
+use super::result_scrub::{OutboundResultSender, scrub_outbound_result_with_body};
 use super::scope::{
     ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
     evaluate_scoped_mcp_call,
 };
+pub(super) use super::scoped_prepared_effect::scoped_prepared_effect;
 use super::tool_call::PreparedToolCall;
 
 /// Counted output of one consent-bound durable dispatch.
@@ -49,13 +51,43 @@ pub struct ScopedMcpDispatchResult {
     /// charge, never a second delivery lane; `None` when no key governed or
     /// a replay charged nothing.
     pub budget_charge: Option<EffectorBudgetCharge>,
+    /// Confirmed-settlement events, also present when a resume charged nothing.
+    pub budget_settlement_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
     /// A full count-bound budget window paced the call until this engine
     /// instant, Unix seconds (FIX 8686): it was not sent, recorded or
     /// charged, and goes again once its windows open.
     paced_until: Option<u64>,
+    /// FIX 4747 slice 5: the agent run that made the call no longer runs on
+    /// this machine, so the call's transport never started: nothing was
+    /// sent.
+    pub agent_run_stood_down: bool,
+    /// FIX 4747 slice 7: why the call's admission stopped it for its agent
+    /// run: its run stood down, an earlier executor of the run may have made
+    /// it, the owner left it, or its run's marks are full. Nothing was
+    /// recorded, charged or sent.
+    pub(crate) agent_run_effect: Option<crate::agent_dispatch::AgentRunEffectStop>,
 }
 
 impl ScopedMcpDispatchResult {
+    /// Admission and confirmed-settlement messages on the existing steering
+    /// channel. A resumed Done can emit without a new admission charge.
+    #[must_use]
+    pub fn steering_messages(&self) -> Vec<String> {
+        let mut messages = self
+            .budget_charge
+            .as_ref()
+            .map(EffectorBudgetCharge::steering_messages)
+            .unwrap_or_default();
+        for event in self
+            .budget_settlement_events
+            .iter()
+            .flat_map(|events| &events.ladder_events)
+        {
+            crate::connector_key::append_effector_steering_message(&mut messages, event);
+        }
+        messages
+    }
+
     /// When a full count-bound budget window paced this call, the instant
     /// (Unix seconds) its windows all open again (FIX 8686).
     #[must_use]
@@ -126,7 +158,10 @@ impl fmt::Debug for ScopedMcpDispatchResult {
             .field("held_ask", &self.held_ask)
             .field("delivery_unresolved", &self.delivery_unresolved)
             .field("budget_charge", &self.budget_charge)
+            .field("budget_settlement_events", &self.budget_settlement_events)
             .field("paced_until", &self.paced_until)
+            .field("agent_run_stood_down", &self.agent_run_stood_down)
+            .field("agent_run_effect", &self.agent_run_effect)
             .finish()
     }
 }
@@ -151,52 +186,28 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     #[cfg(not(test))]
     let freeze_event_baseline = ();
     let _ = grant;
-    let call = prepared_call.call().clone();
-    // FIX 6424 part 3: the gate input pins this prepared call.
-    let gate = super::approval::scoped_mcp_pinned_gate_input(
-        principal_ref,
+    // FIX 4747 slices 5, 7: the agent run try whose step makes the call, as
+    // its caller's binding named it, else a run whose claim fenced the
+    // call's own attempt.
+    let prepared_call = match prepared_call.agent_run() {
+        Some(_) => prepared_call,
+        None => {
+            let fenced = vault.agent_run_fence(attempt_id).map(|_| attempt_id);
+            prepared_call.for_agent_run(fenced)
+        }
+    };
+    let prepared = scoped_prepared_effect(
+        vault,
         grant_id,
+        principal_ref,
+        attempt_id,
+        call_seq,
         &prepared_call,
-        attempt_id,
-        call_seq,
-    );
-    let idempotency_supported = prepared_call.idempotency_supported();
-    // The Send class follows the dispatched tool's own effect (FIX 8688): a
-    // tool its approved slate row declares read-only never debits `Sends`;
-    // any other tool on a counterparty-communication catalog does.
-    let budget_class = {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        crate::connector_key::scoped_tool_effect_in_txn(
-            &vault.store,
-            &txn,
-            &call.server,
-            prepared_call.is_read_only(),
-        )?
-        .budget_class()
-    };
-    let prepared = crate::outbound_chokepoint::PreparedEffect {
-        attempt_id,
-        call_seq,
-        server: call.server,
-        tool: call.tool,
-        payload: prepared_call.frozen_bytes().to_vec(),
-        idempotency_supported,
-        resolved_endpoint: Some(call.resolved_endpoint),
-        gate,
-        budget_class,
-        authorization: crate::outbound_chokepoint::PreparedAuthorization::ScopedMcp {
-            grant_id,
-            principal_ref: principal_ref.to_owned(),
-            prepared: Box::new(prepared_call.clone()),
-        },
-        verified_actor: None,
-        owner_proof: None,
-        dedupe_key: None,
-        suppression_receipt: None,
-        admission_ceiling: None,
-        co_actor: None,
-    };
-    let mut transport = ScopedResultTransport::new(sender);
+    )?;
+    // FIX 4747 slices 5, 7: a call an agent run makes goes only while the
+    // run's machine holds the run.
+    let mut transport = ScopedResultTransport::new(sender)
+        .fenced(prepared_call.agent_run().map(|run| (vault, run)));
     let effect = crate::outbound_chokepoint::execute_outbound_effect(
         vault,
         authority,
@@ -265,15 +276,19 @@ pub(super) fn scoped_mcp_gate_input(
 /// run before transport and refuse or hold a call whose authority changed.
 /// A hold that names an approve-once digest (the tool's `always ask`, FIX
 /// 990) keeps the ask `payload`, the row's frozen bytes, was first held for.
+/// A row an agent run try `agent_run` admitted sends only while this machine
+/// holds that run (FIX 4747 slice 7).
 pub(super) fn resume_scoped_mcp_outbound_intent<S: OutboundResultSender>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     intent_id: [u8; 32],
     payload: &[u8],
+    agent_run: Option<AttemptId>,
     now_ms: u64,
     sender: &mut S,
 ) -> std::result::Result<ScopedMcpDispatchResult, IntentLedgerError> {
-    let mut transport = ScopedResultTransport::new(sender);
+    let mut transport =
+        ScopedResultTransport::new(sender).fenced(agent_run.map(|run| (vault, run)));
     let effect = crate::outbound_chokepoint::execute_outbound_effect(
         vault,
         authority,
@@ -335,7 +350,10 @@ fn dispatch_result<S>(
         held_ask: None,
         delivery_unresolved,
         budget_charge: effect.budget_charge,
+        budget_settlement_events: effect.budget_settlement_events,
         paced_until: effect.paced_until,
+        agent_run_stood_down: transport.agent_run_stood_down,
+        agent_run_effect: effect.agent_run_effect,
     }
 }
 
@@ -355,7 +373,9 @@ fn resumed_decision(effect: &OutboundEffectResult) -> ScopedMcpConsentDecision {
         Some(IntentEscalationReason::ConnectorRevoked) => {
             ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeyRevoked)
         }
-        Some(IntentEscalationReason::BindingInvalid) => {
+        // A grant that no longer stands escalates as the invalid grant it
+        // was reported as before FIX 11591 named it.
+        Some(IntentEscalationReason::BindingInvalid | IntentEscalationReason::GrantNotStanding) => {
             ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant)
         }
         Some(IntentEscalationReason::ConnectorSlateNeverAllow) => {
@@ -445,8 +465,10 @@ fn scoped_decision_after_effect(
         .escalation
         .as_ref()
         .is_some_and(|escalation| {
-            escalation.reason
-                == crate::outbound_intent_ledger::IntentEscalationReason::BindingInvalid
+            matches!(
+                escalation.reason,
+                IntentEscalationReason::BindingInvalid | IntentEscalationReason::GrantNotStanding
+            )
         })
     {
         return Ok(ScopedMcpConsentDecision::Escalate(
@@ -506,7 +528,12 @@ pub(super) struct ScopedResultTransport<'a, S> {
     pub(super) checked_bytes: Vec<u8>,
     /// The body the last authorized send returned, handed on to that send's
     /// own terminal bridge only (DOOR-141 PR2), never counted or logged.
-    settled_body: Option<Vec<u8>>,
+    settled_body: Option<RawOutboundBody>,
+    /// FIX 4747 slices 5, 7: the agent run try that makes the call, whose
+    /// holding is checked right before each transport call.
+    run_fence: Option<(&'a Vault, AttemptId)>,
+    /// The run fence stood a call down before its transport call.
+    pub(super) agent_run_stood_down: bool,
 }
 
 impl<'a, S> ScopedResultTransport<'a, S> {
@@ -518,7 +545,16 @@ impl<'a, S> ScopedResultTransport<'a, S> {
             scrubbed_result_fields: 0,
             checked_bytes: Vec::new(),
             settled_body: None,
+            run_fence: None,
+            agent_run_stood_down: false,
         }
+    }
+
+    /// This transport, its calls guarded by the holding of the agent run try
+    /// `fence` names (FIX 4747); `None` guards nothing.
+    pub(super) fn fenced(mut self, fence: Option<(&'a Vault, AttemptId)>) -> Self {
+        self.run_fence = fence;
+        self
     }
 }
 
@@ -526,19 +562,36 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
     for ScopedResultTransport<'_, S>
 {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
+        // FIX 4747 slices 5, 7: a stale agent run's call stands down before
+        // its transport call, as a connector send's fence stands it down:
+        // the fence its claim took while the run is on this host, else the
+        // run TASK's own lease (a held call a settler resumes).
+        if let Some((vault, run)) = self.run_fence
+            && !crate::agent_dispatch::agent_run_effect_permitted(vault, run)
+        {
+            self.agent_run_stood_down = true;
+            return OutboundSendOutcome::Failed(
+                crate::outbound_intent_ledger::OutboundSendFailure {
+                    kind: crate::outbound_intent_ledger::OutboundFailureKind::TransportNotStarted,
+                    code: None,
+                    secret: None,
+                },
+            );
+        }
         self.checked_bytes = call.payload().to_vec();
         let transport = self.inner.send(call);
         self.effectful_sends = self.effectful_sends.saturating_add(1);
         let scrubbable = transport.raw_result.scrubbable_field_count();
-        self.settled_body = transport.raw_result.body().map(<[u8]>::to_vec);
-        let scrubbed = scrub_outbound_result(transport.raw_result).scrubbed_field_count();
+        let (body, scrubbed) = scrub_outbound_result_with_body(transport.raw_result);
+        self.settled_body = body;
+        let scrubbed = scrubbed.scrubbed_field_count();
         self.scrubbable_result_fields = self.scrubbable_result_fields.saturating_add(scrubbable);
         self.scrubbed_result_fields = self.scrubbed_result_fields.saturating_add(scrubbed);
         transport.outcome
     }
 
-    fn settled_result(&self) -> Option<&[u8]> {
-        self.settled_body.as_deref()
+    fn take_settled_result(&mut self) -> Option<RawOutboundBody> {
+        self.settled_body.take()
     }
 
     fn remote_task(&self) -> Option<crate::outbound_intent_ledger::RemoteTaskHandle> {
@@ -632,7 +685,9 @@ impl Vault {
         Ok(verdict)
     }
 
-    /// The verdict on an answer that carries content.
+    /// The verdict on an answer that carries content: the grant's half
+    /// ([`Self::elicitation_answer_grant_verdict_in_txn`]) in one snapshot,
+    /// then the key's elicitation setting.
     fn elicitation_answer_verdict(
         &self,
         binding: &ConnectorElicitationBinding,
@@ -640,65 +695,12 @@ impl Vault {
         answer: &ConnectorElicitationAnswer<'_>,
         read: &mut Vec<EntityId>,
     ) -> crate::Result<ElicitationAnswerVerdict> {
-        let escalate = |reason: &str| -> crate::Result<ElicitationAnswerVerdict> {
-            Ok(ElicitationAnswerVerdict::Escalate(reason.to_owned()))
-        };
-        let Some(grant) = self.get_standing_outbound_grant(&binding.grant_id)? else {
-            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
-        };
-        read.push(binding.grant_id);
-        if grant.principal_ref != binding.principal_ref {
-            return escalate(escalation_code(ScopedMcpEscalationReason::WrongPrincipal));
-        }
-        let floor = {
+        let held = {
             let txn = self.store.env.read_txn()?;
-            crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?
+            self.elicitation_answer_grant_verdict_in_txn(&txn, binding, answers, read)?
         };
-        if !grant.is_active_under_policy(&floor) {
-            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
-        }
-        let Some(scope) = grant.scope.scoped_mcp_grant() else {
-            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
-        };
-        let Some(key) = self.get_connector_key(&binding.key_ref)? else {
-            return escalate(escalation_code(
-                ScopedMcpEscalationReason::ConnectorKeyUnregistered,
-            ));
-        };
-        read.push(binding.key_ref);
-        match key.status {
-            crate::connector_key::ConnectorKeyStatus::Active => {}
-            crate::connector_key::ConnectorKeyStatus::Revoked => {
-                return Ok(ElicitationAnswerVerdict::Refuse(
-                    escalation_code(ScopedMcpEscalationReason::ConnectorKeyRevoked).to_owned(),
-                ));
-            }
-            crate::connector_key::ConnectorKeyStatus::Suspended => {
-                return escalate(escalation_code(
-                    ScopedMcpEscalationReason::ConnectorKeySuspended,
-                ));
-            }
-            crate::connector_key::ConnectorKeyStatus::Pending => {
-                return escalate(escalation_code(
-                    ScopedMcpEscalationReason::ConnectorKeyPending,
-                ));
-            }
-        }
-        let (route, catalog_key) = self.route_connector_call_listing(&binding.name)?;
-        read.extend(catalog_key);
-        let Some(route) = route else {
-            return escalate("connector_not_routable");
-        };
-        let (slate_class, _, _) = self.connector_tool_class(&key, &route, &binding.tool, read)?;
-        // The answer's own content raises the class it goes under (FIX 8807).
-        let call = ScopedMcpCall {
-            server: &binding.server,
-            tool: &binding.tool,
-            payload_data_class: slate_class.max(super::tool_call::content_data_class(answers)),
-            resolved_endpoint: &binding.endpoint,
-        };
-        if let ScopedMcpConsentDecision::Escalate(reason) = evaluate_scoped_mcp_call(scope, call) {
-            return escalate(escalation_code(reason));
+        if let Some(verdict) = held {
+            return Ok(verdict);
         }
         Ok(
             match self.connector_elicitation_setting(&binding.key_ref)? {
@@ -717,5 +719,97 @@ impl Vault {
                 }
             },
         )
+    }
+
+    /// The grant's half of the verdict on an answer `answers` that carries
+    /// content, read in `txn` (a writer's included, so a check inside one
+    /// opens no read of its own): the original call's exact grant, still
+    /// there, still the principal's and active under the policy floor, on a
+    /// governing key that is there and active and a catalog that still
+    /// routes, admitting the original server, tool and endpoint and the data
+    /// class the tool's slate class and the answer's own content class (FIX
+    /// 8807) reach together, with the tool's arguments granted. `None` while
+    /// it admits the answer; otherwise its escalation, or the refusal a
+    /// revoked key meets. The key's elicitation setting is not read here.
+    /// Each grant, key and slate it reads lists in `read`. A remote task's
+    /// parked answer meets exactly this check at submit and at claim (FIX
+    /// 16029).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn elicitation_answer_grant_verdict_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &ConnectorElicitationBinding,
+        answers: &serde_json::Value,
+        read: &mut Vec<EntityId>,
+    ) -> crate::Result<Option<ElicitationAnswerVerdict>> {
+        let escalate = |reason: &str| -> crate::Result<Option<ElicitationAnswerVerdict>> {
+            Ok(Some(ElicitationAnswerVerdict::Escalate(reason.to_owned())))
+        };
+        let Some(grant) = crate::outbound_grant::standing_outbound_grant_in_txn(
+            &self.store,
+            txn,
+            &binding.grant_id,
+        )?
+        else {
+            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
+        };
+        read.push(binding.grant_id);
+        if grant.principal_ref != binding.principal_ref {
+            return escalate(escalation_code(ScopedMcpEscalationReason::WrongPrincipal));
+        }
+        let floor = crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
+        if !grant.is_active_under_policy(&floor) {
+            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
+        }
+        let Some(scope) = grant.scope.scoped_mcp_grant() else {
+            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
+        };
+        let Some(key) =
+            crate::connector_key::read_key_for_pack_in_txn(self, txn, &binding.key_ref)?
+        else {
+            return escalate(escalation_code(
+                ScopedMcpEscalationReason::ConnectorKeyUnregistered,
+            ));
+        };
+        read.push(binding.key_ref);
+        match key.status {
+            crate::connector_key::ConnectorKeyStatus::Active => {}
+            crate::connector_key::ConnectorKeyStatus::Revoked => {
+                return Ok(Some(ElicitationAnswerVerdict::Refuse(
+                    escalation_code(ScopedMcpEscalationReason::ConnectorKeyRevoked).to_owned(),
+                )));
+            }
+            crate::connector_key::ConnectorKeyStatus::Suspended => {
+                return escalate(escalation_code(
+                    ScopedMcpEscalationReason::ConnectorKeySuspended,
+                ));
+            }
+            crate::connector_key::ConnectorKeyStatus::Pending => {
+                return escalate(escalation_code(
+                    ScopedMcpEscalationReason::ConnectorKeyPending,
+                ));
+            }
+        }
+        let (route, catalog_key) = self.route_connector_call_listing_in_txn(txn, &binding.name)?;
+        read.extend(catalog_key);
+        let Some(route) = route else {
+            return escalate("connector_not_routable");
+        };
+        let (slate_class, _, _) =
+            self.connector_tool_class_in_txn(txn, &key, &route, &binding.tool, read)?;
+        // The answer's own content raises the class it goes under (FIX 8807).
+        let call = ScopedMcpCall {
+            server: &binding.server,
+            tool: &binding.tool,
+            payload_data_class: slate_class.max(super::tool_call::content_data_class(answers)),
+            resolved_endpoint: &binding.endpoint,
+        };
+        if let ScopedMcpConsentDecision::Escalate(reason) = evaluate_scoped_mcp_call(scope, call) {
+            return escalate(escalation_code(reason));
+        }
+        Ok(None)
     }
 }

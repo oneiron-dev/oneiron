@@ -20,6 +20,15 @@
 //! own, and the read answers; so does a read whose room keeps no record of
 //! its hooks.
 //!
+//! An anonymous room serves the same five reads (FIX 5166): a read that
+//! keeps nothing keeps no memory, which is all ARCH-0052 asks of the room.
+//! Its retrieval telemetry and its hooks' records take the room's Discard
+//! route, and the read keeps no base receipt, query cache, replay body, job
+//! or side row of its own. A hydrate that serves an image form needs a
+//! served-form receipt, which the room cannot keep, so that hydrate refuses
+//! as the room's writes do. Every write and every other verb keeps its
+//! refusal.
+//!
 //! Nothing here asks where the caller or the vault runs: the door's key
 //! carries its caller's Grant and ceiling as the host's own judges made it.
 
@@ -27,29 +36,13 @@ mod hooks;
 
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
-    AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, SelfAgentVerbCall, SelfDeniedResult,
+    AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, SelfAgentVerbCall, SelfCall, SelfDeniedResult,
     SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::{Error, Result};
 use crate::memory::{SessionAnswer, SessionRead};
-use crate::task_verb::sdk::AgentVerb;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
-
-/// The verbs a session-bound run reads through the room's view: an explicit
-/// list, never "every verb that writes nothing". A read joins it only with
-/// its room enumeration and projection (neighbors, claim lists and history,
-/// hybrid search and recall do not have theirs yet).
-pub(super) fn session_read(verb: AgentVerb) -> Option<SessionRead> {
-    match verb.as_str() {
-        "vault.get" => Some(SessionRead::Get),
-        "vault.hydrate" => Some(SessionRead::Hydrate),
-        "vault.refs.resolve" => Some(SessionRead::RefsResolve),
-        "vault.search.bm25" => Some(SessionRead::SearchBm25),
-        "vault.receipts" => Some(SessionRead::Receipts),
-        _ => None,
-    }
-}
 
 /// Why a read in a room gives no answer: one typed reason per cause, and the
 /// one place each becomes the stable code the guest reads.
@@ -72,6 +65,7 @@ impl SessionReadRefusal {
 
     fn denied(self, effect: SelfEffect) -> SelfDispatchOutcome {
         SelfDispatchOutcome::Denied(SelfDeniedResult {
+            hook_notice: None,
             effect,
             outcome: self.code(),
             reason_codes: Vec::new(),
@@ -80,6 +74,23 @@ impl SessionReadRefusal {
 }
 
 impl HostSelfDispatcher<'_> {
+    /// The read `call` is when this run serves it through its room's view:
+    /// a verb [`session_read`] names, from a run bound to a session that is
+    /// no scoped child, exactly the call `dispatch_agent_verb` hands to
+    /// [`Self::dispatch_session_read`]. The anonymous-room rule passes this
+    /// call and no other verb (FIX 5166).
+    pub(super) fn room_session_read(&self, call: &SelfCall) -> Option<SessionRead> {
+        let SelfCall::AgentVerb(call) = call else {
+            return None;
+        };
+        if !matches!(self.storage, ExecutorStorage::Session(_))
+            || self.scoped_child_spec().is_some()
+        {
+            return None;
+        }
+        call.verb.session_read()
+    }
+
     /// `read`, the verb `call` names, in the run's room: admitted by the
     /// run's door for its caller at this call, then read on the key it
     /// admitted, through the run-entry route, over one view of the room,

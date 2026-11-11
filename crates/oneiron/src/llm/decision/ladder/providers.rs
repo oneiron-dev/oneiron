@@ -6,12 +6,13 @@ use super::{abstained, validate_pin};
 use crate::llm::decision::types::invalid;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionImage, DecisionQuestion, DecisionRung,
-    HostRuleRef, PairedReading, ProviderPin,
+    DecisionWireLabels, HostRuleRef, PairedReading, ProviderPin,
 };
 use crate::llm::run_admission::RunAdmission;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -36,9 +37,24 @@ pub struct DecisionCall<'a> {
     /// spends admits on this run, sourced with the call's evidence, instead of a run of
     /// its own. `None` keeps today's own mint/carry behavior.
     pub run: Option<&'a RunAdmission>,
+    /// This call's wire names; canonical questions and receipts keep their identities.
+    pub labels: Option<&'a dyn DecisionWireLabels>,
 }
 
 impl DecisionCall<'_> {
+    /// The question's call-local name followed by its unchanged semantic text.
+    /// Unlabeled callers keep their original text.
+    #[must_use]
+    pub fn question_text(&self) -> Cow<'_, str> {
+        match self
+            .labels
+            .and_then(|labels| labels.question_label(self.question.id))
+        {
+            Some(label) => Cow::Owned(format!("{label}: {}", self.question.text)),
+            None => Cow::Borrowed(&self.question.text),
+        }
+    }
+
     /// The caller's score levels this call carries ([`score_levels_in`]).
     #[must_use]
     pub fn score_levels(&self) -> Option<Vec<String>> {
@@ -59,6 +75,8 @@ pub struct DecisionPack<'a> {
     /// The caller's run, when the pack is metered on it (FIX 10443): as
     /// [`DecisionCall::run`], carried into each question's call.
     pub run: Option<&'a RunAdmission>,
+    /// This call's wire names; canonical questions and receipts keep their identities.
+    pub labels: Option<&'a dyn DecisionWireLabels>,
 }
 
 impl<'a> DecisionPack<'a> {
@@ -72,6 +90,7 @@ impl<'a> DecisionPack<'a> {
             state: self.state,
             deadline: self.deadline,
             run: self.run,
+            labels: self.labels,
         })
     }
 }

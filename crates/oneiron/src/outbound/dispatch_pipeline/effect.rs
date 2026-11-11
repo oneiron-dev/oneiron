@@ -39,6 +39,27 @@ pub(super) struct EffectInput<'a, S> {
     pub(super) co_actor: Option<crate::outbound_chokepoint::CoActorAdmission>,
 }
 
+/// The sibling route this send is never admitted beside (FIX 11029): an
+/// ambient alternative names its interrupt, and an interrupt bound to an
+/// alternative names that alternative, each under the ledger identity the
+/// other is admitted by (`ledger_identity_ref`, else `intent_ref`).
+fn exclusive_route_attempt(
+    request: &OutboundDispatchRequest,
+) -> Result<Option<AttemptId>, OutboundDispatchError> {
+    let sibling = match (&request.exclusive_route_ref, &request.ambient_alternative) {
+        (Some(sibling), _) => sibling.clone(),
+        (None, Some(alternative)) => super::degrade::ambient_alternative_ref(
+            request
+                .ledger_identity_ref
+                .as_deref()
+                .unwrap_or(&request.intent_ref),
+            &alternative.surface,
+        ),
+        (None, None) => return Ok(None),
+    };
+    crate::outbound::outbound_dispatch_attempt_id(&sibling).map(Some)
+}
+
 pub(super) fn execute_admitted<S: OutboundExecutionSink>(
     input: EffectInput<'_, S>,
 ) -> Result<DispatchVerdict, OutboundDispatchError> {
@@ -81,6 +102,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
             None
         },
         co_actor,
+        exclusive_route: exclusive_route_attempt(request)?,
     };
     let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(vault)?;
     let mut transport = DispatchChokepointTransport::new(vault, request, verb_contract, sink);
@@ -188,6 +210,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         gate_reason_codes: effect_result.gate_reason_codes,
         gate_receipt_reasons: effect_result.gate_receipt_reasons,
         effector_charge: effect_result.budget_charge,
+        budget_settlement_events: effect_result.budget_settlement_events,
         effect_state: effect_result.dispatch.state,
         resolution,
         outcome,

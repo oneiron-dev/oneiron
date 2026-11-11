@@ -6,6 +6,7 @@
 use super::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
+use crate::claim::ScopedReadActorKey;
 use crate::context_projection::ContextSpec;
 use crate::edge::EdgeActorClass;
 use crate::llm::decision::catalogue::PROJECT_PROPOSAL;
@@ -13,7 +14,9 @@ use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, HeldLadder, Reversibility,
     TypedDecision, cut_text, fit_state,
 };
+use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::retrieval_depth::RetrievalDeadline;
+use crate::settings::ReadDestination;
 use crate::workspace_roster::{
     ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,
     ProjectDetectionVerdict, claim_project_detection, fail_project_detection, project_house_agent,
@@ -140,22 +143,39 @@ impl AgentDispatcher<'_> {
     }
 
     /// The source message's words as the house mind may read them; `None`
-    /// when it is gone or withheld from that scope.
+    /// when it is gone or withheld from it. The house reads a person's turn
+    /// as the Dreamer does (`dreamer_consolidation/turn_text.rs`
+    /// `message_reader`), as a vault-internal reader under the relationship
+    /// gate: a MESSAGE that names a relationship or a private scope passes
+    /// only on the house's own live grants, and one that names neither is
+    /// the vault's own and reads. Under the access gate an agent with no
+    /// grant reads no unscoped MESSAGE, so every question settled unread
+    /// before it was asked.
     pub(super) fn source_text(
         &self,
         house: EntityId,
         source: &ProjectDetectionSource,
     ) -> Result<Option<String>> {
-        let read = self
-            .vault
-            .memory(house, EdgeActorClass::Agent)
-            .get_entity_tolerant(&source.message.to_hex())
-            .map_err(|error| Error::InvalidConfig(format!("project question source: {error}")))?;
-        Ok(read
-            .value
-            .and_then(|view| view.body)
-            .and_then(|body| body.get("content")?.as_str().map(str::to_owned))
-            .filter(|text| !text.is_empty()))
+        let key = ScopedReadActorKey::with_actor_class(
+            house.to_hex(),
+            EdgeActorClass::Agent.gate_actor_class(),
+        )
+        .ok_or_else(|| Error::InvalidConfig("project question reader is not an actor".into()))?
+        .require_relationship_grants(Some(house))
+        .for_destination(&ReadDestination::on_device());
+        let reader = self.vault.scoped_read(key);
+        // The grant time is persisted before the snapshot opens, so a grant
+        // that expired while the question waited is judged expired.
+        let row = reader.with_grant_read_snapshot(|txn| {
+            reader.get_entities_parts_in_txn(txn, std::slice::from_ref(&source.message))
+        })?;
+        let Some((kind, _, body)) = row.into_iter().next().flatten() else {
+            return Ok(None);
+        };
+        if kind != ENTITY_TYPE_MESSAGE {
+            return Ok(None);
+        }
+        Ok(message_content(&body).filter(|text| !text.is_empty()))
     }
 
     /// The house mind, as an ordinary attempt, drafts the card. Its brief
@@ -184,6 +204,7 @@ impl AgentDispatcher<'_> {
                 now,
             },
             AgentSpawnContext::default()
+                .with_caller_origin(super::CallerOrigin::NativeHost)
                 .with_context_spec(ContextSpec::default().with_briefing(brief.to_string()))
                 .with_origin_conversation(source.conversation),
         )
@@ -219,4 +240,21 @@ fn ask(
         Reversibility::ReversibleRead,
         &RetrievalDeadline::hard(Instant::now(), detection.budget),
     )
+}
+
+/// The `content` string of a stored MESSAGE body: one MessagePack map whose
+/// keys are not ordered (a document-backed row carries `content` last).
+/// `None` for a body that is not one map, or that has no string `content`.
+fn message_content(body: &[u8]) -> Option<String> {
+    let mut cursor = body;
+    let rmpv::Value::Map(entries) = rmpv::decode::read_value(&mut cursor).ok()? else {
+        return None;
+    };
+    if !cursor.is_empty() {
+        return None;
+    }
+    entries
+        .into_iter()
+        .find(|(key, _)| key.as_str() == Some("content"))
+        .and_then(|(_, value)| value.as_str().map(str::to_owned))
 }

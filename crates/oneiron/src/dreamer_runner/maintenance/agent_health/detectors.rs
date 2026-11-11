@@ -99,12 +99,18 @@ pub(super) fn long_wait_findings(
         if queue * 2 > wait {
             counter.push(AgentHealthCounter::QueueWait);
         }
+        let (exact_dial, exact_measured) = if dials.wait_share.is_finite() && share.is_finite() {
+            (Some(dials.wait_share), Some(share))
+        } else {
+            (None, None)
+        };
         out.push(Finding {
             subject: dispatch.actor,
             signal: AgentHealthSignal::LongWait,
             task: task_of(record),
             attempt: Some(record.id),
             generation: Some(record.attempt_count),
+            source_rows: None,
             evidence,
             window: (record.created_at, end),
             // A live share moves on every review; the DIAGNOSTIC carries it in
@@ -112,6 +118,8 @@ pub(super) fn long_wait_findings(
             actual: if live { permille / 100 * 100 } else { permille },
             dial: (dials.wait_share * 1000.0).round() as i64,
             measured: permille,
+            exact_dial,
+            exact_measured,
             counter,
             confession: None,
             blocked: false,
@@ -239,12 +247,18 @@ pub(super) fn cost_spike_findings(
             continue;
         };
         let permille = (ratio * 1000.0).round() as i64;
+        let (exact_dial, exact_measured) = if dials.cost_spike.is_finite() && ratio.is_finite() {
+            (Some(dials.cost_spike), Some(ratio))
+        } else {
+            (None, None)
+        };
         out.push(Finding {
             subject: dispatch.actor,
             signal: AgentHealthSignal::CostSpike,
             task: task_of(record),
             attempt: Some(record.id),
             generation: Some(record.attempt_count),
+            source_rows: None,
             evidence: vec![attempt],
             window: (record.created_at, end),
             // A live ratio moves on every review; the DIAGNOSTIC carries it in
@@ -252,6 +266,8 @@ pub(super) fn cost_spike_findings(
             actual: if live { permille / 500 * 500 } else { permille },
             dial: (dials.cost_spike * 1000.0).round() as i64,
             measured: permille,
+            exact_dial,
+            exact_measured,
             counter,
             confession: None,
             blocked: false,
@@ -279,42 +295,78 @@ pub(super) fn said_blocked(
     since: u64,
     attempt: Option<AttemptId>,
 ) -> Result<bool> {
-    let recent = {
-        let rtxn = vault.store.env.read_txn()?;
-        if let Some(task) = task
-            && crate::task_verb::task_is_blocked_in(vault, &rtxn, task)?
-        {
-            return Ok(true);
-        }
-        let mut recent = Vec::new();
-        for id in vault.filtered_edge_peers(
-            &rtxn,
-            EdgeDirection::In,
-            &actor,
-            EdgeKind::AuthoredBy,
-            Some(crate::registry::ENTITY_TYPE_MESSAGE),
-        )? {
-            let at = vault
-                .get_raw_in(&rtxn, &id)?
-                .as_deref()
-                .and_then(crate::batch::EntityMetadataHeader::parse)
-                .map_or(0, |header| unix_secs(header.occurred_start));
-            if at >= since {
-                recent.push(id);
+    said_blocked_sourced(vault, actor, task, since, attempt).map(|(blocked, _)| blocked)
+}
+
+/// The blocked mark beside every TASK/MESSAGE row read to decide it. An
+/// absent TASK or dangling MESSAGE edge leaves the read set unknown.
+pub(super) fn said_blocked_sourced(
+    vault: &Vault,
+    actor: EntityId,
+    task: Option<EntityId>,
+    since: u64,
+    attempt: Option<AttemptId>,
+) -> Result<(bool, Option<Vec<EntityId>>)> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut source_rows = Some(Vec::new());
+    if let Some(task) = task {
+        match crate::task_verb::task_is_blocked_with_source_in(vault, &rtxn, task)? {
+            Some((blocked, row)) => {
+                source_rows = Some(vec![row]);
+                if blocked {
+                    return Ok((true, source_rows));
+                }
             }
-        }
-        recent
-    };
-    // The report reader opens its own snapshot. A report the host bound to
-    // another attempt of the same agent speaks for that one only.
-    for id in recent {
-        if crate::code_run::blocked::read_blocked_receipt(vault, &id)?
-            .is_some_and(|receipt| receipt.speaks_for(attempt))
-        {
-            return Ok(true);
+            None => source_rows = None,
         }
     }
-    Ok(false)
+    let mut recent = Vec::new();
+    for id in vault.filtered_edge_peers(
+        &rtxn,
+        EdgeDirection::In,
+        &actor,
+        EdgeKind::AuthoredBy,
+        Some(crate::registry::ENTITY_TYPE_MESSAGE),
+    )? {
+        let raw = vault.get_raw_in(&rtxn, &id)?;
+        if raw.is_some() {
+            if let Some(rows) = &mut source_rows {
+                rows.push(id);
+            }
+        } else {
+            source_rows = None;
+        }
+        let at = raw
+            .as_deref()
+            .and_then(crate::batch::EntityMetadataHeader::parse)
+            .map_or(0, |header| unix_secs(header.occurred_start));
+        if at >= since {
+            recent.push(id);
+        }
+    }
+    // Re-read one report at a time in the same snapshot as its header.
+    for id in recent {
+        let Some(raw) = vault.get_raw_sealed_in_txn(&rtxn, &id)? else {
+            source_rows = None;
+            continue;
+        };
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+            continue;
+        };
+        if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE
+            || raw.len() <= crate::batch::ENTITY_METADATA_HEADER_LEN
+        {
+            continue;
+        }
+        if crate::code_run::blocked::decode_blocked_receipt(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )?
+        .is_some_and(|receipt| receipt.speaks_for(attempt))
+        {
+            return Ok((true, source_rows));
+        }
+    }
+    Ok((false, source_rows))
 }
 
 /// A stored time in seconds, whether it was written in seconds or in
@@ -445,11 +497,14 @@ fn dup_finding(
         task: task_of(record),
         attempt: Some(record.id),
         generation: Some(record.attempt_count),
+        source_rows: None,
         evidence,
         window: (record.created_at, terminal_or_activity_at(record)?),
         actual: 1,
         dial: 0,
         measured: 1,
+        exact_dial: None,
+        exact_measured: None,
         counter: Vec::new(),
         confession: None,
         blocked: false,
@@ -514,11 +569,14 @@ pub(super) fn misalignment_findings(
             task: task_of(record),
             attempt: Some(record.id),
             generation: Some(record.attempt_count),
+            source_rows: None,
             evidence,
             window: (sealed.sealed_at, checked_at),
             actual: count,
             dial: 0,
             measured: count,
+            exact_dial: None,
+            exact_measured: None,
             counter: Vec::new(),
             confession: Some(attempt),
             blocked: false,
@@ -564,11 +622,14 @@ pub(super) fn widen_denial_findings(
             task: task_of(record),
             attempt: Some(record.id),
             generation: Some(record.attempt_count),
+            source_rows: None,
             evidence: vec![attempt],
             window: (record.claimed_at.unwrap_or(record.created_at), end),
             actual: count,
             dial: dials.widen_denials as i64,
             measured: count,
+            exact_dial: None,
+            exact_measured: None,
             counter: Vec::new(),
             confession: None,
             blocked: false,
@@ -626,11 +687,14 @@ pub(super) fn unsupported_done_findings(
             task: Some(task),
             attempt: Some(record.id),
             generation: Some(record.attempt_count),
+            source_rows: None,
             evidence: vec![attempt, task],
             window: (record.claimed_at.unwrap_or(record.created_at), end),
             actual: count,
             dial: 0,
             measured: count,
+            exact_dial: None,
+            exact_measured: None,
             counter: Vec::new(),
             confession: None,
             blocked: false,

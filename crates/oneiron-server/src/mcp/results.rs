@@ -254,18 +254,32 @@ fn board_budget_source_value(metadata: &BoardRenderMetadata) -> Value {
     }
 }
 
-/// The three parts `setup_oneiron` returns in ONE result.
+/// The agent's turn-one self brief a `setup_oneiron` page one carries for
+/// its connection (FIX 17594 D4, Engine call MCP A): the client places
+/// `prefix`, unchanged, before its first model turn. A continuation restates
+/// the brief its page one carried.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpSetupSelfBrief {
+    /// The rendered brief.
+    pub prefix: String,
+}
+
+/// The three parts `setup_oneiron` returns in ONE result, and the
+/// connection's self brief when its page one carries one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct McpSetupPayload {
     pub board: McpBoardKeyframe,
     pub verb_grammar: Vec<McpGeneratedVerbTool>,
     pub instructions: &'static str,
+    /// `None` for a connection with no self brief, or one whose brief did
+    /// not prepare: the result names no `self_brief`.
+    pub self_brief: Option<McpSetupSelfBrief>,
 }
 
 impl McpSetupPayload {
     #[must_use]
     pub fn to_value(&self) -> Value {
-        json!({
+        let mut value = json!({
             "board": self.board.to_value(),
             "verb_grammar": {
                 "schema_version": MCP_VERB_GRAMMAR_SCHEMA_VERSION,
@@ -281,7 +295,11 @@ impl McpSetupPayload {
                     .collect::<Vec<_>>(),
             },
             "instructions": self.instructions,
-        })
+        });
+        if let (Some(brief), Some(object)) = (&self.self_brief, value.as_object_mut()) {
+            object.insert("self_brief".to_owned(), json!({ "prefix": brief.prefix }));
+        }
+        value
     }
 }
 
@@ -317,6 +335,7 @@ pub fn mcp_setup_payload(
         },
         verb_grammar: generated_verb_tools()?,
         instructions: MCP_SETUP_INSTRUCTIONS,
+        self_brief: None,
     })
 }
 

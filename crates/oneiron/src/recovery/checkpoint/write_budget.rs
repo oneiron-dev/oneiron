@@ -136,6 +136,14 @@ impl<'b> RestoreRoom<'b> {
     }
 
     /// Claims the whole copy before anything of it is made or opened.
+    /// This room with the files of `lens` landing beside the image's: the
+    /// live vault's removal archive files a restore over it carries (FIX
+    /// 3679).
+    pub(super) fn with_files(mut self, lens: impl Iterator<Item = u64>) -> Self {
+        self.bodies = lens.fold(self.bodies, u64::saturating_add);
+        self
+    }
+
     pub(super) fn admit(&self) -> Result<()> {
         hold(
             self.budget,

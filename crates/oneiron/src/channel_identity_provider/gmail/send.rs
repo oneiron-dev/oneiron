@@ -4,7 +4,8 @@
 //! pieces, in the order a send meets them:
 //!
 //! * **A frozen plan.** [`GmailSendPlan`] fixes From (the member's mailbox and
-//!   nothing else), To, Subject, body, Date, the RFC `Message-ID` and the reply
+//!   nothing else), To (and, for one message to several, every To and Cc in
+//!   its role), Subject, body, Date, the RFC `Message-ID` and the reply
 //!   headers BEFORE anyone approves anything. Its content ref is a digest of
 //!   all of them, the host puts that ref on `intent.content_ref`, and the
 //!   canonical mail approve-once digest binds it. So the press the owner gives
@@ -27,7 +28,7 @@
 //!   resending: `users.messages.send` is not idempotent.
 //! * **Thread record.** A delivered send records its `(identity × Message-ID)`
 //!   passport with its References and In-Reply-To, beside the Gmail threadId on
-//!   the receipt, and touches comm history for the recipient.
+//!   the receipt, and touches comm history for every recipient.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -43,9 +44,9 @@ use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound::{
-    OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
+    EngineSendId, OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
     OutboundDispatchResult, OutboundExecutionOutcome, OutboundExecutionRequest,
-    OutboundExecutionSink,
+    OutboundExecutionSink, OutboundRecipient, OutboundRecipientRole, SentLookup, SentLookupTarget,
 };
 use crate::secret_lease::DoorInjectionReceipt;
 use crate::write_envelope::thread_claim::{
@@ -130,8 +131,15 @@ pub struct GmailSendPlan {
     from_mailbox: String,
     from_display_name: Option<String>,
     to: String,
+    /// Every recipient of one message to several, canonical, in its role and
+    /// place, `to` first (fix list row 17645); empty for a send to `to`
+    /// alone.
+    recipients: Vec<OutboundRecipient>,
     subject: String,
     body_text: String,
+    /// The HTML alternative, written again by the mail HTML gate; `None`
+    /// for a plain-text send (fix list row 17645).
+    body_html: Option<String>,
     date: String,
     message_id: CanonicalMessageId,
     reply: Option<GmailReplyThread>,
@@ -199,8 +207,10 @@ impl GmailSendPlan {
             from_mailbox,
             from_display_name: None,
             to,
+            recipients: Vec::new(),
             subject: subject.to_owned(),
             body_text: body_text.to_owned(),
+            body_html: None,
             date,
             message_id,
             reply,
@@ -208,6 +218,46 @@ impl GmailSendPlan {
         };
         plan.seal();
         Ok(plan)
+    }
+
+    /// Sends `html` as the HTML alternative of the plan's text, written
+    /// again through the mail HTML gate first (fix list row 17645): the text
+    /// part stays, so a reader without HTML reads the same reply.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for HTML the gate refuses.
+    pub fn with_html(mut self, html: &str) -> Result<Self> {
+        self.body_html =
+            Some(crate::channel_identity_provider::mail_html::sanitize_mail_html(html)?);
+        self.seal();
+        Ok(self)
+    }
+
+    /// Sends this plan as one message to every recipient of `recipients`, To
+    /// and Cc in their roles, the plan's own recipient first in To (fix list
+    /// row 17645). An empty list keeps the send to its one recipient.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for a malformed address, or a list that is no
+    /// message's whole recipient list
+    /// ([`OutboundRecipient::check_list`]).
+    pub fn with_recipients(mut self, recipients: &[OutboundRecipient]) -> Result<Self> {
+        let recipients = recipients
+            .iter()
+            .map(|named| -> Result<OutboundRecipient> {
+                Ok(OutboundRecipient::new(
+                    named.role,
+                    canonical_recipient(&named.address)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        OutboundRecipient::check_list(&self.to, &recipients)
+            .map_err(|reason| Error::InvalidConfig(format!("gmail send recipients: {reason}")))?;
+        self.recipients = recipients;
+        self.seal();
+        Ok(self)
     }
 
     /// Sends as `alias`, one of the mailbox's verified send-as aliases the
@@ -254,10 +304,23 @@ impl GmailSendPlan {
         &self.content_ref
     }
 
-    /// The canonical recipient this plan sends to.
+    /// The canonical recipient this plan sends to: its first, in To.
     #[must_use]
     pub fn recipient(&self) -> &str {
         &self.to
+    }
+
+    /// Every recipient of a plan sent to several, in its role and place;
+    /// empty for one sent to [`Self::recipient`] alone.
+    #[must_use]
+    pub fn recipients(&self) -> &[OutboundRecipient] {
+        &self.recipients
+    }
+
+    /// The HTML alternative this plan sends, as the mail HTML gate wrote it.
+    #[must_use]
+    pub fn body_html(&self) -> Option<&str> {
+        self.body_html.as_deref()
     }
 
     /// The RFC `Message-ID` this plan mints.
@@ -300,6 +363,22 @@ impl GmailSendPlan {
                 hasher.update(&[0]);
             }
         }
+        // A plain-text plan seals as before; an HTML alternative follows the
+        // self-delimiting reply half (fix list row 17645).
+        if let Some(html) = &self.body_html {
+            hasher.update(b"html");
+            hash_part(&mut hasher, html);
+        }
+        // So do the recipients of a message to several, counted, each in its
+        // role and place; a plan to one seals as before.
+        if !self.recipients.is_empty() {
+            hasher.update(b"recipients");
+            hasher.update(&(self.recipients.len() as u64).to_le_bytes());
+            for named in &self.recipients {
+                hash_part(&mut hasher, named.role.as_str());
+                hash_part(&mut hasher, &named.address);
+            }
+        }
         self.content_ref = format!("{GMAIL_SEND_PLAN_REF_PREFIX}{}", hasher.finalize().to_hex());
     }
 
@@ -321,7 +400,11 @@ impl GmailSendPlan {
             ),
             None => push_header(&mut out, "From", &self.from_mailbox),
         }
-        push_header(&mut out, "To", &self.to);
+        if self.recipients.is_empty() {
+            push_header(&mut out, "To", &self.to);
+        } else {
+            push_recipient_headers(&mut out, &self.recipients);
+        }
         push_header(&mut out, "Subject", &encode_word(&self.subject));
         push_header(&mut out, "Date", &self.date);
         push_header(&mut out, "Message-ID", &format!("<{}>", self.message_id));
@@ -350,15 +433,11 @@ impl GmailSendPlan {
             push_header(&mut out, name, value);
         }
         push_header(&mut out, "MIME-Version", "1.0");
-        push_header(&mut out, "Content-Type", "text/plain; charset=UTF-8");
-        push_header(&mut out, "Content-Transfer-Encoding", "base64");
-        out.push_str("\r\n");
-        let body = self.body_text.replace("\r\n", "\n").replace('\n', "\r\n");
-        let encoded = base64::engine::general_purpose::STANDARD.encode(body.as_bytes());
-        for chunk in encoded.as_bytes().chunks(76) {
-            out.push_str(std::str::from_utf8(chunk).unwrap_or_default());
-            out.push_str("\r\n");
-        }
+        crate::channel_identity_provider::mail_html::push_mail_body(
+            &mut out,
+            &self.body_text,
+            self.body_html.as_deref(),
+        );
         Ok(out.into_bytes())
     }
 }
@@ -385,6 +464,25 @@ fn push_header(out: &mut String, name: &str, value: &str) {
     out.push_str(": ");
     out.push_str(value);
     out.push_str("\r\n");
+}
+
+/// The `To` and `Cc` headers of a message to several: each role's addresses
+/// in their place, one per folded line (fix list row 17645); no `Cc` when it
+/// names none.
+fn push_recipient_headers(out: &mut String, recipients: &[OutboundRecipient]) {
+    for (role, name) in [
+        (OutboundRecipientRole::To, "To"),
+        (OutboundRecipientRole::Cc, "Cc"),
+    ] {
+        let addresses = recipients
+            .iter()
+            .filter(|named| named.role == role)
+            .map(|named| named.address.as_str())
+            .collect::<Vec<_>>();
+        if !addresses.is_empty() {
+            push_header(out, name, &addresses.join(",\r\n "));
+        }
+    }
 }
 
 /// The plan owns these; a hygiene header may not restate one.
@@ -474,7 +572,13 @@ pub enum GmailSendWireError {
     Uncertain(String),
 }
 
-/// The Gmail send protocol seam: exactly one method, sending.
+/// The mailbox's sent search did not answer (FIX 4747): the grant cannot
+/// search, the request failed or timed out, or its answer did not read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GmailSentSearchUnanswered;
+
+/// The Gmail send protocol seam: sending, and the sent search a send that
+/// may have gone out is looked up by.
 ///
 /// Implementations MUST resolve the token through
 /// `authority.with_token_at_door` and make the provider request inside its
@@ -493,6 +597,22 @@ pub trait GmailSendWire {
         raw: &[u8],
         gmail_thread_id: Option<&str>,
     ) -> std::result::Result<GmailSentMessage, GmailSendWireError>;
+
+    /// Searches the mailbox's SENT for the message carrying
+    /// `rfc_message_id` with the send grant's access (FIX 4747): its Gmail
+    /// message id, or `None` when the search answered and found none. One
+    /// bounded request, metadata only. By default a wire cannot search.
+    ///
+    /// # Errors
+    ///
+    /// [`GmailSentSearchUnanswered`] when the search itself did not answer.
+    fn find_sent_message(
+        &self,
+        _authority: &GmailSendAuthority<'_>,
+        _rfc_message_id: &str,
+    ) -> std::result::Result<Option<String>, GmailSentSearchUnanswered> {
+        Err(GmailSentSearchUnanswered)
+    }
 }
 
 /// A mailbox- and identity-bound SEND handle supplied to the host wire.
@@ -573,6 +693,15 @@ impl<'a, W> GmailSendSink<'a, W> {
         self.plans.insert(plan.content_ref.clone(), plan);
     }
 
+    /// Registers a plan the served sink composed from the typed outbound
+    /// content `content_ref` names, under that ref: the send's approval binds
+    /// the content ref, and the plan's body is the text it loads (FIX 1168).
+    #[must_use]
+    pub fn with_content_plan(mut self, content_ref: &str, plan: GmailSendPlan) -> Self {
+        self.plans.insert(content_ref.to_owned(), plan);
+        self
+    }
+
     /// The plan a content ref names, if registered.
     #[must_use]
     pub fn plan(&self, content_ref: &str) -> Option<&GmailSendPlan> {
@@ -615,6 +744,11 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
         let recipient = request.counterparty_ref.unwrap_or(&request.intent.target);
         if plan.to != recipient || plan.to != request.intent.target {
             return OutboundExecutionOutcome::failed("gmail_send_target_mismatch");
+        }
+        // Fix list row 17645: the message's recipients are the admitted
+        // ones, every one in its role and place, or it does not send.
+        if plan.recipients != request.intent.recipients {
+            return OutboundExecutionOutcome::failed("gmail_send_recipients_mismatch");
         }
         if self
             .adapter
@@ -715,5 +849,68 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
                     .with_possible_delivery()
             }
         }
+    }
+
+    /// FIX 4747: the mailbox's SENT searched for the Message-ID the send's
+    /// frozen plan carries. Gmail keeps the plan's own Message-ID, a pure
+    /// function of the plan (its logical ref, From, To, Subject and body),
+    /// which the TASK binds by content ref; the engine send id is not on
+    /// this wire. No plan here, or a search that did not answer, cannot
+    /// tell; an empty answer from a search that answered is not sent.
+    fn lookup_sent(
+        &mut self,
+        _engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        if target.intent.channel != EMAIL_CHANNEL
+            || target.verb_contract.kind != "send"
+            || target
+                .channel_identity_ref
+                .is_some_and(|identity| identity != self.identity_id)
+        {
+            return SentLookup::CannotTell;
+        }
+        let Some(content_ref) = target.intent.content_ref.as_deref() else {
+            return SentLookup::CannotTell;
+        };
+        if !self.plans.contains_key(content_ref)
+            && let Ok(Some(plan)) = GmailSendPlan::kept(self.vault, content_ref)
+        {
+            self.add_plan(plan);
+        }
+        let Some(plan) = self.plans.get(content_ref) else {
+            return SentLookup::CannotTell;
+        };
+        let authority = GmailSendAuthority {
+            adapter: self.adapter,
+            vault: self.vault,
+            identity_id: self.identity_id,
+            used: Cell::new(false),
+        };
+        match self
+            .wire
+            .find_sent_message(&authority, plan.message_id.as_str())
+        {
+            Ok(Some(gmail_message_id))
+                if validate_gmail_id(
+                    &gmail_message_id,
+                    super::MAX_GMAIL_MESSAGE_ID_BYTES,
+                    "gmail message id",
+                )
+                .is_ok() =>
+            {
+                SentLookup::Sent {
+                    provider_ref: format!("gmail:{gmail_message_id}"),
+                }
+            }
+            Ok(None) => SentLookup::NotSent,
+            Ok(Some(_)) | Err(GmailSentSearchUnanswered) => SentLookup::CannotTell,
+        }
+    }
+
+    /// One `users.messages.send` delivers the plan's raw message to every
+    /// recipient its headers name (fix list row 17645).
+    fn delivers_recipient_lists(&self) -> bool {
+        true
     }
 }

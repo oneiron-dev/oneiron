@@ -58,9 +58,10 @@ pub use self::unified::{
     UnifiedInboxGroup, UnifiedInboxGroupCursor, UnifiedInboxGroupPage,
 };
 
-pub(crate) use self::notification::{notification_id, scrub_finding_notification_subjects_in_txn};
+pub(crate) use self::notification::{notification_id, scrub_finding_notification_actor_in_txn};
 pub(crate) use self::projection::inbox_claim_hash;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

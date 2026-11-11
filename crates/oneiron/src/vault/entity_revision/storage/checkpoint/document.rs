@@ -39,7 +39,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::identity_topology::author_carrier_actor;
 use crate::note::checkpoint::{join_core_row, split_core_row};
-use crate::note::decode_note_body_in_txn;
+use crate::note::decode_note_core_in_txn;
 use crate::registry::{ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTE, entity_type_registry_entry};
 use crate::side_table::{SideCodec, SideKey, SideTable};
 use crate::store::ManifestDbs;
@@ -83,9 +83,10 @@ const MIXED_KINDS: &str = "a revision document whose rows are of two kinds";
 /// row, or a ref no retained frontier binds.
 const BINDING_UNPROVED: &str = "a revision binding whose origin does not prove";
 /// A raw-derived ref an actor's erase would change (lead pick (b)).
-const RAW_REF_CHANGES: &str = "a raw-derived revision ref an actor's erase would change";
+pub(super) const RAW_REF_CHANGES: &str = "a raw-derived revision ref an actor's erase would change";
 /// A revision whose short-reference hash byte an actor's erase would change.
-const SHORT_REF_CHANGES: &str = "a revision short-reference hash an actor's erase would change";
+pub(super) const SHORT_REF_CHANGES: &str =
+    "a revision short-reference hash an actor's erase would change";
 
 /// A projection's outcome: the value, or why its row stays under the
 /// vault-wide seal.
@@ -374,6 +375,10 @@ fn binding_origin(
     revision: RevisionRef,
     encoded: &[u8],
 ) -> Option<(Origin, Vec<u8>)> {
+    let encoded = super::super::frontier::FrontierEntry::decode(encoded)
+        .ok()?
+        .document()
+        .ok()?;
     let frontier = Frontiers::decode(encoded).ok()?;
     let raw = doc_raw(&doc.fork_at(&frontier).ok()?).ok()?;
     if reference(id, encoded) == revision {
@@ -441,6 +446,9 @@ impl Bindings {
             entities.insert(row.key, Bound::default());
         }
         for row in states {
+            if row.value.has_doc {
+                entities.entry(row.key).or_insert_with(Bound::default);
+            }
             if let Some(bound) = entities.get_mut(&row.key) {
                 let state = &row.value;
                 bound.state = state.has_doc.then_some([state.live, state.indexed]);
@@ -460,12 +468,35 @@ impl Bindings {
         Self { entities }
     }
 
+    /// Native metadata still proves when no generic document was materialized.
+    pub(super) fn check_native_without_doc(
+        &self,
+        dbs: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+    ) -> Result<()> {
+        for (id, bound) in &self.entities {
+            let staged = staged_revisions(dbs, txn, id)?;
+            super::native::check_without_doc(
+                dbs,
+                txn,
+                id,
+                bound.state.as_ref(),
+                &bound.frontiers,
+                &bound.identities,
+                &staged,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Refuses `id`'s document `doc` unless each binding the view holds for
     /// it stays as it is under every opening of the document's actors, and
     /// each ref its state, its reverse rows and its `staged` inputs name is
     /// one of its retained frontiers.
     fn keeps(
         &self,
+        dbs: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
         id: &EntityId,
         doc: &LoroDoc,
         common: Option<&crate::entity_doc::EntityDoc>,
@@ -480,13 +511,20 @@ impl Bindings {
         };
         let mut retained = BTreeSet::new();
         for (revision, encoded) in &bound.frontiers {
-            if binding_origin(id, doc, *revision, encoded).is_some() {
+            if let Some(selected) = super::native::binding(dbs, txn, id, *revision, encoded)? {
+                if let Err(reason) = super::native::keeps_projected_binding(&selected, encoded) {
+                    return Ok(Err(reason));
+                }
+            } else if binding_origin(id, doc, *revision, encoded).is_some() {
                 if let Err(reason) = keeps_binding(id, doc, *revision, encoded) {
                     return Ok(Err(reason));
                 }
             } else {
                 // An invalid generic encoding keeps its original unclassified outcome.
-                if Frontiers::decode(encoded).is_err() {
+                if super::super::frontier::FrontierEntry::decode(encoded)
+                    .and_then(|entry| entry.document())
+                    .is_err()
+                {
                     return Ok(Err(unproved));
                 }
                 let Some(common) = common else {
@@ -544,7 +582,7 @@ fn project(
     let staged = staged_revisions(dbs, txn, &row.key)?;
     let common = crate::entity_doc::record_document(dbs, txn, &row.key, None)?;
     Ok(bindings
-        .keeps(&row.key, &doc, common.as_ref(), &staged)?
+        .keeps(dbs, txn, &row.key, &doc, common.as_ref(), &staged)?
         .map(|()| split))
 }
 
@@ -575,7 +613,7 @@ fn note_kinds_held(
         if body.is_empty() {
             continue;
         }
-        match decode_note_body_in_txn(dbs, txn, body) {
+        match decode_note_core_in_txn(dbs, txn, body) {
             Ok(_) => {}
             Err(Error::Record(_)) => return Ok(Err(Unresolved::UnknownKind)),
             Err(Error::CorruptedIndex(_)) => return Ok(Err(Unresolved::Undecodable)),
@@ -685,6 +723,7 @@ pub(super) fn preflight(
 /// owner's own, and only one.
 fn staged_document(opened: &OpenedOwnerRows) -> Result<Option<EntityId>> {
     let mut entity = None;
+    let mut document = false;
     for part in &opened.rows {
         // An author carrier's document is an actor-keyed row: its slot
         // names no entity, and no binding of it is checked (FIX 17143).
@@ -692,8 +731,29 @@ fn staged_document(opened: &OpenedOwnerRows) -> Result<Option<EntityId>> {
             continue;
         }
         let at = part.at();
-        if at.in_table(DOC.decl()) && entity.replace(table_key(DOC, at)?).is_some() {
-            return Err(rows::bad_part());
+        let candidate = if at.in_table(DOC.decl()) {
+            if document {
+                return Err(rows::bad_part());
+            }
+            document = true;
+            Some(table_key(DOC, at)?)
+        } else if let RowPart::Exact { value, .. } = part
+            && at.in_table(FRONTIER.decl())
+        {
+            match super::super::frontier::FrontierEntry::decode(value)
+                .map_err(|_| rows::bad_part())?
+            {
+                super::super::frontier::FrontierEntry::Document(_) => None,
+                _ => Some(table_key(FRONTIER, at)?.0),
+            }
+        } else {
+            None
+        };
+        if let Some(candidate) = candidate {
+            if entity.is_some_and(|held| held != candidate) {
+                return Err(rows::bad_part());
+            }
+            entity = Some(candidate);
         }
     }
     let owner = OwnerRef {
@@ -729,8 +789,10 @@ pub(super) fn finish_restore_in_txn(
     staged: &Staged,
 ) -> Result<()> {
     let id = &staged.entity;
-    let bytes = DOC.get(dbs, txn, id)?.ok_or_else(rows::bad_part)?;
-    let doc = full_doc(&bytes).map_err(|_| rows::bad_part())?;
+    let doc = DOC
+        .get(dbs, txn, id)?
+        .map(|bytes| full_doc(&bytes).map_err(|_| rows::bad_part()))
+        .transpose()?;
     let state = STATE.get(dbs, txn, id)?.filter(|state| state.has_doc);
     let state = state.ok_or_else(rows::bad_part)?;
     let common = crate::entity_doc::record_document(dbs, txn, id, None)?;
@@ -738,10 +800,18 @@ pub(super) fn finish_restore_in_txn(
     for ((_, revision), encoded) in FRONTIER.scan_from(dbs, txn, id.as_bytes())? {
         let reverse = IDENTITY.get(dbs, txn, &revision)?;
         let revision = RevisionRef(revision);
-        let bound = if binding_origin(id, &doc, revision, &encoded).is_some() {
+        let bound = if super::native::binding(dbs, txn, id, revision, &encoded)?.is_some() {
+            true
+        } else if doc
+            .as_ref()
+            .is_some_and(|doc| binding_origin(id, doc, revision, &encoded).is_some())
+        {
             true
         } else {
-            if Frontiers::decode(&encoded).is_err() {
+            if super::super::frontier::FrontierEntry::decode(&encoded)
+                .and_then(|entry| entry.document())
+                .is_err()
+            {
                 return Err(rows::bad_part());
             }
             match common.as_ref() {

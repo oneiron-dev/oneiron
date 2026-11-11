@@ -648,6 +648,95 @@ pub fn export_promotion_snapshot(
     export_window_replacement_for(vault, key, doc, Some(&newest), withhold)
 }
 
+/// The state-only answer to a version vector, whatever it holds (FIX 4748, ARCH-0023b
+/// `#peer-fetch`: "It serves state-only copies, never history"): the history-free snapshot of
+/// `doc`'s current state for the machine `withhold` names, rooted at its newest root as a
+/// promotion's is ([`export_promotion_snapshot`]) and never before `baseline`, always a
+/// [`WindowExport::Replacement`]. A window withheld from that machine is answered as
+/// [`export_window_since_for`] answers it, with the update that carries nothing. A machine served
+/// as a peer gets this and nothing else of a window, whatever vector it sends, and none when it
+/// holds every operation already ([`crate::sync::peer_route::peer_state_copy_owed`]).
+///
+/// # Errors
+/// Typed `HistoryFreeRootUnavailable` when no root at or past both floors passes the history
+/// check; store and export errors.
+pub fn export_window_state_for(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    baseline: Option<&VersionVector>,
+    withhold: super::Withhold<'_>,
+) -> Result<WindowExport> {
+    let mut floor = promotion_baseline(doc)?;
+    if let Some(baseline) = baseline {
+        floor.merge(baseline);
+    }
+    match export_window_replacement_for(vault, key, doc, Some(&floor), withhold)? {
+        Some(snapshot) => Ok(WindowExport::Replacement(snapshot)),
+        None => super::device_only::withheld_window_update().map(WindowExport::Update),
+    }
+}
+
+/// What a private world's sealed mirror ships ([`export_sealed_mirror_snapshot`]).
+pub(crate) struct SealedMirrorExport {
+    /// The snapshot.
+    pub(crate) bytes: Vec<u8>,
+    /// Whether its history passed the check: the snapshot may then be rooted later than the
+    /// mirror, so storing it destroys history a legal hold may keep.
+    pub(crate) checked: bool,
+}
+
+/// The snapshot a private world's sealed mirror of window `key` ships (FIX 17210): every export
+/// scrub runs over `doc` first, with nothing withheld (only the world's key opens the section it
+/// rides). When a scrub took something out, the window is pinned history-free, or the mirror is
+/// shallow (its root may hold what a later scrub took out), its history then passes the check a
+/// pinned window's does: it ships whole when that passes, else rooted at its newest operation, or
+/// cut at the mirror's one head when no root passes. Typed `HistoryFreeRootUnavailable` when that
+/// cut is not proved or its state does not pass either: nothing unchecked ships. Any other mirror
+/// ships whole, its full history, as before.
+pub(crate) fn export_sealed_mirror_snapshot(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<SealedMirrorExport> {
+    let Scrubbed { check, .. } = scrub_for_export(
+        vault,
+        key,
+        doc,
+        &VersionVector::default(),
+        super::Withhold::Nothing,
+    )?;
+    let check = match check {
+        Some(check) => check,
+        None if doc.is_shallow() => HistoryCheck::read(vault, key, doc)?,
+        None => {
+            return Ok(SealedMirrorExport {
+                bytes: export_snapshot(doc)?,
+                checked: false,
+            });
+        }
+    };
+    let bytes = match history_free_snapshot(doc, Some(&check), None) {
+        Err(Error::Sync(SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::HistoryFreeRootUnavailable,
+        })) => {
+            // The mirror has no observers: the barrier the cut commits
+            // reaches no window.
+            let cut = super::shallow::strict_window_cut(doc)?;
+            if cut.proved && check.root_ships(doc, &doc.oplog_frontiers()) {
+                cut.bytes
+            } else {
+                return Err(root_unavailable());
+            }
+        }
+        other => other?,
+    };
+    Ok(SealedMirrorExport {
+        bytes,
+        checked: true,
+    })
+}
+
 /// What the export scrubs left.
 struct Scrubbed {
     /// The check a pinned window's history must pass; `None` for a window not pinned.
@@ -680,6 +769,12 @@ fn scrub_for_export(
         crate::sync::document_pins::scrub_document_pins(vault, doc, Some(key))?;
     let message_docs_scrubbed =
         crate::sync::message_docs::scrub_message_docs(vault, doc, Some(key))?;
+    // FIX 2691: and the office proposals of an erased artifact.
+    let office_proposals_scrubbed =
+        crate::sync::office_proposals::scrub_office_proposals(vault, doc, Some(key))?;
+    // FIX 12470: and the typed body receipts of an erased body.
+    let typed_body_rows_scrubbed =
+        crate::sync::typed_body_rows::scrub_typed_body_rows(vault, doc, Some(key))?;
     // FIX 6870: and an erased repo's portable manifest.
     let repo_manifests_scrubbed =
         crate::sync::repo_manifests::scrub_repo_manifests(vault, doc, Some(key))?;
@@ -694,6 +789,10 @@ fn scrub_for_export(
         crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
     let positions_scrubbed = crate::sync::origin_positions::scrub_stale(vault, doc, key)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
+    // Last of the removals: the source audiences the rows left carried need,
+    // each at this vault's current revision (Engine A, 6 Nov 03:46).
+    let source_audiences_scrubbed =
+        crate::sync::source_audiences::refresh_and_scrub(vault, doc, Some(key))?;
     // Every update and replacement ships each held revision of a PROJECT row the window
     // carries, whatever month it was learned in (Astra #1434 F2).
     if super::project_history::carry_project_history(vault, doc)? {
@@ -708,10 +807,13 @@ fn scrub_for_export(
         || room_facts_scrubbed
         || document_pins_scrubbed
         || message_docs_scrubbed
+        || office_proposals_scrubbed
+        || typed_body_rows_scrubbed
         || repo_manifests_scrubbed
         || origin_claims_scrubbed
         || section_fit_scrubbed
         || births_scrubbed
+        || source_audiences_scrubbed
         || positions_scrubbed
         || history_free_window_required(vault, key)?
     {

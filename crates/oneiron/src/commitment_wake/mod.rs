@@ -54,7 +54,8 @@ pub use self::reminder_wording::{
 pub(crate) use self::wake_approval::scheduled_commitment_wake_authorised;
 pub use self::wake_approval::{
     ApprovedCommitmentWake, approved_commitment_wake, schedule_approved_commitment_wake,
-    schedule_approved_commitment_wakes,
+    schedule_approved_commitment_wake_with_wording, schedule_approved_commitment_wakes,
+    schedule_approved_commitment_wakes_with_wordings,
 };
 pub use self::wake_event::{
     COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION, COMMITMENT_WAKE_RUN_PREFIX,
@@ -71,6 +72,7 @@ pub use self::wake_proposal::{
     CommitmentWakeProposalSkip, commitment_wake_proposal_claim_id,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

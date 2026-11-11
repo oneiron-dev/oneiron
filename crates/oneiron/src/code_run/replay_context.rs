@@ -17,17 +17,36 @@
 //! The context is a typed body with named members. Beside the responses, it
 //! holds what the step's result reads saw of reader state (FIX 6352,
 //! `reads`): a reader child's binding, whether its job was live, a parent's
-//! settled findings and the fold receipt each whole result's card carried.
+//! settled findings, the fold receipt each whole result's card carried and
+//! the verdict the door's row check gave each read of another run's result.
+//! It also keeps each callable skill the step's own program called and that
+//! answered (FIX 3608, `callables`): what its load selected, the arguments it
+//! ran with and where its own calls are, so a callable's counterfactual
+//! runs that exact load again, or leaves it out. And it keeps each skill body
+//! a call's answer delivered to the step's own program (FIX 3608,
+//! `deliveries`): the call's bridge position and the body its native
+//! producer witnessed, kept only once the guest read that answer as the
+//! producer made it, so a delivery's counterfactual answers that exact call
+//! again, or as the skill were not found.
+//!
+//! The context is committed with the step's capsule, as a body the run owns
+//! (`storage::replay_capsule`): an erase of the capsule's actor releases the
+//! context with the capsule's other bodies, and the deliveries it keeps with
+//! it. No other row keeps a delivery.
 
 mod reads;
 
 use serde::{Deserialize, Serialize};
 
 pub(crate) use self::reads::{
-    CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture, SelectedFinding,
+    CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture, RetainedReadVerdict,
+    SelectedFinding,
 };
-use super::types::SelfCall;
+use super::payload::{answer_fold_words, push_fold_word};
+use super::replay::CodeRunBridgeCall;
+use super::types::{FoldWordRef, SelfCall};
 use crate::dreamer_wake::BudgetLegibilityEnvelope;
+use crate::skill::{SelectedCallable, SkillBodyWitness};
 use crate::task_verb::sdk::AgentVerb;
 use crate::{EntityId, Error, Result};
 
@@ -94,6 +113,26 @@ impl GuestResponseCapture {
         self.responses.iter().find(|response| response.seq == seq)
     }
 
+    /// The folds whose accepted summaries a kept hook view may show (FIX
+    /// 18924): for each response kept with a view, the words its row among
+    /// `calls` records, by its position, each fold once. A response with no
+    /// view copies nothing into the context.
+    pub(crate) fn viewed_fold_words(&self, calls: &[CodeRunBridgeCall]) -> Vec<FoldWordRef> {
+        let mut words = Vec::new();
+        for response in self.responses.iter().filter(|kept| kept.view.is_some()) {
+            let row = usize::try_from(response.seq)
+                .ok()
+                .and_then(|seq| calls.get(seq));
+            for word in row
+                .and_then(|row| answer_fold_words(&row.outcome))
+                .unwrap_or_default()
+            {
+                push_fold_word(&mut words, word);
+            }
+        }
+        words
+    }
+
     /// Whether each response is at its own position, all before
     /// `bridge_end`: a step's responses answer its own rows, and a settled
     /// call's answer an earlier entry's.
@@ -105,6 +144,32 @@ impl GuestResponseCapture {
                     .all(|earlier| earlier.seq != response.seq)
         })
     }
+}
+
+/// A callable skill the step's own program called, kept once it answered
+/// (FIX 3608): the bridge position of the call's own row, where the calls
+/// the skill made end (its rows are the ones after the call's own, up to
+/// `nested_end`), the skill the call named, what its load selected and the
+/// arguments it ran with, all after the call's verb hooks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CapturedCallable {
+    pub(crate) seq: u64,
+    pub(crate) nested_end: u64,
+    pub(crate) skill: EntityId,
+    pub(crate) selected: SelectedCallable,
+    pub(crate) args: serde_json::Value,
+}
+
+/// A skill body a call's answer delivered whole to the step's own program
+/// (FIX 3608): the bridge position of the call's row, and the body as the
+/// answer's native producer witnessed it: the skill's entity, its revision
+/// as `skill_id@version`, and each file the answer carries exactly, by its
+/// path, byte extent and BLAKE3. A call's answer may deliver several skills'
+/// bodies (a library page), one delivery each at the call's position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CapturedSkillDelivery {
+    pub(crate) seq: u64,
+    pub(crate) body: SkillBodyWitness,
 }
 
 /// One captured step's replay context: the step it is, where its calls are
@@ -120,9 +185,52 @@ pub(crate) struct StepReplayContext {
     pub(crate) guest_responses: GuestResponseCapture,
     /// What the step's result reads saw of reader state (FIX 6352).
     pub(crate) reader_reads: ReaderReadCapture,
+    /// Each callable skill the step's program called that answered, in
+    /// call order (FIX 3608).
+    pub(crate) callables: Vec<CapturedCallable>,
+    /// Each skill body a call's answer delivered to the step's program, in
+    /// call order (FIX 3608).
+    pub(crate) deliveries: Vec<CapturedSkillDelivery>,
 }
 
 impl StepReplayContext {
+    /// Whether each callable it keeps sits inside the step's own calls,
+    /// `bridge_start..bridge_end`, its calls after its own row, once each.
+    pub(crate) fn callables_placed(&self) -> bool {
+        self.callables.iter().enumerate().all(|(index, callable)| {
+            self.bridge_start <= callable.seq
+                && callable.seq < callable.nested_end
+                && callable.nested_end <= self.bridge_end
+                && self.callables[..index]
+                    .iter()
+                    .all(|earlier| earlier.nested_end <= callable.seq)
+        })
+    }
+
+    /// The callable kept for the call at bridge position `seq`.
+    pub(crate) fn callable_at(&self, seq: u64) -> Option<&CapturedCallable> {
+        self.callables.iter().find(|callable| callable.seq == seq)
+    }
+
+    /// Whether each delivery it keeps sits at one of the step's own calls,
+    /// `bridge_start..bridge_end`, in call order.
+    pub(crate) fn deliveries_placed(&self) -> bool {
+        self.deliveries.iter().enumerate().all(|(index, delivery)| {
+            (self.bridge_start..self.bridge_end).contains(&delivery.seq)
+                && self.deliveries[..index]
+                    .iter()
+                    .all(|earlier| earlier.seq <= delivery.seq)
+        })
+    }
+
+    /// The delivery of `skill`'s body kept for the call at bridge position
+    /// `seq`.
+    pub(crate) fn delivery_at(&self, seq: u64, skill: EntityId) -> Option<&CapturedSkillDelivery> {
+        self.deliveries
+            .iter()
+            .find(|delivery| delivery.seq == seq && delivery.body.entity == skill)
+    }
+
     /// Its body: canonical JSON.
     pub(crate) fn encode(&self) -> Result<Vec<u8>> {
         serde_json::to_vec(self)
@@ -136,11 +244,15 @@ impl StepReplayContext {
 }
 
 /// What one step's host keeps for the step's replay context while the step
-/// runs: each guest response it hands out (FIX 6351) and what its result
-/// reads see of reader state (FIX 6352).
+/// runs: each guest response it hands out (FIX 6351), what its result reads
+/// see of reader state (FIX 6352), each callable its program called that
+/// answered and each skill body a call's answer delivered to its program
+/// (FIX 3608).
 pub(crate) struct StepContextCapture {
     pub(crate) guest_responses: GuestResponseCapture,
     pub(crate) reader_reads: ReaderReadCapture,
+    pub(crate) callables: Vec<CapturedCallable>,
+    pub(crate) deliveries: Vec<CapturedSkillDelivery>,
 }
 
 impl StepContextCapture {
@@ -149,6 +261,8 @@ impl StepContextCapture {
         Self {
             guest_responses: GuestResponseCapture::new(),
             reader_reads: ReaderReadCapture::new(child),
+            callables: Vec::new(),
+            deliveries: Vec::new(),
         }
     }
 }
@@ -161,19 +275,24 @@ pub(crate) struct StepContextCommit {
     pub(crate) capsule: Option<(EntityId, u32)>,
     pub(crate) context: StepReplayContext,
     pub(crate) bytes: Vec<u8>,
+    /// The folds whose accepted summaries its hook views show (FIX 18924).
+    pub(crate) fold_words: Vec<FoldWordRef>,
 }
 
 impl StepContextCommit {
-    /// `context`, encoded, for `capsule`.
+    /// `context`, encoded, for `capsule`, its hook views showing the
+    /// accepted summaries of the folds `fold_words` names.
     pub(crate) fn new(
         capsule: Option<(EntityId, u32)>,
         context: StepReplayContext,
+        fold_words: Vec<FoldWordRef>,
     ) -> Result<Self> {
         let bytes = context.encode()?;
         Ok(Self {
             capsule,
             context,
             bytes,
+            fold_words,
         })
     }
 

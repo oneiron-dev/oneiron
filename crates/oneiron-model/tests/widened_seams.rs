@@ -52,12 +52,14 @@ fn failure_rules_parser_refuses_malformed_tables() {
     assert!(parse_failure_rules(&Value::Array(vec![Value::from("row")])).is_none());
 }
 
+/// FIX 8781 (6dcf0b90bee, #6059): "Policy tables are never refused for their length: the
+/// budget meter addresses a row by its position". The same table, past the old u16 row index,
+/// now builds a guard, and that guard admits (no row carries a cap).
 #[test]
-#[should_panic(expected = "addressable by a u16 row index")]
 fn policy_guard_refuses_a_table_past_the_u16_row_index() {
     let row = BudgetPolicyRow::new(BudgetPolicySelector::Purpose(CallPurpose::Eval), None, None);
     let table = BudgetPolicyTable::from_rows(vec![row; usize::from(u16::MAX) + 2]);
-    let _ = BudgetGuard::with_policy_table(
+    let guard = BudgetGuard::with_policy_table(
         "seam",
         1_000,
         10,
@@ -65,6 +67,7 @@ fn policy_guard_refuses_a_table_past_the_u16_row_index() {
         actor(),
         &table,
     );
+    assert!(guard.admit().is_ok());
 }
 
 #[test]
@@ -170,6 +173,8 @@ fn only_a_fallback_finish_marks_an_output_as_failed() {
         },
         usage: LlmUsage::zero(),
         finish_reason,
+        reply_assertions: Default::default(),
+        token_scores: None,
     };
     let fallback = FinishReason::Other {
         name: "fallback:deterministic".to_owned(),

@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "hookName": "fact-order",
+  "hookVersion": "1.0.0",
+  "triggerPredicate": "fact.hooks.input",
+  "otherPredicate": "fact.hooks.other",
+  "outputPredicate": "fact.hooks.observation",
+  "matchingWorld": "a1010000000000000000000000000010",
+  "otherWorld": "a1010000000000000000000000000020",
+  "marker": "amber-fact-catchup",
+  "writes": [
+    {
+      "id": "a1010000000000000000000000000001",
+      "match": true,
+      "axis": "matching",
+      "value": {
+        "sequence": 1,
+        "fact": "harbor gate opens at dawn"
+      }
+    },
+    {
+      "id": "a1010000000000000000000000000002",
+      "match": false,
+      "axis": "predicate",
+      "value": {
+        "sequence": 2,
+        "fact": "orchard gate closes at dusk"
+      }
+    },
+    {
+      "id": "a1010000000000000000000000000003",
+      "match": false,
+      "axis": "world",
+      "value": {
+        "sequence": 3,
+        "fact": "ridge beacon flashes blue"
+      }
+    },
+    {
+      "id": "a1010000000000000000000000000004",
+      "match": false,
+      "axis": "actor_class",
+      "value": {
+        "sequence": 4,
+        "fact": "valley beacon flashes green"
+      }
+    },
+    {
+      "id": "a1010000000000000000000000000005",
+      "match": true,
+      "axis": "matching",
+      "value": {
+        "sequence": 5,
+        "fact": "harbor bell rings twice"
+      }
+    }
+  ],
+  "expected": {
+    "matchingSequences": [
+      1,
+      5
+    ],
+    "landedEffects": [
+      {
+        "marker": "amber-fact-catchup",
+        "sequence": 1,
+        "fact": "harbor gate opens at dawn"
+      },
+      {
+        "marker": "amber-fact-catchup",
+        "sequence": 5,
+        "fact": "harbor bell rings twice"
+      }
+    ]
+  },
+  "packFiles": {
+    "PACK.md": "hooks-fact-PACK-md",
+    "hooks/fact-order/HOOK.md": "hooks-fact-HOOK-md",
+    "hooks/fact-order/body.js": "hooks-fact-body-js",
+    "hooks/fact-order/intent.md": "hooks-fact-intent-md"
+  },
+  "packName": "fact"
+}

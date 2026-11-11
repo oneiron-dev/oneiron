@@ -1,0 +1,16 @@
+{
+  "name": "vault.artifacts.unpublish",
+  "description": "Removes one artifact channel pointer without deleting its immutable export or earlier publication receipts.",
+  "input": "crate::artifact_hosting::door_types::ArtifactPointerRequest",
+  "output": "crate::artifact_hosting::door_types::ArtifactUnpublished",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.unpublish\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

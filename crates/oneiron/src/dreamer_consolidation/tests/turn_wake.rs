@@ -1009,3 +1009,33 @@ fn a_turn_the_dreamer_may_not_read_is_never_held() -> Result<()> {
     assert_eq!(micro_rounds(&vault)?, vec![vec![hidden], vec![open]]);
     Ok(())
 }
+
+/// X01 (untangle slice 6.1): the Dreamer's side doors (gap scan, owner
+/// intent, retrieval shadow) returned a TURN's own words before asking the
+/// Dreamer's gate, so a TURN the owner's policy keeps from the Dreamer
+/// reached its text. They read it as the Dreamer now, and the writer's
+/// re-check asks the gate for such a TURN too.
+#[test]
+fn a_turn_the_dreamer_may_not_read_gives_its_side_doors_no_words() -> Result<()> {
+    use crate::dreamer_consolidation::turn_text::{dreamer_read, read_turn_text, snapshot};
+    let (_dir, vault) = open_vault();
+    let at = vault.now_recorded_at();
+    let session = seed_session(&vault, 28, at);
+    let said = "My door code is 4410.";
+    crate::test_util::withhold_dreamer_read(&vault)?;
+    let turn = seed_turn(&vault, &session, "user", said, at);
+    assert_eq!(read_turn_text(&vault, &turn)?.into_text(), None);
+    assert!(crate::dreamer_consolidation::turn_text_for_shadow(&vault, &turn).is_err());
+
+    install_shipped_policy(&vault)?;
+    let record = read_turn_text(&vault, &turn)?;
+    assert_eq!(record.text(), Some(said));
+    crate::test_util::withhold_dreamer_read(&vault)?;
+    let read = dreamer_read(&vault)?;
+    let txn = snapshot(&vault)?;
+    assert!(
+        record.check_live_in(&read, &txn, &turn).is_err(),
+        "the writer refuses words the Dreamer may no longer read"
+    );
+    Ok(())
+}

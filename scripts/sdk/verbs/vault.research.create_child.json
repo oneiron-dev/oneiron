@@ -1,0 +1,16 @@
+{
+  "name": "vault.research.create_child",
+  "description": "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave.",
+  "input": "crate::task_verb::sdk::ResearchChildWire",
+  "output": "crate::task_verb::sdk::ResearchChildReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.research.create_child\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vault.retrieval.hyde.receipt",
+  "description": "Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline.",
+  "input": "crate::query_expansion::host::HydeHostReceiptRequest",
+  "output": "Option<crate::query_expansion::host::HydeHostReceipt>",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.retrieval.hyde.receipt\", &input)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "hyde_caller"
+}

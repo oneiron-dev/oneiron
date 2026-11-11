@@ -1,0 +1,16 @@
+{
+  "name": "vault.org_admin.configure",
+  "description": "The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured.",
+  "input": "crate::task_verb::sdk::OrgAdminConfigureRequest",
+  "output": "crate::task_verb::sdk::OrgAdminConfigured",
+  "call": "crate::task_verb::sdk::configure_org_admin_as_owner(memory.vault(), &memory.embedded_owner(\"vault.org_admin.configure\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

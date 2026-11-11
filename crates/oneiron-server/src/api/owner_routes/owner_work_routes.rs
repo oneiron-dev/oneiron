@@ -33,10 +33,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::secret_custody::CustodyManifestCheck;
-use oneiron::world_keys::{
-    BundleHomeWarning, OwnerWorkDiagnostics, OwnerWorkReceipt, OwnerWorkUnassigned,
-};
+pub(super) use oneiron::task_verb::sdk::{OwnerWorkReceiptView, OwnerWorkView};
+use oneiron::world_keys::OwnerWorkDiagnostics;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -91,81 +89,6 @@ pub(super) fn owner_table() -> OwnerTable {
     ]
 }
 
-/// One owner work receipt with the holder's manifest judgment as a surface
-/// shows it (FIX 5446): the receipt (ids only) and, for a custody register
-/// whose result carries one, the words for what its holder checked.
-/// Reporting only: an unchecked registration stays accepted.
-#[derive(Debug, Serialize)]
-pub(super) struct OwnerWorkReceiptView {
-    #[serde(flatten)]
-    receipt: OwnerWorkReceipt,
-    /// `CustodyManifestCheck::Judged(check).text()`, when the receipt's
-    /// `manifest_check` names one; `None` before the result, and for any
-    /// other work.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    manifest_text: Option<String>,
-}
-
-impl From<OwnerWorkReceipt> for OwnerWorkReceiptView {
-    fn from(receipt: OwnerWorkReceipt) -> Self {
-        let manifest_text = receipt
-            .manifest_check
-            .clone()
-            .map(|check| CustodyManifestCheck::Judged(check).text());
-        Self {
-            receipt,
-            manifest_text,
-        }
-    }
-}
-
-/// One owner work receipt as a surface shows it: the receipt (ids only),
-/// the engine's words for where it stands, and, when no install could be
-/// named, the engine's words for why.
-#[derive(Debug, Serialize)]
-pub(super) struct OwnerWorkView {
-    #[serde(flatten)]
-    receipt: OwnerWorkReceiptView,
-    /// `OwnerWorkStatus::text`: "recorded, awaiting a holder", "enacted by
-    /// its holder", "refused by its holder", "cancelled by the owner" or
-    /// "superseded by a newer request on its target".
-    status_text: &'static str,
-    /// `OwnerWorkUnassigned::text`, when nothing was recorded.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    unassigned_text: Option<&'static str>,
-    /// `OwnerWorkStatus::advice`, when a refusal names what the owner may do
-    /// next: a root request whose target may not have synced (FIX 4738).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    advice_text: Option<&'static str>,
-    /// `BundleHomeWarning::text`, when a publication's home may keep no
-    /// sealed copy (FIX 4786).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    home_warning_text: Option<&'static str>,
-    /// `OwnerWorkCancelState::text`, when the owner cancelled a root request:
-    /// "cancelled", or that its target answered it first, "already enacted"
-    /// (FIX 4739).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cancel_text: Option<&'static str>,
-}
-
-impl From<OwnerWorkReceipt> for OwnerWorkView {
-    fn from(receipt: OwnerWorkReceipt) -> Self {
-        let status_text = receipt.status.text();
-        let unassigned_text = receipt.unassigned.map(OwnerWorkUnassigned::text);
-        let advice_text = receipt.status.advice();
-        let home_warning_text = receipt.home_warning.as_ref().map(BundleHomeWarning::text);
-        let cancel_text = receipt.cancel.as_ref().map(|cancel| cancel.state.text());
-        Self {
-            status_text,
-            unassigned_text,
-            advice_text,
-            home_warning_text,
-            cancel_text,
-            receipt: OwnerWorkReceiptView::from(receipt),
-        }
-    }
-}
-
 /// `POST /v1/owner/bundles/publications`'s body: the linked install that is
 /// to keep the sealed bundle. Ids only.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -182,9 +105,9 @@ pub(crate) fn bundle_publication_body_schema() -> Value {
 }
 
 /// The OpenAPI schema of [`OwnerWorkView`], as every route that records
-/// owner work answers it (FIX 4782). The receipt's engine types carry no
-/// schema derive, so its fields are spelled here, beside the view; each
-/// closed value names its current words without fixing the set.
+/// owner work answers it (FIX 4782). This owner-route description names
+/// the receipt's current closed values and the shared engine projection's
+/// words without fixing the set.
 pub(crate) fn owner_work_view_schema() -> Value {
     let text = |what: &str| json!({"type": "string", "description": what});
     json!({

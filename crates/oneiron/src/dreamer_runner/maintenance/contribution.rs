@@ -77,7 +77,7 @@ pub(super) fn execute(
     let Some(host) = host else {
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     };
     if ctx.deadline.in_finalize_window() {
@@ -99,7 +99,7 @@ pub(super) fn execute(
         }
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     }
     // The forks' model calls block on the host's runtime, which a thread
@@ -137,7 +137,7 @@ pub(super) fn execute(
         } else {
             0
         },
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 

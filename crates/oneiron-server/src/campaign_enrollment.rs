@@ -101,6 +101,7 @@ pub(crate) fn spawn(
     let signals = AttemptQueue::new(server.vault()).subscribe();
     tokio::spawn(async move {
         let mut signals = signals;
+        let mut repair_asks = true;
         loop {
             let more = {
                 let Some(server) = weak.upgrade() else {
@@ -109,8 +110,14 @@ pub(crate) fn spawn(
                 match admit() {
                     None => false,
                     Some(pass) => {
+                        let repair = std::mem::take(&mut repair_asks);
                         let ran = tokio::task::spawn_blocking(move || {
                             let _pass = pass;
+                            if repair {
+                                if let Err(error) = server.vault().repair_campaign_enrollment_owner_asks() {
+                                    tracing::warn!(%error, "campaign enrollment owner asks were not repaired");
+                                }
+                            }
                             pump(&server)
                         })
                         .await;
@@ -138,7 +145,7 @@ pub(crate) fn spawn(
                             break;
                         }
                     }
-                    _ = tokio::time::sleep(PUMP) => {}
+                    _ = tokio::time::sleep(PUMP) => { repair_asks = true; }
                 }
             }
         }

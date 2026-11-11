@@ -5,9 +5,12 @@
 //! touching the solver or lifecycle, and use the response-cache helpers when
 //! they serve a listing; enforcement never moves below the route layer. Guards
 //! thread `State<Arc<SyncServer>>` and fail as `crate::error::ApiError` —
-//! no invented request state and no new server field: rows, counters, and
-//! the cache all persist through `server.vault` under the booking-only meta
-//! prefix owned by the engine.
+//! no invented request state: rows, counters, and the cache all persist
+//! through `server.vault` under the booking-only meta prefix owned by the
+//! engine. Those windows govern anonymous visitors. An authenticated caller
+//! (`BookingCaller::Authenticated`) spends none of them: its calls are
+//! counted per actor in memory (`SyncServer::booking_calls`) and measured
+//! against `[limits]` rows that ask and serve (FIX 128-131).
 //!
 //! Behavioural law comes from the engine:
 //! - honeypot and too-fast submissions leave as `SilentOk`, an HTTP 200
@@ -34,5 +37,6 @@ pub(crate) use self::cache::{cached_slot_list_body, remember_slot_list_body};
 #[allow(unused_imports)]
 pub(crate) use self::guards::enforce_book;
 pub(crate) use self::guards::{
-    BookingHttpDisposition, enforce_amend, enforce_book_restorable, enforce_hold, enforce_slot_list,
+    BookingCaller, BookingHttpDisposition, enforce_amend, enforce_book_restorable, enforce_hold,
+    enforce_slot_list,
 };

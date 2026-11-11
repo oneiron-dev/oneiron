@@ -50,6 +50,7 @@ pub(crate) fn rerank_request(
     };
     let text = |text: &str| ContentPart::Text {
         text: text.to_owned(),
+        signature: None,
     };
     LlmRequest {
         model: ModelId::new("seat/reranker@unbound").expect("a well-formed placeholder id"),
@@ -62,6 +63,7 @@ pub(crate) fn rerank_request(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: vec![
             LlmMessage {
@@ -110,7 +112,7 @@ fn parts(request: &LlmRequest) -> Option<(&str, Vec<&str>)> {
 
 fn part_text(part: &ContentPart) -> Option<&str> {
     match part {
-        ContentPart::Text { text } => Some(text),
+        ContentPart::Text { text, .. } => Some(text),
         _ => None,
     }
 }
@@ -212,7 +214,10 @@ impl LlmBackend for RerankBackend {
             Ok(LlmResponse {
                 message: LlmMessage {
                     role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text { text }],
+                    content: vec![ContentPart::Text {
+                        text,
+                        signature: None,
+                    }],
                 },
                 usage: LlmUsage {
                     input: LlmInputUsage {

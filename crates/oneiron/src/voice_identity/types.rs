@@ -147,7 +147,7 @@ impl VoiceConsentEventV1 {
             }
             seen.push(purpose);
         }
-        self.basis.validate()
+        crate::verbs::voice_records::voice_consent_basis_validate(&self.basis)
     }
 
     /// Returns whether this record covers `purpose`.

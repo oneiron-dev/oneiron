@@ -1,0 +1,18 @@
+{
+  "name": "vault.cluster.propose",
+  "description": "Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant.",
+  "input": "crate::memory::clustering::ClusterProposeRequest",
+  "output": "crate::memory::clustering::ClusterTopologyReceipt",
+  "call": "{ let owner = if input.grant_ref.is_none() { Some(memory.embedded_owner(\"vault.cluster.propose\")?) } else { None }; memory.cluster_propose(owner.as_ref(), &input)? }",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "openapi": true,
+  "proposes": true
+}

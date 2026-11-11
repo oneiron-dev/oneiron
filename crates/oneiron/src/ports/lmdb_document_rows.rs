@@ -1,6 +1,7 @@
 //! LMDB/session adapter of the document-row port, over the declared `sync_state` families.
 use super::{
-    DocumentRow, DocumentRowStore, DocumentSlot, DocumentUpdateKey, PendingUpdate, UpdateSeq,
+    BorrowedPendingUpdate, DocumentRow, DocumentRowStore, DocumentSlot, DocumentUpdateKey,
+    PendingUpdate, UpdateSeq,
 };
 use crate::error::Result;
 use crate::side_table::{self, FixedSideKey, Raw, SideKey, SideTable};
@@ -211,6 +212,15 @@ impl<T: ManifestDbs> DocumentRowStore for T {
         table(row).get_bytes(self, txn, &slot)
     }
 
+    fn port_document_row_borrowed<'txn>(
+        &self,
+        txn: &'txn RoTxn<'_>,
+        slot: DocumentSlot,
+        row: DocumentRow,
+    ) -> Result<Option<std::borrow::Cow<'txn, [u8]>>> {
+        table(row).get_borrowed(self, txn, &slot)
+    }
+
     fn port_document_updates(
         &self,
         txn: &RoTxn<'_>,
@@ -222,6 +232,21 @@ impl<T: ManifestDbs> DocumentRowStore for T {
                 let (key, bytes) = row?;
                 let seq = DocumentUpdateKey::decode_key(&key).map(|key| key.seq);
                 Ok(PendingUpdate { seq, bytes })
+            })
+            .collect()
+    }
+
+    fn port_document_updates_borrowed<'txn>(
+        &self,
+        txn: &'txn RoTxn<'_>,
+        slot: DocumentSlot,
+    ) -> Result<Vec<BorrowedPendingUpdate<'txn>>> {
+        UPDATES
+            .iter_raw_borrowed_values_from(self, txn, &slot_updates(slot))?
+            .map(|row| {
+                let (key, bytes) = row?;
+                let seq = DocumentUpdateKey::decode_key(&key).map(|key| key.seq);
+                Ok(BorrowedPendingUpdate { seq, bytes })
             })
             .collect()
     }

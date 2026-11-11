@@ -7,7 +7,7 @@
 //! grouping that cite those keys and nothing else. The plan is saved on the
 //! period's row. Opening the digest composes it into a card under the
 //! opener's own read: every row keeps its source refs, and every link, claim,
-//! project and budget row carries the one-tap wrong control
+//! project, budget, sieve audit and loop decision row carries the one-tap wrong control
 //! (`vault.weave.link.wrong`, `vault.weave.item.wrong`). The
 //! model mints no ref, handle or action. When the reader's next period
 //! renders, the previous one settles the skill's two axes as evidence.
@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::weave_correction::WeaveItemKey;
 use super::{
     PointRead, ScopedRead, StoredWeaveDigest, WeaveDigestReader, WeaveItem, WeaveReader,
     WeaveReport, WeaveSectionView,
@@ -510,7 +511,7 @@ fn wrong_control(
 /// Compose a render into the lens under `read`, the opener's own read, as a
 /// card beside the frame that minted its rows' backing refs (OF-181). Every
 /// row binds the source its read admits now; every link, claim, project,
-/// budget and sieve audit row a human opens carries the wrong control over
+/// budget, sieve audit and loop decision row a human opens carries the wrong control over
 /// its exact link or item (an agent files no label, so its rows carry none;
 /// the owner lens's call the owner's own verbs). Each wrong control is
 /// declared in the card's manifest as the deterministic tool it calls, for a
@@ -681,7 +682,7 @@ pub(crate) struct KeptLiveLens {
     rendered_at: u64,
     /// Each link as `(source hex, edge kind byte, target hex)`.
     links: Vec<(String, u8, String)>,
-    /// Each claim, project, budget and sieve audit item id, hex.
+    /// Each family-qualified entity or gate-decision item key, hex.
     items: Vec<String>,
     /// Each health card's `health:` handle.
     cards: Vec<String>,
@@ -718,10 +719,10 @@ impl KeptLiveLens {
             .collect()
     }
 
-    fn items(&self) -> Result<Vec<EntityId>> {
+    fn items(&self) -> Result<Vec<WeaveItemKey>> {
         self.items
             .iter()
-            .map(|id| EntityId::from_hex(id).map_err(|_| invalid("kept item")))
+            .map(|id| WeaveItemKey::from_hex(id).ok_or_else(|| invalid("kept item")))
             .collect()
     }
 }
@@ -742,14 +743,14 @@ fn report_links(report: &WeaveReport) -> impl Iterator<Item = EdgeRef> + '_ {
         })
 }
 
-/// The ids of the claim, project, budget and sieve audit rows `report`
-/// shows: the keys their wrong labels file under.
-fn report_items(report: &WeaveReport) -> impl Iterator<Item = EntityId> + '_ {
+/// The native family-qualified keys of the rows `report` shows that take
+/// a wrong-item label, including gate decisions.
+fn report_items(report: &WeaveReport) -> impl Iterator<Item = WeaveItemKey> + '_ {
     report
         .sections
         .iter()
         .flat_map(|section| &section.items)
-        .filter_map(|item| super::WeaveItemTarget::of(item).map(super::WeaveItemTarget::id))
+        .filter_map(|item| super::WeaveItemTarget::of(item).map(super::WeaveItemTarget::key))
 }
 
 /// The `health:` handles of the cards `report` shows.
@@ -774,7 +775,7 @@ fn corrected_since(
     txn: &heed::RoTxn<'_>,
     reader: WeaveDigestReader,
     links: impl IntoIterator<Item = EdgeRef>,
-    items: impl IntoIterator<Item = EntityId>,
+    items: impl IntoIterator<Item = WeaveItemKey>,
     cards: &[String],
     since: u64,
 ) -> Result<bool> {

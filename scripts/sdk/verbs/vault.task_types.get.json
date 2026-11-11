@@ -1,0 +1,16 @@
+{
+  "name": "vault.task_types.get",
+  "description": "The owner reads the task-type tree in force, or one kept tree version, for the vault or a project.",
+  "input": "crate::team::doors::TaskTypeTreeRead",
+  "output": "crate::team::doors::TaskTypeTreeReadReply",
+  "call": "crate::team::doors::read_tree_as(memory.vault(), &memory.embedded_owner(\"vault.task_types.get\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

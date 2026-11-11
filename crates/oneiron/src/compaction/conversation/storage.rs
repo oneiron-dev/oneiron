@@ -1,27 +1,46 @@
 //! A conversation's landed self-written summaries (FIX 4465 D): one durable
 //! receipt per SUMMARY, written in its mint's own transaction, naming the
-//! epoch, the SESSION's turn range and the host's record of what wrote it,
-//! the conversation evidence included. The Dreamer's check and the agent's
-//! next log read it; it holds refs, hashes and usage, never words.
+//! epoch's lineage (the SESSION and the conversation, FIX 5029), the epoch,
+//! the conversation's turn range within the SESSION and the host's record of
+//! what wrote it, the conversation evidence included. The evidence names the
+//! ref of the accepted try's check material (FIX 5040), so the receipt and
+//! its digest bind that material. The Dreamer's check, the agent's next log
+//! and a folded turn's board history read it; it holds refs, hashes and
+//! usage, never words.
+//!
+//! FIX 5032: the same writer files each receipt under its conversation in a
+//! ref-only index, so a conversation's receipts are read by a prefix scan of
+//! that index, never a scan of every receipt in the vault. The index names
+//! receipts and grants nothing: each one is read again from the canonical
+//! table and must name the conversation it is filed under.
 
 use serde::{Deserialize, Serialize};
 
 use super::{ConversationEvidence, ConversationTurnSpan};
 use crate::compaction::{CompactionEvidence, CompactionExecution, EpochMint};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, Error, Result, Vault};
 
 /// Landing receipts. Key: id16(summary).
 const RECEIPTS: SideTable<EntityId, ConversationLandingReceipt, Named> =
     SideTable::new(&side_table::COMPACTION_CONVERSATION_RECEIPT);
 
+/// Each landing receipt under its conversation (FIX 5032): ids only. Key:
+/// id16(conversation) + id16(summary).
+const RECEIPTS_BY_CONVERSATION: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::COMPACTION_CONVERSATION_RECEIPT_BY_CONVERSATION);
+
 /// One landed conversation summary's receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ConversationLandingReceipt {
     pub(crate) summary: EntityId,
+    /// The epoch's lineage (FIX 5029): `conversation`'s turns within
+    /// `session`.
+    pub(crate) session: EntityId,
+    pub(crate) conversation: EntityId,
     pub(crate) epoch: u64,
-    /// The SESSION's turn numbers the epoch covers.
+    /// The conversation's turn numbers within the SESSION the epoch covers.
     pub(crate) turn_start: u64,
     pub(crate) turn_end: u64,
     pub(crate) execution: CompactionExecution,
@@ -37,21 +56,29 @@ impl ConversationLandingReceipt {
     }
 }
 
-/// Writes `mint`'s receipt in its own transaction.
+/// Writes `mint`'s receipt in its own transaction, and files it under its
+/// conversation in the same writer (FIX 5032). A conversation's epoch counts
+/// in its conversation's lineage; one minted in a SESSION's own is refused.
 pub(crate) fn put_conversation_receipt_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     mint: &EpochMint,
     execution: &CompactionExecution,
 ) -> Result<()> {
+    let conversation = mint.conversation().ok_or(Error::InvariantViolation(
+        "a conversation's epoch counts in no conversation's lineage",
+    ))?;
     let receipt = ConversationLandingReceipt {
         summary: mint.summary_id(),
+        session: mint.session_ref(),
+        conversation,
         epoch: mint.epoch(),
         turn_start: mint.turn_start(),
         turn_end: mint.turn_end(),
         execution: execution.clone().without_calls(),
     };
-    RECEIPTS.put(vault, txn, &receipt.summary, &receipt)
+    RECEIPTS.put(vault, txn, &receipt.summary, &receipt)?;
+    RECEIPTS_BY_CONVERSATION.put(vault, txn, &(conversation, receipt.summary), &())
 }
 
 /// The receipt of `summary`, in the caller's snapshot.
@@ -101,20 +128,29 @@ impl Vault {
     }
 }
 
-/// Every landed receipt of `conversation`, in SUMMARY order.
+/// Every landed receipt of `conversation`, in SUMMARY order. FIX 5032: the
+/// conversation's index rows name the summaries, and each receipt is read
+/// from the canonical table. A row whose receipt is missing, or names
+/// another conversation, is a corrupted index: no receipt is made up for it.
+///
+/// # Errors
+///
+/// Storage errors, and a corrupted index.
 pub(super) fn conversation_receipts_in(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     conversation: EntityId,
 ) -> Result<Vec<ConversationLandingReceipt>> {
-    Ok(RECEIPTS
-        .scan(store, txn)?
+    RECEIPTS_BY_CONVERSATION
+        .scan_keys(store, txn, conversation.as_bytes())?
         .into_iter()
-        .map(|(_, receipt)| receipt)
-        .filter(|receipt| {
-            receipt
-                .evidence()
-                .is_some_and(|evidence| evidence.conversation == conversation)
+        .map(|(_, summary)| {
+            RECEIPTS
+                .get(store, txn, &summary)?
+                .filter(|receipt| receipt.conversation == conversation)
+                .ok_or(Error::CorruptedIndex(
+                    "a conversation's receipt index names no receipt of that conversation",
+                ))
         })
-        .collect())
+        .collect()
 }

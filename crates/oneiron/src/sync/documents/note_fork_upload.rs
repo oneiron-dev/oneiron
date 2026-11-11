@@ -44,8 +44,8 @@ impl DocumentRegistry {
             {
                 return Err(denied());
             }
-            // Also refuses soft-erased shells and malformed birth records.
-            crate::note::document_birth_in_txn(&self.vault, txn, id)?;
+            // Also refuses soft-erased shells and malformed NOTE cores.
+            crate::note::note_core_in_txn(&self.vault, txn, id)?;
             let upload = crate::note::uploadable_fork_in_txn(&self.vault, txn, id, fork)?
                 .ok_or_else(denied)?;
             let input = upload.command_hash()?;

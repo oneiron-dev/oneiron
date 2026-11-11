@@ -34,7 +34,9 @@
 
 pub mod archive;
 pub mod gzip;
+pub mod pacing;
 pub mod pdf;
+pub use pacing::{ReadCancelled, ReadPacer, ReadPacing, ReadProgress};
 pub mod projection_edit;
 pub mod retained_iterative;
 pub mod sevenz;
@@ -137,6 +139,10 @@ pub fn kind(bytes: &[u8]) -> Option<Kind> {
 /// only starts like one reads as text. Binary bytes keep the head's: a
 /// malformed container stays sealed. A gzip file's second byte is no UTF-8.
 pub fn classify(bytes: &[u8]) -> Option<Kind> {
+    classify_with_pacing(bytes, &ReadPacing::default())
+}
+
+pub fn classify_with_pacing(bytes: &[u8], pacing: &ReadPacing) -> Option<Kind> {
     let Some(head) = kind(bytes) else {
         // FIX 2471: a ZIP that starts past byte 0 opens through the zip
         // crate's own offset handling; binary bytes only.
@@ -155,7 +161,7 @@ pub fn classify(bytes: &[u8]) -> Option<Kind> {
         Kind::SevenZip => true,
         Kind::Tar => tar::opens(bytes),
         Kind::Xz => true,
-        Kind::Pdf => pdf::opens(bytes),
+        Kind::Pdf => pdf::opens_with_pacing(bytes, pacing),
     };
     parses.then_some(head)
 }
@@ -187,6 +193,10 @@ pub fn holds_spans(bytes: &[u8]) -> bool {
 /// stream's (it names its objects by byte offset) and a PDF's own bytes
 /// (its cross-reference does) keep the filler's width.
 pub fn writes_handles(path: &[MemberStep], bytes: &[u8]) -> bool {
+    writes_handles_with_pacing(path, bytes, &ReadPacing::default())
+}
+
+pub fn writes_handles_with_pacing(path: &[MemberStep], bytes: &[u8], pacing: &ReadPacing) -> bool {
     matches!(
         path.last(),
         Some(
@@ -199,7 +209,7 @@ pub fn writes_handles(path: &[MemberStep], bytes: &[u8]) -> bool {
                 | MemberStep::PdfStrings { .. }
         )
     ) && std::str::from_utf8(bytes).is_ok()
-        && classify(bytes).is_none()
+        && classify_with_pacing(bytes, pacing).is_none()
 }
 
 /// Why a walk stopped before the end of a file's tree.
@@ -280,6 +290,7 @@ pub struct Budget {
     /// container's entry instead of hashing the file again (FIX 12270).
     /// `None` hashes as before.
     pub root_digest: Option<[u8; 32]>,
+    pub pacing: ReadPacing,
 }
 
 impl Budget {
@@ -296,7 +307,13 @@ impl Budget {
             hidden: false,
             ancestors: Vec::new(),
             root_digest: None,
+            pacing: ReadPacing::default(),
         }
+    }
+
+    pub fn with_pacing(mut self, pacing: ReadPacing) -> Self {
+        self.pacing = pacing;
+        self
     }
 
     /// This budget, its walk reading the bytes no reader shows too.
@@ -352,6 +369,7 @@ impl Budget {
     /// is left once its members are read, so a container met again beside
     /// itself is read again.
     pub fn enter_container(&mut self, bytes: &[u8]) -> Walked<()> {
+        self.pacing.checkpoint(ReadProgress::Container)?;
         // The walk enters its root file first, so the first entry takes
         // the caller's checked digest instead of hashing the file again;
         // members hash as before (FIX 12270).

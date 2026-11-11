@@ -1,0 +1,16 @@
+{
+  "name": "vault.projects.goal.intake.complete",
+  "description": "Completes the witnessed human goal-intake interview with the full confirmed record; no agent proposal can write the effective goal.",
+  "input": "ProjectGoalIntakeCompleteRequest",
+  "output": "crate::task_verb::sdk::ProjectGoalIntakeReceipt",
+  "call": "crate::task_verb::sdk::project_goal_intake_complete_as_owner(memory.vault(), &memory.embedded_owner(\"vault.projects.goal.intake.complete\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -368,6 +368,57 @@ pub(crate) fn erase_in_txn(
     Ok(())
 }
 
+/// The lifecycle fields a call's words sit under, as the highway's writers
+/// put them: a worker's note, error and confession, and a block's reason.
+/// Every other field is an id, a code, a count, a time or a digest, which
+/// receipt reads and rebuilt projections (a settlement's anchor, a Done's
+/// judge model) still read.
+const WORD_FIELDS: [&str; 4] = ["note", "error", "reason", "confession"];
+
+/// Whether the lifecycle field `name` holds a call's words
+/// ([`WORD_FIELDS`]), which the owner's discard of its TASK takes (FIX 14534
+/// rule 4).
+pub(crate) fn lifecycle_field_holds_words(name: &str) -> bool {
+    WORD_FIELDS.contains(&name)
+}
+
+/// The owner's discard of TASK `id`'s local copy (FIX 14534 rule 4): each
+/// lifecycle receipt naming it as its TASK or its parked proposal stays
+/// identifier-only history: its row, id, kind, time, actor, outcome, refs,
+/// policy trace and indexes, and every field but those that hold the call's
+/// words ([`lifecycle_field_holds_words`]). Rewritten in place, in the
+/// discard's transaction, with no receipt of its own; a no-op for any other
+/// entity.
+///
+/// # Errors
+///
+/// Storage errors, or a receipt row that cannot be read.
+pub(crate) fn discard_payload_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> crate::Result<()> {
+    let hex = id.to_hex();
+    let mut rows = Vec::new();
+    for (key, mut row) in RECEIPTS.scan(store, txn)? {
+        if row.trigger_ref.as_deref() != Some(hex.as_str())
+            && row.fields.get(FIELD_PROPOSAL_REF) != Some(&hex)
+        {
+            continue;
+        }
+        let before = row.fields.len();
+        row.fields
+            .retain(|name, _| !lifecycle_field_holds_words(name));
+        if row.fields.len() != before {
+            rows.push((key, row));
+        }
+    }
+    for (key, row) in rows {
+        RECEIPTS.put(store, txn, &key, &row)?;
+    }
+    Ok(())
+}
+
 /// Erasing `actor` from the lifecycle receipts (FIX 3520): each one that
 /// names it as its actor, or as whom the call ran on behalf of, keeps its
 /// row, call, outcome, time, refs and fields, and names no one there. The

@@ -33,6 +33,12 @@ pub enum HostInferenceBinding {
     /// the call runs, never who pays.
     SupervisedNativeLocal {
         model: ModelId,
+        /// Host-attested from the native ladder (FIX 18407): true when a
+        /// rung that may serve this route is paid work by the run
+        /// admission's own rule (`!OfferLadder::all_free_work`), such as a
+        /// paid provider's managed worker. False is free on-device work.
+        /// Read beside selected_locality, never from caller JSON.
+        paid: bool,
     },
 }
 
@@ -58,6 +64,18 @@ impl HostInferenceContext<'_> {
         matches!(
             &self.binding,
             HostInferenceBinding::Advertised { keyless: true, .. }
+        )
+    }
+    /// Whether the host attested a rung of this route as paid work on this
+    /// device (FIX 18407): only a supervised native binding whose ladder has
+    /// a paid rung. A door stamps it as `CallEnvelope::host_paid`, so the
+    /// budget guard reserves the call on its paid line though its locality
+    /// is on device. Registered and Advertised bindings are false, today's
+    /// rule exactly.
+    pub fn selected_paid(&self) -> bool {
+        matches!(
+            &self.binding,
+            HostInferenceBinding::SupervisedNativeLocal { paid: true, .. }
         )
     }
 }

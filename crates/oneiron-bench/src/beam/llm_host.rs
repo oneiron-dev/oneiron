@@ -307,6 +307,7 @@ impl ModelSession {
                 response_format: ResponseFormat::Text,
                 locality: ModelLocality::ThirdParty,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, system),
@@ -375,7 +376,7 @@ impl ModelSession {
             .content
             .iter()
             .filter_map(|p| {
-                if let ContentPart::Text { text } = p {
+                if let ContentPart::Text { text, .. } = p {
                     Some(text.as_str())
                 } else {
                     None
@@ -393,7 +394,10 @@ impl ModelSession {
 fn message(role: LlmMessageRole, text: &str) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text: text.into() }],
+        content: vec![ContentPart::Text {
+            text: text.into(),
+            signature: None,
+        }],
     }
 }
 fn refusal(reason: &str) -> BeamError {

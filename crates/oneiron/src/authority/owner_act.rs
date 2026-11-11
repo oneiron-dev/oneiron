@@ -568,7 +568,9 @@ impl crate::Vault {
     /// grant owner). The first such row, in id order, whose pact membership,
     /// on a shared vault, still stands (FIX 7548): a lapsed one is passed
     /// over for a later one, and with none, the lapse. The Coach's writer
-    /// reads it inside the transaction that applies.
+    /// reads it inside the transaction that applies. An owner's agent Grant
+    /// that names a verb class admitting the verb lists it too (FIX 8735):
+    /// the owner's class rows are read once, at the first such Grant.
     pub(crate) fn coach_weave_digest_settings_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -579,6 +581,8 @@ impl crate::Vault {
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let sole_owner = owners.len() == 1 && owners.first() == Some(&owner);
         let mut lapsed = false;
+        let no_classes = crate::federation::AgentVerbClasses::none();
+        let mut class_rows: Option<crate::federation::AgentVerbClasses> = None;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
             txn,
@@ -596,13 +600,19 @@ impl crate::Vault {
             let Ok(grant) = crate::federation::decode_federation_grant_body(&body) else {
                 continue;
             };
-            if grant.member_ref == coach
-                && grant.confers_at(now)
-                && matches!(
-                    &grant.authority_scope.verbs,
-                    oneiron_authority::federation::ScopeAxis::Some(verbs)
-                        if verbs.contains(WEAVE_DIGEST_SETTINGS_GRANT_VERB)
-                )
+            if grant.member_ref != coach {
+                continue;
+            }
+            if !grant.verb_classes.is_empty() && class_rows.is_none() {
+                class_rows = Some(crate::federation::AgentVerbClasses::for_grants_in_txn(
+                    &self.store,
+                    txn,
+                    [&grant],
+                )?);
+            }
+            let classes = class_rows.as_ref().unwrap_or(&no_classes);
+            if grant.confers_with_classes_at(now, classes)
+                && grant.admits_verb(WEAVE_DIGEST_SETTINGS_GRANT_VERB, classes)
                 && (grant.delegated_by == Some(owner) || sole_owner)
             {
                 if grant_pact_standing_lapsed_in_txn(self, txn, id, grant.scope, grant.member_ref) {

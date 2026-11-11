@@ -15,7 +15,7 @@
 //! ([`super::broker_media`]).
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::llm::{BrokerIsolation, CacheDigest, SingleRouteBackend};
@@ -359,8 +359,36 @@ impl BrokerBackend {
         &self,
         header: &CallHeader,
         body: &[u8],
+        lease: &BudgetLease,
+        release: oneiron::llm::DispatchRelease<'_>,
     ) -> LlmResult<oneiron_broker::BrokerReply> {
-        call_with_key(&self.client, &self.keys, &self.secret, header, body).await
+        if !lease.has_dispatch_release() {
+            return call_with_key_released(
+                &self.client,
+                &self.keys,
+                &self.secret,
+                header,
+                body,
+                Some(release),
+                None,
+            )
+            .await;
+        }
+        let gated = || {
+            lease.check_dispatch_release()?;
+            release()?;
+            Ok::<(), LlmError>(())
+        };
+        call_with_key_released(
+            &self.client,
+            &self.keys,
+            &self.secret,
+            header,
+            body,
+            Some(&gated),
+            Some(lease),
+        )
+        .await
     }
 
     /// The provider's answer as the adapter reads it, its model labelled as
@@ -377,6 +405,7 @@ impl BrokerBackend {
         wire_model: &str,
         model: &ModelId,
         execution: Option<&CacheDigest>,
+        mut inference: Option<&mut super::openai::InferenceUsage>,
     ) -> LlmResult<LlmResponse> {
         let (status, headers) = answered(outcome)?;
         let parsed = serde_json::from_slice::<JsonValue>(body);
@@ -386,6 +415,19 @@ impl BrokerBackend {
                 .map(|(name, value)| (name.to_ascii_lowercase(), value))
                 .collect();
             let body = parsed.unwrap_or(JsonValue::Null);
+            if let (Wire::OpenAi(_), Some(inference)) = (&self.wire, inference.as_deref_mut()) {
+                let mut observed = body.clone();
+                // As on the plain transport, an error does not establish
+                // an answering alias; only native carried measurements do.
+                super::openai::carry_sent_reply_evidence(
+                    status,
+                    &mut observed,
+                    Some(wire_model),
+                    None,
+                    execution,
+                );
+                inference.record(&mut observed, true);
+            }
             return Err(match &self.wire {
                 Wire::OpenAi(_) => classify_openai_status(status, &headers, &body),
                 Wire::Anthropic(_) => classify_anthropic_status(status, &headers, &body),
@@ -406,8 +448,16 @@ impl BrokerBackend {
                     answering.as_ref(),
                     execution,
                 );
+                if let Some(inference) = inference.as_deref_mut() {
+                    // A reply that later fails strict parsing still keeps
+                    // the native work its body actually reported.
+                    inference.record(&mut body, true);
+                }
                 let mut answer = parse_openai_chat_response(&body)?;
                 answer.usage.bind_inference_model(model);
+                if let Some(inference) = inference {
+                    inference.finish(None);
+                }
                 Ok(answer)
             }
             Wire::Anthropic(_) => {
@@ -436,8 +486,8 @@ pub(super) async fn call_with_key(
     call_with_key_released(client, keys, secret, header, body, None, None).await
 }
 
-/// [`call_with_key`] with the caller's release invoked after connection and
-/// key retrieval, immediately before the broker sends the bytes.
+/// [`call_with_key`] with the caller's original release after key retrieval,
+/// then before each physical broker HTTP write, including a gzip/plain resend.
 pub(super) async fn call_with_key_released(
     client: &BrokerClient,
     keys: &Arc<dyn KeyDoor>,
@@ -447,7 +497,27 @@ pub(super) async fn call_with_key_released(
     release: Option<oneiron::llm::DispatchRelease<'_>>,
     lease: Option<&BudgetLease>,
 ) -> LlmResult<oneiron_broker::BrokerReply> {
-    let (connection, key) = connect_with_key_released(client, keys, secret, release, lease).await?;
+    let (connection, key) = connect_with_key_released(client, keys, secret, None, None).await?;
+    if let Some(release) = release {
+        release()?;
+        let before_send = || {
+            release()?;
+            if let Some(lease) = lease {
+                lease.begin_physical_attempt();
+            }
+            Ok::<(), LlmError>(())
+        };
+        return connection
+            .call_released(header, body, key, &before_send)
+            .await
+            .map_err(|error| match error {
+                oneiron_broker::DispatchError::Broker(error) => broker_error(error),
+                oneiron_broker::DispatchError::Release(error) => error,
+            });
+    }
+    if let Some(lease) = lease {
+        lease.begin_physical_attempt();
+    }
     connection
         .call(header, body, key)
         .await
@@ -571,6 +641,48 @@ pub(super) async fn open_with_whole(
         .map_err(broker_error)
 }
 
+/// Opens a released Responses call without moving the caller's authority into
+/// the broker. The same lease checks each physical create, including a whole retry.
+pub(super) async fn open_with_whole_released(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    whole: &[u8],
+    lease: &BudgetLease,
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    header
+        .check_responses(body, whole)
+        .map_err(|reason| broker_error(oneiron_broker::BrokerError::Refused(reason)))?;
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    lease.check_dispatch_release()?;
+    let release = || {
+        lease.check_dispatch_release()?;
+        lease.begin_physical_attempt();
+        Ok::<(), LlmError>(())
+    };
+    connection
+        .open_with_whole_released(header, body, whole, key, &release)
+        .await
+        .map_err(|error| match error {
+            oneiron_broker::DispatchError::Broker(error) => broker_error(error),
+            oneiron_broker::DispatchError::Release(error) => error,
+        })
+}
+
 /// The provider's status and headers when it answered, or the error a call
 /// with no answer is.
 pub(super) fn answered(outcome: Outcome) -> LlmResult<(u16, Vec<(String, String)>)> {
@@ -680,13 +792,28 @@ impl LlmBackend for BrokerBackend {
             let execution = serde_json::from_slice::<JsonValue>(&body)
                 .ok()
                 .and_then(|sent| execution_mode(&sent));
-            let reply = self.send(&header, &body).await?;
+            let inference = Mutex::new(None);
+            let observe = matches!(&self.wire, Wire::OpenAi(_));
+            let release = || {
+                if observe {
+                    *inference.lock().unwrap_or_else(PoisonError::into_inner) = Some(
+                        super::openai::InferenceUsage::new(lease, Some(request.model.clone())),
+                    );
+                }
+                Ok(())
+            };
+            let reply = self.send(&header, &body, lease, &release).await?;
+            let mut inference = inference
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
             self.answer(
                 reply.outcome,
                 &reply.body,
                 &header.wire_model,
                 &request.model,
                 execution.as_ref(),
+                inference.as_mut(),
             )
         })
     }

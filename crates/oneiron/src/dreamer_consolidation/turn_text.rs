@@ -226,6 +226,8 @@ impl TurnText {
         turn: &EntityId,
     ) -> Result<Option<String>> {
         let text = self.readable_text(scope)?.map(str::to_owned);
+        // A branch read an inline TURN through its own scoped source; the
+        // write fence re-checks it.
         if self.messages.is_some() {
             self.check_live_in(read, &snapshot(read.vault())?, turn)?;
         }
@@ -233,17 +235,14 @@ impl TurnText {
     }
 
     /// Re-collect the same TURN under `read` in `txn` and refuse any change to
-    /// the child set, a binding, a version, a frontier or the text. Inline
-    /// text depends only on the TURN body, which every caller pins itself.
+    /// the child set, a binding, a version, a frontier or the text, and a
+    /// TURN `read` may no longer read, inline text included.
     pub(super) fn check_live_in(
         &self,
         read: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
         turn: &EntityId,
     ) -> Result<()> {
-        if self.messages.is_none() {
-            return Ok(());
-        }
         let Some((_, _, body)) = read
             .get_entities_parts_in_txn(txn, std::slice::from_ref(turn))?
             .pop()
@@ -517,18 +516,11 @@ pub(crate) fn live_turn_text_in(
 }
 
 /// The text of one TURN for the Dreamer's read-only side doors (gap scan,
-/// retrieval shadow), with the record a writer re-checks. Inline text keeps
-/// its existing reader; the MESSAGE fallback reads as the Dreamer, in one
-/// snapshot.
+/// retrieval shadow), with the record a writer re-checks. The TURN is read as
+/// the Dreamer, in one snapshot, whether it carries its own words or its
+/// words are its MESSAGE rows (X01): a TURN the Dreamer may not read gives
+/// no text.
 pub(super) fn read_turn_text(vault: &Vault, id: &EntityId) -> Result<TurnText> {
-    let facts = super::watermark::read_turn_facts(vault, id)?;
-    if facts.text.is_some() {
-        return Ok(TurnText {
-            text: facts.text,
-            messages: None,
-            layout: Vec::new(),
-        });
-    }
     let read = dreamer_read(vault)?;
     let txn = snapshot(vault)?;
     // A TURN the Dreamer may not read has no text here, like an absent one.

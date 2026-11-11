@@ -455,6 +455,7 @@ fn pending_call<'a>(
                 call_id,
                 name,
                 input,
+                ..
             } => Some((call_id.as_str(), name.as_str(), input)),
             _ => None,
         })

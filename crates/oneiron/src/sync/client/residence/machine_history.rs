@@ -103,7 +103,7 @@ pub(crate) async fn fetch_owed_machine_history(
         .encode(encode_sync_selector(selector).map_err(|_| refused())?);
     let budgets = residence_budgets(vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
-        return Err(TransportError::Storage("home node offline".into()));
+        return Err(TransportError::home_offline());
     };
     let mut landed = 0;
     let mut fetched = Vec::new();

@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { createServer } from "node:net";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { FacadeInput } from "@oneiron/client";
@@ -9,7 +10,7 @@ import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { loadBuildManifest, loadFixtures, requireAsset } from "./support/fixtures.ts";
 import { ScriptedProviders, embeddingReply } from "./support/providers.ts";
 import type { ProviderStep } from "./support/providers.ts";
-import { Artifacts, LIMITS, ManagedProcess, defineFile, isolatedEnv, ownResource, redactor, secretHex, tempRoot } from "./support/run.ts";
+import { Artifacts, LIMITS, ManagedProcess, assertFlowActive, defineFile, isolatedEnv, ownResource, redactor, secretHex, tempRoot } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -72,6 +73,7 @@ async function startEndpointEngine(id: string, data: Scenarios, endpoint: string
   redactor.add(env.ONEIRON_AUTH_SECRET);
   await mkdir(env.TMPDIR!, { recursive: true, mode: 0o700 });
   const artifacts = new Artifacts(resolve(process.env.E2E_ARTIFACTS_DIR ?? resolve(root, "artifacts"), id));
+  assertFlowActive();
   const reservation = createServer();
   await new Promise<void>((done, reject) => {
     reservation.once("error", reject);
@@ -145,7 +147,11 @@ async function startEndpointEngine(id: string, data: Scenarios, endpoint: string
     const { bearer, seed } = credentialParts(paired.credential);
     const cli = new CliClient(requireAsset(build, "cli"), root,
       { ...env, ONEIRON_URL: url, ONEIRON_TOKEN: bearer, ONEIRON_SECRET: bearer, ONEIRON_BINDING_KEY: seed }, artifacts);
-    await artifacts.json("public-schema.json", (await client.request("GET", "/api/openapi.json")).body);
+    const schema = await client.request<{ readonly paths?: Readonly<Record<string, unknown>> }>("GET", "/api/openapi.json");
+    await artifacts.json("public-schema.json", {
+      sha256: createHash("sha256").update(schema.bytes).digest("hex"),
+      bytes: schema.bytes.byteLength, pathCount: Object.keys(schema.body.paths ?? {}).length,
+    });
     await artifacts.json("launch.json", { buildHead: build.head, profile,
       config: redactor.text(configuredPolicy), runtimePolicy: data.runtimePolicy });
     const ready = async () => awaitPublic(() => client.request<OwnerStatus>("GET", "/v1/owner/status"),

@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.find",
+  "description": "Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page.",
+  "input": "crate::task_verb::sdk::BrowserFindInput",
+  "output": "crate::task_verb::sdk::BrowserFindOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.find(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserFindInput>",
+    "description": "Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

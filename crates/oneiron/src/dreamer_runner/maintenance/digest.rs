@@ -36,7 +36,7 @@ pub use urgent::{
     DigestHarmCandidate, DigestHarmJudgeInput, DigestHarmResult, DigestNeededBefore,
     DigestVersionRef, UrgentDigestAssessment,
 };
-pub use view::ProactivityDigestView;
+pub use view::{DigestReadRequest, ProactivityDigestView};
 const CADENCE: SideTable<(), ProactivityCadence, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CADENCE);
 const STATE: SideTable<(), DigestState, LegacyJson> =

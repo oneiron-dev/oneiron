@@ -5,8 +5,11 @@
 //! subresource included ([`handler`], FIX 7332), and each connection and
 //! datagram its guest opens off its own session, a page WebSocket's and a
 //! worker's included ([`relay`], FIX 7333), by the address it goes to, with
-//! the hosted egress guard the fetch hands the render. It refuses only what
-//! that guard refuses, by the guard's own reason: hosted infrastructure, or
+//! the hosted egress guard the fetch hands the render. A same-site crawl's
+//! render holds each navigation its pages make, every redirect hop
+//! included, to the crawl's pinned origin before it is sent (FIX 4734). It
+//! refuses only what that guard refuses, by the guard's own reason, and
+//! what that pin refuses: hosted infrastructure, or
 //! a private network (FIX 7657), which a page's request may reach at an
 //! operator's private origin and a relayed connection never does, as the
 //! relay knows only an address. The guest's own loopback (the Lightpanda
@@ -34,10 +37,10 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use oneiron::Vault;
 use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::egress::EgressConfig;
-use oneiron::code_sandbox::microvm::select_backend_for_session;
+use oneiron::code_sandbox::microvm::{SandboxBackends, select_backend_for_session};
 use oneiron::web_fetch::{
-    HeadlessDocument, HeadlessRenderer, HostedEgressGuard, HostedEgressRefusal, RendererError,
-    RendererResult,
+    CROSS_SITE_REDIRECT_REASON, HeadlessDocument, HeadlessRenderer, HostedEgressGuard,
+    HostedEgressRefusal, PinnedOrigin, RenderContext, RendererError, RendererResult,
 };
 use oneiron_browser::{
     BrowserDriver as _, BrowserError, BrowserGuest, BrowserRequestHandler, BrowserSession,
@@ -87,11 +90,13 @@ impl GuestHeadless {
         }
     }
 
-    /// One render of `url`, checked with `guard` where the fetch gave one.
+    /// One render of `url`, checked with `guard` where the fetch gave one,
+    /// and its navigations held to `pin` where it gave one.
     fn render(
         &self,
         url: &str,
         guard: Option<Arc<HostedEgressGuard>>,
+        pin: Option<PinnedOrigin>,
     ) -> RendererResult<HeadlessDocument> {
         // The render's bodies charge the shared retained line and refuse past
         // the host's egress bound (FIX 8638): the egress file the guest's own
@@ -102,6 +107,7 @@ impl GuestHeadless {
             .max_response_bytes;
         let operation = Arc::new(Operation::new(
             guard,
+            pin,
             Arc::clone(&self.retained),
             Arc::clone(&self.questions),
             max_response_bytes,
@@ -154,15 +160,18 @@ impl GuestHeadless {
             Arc::clone(&self.vault),
             self.guest.wait_cap,
         ));
-        // A guarded render's pages take its handler; an unguarded one's take
-        // the relay, which performs them the same way, unchecked.
-        let handler: Option<Arc<dyn BrowserRequestHandler>> = if operation.guard.is_some() {
-            Some(requests)
-        } else {
-            None
-        };
+        // A guarded or pinned render's pages take its handler, which checks
+        // them; any other render's take the relay, which performs them the
+        // same way, unchecked.
+        let handler: Option<Arc<dyn BrowserRequestHandler>> =
+            if operation.guard.is_some() || operation.pin.is_some() {
+                Some(requests)
+            } else {
+                None
+            };
         let mut session = start_guest(
             &self.guest,
+            &*self.vault.runtime().sandbox_backends(),
             relay,
             self.handles.charge(),
             handler,
@@ -186,26 +195,22 @@ impl GuestHeadless {
 }
 
 impl HeadlessRenderer for GuestHeadless {
-    /// Unchecked: the guest's requests and connections go where they ask.
-    /// Only a managed node installs this rung, and its fetch renders guarded.
-    fn render_html(&self, url: &str) -> RendererResult<HeadlessDocument> {
-        self.render(url, None)
-    }
-
-    /// Checked with the managed node's `guard`, as the fetch handed it.
-    fn render_html_guarded(
-        &self,
-        url: &str,
-        guard: &HostedEgressGuard,
-    ) -> RendererResult<HeadlessDocument> {
-        self.render(url, Some(Arc::new(guard.clone())))
+    /// Checked with the managed node's guard, and each navigation held to a
+    /// same-site crawl's pinned origin, as `context` hands them (FIX 4734).
+    /// Only a managed node installs this rung, and its fetch hands a guard.
+    fn render_html(&self, url: &str, context: &RenderContext) -> RendererResult<HeadlessDocument> {
+        self.render(url, context.hosted_guard().cloned(), context.pin().cloned())
     }
 }
 
-/// The rung error a browser's destination refusal stands for: the guard
-/// refusal its reason names exactly (FIX 7657); a reason that names neither
+/// The rung error a browser's destination refusal stands for: a navigation
+/// outside a same-site crawl's pinned origin (FIX 4734), or the guard
+/// refusal its reason names exactly (FIX 7657); a reason that names none
 /// stays the hosted-infrastructure refusal every one was before.
 fn destination_refusal(refused: &DestinationRefusal) -> RendererError {
+    if refused.reason == CROSS_SITE_REDIRECT_REASON {
+        return RendererError::cross_site_redirect(refused.message.clone());
+    }
     let reason = HostedEgressRefusal::from_reason(&refused.reason)
         .unwrap_or(HostedEgressRefusal::Infrastructure);
     RendererError::hosted(reason, refused.message.clone())
@@ -215,15 +220,18 @@ fn destination_refusal(refused: &DestinationRefusal) -> RendererError {
 /// engine's tier selector, as a code run's guest starts, behind `relay`,
 /// and attaches it: with no starter, as one render switches no engine, and
 /// with `requests` where the render is guarded. The guest mounts no fixture.
-/// Each phase's outcome moves `readiness`.
+/// Each phase's outcome moves `readiness`. Its backend comes from
+/// `backends`, the set the vault carries (F1-6).
 fn start_guest(
     guest: &BrowserGuest,
+    backends: &dyn SandboxBackends,
     relay: Arc<dyn EgressRelay>,
     retention: Box<dyn HandleRetention>,
     requests: Option<Arc<dyn BrowserRequestHandler>>,
     readiness: &BrowserReadinessCell,
 ) -> Result<BrowserSession, BrowserError> {
     let backend = select_backend_for_session(
+        backends,
         SandboxGuestTier::Untrusted,
         guest.runtime.clone(),
         &guest.image,
@@ -255,9 +263,13 @@ fn start_guest(
 
 /// One render's custody of its guest's network, shared by its request
 /// handler and its relay: the managed node's guard (none on an unguarded
-/// render), the first refusal either gave, and the work they have in flight.
+/// render), a same-site crawl's pinned origin (FIX 4734), the first refusal
+/// either gave, and the work they have in flight.
 struct Operation {
     guard: Option<Arc<HostedEgressGuard>>,
+    /// The origin each navigation of the render is held to, where the fetch
+    /// gave one.
+    pin: Option<PinnedOrigin>,
     refused: Mutex<Option<RendererError>>,
     work: Mutex<Work>,
     settled: Condvar,
@@ -285,12 +297,14 @@ struct Running<'a>(&'a Operation);
 impl Operation {
     fn new(
         guard: Option<Arc<HostedEgressGuard>>,
+        pin: Option<PinnedOrigin>,
         retained: Arc<ByteLine>,
         questions: Arc<LimitQuestions>,
         max_response_bytes: usize,
     ) -> Self {
         Self {
             guard,
+            pin,
             refused: Mutex::default(),
             work: Mutex::default(),
             settled: Condvar::new(),

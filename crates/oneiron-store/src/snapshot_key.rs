@@ -28,9 +28,12 @@ impl WrappedSnapshotKey {
         if bytes.len() != WRAPPED_LEN || bytes[0] != VERSION {
             return Err(corrupt());
         }
-        Ok(Self {
-            bytes: bytes.to_vec(),
-        })
+        let mut owned = Vec::new();
+        owned
+            .try_reserve_exact(bytes.len())
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+        owned.extend_from_slice(bytes);
+        Ok(Self { bytes: owned })
     }
 
     /// The canonical bytes: version, nonce, ciphertext.

@@ -36,9 +36,9 @@ use super::types::{
 };
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunStepCheckpoint,
-    ExecutorStorage, ProgramCheckpointTail, ProgramResumeCommit, ProgramResumeWait, SelfCall,
-    SelfDispatchOutcome, SelfDurableWait, SelfSkillCall, load_program_checkpoint_tail,
-    program_resume_call,
+    ExecutorStorage, ProgramCheckpointTail, ProgramResumeCommit, ProgramResumeKind,
+    ProgramResumeWait, SelfCall, SelfDispatchOutcome, SelfDurableWait, SelfSkillCall,
+    load_program_checkpoint_tail, program_resume_call,
 };
 use crate::code_sandbox::ProposalSpoolFloor;
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
@@ -48,7 +48,9 @@ use crate::{Error, Vault};
 mod injection;
 
 use self::injection::SettledCall;
-pub(super) use self::injection::{InjectedAnswer, ProgramInjection};
+pub(super) use self::injection::{
+    InjectedAnswer, ProgramCallableSpan, ProgramInjection, ProgramLogEntry,
+};
 
 /// What the guest of a call reads once its entry holds.
 pub(super) const PROGRAM_RESUME_HELD: &str = "program_resume_held";
@@ -123,6 +125,13 @@ impl JsCodeModeRuntime for PinnedSourceRuntime<'_> {
 
     fn bind_proposal_spool(&mut self, spool: Arc<dyn ProposalSpoolFloor>) {
         self.runtime.bind_proposal_spool(spool);
+    }
+
+    fn bind_sandbox_backends(
+        &mut self,
+        backends: Arc<dyn crate::code_sandbox::microvm::SandboxBackends>,
+    ) {
+        self.runtime.bind_sandbox_backends(backends);
     }
 
     fn run_step(
@@ -308,7 +317,8 @@ impl<'a> EngineNativeExecutor<'a> {
             let generation = record.generation()?;
             return Ok((record, Some(generation)));
         }
-        let record = CodeRunReplayRecord::new(config.run_id, config.determinism);
+        let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
+        record.birth_world = self.gated_write.birth_world();
         // The program's replies are its actor's (FIX 5718).
         let actor = self.gated_write.actor().entity_ref();
         let generation =
@@ -423,12 +433,7 @@ impl<'a> EngineNativeExecutor<'a> {
         self.gated_write
             .observe_bridge_history(&record.bridge_calls);
         let recoverable = self.observation_refs(&record)?;
-        let injection = ProgramInjection {
-            entered: false,
-            calls: settled,
-            answered: Vec::new(),
-            held: None,
-        };
+        let injection = ProgramInjection::new(settled);
         let mut host = RecordingJsHost::new(
             self.gated_write,
             config.run_id,
@@ -438,6 +443,7 @@ impl<'a> EngineNativeExecutor<'a> {
         )
         .with_recoverable_outputs(&self.storage, &record, recoverable)?
         .with_skill_executor(&config.model)
+        .with_summary_prompt_package(&config.prompt_package_root)
         .with_result_share(&self.result_share)
         .with_program_injection(injection)
         .with_callable_checks(
@@ -458,8 +464,8 @@ impl<'a> EngineNativeExecutor<'a> {
         let response = host.dispatch_self_nested_cancellable(pinned, &mut lent, cancel)?;
         let ran = lent.ran;
         let failure = host.hard_failure.take();
-        let answered = match host.injection.take().map(ProgramInjection::settle) {
-            Some(Ok(answered)) => answered,
+        let log = match host.injection.take().map(ProgramInjection::settle) {
+            Some(Ok(log)) => log,
             Some(Err(why)) => return Ok(PinnedProgramRun::Held(why)),
             None => {
                 return Err(Error::InvariantViolation("a pinned entry lost its injection").into());
@@ -483,22 +489,52 @@ impl<'a> EngineNativeExecutor<'a> {
             entry_start,
             &host.bridge_calls,
         )?;
-        // The settled calls in the source's order: those answered, then the
-        // entry's own, up to the call that parked.
-        let injected = u64::try_from(answered.len())
-            .map_err(|_| Error::ArithmeticOverflow("pinned entry calls"))?;
-        let mut calls = answered;
+        // The settled calls in the source's order, answered or issued, up to
+        // the call that parked (FIX 5878). A callable whose body ended is
+        // listed whole, its own calls not; one whose body unwound on the wait
+        // is listed open, its own calls after it; one that cannot resume is
+        // listed held. The calls answered before the entry issued any keep
+        // their place: an earlier head's pages hold them as written.
+        let rows: std::collections::HashMap<u64, &CodeRunBridgeCall> =
+            host.bridge_calls.iter().map(|row| (row.seq, row)).collect();
+        let mut calls = Vec::new();
+        let mut injected = 0u64;
+        let mut answered_first = true;
         let mut parked_row = None;
-        for row in host
-            .bridge_calls
-            .iter()
-            .filter(|row| row.seq != entry_start)
-        {
+        let mut inside_settled: Option<usize> = None;
+        for (index, entry) in log.iter().enumerate() {
+            if inside_settled.is_some_and(|end| index < end) {
+                continue;
+            }
+            let seq = match *entry {
+                ProgramLogEntry::Answered(listed) => {
+                    calls.push(listed);
+                    if answered_first {
+                        injected += 1;
+                    }
+                    continue;
+                }
+                ProgramLogEntry::Issued(seq) if seq == entry_start => continue,
+                ProgramLogEntry::Issued(seq) => seq,
+            };
+            answered_first = false;
+            let Some(row) = rows.get(&seq) else {
+                return Err(
+                    Error::InvariantViolation("a pinned entry lost a row it issued").into(),
+                );
+            };
             if row.program_durable_wait()?.is_some() {
-                parked_row = Some(row.seq);
+                parked_row = Some(seq);
                 break;
             }
-            calls.push(program_resume_call(row, None)?);
+            let mut call = program_resume_call(row, None)?;
+            if let Some(span) = host.program_callables.iter().find(|span| span.seq == seq) {
+                call.kind = span.kind;
+                if span.kind == ProgramResumeKind::Settled {
+                    inside_settled = Some(span.log_end);
+                }
+            }
+            calls.push(call);
         }
         record.record_callable_rows(host.result_rows());
         record.bridge_calls.extend(host.bridge_calls);

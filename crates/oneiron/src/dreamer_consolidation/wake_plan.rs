@@ -5,6 +5,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_wake::{WakeCancellation, WakePassDeadline};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::settings::ReadDestination;
 use crate::{EntityId, Result, Vault};
 use oneiron_model::llm::{Scope, ScopeResource};
 use std::collections::{BTreeMap, BTreeSet};
@@ -160,6 +161,10 @@ pub struct PreparedWake {
     /// The material this pass's admitted `host.wake` pre-hooks added, in
     /// order (FIX 8722, 10665): every extraction of the wake reads it.
     hook_material: Vec<String>,
+    /// The destination bound the pass's vended executors stated (FIX
+    /// 12735), which every listing of this wake is read for; `None` where
+    /// none was stated, read as a destination nobody proved.
+    destination_bound: Option<ReadDestination>,
 }
 
 impl PreparedWake {
@@ -177,49 +182,71 @@ impl PreparedWake {
         scope: crate::dreamer_runner::DreamerConsolidationScope,
         caller_scope: Option<&Scope>,
     ) -> Result<Self> {
-        Self::prepare_matching(vault, scope, caller_scope, None, None)
+        Self::prepare_matching(vault, scope, caller_scope, None, None, None)
     }
 
     /// [`Self::capture_with_grants`] for a driven pass: while the queues are
     /// long, each iteration polls `deadline` and `cancel`, and a paused,
     /// stopped or expired pass prepares nothing — it ends at its next
-    /// boundary instead.
+    /// boundary instead. Its listings are read for `destination_bound`, the
+    /// bound the pass's vended executors stated (FIX 12735).
     pub(crate) fn capture_for_pass(
         vault: &Vault,
         scope: crate::dreamer_runner::DreamerConsolidationScope,
         caller_scope: Option<&Scope>,
+        destination_bound: Option<&ReadDestination>,
         deadline: &WakePassDeadline,
         cancel: &WakeCancellation,
     ) -> Result<Self> {
         let preempt = PreparationPreempt { deadline, cancel };
-        Self::prepare_matching(vault, scope, caller_scope, None, Some(&preempt))
+        Self::prepare_matching(
+            vault,
+            scope,
+            caller_scope,
+            destination_bound,
+            None,
+            Some(&preempt),
+        )
     }
 
     /// Direct execution uses the same one-revision planner but materializes
-    /// only its own admitted attempt, not unrelated queued branches.
+    /// only its own admitted attempt, not unrelated queued branches. No
+    /// vended pass states its destination here (FIX 12735), so it lists for
+    /// a destination nobody proved.
     pub(crate) fn prepare_one(
         vault: &Vault,
         scope: crate::dreamer_runner::DreamerConsolidationScope,
         caller_scope: Option<&Scope>,
         attempt: AttemptId,
     ) -> Result<Self> {
-        Self::prepare_matching(vault, scope, caller_scope, Some(attempt), None)
+        Self::prepare_matching(vault, scope, caller_scope, None, Some(attempt), None)
     }
 
     fn prepare_matching(
         vault: &Vault,
         scope: crate::dreamer_runner::DreamerConsolidationScope,
         caller_scope: Option<&Scope>,
+        destination_bound: Option<&ReadDestination>,
         only_attempt: Option<AttemptId>,
         preempt: Option<&PreparationPreempt<'_>>,
     ) -> Result<Self> {
         let started = std::time::Instant::now();
-        let (mut wake, owed) =
-            Self::read_matching(vault, scope, caller_scope, only_attempt, preempt)?;
+        let destination = destination_bound
+            .cloned()
+            .unwrap_or_else(super::neighbourhood::listing_destination);
+        let (mut wake, owed) = Self::read_matching(
+            vault,
+            scope,
+            caller_scope,
+            &destination,
+            only_attempt,
+            preempt,
+        )?;
         // The read transaction has closed: each retry's overflow is owed in
         // its own commit, before any branch of this wake runs.
         chunks::owe(vault, scope, owed);
         wake.prepared_ms = super::stage_log::ms_since(started);
+        wake.destination_bound = destination_bound.cloned();
         Ok(wake)
     }
 
@@ -227,6 +254,7 @@ impl PreparedWake {
         vault: &Vault,
         scope: crate::dreamer_runner::DreamerConsolidationScope,
         caller_scope: Option<&Scope>,
+        destination: &ReadDestination,
         only_attempt: Option<AttemptId>,
         preempt: Option<&PreparationPreempt<'_>>,
     ) -> Result<(Self, Vec<chunks::WakePreparationChunks>)> {
@@ -359,6 +387,7 @@ impl PreparedWake {
                 lineage: &lineage,
                 rounds: &rounds,
                 completed: &completed,
+                destination,
             },
             &mut preparations,
             &mut sources,
@@ -385,6 +414,7 @@ impl PreparedWake {
                 read_receipt: Some(read_receipt),
                 prepared_ms: 0,
                 hook_material: Vec::new(),
+                destination_bound: None,
             },
             owed,
         ))
@@ -407,6 +437,15 @@ impl PreparedWake {
     /// when none did.
     pub(crate) fn hook_material(&self) -> &[String] {
         &self.hook_material
+    }
+
+    /// The destination this wake's listings were read for (FIX 12735): the
+    /// bound its pass's vended executors stated, else a destination nobody
+    /// proved. A NOTE review on this wake lists for the same one.
+    pub(crate) fn listing_destination(&self) -> ReadDestination {
+        self.destination_bound
+            .clone()
+            .unwrap_or_else(super::neighbourhood::listing_destination)
     }
 
     /// Only work known at the wake's single revision may execute on it.
@@ -461,6 +500,7 @@ fn neighbourhood_in(
     plan: &PreparedConsolidationAttempt,
     sources: &BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
     texts: &BTreeMap<EntityId, super::turn_text::TurnText>,
+    destination: &ReadDestination,
 ) -> Result<(
     super::neighbourhood::Neighbourhood,
     super::neighbourhood::ListedRows,
@@ -496,10 +536,10 @@ fn neighbourhood_in(
         project: Some(project),
         ..Scope::default()
     });
-    // FIX 5588 S1 (Unknown-always, C3/C8): the listing is read through a
-    // fork of the wake's read bound to the plan destination; the shared read
-    // still feeds sources/texts/receipts and is never narrowed.
-    let destination = super::neighbourhood::listing_destination();
+    // FIX 5588 C3, FIX 12735: the listing is read through a fork of the
+    // wake's read bound to the destination the pass's executors stated; the
+    // shared read still feeds sources/texts/receipts and is never narrowed.
+    let destination = destination.clone();
     let listing = vault.scoped_read(read.actor_key().clone().for_destination(&destination));
     let passage = super::neighbourhood::Passage {
         turns: &turns,

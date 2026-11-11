@@ -4,7 +4,7 @@ Memory Wire is the Oneiron developer profile. Start with `vault.witness`,
 `vault.recall`, and `vault.receipts`. The same package also ships
 `vault.claims.upsert` (the same path in JS) and the other facade verbs listed
 under [API](#api). The verb set is generated from
-`scripts/sdk/agent-verbs.json` by `scripts/sdk/generate.py`; the shipped stubs
+`scripts/sdk/verbs/` by `scripts/sdk/generate.py`; the shipped stubs
 (`oneiron/__init__.pyi`) carry the typed signatures.
 There is no separate lite SDK and no alternate mutation path.
 
@@ -116,7 +116,7 @@ credential.
 | `handle.vault.export(format=None)` | the whole vault as one re-importable archive: a ZIP (JSONL per record kind, files by BLAKE3, manifest), base64 in `archive` |
 | `handle.cancel(task_ref)` | `TaskCancelReceipt` |
 | `handle.describe(task_ref=None)` | `TaskDescription`: one task card, or the whole TASKS section |
-| `handle.can(request)` | `TaskAskPreflight` |
+| `handle.can(request)` | `TaskAskPreflight` for `{"ask"}`; for `{"effect"}`, `CanEffectAnswer`: a dated allow, deny, would-ask or named hold |
 | `handle.peek(request)` | `list[TaskAskPersonEvidence]` |
 | `handle.ask(spec)` / `handle.wait(handle)` | an ask's receipt / its wait outcome |
 | `handle.vault.kv.get` / `put` / `delete` / `search` / `namespaces(request)` | exact, actor-owned keyed memory |

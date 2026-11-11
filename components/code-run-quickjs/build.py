@@ -130,7 +130,9 @@ def main():
             stage_wit = re.sub(r"    // @js (?:self\.[^\n]*|vault\.[^\n]*|ask)\n    import [^;]+;\n", "", wit)
         else:
             # A first-party write is its own import; it streams no proposals.
-            stage_wit = re.sub(r"    // @js oneiron\.propose\.[^\n]*\n    import [^;]+;\n", "", wit)
+            # The typed `ask` import is linked by no tier: the catalog's
+            # `ask` row owns the `ask` global (FIX 7033).
+            stage_wit = re.sub(r"    // @js (?:oneiron\.propose\.[^\n]*|ask)\n    import [^;]+;\n", "", wit)
 
         (stage / "code-run.wit").write_text(stage_wit)
         run(["wit-bindgen", "c", "--world", "guest", "--out-dir", stage, stage / "code-run.wit"])

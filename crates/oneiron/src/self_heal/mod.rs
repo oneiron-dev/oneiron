@@ -124,6 +124,7 @@ use self::event::invalid_diagnostic;
 mod healer_host_tests;
 #[cfg(test)]
 mod production_tests;
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

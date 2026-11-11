@@ -38,6 +38,7 @@ fn napi_witness_ingress_cannot_smuggle_a_system_row_past_the_engine_ceiling() {
             metadata: None,
             is_visible: None,
             order,
+            quote: None,
         };
 
         // The honest turn crosses the boundary and lands.
@@ -46,6 +47,8 @@ fn napi_witness_ingress_cannot_smuggle_a_system_row_past_the_engine_ceiling() {
             turn_ref: None,
             messages: vec![napi_message("user", 0)],
             occurred_at: 700,
+            thread_audience: None,
+            assertions: None,
         })
         .expect("an ordinary user turn converts");
         facade.witness(&honest).expect("and lands");
@@ -64,6 +67,8 @@ fn napi_witness_ingress_cannot_smuggle_a_system_row_past_the_engine_ceiling() {
                 },
             ],
             occurred_at: 701,
+            thread_audience: None,
+            assertions: None,
         })
         .expect("the boundary converts the hostile shape");
         let err = facade
@@ -88,6 +93,8 @@ fn napi_witness_ingress_cannot_smuggle_a_system_row_past_the_engine_ceiling() {
                 ..napi_message("user", 0)
             }],
             occurred_at: 702,
+            thread_audience: None,
+            assertions: None,
         })
         .expect("the boundary converts the side-channel shape");
         let err = facade
@@ -179,6 +186,7 @@ fn forget_drains_all_active_matches_beyond_one_page() {
                     occurred_at: Some(100),
                     learned_at: Some(100),
                     salience: None,
+                    confidence_details: None,
                 })
                 .expect("seed claim");
         }
@@ -190,6 +198,7 @@ fn forget_drains_all_active_matches_beyond_one_page() {
                     predicate: Some("profile.city".to_owned()),
                     lifecycle: Some("active".to_owned()),
                     limit: 500,
+                    filter: None,
                 })
                 .expect("claim_list")
                 .len()
@@ -216,22 +225,17 @@ fn forget_drains_all_active_matches_beyond_one_page() {
 #[test]
 fn native_client_export_projects_the_shared_five_format_verb() {
     let dir = unique_vault_dir("export");
-    let client = super::client::NativeClient::open(Some(dir.to_string_lossy().into_owned()), None)
-        .expect("embedded native client");
+    let client =
+        super::client::NativeClient::open(Some(dir.to_string_lossy().into_owned()), None, None)
+            .expect("embedded native client");
     for format in ["toon", "md", "json", "yaml", "txt"] {
-        let answer = client
-            .export(serde_json::json!({"format": format}))
-            .expect("N-API export");
-        assert_eq!(answer["format"], format);
-        assert!(
-            answer["rendered"]
-                .as_str()
-                .unwrap()
-                .contains("evidence_ledger")
-        );
+        let error = client
+            .vault_export(serde_json::json!({"format": format}))
+            .expect_err("OF-222 removed readable-copy vault export formats");
+        assert!(error.to_string().contains("BAD_REQUEST"));
     }
     let error = client
-        .export(serde_json::json!({"format":"gemini"}))
+        .vault_export(serde_json::json!({"format":"gemini"}))
         .expect_err("provider wire formats are not vault exports");
     assert!(error.to_string().contains("BAD_REQUEST"));
     drop(client);
@@ -251,8 +255,9 @@ fn binding_panic_child() {
         return;
     }
     let dir = unique_vault_dir("panic-hook");
-    let client = super::client::NativeClient::open(Some(dir.to_string_lossy().into_owned()), None)
-        .expect("embedded native client");
+    let client =
+        super::client::NativeClient::open(Some(dir.to_string_lossy().into_owned()), None, None)
+            .expect("embedded native client");
     let caught =
         std::panic::catch_unwind(|| panic!("could not parse row: sentinel-world-text-2b7d"));
     assert!(caught.is_err());

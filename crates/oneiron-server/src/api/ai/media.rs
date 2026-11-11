@@ -23,7 +23,7 @@ use oneiron::llm::media::{
     AiOperation, MediaJobState, MediaPart, MediaReplayKey, MediaRequest, MediaResponse, MediaUsage,
     MediaVoice, Modality,
 };
-use oneiron::task_verb::sdk::AiVoice;
+use oneiron::task_verb::sdk::{AiImageMask, AiVoice};
 use oneiron::voice_cascade::media::BankVoiceBinding;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, FatalLlmError, LlmError, ModelId, ModelTierRef,
@@ -183,6 +183,8 @@ pub(super) struct AiCallBody {
     #[serde(default)]
     references: Vec<WirePart>,
     #[serde(default)]
+    mask: Option<AiImageMask>,
+    #[serde(default)]
     params: BTreeMap<String, JsonValue>,
     /// A speech call's voice; the provider's default when absent.
     #[serde(default)]
@@ -336,6 +338,13 @@ fn admit(
         prompt: body.prompt,
         input: decoded(body.input),
         references: decoded(body.references),
+        mask: body
+            .mask
+            .map(|mask| {
+                mask.into_image()
+                    .ok_or_else(|| refused_here(operation, MediaCallRefusal::InvalidPart))
+            })
+            .transpose()?,
         params: body.params,
         voice: body.voice,
     };
@@ -400,6 +409,7 @@ pub(crate) struct MediaCallParts {
     /// The images an image call edits, or a video call starts from; `None`
     /// as for `input`.
     pub(crate) references: Option<Vec<MediaPart>>,
+    pub(crate) mask: Option<oneiron::llm::image::ImageBytes>,
     pub(crate) params: BTreeMap<String, JsonValue>,
     /// A speech call's voice; the provider's default when absent.
     pub(crate) voice: Option<AiVoice>,
@@ -470,14 +480,19 @@ pub(crate) fn prepare_media_call(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: false,
+            host_paid: false,
             seat_effort: None,
         },
         operation,
         parts,
         references,
+        mask: call.mask,
         params: call.params,
         voice,
     };
+    request
+        .validate_image_mask()
+        .map_err(|_| MediaCallRefusal::InvalidPart)?;
     let request = admit_media(
         &server.vault,
         media,

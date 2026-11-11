@@ -13,6 +13,7 @@ impl Lift<PendingProposalView> for crate::PendingProposalView {
             artifact: record_ref(value.artifact),
             proposal_ref: value.proposal_ref,
             kind: match value.kind {
+                PendingProposalKind::NeedsStaging => crate::PendingProposalKind::NeedsStaging,
                 PendingProposalKind::Edit => crate::PendingProposalKind::Edit,
                 PendingProposalKind::Output => crate::PendingProposalKind::Output,
             },

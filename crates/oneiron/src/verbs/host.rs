@@ -162,7 +162,7 @@ pub fn remove_pack_embedded(
 }
 
 /// `vault.connectors.subscriptions.put`'s input: the agent that answers a
-/// built-in channel (OF-519), and the channel, `slack` or `line`.
+/// built-in channel (OF-519), and the channel, `slack`, `line` or `email`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelSubscriptionRequest {
@@ -403,6 +403,28 @@ impl AiPart {
     }
 }
 
+/// An image-edit mask on the SDK and HTTP wires: image bytes as base64.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AiImageMask {
+    pub media_type: String,
+    pub data: String,
+}
+
+impl AiImageMask {
+    #[must_use]
+    pub fn into_image(self) -> Option<crate::llm::image::ImageBytes> {
+        let bytes = STANDARD
+            .decode(self.data)
+            .ok()
+            .filter(|bytes| !bytes.is_empty())?;
+        Some(crate::llm::image::ImageBytes {
+            bytes,
+            media_type: self.media_type,
+        })
+    }
+}
+
 /// One `ai.*` media call: `ai.image`, `ai.video`, `ai.speech`,
 /// `ai.transcribe` or `ai.embed`, as `POST /v1/ai/<operation>` takes it.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -420,6 +442,9 @@ pub struct AiCallRequest {
     /// The images an image call edits, or a video call starts from.
     #[serde(default)]
     pub references: Vec<AiPart>,
+    /// An explicit mask for an image edit; absent calls are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<AiImageMask>,
     #[serde(default)]
     pub params: BTreeMap<String, serde_json::Value>,
     /// A speech call's voice; the provider's default when absent. Any

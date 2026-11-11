@@ -1,8 +1,12 @@
-//! The one checked proposer (moved from `proposal.rs`, FIX 6867 G1 PR2b):
-//! the trusted and owner proposals take their base from the current
-//! checkout, a run's from the immutable commit its work is pinned at
-//! (PREMISE 3), and both are validated, kept under custody and written by
-//! the same code. No proposal lands a file here.
+//! The one checked proposer (moved from `proposal.rs`, FIX 6867 G1 PR2b).
+//! A trusted proposal takes its base from the current checkout. An owner
+//! proposal takes the tree of the exact commit its stored repository
+//! pointer names, read from the object store, not the live checkout (FIX
+//! 4367). A run's proposal takes the tree of the commit its work is pinned
+//! at (PREMISE 3). All are validated, kept under custody and written by the
+//! same code. No proposal lands a file here. Every changed path must be on
+//! the registered repository's retained whitelist, judged in the same final
+//! writer (FIX 4299, CODE-CUSTODY-01).
 
 use super::*;
 use crate::code_document::CodeOpProvenanceValidation;
@@ -11,11 +15,13 @@ use crate::repo_mutation::snapshot::RepoPinnedBase;
 
 /// Where a proposal's pre-action base comes from.
 pub(in crate::repo_mutation) enum ProposalBase {
-    /// The trusted and owner proposer: the live checkout, captured under the
-    /// repo lock, whose HEAD must be the request's pinned commit.
+    /// The trusted proposer: the live checkout, captured under the repo
+    /// lock, whose HEAD must be the request's pinned commit.
     CurrentCheckout,
-    /// A run's proposal: the tree of the commit its work is pinned at, read
-    /// from the object store; that commit must be the request's pin.
+    /// The tree of one immutable commit, read from the object store; that
+    /// commit must be the request's pin. A run's proposal takes the commit
+    /// its work is pinned at. An owner proposal takes the commit its stored
+    /// repository pointer names (FIX 4367), so HEAD may be ahead of it.
     Pinned(RepoPinnedBase),
 }
 
@@ -26,7 +32,11 @@ impl Vault {
     /// refusal there writes nothing. A run's stamp and class are on the row
     /// before that write; the trusted and owner proposer write none. An
     /// owner `opener`'s verified credential lineage is frozen on the row in
-    /// that transaction (FIX 8838).
+    /// that transaction (FIX 8838). The same writer keeps the submission
+    /// admission receipt (FIX 4338) and, for a `repair_of` source, the link
+    /// that makes this fresh proposal that failed proposal's replacement
+    /// (FIX 4364).
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::repo_mutation) fn propose_repo_mutation_checked<R>(
         &self,
         request: RepoMutationRequest,
@@ -34,6 +44,7 @@ impl Vault {
         base: ProposalBase,
         run: Option<RepoRunStamp>,
         opener: Option<&crate::consent::AuthenticatedOwner>,
+        repair_of: Option<EntityId>,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoProposal, R>> {
         validate_operation(&request.operation)?;
@@ -123,6 +134,7 @@ impl Vault {
             critiques: Vec::new(),
             policy_critiques: Vec::new(),
             queue_review: None,
+            contract_reviews: Vec::new(),
             status: RepoProposalStatus::Proposed,
             resolves: None,
             settlement: None,
@@ -131,13 +143,20 @@ impl Vault {
             run,
             actor_class: request_class.map(|class| class as u8),
             opener_lineage: Vec::new(),
+            repair_of,
         };
         validate_conflict(self, &row, &repo_root)?;
-        let mut prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
+        let repair = repair_of
+            .map(|source| super::repair::RepairSource::of(self, source, &repo_root))
+            .transpose()?;
+        let mut prepared =
+            super::persist::PreparedRepoProposal::new(row, snapshot)?.with_repair(repair);
         let mut txn = self.store.env.write_txn()?;
         if let Err(refused) = check(&txn)? {
             return Ok(Err(refused));
         }
+        let paths = crate::codebase::proposed_file_paths(&prepared.row.files);
+        self.require_registered_edit_in_txn(&txn, None, &repo.locator(), paths)?;
         if let Some(opener) = opener {
             prepared.row.opener_lineage = opener.credential_lineage_in_txn(self, &txn)?;
         }
@@ -259,6 +278,7 @@ impl Vault {
             critiques: Vec::new(),
             policy_critiques: Vec::new(),
             queue_review: None,
+            contract_reviews: Vec::new(),
             status: RepoProposalStatus::Proposed,
             resolves: None,
             settlement: None,
@@ -267,12 +287,15 @@ impl Vault {
             run,
             actor_class: request_class.map(|class| class as u8),
             opener_lineage: Vec::new(),
+            repair_of: None,
         };
         let prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
         let mut txn = self.store.env.write_txn()?;
         if let Err(refused) = check(&txn)? {
             return Ok(Err(refused));
         }
+        let paths = crate::codebase::proposed_file_paths(&prepared.row.files);
+        self.require_registered_edit_in_txn(&txn, None, &repo.locator(), paths)?;
         prepared.persist_in_txn(self, &mut txn)?;
         txn.commit()?;
         Ok(Ok(prepared.row))

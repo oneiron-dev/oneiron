@@ -331,7 +331,8 @@ impl Store {
         // goes with what the archive no longer holds (FIX 6225). The retired
         // ASSETs and files were read off the bindings before they went.
         let files: BTreeSet<[u8; 32]> = prune.files.iter().copied().collect();
-        crate::llm::prune_step_response_pins_in_txn(write, wtxn, &prune.assets, &files)
+        crate::llm::prune_step_response_pins_in_txn(write, wtxn, &prune.assets, &files)?;
+        crate::channel_identity_provider::prune_line_chat_archive_pins_in_txn(self, wtxn)
     }
 
     /// Reads back, under the custody `txn` binds (the forked one), every

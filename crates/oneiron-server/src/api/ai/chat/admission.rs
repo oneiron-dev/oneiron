@@ -69,6 +69,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // the request is assembled from, its board's included (FIX 1389, 8133).
     let (actor, class) = principal(auth, &vault)?;
     let (agent, instructions) = assistant(auth, &vault, request.agent_ref.as_deref())?;
+    let session_binding = super::session_invocation::caller_binding(server, auth, locality)?;
     let settings = server.ai.chat_settings();
     let engine = |error: &dyn std::fmt::Display| {
         refused(StatusCode::CONFLICT, "turn_refused", error.to_string())
@@ -107,20 +108,29 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // FIX 4465 D: a self agent on its live fork reads its log from the
     // retained ledger, as the caller reads it where it sits; every other
     // turn takes the caller's lines as before.
-    let self_chat = crate::server::blocking(|| {
-        let reader = match auth.principal_ref() {
-            Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
-            None => vault.memory(actor, class),
-        };
+    let self_reader = || match auth.principal_ref() {
+        Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
+        None => vault.memory(actor, class),
+    };
+    let entry = crate::server::blocking(|| {
         compaction::self_chat(
             &server.ai,
             &vault,
-            &reader,
+            &self_reader(),
             agent,
             &request.conversation_ref,
             settings.history_turns,
         )
     });
+    let (self_chat, first_turn) = match entry {
+        Some(compaction::ChatEntry::Read(chat)) => (Some(chat), None),
+        Some(compaction::ChatEntry::Unread(mode)) => (None, Some(mode)),
+        None => (None, None),
+    };
+    // FIX 5034: a self agent's turn whose log did not read binds its log
+    // after its witness, when its request holds no caller line: a caller's
+    // history is never ledger evidence.
+    let first_turn = first_turn.filter(|_| request.history.len().min(settings.history_turns) == 0);
     match &self_chat {
         Some(chat) => {
             chat.push_log(&mut messages);
@@ -192,7 +202,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
         None,
     )
     .call
-    .map_err(&role_refused)?;
+    .map_err(role_refused)?;
     // `host.turn.generate` (ARCH-0080 §5): its pre chain runs once the turn
     // is admitted, so a refused admission leaves no hook's blocks or notes,
     // and before the user's turn is witnessed, so a skip or an ask ends the
@@ -213,9 +223,14 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // first, then the room's, as a queued Continue or Retry is (FIX 3572).
     let branch = match origin {
         Some(room) => {
-            crate::server::blocking(|| reply_place(&vault, room, reply_to))
-                .map_err(|error| engine(&error))?
-                .branch
+            crate::server::blocking(|| match &session_binding {
+                Some(binding) => binding.reply_place(&vault, room, reply_to),
+                None => {
+                    reply_place(&vault, room, reply_to).map_err(oneiron::memory::MemoryError::from)
+                }
+            })
+            .map_err(|error| engine(&error))?
+            .branch
         }
         None => None,
     };
@@ -259,7 +274,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // A turn that answers in a thread replies there to the TURN it names,
     // its own id minted here so the reply below answers it (FIX 3572); a
     // trunk turn keeps the witness's own id.
-    let user_turn_id = reply_to.map(|_| EntityId::now());
+    let user_turn_id = reply_to
+        .filter(|_| session_binding.is_none())
+        .map(|_| EntityId::now());
     let mut user_turn = witness_turn(
         &request.conversation_ref,
         user_turn_id,
@@ -272,6 +289,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
     }
     let generate_session = verb_hook_boundary::hook_session_for_call(
         Some(&hooked_call()),
+        &oneiron::verbs::VERB_TABLE,
         HOST_TURN_GENERATE,
         &super::hooks::turn_generate_args(&request.conversation_ref),
         None,
@@ -280,6 +298,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
     let witness_args = serde_json::to_value(&user_turn).map_err(|error| engine(&error))?;
     let witness_session = verb_hook_boundary::hook_session_for_call(
         Some(&hooked_call()),
+        &oneiron::verbs::VERB_TABLE,
         WITNESS_ROW,
         &witness_args,
         None,
@@ -374,6 +393,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
         }),
     });
     let board_rows = read_board.map(|board| board.rows.clone());
+    let board_rows_complete = read_board.is_some_and(|board| board.rows_complete);
     let rider_ack = board
         .as_mut()
         .ok()
@@ -399,6 +419,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // A board the call goes without is no row it read.
     if recalled {
         sources.add(board_rows.as_deref());
+        if !board_rows_complete {
+            sources.add(None);
+        }
     }
     // The board's place holds the board, or the note of its omission, which
     // the call's segments name as one unnamed board section; a call its
@@ -419,8 +442,8 @@ pub(in crate::api::ai::chat) async fn start_turn(
             });
         (state.is_some() || tail.is_some()).then_some(segments::BoardView { state, tail })
     };
-    let mut admitted = admitted.map_err(&role_refused)?;
-    if self_chat.is_some() {
+    let mut admitted = admitted.map_err(role_refused)?;
+    if self_chat.is_some() || first_turn.is_some() {
         // The history before the turn's context is the prefix the next turn
         // sends again, so its end is marked beside the request's own. Today's
         // layout keeps today's marks.
@@ -483,6 +506,8 @@ pub(in crate::api::ai::chat) async fn start_turn(
             server.ai.session_app_open_applied(session_key, None);
     }
     let mut written = None;
+    let mut written_turn = None;
+    let mut native_user_turn = None;
     let user = crate::server::blocking(|| {
         let memory = vault.memory(actor, class).with_session(session_key);
         let (memory, hooked) = match invocation {
@@ -495,7 +520,10 @@ pub(in crate::api::ai::chat) async fn start_turn(
             &hooked,
             &user_turn,
             witness_session.as_ref(),
+            session_binding.as_ref(),
             &mut written,
+            &mut written_turn,
+            &mut native_user_turn,
         )
     })
     .map_err(|error| engine(&error))?
@@ -504,6 +532,15 @@ pub(in crate::api::ai::chat) async fn start_turn(
     sources.add(written.as_deref());
     let conversation = crate::server::blocking(|| vault.record_container(destination))
         .unwrap_or(Some(destination));
+    // FIX 5034: a first turn binds its breakpoint now its witness minted the
+    // conversation, from the rows that witness wrote: the history before the
+    // user's turn, proven empty, and the user's turn never added again.
+    let self_chat = self_chat.or_else(|| {
+        let mode = first_turn?;
+        crate::server::blocking(|| {
+            compaction::first_turn_chat(mode, &self_reader(), destination, written.as_deref())
+        })
+    });
     // The caller's view of the receipt, which a hook may have redacted.
     let user_turn = user
         .get("turn_short_id")
@@ -530,17 +567,20 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // answers in one (FIX 3572).
     let mut reply = witness_turn(
         &request.conversation_ref,
-        Some(turn),
+        session_binding.is_none().then_some(turn),
         WitnessAuthor::Companion,
         String::new(),
         at,
     );
-    if let Some(user) = user_turn_id {
+    if let Some(user) = user_turn_id.or(native_user_turn.filter(|_| reply_to.is_some())) {
         stamp_reply(&mut reply, user);
     }
     let hooks_vault = Arc::clone(&vault);
     let mut reply_rows = sources.known_rows();
-    reply_rows.extend([destination, turn]);
+    reply_rows.push(destination);
+    if session_binding.is_none() {
+        reply_rows.push(turn);
+    }
     let answering = begin_sourced_answer(
         &server.ai,
         Answer {
@@ -548,9 +588,16 @@ pub(in crate::api::ai::chat) async fn start_turn(
             agent,
             session_key: Some(session_key),
             activity: signals.then_some(session_key),
-            open: AnswerOpen::Turn {
-                turn: reply,
-                conversation,
+            open: match session_binding {
+                Some(binding) => AnswerOpen::Session {
+                    turn: reply,
+                    conversation,
+                    binding,
+                },
+                None => AnswerOpen::Turn {
+                    turn: reply,
+                    conversation,
+                },
             },
             mode,
             admitted,
@@ -563,9 +610,15 @@ pub(in crate::api::ai::chat) async fn start_turn(
             model_call_no_record_at_arrival,
             keepalive,
             mark,
+            // FIX 5033: its seed binds the user turn this request answers,
+            // by the TURN and MESSAGE rows the witness above wrote.
             breakpoint: self_chat.map(|chat| {
                 let reader = WriteActor::new(actor, class);
+                let answered = written_turn.zip(written.clone()).map(|(turn, messages)| {
+                    oneiron::conversation::ChatBreakpointUserTurn { turn, messages }
+                });
                 chat.breakpoint(reader, locality, recalled, breakpoint_craft)
+                    .with_user_turn(answered)
             }),
             today: None,
             craft,

@@ -1,0 +1,27 @@
+{
+  "name": "vault.summaries.edit",
+  "description": "Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal.",
+  "input": "crate::scope_summary::SummaryEditRequest",
+  "output": "crate::scope_summary::SummaryProposalView",
+  "call": "memory.edit_summary(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "request",
+        "type": "crate::scope_summary::SummaryEditRequest",
+        "field": "$"
+      }
+    ]
+  },
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true
+}

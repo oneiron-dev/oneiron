@@ -37,8 +37,9 @@ pub struct MergeBatch {
     /// A leased run's accepted entry and the declarations it waits behind
     /// (FIX 6867); `None` for an owner or trusted batch, which waits on none.
     pub run_order: Option<super::RepoQueueOrder>,
-    /// What the automatic driver decided for it (FIX 6868, G2 PR2); `None`
-    /// until the driver acts on it. An owner's call needs none.
+    /// What was decided for it (FIX 6868, G2 PR2): the automatic driver's
+    /// record, and the survivor links and diagnosis trace an owner's call
+    /// also writes (FIX 4362). `None` until one is written.
     pub drive: Option<super::QueueBatchDrive>,
 }
 

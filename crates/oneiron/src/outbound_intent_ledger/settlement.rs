@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::types::{IntentId, IntentLedgerRecord, IntentLedgerResult, IntentState};
 use crate::Vault;
 use crate::connector_key::{
-    ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetDebit, EffectorBudgetLocation,
+    ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetDebit, EffectorSpendReservationRow,
 };
 use crate::side_table::{self, Named, SideTable};
 
@@ -54,6 +54,31 @@ pub enum RemoteTaskObservation {
     Completed,
     /// The task failed or was cancelled before it delivered.
     Failed,
+}
+
+/// A remote task's post-commit state and newly fired budget thresholds.
+/// The trusted status caller delivers their steering through the same
+/// next-turn queue as a synchronous outbound result, not a second channel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteTaskSettlement {
+    pub state: IntentState,
+    pub budget_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
+}
+
+impl RemoteTaskSettlement {
+    /// Messages to forward to the trusted caller's existing next-turn queue.
+    #[must_use]
+    pub fn steering_messages(&self) -> Vec<String> {
+        let mut messages = Vec::new();
+        for event in self
+            .budget_events
+            .iter()
+            .flat_map(|events| &events.ladder_events)
+        {
+            crate::connector_key::append_effector_steering_message(&mut messages, event);
+        }
+        messages
+    }
 }
 
 /// Why a provider refused a send it says to try again later (FIX 8818).
@@ -122,7 +147,8 @@ pub enum ReservationStatus {
     Reserved,
     /// The send was delivered: the reserved debit is its charge.
     Settled,
-    /// The send certainly did not go and never will: its debit came out.
+    /// The send certainly did not go: its debits are out. A still-pending
+    /// retry restores them before transport.
     Released,
 }
 
@@ -154,7 +180,7 @@ pub struct BudgetReservation {
     /// Every preauthorizing Spend row the send met, priced or not: where a
     /// reported actual cost is reconciled (FIX 11662).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spend_rows: Vec<EffectorBudgetLocation>,
+    pub spend_rows: Vec<EffectorSpendReservationRow>,
 }
 
 /// One intent's row in [`SETTLEMENT`].
@@ -216,6 +242,31 @@ fn update_settlement_in_txn(
     Ok(())
 }
 
+/// Drops row `id`'s settlement as the stood-down row it belongs to is
+/// superseded (FIX 4747 slice 4), in the caller's writer: only while its
+/// reserved budget already came out, or it reserved none, so the send's next
+/// admission reserves its own. `false`, and nothing dropped, while its
+/// reservation still stands reserved or settled.
+///
+/// # Errors
+/// Storage and row-codec faults.
+pub(super) fn forget_released_settlement_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &IntentId,
+) -> IntentLedgerResult<bool> {
+    let settlement = intent_settlement_in_txn(vault, wtxn, id)?;
+    if settlement
+        .reservation
+        .as_ref()
+        .is_some_and(|reservation| reservation.status != ReservationStatus::Released)
+    {
+        return Ok(false);
+    }
+    SETTLEMENT.delete(&vault.store, wtxn, id)?;
+    Ok(true)
+}
+
 /// Keeps the budget admission reserved for row `id`, in the admission's
 /// writer (FIX 7964), with what its preauthorized spend stood on (FIX
 /// 8689) and the preauthorizing rows it met (FIX 11662). A charge that
@@ -228,11 +279,12 @@ pub(crate) fn reserve_budget_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &IntentId,
     debits: Vec<EffectorBudgetDebit>,
-    spend: Option<(ConnectorSpendBasis, Vec<EffectorBudgetLocation>)>,
+    spend: Option<(ConnectorSpendBasis, Vec<EffectorSpendReservationRow>)>,
 ) -> IntentLedgerResult<()> {
     if debits.is_empty() && spend.is_none() {
         return Ok(());
     }
+    crate::connector_key::set_effector_debits_reserved_in_txn(&vault.store, wtxn, &debits, true)?;
     let (spend, spend_rows) = spend.map_or((None, Vec::new()), |(basis, rows)| (Some(basis), rows));
     update_settlement_in_txn(vault, wtxn, id, |settlement| {
         settlement.reservation = Some(BudgetReservation {
@@ -276,14 +328,70 @@ pub(crate) fn keep_reported_cost(
     Ok(())
 }
 
-/// Settles `record`'s reserved budget by the state it now stands in, in the
-/// writer that moved it (FIX 7964): a delivered send's reservation is its
-/// charge, its preauthorized spend reconciled to the actual cost its
-/// provider reported when it reported one (FIX 11662); a send that stopped
-/// and certainly never went gives its debit back, in the window it was
-/// taken in. A send that may have gone, waits on a provider or a remote
-/// task, or may still be retried keeps its reservation. A reservation
-/// settles or releases once.
+/// Releases a certain non-delivery's budget in the outcome writer.
+/// Prior possible delivery keeps it. Each charter debit must still name its
+/// original approval before release can touch the current usage row.
+pub(super) fn release_non_delivery_reservation_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &IntentLedgerRecord,
+) -> IntentLedgerResult<()> {
+    if record.delivery_uncertain {
+        return Ok(());
+    }
+    let mut settlement = intent_settlement_in_txn(vault, wtxn, &record.id)?;
+    let Some(reservation) = settlement.reservation.as_mut() else {
+        return Ok(());
+    };
+    if reservation.status != ReservationStatus::Reserved {
+        return Ok(());
+    }
+    crate::connector_key::release_effector_debits_in_txn(&vault.store, wtxn, &reservation.debits)?;
+    reservation.status = ReservationStatus::Released;
+    SETTLEMENT.put(&vault.store, wtxn, &record.id, &settlement)?;
+    Ok(())
+}
+
+/// Restores a released reservation in the retry claim's writer after all
+/// still-live debits fit. A blocked claim retains its Released status; a
+/// dedupe takeover has abandoned the row and never restores its debits.
+pub(super) fn restore_retry_reservation_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &IntentLedgerRecord,
+) -> IntentLedgerResult<crate::connector_key::BudgetBlock> {
+    use crate::connector_key::BudgetBlock;
+
+    if record.state != IntentState::Pending {
+        return Ok(BudgetBlock::Open);
+    }
+    let mut settlement = intent_settlement_in_txn(vault, wtxn, &record.id)?;
+    let Some(reservation) = settlement.reservation.as_mut() else {
+        return Ok(BudgetBlock::Open);
+    };
+    if reservation.status != ReservationStatus::Released {
+        return Ok(BudgetBlock::Open);
+    }
+    let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    let block = crate::connector_key::restore_effector_debits_in_txn(
+        &vault.store,
+        wtxn,
+        &reservation.debits,
+        now,
+    )?;
+    if block == BudgetBlock::Open {
+        reservation.status = ReservationStatus::Reserved;
+        SETTLEMENT.put(&vault.store, wtxn, &record.id, &settlement)?;
+    }
+    Ok(block)
+}
+
+/// Settles `record`'s live reserved budget by its terminal state in the
+/// writer that moved it (FIX 7964). Delivery keeps the charge and reconciles
+/// preauthorized spend to reported actual cost (FIX 11662); a certain stop
+/// releases it once. Possible delivery and accepted remote tasks retain it.
+/// A certain non-delivery releases in its outcome writer and restores only
+/// at retry claim, so a later stop cannot release it twice.
 ///
 /// # Errors
 /// Storage faults.
@@ -291,18 +399,20 @@ pub(super) fn settle_reservation_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &IntentLedgerRecord,
-) -> IntentLedgerResult<()> {
+) -> IntentLedgerResult<Vec<crate::connector_key::EffectorBudgetSettlementEvents>> {
     let next = match record.state {
         IntentState::Done => ReservationStatus::Settled,
         IntentState::Abandoned if !record.delivery_uncertain => ReservationStatus::Released,
-        IntentState::Abandoned | IntentState::Pending | IntentState::Deferred => return Ok(()),
+        IntentState::Abandoned | IntentState::Pending | IntentState::Deferred => {
+            return Ok(Vec::new());
+        }
     };
     let settlement = intent_settlement_in_txn(vault, wtxn, &record.id)?;
     let Some(reservation) = settlement.reservation else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if reservation.status != ReservationStatus::Reserved {
-        return Ok(());
+        return Ok(Vec::new());
     }
     if next == ReservationStatus::Released {
         crate::connector_key::release_effector_debits_in_txn(
@@ -317,6 +427,27 @@ pub(super) fn settle_reservation_in_txn(
         }
         _ => None,
     };
+    let mut budget_events = Vec::new();
+    if next == ReservationStatus::Settled {
+        let debits = reconciled
+            .as_ref()
+            .map_or(reservation.debits.as_slice(), |(debits, _)| {
+                debits.as_slice()
+            });
+        crate::connector_key::set_effector_debits_reserved_in_txn(
+            &vault.store,
+            wtxn,
+            debits,
+            false,
+        )?;
+        let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        budget_events = crate::connector_key::fire_settled_effector_debits_in_txn(
+            &vault.store,
+            wtxn,
+            debits,
+            now,
+        )?;
+    }
     update_settlement_in_txn(vault, wtxn, &record.id, |settlement| {
         if let Some(reservation) = settlement.reservation.as_mut() {
             reservation.status = next;
@@ -325,7 +456,8 @@ pub(super) fn settle_reservation_in_txn(
                 reservation.spend = Some(basis);
             }
         }
-    })
+    })?;
+    Ok(budget_events)
 }
 
 /// FIX 11662: `reservation`'s preauthorized spend reconciled to `actual`,
@@ -423,6 +555,32 @@ pub(super) fn forget_remote_task_in_txn(
     update_settlement_in_txn(vault, wtxn, id, |settlement| {
         settlement.remote_task = None;
     })
+}
+
+/// Polls row `id`'s remote task `task_id` in the MCP session `session`
+/// from now on, in `wtxn` (FIX 16028): the connector ended the one the task
+/// was created in. A handle naming another task, or keeping no poll, stays
+/// as it is. Whether the handle changed.
+pub(super) fn renew_remote_task_session_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &IntentId,
+    task_id: &str,
+    session: Option<String>,
+) -> IntentLedgerResult<bool> {
+    let mut renewed = false;
+    update_settlement_in_txn(vault, wtxn, id, |settlement| {
+        if let Some(poll) = settlement
+            .remote_task
+            .as_mut()
+            .filter(|handle| handle.id == task_id)
+            .and_then(|handle| handle.poll.as_mut())
+        {
+            poll.session = session;
+            renewed = true;
+        }
+    })?;
+    Ok(renewed)
 }
 
 /// Row `id`'s provider wait and its edge, when that edge is still ahead of

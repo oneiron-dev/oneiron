@@ -1,0 +1,16 @@
+{
+  "name": "vault.trusted_contacts.concern.asks",
+  "description": "A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled.",
+  "input": "crate::task_verb::sdk::TrustedContactAsksRequest",
+  "output": "Vec<crate::counterparty_contact::TrustedContactAsk>",
+  "call": "crate::task_verb::sdk::read_trusted_contact_asks(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.concern.asks\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "trusted_contact_person"
+}

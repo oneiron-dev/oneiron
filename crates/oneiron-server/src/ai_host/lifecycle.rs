@@ -66,7 +66,13 @@ impl AiHost {
                 ladder: decisions.ladder().clone(),
                 dial: decisions.dial(oneiron::llm::decision::DecisionRung::Big),
                 bands: decisions.bands(),
-                wording: PROJECT_DETECTION_WORDING.to_owned(),
+                wording: models
+                    .map(|models| models.dreamer.wording.project_detection().to_owned())
+                    .unwrap_or_else(|| {
+                        crate::config::models::DreamerWording::default()
+                            .project_detection()
+                            .to_owned()
+                    }),
                 budget: PROJECT_DETECTION_BUDGET,
             });
         }
@@ -427,11 +433,7 @@ fn recover_dead_leases(vault: &Vault) {
             }
         };
         match parked {
-            Some(park)
-                if park.park_owner == dreamer::LEASE_OWNER
-                    || park.cause == oneiron::DreamerParkCause::Checkpoint
-                    || run_outage_park(&park.park_owner, park.cause) =>
-            {
+            Some(park) if park.resumable_by(oneiron::dreamer_runner::ParkResumer::BootRecovery) => {
                 if let Err(error) = runner.resume_parked(row.id, &park.park_owner, unix_now()) {
                     tracing::warn!(%error, attempt = ?row.id, "a checkpoint park was not cleared; its lease is kept");
                     held.insert(row.id);
@@ -513,9 +515,7 @@ fn resume_outage_parks(vault: &Vault) {
         let Ok(Some(park)) = runner.parked_attempt(row.id) else {
             continue;
         };
-        let dreamer_outage = park.park_owner == dreamer::LEASE_OWNER
-            && park.cause == oneiron::DreamerParkCause::ProviderUnavailable;
-        if !dreamer_outage && !run_outage_park(&park.park_owner, park.cause) {
+        if !park.resumable_by(oneiron::dreamer_runner::ParkResumer::ProviderRecovery) {
             continue;
         }
         match runner.resume_parked(row.id, &park.park_owner, unix_now()) {
@@ -532,11 +532,4 @@ fn resume_outage_parks(vault: &Vault) {
             "a provider recovered; attempts its outage parked resume"
         );
     }
-}
-
-/// Whether a park is an agent run's on a provider outage (FIX 3194): the
-/// pump's own, under its lease owner.
-fn run_outage_park(park_owner: &str, cause: oneiron::DreamerParkCause) -> bool {
-    park_owner == crate::server::RUN_LEASE_OWNER
-        && cause == oneiron::DreamerParkCause::ProviderUnavailable
 }

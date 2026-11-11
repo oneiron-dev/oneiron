@@ -1,12 +1,13 @@
 //! Revision-pinned short references and Loro cursor citations.
 
 use super::storage::{
-    RevisionNamespace, ensure_document, fork_revision_with_namespace, load_doc,
-    read_entity_revision_in_txn,
+    RevisionNamespace, citation_live_doc, ensure_document, fork_revision_with_namespace,
+    read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,
 };
 use super::{PinnedCitation, ReadMode, ResolvedCitation, RevisionRef};
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, parse_short_id_value};
+use crate::batch::parse_short_id_value;
 use crate::error::{Error, Result};
+use crate::store::ManifestDbs;
 use crate::{EntityId, Vault};
 use loro::ContainerTrait;
 use loro::cursor::{Cursor, Side};
@@ -25,7 +26,9 @@ impl Vault {
         let revision = selected_revision(self, &txn, id, mode, live)?;
         let raw = read_entity_revision_in_txn(self, &txn, id, ReadMode::Pinned(revision))?
             .ok_or(Error::EntityNotFound)?;
-        let hash = (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8;
+        // A file-plane ASSET's hash is its body's, as every pinned reference
+        // is minted and checked (FIX 22091).
+        let hash = crate::store::revision_content_hash_in_txn(&self.store, &txn, id, &raw)?;
         let reference =
             match crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &txn, id)? {
                 Some((short, _)) => format!("{short}:{hash:02x}@{}", revision.to_hex()),
@@ -80,8 +83,8 @@ impl Vault {
                 let pinned_raw =
                     read_entity_revision_in_txn(self, &txn, id, ReadMode::Pinned(revision))?
                         .ok_or(Error::EntityNotFound)?;
-                let hash = (xxhash_rust::xxh32::xxh32(&pinned_raw[ENTITY_METADATA_HEADER_LEN..], 0)
-                    % 256) as u8;
+                let hash =
+                    crate::store::revision_content_hash_in_txn(&self.store, &txn, id, &pinned_raw)?;
                 format!("{short}:{hash:02x}")
             }
             None => id.to_hex(),
@@ -149,7 +152,7 @@ impl Vault {
                 "citation span does not match its pinned quote".into(),
             ));
         }
-        let live = load_doc(&self.store, &txn, &citation.entity)?;
+        let live = citation_live_doc(&self.store, &txn, &citation.entity, namespace)?;
         let drifted = cursor_quote(
             &live,
             citation_text(
@@ -158,7 +161,7 @@ impl Vault {
                 &citation.entity,
                 &live,
                 &citation.field,
-                None,
+                Some(namespace),
             )?,
             &start,
             &end,
@@ -191,6 +194,21 @@ impl Vault {
     ) -> Result<Option<EntityId>> {
         resolve_reference(self, txn, reference, revision)
     }
+
+    /// The record that retains `revision` in `txn` (FIX 3959), named by the
+    /// revision alone: how the scoped CLAIM admission finds the record an
+    /// `edge.provenance` Claim's `source_revision_ref` cites. `None` when no
+    /// record retains it, as for an opaque legacy value.
+    pub(crate) fn revision_record_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        revision: RevisionRef,
+    ) -> Result<Option<EntityId>> {
+        let Some(id) = super::storage::IDENTITY.get(&self.store, txn, &revision.0)? else {
+            return Ok(None);
+        };
+        Ok(read_entity_revision_in_txn(self, txn, &id, ReadMode::Pinned(revision))?.map(|_| id))
+    }
 }
 
 fn resolve_reference(
@@ -216,7 +234,7 @@ fn resolve_reference(
     let Ok((short, hash)) = crate::entity_id::parse_short_ref_syntax(reference) else {
         return Ok(None);
     };
-    if hash != (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8 {
+    if hash != crate::store::revision_content_hash_in_txn(&vault.store, txn, &id, &raw)? {
         return Ok(None);
     }
     let Some((name, _)) =
@@ -236,6 +254,56 @@ fn resolve_reference(
         }
     }
     Ok(None)
+}
+
+/// The row a room's pinned alias `alias:hash@revision` names in `view`, one
+/// view of the room, read in `txn` (FIX 5162). It names the row only when
+/// all of these hold in that one view:
+///
+/// - the view holds the revision's identity row;
+/// - the room stages its own entity row of that id, so it keeps every
+///   revision row of it;
+/// - that id's reverse short-id row names it `alias`;
+/// - `hash` is the short hash of the pinned bytes.
+///
+/// The hash is never checked against the live body: an edit replaces the
+/// hash-keyed forward alias, and the reverse row keeps the name. Any other
+/// pin names nothing here. This grants no read: the caller's lane admits the
+/// row and its revision.
+///
+/// # Errors
+///
+/// Storage and corruption errors reading the view's rows.
+pub(crate) fn resolve_room_pinned_alias_in_txn(
+    vault: &Vault,
+    view: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    alias: &str,
+    hash: u8,
+    revision: RevisionRef,
+) -> Result<Option<EntityId>> {
+    let Some(id) = super::storage::IDENTITY.get(view, txn, &revision.0)? else {
+        return Ok(None);
+    };
+    // A record the room holds no row of reads as absent. Without that row,
+    // the view pairs the room's revision rows with base's rows of the
+    // record, which may never have held the revision: the room saved a
+    // later body, or base deleted, erased or redacted the record.
+    if !view.entities().stages_row(id.as_bytes()) {
+        return Ok(None);
+    }
+    match crate::ports::ShortIdStoreRead::port_short_id_reference(view, txn, &id)? {
+        Some((name, _)) if name == alias => {}
+        _ => return Ok(None),
+    }
+    let Some(raw) =
+        read_entity_revision_from_store_in_txn(vault, view, txn, &id, ReadMode::Pinned(revision))?
+    else {
+        return Ok(None);
+    };
+    // The hash a room's read names this revision by (`AdmittedRevision`).
+    let pinned = crate::store::revision_content_hash_in_txn(&vault.store, txn, &id, &raw)?;
+    Ok((pinned == hash).then_some(id))
 }
 
 /// The TURN `reference` names, when `revision` is a text revision of it that
@@ -296,6 +364,9 @@ fn citation_text(
     field: &str,
     namespace: Option<RevisionNamespace>,
 ) -> Result<Option<loro::LoroText>> {
+    if matches!(namespace, Some(RevisionNamespace::Note)) {
+        return Ok((field == "markdown").then(|| doc.get_text("body")));
+    }
     if !matches!(namespace, Some(RevisionNamespace::Generic))
         && let Some(body_field) = crate::entity_doc::pointer_field_in(store, txn, id)?
     {

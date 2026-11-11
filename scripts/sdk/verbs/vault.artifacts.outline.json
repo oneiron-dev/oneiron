@@ -1,0 +1,16 @@
+{
+  "name": "vault.artifacts.outline",
+  "description": "Reads a typed deck outline, its current NOTE frontier, its keep and its freshness.",
+  "input": "crate::blob_artifact::deck_creation::DeckOutlineRefRequest",
+  "output": "crate::blob_artifact::deck_creation::DeckOutlineView",
+  "call": "memory.artifacts_outline(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "refs": [
+    "/outline_ref"
+  ]
+}

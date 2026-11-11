@@ -555,7 +555,7 @@ pub async fn run_resident_dream(
         if LANDED.contains(&ctx.vault.store, &txn, &attempt_id)? {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
     }
@@ -567,7 +567,7 @@ pub async fn run_resident_dream(
             crate::dreamer_runner::FreeTimeItemRun::Done => {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
             crate::dreamer_runner::FreeTimeItemRun::Unbound => None,
@@ -576,13 +576,13 @@ pub async fn run_resident_dream(
     let Some(definition) = ctx.vault.get_agent_definition(&resident_id)? else {
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     };
     if !definition.enabled || definition.dreaming_mode() == DreamingMode::Off {
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     }
     let progress = ctx.vault.resident_dream_progress(resident_id)?;
@@ -597,7 +597,7 @@ pub async fn run_resident_dream(
     if cut.is_empty() {
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     }
     let (request, step_hash, craft) = dream_request(
@@ -624,7 +624,7 @@ pub async fn run_resident_dream(
         now_ms: ctx.now_ms,
     };
     let mut charges = StepChargeTally::default();
-    let response = match call_as_step_checked(
+    let (response, binding) = match call_as_step_checked(
         &step_ctx,
         backend.get(),
         model.guard,
@@ -633,9 +633,16 @@ pub async fn run_resident_dream(
     )
     .await
     {
-        Ok(StepOutcome::Finished { response, .. }) => {
-            charges.record_terminal_metered(ctx, attempt_id, step_hash, &response.usage)?;
-            response
+        Ok(StepOutcome::Finished {
+            response, binding, ..
+        }) => {
+            charges.record_terminal_metered(
+                ctx,
+                binding.attempt_id,
+                binding.step_hash,
+                &response.usage,
+            )?;
+            (response, binding)
         }
         Ok(StepOutcome::Trapped { .. }) => {
             return Ok(DreamerAttemptExecution::Park {
@@ -675,7 +682,10 @@ pub async fn run_resident_dream(
             {
                 charges.record_usage(usage);
             }
-            return Ok(charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other)));
+            return Ok(charges.park_for(
+                &other.to_string(),
+                crate::dreamer_runner::dreamer_park_cause_of_step(&other),
+            ));
         }
     };
     if ctx.deadline.expired() {
@@ -689,7 +699,12 @@ pub async fn run_resident_dream(
         // failure does below: this fn also dreams metered free-time items,
         // so a handover here would charge that spend twice.
         Err(reason) => {
-            return match charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason) {
+            return match charges.park_refused_reply(
+                ctx.vault,
+                binding.attempt_id,
+                binding.step_hash,
+                reason,
+            ) {
                 Ok(parked) => Ok(parked),
                 Err(error) => {
                     tracing::warn!(?error, "a refused reply's memo did not go");
@@ -732,6 +747,6 @@ pub async fn run_resident_dream(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     })
 }

@@ -79,6 +79,33 @@ pub(crate) async fn self_agents_spawn(
     (answer, Vec::new())
 }
 
+/// `tasks.wait` over AGENT children (`host_door_lists`): the reply is each
+/// named child's attempt id, terminal state and result ref, and the ids
+/// still pending. The attempts are read to reduce the wait, not served, and
+/// a result ref names a row without serving it, so the list is complete and
+/// empty.
+pub(crate) async fn tasks_wait(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<oneiron::code_run::TaskWaitAgentsRequest>,
+) -> Listed<oneiron::code_run::TaskWaitOutput> {
+    let answer = on_live_run(
+        server,
+        auth,
+        session,
+        input.live_run,
+        "tasks.wait",
+        move |dispatcher| {
+            dispatcher
+                .wait_agents_from_host(input.spec)
+                .map(oneiron::code_run::TaskWaitOutput::Agents)
+        },
+    )
+    .await;
+    (answer, Vec::new())
+}
+
 /// `self.leader.split` (`host_door_lists`): the reply is the project,
 /// TASK, parent and leader ids and the depth left, so the list is complete
 /// and empty.
@@ -116,6 +143,27 @@ pub(crate) async fn vault_claims_supersede(
         input.live_run,
         "vault.claims.supersede",
         move |dispatcher| dispatcher.supersede_claim_from_host(input.spec),
+    )
+    .await;
+    (answer, Vec::new())
+}
+
+/// `vault.claims.put` (`host_door_lists`): the reply is the claim's id; the
+/// policy and any claim it touches are read by the write gates, not served,
+/// so the list is complete and empty.
+pub(crate) async fn vault_claims_put(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<oneiron::code_run::MemoryClaimInput>,
+) -> Listed<oneiron::code_run::MemoryWriteOutput> {
+    let answer = on_live_run(
+        server,
+        auth,
+        session,
+        input.live_run,
+        "vault.claims.put",
+        move |dispatcher| dispatcher.put_claim_from_host(input.spec),
     )
     .await;
     (answer, Vec::new())

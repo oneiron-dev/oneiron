@@ -46,7 +46,7 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
         SelfCall::AgentVerb(call) => {
             let verb = call.verb.as_str();
             let input = call.input.to_string();
-            if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
+            if crate::task_verb::sdk::CUSTODY_VALUE_ROWS.contains(&verb) {
                 // Replay compares the exact input; write receipts ignore object-key order.
                 // Both fingerprints are host fields, never markers accepted from the caller.
                 request_map(vec![
@@ -98,10 +98,25 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
         )]),
         // The run repo row and its closed input; the binding is the host's.
         SelfCall::Repo(call) => repo_request_value(call)?,
-        SelfCall::MemorySearch(call) => request_map(vec![
-            ("query", Value::from(call.query.as_str())),
-            ("limit", Value::from(call.limit as u64)),
-        ]),
+        SelfCall::MemorySearch(call) => {
+            let mut entries = vec![
+                ("query", Value::from(call.query.as_str())),
+                ("limit", Value::from(call.limit as u64)),
+            ];
+            // An unfiltered search keeps the request bytes it always had; a
+            // filtered one names its filter (FIX 3977).
+            if let Some(filter) = &call.filter {
+                entries.push((
+                    "filter",
+                    Value::from(
+                        serde_json::to_string(filter).map_err(|_| {
+                            invalid_code_run_replay("search filter does not encode")
+                        })?,
+                    ),
+                ));
+            }
+            request_map(entries)
+        }
         SelfCall::MemoryWriteFixture(call) => request_map(vec![
             ("id", entity_id_value(call.id)),
             ("candidate", claim_candidate_request_value(&call.candidate)?),
@@ -228,7 +243,7 @@ pub(in crate::code_run) fn agent_verb_call_identity(
     let input = canonical_verb_input(input).to_string();
     let mut identity = verb.as_bytes().to_vec();
     identity.push(0);
-    if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
+    if crate::task_verb::sdk::CUSTODY_VALUE_ROWS.contains(&verb) {
         identity.extend_from_slice(blake3::hash(input.as_bytes()).as_bytes());
     } else {
         identity.extend(input.into_bytes());

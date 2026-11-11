@@ -25,7 +25,9 @@ use oneiron_base::machine_destination::{Destination, EffectiveRead, PeerMachine}
 /// host decides it, from the connection the caller reached it on; nothing the
 /// caller sends sets it. A device that forwards its caller's search to the
 /// home states it there, signed with the request (FIX 3550).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CallerLocality {
     /// On this device: the embedded host, or a caller on its local socket or
@@ -38,114 +40,27 @@ pub enum CallerLocality {
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 
-/// Where a read's rows go: this device, or off it to every machine that
-/// carries them on. Requester, executor and onward recipient are conjuncts:
-/// a world reaches the read only when every one of them may read it.
-///
-/// Only the host builds one, from the connection a request reached it on.
-/// It only narrows ([`Self::meet`]): once off this device a read never reads
-/// on it again, and a later on-device locality never erases a machine it
-/// carries.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ReadDestination {
-    /// Whether the rows leave this device.
-    off_device: bool,
-    /// Each machine the rows go to, as its connection proved it. Empty while
-    /// off this device: a destination nobody proved.
-    proved: Vec<PeerMachine>,
+#[doc(hidden)]
+pub use oneiron_wake_contract::settings::destination::ReadDestination;
+
+/// A caller at `locality` on a connection that proved `peer`: on this
+/// device nothing leaves, whatever it proved; off it the rows go to
+/// `peer`. A TCP address or an owner principal alone is no machine proof.
+#[must_use]
+pub fn read_destination_at(locality: CallerLocality, peer: PeerMachine) -> ReadDestination {
+    match locality {
+        CallerLocality::OnDevice => ReadDestination::on_device(),
+        CallerLocality::OffDevice => ReadDestination::toward(peer),
+    }
 }
 
-impl ReadDestination {
-    /// This device: nothing leaves it.
-    #[must_use]
-    pub fn on_device() -> Self {
-        Self::default()
-    }
-
-    /// Off this device, to the machine `peer` names: a proved connection's
-    /// machine, which every snapshot judges again, or one nobody proved.
-    #[must_use]
-    pub fn toward(peer: PeerMachine) -> Self {
-        Self {
-            off_device: true,
-            proved: vec![peer],
-        }
-    }
-
-    /// The machine a connection proved, before any locality says whether
-    /// the rows leave: met into a read, it names where they go once a
-    /// locality puts the read off this device ([`Self::meet`]). An unproved
-    /// peer names nothing, so such a read stays a destination nobody proved.
-    #[must_use]
-    pub fn proved(peer: PeerMachine) -> Self {
-        Self {
-            off_device: false,
-            proved: match peer {
-                PeerMachine::Proven { .. } => vec![peer],
-                PeerMachine::Unknown => Vec::new(),
-            },
-        }
-    }
-
-    /// A caller at `locality` on a connection that proved `peer`: on this
-    /// device nothing leaves, whatever it proved; off it the rows go to
-    /// `peer`. A TCP address or an owner principal alone is no machine proof.
-    #[must_use]
-    pub fn at(locality: CallerLocality, peer: PeerMachine) -> Self {
-        match locality {
-            CallerLocality::OnDevice => Self::on_device(),
-            CallerLocality::OffDevice => Self::toward(peer),
-        }
-    }
-
-    /// Whether the rows leave this device.
-    #[must_use]
-    pub fn is_off_device(&self) -> bool {
-        self.off_device
-    }
-
-    /// The locality alone, for a door that judges only that.
-    #[must_use]
-    pub fn locality(&self) -> CallerLocality {
-        if self.off_device {
-            CallerLocality::OffDevice
-        } else {
-            CallerLocality::OnDevice
-        }
-    }
-
-    /// Meets `other` into `self`: off this device if either is, toward every
-    /// machine either names. See [`BARE_LOCALITY_NAMES_NO_MACHINE`] for a
-    /// bare off-device locality met into a read that already carries a
-    /// proved machine.
-    pub fn meet(&mut self, other: &Self) {
-        self.off_device |= other.off_device;
-        if other.off_device && other.proved.is_empty() && !BARE_LOCALITY_NAMES_NO_MACHINE {
-            self.add(PeerMachine::Unknown);
-        }
-        for peer in &other.proved {
-            self.add(*peer);
-        }
-    }
-
-    fn add(&mut self, peer: PeerMachine) {
-        if !self.proved.contains(&peer) {
-            self.proved.push(peer);
-        }
-    }
-
-    /// Every machine the judge reads the world settings for: none on this
-    /// device, else each machine the rows go to. An unproved one stands for
-    /// all of them, since a destination nobody proved may read the least.
-    #[must_use]
-    pub fn peers(&self) -> Vec<PeerMachine> {
-        if !self.off_device {
-            return Vec::new();
-        }
-        if self.proved.is_empty() || self.proved.contains(&PeerMachine::Unknown) {
-            return vec![PeerMachine::Unknown];
-        }
-        self.proved.clone()
+/// The locality alone, for a door that judges only that.
+#[must_use]
+pub fn read_destination_locality(read_destination: &ReadDestination) -> CallerLocality {
+    if read_destination.off_device {
+        CallerLocality::OffDevice
+    } else {
+        CallerLocality::OnDevice
     }
 }
 
@@ -159,19 +74,6 @@ impl From<CallerLocality> for ReadDestination {
         }
     }
 }
-
-impl From<&ReadDestination> for ReadDestination {
-    fn from(destination: &ReadDestination) -> Self {
-        destination.clone()
-    }
-}
-
-/// Whether a bare off-device locality met into a read that already carries a
-/// proved machine names no machine of its own (CALLS `mesh PR2b bare
-/// locality`). A host stamps both from one connection, so the locality only
-/// restates where that machine sits; an unproved hop is always met in as
-/// [`ReadDestination::toward`]`(PeerMachine::Unknown)`.
-const BARE_LOCALITY_NAMES_NO_MACHINE: bool = true;
 
 /// The worlds whose rows a read toward `destination` never carries: every
 /// world the shared judge withholds from one of its machines, each proof
@@ -460,6 +362,32 @@ impl Vault {
         rows: &[EntityId],
         destination: &ReadDestination,
     ) -> Result<Option<ReleaseHold>> {
+        self.release_hold_judged(rows, destination, false)
+    }
+
+    /// [`Self::release_hold_for`] for the owner's own whole-vault export
+    /// (owner ruling 1-EXPORT = B), whose release mode its door chose from
+    /// its trusted route and the owner's fresh proof: his recipient choice
+    /// keeps none of its rows from where it goes, so a row a withheld world
+    /// keeps by that choice alone goes, and every row after it is judged
+    /// on. Every integrity hold still keeps the rows here: a row whose world
+    /// cannot be placed, and a conflicted vault root.
+    pub fn owner_export_release_hold_for(
+        &self,
+        rows: &[EntityId],
+        destination: &ReadDestination,
+    ) -> Result<Option<ReleaseHold>> {
+        self.release_hold_judged(rows, destination, true)
+    }
+
+    /// The one release verdict of [`Self::release_hold_for`] and, with
+    /// `owner_export`, of [`Self::owner_export_release_hold_for`].
+    fn release_hold_judged(
+        &self,
+        rows: &[EntityId],
+        destination: &ReadDestination,
+        owner_export: bool,
+    ) -> Result<Option<ReleaseHold>> {
         if !destination.is_off_device() || rows.is_empty() {
             return Ok(None);
         }
@@ -477,8 +405,12 @@ impl Vault {
                 // Naming the reason never changes the verdict: a reason that
                 // cannot be read is an integrity hold.
                 Ok(true) => {
-                    let hold = row_hold(self, &txn, &view, &withheld, row, destination);
-                    return Ok(Some(hold.unwrap_or(ReleaseHold::Placement)));
+                    let hold = row_hold(self, &txn, &view, &withheld, row, destination)
+                        .unwrap_or(ReleaseHold::Placement);
+                    if owner_export && hold.is_owner_choice() {
+                        continue;
+                    }
+                    return Ok(Some(hold));
                 }
                 Err(Error::CorruptedIndex(_)) => return Ok(Some(ReleaseHold::Placement)),
                 Err(error) => return Err(error),

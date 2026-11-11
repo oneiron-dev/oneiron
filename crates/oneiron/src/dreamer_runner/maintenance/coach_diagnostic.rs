@@ -171,11 +171,29 @@ pub(crate) struct ProducerLinks {
     pub(crate) manifests: Vec<EntityId>,
 }
 
+/// The recorded links a retrieval window proves (FIX 7315): the dispatch attempt every run of
+/// a nonempty window records, when each records the same one; else none. Manifests stay empty:
+/// this slice records no manifest link. Diagnostic data only, never authority.
+pub(crate) fn links_from_runs(runs: &[RetrievalRunRecord]) -> ProducerLinks {
+    let mut attempts = Vec::new();
+    if let Some(first) = runs.first().and_then(|run| run.dispatch_attempt)
+        && runs.iter().all(|run| run.dispatch_attempt == Some(first))
+    {
+        attempts.push(first);
+    }
+    ProducerLinks {
+        attempts,
+        manifests: Vec::new(),
+    }
+}
+
 /// The producer a finding's recorded links prove (OF-418 L3), under one binding rule: the one
-/// active skill the one linked attempt loaded, by the heal's own ruled rule; else the one
-/// linked live policy manifest, at its stored row's digest; else the config every run of
-/// `runs` recorded it ran under, when each recorded the same one; else `Unknown`. A result is
-/// never taken for its producer, and nothing is guessed.
+/// active skill the one linked attempt loaded, by the heal's own ruled rule; else the one live
+/// policy manifest every run's record witnesses (FIX 7315), at its recorded body digest while
+/// the live body still hashes to it; else the one linked live policy manifest, at its stored
+/// row's digest; else the config every run of `runs` recorded it ran under, when each recorded
+/// the same one; else `Unknown`. A result is never taken for its producer, and nothing is
+/// guessed.
 pub(crate) fn bind_producer(
     vault: &Vault,
     runs: &[RetrievalRunRecord],
@@ -190,6 +208,20 @@ pub(crate) fn bind_producer(
             version: record.version,
             attempt: EntityId::from_bytes(*attempt.as_bytes())?,
         });
+    }
+    if let Some((manifest, body_hash)) = run_policy_witness(runs)
+        && let Some(raw) = vault.get_raw(&manifest)?
+        && EntityMetadataHeader::parse(&raw)
+            .is_some_and(|header| header.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
+        && let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..)
+    {
+        let revision = blake3::hash(body);
+        if revision.to_hex().as_str() == body_hash {
+            return Ok(ProducerTarget::PolicyManifest {
+                manifest,
+                revision: *revision.as_bytes(),
+            });
+        }
     }
     if let [manifest] = links.manifests.as_slice()
         && let Some(raw) = vault.get_raw(manifest)?
@@ -217,6 +249,27 @@ pub(crate) fn bind_producer(
         });
     }
     Ok(ProducerTarget::Unknown)
+}
+
+/// The policy witness every run of `runs` recorded (FIX 7315): the one manifest ref and body
+/// digest each run's two actual typed policy reads agreed on. `Some` only for a nonempty
+/// cohort where EVERY run recorded both fields and all agree byte-exact; an invalid manifest
+/// ref is no witness at all, never an error.
+fn run_policy_witness(runs: &[RetrievalRunRecord]) -> Option<(EntityId, &str)> {
+    let mut pairs = runs.iter().map(|run| {
+        run.policy_manifest_ref
+            .as_deref()
+            .zip(run.policy_manifest_body_hash.as_deref())
+    });
+    let Some(Some((first_ref, first_hash))) = pairs.next() else {
+        return None;
+    };
+    if !pairs.all(|pair| pair == Some((first_ref, first_hash))) {
+        return None;
+    }
+    EntityId::from_hex(first_ref)
+        .ok()
+        .map(|id| (id, first_hash))
 }
 
 impl Vault {

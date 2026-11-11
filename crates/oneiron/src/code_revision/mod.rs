@@ -58,6 +58,7 @@ pub(crate) use self::import_types::{
     CodeImportManifest, IMPORT_MANIFEST_PREDICATE, manifest_digest, manifest_id,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

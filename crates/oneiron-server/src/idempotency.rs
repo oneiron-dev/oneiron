@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{OriginalUri, Request, State};
@@ -46,10 +46,13 @@ impl IdempotencyLayerState {
     }
 }
 
+/// The keyed responses one server keeps. An entry's age is judged by the
+/// vault's own clock: the host's clock unless `[runtime] clock` names a
+/// manual one (`VaultConfig::store_clock`), so a harness that moves the
+/// server's time moves this layer's with it.
 #[derive(Clone)]
 struct IdempotencyStore {
     vault: Arc<oneiron::Vault>,
-    clock: Arc<dyn IdempotencyClock>,
     locks: Arc<IdempotencyLockTable>,
 }
 
@@ -57,22 +60,13 @@ impl IdempotencyStore {
     fn new(vault: Arc<oneiron::Vault>) -> Self {
         Self {
             vault,
-            clock: Arc::new(SystemClock),
             locks: Arc::new(IdempotencyLockTable::default()),
         }
     }
 
-    #[cfg(test)]
-    fn with_clock(vault: Arc<oneiron::Vault>, clock: Arc<dyn IdempotencyClock>) -> Self {
-        Self {
-            vault,
-            clock,
-            locks: Arc::new(IdempotencyLockTable::default()),
-        }
-    }
-
+    /// The vault clock's seconds, held at no floor.
     fn now_secs(&self) -> u64 {
-        self.clock.now_secs()
+        self.vault.now_recorded_ms() / 1000
     }
 
     async fn lock_for(&self, store_key: &str) -> IdempotencyKeyGuard {
@@ -83,7 +77,7 @@ impl IdempotencyStore {
         &self,
         store_key: &str,
         request_target: &str,
-        request_body: &[u8],
+        request_digest: &[u8],
     ) -> Result<IdempotencyLookup, IdempotencyStoreError> {
         let Some(raw) = self
             .vault
@@ -123,7 +117,7 @@ impl IdempotencyStore {
         if stored.erased {
             return Ok(IdempotencyLookup::Erased);
         }
-        if stored.request_body != request_body
+        if stored.request_digest != request_digest
             || stored
                 .request_target
                 .as_deref()
@@ -295,12 +289,13 @@ impl CachedHttpResponse {
 
 impl CachedHttpResponse {
     /// The entry this response is kept as: its time, the request it
-    /// answers, and its owners' stamps, the caller's among them.
+    /// answers (its target and body digest), and its owners' stamps, the
+    /// caller's among them.
     fn into_stored(
         self,
         created_at_secs: u64,
         request_target: String,
-        request_body: Vec<u8>,
+        request_digest: Vec<u8>,
         stamp: caller::EntryStamp,
     ) -> StoredIdempotencyEntry {
         let mut headers = Vec::with_capacity(self.headers.len());
@@ -309,7 +304,7 @@ impl CachedHttpResponse {
         }
         StoredIdempotencyEntry {
             created_at_secs,
-            request_body,
+            request_digest,
             status: self.status.as_u16(),
             headers,
             response_body: self.body,
@@ -361,20 +356,6 @@ impl CachedHttpResponse {
                 .map_err(IdempotencyStoreError::rows)?,
             sources: stored.stamps.sources,
         })
-    }
-}
-
-trait IdempotencyClock: Send + Sync {
-    fn now_secs(&self) -> u64;
-}
-
-struct SystemClock;
-
-impl IdempotencyClock for SystemClock {
-    fn now_secs(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_secs())
     }
 }
 

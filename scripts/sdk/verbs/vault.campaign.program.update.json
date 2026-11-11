@@ -1,0 +1,12 @@
+{
+  "name": "vault.campaign.program.update",
+  "description": "Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops.",
+  "input": "crate::campaign::surface::UpdateCampaignProgramRequest",
+  "output": "crate::campaign::surface::CampaignProgramRecord",
+  "call": "memory.campaign_program_update(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

@@ -7,7 +7,7 @@
 
 use super::super::NativeRefusal;
 use super::super::workbook::number;
-use super::{C, Model, points};
+use super::{C, Model, point_values, points};
 use crate::design_plan::Cell;
 use crate::edit::xml::{self, Splice};
 use crate::ooxml::escape_text;
@@ -34,6 +34,29 @@ pub(super) fn patched(
     old: &[Cell],
     new: &[Cell],
 ) -> Result<Vec<Splice>, NativeRefusal> {
+    patched_points(model, cache, old, new, true)
+}
+
+/// A retained multi-level cache's `c:lvl` holds points but no point count.
+pub(super) fn patched_level(
+    model: &Model,
+    level: usize,
+    old: &[Cell],
+    new: &[Cell],
+) -> Result<Vec<Splice>, NativeRefusal> {
+    if old == new {
+        return Ok(Vec::new());
+    }
+    patched_points(model, level, old, new, false)
+}
+
+fn patched_points(
+    model: &Model,
+    cache: usize,
+    old: &[Cell],
+    new: &[Cell],
+    with_count: bool,
+) -> Result<Vec<Splice>, NativeRefusal> {
     let (tree, bytes) = (&model.tree, model.bytes.as_slice());
     let node = &tree.nodes[cache];
     let p = node
@@ -41,11 +64,12 @@ pub(super) fn patched(
         .rsplit_once(':')
         .map_or(String::new(), |(prefix, _)| format!("{prefix}:"));
     if node.empty {
-        return Ok(vec![xml::insert_end(
-            bytes,
-            node,
-            points(&p, new).as_bytes(),
-        )]);
+        let content = if with_count {
+            points(&p, new)
+        } else {
+            point_values(&p, new)
+        };
+        return Ok(vec![xml::insert_end(bytes, node, content.as_bytes())]);
     }
     let child = |name: &str| {
         tree.children(cache)
@@ -54,36 +78,50 @@ pub(super) fn patched(
     };
     let mut edits = Vec::new();
     let mut inserted: BTreeMap<usize, String> = BTreeMap::new();
-    let after_count = match child("ptCount") {
-        Some(at) => {
-            if old.len() != new.len() {
-                edits.push(xml::set_attribute(
-                    bytes,
-                    &tree.nodes[at],
-                    "val",
-                    &new.len().to_string(),
-                ));
+    let after_count = if !with_count {
+        node.open_end
+    } else {
+        match child("ptCount") {
+            Some(at) => {
+                if old.len() != new.len() {
+                    edits.push(xml::set_attribute(
+                        bytes,
+                        &tree.nodes[at],
+                        "val",
+                        &new.len().to_string(),
+                    ));
+                }
+                tree.nodes[at].span.end
             }
-            tree.nodes[at].span.end
-        }
-        None => {
-            let at = child("formatCode").map_or(node.open_end, |at| tree.nodes[at].span.end);
-            inserted
-                .entry(at)
-                .or_default()
-                .push_str(&format!(r#"<{p}ptCount val="{}"/>"#, new.len()));
-            at
+            None => {
+                let at = child("formatCode").map_or(node.open_end, |at| tree.nodes[at].span.end);
+                inserted
+                    .entry(at)
+                    .or_default()
+                    .push_str(&format!(r#"<{p}ptCount val="{}"/>"#, new.len()));
+                at
+            }
         }
     };
-    let held: BTreeMap<usize, usize> = tree
-        .children(cache)
-        .filter(|(_, child)| child.is(C, "pt"))
-        .filter_map(|(at, pt)| Some((pt.attr("idx")?.trim().parse().ok()?, at)))
-        .collect();
+    let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+    for (at, pt) in tree.children(cache).filter(|(_, child)| child.is(C, "pt")) {
+        let Some(idx) = pt
+            .attr("idx")
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+        else {
+            continue;
+        };
+        held.insert(idx, at);
+        if new
+            .get(idx)
+            .is_none_or(|cell| matches!(cell, Cell::Missing))
+        {
+            edits.push((pt.span.clone(), Vec::new()));
+        }
+    }
     for (&idx, &pt) in &held {
         let point = &tree.nodes[pt];
         let Some(value) = new.get(idx).and_then(text) else {
-            edits.push((point.span.clone(), Vec::new()));
             continue;
         };
         if old.get(idx) == new.get(idx) {

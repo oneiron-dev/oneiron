@@ -1,7 +1,8 @@
-//! The runner's durable rows: cursors, the run memo, saved intents, the
-//! Hook receipts and the run index (ARCH-0080 §4 Delivery, Crash-safe
-//! outcomes; §6 receipt; §8 golden set).
+//! The runner's durable rows: cursors ([`cursor`](mod@cursor)), the run
+//! memo, saved intents, the Hook receipts and the run index (ARCH-0080 §4
+//! Delivery, Crash-safe outcomes; §6 receipt; §8 golden set).
 
+mod cursor;
 mod erase;
 
 use serde::{Deserialize, Serialize};
@@ -9,29 +10,34 @@ use serde::{Deserialize, Serialize};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::receipt::{ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
-use crate::skill_hub::pack_catalog::{HookPhase, PackHookBinding};
+use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::vault::RevisionRef;
 use crate::{EntityId, Error, Result, Vault};
 
 use super::body::{HookBudgetOverrun, HookPreparation, HookSettledCallRef};
 use super::grant::HookGrant;
 use super::lineage::LineageLink;
-use super::source::{
-    self, ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
-};
+use super::source::{FactEntry, FactKind, FactSource};
 
-pub(crate) use erase::scrub_hook_source_in_txn;
+pub(crate) use cursor::sync_binding_cursor_in_txn;
+pub(super) use cursor::{
+    CursorRow, advance_cursor_in_txn, cursor, cursor_in_txn, enable_cursor_in_txn,
+    enabled_before_tick_in_txn, put_cursor_in_txn, unpaused_cursor_bindings_in_txn,
+};
 pub(super) use erase::{
-    dependencies_erased_in_txn, erased_dependency_ids_in_txn, scrub_intent_payload,
-    scrub_memo_payload, scrub_receipt_payload, scrub_verb_payload,
+    ErasedIds, args_erased, dependencies_erased_in_txn, erased_by_args_in_txn,
+    retire_kept_runs_in_txn, rows_named_by_call, rows_named_by_fact, scrub_erased_memo_in_txn,
+    scrub_erased_verb_run_in_txn, scrub_intent_payload, scrub_memo_payload, scrub_receipt_payload,
+    scrub_verb_payload, source_erased_in_txn,
+};
+pub(crate) use erase::{
+    forget_scrubbed_source_in_txn, scrub_erased_hook_sources, scrub_erased_in_session_stores,
+    scrub_hook_source_in_txn,
 };
 
 /// A run's identity: BLAKE3 over its derivation envelope and its position.
 pub(super) type RunKey = [u8; 32];
 
-/// One cursor per binding and source.
-const CURSORS: SideTable<(EntityId, [u8; 1]), CursorRow, Named> =
-    SideTable::new(&side_table::HOOKS_CURSOR);
 /// The saved result of each run, by run key.
 pub(super) const MEMOS: SideTable<RunKey, HookRunRecord, Named> =
     SideTable::new(&side_table::HOOKS_MEMO);
@@ -104,145 +110,6 @@ pub(super) fn run_key(
     key.update(&[fact.position.source().tag()]);
     key.update(&fact.position.bytes());
     Ok(*key.finalize().as_bytes())
-}
-
-/// A cursor row: the last position delivered to its binding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct CursorRow {
-    /// `None` is the start of the source.
-    position: Option<CursorPosition>,
-    /// The binding was seen disabled; it restarts where it is re-enabled.
-    pub(super) paused: bool,
-    updated_at: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum CursorPosition {
-    ClaimChangelog([u8; 16]),
-    Settlement(u64),
-}
-
-impl CursorRow {
-    pub(super) fn new(position: Option<FactPosition>, at: u64) -> Self {
-        Self {
-            position: position.map(|position| match position {
-                FactPosition::ClaimChangelog(position) => {
-                    CursorPosition::ClaimChangelog(position.0)
-                }
-                FactPosition::Settlement(position) => CursorPosition::Settlement(position.0),
-            }),
-            paused: false,
-            updated_at: at,
-        }
-    }
-
-    pub(super) fn paused(self, at: u64) -> Self {
-        Self {
-            paused: true,
-            updated_at: at,
-            ..self
-        }
-    }
-
-    pub(super) fn position(self) -> Option<FactPosition> {
-        self.position.map(|position| match position {
-            CursorPosition::ClaimChangelog(id) => {
-                FactPosition::ClaimChangelog(ClaimChangelogPosition(id))
-            }
-            CursorPosition::Settlement(sequence) => {
-                FactPosition::Settlement(SettlementPosition(sequence))
-            }
-        })
-    }
-}
-
-pub(super) fn cursor(
-    vault: &Vault,
-    binding: EntityId,
-    source: FactSource,
-) -> Result<Option<CursorRow>> {
-    let rtxn = vault.store.env.read_txn()?;
-    CURSORS.get(&vault.store, &rtxn, &(binding, [source.tag()]))
-}
-
-pub(super) fn put_cursor_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    binding: EntityId,
-    source: FactSource,
-    row: &CursorRow,
-) -> Result<()> {
-    CURSORS.put(&vault.store, txn, &(binding, [source.tag()]), row)
-}
-
-/// Commits a fact binding's cursor with its real enable, disable or
-/// replacement write. A selector-only update of an already-enabled binding
-/// keeps its cursor; a disabled-to-enabled transition starts at the enable
-/// write, including the settlement head (FIX 10078).
-pub(crate) fn sync_binding_cursor_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    binding: EntityId,
-    previous: Option<&PackHookBinding>,
-    current: &PackHookBinding,
-) -> Result<()> {
-    if current.selector.phase != HookPhase::Fact {
-        return Ok(());
-    }
-    let at = vault.store.clock.now_recorded_at();
-    if !current.enabled {
-        for source in FactSource::ALL {
-            let key = (binding, [source.tag()]);
-            let prior = CURSORS.get(&vault.store, txn, &key)?;
-            if prior.is_some_and(|row| row.paused) {
-                continue;
-            }
-            let row = prior.unwrap_or_else(|| CursorRow::new(None, at)).paused(at);
-            CURSORS.put(&vault.store, txn, &key, &row)?;
-        }
-        return Ok(());
-    }
-    let restart = previous.is_none_or(|previous| {
-        !previous.enabled
-            || previous.code != current.code
-            || previous.source != current.source
-            || previous.hook_version != current.hook_version
-            || previous.body_hash != current.body_hash
-    });
-    if !restart {
-        return Ok(());
-    }
-    for source in FactSource::ALL {
-        let start = source::enable_start_in_txn(vault, txn, &binding, source)?;
-        put_cursor_in_txn(vault, txn, binding, source, &CursorRow::new(start, at))?;
-    }
-    Ok(())
-}
-
-/// Moves `binding`'s cursor to `position` unless it already stands there or
-/// past it.
-pub(super) fn advance_cursor_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    binding: EntityId,
-    position: FactPosition,
-    at: u64,
-) -> Result<()> {
-    let source = position.source();
-    let current = CURSORS
-        .get(&vault.store, txn, &(binding, [source.tag()]))?
-        .and_then(CursorRow::position);
-    if current.is_some_and(|current| current >= position) {
-        return Ok(());
-    }
-    put_cursor_in_txn(
-        vault,
-        txn,
-        binding,
-        source,
-        &CursorRow::new(Some(position), at),
-    )
 }
 
 /// How a run ended.
@@ -328,6 +195,54 @@ impl HookRunDerivation {
         verdict_evidence: &[EntityId],
         runtime_identity: Option<String>,
     ) -> Result<Self> {
+        Self::new_in_snapshot(
+            vault,
+            None,
+            binding_id,
+            binding,
+            grant,
+            entry,
+            reads,
+            verdict_evidence,
+            runtime_identity,
+        )
+    }
+
+    pub(in crate::runtime_hooks) fn new_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        binding_id: EntityId,
+        binding: &PackHookBinding,
+        grant: &HookGrant,
+        entry: &FactEntry,
+        reads: &[HookReadPin],
+        verdict_evidence: &[EntityId],
+        runtime_identity: Option<String>,
+    ) -> Result<Self> {
+        Self::new_in_snapshot(
+            vault,
+            Some(txn),
+            binding_id,
+            binding,
+            grant,
+            entry,
+            reads,
+            verdict_evidence,
+            runtime_identity,
+        )
+    }
+
+    fn new_in_snapshot(
+        vault: &Vault,
+        txn: Option<&heed::RoTxn<'_>>,
+        binding_id: EntityId,
+        binding: &PackHookBinding,
+        grant: &HookGrant,
+        entry: &FactEntry,
+        reads: &[HookReadPin],
+        verdict_evidence: &[EntityId],
+        runtime_identity: Option<String>,
+    ) -> Result<Self> {
         let selector = serde_json::to_vec(&binding.selector)
             .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
         let mut params = blake3::Hasher::new();
@@ -346,30 +261,31 @@ impl HookRunDerivation {
             })
         }));
         for id in verdict_evidence {
-            let (revision, body_hash) = {
-                let txn = vault.store.env.read_txn()?;
-                let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
-                    vault,
-                    &txn,
-                    id,
-                    crate::vault::ReadMode::Live,
-                )?;
-                let body_hash = raw
-                    .as_deref()
-                    .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
-                    .map(|body| *blake3::hash(body).as_bytes());
-                let revision = match body_hash.as_ref() {
-                    Some(hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
-                        vault, &txn, id, hash,
-                    )?,
-                    None => None,
-                };
-                (revision, body_hash)
+            let (revision, body_hash) = match txn {
+                Some(txn) => Self::evidence_revision_in_txn(vault, txn, id)?,
+                None => {
+                    let txn = vault.store.env.read_txn()?;
+                    Self::evidence_revision_in_txn(vault, &txn, id)?
+                }
             };
             dependencies.push(HookDependency {
                 id: *id,
                 revision,
                 body_hash,
+            });
+        }
+        // An inbound event's input names its actor too, so that actor's
+        // erase scrubs the run as its identity's does; a pinned dependency
+        // on the same id already does.
+        if let Some(surface) = &entry.surface
+            && !dependencies
+                .iter()
+                .any(|dependency| dependency.id == surface.actor)
+        {
+            dependencies.push(HookDependency {
+                id: surface.actor,
+                revision: None,
+                body_hash: None,
             });
         }
         dependencies.sort();
@@ -386,6 +302,29 @@ impl HookRunDerivation {
             runtime_identity,
             dependencies,
         })
+    }
+    fn evidence_revision_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(Option<RevisionRef>, Option<[u8; 32]>)> {
+        let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
+            vault,
+            txn,
+            id,
+            crate::vault::ReadMode::Live,
+        )?;
+        let body_hash = raw
+            .as_deref()
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+            .map(|body| *blake3::hash(body).as_bytes());
+        let revision = match body_hash.as_ref() {
+            Some(hash) => {
+                crate::vault::entity_revision::revision_for_body_hash_in_txn(vault, txn, id, hash)?
+            }
+            None => None,
+        };
+        Ok((revision, body_hash))
     }
 }
 
@@ -466,6 +405,12 @@ pub(super) struct HookRunRecord {
     pub(super) entity: EntityId,
     /// The exact input the body saw; `None` past the pin bound or after erase.
     pub(super) input_json: Option<String>,
+    /// The rows the input names anywhere but as the fact's actor, read from
+    /// the whole input before the pin bound drops any of it (FIX 22240,
+    /// review #6848): a permanent erase of one retires the memo even when
+    /// its input was past the bound ([`rows_named_by_fact`]).
+    #[serde(default, with = "crate::serialize::entity_ref::sequence")]
+    pub(super) named_rows: Vec<EntityId>,
     /// Source erasure retired this run's retained payload (FIX 10080).
     pub(super) history_erased: bool,
     pub(super) input_hash: String,
@@ -515,7 +460,7 @@ pub(super) enum HookRunRef {
 }
 
 impl HookRunRef {
-    const fn key(self) -> RunKey {
+    pub(super) const fn key(self) -> RunKey {
         match self {
             Self::Fact(key) | Self::Verb(key) => key,
         }
@@ -572,7 +517,16 @@ pub(super) struct HookIntent {
 
 pub(super) fn memo(vault: &Vault, key: &RunKey) -> Result<Option<HookRunRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    MEMOS.get(&vault.store, &rtxn, key)
+    memo_in_txn(vault, &rtxn, key)
+}
+
+/// [`memo`] in the caller's snapshot.
+pub(super) fn memo_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &RunKey,
+) -> Result<Option<HookRunRecord>> {
+    MEMOS.get(&vault.store, txn, key)
 }
 
 /// The id of the receipt a run writes.
@@ -637,7 +591,8 @@ pub(super) fn hook_verb_run_source_rows_in(
         return Ok(None);
     };
     if run.unattributed
-        || crate::task_verb::verb_hook_boundary::row_domain(&run.verb) == super::VerbDomain::Write
+        || crate::task_verb::verb_hook_boundary::row_domain(&crate::verbs::VERB_TABLE, &run.verb)
+            == super::VerbDomain::Write
     {
         return Ok(None);
     }
