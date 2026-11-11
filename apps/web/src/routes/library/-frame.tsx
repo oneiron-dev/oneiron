@@ -49,7 +49,7 @@ const line = (r: Resident, size: 18 | 24 = 18) => (
 
 const VAULTS: VaultSwitchVault[] = [
   { id: 'antevon', name: 'antevon', caption: 'the house' },
-  { id: 'Owen', name: 'Owen', caption: 'yours', needsYou: 2 },
+  { id: 'owen', name: 'owen', caption: 'yours', needsYou: 2 },
   { id: 'acme', name: 'acme', caption: 'a guest slice', needsYou: 1 },
 ]
 
@@ -411,7 +411,7 @@ function PeopleDemo() {
         <PeopleTable.Cell>Who</PeopleTable.Cell>
         <PeopleTable.Cell>Role</PeopleTable.Cell>
       </PeopleTable.Head>
-      <PeopleTable.Row glyph={<Glyph initial="o" label="Owen" size={18} />} name="Owen" roleWord={<ReadOnlyRole id="owner" who="Owen" />}>
+      <PeopleTable.Row glyph={<Glyph initial="o" label="Owen" size={18} />} name="Owen" roleWord={<ReadOnlyRole id="owner" who="owen" />}>
         <PeopleTable.Row glyph={line(ANTEVON)} name="Antevon" roleWord={<ChangeableRole initial="steward" who="antevon" />}>
           <PeopleTable.Row glyph={line(METRYON)} name="Metryon" roleWord={<ChangeableRole initial="member" who="metryon" />} />
           <PeopleTable.Row glyph={line(TORY)} name="Tory" roleWord={<ChangeableRole initial="delegate" who="tory" />} />
@@ -422,7 +422,7 @@ function PeopleDemo() {
         glyph={<Glyph initial="y" label="Yuki" size={18} guest />}
         name="Yuki"
         origin="from Acme’s vault"
-        roleWord={<ReadOnlyRole id="guest" who="Yuki" />}
+        roleWord={<ReadOnlyRole id="guest" who="yuki" />}
       />
     </PeopleTable>
   )

@@ -467,10 +467,10 @@ function CrewDemo({ open }: { open?: boolean }) {
           <Glyph glyph="wing" label="Eiri" size={18} guest />
         </CrewStack.Member>
         <CrewStack.List>
-          <CrewStack.ListRow glyph={<Glyph initial="o" label="Owen" />} href="#Owen">
+          <CrewStack.ListRow glyph={<Glyph initial="o" label="Owen" />} href="#owen">
             Owen (you)
           </CrewStack.ListRow>
-          <CrewStack.ListRow glyph={<Glyph initial="y" label="Yuki" guest />} href="#Yuki">
+          <CrewStack.ListRow glyph={<Glyph initial="y" label="Yuki" guest />} href="#yuki">
             Yuki
           </CrewStack.ListRow>
           <CrewStack.ListRow glyph={<Glyph glyph="ruler" label="Metryon" />} href="#metryon">
