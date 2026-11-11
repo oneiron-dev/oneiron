@@ -2,8 +2,9 @@
 //! 2041 and 3168). An active install of a travelling pack mints its agent
 //! here, in the install's own writer: the World its scope names binds to the
 //! world the owner picked, else the one local world of that name; the
-//! definition is the inert imported one the projection gives; its skills
-//! already went through the common skill door with the rest of the pack; and
+//! definition goes through the author writer for an agent's own local pack
+//! (ARCH-0053:20), while owner and hub imports stay inert; its skills already
+//! went through the common skill door with the rest of the pack; and
 //! each piece of selected knowledge becomes a local claim about the new
 //! agent. A World scope that binds nowhere holds the install as a Candidate
 //! until the owner picks the world or creates it
@@ -13,6 +14,7 @@ use super::admission::{PACK_CANDIDATE, PackCommit};
 use super::{
     HookAuthor, PackCandidateReason, PackFitVerdict, PackInstallDisposition, PackSource, invalid,
 };
+use crate::agent_def::AgentAuthoring;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -76,12 +78,16 @@ impl Vault {
     /// its id derives from the source's content hash, so reinstalling the
     /// same bytes finds the agent it minted and writes nothing, and a local
     /// edit is never overwritten. A changed source mints a new agent beside
-    /// the old.
+    /// the old. An agent's own local pack goes through the author writer
+    /// (ARCH-0053:20); the owner's and the hub's agents remain inert imports.
+    /// No lane key is supplied: an author with no definition takes no slice
+    /// from a lane, so without a standing grant its request lands Proposed.
     pub(super) fn admit_travel_agent_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         source: &PackSource,
         travel: TravelAgent,
+        agent_author: Option<&crate::WriteActor>,
         at: u64,
     ) -> Result<EntityId> {
         let agent = EntityId::derive(
@@ -96,13 +102,20 @@ impl Vault {
         }
         let TravelAgent { projection, world } = travel;
         let occurred = TimeRange { start: at, end: at };
-        self.put_agent_definition_in_txn(
-            txn,
-            &agent,
-            &projection.to_definition(world)?,
-            occurred,
-            at,
-        )?;
+        let definition = if let Some(author) = agent_author {
+            let authoring = AgentAuthoring::of(author, "vault.packs.put", None).ok_or(
+                crate::error::Error::InvariantViolation("pack author is not an agent writer"),
+            )?;
+            self.prepare_agent_authored_create_in_txn(
+                txn,
+                &authoring,
+                &agent,
+                &projection.to_author_request(world)?,
+            )?
+        } else {
+            projection.to_definition(world)?
+        };
+        self.put_agent_definition_in_txn(txn, &agent, &definition, occurred, at)?;
         for (index, row) in (0u32..).zip(&projection.knowledge) {
             let mut body = ClaimBody::new(
                 row.predicate.clone(),
@@ -195,6 +208,7 @@ impl Vault {
                     source_id,
                     hub: &hub,
                     publisher: &candidate.publisher,
+                    agent_author: None,
                     foreign: publisher.as_ref(),
                     verdict: PackFitVerdict {
                         fits: true,
