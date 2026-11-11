@@ -57,7 +57,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
 | `src/llm/mod.rs` | src | s | 4 mod · 36 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
-| `src/llm/protocol.rs` | src | m | 8 struct · 8 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor, LlmInputUsage, LlmMessage +8 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
+| `src/llm/protocol.rs` | src | m | 8 struct · 8 enum · 8 fn · 2 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor, LlmInputUsage, LlmMessage +8 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/protocol/tests.rs` | test | s | — | — | — |
 | `src/llm/provider_usage.rs` | src | s | 1 struct · 3 fn | ProviderTokenMeasurement | Provider-reported token measurements, kept apart from budget charges and the normalized usage counters that… |
 | `src/llm/reply_assertions.rs` | src | s | 2 struct · 3 fn | ReplyAssertionRecord, ReplyAssertions | The typed records one reply cited or created (OF-063, FIX 3416), carried on its terminal |
