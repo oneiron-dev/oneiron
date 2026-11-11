@@ -12,6 +12,7 @@ pub mod dag_append;
 pub mod feeds;
 pub mod label_writers;
 pub mod live_run_claim_put;
+pub mod park_typed_wait;
 pub mod retrieval_policy_default_floor;
 pub mod run_hold;
 pub mod run_lifecycle;
