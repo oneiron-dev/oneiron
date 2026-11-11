@@ -25,11 +25,13 @@ use crate::{EntityId, Vault};
 const WHOLE_TEXT_TIMEOUT_MS: u32 = 2_000;
 
 /// Where one source's files land: the folder its ledger is kept under, the
-/// namespace its notes' ids derive from, and the world they are born in.
+/// namespace its notes' ids derive from, the world they are born in, and the
+/// owner who attached it, whose live proof lands a changed file's text.
 struct Landing<'a> {
     folder: &'a str,
     namespace: String,
     world: Option<EntityId>,
+    owner: &'a AuthenticatedOwner,
 }
 
 /// What holding one file by its name did.
@@ -91,6 +93,7 @@ impl Vault {
             folder: &folder,
             namespace: source.namespace(),
             world: source.files.as_ref().map(|files| files.world),
+            owner,
         };
         let mut report = FolderRescanReport::default();
         self.land_new_files(
@@ -580,7 +583,18 @@ impl Vault {
             EdgeActorClass::System,
         );
         let mut indexed = false;
-        row.state = match self.edit_note(id, &edit, actor) {
+        // The owner attached the folder: its changed file supersedes the
+        // note under his live proof, as no agent's edit does (ARCH-0027
+        // #folder-source; DEC-0006 #10).
+        let edited = self.edit_note_landing(
+            id,
+            &edit,
+            actor,
+            super::super::NoteEditLanding::OwnerFolder {
+                owner: landing.owner,
+            },
+        );
+        row.state = match edited {
             Ok(NoteProgramEditOutcome::Edited { .. }) => {
                 report.superseded += 1;
                 row.landed_hash = hash.clone();

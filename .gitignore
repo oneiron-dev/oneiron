@@ -32,7 +32,7 @@ __pycache__/
 /crates/oneiron/src/verbs/generated/verb_catalog.rs
 /crates/oneiron/src/generated/core_verb_names.rs
 
-# The package outputs, written by each package's own build (`generate.py --package`; untangle slice 4.3).
+# The package outputs, written by each package's own build (`oneiron-sdk-generator --package`; untangle slice 4.3).
 /packages/oneiron/src/facade-types.ts
 /packages/oneiron/src/agent-verbs.ts
 /packages/oneiron/src/facade-verbs.ts
