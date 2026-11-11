@@ -1,9 +1,13 @@
-/* The frame: the microsidebar, the sidebar, then the work area taking the
-   rest of the width. Folding the sidebar hands its width to the work
-   area at once (a width change is layout, not a transform, so it is not
-   animated); the sidebar fades back in when the person opens it. */
+/* The frame: the window ground behind everything; the microsidebar on it
+   at the left; then the sheet, one surface 10 px inside the window's top,
+   right and bottom, holding the sidebar and the work area with no gap.
+   Folding the sidebar hands its width to the work area at once (a width
+   change is layout, not a transform, so it is not animated); the sidebar
+   fades back in when the person opens it. */
 .sl-app-frame {
+  --sl-sheet-inset: 10px;
   position: relative;
+  isolation: isolate;
   display: flex;
   align-items: stretch;
   min-width: 0;
@@ -17,17 +21,34 @@
   flex: none;
 }
 
+.sl-app-frame-sheet {
+  position: relative;
+  z-index: var(--sl-z-work);
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  margin: var(--sl-sheet-inset) var(--sl-sheet-inset) var(--sl-sheet-inset) 0;
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  background: var(--sl-island);
+}
+
+/* The sidebar's column: the sheet's darker tone, a hairline at its right
+   edge where the work area begins. */
 .sl-app-frame-side {
   display: flex;
   flex: none;
   min-height: 0;
+  background: var(--sl-bg);
+  box-shadow: inset -1px 0 0 var(--sl-rule);
 }
 
-.sl-app-frame[data-reopened] > .sl-app-frame-side {
+.sl-app-frame[data-reopened] .sl-app-frame-side {
   animation: sl-frame-side-in 160ms var(--sl-ease-out);
 }
 
-.sl-app-frame[data-sidebar="folded"] > .sl-app-frame-side {
+.sl-app-frame[data-sidebar="folded"] .sl-app-frame-side {
   display: none;
 }
 
@@ -37,51 +58,34 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  padding-left: 12px;
+  background: var(--sl-island);
 }
 
-/* The fold control in the microsidebar shows only while the sidebar is
-   folded; inside a peek, and where the place has no sidebar, never. */
-.sl-app-frame[data-sidebar="open"] .sl-micro-sidebar .sl-app-frame-fold,
-.sl-app-frame[data-sidebar="none"] .sl-app-frame-fold,
-.sl-app-frame-peek .sl-app-frame-fold {
-  display: none;
-}
-
-/* The peek: an item's sidebar over the work area, on the popover tone
-   with the popover shadow (it floats; it is not a well). It sits flush
-   against the strip so the pointer crosses straight into it. */
+/* The peek: an item's sidebar raised over the sheet, 6 px inside the
+   sheet's left, top and bottom edges, on the popover tone with the popover
+   shadow (it floats; it is not a well). */
 .sl-app-frame-peek {
+  --sl-peek-inset: 6px;
   position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: 100%;
+  top: calc(var(--sl-sheet-inset) + var(--sl-peek-inset));
+  bottom: calc(var(--sl-sheet-inset) + var(--sl-peek-inset));
+  left: calc(100% + var(--sl-peek-inset));
   display: flex;
-  border-radius: 0 var(--sl-radius) var(--sl-radius) 0;
+  border-radius: var(--sl-radius);
   background: var(--sl-pop);
   box-shadow: var(--sl-pop-shadow);
   animation: sl-frame-peek-in 160ms var(--sl-ease-out);
 }
 
-/* A sidebar shown in the peek prints in the plain inks of the popover,
-   not the on-field inks. */
-.sl-app-frame-peek .sl-sidebar[data-ground] {
-  --sl-sidebar-ink: var(--sl-ink-2);
-  --sl-sidebar-ink-on: var(--sl-ink-1);
-  --sl-sidebar-quiet: var(--sl-ink-3);
-  --sl-sidebar-hover: var(--sl-hover);
-  --sl-sidebar-lit: var(--sl-lit);
-  --sl-sidebar-text-shadow: none;
-  --sl-sidebar-symbol-shadow: none;
-  --sl-sidebar-badge: var(--sl-ink-1);
-  --sl-sidebar-badge-ink: var(--sl-on-primary);
-  --sl-sidebar-rule: var(--sl-rule);
-  --sl-mark-ground: var(--sl-pop);
-  background: none;
-}
-
-.sl-app-frame-peek .sl-sidebar .sl-glyph-line {
-  color: var(--sl-glyph-ink, var(--sl-ink-2));
+/* The strip of sheet between the microsidebar and the peek belongs to the
+   peek, so the pointer crosses from an item into it without leaving. */
+.sl-app-frame-peek::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 100%;
+  bottom: 0;
+  width: var(--sl-peek-inset);
 }
 
 @keyframes sl-frame-peek-in {
@@ -99,7 +103,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .sl-app-frame-peek,
-  .sl-app-frame[data-reopened] > .sl-app-frame-side {
+  .sl-app-frame[data-reopened] .sl-app-frame-side {
     animation: none;
   }
 }
