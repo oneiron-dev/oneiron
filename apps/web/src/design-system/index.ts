@@ -54,6 +54,7 @@ export {
   NEEDS_YOU_UNDO_MS,
   type NeedsYouProps,
   type NeedsYouItemProps,
+  type NeedsYouAnswerProps,
   type NeedsYouUrgency,
   type NeedsYouPicksProps,
   type NeedsYouPickProps,
@@ -117,6 +118,31 @@ export {
 } from './patterns/LedgerTable'
 export { ClaimText, type ClaimTextProps } from './patterns/ClaimText'
 export { claimInk, type ClaimInk } from './patterns/claim-ink'
+
+export {
+  Rail,
+  type RailProps,
+  type RailHeadProps,
+  type RailGroupProps,
+  type RailRowProps,
+} from './frame/Rail'
+export { moveItem, dropIndex, leadingEdge, shiftFor } from './frame/reorder'
+export { VaultSwitch, type VaultSwitchProps, type VaultSwitchVault } from './frame/VaultSwitch'
+export {
+  ActivityList,
+  ActivityRow,
+  ActivityDay,
+  type ActivityListProps,
+  type ActivityRowProps,
+  type ActivityDayProps,
+  type ActivityKind,
+  type ActivityAge,
+} from './frame/ActivityList'
+export { SortCycle, type SortCycleProps, type SortCycleOption } from './frame/SortCycle'
+export { PeopleTable, type PeopleTableProps, type PeopleTableRowProps } from './frame/PeopleTable'
+export { RoleWord, type RoleWordProps } from './frame/RoleWord'
+export { RolePicker, type RolePickerProps, type RoleOption } from './frame/RolePicker'
+export { ACT_MODES, setActMode, type RoleAct, type ActMode } from './frame/role-acts'
 
 export { GLYPH_NAMES, type GlyphName } from './lib/seal-art'
 export { GlyphLine, laurelLeaves, type GlyphLineProps, type LaurelLeaf } from './lib/glyph-lines'
