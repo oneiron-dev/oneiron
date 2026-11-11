@@ -1,6 +1,6 @@
 {
   "name": "vault.code.origin.lfs_path_policy.set",
-  "description": "Replace one served origin's ordered LFS path rules (each an exact path or a directory prefix, build-required or repository-large; first match wins) at the revision the owner read, as the owner. A pushed LFS pointer of either class keeps its object.",
+  "description": "Replace one served origin's ordered LFS path rules (exact path or directory prefix, build-required or repository-large; first match wins) at the revision the owner read, as the owner. A pushed pointer of either class keeps its object.",
   "input": "crate::memory::origin_doors::OriginLfsPathPolicySetRequest",
   "output": "crate::memory::origin_doors::OriginLfsPathPolicyView",
   "call": "memory.origin_lfs_path_policy_set_as(&memory.embedded_owner(\"vault.code.origin.lfs_path_policy.set\")?, input)?",
