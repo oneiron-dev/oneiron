@@ -5,7 +5,8 @@
 //! `vault.code.corrections` names the receipt's `model_id` (the rung that
 //! served the reply), not the run's configured seat model. A reply with a
 //! bare receipt falls back to the configured model, and a reply the turn
-//! refuses records the serving rung the same way.
+//! refuses records the serving rung the same way. A step its deadline parks
+//! keeps the serving rung until the run's next entry resumes and commits it.
 
 #![cfg(oneiron_test_support)]
 
@@ -21,7 +22,7 @@ use oneiron::engine_executor::{
     JsCodeModeStepOutcome,
 };
 use oneiron::llm::ReplyAssertions;
-use oneiron::memory::code_run_doors::CodeRunCorrectionsRequest;
+use oneiron::memory::code_run_doors::{CodeRunCorrectionsRequest, CodeRunCorrectionsView};
 use oneiron::prompt::workspace_test_prompt_package_root;
 use oneiron::store::GateDecisionId;
 use oneiron::{
@@ -136,11 +137,42 @@ fn executor_config(run_id: EntityId) -> EngineExecutorConfig {
     }
 }
 
+/// Stops its first step at the step deadline, as the sandbox runtime does
+/// once a step's time allowance is spent, then answers each later step.
+struct DeadlineOnceRuntime {
+    stopped: bool,
+}
+
+impl JsCodeModeRuntime for DeadlineOnceRuntime {
+    fn run_step(
+        &mut self,
+        _step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+    ) -> oneiron::Result<JsCodeModeStepOutcome> {
+        if self.stopped {
+            return Ok(JsCodeModeStepOutcome::pending("probe observation"));
+        }
+        self.stopped = true;
+        host.stopped_at_step_deadline();
+        Ok(JsCodeModeStepOutcome::pending("step_deadline"))
+    }
+}
+
 fn run_single_turn(
     vault: &Vault,
     owner: EntityId,
     config: &EngineExecutorConfig,
     response: LlmResponse,
+) -> EngineExecutorResult<EngineExecutorOutcome> {
+    run_turn(vault, owner, config, response, &mut PendingRuntime)
+}
+
+fn run_turn<R: JsCodeModeRuntime>(
+    vault: &Vault,
+    owner: EntityId,
+    config: &EngineExecutorConfig,
+    response: LlmResponse,
+    runtime: &mut R,
 ) -> EngineExecutorResult<EngineExecutorOutcome> {
     let backend = ScriptedBackend { response };
     let lease = BudgetLease::for_test("correction-model");
@@ -150,19 +182,18 @@ fn run_single_turn(
         "run-correction-model",
     )
     .expect("gated actor write");
-    let mut runtime = PendingRuntime;
-    let mut executor = EngineNativeExecutor::new(vault, &backend, &lease, &mut runtime, &gated);
+    let mut executor = EngineNativeExecutor::new(vault, &backend, &lease, runtime, &gated);
     block_on_ready(executor.run(config))
 }
 
-fn step_zero_model_id(
+fn correction_page(
     vault: &Vault,
     owner: EntityId,
     proof: &AuthenticatedOwner,
     run_id: EntityId,
-) -> String {
-    let memory = vault.memory(owner, EdgeActorClass::Human);
-    let page = memory
+) -> CodeRunCorrectionsView {
+    vault
+        .memory(owner, EdgeActorClass::Human)
         .code_run_corrections_as(
             proof,
             CodeRunCorrectionsRequest {
@@ -171,7 +202,16 @@ fn step_zero_model_id(
                 limit: None,
             },
         )
-        .expect("correction page");
+        .expect("correction page")
+}
+
+fn step_zero_model_id(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    run_id: EntityId,
+) -> String {
+    let page = correction_page(vault, owner, proof, run_id);
     assert_eq!(page.records.len(), 1, "one response records one correction");
     assert_eq!(page.records[0].step, 0, "the record is step zero");
     page.records[0].model_id.clone()
@@ -244,5 +284,52 @@ fn rejected_turn_records_the_serving_rung_model() {
     assert_eq!(
         step_zero_model_id(&vault, owner, &proof, run_id),
         SERVED_MODEL_ID,
+    );
+}
+
+#[test]
+fn deadline_resumed_turn_records_the_serving_rung_model() {
+    let (_dir, vault, owner, proof) = owner_vault();
+    let run_id = EntityId::now();
+    let config = executor_config(run_id);
+    let mut runtime = DeadlineOnceRuntime { stopped: false };
+    let parked = run_turn(
+        &vault,
+        owner,
+        &config,
+        scripted_response("console.log('probe');", served_receipt()),
+        &mut runtime,
+    )
+    .expect("the stopped step parks");
+    assert_eq!(
+        parked.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 0 },
+        "the step its deadline stopped parks at the same seq",
+    );
+    assert!(
+        correction_page(&vault, owner, &proof, run_id)
+            .records
+            .is_empty(),
+        "a park commits no correction record",
+    );
+    // The next entry runs the parked program again before any model turn,
+    // so this reply's bare receipt names no model the record could take.
+    let resumed = run_turn(
+        &vault,
+        owner,
+        &config,
+        scripted_response("console.log('not asked');", serde_json::json!({})),
+        &mut runtime,
+    )
+    .expect("the parked step resumes and commits");
+    assert_eq!(
+        resumed.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 1 },
+        "the resumed step commits, then the run yields",
+    );
+    assert_eq!(
+        step_zero_model_id(&vault, owner, &proof, run_id),
+        SERVED_MODEL_ID,
+        "the resumed step's record names the rung that served the parked reply",
     );
 }

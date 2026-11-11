@@ -228,6 +228,12 @@ impl<'a> CodeRunCorrectionDraft<'a> {
         self
     }
 
+    /// The model id the reply's served receipt named, which a step parked
+    /// at its deadline keeps until its checkpoint commits this record.
+    pub(crate) const fn answering_model(&self) -> Option<&ModelId> {
+        self.answered_by.as_ref()
+    }
+
     pub(crate) const fn run_id(&self) -> EntityId {
         self.run_id
     }
