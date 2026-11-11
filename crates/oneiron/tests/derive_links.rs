@@ -19,8 +19,9 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{
     Claim, Derived, Distinct, Named, SameAs, claim_lifecycle, commit, commit_claims,
-    define_auto_agent, grant_derive_rows, grant_topology_seal, mint_nightly_links,
-    narrow_steward_grant_to_project, same_as_edge, source_version,
+    define_auto_agent, grant_core_read_beside_derive_rows, grant_derive_rows, grant_topology_seal,
+    mint_nightly_links, narrow_steward_grant_to_project, reader_claim_rows, reader_reads_row,
+    same_as_edge, source_version,
 };
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::{EdgeActorClass, EntityId, Vault};
@@ -329,6 +330,79 @@ fn the_dreamer_lands_no_same_as_to_a_claim_outside_its_narrowed_grant() {
         vec!["gate.deny.derive.same_as_not_claims".to_owned()]
     );
     assert!(!same_as_edge(&fixture.vault, fixture.first, outside).expect("read"));
+}
+
+#[test]
+fn a_same_as_proposal_is_read_only_beside_both_its_claims() {
+    let fixture = fixture();
+    let proposer = define_auto_agent(&fixture.vault).expect("a proposer");
+    let reader = define_auto_agent(&fixture.vault).expect("a reader");
+    grant_core_read_beside_derive_rows(&fixture.vault, reader, proposer)
+        .expect("the reader's read grant beside the proposer's rows");
+    let mut body = ClaimBody::new(
+        "preference.coffee",
+        ClaimSubject::Entity(fixture.person),
+        rmpv::Value::from("a black filter coffee"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("a claim body");
+    body.source = Some(ClaimSource::Observed);
+    body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("principal"),
+        rmpv::Value::Binary(proposer.as_bytes().to_vec()),
+    )]));
+    let private_target = EntityId::now();
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .put_claim(&private_target, &body, TimeRange { start: at, end: at }, at)
+        .expect("a claim for the proposer alone");
+    let committed = commit(
+        &fixture.vault,
+        proposer,
+        EdgeActorClass::Agent,
+        "run-status-endpoints",
+        &[
+            Derived::SameAs(SameAs {
+                local: "private_pair",
+                source: Named::Stored(fixture.first),
+                target: Named::Stored(private_target),
+            }),
+            Derived::SameAs(SameAs {
+                local: "open_pair",
+                source: Named::Stored(fixture.first),
+                target: Named::Stored(fixture.second),
+            }),
+        ],
+    )
+    .expect("the proposals commit");
+    let [private_pair, open_pair] = committed.items.as_slice() else {
+        panic!("two items: {:?}", committed.items);
+    };
+    for item in [private_pair, open_pair] {
+        assert!(item.landed, "the proposal lands: {:?}", item.reasons);
+        assert!(item.reasons.is_empty());
+        assert_eq!(item.rows.len(), 1);
+    }
+    let private_status = private_pair.rows[0];
+    let open_status = open_pair.rows[0];
+    let reads = |actor, row| {
+        reader_reads_row(&fixture.vault, actor, EdgeActorClass::Agent, row)
+            .expect("the recorded point read")
+    };
+    assert!(reads(reader, fixture.first));
+    assert!(reads(reader, fixture.second));
+    assert!(!reads(reader, private_target));
+    assert!(reads(proposer, private_status));
+    assert!(reads(reader, open_status));
+    assert!(!reads(reader, private_status));
+
+    let listed = reader_claim_rows(&fixture.vault, reader, EdgeActorClass::Agent)
+        .expect("the reader's recorded claim listing");
+    assert!(listed.contains(&open_status));
+    assert!(!listed.contains(&private_status));
 }
 
 #[test]
