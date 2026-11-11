@@ -276,6 +276,10 @@ pub struct EsignSealAttemptView {
     pub updated_at: u64,
     /// The failure a failed attempt kept; the backstop queues it again.
     pub last_error: Option<String>,
+    /// Native finding and sub-indication codes of a failed self-verification,
+    /// including `validation_material_possible_tampering`. Empty when none was
+    /// supplied; an empty list never means "verification passed".
+    pub verify_reasons: Vec<String>,
 }
 
 /// One sealed item's provenance: the frozen original it came from and the
