@@ -282,6 +282,11 @@ impl AccessContextSnapshot {
             ENTITY_TYPE_MESSAGE => AccessGrantCapability::MessagesRead,
             ENTITY_TYPE_SUMMARY => AccessGrantCapability::SummariesRead,
             ENTITY_TYPE_CLAIM => AccessGrantCapability::RelationshipClaimsRead,
+            // An identity row named only in a relationship's MESSAGEs is read
+            // as those MESSAGEs are (OPUS-LEAKS).
+            kind if crate::tagging::label_kind_admitted(kind) => {
+                AccessGrantCapability::MessagesRead
+            }
             _ => return false,
         };
         self.grants.iter().any(|grant| {

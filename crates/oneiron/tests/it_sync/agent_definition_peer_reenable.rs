@@ -18,6 +18,7 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::{FederationAdmissionRole, admit_federated_window_update};
 use oneiron::{EntityId, ErrorKind, Vault};
 
+use crate::sync_harness::open_vault_with_memory_keystore;
 use crate::sync_harness::{
     T0, WINDOW, clear_policy_manifests, entity_blob, map_insert_bytes, test_config, time_range,
 };
@@ -41,7 +42,11 @@ fn running_definition() -> AgentDefinition {
         1.0,
         false,
         true,
-        rmpv::Value::Map(Vec::new()),
+        // A stored definition names where it came from (a non-empty map).
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("definedVia"),
+            rmpv::Value::from("it_sync fixture"),
+        )]),
         None,
         true,
         None,
@@ -73,6 +78,7 @@ fn replay(
             entity_type: ENTITY_TYPE_AGENT_DEF,
             occurred: time_range(T0),
             learned_at: T0,
+            row_version: 0,
             body: &body,
         },
         tier,
@@ -84,7 +90,7 @@ fn admit(
     id: &EntityId,
     definition: &AgentDefinition,
     role: FederationAdmissionRole,
-) -> oneiron::Result<Vec<u8>> {
+) -> oneiron::Result<Vec<(WindowKey, Vec<u8>)>> {
     let key = WindowKey::new(WINDOW);
     let peer = create_window_doc("federation-peer", &key);
     let body = encode_agent_definition(definition).unwrap();
@@ -95,7 +101,7 @@ fn admit(
     );
     peer.commit();
     let update = peer.export(ExportMode::all_updates()).unwrap();
-    admit_federated_window_update(vault, &key, &update, role)
+    admit_federated_window_update(vault, &key, &update, role, None)
 }
 
 /// A fresh definition seeded running, then turned off by a federation
@@ -128,7 +134,7 @@ fn revoked_definition(vault: &Vault) -> (EntityId, AgentDefinition) {
 #[test]
 fn a_federation_peer_turns_no_agent_definition_back_on() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    let vault = open_vault_with_memory_keystore(dir.path(), test_config());
     clear_policy_manifests(&vault);
     let widenings: [(&str, fn(&mut AgentDefinition)); 4] = [
         ("enabled", |def| def.enabled = true),

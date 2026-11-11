@@ -115,13 +115,13 @@ pub(super) fn scaffold(graph: &Graph) -> Result<Scaffold> {
         next.parents = vec![rev.parent.map_or(root, |parent| ids[parent]).to_hex()];
         next.slice.readable = readable(rev.mask);
         next.depth_remaining = rev.depth;
-        let anchor = base.anchor();
+        let anchor = base.anchor()?;
         let version = ProjectProofVersion::V3;
         // Each revision signs at its own second: equal content never shares a hash.
         let signed_at = slip.claims.issued_at + index as u64;
-        let challenge =
-            next.authority_at(version)
-                .write_challenge(id, version, signed_at, Some(&anchor))?;
+        let challenge = next
+            .authority_at(version)
+            .write_challenge(id, version, signed_at, &anchor)?;
         next.write_proof = Some(ProjectWriteProof {
             slip_wire: slip.to_token()?,
             holder_signature: holder_key(signer)
@@ -129,7 +129,7 @@ pub(super) fn scaffold(graph: &Graph) -> Result<Scaffold> {
                 .to_bytes()
                 .to_vec(),
             signed_at,
-            anchor: Some(Box::new(anchor)),
+            anchor,
             version,
         });
         revisions.push(revisions_of_row(id, &next)?.pop().ok_or_else(invalid)?);

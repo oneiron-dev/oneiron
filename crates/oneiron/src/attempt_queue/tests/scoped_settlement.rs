@@ -7,6 +7,14 @@ const KEY: &str = "shared";
 const ACTOR_A: &str = "actor-a";
 const ACTOR_B: &str = "actor-b";
 
+/// An unrelated non-owned dedupe-index entry. 41b4a5f8f11 (#3369, C069)
+/// deleted the raw legacy key ("the raw dedupe fallback is gone"), so the
+/// old legacy bytes are untestable; the surviving promise is that
+/// settlement retires only the owning actor index and leaves every
+/// non-owned key alone. The actorless neighbor itself is still guarded by
+/// its current hashed v1 index key below.
+const UNRELATED_DEDUPE_KEY: &[u8] = b"unrelated-settlement-index";
+
 fn enqueue_actor(vault: &Vault, queue: &AttemptQueue<'_>, actor: &str) -> Result<AttemptRecord> {
     let mut wtxn = vault.store.env.write_txn()?;
     let EnqueueOutcome::Enqueued(record) = queue.enqueue_with_task_ref_and_dedupe_actor_in_txn(
@@ -39,14 +47,14 @@ fn claim_with_neighbors(
     let EnqueueOutcome::Enqueued(legacy) = queue.enqueue(enqueue(KIND, Some(KEY), 12))? else {
         panic!("actorless enqueue must not coalesce with either actor");
     };
-    // Both actorless families can still belong to a live legacy chain. Neither
-    // may be deleted while settling an unrelated actor-scoped row.
+    // The actorless neighbor owns the hashed v1 key; the unrelated literal
+    // below belongs to nobody. Neither may be deleted while settling an
+    // unrelated actor-scoped row.
     let mut wtxn = vault.store.env.write_txn()?;
-    vault.store.attempt_dedupe.put(
-        &mut wtxn,
-        &legacy_dedupe_index_key(KIND, KEY),
-        legacy.id.as_bytes(),
-    )?;
+    vault
+        .store
+        .attempt_dedupe
+        .put(&mut wtxn, UNRELATED_DEDUPE_KEY, legacy.id.as_bytes())?;
     wtxn.commit()?;
     Ok((claim, other, legacy))
 }
@@ -65,7 +73,7 @@ fn assert_index_owners(
             Some(other),
         ),
         (dedupe_index_key(KIND, KEY).to_vec(), Some(legacy)),
-        (legacy_dedupe_index_key(KIND, KEY), Some(legacy)),
+        (UNRELATED_DEDUPE_KEY.to_vec(), Some(legacy)),
     ] {
         let actual = vault
             .store

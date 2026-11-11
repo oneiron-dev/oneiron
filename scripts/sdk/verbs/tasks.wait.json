@@ -4,5 +4,12 @@
   "output": "crate::code_run::TaskWaitOutput",
   "scope": "Read",
   "context": "run",
-  "effect": "TasksWaitSet"
+  "effect": "TasksWaitSet",
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskWaitAgentsRequest>",
+    "description": "Waits on AGENT children the leased parent attached to this credential spawned with self.agents.spawn: spec is {agents, all?, n_of?, step_key}, the attempt ids the spawns answered. It answers each ended child's state and result ref and the ids still pending, never a child's words; the same step_key answers as the same wait.",
+    "host_door_lists": true
+  },
+  "run_surface": "live"
 }

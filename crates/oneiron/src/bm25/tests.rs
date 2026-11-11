@@ -1131,7 +1131,9 @@ fn a_query_is_read_to_the_query_ceiling() -> Result<()> {
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let id = EntityId::now();
     put_text_doc(&vault, &id, "lantern")?;
-    let limit = query::MAX_QUERY_TEXT_BYTES;
+    // The engine query door's 8 KiB text ceiling (oneiron-base MAX_QUERY_BYTES), retired by
+    // d396e233532 (FIX55, #4909: serve the full shared query text).
+    let limit = 8 * 1024;
     let within = format!("{} lantern", text_of_len("x", limit - " lantern".len()));
     assert_eq!(within.len(), limit);
     assert!(contains_id(&vault.search_text(&within, 10)?, &id));

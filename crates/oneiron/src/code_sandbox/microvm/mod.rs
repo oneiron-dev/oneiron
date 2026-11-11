@@ -30,8 +30,9 @@ pub use self::adapter::MicroVmSandboxAdapter;
 #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
 pub use self::backend::DevProcessBackend;
 pub use self::backend::{
-    DEV_BACKEND_NAME, MicroVmBackend, SandboxBackends, backend_error, dev_backend_compiled,
-    firecracker_backend_compiled, select_backend_for_session, select_backend_for_tier,
+    DEV_BACKEND_NAME, MicroVmBackend, NoSandboxBackends, SandboxBackends, backend_error,
+    dev_backend_compiled, firecracker_backend_compiled, select_backend_for_session,
+    select_backend_for_tier,
 };
 pub use self::credential::{
     CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection,

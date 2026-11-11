@@ -94,13 +94,14 @@ pub(crate) fn ppr_compute_weighted(
     depth: u32,
     teleport_alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
-    Ok(ppr_compute_state_weighted(
+    Ok(ppr_compute_state_weighted_with_deadline(
         store,
         txn,
         seeds,
         weighting,
         depth,
         PprAlphas::default_vad(teleport_alpha),
+        None,
         None,
     )?
     .scores)
