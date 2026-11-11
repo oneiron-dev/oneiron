@@ -257,6 +257,8 @@ export async function tempRoot(label: string): Promise<string> {
 }
 
 export interface FileDeclaration { readonly profile: Profile; readonly slots: 1 | 2 }
+/** A missing door's FIX-LIST row ("FIX <line>") and its "door or delete" date (YYYY-MM-DD, UTC). */
+export interface PendingDoor { readonly fix: string; readonly deadline: string }
 interface FileDiagnostics {
   readonly file: string; readonly exitCode: number; readonly signal: string | null;
   readonly expectedCases: number; readonly junitPresent: boolean; readonly junitCases: number;
@@ -321,6 +323,23 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
       register(id);
       results.set(id, {id,outcome:"SKIPPED",durationMs:0,reason});
       test.skip(`${id} ${reason}`, () => {});
+    },
+    /** A case whose door is missing (Engine CORE-FOUR-SKIPS = A, the pending-door filter). It stays
+     * registered and in the 242-ID plan, is never run, and reports SKIPPED with its missing door, its
+     * FIX row and its deadline, so the PR tier stays green and honest. From the deadline on it FAILS:
+     * door or delete. */
+    pendingDoor(test: Reporter["test"], id: string, reason: `waits on ${string}`, pending: PendingDoor): void {
+      if (selected.size && !selected.has(id)) return;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(pending.deadline) || !/^FIX \d+$/.test(pending.fix)) throw new Error(`Malformed pending door for ${id}`);
+      register(id);
+      const text = `${reason} [${pending.fix}; pending door until ${pending.deadline}: door or delete]`;
+      if (Date.now() >= Date.parse(`${pending.deadline}T00:00:00Z`)) {
+        results.set(id, {id,outcome:"FAIL",durationMs:0,reason:`pending-door deadline passed: ${text}`});
+        test(`${id} ${text}`, () => { throw new Error(`pending-door deadline passed: ${text}`) });
+        return;
+      }
+      results.set(id, {id,outcome:"SKIPPED",durationMs:0,reason:`PENDING-DOOR ${text}`});
+      test.skip(`${id} ${text}`, () => {});
     },
     /** Real test.todo, but also a mandatory BLOCKED row in the independent report. */
     todo(test: Reporter["test"], id: string, reason: `waits on ${string}`): void {
