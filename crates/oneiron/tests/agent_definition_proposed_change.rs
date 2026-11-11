@@ -18,7 +18,12 @@
 
 use std::sync::Arc;
 
-use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope, encode_agent_definition};
+use oneiron::agent_def::{
+    AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence, encode_agent_definition,
+};
+use oneiron::agent_dispatch::{
+    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
+};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::store::GateDecisionId;
@@ -52,7 +57,8 @@ fn proposed_change_id(stored: &EntityId, version: &str) -> EntityId {
 }
 
 /// The author's definition as the owner creates it: scope Base, ceiling
-/// Proposed, version "1".
+/// Proposed, version "1", a companion's wake cadence (the one role the
+/// default wake policy wakes on a surprise alone).
 fn author_definition() -> AgentDefinition {
     AgentDefinition::new(
         "proposed_change.author",
@@ -80,6 +86,9 @@ fn author_definition() -> AgentDefinition {
         true,
         None,
     )
+    .with_wake_cadence(AgentWakeCadence::Companion {
+        every_turns: Some(1),
+    })
 }
 
 fn json_of(value: &RmpValue) -> Value {
@@ -105,6 +114,48 @@ fn json_of(value: &RmpValue) -> Value {
     }
 }
 
+/// Puts `def` at the author's own id through `vault.batch` on the author's
+/// Agent-class handle, as a code-mode run does.
+fn author_batch_put(
+    vault: &Vault,
+    author: EntityId,
+    def: &AgentDefinition,
+    at: u64,
+) -> Result<Value, String> {
+    let bytes = encode_agent_definition(def).expect("valid definition");
+    let body = json_of(&rmpv::decode::read_value(&mut bytes.as_slice()).expect("MessagePack"));
+    oneiron::task_verb::sdk::invoke(
+        &vault.memory(author, EdgeActorClass::Agent),
+        "vault.batch",
+        json!({"entities": [{
+            "id": author.to_hex(),
+            "entity_type": ENTITY_TYPE_AGENT_DEF,
+            "occurred_start": at,
+            "occurred_end": at,
+            "learned_at": at,
+            "body": body,
+        }]}),
+    )
+    .map_err(|error| format!("{error:?}"))
+}
+
+/// One dispatch of the definition at `id`, as a label.
+fn dispatch_of(vault: &Vault, id: EntityId) -> String {
+    match AgentDispatcher::new(vault).dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(id),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: None,
+        now: NOW + 9,
+    }) {
+        Ok(AgentDispatchOutcome::Dispatched(_)) => "dispatched".to_owned(),
+        Ok(AgentDispatchOutcome::Existing(_)) => "existing".to_owned(),
+        Ok(AgentDispatchOutcome::ProposedWiden(_)) => "proposed-widen".to_owned(),
+        Ok(_) => "workflow".to_owned(),
+        Err(error) => format!("refused: {error}"),
+    }
+}
+
 /// A personal vault, held by this process, whose owner created one agent
 /// and whose agent proposed a wider version of its own definition.
 struct Fixture {
@@ -113,7 +164,9 @@ struct Fixture {
     author: EntityId,
     /// The author's stored definition before the proposal.
     before: AgentDefinition,
-    /// The proposal row: the author's definition at scope All, version "2".
+    /// The author's definition at scope All, version "2", as it proposed it.
+    wider: AgentDefinition,
+    /// The proposal row holding `wider`.
     proposal: EntityId,
     _dir: tempfile::TempDir,
 }
@@ -158,21 +211,7 @@ fn fixture() -> Fixture {
     let mut wider = before.clone();
     wider.scope = AgentScope::All;
     wider.version = "2".to_owned();
-    let bytes = encode_agent_definition(&wider).expect("valid definition");
-    let body = json_of(&rmpv::decode::read_value(&mut bytes.as_slice()).expect("MessagePack"));
-    oneiron::task_verb::sdk::invoke(
-        &vault.memory(author, EdgeActorClass::Agent),
-        "vault.batch",
-        json!({"entities": [{
-            "id": author.to_hex(),
-            "entity_type": ENTITY_TYPE_AGENT_DEF,
-            "occurred_start": NOW + 5,
-            "occurred_end": NOW + 5,
-            "learned_at": NOW + 5,
-            "body": body,
-        }]}),
-    )
-    .expect("the author's widening batch lands");
+    author_batch_put(&vault, author, &wider, NOW + 5).expect("the author's widening batch lands");
     let proposal = proposed_change_id(&author, "2");
     let stored = vault
         .get_agent_definition(&proposal)
@@ -191,6 +230,7 @@ fn fixture() -> Fixture {
         owner_person,
         author,
         before,
+        wider,
         proposal,
         _dir: dir,
     }
@@ -347,7 +387,12 @@ fn owner_approving_a_proposed_change_makes_it_the_stored_definitions_next_versio
             .get_agent_definition(&fixture.proposal)
             .expect("read the proposal id"),
         None,
-        "the answered proposal row is deleted"
+        "the approved proposal row is deleted: the stored row holds its body"
+    );
+    assert_ne!(
+        dispatch_of(&fixture.vault, fixture.proposal),
+        "dispatched",
+        "an approved proposal's own id is never dispatched"
     );
     assert_answer_recorded(
         &fixture,
@@ -392,13 +437,38 @@ fn owner_rejecting_a_proposed_change_leaves_the_stored_definition_as_it_was() {
         Some(fixture.before.clone()),
         "a rejection leaves the stored row as it was"
     );
+    let rejected = fixture
+        .vault
+        .get_agent_definition(&fixture.proposal)
+        .expect("read the proposal id")
+        .expect("a rejected proposal stays at its ref");
+    let rejected_version = format!("rejected-{}", blake3::hash(b"2").to_hex());
+    assert_eq!(rejected.approval_status, ClaimApprovalStatus::Rejected);
+    assert_eq!(rejected.lifecycle_status, ClaimLifecycleStatus::Retracted);
+    assert_eq!(rejected.version, rejected_version);
     assert_eq!(
-        fixture
-            .vault
-            .get_agent_definition(&fixture.proposal)
-            .expect("read the proposal id"),
-        None,
-        "the answered proposal row is deleted"
+        rejected.scope,
+        AgentScope::All,
+        "the rejected row holds what the agent proposed"
+    );
+    let read = as_owner(
+        &fixture,
+        "vault.agents.get",
+        json!({"agent_def_ref": fixture.proposal.to_hex()}),
+    )
+    .expect("the owner reads the rejected proposal by its ref");
+    assert_eq!(text(&read, "/approval_status"), "rejected");
+    assert_eq!(text(&read, "/lifecycle_status"), "retracted");
+    assert_eq!(text(&read, "/definition/version"), rejected_version);
+    assert_eq!(
+        read.pointer("/definition/scope/kind"),
+        Some(&json!("all")),
+        "the owner reads the proposed scope"
+    );
+    assert_ne!(
+        dispatch_of(&fixture.vault, fixture.proposal),
+        "dispatched",
+        "a rejected proposal is never dispatched"
     );
     assert_answer_recorded(
         &fixture,
@@ -418,6 +488,41 @@ fn owner_rejecting_a_proposed_change_leaves_the_stored_definition_as_it_was() {
     assert!(
         waiting_changes(&fixture).is_empty(),
         "no change waits after the answer"
+    );
+}
+
+#[test]
+fn an_agent_cannot_bring_back_a_proposal_the_owner_rejected() {
+    let fixture = fixture();
+    as_owner(
+        &fixture,
+        REJECT,
+        json!({"proposal_ref": fixture.proposal.to_hex()}),
+    )
+    .expect("the owner rejects the proposed change");
+    let again = author_batch_put(&fixture.vault, fixture.author, &fixture.wider, NOW + 7);
+    println!("CONFORMANCE case=refile-after-reject write={again:?}");
+    assert!(
+        again.is_err(),
+        "the widening rule keeps a rejected proposal rejected: {again:?}"
+    );
+    let rejected = fixture
+        .vault
+        .get_agent_definition(&fixture.proposal)
+        .expect("read the proposal id")
+        .expect("the rejected proposal row");
+    assert_eq!(rejected.approval_status, ClaimApprovalStatus::Rejected);
+    assert_eq!(rejected.lifecycle_status, ClaimLifecycleStatus::Retracted);
+    assert!(
+        waiting_changes(&fixture).is_empty(),
+        "no change waits after the refused re-file"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_agent_definition(&fixture.author)
+            .expect("read the author"),
+        Some(fixture.before.clone())
     );
 }
 
@@ -545,5 +650,50 @@ fn an_agent_cannot_answer_a_proposed_change() {
             .get_agent_definition(&fixture.author)
             .expect("read the author"),
         Some(fixture.before.clone())
+    );
+}
+
+/// The agents a surprise wakes and the vault's companions, in that order.
+fn cadence_scans(fixture: &Fixture) -> (Vec<EntityId>, Vec<EntityId>) {
+    let woken =
+        oneiron::test_doors::agent_definition_scans::surprise_wakeable_agents(&fixture.vault, 1.0)
+            .expect("the surprise wake scan");
+    let companions = oneiron::test_doors::agent_definition_scans::companion_agents(&fixture.vault)
+        .expect("the companion scan");
+    (woken, companions)
+}
+
+#[test]
+fn a_proposed_change_waiting_or_answered_is_in_no_cadence_scan() {
+    let fixture = fixture();
+    let (woken, companions) = cadence_scans(&fixture);
+    println!("CONFORMANCE case=scans-waiting woken={woken:?} companions={companions:?}");
+    assert!(
+        woken.contains(&fixture.author) && companions.contains(&fixture.author),
+        "control: a surprise wakes the companion author, which is a companion"
+    );
+    assert!(
+        !woken.contains(&fixture.proposal),
+        "a waiting proposal is woken by no surprise"
+    );
+    assert!(
+        !companions.contains(&fixture.proposal),
+        "a waiting proposal is no companion"
+    );
+    as_owner(
+        &fixture,
+        REJECT,
+        json!({"proposal_ref": fixture.proposal.to_hex()}),
+    )
+    .expect("the owner rejects the proposed change");
+    let (woken, companions) = cadence_scans(&fixture);
+    println!("CONFORMANCE case=scans-rejected woken={woken:?} companions={companions:?}");
+    assert!(
+        woken.contains(&fixture.author) && companions.contains(&fixture.author),
+        "control: the stored definition still wakes and is still a companion"
+    );
+    assert!(
+        !woken.contains(&fixture.proposal) && !companions.contains(&fixture.proposal),
+        "a rejected proposal is in no cadence scan"
     );
 }

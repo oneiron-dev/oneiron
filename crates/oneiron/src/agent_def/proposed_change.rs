@@ -6,17 +6,19 @@
 //! holds is stored beside it as a proposal (`agent_authored_update_in_txn`):
 //! a Proposed row at [`proposed_change_id`] whose provenance names the stored
 //! row under `replaces`, and the stored row stays as it is. Only the owner
-//! answers one. Approving makes the proposal the stored row's next version;
-//! rejecting leaves the stored row as it is. Either answer deletes the
-//! proposal row and appends one gate decision that records it, in the one
-//! write transaction that rechecks the owner's proof.
+//! answers one. Approving makes the proposal the stored row's next version
+//! and deletes the proposal row, whose body the stored row now holds.
+//! Rejecting leaves the stored row as it is and retires the proposal row in
+//! place (Rejected, Retracted), where the owner still reads what the agent
+//! proposed. Either answer appends one gate decision that records it, in the
+//! one write transaction that rechecks the owner's proof.
 
 use super::codec::{encode_agent_definition, validate_agent_definition_update};
 use super::doors::proposed_change_id;
 use super::types::AgentDefinition;
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
-use crate::claim::ClaimApprovalStatus;
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -71,7 +73,7 @@ pub(crate) struct ProposedAgentDefinitionChange {
 /// What the owner's answer wrote.
 #[derive(Debug, Clone)]
 pub(crate) struct ProposedAgentDefinitionChangeSettlement {
-    /// The proposal answered, now deleted.
+    /// The proposal answered.
     pub(crate) change: ProposedAgentDefinitionChange,
     pub(crate) decision: ProposedAgentDefinitionChangeDecision,
     /// The stored row's version before the answer; `None` when a rejected
@@ -146,6 +148,21 @@ fn approved_next_version(stored: &AgentDefinition, proposal: &AgentDefinition) -
     next.lifecycle_status = stored.lifecycle_status;
     next.provenance.clone_from(&stored.provenance);
     next
+}
+
+/// The proposal as a rejection leaves it: Rejected and Retracted, so no
+/// dispatch runs it and no list shows it as waiting, with every other field
+/// as the agent proposed it. Its version moves to `rejected-` and the BLAKE3
+/// hash of the proposed version, since a body changes only with its version.
+fn rejected_proposal(proposal: &AgentDefinition) -> AgentDefinition {
+    let mut rejected = proposal.clone();
+    rejected.approval_status = ClaimApprovalStatus::Rejected;
+    rejected.lifecycle_status = ClaimLifecycleStatus::Retracted;
+    rejected.version = format!(
+        "rejected-{}",
+        blake3::hash(proposal.version.as_bytes()).to_hex()
+    );
+    rejected
 }
 
 impl Vault {
@@ -238,7 +255,8 @@ impl Vault {
                 now,
                 encode_agent_definition(&next)?,
             )?;
-            self.settle_change_in_txn(
+            self.delete_proposal_in_txn(txn, &change.proposal)?;
+            self.record_answer_in_txn(
                 txn,
                 actor,
                 change,
@@ -250,9 +268,10 @@ impl Vault {
     }
 
     /// The owner rejects the proposed change at `proposal`: the stored row it
-    /// names stays as it is, the proposal row is deleted, and one gate
-    /// decision records the answer, in one writer that rechecks the proof. A
-    /// proposal whose stored row no longer stands is rejected all the same.
+    /// names stays as it is, the proposal row is retired in place
+    /// ([`rejected_proposal`]), and one gate decision records the answer, in
+    /// one writer that rechecks the proof. A proposal whose stored row no
+    /// longer stands is rejected all the same.
     ///
     /// # Errors
     ///
@@ -266,12 +285,25 @@ impl Vault {
         owner: &AuthenticatedOwner,
         proposal: &EntityId,
     ) -> Result<ProposedAgentDefinitionChangeSettlement> {
+        let now = crate::unix_seconds_now();
         self.with_write_txn(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let change = self.waiting_change_in_txn(txn, proposal)?;
             let stored = self.standing_target_in_txn(txn, &change.target)?;
             let before = stored.as_ref().map(|stored| stored.version.clone());
-            self.settle_change_in_txn(
+            let rejected = rejected_proposal(&change.definition);
+            validate_agent_definition_update(&change.definition, &rejected)?;
+            self.apply_agent_definition_body(
+                txn,
+                &change.proposal,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                encode_agent_definition(&rejected)?,
+            )?;
+            self.record_answer_in_txn(
                 txn,
                 actor,
                 change,
@@ -317,16 +349,35 @@ impl Vault {
         }
     }
 
-    /// Deletes the answered proposal row and appends the gate decision that
-    /// records the answer: the owner as actor, `gate.allow.` or
-    /// `gate.deny.owner_agent_definition_change`, the stored row as its
-    /// `agent_def:` grant ref, the BLAKE3 hash of the proposal's body as its
-    /// diff handle, and the ids, versions and proposer as audit details.
+    /// Deletes the approved proposal row: the stored row now holds its body.
     ///
     /// # Errors
     ///
-    /// The delete's refusals, and the ledger's.
-    fn settle_change_in_txn(
+    /// The delete's refusals.
+    fn delete_proposal_in_txn(&self, txn: &mut heed::RwTxn<'_>, proposal: &EntityId) -> Result<()> {
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            vec![BatchOp::Delete { id: *proposal }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
+
+    /// Appends the gate decision that records the owner's answer: the owner
+    /// as actor, `gate.allow.` or `gate.deny.owner_agent_definition_change`,
+    /// the stored row as its `agent_def:` grant ref, the BLAKE3 hash of the
+    /// proposal's body as its diff handle, and the ids, versions and proposer
+    /// as audit details.
+    ///
+    /// # Errors
+    ///
+    /// The ledger's.
+    fn record_answer_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         actor: EntityId,
@@ -336,19 +387,6 @@ impl Vault {
         target_after: Option<AgentDefinition>,
     ) -> Result<ProposedAgentDefinitionChangeSettlement> {
         let proposal_body = encode_agent_definition(&change.definition)?;
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            txn,
-            vec![BatchOp::Delete {
-                id: change.proposal,
-            }],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
         let (outcome, reason) = match decision {
             ProposedAgentDefinitionChangeDecision::Approved => ("allow", APPROVE_REASON),
             ProposedAgentDefinitionChangeDecision::Rejected => ("deny", REJECT_REASON),

@@ -67,8 +67,10 @@ impl Vault {
     /// The live agents whose role triggers admit a surprise wake under the
     /// stored policy row, when `surprise` reaches its floor: the turn wake's
     /// own test on a surprise signal alone, with no cadence ordinal. A
-    /// definition that does not decode wakes at no turn either, and is left.
-    fn surprise_wakeable_agents(&self, surprise: f32) -> Result<Vec<EntityId>> {
+    /// definition that does not decode wakes at no turn either, and is left,
+    /// as is one its agent does not run under (`agent_def::stands`): a
+    /// proposal, waiting or answered, wakes no agent.
+    pub(crate) fn surprise_wakeable_agents(&self, surprise: f32) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
         if !surprises(surprise, surprise_floor_in_txn(self, &txn)?) {
             return Ok(Vec::new());
@@ -91,9 +93,10 @@ impl Vault {
             else {
                 continue;
             };
-            if decode_agent_definition(&body)
-                .is_ok_and(|definition| definition.dream_wake_due(&policy, 0, signals))
-            {
+            if decode_agent_definition(&body).is_ok_and(|definition| {
+                crate::agent_def::stands(&definition)
+                    && definition.dream_wake_due(&policy, 0, signals)
+            }) {
                 wakeable.push(id);
             }
         }

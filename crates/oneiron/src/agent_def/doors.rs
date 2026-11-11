@@ -174,7 +174,7 @@ fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
 
 /// Whether a definition is one its agent runs under: active, approved and
 /// switched on.
-fn stands(definition: &AgentDefinition) -> bool {
+pub(crate) fn stands(definition: &AgentDefinition) -> bool {
     definition.lifecycle_status == ClaimLifecycleStatus::Active
         && definition.enabled
         && matches!(
@@ -1063,9 +1063,26 @@ impl Vault {
         proposal.approval_status = ClaimApprovalStatus::Proposed;
         // A reserved logical id names its one seeded row.
         proposal.logical_id = None;
+        let body = encode_agent_definition(&proposal)?;
+        // The proposal lands on its own id, past the below-owner widening
+        // check, which judged the put at the stored row's id. A proposal the
+        // owner rejected stays rejected: bringing it back to waiting moves
+        // its approval up, which is the owner's (`widening`).
+        if super::widening::agent_definition_put_widens_in_txn(
+            &self.store,
+            txn,
+            &proposal_id,
+            &body,
+        )? {
+            return Err(Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    "only the vault owner brings back a proposed change it answered",
+                ),
+            ));
+        }
         Ok(AuthoredPut::ProposedChange {
             id: proposal_id,
-            body: encode_agent_definition(&proposal)?,
+            body,
         })
     }
 
