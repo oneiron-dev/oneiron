@@ -54,6 +54,18 @@ use crate::store::base_agent::{ACTOR_BODY, COACH_BODY, base_agent_body};
 pub(crate) use crate::store::base_agent::{
     coach_actor_id, dreamer_actor_id, guard_actor_delete, guard_actor_put, is_base_agent_actor,
 };
+/// The Coach as a reader, for a job that reads as the Coach (untangle 6.6d,
+/// F4): its goal reads name it, and go through its grant.
+///
+/// # Errors
+///
+/// The Coach's fixed id cannot be formed.
+pub fn coach_reader() -> Result<WriteActor> {
+    Ok(WriteActor::new(
+        coach_actor_id()?,
+        crate::edge::EdgeActorClass::System,
+    ))
+}
 fn invalid() -> Error {
     Error::InvalidConfig("invalid Dreamer authority binding".into())
 }

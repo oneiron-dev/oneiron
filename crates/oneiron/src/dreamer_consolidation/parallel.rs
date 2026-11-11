@@ -85,10 +85,11 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
         stages: &mut PartitionStages,
     ) -> DurableStepResult<PartitionRun> {
-        match self
+        let prefix = self
             .extract_partition_prefix(payload_input, resources, ctx, attempt_id, run_id, charges)
-            .await?
-        {
+            .await?;
+        stages.mark_prefix_ended(Instant::now());
+        match prefix {
             PartitionPrefix::Done(run) => Ok(run),
             PartitionPrefix::Extracted(extracted) => {
                 self.finish_partition_run(*extracted, resources, ctx, attempt_id, charges, stages)
