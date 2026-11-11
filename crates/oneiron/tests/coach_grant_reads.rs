@@ -175,13 +175,8 @@ fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
         )
     };
 
-    stand_project_steward_grant(
-        &vault,
-        agent,
-        &[STEWARD_READ_VERB, ENGINE_CONTROLS_VERB],
-        own_project,
-    )
-    .expect("a grant narrowed to one project");
+    stand_project_steward_grant(&vault, agent, &read_and_engine_controls(), own_project)
+        .expect("a grant narrowed to one project");
     for (verb, input) in evidence_reads(agent) {
         assert_refused(
             read(&vault, agent, EdgeActorClass::Agent, verb, input),
@@ -191,7 +186,7 @@ fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
     assert_refused(learning(), "vault.learning.read");
     assert_refused(dials(), "vault.settings.learning");
 
-    stand_steward_grant(&vault, agent, &[STEWARD_READ_VERB, ENGINE_CONTROLS_VERB])
+    stand_steward_grant(&vault, agent, &read_and_engine_controls())
         .expect("a grant across the whole vault");
     for (verb, input) in evidence_reads(agent) {
         read(&vault, agent, EdgeActorClass::Agent, verb, input)
