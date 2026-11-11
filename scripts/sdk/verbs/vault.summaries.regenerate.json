@@ -5,6 +5,7 @@
   "output": "crate::scope_summary::SummaryMutationResult",
   "call": "memory.regenerate_summary(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

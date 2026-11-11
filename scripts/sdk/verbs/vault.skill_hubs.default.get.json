@@ -5,6 +5,7 @@
   "output": "crate::skill_hub::DefaultSkillHub",
   "call": "crate::task_verb::sdk::default_skill_hub_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.default.get\")?, &_input)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

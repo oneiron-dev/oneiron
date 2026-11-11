@@ -5,6 +5,7 @@
   "output": "Vec<crate::EntityId>",
   "call": "memory.hooks_regen_due_as(&memory.embedded_owner(\"vault.hooks.regen.due\")?)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

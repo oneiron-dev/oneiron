@@ -3,6 +3,7 @@
   "input": "crate::task_verb::sdk::ConnectorAnswerRequest",
   "output": "crate::task_verb::sdk::ConnectorCallReply",
   "scope": "Write",
+  "act_class": "outbound_send",
   "context": "run",
   "effect": "ConnectorAnswer",
   "host": {

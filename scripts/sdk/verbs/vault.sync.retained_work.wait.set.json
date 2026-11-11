@@ -9,6 +9,7 @@
   "host_door_lists": true,
   "rust_feature": "sync",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

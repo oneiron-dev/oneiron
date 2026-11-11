@@ -3,6 +3,7 @@
   "input": "crate::team::TeamStartInput",
   "output": "crate::team::TeamRunAnswer",
   "scope": "Write",
+  "act_class": "spawn",
   "context": "run",
   "effect": "Team",
   "run_surface": "live"

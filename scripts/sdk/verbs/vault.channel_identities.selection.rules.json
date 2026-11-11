@@ -5,6 +5,7 @@
   "output": "crate::channel_identity_selection::ChannelIdentitySelectionRuleSet",
   "call": "memory.channel_selection_rules()?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

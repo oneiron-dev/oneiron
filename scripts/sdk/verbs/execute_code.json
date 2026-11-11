@@ -5,6 +5,7 @@
   "output": "crate::memory::foreign_code::ForeignCodeRunResult",
   "call": "crate::task_verb::sdk::host_only(memory, \"execute_code\", &input)?",
   "scope": "Read",
+  "act_class": "unstated",
   "admission": {
     "lane_record_scope": true
   },

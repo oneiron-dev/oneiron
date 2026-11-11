@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarEventOutcome>>",
   "call": "memory.calendar_event_outcome(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

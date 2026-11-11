@@ -36,7 +36,7 @@ for row in HOST_ROWS:
 def host_synthetic(row):
     return {'name': row['name'], 'input': row['host']['input'],
      'output': row['host'].get('output', row['output']),
-     'description': row['host']['description'], 'scope': row['scope'],
+     'description': row['host']['description'], 'scope': row['scope'], 'act_class': row['act_class'],
      'call': f'crate::task_verb::sdk::host_only(memory, "{row["name"]}", &input)?',
      'host_door': True, 'host_door_session': row['host'].get('host_door_session', True),
      'host_door_caller': row['host'].get('host_door_caller', False),
@@ -77,8 +77,8 @@ for row in MANIFEST['verbs']:
 CODE_MODE_ROWS = [row for row in ROWS if row['name'] not in {r['name'] for r in HOST_ROWS}] + HOST_BROWSER_ROWS + HOST_BOARD_ROWS + RUN_ROWS
 SCHEMA_ROWS = ROWS + [row for row in RUN_ROWS if 'host' not in row]
 for row in RUN_ROWS:
-    if set(row) - {'output', 'outputs_by_input', 'host', 'run_surface', 'grant_class'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
-        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output, per-input outputs, run surface and grant class, and nothing else')
+    if set(row) - {'output', 'outputs_by_input', 'host', 'run_surface', 'grant_class'} != {'name', 'input', 'scope', 'context', 'effect', 'act_class'} or row['scope'] not in ('Read', 'Write'):
+        raise ValueError(f'{row["name"]}: a run row names its input, scope, act class, effect, output, per-input outputs, run surface and grant class, and nothing else')
 # A run row's `grant_class` names the authority rule its writer applies
 # (`vault.agents.put`: the author's slice, ARCH-0053:20). Code mode shows it
 # as the method's JSDoc. It describes the writer's own check; nothing reads it
@@ -119,10 +119,10 @@ for row in MANIFEST['verbs']:
 MCP_NONE_CONTEXTS = ('browser', 'scoped_child')
 for row in MANIFEST['verbs']:
     if row.get('context') != 'scoped_child': continue
-    if (set(row) - {'description'} != {'name', 'input', 'output', 'call', 'scope', 'context', 'mcp', 'section'}
+    if (set(row) - {'description'} != {'name', 'input', 'output', 'call', 'scope', 'act_class', 'context', 'mcp', 'section'}
             or row['scope'] not in ('Read', 'Write') or row['section']
             or row['call'] != f'crate::task_verb::sdk::host_only(memory, "{row["name"]}", &input)?'):
-        raise ValueError(f'{row["name"]}: a scoped-child row names its input, output, scope and description, calls the host-only refusal, and nothing else')
+        raise ValueError(f'{row["name"]}: a scoped-child row names its input, output, scope, act class and description, calls the host-only refusal, and nothing else')
 MCP_SCOPES = {'filtered', 'unrestricted', 'addressed', 'born'}
 for row in ROWS:
     if (row.get('context') in MCP_NONE_CONTEXTS) != (row.get('mcp', 'tool') == 'none'):
@@ -1700,7 +1700,25 @@ def core_verb_names(custody):
     text += "/// The member of custody row `verb`'s input that holds the secret's value or its sealed input; `None`\n/// for any other row.\n"
     text += "#[must_use]\npub fn custody_member(verb: &str) -> Option<&'static str> {\n"
     text += '    CUSTODY_VALUE_ROWS.iter().position(|row| *row == verb).map(|at| CUSTODY_VALUE_MEMBERS[at])\n}\n'
+    text += verb_act_classes()
     return text
+
+def verb_act_class_value(token):
+    'The `crate::check_in::VerbActClass` value of an `act_class` token; a token with no variant fails the build.'
+    if token in ('read', 'unstated'):
+        return f'crate::check_in::VerbActClass::{token.capitalize()}'
+    variant = ''.join(part.capitalize() for part in token.split('_'))
+    return f'crate::check_in::VerbActClass::Act(crate::check_in::ActClass::{variant})'
+
+def verb_act_classes():
+    'Every verb row\'s `act_class`, in verb-name order, for `crate::check_in::verb_act_class`.'
+    rows = sorted(MANIFEST['verbs'], key=lambda row: row['name'])
+    text = "/// Every verb row's `act_class` (ARCH-0082 #act-table), in verb-name order: `crate::check_in::verb_act_class`\n"
+    text += '/// looks a verb up here.\n'
+    text += f"pub const VERB_ACT_CLASSES: [(&str, crate::check_in::VerbActClass); {len(rows)}] = [\n"
+    for row in rows:
+        text += f"    ({json.dumps(row['name'])}, {verb_act_class_value(row['act_class'])}),\n"
+    return text + '];\n'
 
 def core_verb_names_check(variants, custody):
     'The catalog\'s compile-time check that core\'s table (`crate::verb_names`) holds its own rows.'
