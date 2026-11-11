@@ -12,6 +12,8 @@
 //! row of another kind at the agent's derived PERSON id: the writer must
 //! refuse and leave no definition behind.
 
+use std::sync::Arc;
+
 use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
@@ -19,6 +21,7 @@ use oneiron::agent_dispatch::{
 use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::code_run::HostSelfDispatcher;
+use oneiron::store::ports::ManualClock;
 use oneiron::{EdgeActorClass, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor};
 use rmpv::Value;
 
@@ -56,9 +59,9 @@ fn definition(agent_id: &str) -> AgentDefinition {
 }
 
 /// A fresh vault on a manual clock at 10.
-fn open() -> (tempfile::TempDir, oneiron::ports::ManualClock, Vault) {
+fn open() -> (tempfile::TempDir, Arc<ManualClock>, Vault) {
     let dir = tempfile::tempdir().expect("temporary vault directory");
-    let clock = oneiron::ports::ManualClock::new(10);
+    let clock = ManualClock::new(10);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     config.embedding_model = None;
