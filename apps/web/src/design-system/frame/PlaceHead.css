@@ -1,0 +1,118 @@
+/* The head line of the work area. Wide, the title and the right slot sit
+   at their own widths; narrower than 520 px the right slot shrinks first
+   and the title truncates only after it is gone. */
+.sl-place-head {
+  container-type: inline-size;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.sl-place-head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: auto;
+}
+
+/* With views on the line, the title keeps its letters and the views take
+   what is left between it and the right slot. */
+.sl-place-head:has(> .sl-place-head-tabs) > .sl-place-head-main {
+  flex-shrink: 0;
+  margin-right: 0;
+}
+
+.sl-place-head-tabs {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  margin-left: 12px;
+}
+
+.sl-place-head-tabs > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.sl-place-head-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sl-place-head-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: var(--sl-ink-2);
+}
+
+.sl-place-head-icon > .sl-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.sl-place-head-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--sl-t-place);
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--sl-ink-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quiet by size: the do size under the place size, in the reading ink. */
+.sl-place-head-origin {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+}
+
+.sl-place-head-end {
+  display: flex;
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+  flex: none;
+  gap: 0 8px;
+}
+
+.sl-place-head-part {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+@container (max-width: 519.98px) {
+  .sl-place-head-main {
+    flex-shrink: 0;
+    max-width: 100%;
+  }
+
+  .sl-place-head:has(> .sl-place-head-end) > .sl-place-head-main {
+    max-width: calc(100% - 16px);
+  }
+
+  /* One line high: parts that wrap off it are out of view. */
+  .sl-place-head-end {
+    flex-shrink: 1;
+    min-width: 0;
+    height: 36px;
+    overflow: hidden;
+  }
+}
