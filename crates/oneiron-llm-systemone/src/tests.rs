@@ -68,6 +68,8 @@ fn request(contract: AnswerContract, score_levels: Vec<String>) -> SeatRequest {
         posture: HostingPrivacyPosture::Hosted,
         remote_opt_in: false,
         phase: SeatPhase::Background,
+        images: Vec::new(),
+        audio: Vec::new(),
     }
 }
 fn wire(answer: Value) -> Value {
