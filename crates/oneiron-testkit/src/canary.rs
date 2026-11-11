@@ -234,11 +234,9 @@ impl CanaryClass {
         use CanaryActor::{Inside, Outside, Owner};
         let actors: &[CanaryActor] = match self {
             Self::Diary(actor) => return BTreeSet::from([actor]),
+            Self::OwnerKeyValue => &[Owner],
             Self::Claim(ClaimBand::Public) => &[Owner, Inside, Outside],
-            Self::OwnerKeyValue
-            | Self::Claim(_)
-            | Self::PrivateFlagClaim
-            | Self::RelationshipMessage => &[Owner, Inside],
+            Self::Claim(_) | Self::PrivateFlagClaim | Self::RelationshipMessage => &[Owner, Inside],
         };
         actors.iter().copied().collect()
     }
@@ -253,8 +251,10 @@ impl CanaryClass {
                  claim/scoped_read/note_visibility.rs)"
             }
             Self::OwnerKeyValue => {
-                "a keyed value is a worldless CLAIM at band 2: its writer reads it through vault.kv, \
-                 and the inside agent's every-band Grant covers it on the claim lane"
+                "a keyed value is an exact-store CLAIM: only its writer's keyed reader returns it \
+                 (memory/key_value, bound to the writer's actor and class), and generic claim \
+                 reads, retrieval and hydration skip it even for the owner \
+                 (claim/source_trust.rs, claim_generic_readable); no Grant widens it"
             }
             Self::Claim(ClaimBand::Public) => "band 0: the owner, and both agents' Grants cover it",
             Self::Claim(_) => {
@@ -644,7 +644,11 @@ impl CanaryVault {
     /// canary conversation's; `self.memory.diary.query` of each actor;
     /// `vault.get` and `vault.hydrate` of every seeded ref; and the change
     /// and settlement feed from its beginning. A diary read and a feed
-    /// subscription each leave a row; nothing else writes.
+    /// subscription each leave a row; nothing else writes. No other read
+    /// door is scanned yet (among them `vault.refs.links`, `self.inbox.get`,
+    /// the filtered and history claim reads, `vault.kv.get`, receipts,
+    /// summaries, outbound reports and exports), and a ref a list answer
+    /// names is not followed: a leak confined to one of those passes.
     #[must_use]
     pub fn scan(&self, vault: &Vault, actor: CanaryActor) -> CanaryScan {
         let memory = self.memory(vault, actor);

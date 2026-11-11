@@ -147,6 +147,16 @@ fn the_detector_names_each_canary_that_reaches_a_reader_outside_its_audience() {
             lines.join("\n")
         );
     }
+    // The assertion every leak test relies on fails on that same scan: it
+    // panics, never returns the scan. (The panic it prints here is expected.)
+    let narrowed = canaries.excluding(CanaryActor::Owner);
+    let asserted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        narrowed.assert_no_canary_leak(&vault, CanaryActor::Owner)
+    }));
+    assert!(
+        asserted.is_err(),
+        "assert_no_canary_leak returned the scan of a reader that read canaries outside its audience"
+    );
 
     // A prompt is a surface too: the outside agent's diary sent to a model
     // that speaks for the owner leaks it; sent for the outside agent, not.

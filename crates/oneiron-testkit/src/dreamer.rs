@@ -23,7 +23,10 @@
 //!    check, a claim source re-check and an urgent digest's harm question,
 //!    which the driver leaves to the host's executor to judge on a model or
 //!    ladder the host lends. The kit lends none, so each parks unrun, as a
-//!    host that lends none parks it ([`DreamerAttemptRun::unlent`]).
+//!    host that lends none parks it ([`DreamerAttemptRun::unlent`]). A
+//!    resident's dream and its free time for its human, which run on the
+//!    resident model a host lends, complete with no units, as a host that
+//!    lends none completes them; neither counts as model work done.
 //!
 //! A pass that parked (other than unlent), failed or landed an attempt, or
 //! stopped for any reason but an empty queue, is refused
@@ -90,7 +93,10 @@ use oneiron::dreamer_runner::maintenance::{
     CLAIM_SOURCE_RECHECK_FACET, COMPACTION_CHECK_FACET, CoachSkillOptimizer, claim_source_recheck,
     compaction_check,
 };
-use oneiron::dreamer_runner::{DreamerAttemptPayload, DreamerParkCause};
+use oneiron::dreamer_runner::{
+    DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND, DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
+    DreamerAttemptPayload, DreamerParkCause,
+};
 use oneiron::dreamer_wake::{WakeTurnSubject, request_wake};
 use oneiron::llm::decision::{DecisionQuestion, TypedDecision};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
@@ -187,9 +193,11 @@ pub struct DreamerAttemptRun {
     pub pended: Vec<EntityId>,
     /// Candidates its sink refused, each with the reason.
     pub rejected: Vec<(EntityId, String)>,
-    /// Whether the kit's host parked it unrun: a compaction's check, a claim
-    /// source re-check or an urgent digest's harm question, which a host
-    /// judges on a model or ladder it lends. The kit lends none.
+    /// Whether the kit's host answered it unrun, as a host that lends
+    /// nothing does: it parked a compaction's check, a claim source re-check
+    /// or an urgent digest's harm question, which a host judges on a model or
+    /// ladder it lends, and it completed a resident's dream or free time with
+    /// no units and no work done. The kit lends none.
     pub unlent: bool,
     /// The wall milliseconds the executor took over it (a diagnostic only).
     pub wall_ms: u64,
@@ -685,18 +693,18 @@ impl DreamerAttemptExecutor for PassExecutor<'_, '_> {
         let started = Instant::now(); // testkit-lint: allow(wall-clock) diagnostic timing only
         let attempt_id = hex(attempt.status.attempt.id.as_bytes());
         let attempt_type = attempt.status.payload.attempt_type.clone();
-        if let Some(parked) = unlent_park(&attempt_type) {
+        if let Some(answer) = unlent_answer(&attempt_type) {
             self.attempts.push(DreamerAttemptRun {
                 attempt_id,
                 attempt_type,
-                execution: Ok(parked.clone()),
+                execution: Ok(answer.clone()),
                 landed: Vec::new(),
                 pended: Vec::new(),
                 rejected: Vec::new(),
                 unlent: true,
                 wall_ms: ms_since(started),
             });
-            return Ok(parked);
+            return Ok(answer);
         }
         let mut sink = PromotionWriterSink::new(
             self.vault,
@@ -736,13 +744,23 @@ impl DreamerAttemptExecutor for PassExecutor<'_, '_> {
     }
 }
 
-/// What a host that lends no judge answers for `attempt_type`, as
+/// What a host that lends nothing answers for `attempt_type`, as
 /// oneiron-server's Dreamer host does with nothing lent: the driver leaves a
 /// compaction's check (FIX 4465 B), a claim source re-check (FIX 15414) and
 /// an urgent digest's harm question (OF-194) to the host's executor, and a
-/// `ConsolidationExecutor` runs none of them. `None` for every other shape.
-fn unlent_park(attempt_type: &str) -> Option<DreamerAttemptExecution> {
-    if attempt_type == COMPACTION_CHECK_FACET {
+/// `ConsolidationExecutor` runs none of them, so each parks. A resident's
+/// dream (OF-490) and its free time for its human (FIX 4453) end without
+/// their work, completed with no units: a park would strand the nightly item
+/// and a retry would loop every pass. `None` for every other shape.
+fn unlent_answer(attempt_type: &str) -> Option<DreamerAttemptExecution> {
+    if attempt_type == DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+        || attempt_type == DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
+    {
+        Some(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_bindings: Vec::new(),
+        })
+    } else if attempt_type == COMPACTION_CHECK_FACET {
         Some(compaction_check::unlent())
     } else if attempt_type == CLAIM_SOURCE_RECHECK_FACET {
         Some(claim_source_recheck::unlent())
