@@ -1,7 +1,9 @@
 //! The settlement item (kind 3): an agent answers one open conflict its live
 //! `derive` grant reaches, through the conflict settlement's own door, with
 //! the guards a responder meets (a person alone closes user-stated truth;
-//! the owner's revert and review hold stand).
+//! the owner's revert and review hold stand). The marker and every member
+//! are read under the actor's own read first: a conflict it does not read
+//! answers as a row that is no open conflict.
 
 use std::cell::Cell;
 
@@ -19,8 +21,8 @@ use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{EntityId, Vault};
 
 /// The refusal of a settlement the conflict's own door refuses: the marker
-/// is no open conflict, the kept claim is no member, or only a person may
-/// close what it would close.
+/// is no open conflict the actor reads whole, the kept claim is no member,
+/// or only a person may close what it would close.
 pub const SETTLE_REFUSED: &str = "gate.deny.derive.settle_refused";
 
 /// The refusal of a settlement the owner reverted, or whose review the owner
@@ -40,8 +42,9 @@ const SETTLE_ALLOWED: &str = "gate.allow.derive.settle";
 /// they hold no conflict answer of the Dreamer's.
 const SETTLE_SURFACE: &str = "vault.derive.settle";
 
-/// Stages `item`: the derive verdict over the marker, the owner's revert and
-/// hold, then the settlement in a savepoint of `txn`.
+/// Stages `item`: the marker under the actor's own read, the derive verdict
+/// over it, its members under that read, the owner's revert and hold, then
+/// the settlement in a savepoint of `txn`.
 ///
 /// # Errors
 ///
@@ -60,6 +63,13 @@ pub(super) fn stage_in_txn(
         DerivedSettlement::Dismiss => ConflictSettlement::Dismiss,
     };
     let actor = context.stamp.actor;
+    // At every status the record verbs serve: a marker waits as a proposal
+    // in its own review.
+    let read =
+        super::actor_read(vault, actor)?.with_claim_status(crate::ports::ClaimReadStatus::Recorded);
+    if !reads_every_row(&read, txn, &[marker])? {
+        return refuse(vault, txn, context, marker, &[SETTLE_REFUSED]);
+    }
     let allowance = match derive_verdict_in_txn(
         &vault.store,
         txn,
@@ -72,11 +82,16 @@ pub(super) fn stage_in_txn(
     };
     let conflict = match open_conflict_in_txn(vault, txn, marker) {
         Ok(conflict) => conflict,
-        Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
+        Err(Error::EntityNotFound | Error::Claim(_) | Error::InvalidClaimBody(_)) => {
             return refuse(vault, txn, context, marker, &[SETTLE_REFUSED]);
         }
         Err(error) => return Err(error),
     };
+    // A landed settlement closes members and answers their ids, so each is
+    // one the actor reads.
+    if !reads_every_row(&read, txn, &conflict.members)? {
+        return refuse(vault, txn, context, marker, &[SETTLE_REFUSED]);
+    }
     if conflict.reverted
         || crate::memory::conflict_review_held_in(vault, txn, actor, conflict.subject)?.is_some()
     {
@@ -146,6 +161,18 @@ pub(super) fn stage_in_txn(
         }
         Err(error) => Err(error),
     }
+}
+
+/// Whether `read` serves every one of `rows` in `txn`.
+fn reads_every_row(
+    read: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    rows: &[EntityId],
+) -> Result<bool> {
+    Ok(read
+        .get_entities_parts_in_txn(txn, rows)?
+        .iter()
+        .all(Option::is_some))
 }
 
 fn refuse(

@@ -11,7 +11,12 @@
 //! - once a host minted its Steward grant, that grant must still stand, name
 //!   the verb the item needs (`derive`, or `archive`), and reach the target
 //!   record's position. A narrowed or revoked grant refuses from its next
-//!   item on. Before a first mint the policy rows decide alone, as before.
+//!   item on. Before a first mint a base agent's policy rows decide alone, as
+//!   before;
+//! - any other actor holds no Steward grant, so no stored record is in its
+//!   reach: it lands what it derives, and an item of its that names a target
+//!   is refused. The doors that settle, supersede or archive a record under
+//!   a named Grant of its own stay those doors.
 //!
 //! Each refusal carries a stable reason token in the gate's style
 //! ([`DeriveRefusal::token`]).
@@ -57,7 +62,8 @@ pub(crate) enum DeriveRefusal {
     GrantLacksDerive,
     /// Its Steward grant does not name `archive`.
     GrantLacksArchive,
-    /// The target record is gone, or lies outside the grant's reach.
+    /// The target record is gone, or lies outside the grant's reach: every
+    /// record does, for an actor that holds no Steward grant.
     OutsideGrant,
 }
 
@@ -113,6 +119,14 @@ pub(crate) fn derive_verdict_in_txn(
         &actor.entity_ref().to_hex(),
     );
     let grant_ref = match crate::federation::steward_grant_of_in(store, txn, actor.entity_ref())? {
+        // The Steward role alone reaches the vault's stored records. A base
+        // agent holds it by default, and before its first mint its policy
+        // rows stand for it; any other actor with no grant reaches none.
+        None if target.is_some()
+            && !crate::federation::holds_system_agent_grant(actor.entity_ref()) =>
+        {
+            return Ok(Err(DeriveRefusal::OutsideGrant));
+        }
         None => super::dreamer_grant::DREAMER_LANDING_ROWS_REF.to_owned(),
         Some(None) => return Ok(Err(DeriveRefusal::OptedOut)),
         Some(Some(grant)) => {
