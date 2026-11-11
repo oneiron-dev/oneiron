@@ -779,7 +779,9 @@ fn door_refusals(origin: &TestOrigin) -> Vec<String> {
         .into_iter()
         .filter_map(|report| match report.door.verdict {
             DoorWindowVerdict::Rejected { reasons } => Some(reasons.join("; ")),
-            DoorWindowVerdict::Clean | DoorWindowVerdict::NotInvoked => None,
+            DoorWindowVerdict::Clean
+            | DoorWindowVerdict::NotInvoked
+            | DoorWindowVerdict::AdmitMarked { .. } => None,
         })
         .collect()
 }
