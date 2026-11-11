@@ -100,8 +100,9 @@ impl Masker {
         }
         // A clean scan read every part of the leaf too: no phrase split over
         // them is sought again (speed). The switch off places a phrase
-        // custody already holds, and no other (FIX 8644).
-        if !self.shapes_read {
+        // custody already holds, and no other (FIX 8644). Only the batch
+        // door's plan places one; a carrier's text stays unplaced.
+        if self.places_split_phrases && !self.shapes_read {
             self.place_split_phrases(path, leaf, &known, &mut placed)?;
         }
         for (span, custody) in known {
