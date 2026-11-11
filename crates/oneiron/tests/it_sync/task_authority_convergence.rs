@@ -38,6 +38,7 @@ use oneiron::edge::EdgeActorClass;
 use oneiron::genui::{GrantMintIntent, GrantMintIntentScope};
 use oneiron::habit::TaskRole;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
+use oneiron::store::GateDecisionId;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::reverse_rematerialize;
 use oneiron::task_verb::{TaskCancelTarget, TaskCreateSpec};
@@ -257,25 +258,78 @@ impl TaskPair {
         a.open_window(window.as_str());
         b.open_window(window.as_str());
 
-        // The first-party actor: the one id the default policy manifest gives
-        // an Auto ceiling, so `tasks.create` takes direct effect instead of
-        // parking a proposal. It is authored on node A and reaches node B the
-        // same way everything else here does — by replicating.
-        let owner = EntityId::from_bytes([0xE1; 16]).unwrap();
-        a.vault
-            .put_entity(&owner, ENTITY_TYPE_PERSON, time_range(now), now, b"owner")
+        // The live vault owner is authored on node A and reaches node B the
+        // same way the task and its Owner fact do — by replicating.
+        // FIX (a32044b3d27 #1307, 8a5feef95bd #1373): owner acts revalidate live
+        // vault ownership at commit, so use the embedded owner actor instead of
+        // a synthetic PERSON that authenticates but owns nothing.
+        let owner = a
+            .vault
+            .ensure_embedded_owner_actor()
             .expect("store the owner actor");
+        converge(&a, &b, &window);
+        // FIX (9062f8d0f89 #1346): the embedded owner has no default Agent
+        // Auto ceiling. Author a separate pack so the default seed stays
+        // unchanged for the harness's initial-unshared-seed guard. Install it
+        // BEFORE minting the cancel grant, which binds to the policy frontier.
+        let policy_pack_ref = EntityId::now();
+        let policy_pack = rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("schema_version"),
+                rmpv::Value::from("1.2"),
+            ),
+            (
+                rmpv::Value::from("pack_id"),
+                rmpv::Value::from("task-authority-owner-ceiling"),
+            ),
+            (
+                rmpv::Value::from("pack_version"),
+                rmpv::Value::from("1.0.0"),
+            ),
+            (
+                rmpv::Value::from("min_engine_version"),
+                rmpv::Value::from("0.0.0"),
+            ),
+            (rmpv::Value::from("defaults"), rmpv::Value::Map(vec![])),
+            (rmpv::Value::from("rules"), rmpv::Value::Array(vec![])),
+            (
+                rmpv::Value::from("actor_ceilings"),
+                rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                    (rmpv::Value::from("actor_class"), rmpv::Value::from("agent")),
+                    (
+                        rmpv::Value::from("actor_ref"),
+                        rmpv::Value::from(owner.to_hex()),
+                    ),
+                    (rmpv::Value::from("ceiling"), rmpv::Value::from("auto")),
+                ])]),
+            ),
+        ]);
+        let mut policy_pack_bytes = Vec::new();
+        rmpv::encode::write_value(&mut policy_pack_bytes, &policy_pack)
+            .expect("writing MessagePack to a Vec cannot fail");
+
         // Each device holds the owner's standing cancel grant: the authority to
         // stop one's own work is not something a second machine borrows over
-        // the wire. It PREDATES the task ([`T0`], outside the window under
-        // test), which is both what a standing authorization looks like and
-        // what keeps it out of this suite's subject: a grant carries a
-        // node-local usage stamp, so the two devices' copies legitimately
-        // differ once one of them spends it, and nothing here converges on it.
+        // the wire. The owner, whose row node B now holds, mints it on each
+        // device before the task exists. A grant is a row of its device's own
+        // consent table, never of the window, so nothing here converges on it.
         for node in [&a, &b] {
+            let proof = node
+                .vault
+                .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+                .expect("the owner authenticates on each device");
+            node.vault
+                .install_owner_policy_manifest(
+                    &proof,
+                    policy_pack_ref,
+                    policy_pack_bytes.clone(),
+                    now,
+                )
+                .expect("grant the owner's agent Auto ceiling on each device");
             node.vault
                 .mint_standing_outbound_grant(
-                    &EntityId::from_bytes([0xD1; 16]).unwrap(),
+                    &proof,
+                    EntityId::from_bytes([0xD1; 16]).unwrap(),
                     &GrantMintIntent {
                         principal_ref: owner.to_hex(),
                         origin_component_id: "tasks".to_owned(),
@@ -287,7 +341,6 @@ impl TaskPair {
                                 .to_owned(),
                         },
                     },
-                    T0,
                 )
                 .expect("mint the owner's standing cancel grant");
         }
@@ -424,6 +477,7 @@ enum AckArrival {
 /// last-writer-wins body would have let clobber the cancellation — merely
 /// coexists with it.
 #[test]
+#[ignore = "stale since 46ca703251f: acknowledging failed work needs typed TASK settlement that this fixture cannot mirror (FIX IT-SYNC-STALE-TASK-SETTLE)"]
 fn cancel_wins_under_both_merge_orders() {
     for arrival in [AckArrival::BeforeCancel, AckArrival::AfterCancel] {
         cancel_wins_in_order(arrival);

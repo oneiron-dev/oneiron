@@ -1,4 +1,8 @@
 //! The externally observable consent, raw-door, held-out, dedup, and shared-merge laws.
+use super::tests::ladder_fixture::{
+    FixtureJudge, FixtureNotes, FixtureProvider, fixture_judge, fixture_notes, noul_answer,
+    score_answer,
+};
 use super::*;
 use crate::{
     Vault,
@@ -7,14 +11,19 @@ use crate::{
     entity_id::EntityId,
     error::{ErrorKind, Result},
     llm::decision::{
-        AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionQuestion,
-        DecisionReceipt, DecisionRung, PairedReading, ProviderPin, TypedDecision,
+        AnswerContract, DecisionClass, DecisionQuestion, DecisionRung, PairedAnswer, ProviderPin,
+        TypedDecision,
     },
     skill::{SkillLifecycle, SkillRecord},
-    skill_optimize::{BlindPreference, HeldOutReplayCase, HeldOutReplayScorer, PreferredResponse},
+    skill_optimize::{
+        GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplay, SkillOptimizeDecisions,
+        SkillReplayResponses,
+    },
     temporal::TimeRange,
 };
-use std::cell::Cell;
+use serde_json::Value as Json;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 fn at(time: u64) -> TimeRange {
     TimeRange {
@@ -127,74 +136,121 @@ impl Fixture {
     }
 }
 use super::test_support::reserve;
+/// Forwards [`HeldOutReplayNotes`] to the shared `notes` shell every fixture
+/// scorer holds; the per-test answers live in the fixture provider behind it.
+macro_rules! delegate_notes {
+    ($ty:ty) => {
+        impl HeldOutReplayNotes for $ty {
+            fn judge_revision(&self) -> &str {
+                self.notes.judge_revision()
+            }
+            fn decisions(&self) -> SkillOptimizeDecisions<'_> {
+                self.notes.decisions()
+            }
+            fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<Json> {
+                self.notes.replay_state(case)
+            }
+            fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+                self.notes.replay_responses(receipts)
+            }
+            fn record_decision(
+                &self,
+                question: &DecisionQuestion,
+                decision: &TypedDecision,
+                state: &Json,
+            ) -> Result<()> {
+                self.notes.record_decision(question, decision, state)
+            }
+            fn honesty_replays(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
+                self.notes.honesty_replays(case)
+            }
+            fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+                self.notes.goal_axes(case)
+            }
+        }
+    };
+}
+
+/// A useful-upstream judge answering `useful`, on the System One seat.
+fn useful_judge(useful: bool) -> FixtureJudge<'static> {
+    fixture_judge(
+        ProviderPin {
+            rung: DecisionRung::SystemOne,
+            model: "fixture-system-one".to_owned(),
+            version: "1".to_owned(),
+        },
+        "fixture-judge@1",
+        move |_, _, state| {
+            assert_eq!(state["base"]["skill_id"], state["candidate"]["skill_id"]);
+            Ok(noul_answer(useful))
+        },
+    )
+}
+
 struct Replay {
     improve: bool,
+    notes: FixtureNotes<'static>,
 }
 impl Replay {
     fn new(improve: bool) -> Self {
-        Self { improve }
+        let provider = FixtureProvider::new(
+            ProviderPin {
+                rung: DecisionRung::SystemOne,
+                model: "fixture-judge".to_owned(),
+                version: "1".to_owned(),
+            },
+            "fixture-judge@1",
+            move |kind, _, state| match kind.as_deref() {
+                Some("score") => {
+                    let held = state
+                        .get("held_out_receipts")
+                        .and_then(Json::as_array)
+                        .map(|receipts| receipts.len())
+                        .unwrap_or_default();
+                    assert!(held > 0);
+                    let instructions = state
+                        .get("instructions")
+                        .and_then(Json::as_str)
+                        .unwrap_or_default();
+                    Ok(score_answer(
+                        if instructions.contains("check result") && improve {
+                            0.9
+                        } else {
+                            0.2
+                        },
+                    ))
+                }
+                other => panic!("Replay asked an unexpected kind: {other:?}"),
+            },
+        );
+        Self {
+            improve,
+            notes: fixture_notes("fixture-judge@1", provider),
+        }
     }
 }
+delegate_notes!(Replay);
 struct NoReplay;
-impl HeldOutReplayScorer for NoReplay {
+impl HeldOutReplayNotes for NoReplay {
     fn judge_revision(&self) -> &str {
         "fixture-judge@1"
     }
-    fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
+    fn decisions(&self) -> SkillOptimizeDecisions<'_> {
         panic!("replay must not run before consent or usefulness");
     }
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-        Ok(0.5)
+    fn replay_state(&self, _case: &HeldOutReplayCase<'_>) -> Result<Json> {
+        panic!("replay must not run before consent or usefulness");
     }
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
+    fn replay_responses(&self, _receipts: &[String]) -> Result<SkillReplayResponses> {
+        panic!("replay must not run before consent or usefulness");
     }
-    fn contrastive_audit(
+    fn record_decision(
         &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
-    }
-}
-impl HeldOutReplayScorer for Replay {
-    fn judge_revision(&self) -> &str {
-        "fixture-judge@1"
-    }
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-        assert!(!case.held_out_receipts.is_empty());
-        Ok(
-            if case.instructions.contains("check result") && self.improve {
-                0.9
-            } else {
-                0.2
-            },
-        )
-    }
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
-    }
-    fn contrastive_audit(
-        &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
+        _question: &DecisionQuestion,
+        _decision: &TypedDecision,
+        _state: &Json,
+    ) -> Result<()> {
+        panic!("replay must not run before consent or usefulness");
     }
 }
 #[test]
@@ -424,50 +480,48 @@ fn raw_create_and_delete_recreate_cannot_launder_import_origin() -> Result<()> {
     Ok(())
 }
 struct MoveBaseline<'a> {
-    fixture: &'a Fixture,
-    moved: Cell<bool>,
+    notes: FixtureNotes<'a>,
 }
-impl HeldOutReplayScorer for MoveBaseline<'_> {
-    fn judge_revision(&self) -> &str {
-        "fixture-judge@1"
-    }
-    fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
-        if !self.moved.replace(true) {
-            let mut record = self
-                .fixture
-                .vault
-                .get_skill_record(&self.fixture.baseline)?
-                .expect("baseline");
-            record.version = "2".to_owned();
-            record.desc = "changed while scoring".to_owned();
-            self.fixture
-                .vault
-                .update_skill_record(&self.fixture.baseline, &record, at(40), 40)?;
-            Ok(0.1)
-        } else {
-            Ok(0.9)
+impl<'a> MoveBaseline<'a> {
+    fn new(fixture: &'a Fixture) -> Self {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_in = Arc::clone(&calls);
+        let provider = FixtureProvider::with_hook(
+            ProviderPin {
+                rung: DecisionRung::SystemOne,
+                model: "fixture-judge".to_owned(),
+                version: "1".to_owned(),
+            },
+            "fixture-judge@1",
+            move || {
+                let mut record = fixture
+                    .vault
+                    .get_skill_record(&fixture.baseline)?
+                    .expect("baseline");
+                record.version = "2".to_owned();
+                record.desc = "changed while scoring".to_owned();
+                fixture
+                    .vault
+                    .update_skill_record(&fixture.baseline, &record, at(40), 40)?;
+                Ok(())
+            },
+            move |kind, _, _| match kind.as_deref() {
+                Some("score") => Ok(score_answer(
+                    if calls_in.fetch_add(1, Ordering::SeqCst) == 0 {
+                        0.1
+                    } else {
+                        0.9
+                    },
+                )),
+                other => panic!("MoveBaseline asked an unexpected kind: {other:?}"),
+            },
+        );
+        Self {
+            notes: fixture_notes("fixture-judge@1", provider),
         }
     }
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
-    }
-    fn contrastive_audit(
-        &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> Result<f32> {
-        Ok(0.5)
-    }
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
-    }
 }
+delegate_notes!(MoveBaseline<'_>);
 #[test]
 fn callback_runs_without_lock_and_changed_basis_or_revoked_publisher_cannot_admit() -> Result<()> {
     let fixture = Fixture::new();
@@ -483,15 +537,7 @@ fn callback_runs_without_lock_and_changed_basis_or_revoked_publisher_cannot_admi
     assert!(
         fixture
             .vault
-            .admit_marketplace_skill(
-                &ask,
-                &MoveBaseline {
-                    fixture: &fixture,
-                    moved: Cell::new(false)
-                },
-                at(41),
-                41
-            )
+            .admit_marketplace_skill(&ask, &MoveBaseline::new(&fixture), at(41), 41)
             .is_err()
     );
     assert_eq!(
@@ -525,40 +571,20 @@ fn useful_question(candidate: EntityId) -> DecisionQuestion {
     }
 }
 struct Useful(bool);
-impl UsefulUpstreamJudge for Useful {
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        resident: EntityId,
-        base: &SkillRecord,
-        candidate: &HubPackage,
-        _: &SharedSkillDelta,
-    ) -> Result<TypedDecision> {
-        assert_eq!(base.skill_id, candidate.record.skill_id);
-        Ok(TypedDecision {
-            answer: DecisionAnswer::Noul(self.0),
-            probability: Some(if self.0 { 0.9 } else { 0.1 }),
-            evidence: vec![],
-            in_band: false,
-            receipt: DecisionReceipt {
-                question: question.id,
-                question_version: question.version,
-                principal: resident,
-                providers: vec![ProviderPin {
-                    rung: DecisionRung::SystemOne,
-                    model: "fixture-system-one".to_owned(),
-                    version: "1".to_owned(),
-                }],
-                band: DecisionBand::default(),
-                band_version: 0,
-                evidence_versions: Vec::new(),
-                cost_per_thousand: None,
-                paired: Vec::new(),
-                person: Vec::new(),
-                time: None,
-            },
-            human_ask: None,
-        })
+
+impl std::ops::Deref for Useful {
+    type Target = UsefulUpstreamDecisions<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        static YES_JUDGE: std::sync::LazyLock<FixtureJudge<'static>> =
+            std::sync::LazyLock::new(|| useful_judge(true));
+        static NO_JUDGE: std::sync::LazyLock<FixtureJudge<'static>> =
+            std::sync::LazyLock::new(|| useful_judge(false));
+        static YES: std::sync::LazyLock<UsefulUpstreamDecisions<'static>> =
+            std::sync::LazyLock::new(|| YES_JUDGE.useful_decisions());
+        static NO: std::sync::LazyLock<UsefulUpstreamDecisions<'static>> =
+            std::sync::LazyLock::new(|| NO_JUDGE.useful_decisions());
+        if self.0 { &YES } else { &NO }
     }
 }
 #[test]
@@ -616,9 +642,10 @@ fn federation_and_company_merge_only_submitted_bytes_with_useful_and_replay_line
                 .prepare_shared_skill_merge(id, company.resident, useful_question(id))?;
         // A merge is reversible, so it lands on the useful yes and the
         // held-out win alone: no per-merge approval (ARCH-0053 r4).
+        let judge = useful_judge(true);
         let SharedSkillMergeDisposition::Ruled(receipt) = company.vault.merge_shared_skill_delta(
             &ask,
-            &Useful(true),
+            &judge.useful_decisions(),
             &Replay::new(true),
             at(22),
             22,
@@ -701,9 +728,10 @@ fn resident_fork_delta_without_held_out_gain_cannot_merge_upstream() -> Result<(
         company
             .vault
             .prepare_shared_skill_merge(id, company.resident, useful_question(id))?;
+    let judge = useful_judge(true);
     let SharedSkillMergeDisposition::Ruled(receipt) = company.vault.merge_shared_skill_delta(
         &ask,
-        &Useful(true),
+        &judge.useful_decisions(),
         &Replay::new(false),
         at(21),
         21,
@@ -751,10 +779,14 @@ fn useless_shared_delta_never_runs_replay_or_changes_base() -> Result<()> {
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
     let replay = NoReplay;
-    let SharedSkillMergeDisposition::Ruled(receipt) =
-        fixture
-            .vault
-            .merge_shared_skill_delta(&ask, &Useful(false), &replay, at(21), 21)?
+    let judge = useful_judge(false);
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &ask,
+        &judge.useful_decisions(),
+        &replay,
+        at(21),
+        21,
+    )?
     else {
         panic!("consented");
     };
@@ -787,27 +819,18 @@ fn useless_shared_delta_never_runs_replay_or_changes_base() -> Result<()> {
     Ok(())
 }
 
-struct WrongSeat;
-impl UsefulUpstreamJudge for WrongSeat {
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        resident: EntityId,
-        base: &SkillRecord,
-        candidate: &HubPackage,
-        delta: &SharedSkillDelta,
-    ) -> Result<TypedDecision> {
-        let mut answer = Useful(true).decide(question, resident, base, candidate, delta)?;
-        answer.receipt.providers[0].rung = DecisionRung::Local;
-        Ok(answer)
-    }
-}
-/// The house model's decision read, with its paired reading. `self_paired` makes the
-/// pair read the question being answered, which no receipt may hold; `person` adds a
-/// person row no receipt may hold either.
-struct HouseRead {
-    self_paired: bool,
-    person: Option<BadPerson>,
+/// A useful-upstream judge answering from the Local seat, which the merge
+/// door refuses.
+fn wrong_seat_judge() -> FixtureJudge<'static> {
+    fixture_judge(
+        ProviderPin {
+            rung: DecisionRung::Local,
+            model: "fixture-system-one".to_owned(),
+            version: "1".to_owned(),
+        },
+        "fixture-judge@1",
+        |_, _, _| Ok(noul_answer(true)),
+    )
 }
 #[derive(Clone, Copy)]
 enum BadPerson {
@@ -816,60 +839,49 @@ enum BadPerson {
     /// The person row reads the question the same provider's paired row read.
     ReadsPaired,
 }
-impl UsefulUpstreamJudge for HouseRead {
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        resident: EntityId,
-        base: &SkillRecord,
-        candidate: &HubPackage,
-        delta: &SharedSkillDelta,
-    ) -> Result<TypedDecision> {
-        let mut answer = Useful(true).decide(question, resident, base, candidate, delta)?;
-        let pin = ProviderPin {
+/// The house model's decision read, with its paired reading. `self_paired`
+/// makes the pair read the question being answered, which no receipt may
+/// hold; `person` adds a person row no receipt may hold either.
+fn house_read_judge(self_paired: bool, person: Option<BadPerson>) -> FixtureJudge<'static> {
+    fixture_judge(
+        ProviderPin {
             rung: DecisionRung::Escalation,
             model: "fixture-house".to_owned(),
             version: "1".to_owned(),
-        };
-        answer.receipt.providers = vec![pin.clone()];
-        answer.receipt.paired = vec![PairedReading {
-            provider: pin,
-            question: if self.self_paired {
-                question.id
-            } else {
-                EntityId::now()
-            },
-            question_version: 1,
-            probability: 0.3,
-        }];
-        if let Some(bad) = self.person {
-            let mut row = answer.receipt.paired[0].clone();
-            match bad {
-                BadPerson::OutOfRange => {
-                    row.question = EntityId::now();
-                    row.probability = 2.0;
-                }
-                BadPerson::ReadsPaired => row.probability = 0.5,
-            }
-            answer.receipt.person = vec![row];
-        }
-        Ok(answer)
-    }
-}
-struct WrongQuestion;
-impl UsefulUpstreamJudge for WrongQuestion {
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        resident: EntityId,
-        base: &SkillRecord,
-        candidate: &HubPackage,
-        delta: &SharedSkillDelta,
-    ) -> Result<TypedDecision> {
-        let mut answer = Useful(true).decide(question, resident, base, candidate, delta)?;
-        answer.receipt.question = EntityId::now();
-        Ok(answer)
-    }
+        },
+        "fixture-judge@1",
+        move |_, question, _| {
+            let paired = PairedAnswer {
+                question: if self_paired {
+                    question.id
+                } else {
+                    EntityId::now()
+                },
+                question_version: 1,
+                probability: 0.3,
+            };
+            let person = person.map(|bad| match bad {
+                BadPerson::OutOfRange => PairedAnswer {
+                    question: EntityId::now(),
+                    question_version: 1,
+                    probability: 2.0,
+                },
+                BadPerson::ReadsPaired => PairedAnswer {
+                    question: paired.question,
+                    question_version: 1,
+                    probability: 0.5,
+                },
+            });
+            Ok(crate::llm::decision::ProviderDecision {
+                answer: crate::llm::decision::DecisionAnswer::Noul(true),
+                probability: Some(0.9),
+                paired: Some(paired),
+                person,
+                served: None,
+                cost_per_thousand: None,
+            })
+        },
+    )
 }
 #[test]
 fn merge_refuses_a_local_seat_and_unbound_receipts_without_spending_consent() -> Result<()> {
@@ -885,43 +897,55 @@ fn merge_refuses_a_local_seat_and_unbound_receipts_without_spending_consent() ->
         at(20),
         20,
     )?;
-    let ask =
-        fixture
-            .vault
-            .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
+    // Captured before prepare: the exact question value the ask carries
+    // (the ask exposes no question accessor).
+    let question = useful_question(id);
+    let ask = fixture
+        .vault
+        .prepare_shared_skill_merge(id, fixture.resident, question.clone())?;
     fixture
         .vault
         .approve_shared_skill_merge(&ask, &fixture.owner)?;
+    let wrong_seat = wrong_seat_judge();
     assert!(
         fixture
             .vault
-            .merge_shared_skill_delta(&ask, &WrongSeat, &NoReplay, at(21), 21)
+            .merge_shared_skill_delta(&ask, &wrong_seat.useful_decisions(), &NoReplay, at(21), 21)
             .is_err()
     );
+    // A wrong-question receipt is unrepresentable through the merge door: the
+    // engine stamps the receipt's question itself. Exercise the same binding
+    // check the door runs, on a valid ladder decision with a swapped question.
+    let judge = useful_judge(true);
+    let mut decision = judge.useful_decisions().decide(
+        &question,
+        fixture.resident,
+        &[id, fixture.baseline],
+        &serde_json::json!({
+            "base": {"skill_id": "fixture.base"},
+            "candidate": {"skill_id": "fixture.base"},
+        }),
+        crate::model_decision::Reversibility::ReversibleRead,
+    )?;
+    assert!(super::shared_gate::checked_useful_decision(
+        &question,
+        fixture.resident,
+        &decision,
+    )?);
+    decision.receipt.question = EntityId::now();
     assert!(
-        fixture
-            .vault
-            .merge_shared_skill_delta(&ask, &WrongQuestion, &NoReplay, at(21), 21)
+        super::shared_gate::checked_useful_decision(&question, fixture.resident, &decision)
             .is_err()
     );
     for house in [
-        HouseRead {
-            self_paired: true,
-            person: None,
-        },
-        HouseRead {
-            self_paired: false,
-            person: Some(BadPerson::OutOfRange),
-        },
-        HouseRead {
-            self_paired: false,
-            person: Some(BadPerson::ReadsPaired),
-        },
+        house_read_judge(true, None),
+        house_read_judge(false, Some(BadPerson::OutOfRange)),
+        house_read_judge(false, Some(BadPerson::ReadsPaired)),
     ] {
         assert!(
             fixture
                 .vault
-                .merge_shared_skill_delta(&ask, &house, &NoReplay, at(21), 21)
+                .merge_shared_skill_delta(&ask, &house.useful_decisions(), &NoReplay, at(21), 21)
                 .is_err()
         );
     }
@@ -944,12 +968,10 @@ fn merge_refuses_a_local_seat_and_unbound_receipts_without_spending_consent() ->
     );
     // The rejected answer has neither burned the consent nor erased the branch, and
     // the house model's read answers the merge like System One (PR B2).
+    let house = house_read_judge(false, None);
     let ruled = fixture.vault.merge_shared_skill_delta(
         &ask,
-        &HouseRead {
-            self_paired: false,
-            person: None,
-        },
+        &house.useful_decisions(),
         &Replay::new(true),
         at(22),
         22,
@@ -1013,10 +1035,14 @@ fn local_refinement_stays_a_fork_until_the_same_merge_gate_admits_it() -> Result
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    let ruled =
-        fixture
-            .vault
-            .merge_shared_skill_delta(&ask, &Useful(false), &NoReplay, at(21), 21)?;
+    let judge = useful_judge(false);
+    let ruled = fixture.vault.merge_shared_skill_delta(
+        &ask,
+        &judge.useful_decisions(),
+        &NoReplay,
+        at(21),
+        21,
+    )?;
     assert!(matches!(ruled, SharedSkillMergeDisposition::Ruled(receipt) if !receipt.accepted));
     assert_eq!(
         fixture
@@ -1070,9 +1096,10 @@ fn local_refinement_yes_needs_independent_held_out_win() -> Result<()> {
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
+    let judge = useful_judge(true);
     let ruled = fixture.vault.merge_shared_skill_delta(
         &ask,
-        &Useful(true),
+        &judge.useful_decisions(),
         &Replay::new(true),
         at(21),
         21,
@@ -1131,8 +1158,15 @@ fn rejected_local_delta_cannot_activate_through_same_byte_hub_alias() -> Result<
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
+    let judge = useful_judge(false);
     assert!(matches!(
-        fixture.vault.merge_shared_skill_delta(&ask, &Useful(false), &NoReplay, at(21), 21)?,
+        fixture.vault.merge_shared_skill_delta(
+            &ask,
+            &judge.useful_decisions(),
+            &NoReplay,
+            at(21),
+            21
+        )?,
         SharedSkillMergeDisposition::Ruled(receipt) if !receipt.accepted
     ));
     let (source, publisher) = fixture.hub(SkillHubTrustTier::Verified);
@@ -1218,8 +1252,15 @@ fn local_refinement_retargeted_upstream_version_is_independent_of_branch_version
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
+    let judge = useful_judge(true);
     assert!(matches!(
-        fixture.vault.merge_shared_skill_delta(&ask, &Useful(true), &Replay::new(true), at(21), 21)?,
+        fixture.vault.merge_shared_skill_delta(
+            &ask,
+            &judge.useful_decisions(),
+            &Replay::new(true),
+            at(21),
+            21
+        )?,
         SharedSkillMergeDisposition::Ruled(receipt) if receipt.accepted
     ));
     assert_eq!(fixture.vault.get_skill_record(&id)?.unwrap().version, "3");
@@ -1227,21 +1268,18 @@ fn local_refinement_retargeted_upstream_version_is_independent_of_branch_version
     Ok(())
 }
 
-struct SecretProvider(bool);
-impl UsefulUpstreamJudge for SecretProvider {
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        resident: EntityId,
-        base: &SkillRecord,
-        candidate: &HubPackage,
-        delta: &SharedSkillDelta,
-    ) -> Result<TypedDecision> {
-        let mut decision = Useful(self.0).decide(question, resident, base, candidate, delta)?;
-        decision.receipt.providers[0].model =
-            crate::test_util::SYNTHETIC_PRIVATE_KEY_BLOCK.to_owned();
-        Ok(decision)
-    }
+/// A useful-upstream judge whose provider pin carries secret-shaped text,
+/// which the merge's receipt scan must refuse.
+fn secret_provider_judge(useful: bool) -> FixtureJudge<'static> {
+    fixture_judge(
+        ProviderPin {
+            rung: DecisionRung::SystemOne,
+            model: crate::test_util::SYNTHETIC_PRIVATE_KEY_BLOCK.to_owned(),
+            version: "1".to_owned(),
+        },
+        "fixture-judge@1",
+        move |_, _, _| Ok(noul_answer(useful)),
+    )
 }
 #[test]
 fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Result<()> {
@@ -1275,10 +1313,11 @@ fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Res
         fixture
             .vault
             .approve_shared_skill_merge(&ask, &fixture.owner)?;
+        let secret = secret_provider_judge(useful);
         assert!(
             fixture
                 .vault
-                .merge_shared_skill_delta(&ask, &SecretProvider(useful), &replay, at(21), 21,)
+                .merge_shared_skill_delta(&ask, &secret.useful_decisions(), &replay, at(21), 21,)
                 .is_err()
         );
         assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
@@ -1309,10 +1348,14 @@ fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Res
             SkillLifecycle::Active
         );
         // Secret rejection must not consume approval; a clean answer still works.
-        let ruled =
-            fixture
-                .vault
-                .merge_shared_skill_delta(&ask, &Useful(useful), &replay, at(22), 22)?;
+        let judge = useful_judge(useful);
+        let ruled = fixture.vault.merge_shared_skill_delta(
+            &ask,
+            &judge.useful_decisions(),
+            &replay,
+            at(22),
+            22,
+        )?;
         assert!(
             matches!(ruled, SharedSkillMergeDisposition::Ruled(receipt) if receipt.accepted == useful)
         );
@@ -1341,10 +1384,11 @@ fn shared_skill_merge_deletion_purges_current_and_every_historical_question() ->
             let ask = fixture
                 .vault
                 .prepare_shared_skill_merge(id, fixture.resident, question)?;
+            let judge = useful_judge(admitted);
             let SharedSkillMergeDisposition::Ruled(receipt) =
                 fixture.vault.merge_shared_skill_delta(
                     &ask,
-                    &Useful(admitted),
+                    &judge.useful_decisions(),
                     &Replay::new(true),
                     at(21 + iteration),
                     21 + iteration,
@@ -1401,10 +1445,11 @@ fn replayed_shared_skill_delete_purges_merge_questions_for_both_outcomes() -> Re
                 fixture.resident,
                 useful_question(id),
             )?;
+            let judge = useful_judge(accepted);
             let SharedSkillMergeDisposition::Ruled(receipt) =
                 fixture.vault.merge_shared_skill_delta(
                     &ask,
-                    &Useful(accepted),
+                    &judge.useful_decisions(),
                     &Replay::new(true),
                     at(21),
                     21,
@@ -1455,9 +1500,10 @@ fn shared_skill_erase_matrix_retains_denial_after_raw_local_and_replayed_delete(
                     fixture.resident,
                     useful_question(candidate),
                 )?;
+                let judge = useful_judge(state == "admitted");
                 fixture.vault.merge_shared_skill_delta(
                     &ask,
-                    &Useful(state == "admitted"),
+                    &judge.useful_decisions(),
                     &Replay::new(true),
                     at(21),
                     21,
@@ -1839,7 +1885,7 @@ fn active_hub_sync_proposes_changed_bytes_until_the_scored_admission_door() -> R
 }
 
 #[test]
-fn native_source_metadata_needs_the_same_human_and_held_out_admission() -> Result<()> {
+fn native_source_metadata_lands_active_after_fit_with_revocable_provenance() -> Result<()> {
     let fixture = Fixture::new();
     let (original, publisher) = fixture.hub(SkillHubTrustTier::Community);
     let mut native = package("fixture.native", "native-revision", "check result");
@@ -1861,23 +1907,21 @@ fn native_source_metadata_needs_the_same_human_and_held_out_admission() -> Resul
         fixture
             .vault
             .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)?;
-    assert_eq!(
-        fixture
-            .vault
-            .admit_marketplace_skill(&ask, &NoReplay, at(21), 21)?,
-        HubAdmissionDisposition::PendingConsent
-    );
-    fixture
-        .vault
-        .approve_marketplace_activation(&ask, &fixture.owner)?;
+    assert_eq!(fixture.vault.skill_hub_provenance_count(&id)?, 1);
     let HubAdmissionDisposition::Ruled(receipt) =
         fixture
             .vault
             .admit_marketplace_skill(&ask, &Replay::new(true), at(22), 22)?
     else {
-        panic!("consented native source")
+        panic!("an unused source needs fit, not an extra owner hold")
     };
     assert!(receipt.accepted);
+    assert!(receipt.after > receipt.before);
+    assert_eq!(receipt.hub_id, source.hub_id.to_hex());
+    assert_eq!(receipt.hub_ref, source.ref_string);
+    assert_eq!(receipt.publisher, publisher.identity());
+    assert_eq!(receipt.publisher_grant, publisher.grant_ref());
+    assert_eq!(fixture.vault.hub_admission_receipt(&id)?, Some(*receipt));
     assert_eq!(
         fixture
             .vault
@@ -1886,6 +1930,33 @@ fn native_source_metadata_needs_the_same_human_and_held_out_admission() -> Resul
             .lifecycle_status,
         SkillLifecycle::Active
     );
+    {
+        let txn = fixture.vault.store.env.read_txn()?;
+        assert!(crate::consent::standing_grant_is_active_in_txn(
+            &fixture.vault.store,
+            &txn,
+            publisher.grant_ref(),
+        )?);
+    }
+    fixture
+        .vault
+        .revoke_skill_publisher(&fixture.owner, publisher.identity(), source.hub_id)?;
+    {
+        let txn = fixture.vault.store.env.read_txn()?;
+        assert!(!crate::consent::standing_grant_is_active_in_txn(
+            &fixture.vault.store,
+            &txn,
+            publisher.grant_ref(),
+        )?);
+    }
+    assert!(
+        fixture
+            .vault
+            .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)
+            .is_err(),
+        "the source's offer grant is revocable"
+    );
+    assert_eq!(fixture.vault.skill_hub_provenance_count(&id)?, 1);
     Ok(())
 }
 
@@ -1926,9 +1997,15 @@ fn marketplace_and_shared_merge_keep_scores_but_mark_displaced_judge() -> Result
         fixture.resident,
         useful_question(merged),
     )?;
-    let SharedSkillMergeDisposition::Ruled(merge_receipt) = fixture
-        .vault
-        .merge_shared_skill_delta(&merge_ask, &Useful(true), &Replay::new(true), at(41), 41)?
+    let judge = useful_judge(true);
+    let SharedSkillMergeDisposition::Ruled(merge_receipt) =
+        fixture.vault.merge_shared_skill_delta(
+            &merge_ask,
+            &judge.useful_decisions(),
+            &Replay::new(true),
+            at(41),
+            41,
+        )?
     else {
         panic!("merged")
     };
@@ -1993,28 +2070,40 @@ fn marketplace_and_shared_merge_keep_scores_but_mark_displaced_judge() -> Result
 
 #[test]
 fn judge_replaced_mid_marketplace_or_merge_scoring_cannot_write_a_ruling() -> Result<()> {
-    struct Replacing<'a> {
-        vault: &'a Vault,
-        changed: std::cell::Cell<bool>,
-    }
-    impl HeldOutReplayScorer for Replacing<'_> {
-        fn judge_revision(&self) -> &str {
-            "old-hub@1"
-        }
-        fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-            if !self.changed.replace(true) {
-                crate::skill_optimize::supersede_skill_edit_judge(
-                    self.vault,
-                    "old-hub@1",
-                    "new-hub@2",
-                )?;
-            }
-            Ok(if case.instructions.contains("check result") {
-                0.9
-            } else {
-                0.2
-            })
-        }
+    fn replacing_scorer(vault: &Vault) -> FixtureNotes<'_> {
+        fixture_notes(
+            "old-hub@1",
+            FixtureProvider::with_hook(
+                ProviderPin {
+                    rung: DecisionRung::SystemOne,
+                    model: "fixture-judge".to_owned(),
+                    version: "1".to_owned(),
+                },
+                "old-hub@1",
+                move || {
+                    crate::skill_optimize::supersede_skill_edit_judge(
+                        vault,
+                        "old-hub@1",
+                        "new-hub@2",
+                    )?;
+                    Ok(())
+                },
+                move |kind, _, state| match kind.as_deref() {
+                    Some("score") => {
+                        let instructions = state
+                            .get("instructions")
+                            .and_then(Json::as_str)
+                            .unwrap_or_default();
+                        Ok(score_answer(if instructions.contains("check result") {
+                            0.9
+                        } else {
+                            0.2
+                        }))
+                    }
+                    other => panic!("Replacing asked an unexpected kind: {other:?}"),
+                },
+            ),
+        )
     }
     let fixture = Fixture::new();
     let (source, publisher) = fixture.hub(SkillHubTrustTier::Verified);
@@ -2026,10 +2115,7 @@ fn judge_replaced_mid_marketplace_or_merge_scoring_cannot_write_a_ruling() -> Re
     fixture
         .vault
         .approve_marketplace_activation(&ask, &fixture.owner)?;
-    let scorer = Replacing {
-        vault: &fixture.vault,
-        changed: std::cell::Cell::new(false),
-    };
+    let scorer = replacing_scorer(&fixture.vault);
     assert!(
         fixture
             .vault
@@ -2062,14 +2148,12 @@ fn judge_replaced_mid_marketplace_or_merge_scoring_cannot_write_a_ruling() -> Re
         other.resident,
         useful_question(candidate),
     )?;
-    let scorer = Replacing {
-        vault: &other.vault,
-        changed: std::cell::Cell::new(false),
-    };
+    let scorer = replacing_scorer(&other.vault);
+    let judge = useful_judge(true);
     assert!(
         other
             .vault
-            .merge_shared_skill_delta(&ask, &Useful(true), &scorer, at(41), 41)
+            .merge_shared_skill_delta(&ask, &judge.useful_decisions(), &scorer, at(41), 41)
             .is_err()
     );
     assert!(
@@ -2219,9 +2303,10 @@ fn shared_merge_lands_without_approval_and_rolls_back_to_the_old_revision() -> R
         fixture.resident,
         useful_question(merged),
     )?;
+    let judge = useful_judge(true);
     let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
         &ask,
-        &Useful(true),
+        &judge.useful_decisions(),
         &Replay::new(true),
         at(21),
         21,
@@ -2293,10 +2378,11 @@ fn shared_merge_that_widens_permissions_waits_for_the_owner() -> Result<()> {
         fixture.resident,
         useful_question(merged),
     )?;
+    let judge = useful_judge(true);
     assert_eq!(
         fixture.vault.merge_shared_skill_delta(
             &ask,
-            &Useful(true),
+            &judge.useful_decisions(),
             &Replay::new(true),
             at(21),
             21
@@ -2314,9 +2400,10 @@ fn shared_merge_that_widens_permissions_waits_for_the_owner() -> Result<()> {
     fixture
         .vault
         .approve_shared_skill_merge(&ask, &fixture.owner)?;
+    let judge = useful_judge(true);
     let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
         &ask,
-        &Useful(true),
+        &judge.useful_decisions(),
         &Replay::new(true),
         at(22),
         22,
@@ -2336,12 +2423,10 @@ fn shared_merge_that_widens_permissions_waits_for_the_owner() -> Result<()> {
     Ok(())
 }
 
-/// Greptile #1336 repro: dropping the per-merge approve-once must not drop a
-/// review the scan requires. With the dial at `Low`, a delta that keeps the
-/// base's admitted tool scans `ProposedRequired`. It widens nothing, and the
-/// merge still waits for the owner.
+/// GATE-23: scanner findings stay visible on a same-permission update;
+/// they are signals, not an extra owner hold (ARCH-0053 r4b-hubs-h).
 #[test]
-fn shared_merge_the_scan_flags_waits_for_the_owner() -> Result<()> {
+fn shared_merge_the_scan_flags_lands_without_owner_hold() -> Result<()> {
     let fixture = Fixture::new();
     let delta = widened_package();
     fixture.vault.with_write_txn(|txn| {
@@ -2356,6 +2441,20 @@ fn shared_merge_the_scan_flags_waits_for_the_owner() -> Result<()> {
         super::ScanRiskLevel::Low,
     )?;
     let merged = submit_fixture_delta(&fixture, &delta)?;
+    let content_hash = delta.content_hash()?;
+    let scan_rows = fixture
+        .vault
+        .skill_scan_verdicts_for_content_hash(content_hash)?;
+    assert!(scan_rows.iter().any(|row| {
+        map_text(&row.value, "provider") == Some(crate::skill_scan::SCAN_PROVIDER_STATIC_V1)
+            && map_text(&row.value, "riskLevel") == Some("low")
+    }));
+    assert_eq!(
+        crate::skill_scan::scan_gate_for_activation(&fixture.vault, content_hash)?,
+        crate::skill_scan::ActivationPosture::ProposedRequired {
+            risk: ScanRiskLevel::Low
+        }
+    );
     let ask = fixture.vault.prepare_shared_skill_merge(
         merged,
         fixture.resident,
@@ -2368,32 +2467,33 @@ fn shared_merge_the_scan_flags_waits_for_the_owner() -> Result<()> {
             .expect("candidate")
             .lifecycle_status)
     };
-    assert_eq!(
-        fixture.vault.merge_shared_skill_delta(
-            &ask,
-            &Useful(true),
-            &Replay::new(true),
-            at(21),
-            21
-        )?,
-        SharedSkillMergeDisposition::PendingConsent
-    );
-    assert_eq!(lifecycle()?, SkillLifecycle::Candidate);
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
         &ask,
         &Useful(true),
         &Replay::new(true),
-        at(22),
-        22,
+        at(21),
+        21,
     )?
     else {
-        panic!("the owner answered the review");
+        panic!("a scanner flag must not park a same-permission update");
     };
     assert!(receipt.accepted);
     assert_eq!(lifecycle()?, SkillLifecycle::Active);
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("update")
+            .content_hash,
+        Some(content_hash)
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .skill_scan_verdicts_for_content_hash(content_hash)?,
+        scan_rows,
+        "the update keeps its scanner signal after activation"
+    );
     Ok(())
 }
 
@@ -2416,9 +2516,10 @@ fn rollback_that_widens_permissions_waits_for_the_owner() -> Result<()> {
         fixture.resident,
         useful_question(merged),
     )?;
+    let judge = useful_judge(true);
     let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
         &ask,
-        &Useful(true),
+        &judge.useful_decisions(),
         &Replay::new(true),
         at(21),
         21,
@@ -2502,19 +2603,38 @@ fn rollback_that_widens_permissions_waits_for_the_owner() -> Result<()> {
 
 /// Scores instructions that say "twice" above any that do not, so a delta can
 /// beat a stored revision the default fixture scorer already rates highest.
-struct PrefersTwice;
-impl HeldOutReplayScorer for PrefersTwice {
-    fn judge_revision(&self) -> &str {
-        "fixture-judge@1"
-    }
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-        assert!(!case.held_out_receipts.is_empty());
-        Ok(if case.instructions.contains("twice") {
-            0.95
-        } else {
-            0.2
-        })
-    }
+fn prefers_twice_notes() -> FixtureNotes<'static> {
+    fixture_notes(
+        "fixture-judge@1",
+        FixtureProvider::new(
+            ProviderPin {
+                rung: DecisionRung::SystemOne,
+                model: "fixture-judge".to_owned(),
+                version: "1".to_owned(),
+            },
+            "fixture-judge@1",
+            |kind, _, state| match kind.as_deref() {
+                Some("score") => {
+                    let held = state
+                        .get("held_out_receipts")
+                        .and_then(Json::as_array)
+                        .map(|receipts| receipts.len())
+                        .unwrap_or_default();
+                    assert!(held > 0);
+                    let instructions = state
+                        .get("instructions")
+                        .and_then(Json::as_str)
+                        .unwrap_or_default();
+                    Ok(score_answer(if instructions.contains("twice") {
+                        0.95
+                    } else {
+                        0.2
+                    }))
+                }
+                other => panic!("PrefersTwice asked an unexpected kind: {other:?}"),
+            },
+        ),
+    )
 }
 
 /// Admits `stored` (version "1": the held-out reserve stamps that version on
@@ -2566,10 +2686,12 @@ fn merge_over_a_stored_revision(
         fixture.resident,
         useful_question(merged),
     )?;
+    let judge = useful_judge(true);
+    let prefers_twice = prefers_twice_notes();
     let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
         &merge_ask,
-        &Useful(true),
-        &PrefersTwice,
+        &judge.useful_decisions(),
+        &prefers_twice,
         at(31),
         31,
     )?
