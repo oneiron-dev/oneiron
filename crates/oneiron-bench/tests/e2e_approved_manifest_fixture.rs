@@ -29,8 +29,8 @@ fn e2e_approved_manifest_fixture_matches_the_bench_flow() {
             .expect("policy serialization"),
     )
     .expect("policy export");
-    let candidate = ModelManifest::load(&fixtures.join("candidate.fixture.json"))
-        .expect("candidate manifest");
+    let candidate =
+        ModelManifest::load(&fixtures.join("candidate.fixture.json")).expect("candidate manifest");
     let manifest = temp.path().join("candidate.json");
     std::fs::write(
         &manifest,
