@@ -1,0 +1,574 @@
+//! Doors to the derivation transaction (untangle 6.7a): commit a batch of
+//! claims as an actor, read its batch record back, and ask the derive
+//! verdict.
+
+use crate::attempt_queue::AttemptId;
+use crate::claim::ClaimSource;
+use crate::derive::{
+    DerivationBatch, DerivationItem, DerivationStamp, DerivedArchive, DerivedClaim, DerivedSettle,
+    DerivedSettlement, DerivedSupersede, ItemOutcome, ItemRef,
+};
+use crate::error::Result;
+use crate::gate::{DeriveCapability, DeriveRefusal};
+use crate::write_envelope::{SourceLineage, WriteActor};
+use crate::{EdgeActorClass, EntityId, Vault};
+
+/// A row a door claim names: a stored one, or an earlier item's.
+#[derive(Debug, Clone)]
+pub enum Named {
+    /// A stored row.
+    Stored(EntityId),
+    /// The row an earlier item of the batch lands, by its local name.
+    Local(&'static str),
+}
+
+/// One derived claim for a door batch.
+#[derive(Debug, Clone)]
+pub struct Claim {
+    pub local: &'static str,
+    pub predicate: &'static str,
+    pub subject: Named,
+    pub value: serde_json::Value,
+    pub evidence: Vec<Named>,
+}
+
+/// A supersession for a door batch: `new` replaces `old`.
+#[derive(Debug, Clone)]
+pub struct Supersede {
+    pub local: &'static str,
+    pub new: Named,
+    pub old: Named,
+}
+
+/// An answer to one open conflict, for a door batch.
+#[derive(Debug, Clone)]
+pub enum Settlement {
+    /// This member stands.
+    Keep(Named),
+    /// Every member stays active.
+    HoldBoth,
+    /// The marker named no real contradiction.
+    Dismiss,
+}
+
+/// A settlement for a door batch.
+#[derive(Debug, Clone)]
+pub struct Settle {
+    pub local: &'static str,
+    pub marker: Named,
+    pub settlement: Settlement,
+}
+
+/// An archive for a door batch: `claim` at `score`.
+#[derive(Debug, Clone)]
+pub struct Archive {
+    pub local: &'static str,
+    pub claim: Named,
+    pub score: f64,
+}
+
+/// One item of a door batch.
+#[derive(Debug, Clone)]
+pub enum Derived {
+    Claim(Claim),
+    Supersede(Supersede),
+    Settle(Settle),
+    Archive(Archive),
+}
+
+/// One item's outcome, as the commit answered it or the batch record keeps
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Item {
+    pub local: String,
+    pub kind: String,
+    pub landed: bool,
+    pub rows: Vec<EntityId>,
+    /// `auto` or `proposed` for a landed claim.
+    pub approval: Option<String>,
+    pub reasons: Vec<String>,
+}
+
+/// What a door commit did.
+#[derive(Debug, Clone)]
+pub struct Committed {
+    pub batch: EntityId,
+    pub items: Vec<Item>,
+}
+
+fn named(named: &Named) -> ItemRef {
+    match named {
+        Named::Stored(id) => ItemRef::Stored(*id),
+        Named::Local(name) => ItemRef::Local((*name).to_owned()),
+    }
+}
+
+/// Writes the shipped policy with a `core:read` grant for `reader`, as an
+/// owner's policy lets a member read: the rows `reader` names and cites then
+/// read back to it.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn grant_core_read(vault: &Vault, reader: EntityId) -> Result<()> {
+    super::consolidation::shipped_policy_with_reader(vault, &reader.to_hex())
+}
+
+/// Writes the shipped policy with a `core:read` grant for `reader` that
+/// reaches rows of the kinds `kinds` alone: a row of any other kind is
+/// outside its read.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn grant_core_read_of_kinds(vault: &Vault, reader: EntityId, kinds: &[u8]) -> Result<()> {
+    let mut scope = crate::federation::scope_codec::read_preset();
+    scope.bands = crate::federation::ScopeAxis::Some(kinds.iter().copied().collect());
+    super::consolidation::shipped_policy_with_read_scope(vault, &reader.to_hex(), &scope)
+}
+
+/// Writes a minimal human-authored agent definition with an Auto ceiling,
+/// as the owner's own agent whose claims the policy rows alone bound; its
+/// id. ([`super::derivation_floor::define_agent`] writes one held to
+/// proposals.)
+///
+/// # Errors
+///
+/// The vault's.
+pub fn define_auto_agent(vault: &Vault) -> Result<EntityId> {
+    use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+    let definition = AgentDefinition::new(
+        "oneiron.agent.derive-landing-fixture",
+        "Derivation landing fixture agent",
+        "1",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        AgentScope::All,
+        AgentCeiling::Auto,
+        None,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("definedVia"),
+            rmpv::Value::from("define_auto_agent"),
+        )]),
+        None,
+        true,
+        None,
+    );
+    let id = EntityId::now();
+    vault.put_agent_definition(&id, &definition, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    Ok(id)
+}
+
+/// Writes the shipped policy with, for each of `agents`, the rows an
+/// owner's policy gives an ordinary agent that derives: its `core:read`
+/// grant, an `agent` Auto ceiling and the actor-bound `generated` permit.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn grant_derive_rows(vault: &Vault, agents: &[EntityId]) -> Result<()> {
+    let mut body = crate::gate::default_policy_manifest()?;
+    for agent in agents {
+        body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
+    }
+    crate::test_support::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &body,
+    )
+}
+
+/// Writes a user's TURN stamped as imported words (ARCH-0027), as an import
+/// lands one; its id.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn imported_turn(vault: &Vault) -> Result<EntityId> {
+    let body = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([
+        ("role", "user"),
+        (crate::memory::IMPORTED_SOURCE_KEY, "transcript"),
+    ]))
+    .map_err(|_| crate::error::Error::InvalidClaimBody("a TURN body does not encode"))?;
+    let id = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault.put_entity(
+        &id,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::TimeRange { start: at, end: at },
+        at,
+        &body,
+    )?;
+    Ok(id)
+}
+
+/// Writes the shipped policy with an Auto permit for `imported` writes
+/// bound to `actor`, as the `generated` permit of the Dreamer's rows is
+/// written: an owner's policy that trusts that writer's imported claims.
+///
+/// # Errors
+///
+/// The vault's, and a shipped policy with no source trust map.
+pub fn permit_imported_auto(vault: &Vault, actor: EntityId) -> Result<()> {
+    use rmpv::Value;
+    let invalid = |what: &str| crate::error::Error::InvalidConfig(what.into());
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
+            .map_err(|_| invalid("default policy"))?
+    else {
+        return Err(invalid("default policy is not a map"));
+    };
+    let Some((_, Value::Map(sources))) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("source_trust"))
+    else {
+        return Err(invalid("the shipped policy has no source trust map"));
+    };
+    let imported = ClaimSource::Imported.as_str();
+    sources.retain(|(key, _)| key.as_str() != Some(imported));
+    sources.push((
+        Value::from(imported),
+        Value::Array(vec![Value::Map(vec![
+            (Value::from("actor_ref"), Value::from(actor.to_hex())),
+            (
+                Value::from("max_auto_sensitivity"),
+                Value::from(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+            ),
+            (Value::from("receipted"), Value::Boolean(true)),
+            (Value::from("warned"), Value::Boolean(true)),
+        ])]),
+    ));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
+        .map_err(|_| invalid("encode policy"))?;
+    crate::test_support::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
+
+/// Commits `claims` as one batch by `actor` of `class`, in run `run`.
+///
+/// # Errors
+///
+/// The commit's: a malformed batch or a storage error.
+pub fn commit_claims(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    run: &str,
+    claims: &[Claim],
+) -> Result<Committed> {
+    let items: Vec<Derived> = claims.iter().cloned().map(Derived::Claim).collect();
+    commit(vault, actor, class, run, &items)
+}
+
+/// Commits `items` as one batch by `actor` of `class`, in run `run`.
+///
+/// # Errors
+///
+/// The commit's: a malformed batch or a storage error.
+pub fn commit(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    run: &str,
+    items: &[Derived],
+) -> Result<Committed> {
+    commit_in_attempt(vault, actor, class, run, None, items)
+}
+
+/// [`commit`] in the attempt `attempt`.
+///
+/// # Errors
+///
+/// The commit's: a malformed batch or a storage error.
+pub fn commit_in_attempt(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    run: &str,
+    attempt: Option<AttemptId>,
+    items: &[Derived],
+) -> Result<Committed> {
+    let stamp = DerivationStamp {
+        actor: WriteActor::new(actor, class),
+        run: Some(run.to_owned()),
+        attempt,
+        lineage: SourceLineage::of(ClaimSource::Generated),
+    };
+    let batch = DerivationBatch {
+        items: items
+            .iter()
+            .map(|item| match item {
+                Derived::Claim(claim) => DerivationItem::Claim(DerivedClaim {
+                    local: claim.local.to_owned(),
+                    predicate: claim.predicate.to_owned(),
+                    subject: named(&claim.subject),
+                    value: claim.value.clone(),
+                    confidence: 0.9,
+                    evidence: claim.evidence.iter().map(named).collect(),
+                }),
+                Derived::Supersede(supersede) => DerivationItem::Supersede(DerivedSupersede {
+                    local: supersede.local.to_owned(),
+                    new: named(&supersede.new),
+                    old: named(&supersede.old),
+                }),
+                Derived::Archive(archive) => DerivationItem::Archive(DerivedArchive {
+                    local: archive.local.to_owned(),
+                    claim: named(&archive.claim),
+                    signals: crate::dreamer_consolidation::selection::StrengthSignals {
+                        type_prior: 0.1,
+                        frequency: 0.1,
+                        recency: 0.1,
+                        diversity: 0.1,
+                    },
+                    score: archive.score,
+                }),
+                Derived::Settle(settle) => DerivationItem::Settle(DerivedSettle {
+                    local: settle.local.to_owned(),
+                    marker: named(&settle.marker),
+                    settlement: match &settle.settlement {
+                        Settlement::Keep(kept) => DerivedSettlement::Keep(named(kept)),
+                        Settlement::HoldBoth => DerivedSettlement::HoldBoth,
+                        Settlement::Dismiss => DerivedSettlement::Dismiss,
+                    },
+                }),
+            })
+            .collect(),
+    };
+    let receipt = vault.derive_commit(&stamp, &batch)?;
+    Ok(Committed {
+        batch: receipt.batch,
+        items: receipt
+            .items
+            .into_iter()
+            .map(|item| match item.outcome {
+                ItemOutcome::Landed { rows, approval, .. } => Item {
+                    local: item.local,
+                    kind: item.kind.to_owned(),
+                    landed: true,
+                    rows,
+                    approval: approval.map(|approval| approval.as_str().to_owned()),
+                    reasons: Vec::new(),
+                },
+                ItemOutcome::Refused { reasons, .. } => Item {
+                    local: item.local,
+                    kind: item.kind.to_owned(),
+                    landed: false,
+                    rows: Vec::new(),
+                    approval: None,
+                    reasons,
+                },
+            })
+            .collect(),
+    })
+}
+
+/// The lifecycle status of the claim `id` (`active`, `superseded`, ...),
+/// when it is a stored claim.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn claim_lifecycle(vault: &Vault, id: EntityId) -> Result<Option<String>> {
+    let Some(raw) = vault.get(&id)? else {
+        return Ok(None);
+    };
+    Ok(crate::claim::decode_claim_body(&raw, true)
+        .ok()
+        .map(|body| body.lifecycle.as_str().to_owned()))
+}
+
+/// Opens a conflict between the stored claims `new` and `old`, as the
+/// claim lifecycle's supersession coaching opens one: the Dreamer writes the
+/// pair's `core.conflict.open` marker as a proposal. Its id.
+///
+/// # Errors
+///
+/// The vault's, and a `new` that is no stored claim.
+pub fn open_conflict(vault: &Vault, new: EntityId, old: EntityId) -> Result<EntityId> {
+    use crate::claim::{ClaimApprovalStatus, ClaimSource};
+    use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+    let raw = vault
+        .get(&new)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    let body = crate::claim::decode_claim_body(&raw, true)?;
+    let envelope = WriteEnvelope::new(
+        vault.dreamer_authority()?,
+        ClaimSource::Generated,
+        WriteProvenance::new(rmpv::Value::Map(vec![(
+            rmpv::Value::from("surface"),
+            rmpv::Value::from("test.open_conflict"),
+        )]))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let marker = crate::claim::conflict_marker(&new, &old, &body, &envelope)?;
+    let now = vault.now_recorded_at();
+    vault.with_write_txn_grouped(|txn| {
+        let mut envelope = marker.envelope.clone();
+        vault.sign_retained_machine_claim_in_txn(
+            txn,
+            &marker.id,
+            &marker.candidate,
+            &mut envelope,
+        )?;
+        vault
+            .batch_in()
+            .claim_candidate(
+                &marker.id,
+                marker.candidate.clone(),
+                &envelope,
+                crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .apply_recording_gate_decisions(txn)
+    })?;
+    Ok(marker.id)
+}
+
+/// Sets the owner's strength policy: a claim archives only with a score
+/// below `archive_below`, once quiet for `quiet_ms`.
+///
+/// # Errors
+///
+/// The vault's, and a policy out of bounds.
+pub fn set_strength_policy(vault: &Vault, archive_below: f64, quiet_ms: u64) -> Result<()> {
+    vault.set_consolidation_strength_policy(
+        &crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy {
+            archive_below,
+            quiet_ms,
+        },
+    )
+}
+
+/// Whether the row `id` is live: an archived claim is not.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn row_live(vault: &Vault, id: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::vault::live_entity_row_in_txn(&vault.store, &txn, &id)?.is_live())
+}
+
+/// The items of the committed batch `batch`, as its record keeps them.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn batch_items(vault: &Vault, batch: EntityId) -> Result<Option<Vec<Item>>> {
+    Ok(vault.derive_batch(batch)?.map(|record| {
+        record
+            .items
+            .into_iter()
+            .map(|item| Item {
+                local: item.local,
+                kind: item.kind,
+                landed: item.landed,
+                rows: item.rows,
+                approval: item.approval,
+                reasons: item.reasons,
+            })
+            .collect()
+    }))
+}
+
+/// The batches `actor` committed, oldest first.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn batches_of(vault: &Vault, actor: EntityId) -> Result<Vec<EntityId>> {
+    vault.derive_batches_of(actor)
+}
+
+/// The reason tokens of the refusal receipt the batch record names for its
+/// item `local`; `None` when the item has no refusal receipt.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn refusal_receipt(vault: &Vault, batch: EntityId, local: &str) -> Result<Option<Vec<String>>> {
+    let Some(record) = vault.derive_batch(batch)? else {
+        return Ok(None);
+    };
+    let txn = vault.store.env.read_txn()?;
+    let Some(receipt) = record
+        .items
+        .iter()
+        .find(|item| item.local == local)
+        .and_then(|item| item.receipt)
+    else {
+        return Ok(None);
+    };
+    Ok(vault
+        .store
+        .gate_decision_in_txn(&txn, crate::store::GateDecisionId::from_bytes(receipt))?
+        .filter(|decision| {
+            decision.content_kind == crate::derive::DERIVE_ITEM_CONTENT_KIND
+                && decision.outcome == "deny"
+        })
+        .map(|decision| decision.reason_codes))
+}
+
+/// The derive verdict for `actor` of `class` doing `capability` (`archive`
+/// when `archive`, else `derive`) to `target`: the grant it was judged by,
+/// or the refusal's token.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn derive_verdict(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    archive: bool,
+    target: Option<EntityId>,
+) -> Result<std::result::Result<String, &'static str>> {
+    let capability = if archive {
+        DeriveCapability::Archive
+    } else {
+        DeriveCapability::Derive
+    };
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::gate::derive_verdict_in_txn(
+        &vault.store,
+        &txn,
+        WriteActor::new(actor, class),
+        capability,
+        target,
+    )?
+    .map(|allowed| allowed.grant_ref)
+    .map_err(DeriveRefusal::token))
+}
+
+/// Every refusal token of the derive verdict.
+#[must_use]
+pub fn refusal_tokens() -> Vec<&'static str> {
+    [
+        DeriveRefusal::NoLandingRows,
+        DeriveRefusal::OptedOut,
+        DeriveRefusal::GrantGone,
+        DeriveRefusal::GrantLacksDerive,
+        DeriveRefusal::GrantLacksArchive,
+        DeriveRefusal::OutsideGrant,
+    ]
+    .into_iter()
+    .map(DeriveRefusal::token)
+    .collect()
+}

@@ -74,7 +74,11 @@ pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
 }
 /// A guest grant is disjoint from member initialization even though both
 /// records carry the FEDERATION_GRANT kind byte, and so is an owner's
-/// own-device grant (FIX 3134): pairing a device never closes sharing.
+/// own-device grant (FIX 3134): pairing a device never closes sharing. Nor
+/// does a base agent's Steward grant, which the host mints by default on the
+/// vault's own root when it opens the vault (untangle 6.3; review of #6917,
+/// round 2): it is the engine's actor's reach, not a member. The creation
+/// row still closes a vault that was shared.
 fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
         &vault.store,
@@ -94,6 +98,7 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
         if matches!(grant.scope, FederationGrantScope::Vault { .. })
             && !grant.is_git_push()
             && !super::is_own_device_grant(&grant)
+            && !super::holds_system_agent_grant(grant.member_ref)
         {
             return Ok(true);
         }
