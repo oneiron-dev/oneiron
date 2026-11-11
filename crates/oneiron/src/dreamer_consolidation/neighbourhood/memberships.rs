@@ -88,13 +88,7 @@ pub(super) fn capture_in(
             crate::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF,
         )?,
     };
-    #[cfg(feature = "sync")]
     let device_only = crate::settings::device_local_worlds_for(vault, txn, destination)?;
-    #[cfg(not(feature = "sync"))]
-    let device_only = {
-        let _ = destination;
-        BTreeSet::new()
-    };
     let mut bindings = Vec::new();
     for (id, row) in ids
         .iter()

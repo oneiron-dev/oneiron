@@ -21,13 +21,14 @@ use crate::{EntityId, Vault};
 
 use super::authority::Standing;
 use super::types::{
-    OwedWakeHold, ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt,
-    TurnProgramAdmissionRecord, TurnProgramWake, run_id,
+    OwedWakeHold, ProgramRecipePin, ProgramTrigger, TurnProgramAdmissionOutcome,
+    TurnProgramAdmissionReceipt, TurnProgramAdmissionRecord, TurnProgramArming, TurnProgramWake,
+    run_id,
 };
 use super::{ADMISSION, ARM, WAKE};
 
 const NOT_ARMED: &str = "the program is no longer armed";
-const NOT_TRIGGERED: &str = "the landed turn does not match the program's trigger";
+const NOT_TRIGGERED: &str = "the waking turn or occurrence does not match the program's trigger";
 const AUTHORITY_LAPSED: &str = "the waking actor's authority no longer stands";
 const PIN_MOVED: &str = "the pinned program changed since it was armed";
 /// How long after its turn landed a wake whose sealed slip lapsed stays
@@ -200,9 +201,7 @@ fn judge_in_txn(
     if arming.revision != wake.revision || arming.definition.revision() != wake.revision {
         return Ok(Err(NOT_ARMED));
     }
-    if !arming.wakes_on(&wake.authority, &wake.turn)
-        || !landed_turn_in_txn(vault, txn, wake.turn.turn, wake.turn.conversation)?
-    {
+    if !triggered_in_txn(vault, txn, &arming, wake)? {
         return Ok(Err(NOT_TRIGGERED));
     }
     match wake.authority.standing_in_txn(vault, txn)? {
@@ -219,6 +218,33 @@ fn judge_in_txn(
         return Ok(Err(PIN_MOVED));
     }
     Ok(Ok(arming.definition))
+}
+
+/// Whether `wake`'s cause still matches `arming`'s trigger. A turn's wake:
+/// the arming wakes on that turn, and it is a live TURN of its conversation. An
+/// occurrence's wake (untangle slice 6.8c): the arming's trigger is of that
+/// kind, and a feed program's subscription still stands. The authority the
+/// wake carries, the one its arming sealed or a rebind's live slip, is judged
+/// after this, as a turn's is.
+fn triggered_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    arming: &TurnProgramArming,
+    wake: &TurnProgramWake,
+) -> Result<bool> {
+    let Some(kind) = wake.occurrence else {
+        return Ok(arming.wakes_on(&wake.authority, &wake.turn)
+            && landed_turn_in_txn(vault, txn, wake.turn.turn, wake.turn.conversation)?);
+    };
+    if arming.trigger.occurrence_kind() != Some(kind) {
+        return Ok(false);
+    }
+    match arming.trigger {
+        ProgramTrigger::Feed { subscription } => {
+            crate::feeds::subscription_stands_in_txn(vault, txn, arming.actor, subscription)
+        }
+        _ => Ok(true),
+    }
 }
 
 /// Whether `turn` is a live TURN of `conversation`.
@@ -280,7 +306,11 @@ fn gate_decision_in_txn(
                 refused.is_none().then(|| run_id(admission)),
                 None,
             ),
-            GateDecisionReadContext::about(Some(wake.turn.turn), vec![wake.turn.turn]),
+            // An occurrence (slice 6.8c) is about no entity the vault holds.
+            match wake.occurrence {
+                None => GateDecisionReadContext::about(Some(wake.turn.turn), vec![wake.turn.turn]),
+                Some(_) => GateDecisionReadContext::about(None, Vec::new()),
+            },
         ),
         redacted_at: None,
     };

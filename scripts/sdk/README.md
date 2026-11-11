@@ -1,38 +1,42 @@
 # Agent verb projections
 
 The verb table, one JSON file per verb in `scripts/sdk/verbs/` (`<verb name>.json`, read in name
-order), is the shared facade/task/room verb table: a verb PR adds or edits its own file. `generate.py` emits the
-engine dispatcher, MCP catalog, HTTP facade handlers, Rust client methods,
+order), is the shared facade/task/room verb table: a verb PR adds or edits its own file. The SDK generator
+(`crates/oneiron-sdk-generator`) emits the engine dispatcher, MCP catalog, HTTP facade handlers, Rust client methods,
 N-API/PyO3 methods, and TypeScript/Python namespaces. All domain behavior stays
 in the engine. The facade methods use the same generated dispatch as tasks and rooms.
 
 Run from the repository root:
 
 ```
-python3 scripts/sdk/generate.py                     # every output and the docs mirror, in the tree
-python3 scripts/sdk/generate.py --package oneiron   # one package's outputs (oneiron, oneiron-client, oneiron-py, docs)
-python3 scripts/sdk/generate.py --check
-python3 -m unittest discover -s scripts/tests -p test_agent_sdk.py -v
+cargo run -p oneiron-sdk-generator                        # the package outputs and the docs mirror, in the tree
+cargo run -p oneiron-sdk-generator -- --package oneiron   # one package's outputs (oneiron, oneiron-client, oneiron-py, docs)
+cargo run -p oneiron-sdk-generator -- --check             # the verb table's refusals, and the committed docs mirror
+cargo run -p oneiron-sdk-generator -- --out-dir <dir>     # every output under <dir>, to read it
+cargo test -p oneiron-sdk-generator                       # the generator's contract tests
 ```
+
+The default mode, `--check` and `--package docs` run `packages/oneiron/scripts/agent-docs.py` for the docs mirror,
+so they need `python3` (or `ONEIRON_PYTHON`); `--out-dir` and the other packages do not.
 
 Hand-written engine DTOs live in `crates/oneiron/src/verbs/`; `task_verb::sdk` is
 its public path. No generated output is in git (untangle slice 4.3):
 - The whole-file Rust projections and the code-mode declaration catalog
-  (`BUILD_TIME_OUTPUTS` in `generate.py`) are made at build time. Each crate that
+  (`BUILD_TIME_OUTPUTS` in the generator's `generate/outputs.rs`) are made at build time. Each crate that
   includes one calls `crates/oneiron-sdk-build` from its build script, which runs
-  `generate.py --out-dir` once per input digest and copies the crate's own outputs
-  into its `OUT_DIR`, where `include!` reads them. Python 3 is therefore a build
-  requirement (README.md, "Building from source") until the generator is ported to
-  Rust.
+  the generator (`crates/oneiron-sdk-generator`, the same `--out-dir`
+  outputs) in-process once per input digest and copies the crate's own outputs
+  into its `OUT_DIR`, where `include!` reads them. No Python runs for this
+  (README.md, "Building from source").
 - The package outputs (`PACKAGE_OUTPUTS`) are made by each package's build:
-  `oneiron` and `@oneiron/client` run `generate.py --package` from their npm
+  `oneiron` and `@oneiron/client` run the generator's `--package` from their npm
   scripts, and `oneiron-py`'s build script places its Python files in
   `python/oneiron/`. The generated code is whole files the hand-written code
   imports: `facade-verbs.ts` and `native-verbs.ts` for `oneiron`, the mixin
   `_facade_verbs.py` (and `.pyi`) that `Oneiron` derives from, and the PyO3
   `#[pymethods]` block `oneiron-py` includes from `OUT_DIR`.
-- To read any output, run `python3 scripts/sdk/generate.py --out-dir /tmp/sdk` and
-  open it under that directory.
+- To read any output, run `cargo run -p oneiron-sdk-generator -- --out-dir /tmp/sdk`
+  and open it under that directory.
 
 `--check` fails when any committed mirror byte differs. Do not hand-edit generated
 files.
@@ -41,12 +45,12 @@ The docs mirror has two parts. The quickstart is authored in
 `packages/oneiron/README.md`, the root `llms.txt` in `scripts/sdk/llms.txt.in`
 (links are relative to the repository root), and the error catalogue comes from the
 error codes: `docs/agent-sdk/quickstart.md`, `errors.md` and `llms.txt` stay in git,
-and `generate.py --check` checks them. Edit their inputs, not the copies. The type
+and the generator's `--check` checks them. Edit their inputs, not the copies. The type
 declarations, facade types and verb census (`types.md`, `facade-types.md`,
 `verbs.md`) are generated from the verb table, so they are not in git: CI publishes
 them from main at https://oneiron-dev.github.io/oneiron/agent-sdk/
 (`.github/workflows/agent-sdk-docs.yml`), a cargo build keeps a local copy in
-`target/debug/sdk-generated/agent-sdk/`, and `generate.py --package docs` writes
+`target/debug/sdk-generated/agent-sdk/`, and the generator's `--package docs` writes
 them into `docs/agent-sdk/`.
 
 New rows supply their engine input/output types, call,
@@ -105,7 +109,7 @@ the generated `AgentVerb::description`), the JSDoc of each TypeScript method,
 the docstring of each Python method, and `FACADE_CATALOG` in `@oneiron/client`.
 A run row carries none.
 
-The wire types are not declared by hand. `facade_types.py` starts from each
+The wire types are not declared by hand. The generator's type inventory (`facade_types`) starts from each
 facade row's `input` and `output` and walks their Rust definitions across the
 engine crates' sources (structs, enums in each serde tagging, aliases, generics,
 `rename`/`rename_all`, `default`, `skip*`, `flatten`, `transparent`,
@@ -218,9 +222,9 @@ boundary is covered by this script and `crates/oneiron-napi/tests/node_host.cjs`
 `crates/oneiron/src/verbs/generated/catalog_fragment.d.ts` is the code-mode catalog
 fragment (ONE-2510 S2, EIRI-ARCH-0002 §The contract), and
 `crates/oneiron/src/verbs/generated/code-mode.d.ts` is the same text at a second
-path. This script writes both from the table and the Rust types its rows name
-(`catalog_fragment.py`). Neither is edited by hand: a new row reaches both
-through its `scripts/sdk/verbs/` file and a run of this script. The text covers every row
+path. The generator writes both from the table and the Rust types its rows name
+(its `catalog_fragment` module). Neither is edited by hand: a new row reaches both
+through its `scripts/sdk/verbs/` file and the next build. The text covers every row
 code mode serves, at its full SDK path (`vault.recall`, `self.focus.refresh`,
 a bare `describe`). `self` is a namespace of constants, every other root a
 constant and a bare verb a function, so a row named by a reserved word
