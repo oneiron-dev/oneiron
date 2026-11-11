@@ -15,7 +15,8 @@
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test selector_relationship_label`.
-#![cfg(oneiron_test_support)]
+// `put_selector_test_federation_grant` exists only under `test-hooks`.
+#![cfg(all(oneiron_test_support, feature = "test-hooks"))]
 
 use std::collections::BTreeSet;
 
