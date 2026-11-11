@@ -14,6 +14,7 @@ pub mod dag_append;
 pub mod derivation_floor;
 pub mod derive;
 pub mod derive_verbs;
+pub mod dreamer_stage_line;
 pub mod feeds;
 pub mod graph_ask_centre;
 pub mod label_writers;
