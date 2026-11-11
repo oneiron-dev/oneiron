@@ -3192,39 +3192,24 @@ suite.test(test, "MUSE-LABEL-04", "A guest federation grant stays inside its nam
 });
 
 
-// MUSE-LABEL-05 — labels, widening. PARTIAL case, written from promise text only.
-// Promises:
-// - P-LABEL-015 (MUST): widening clearance or promoting private content requires
-//   owner-expressed intent or an owner decision. Proved here only in its negative
-//   half: neither a read-only agent nor a read/write agent can fork a claim to
-//   another facet, and an agent-filed clearance offer changes no stored or
-//   effective sharing scope until the owner applies it. The positive widening
-//   paths (private -> public promotion, owner application of a clearance offer)
-//   stay unproved: the typed surface has no facet-exposure/promotion door and
-//   vault.companions.sharing.set carries an opaque `expected_delta` string whose
-//   contract no canon page or facade doc states, so it is never guessed here.
-// - P-LABEL-016 (MUST): disclosure-widening decisions are recorded in the ledger.
-//   Proved for the facet-fork decision class: the topology event reads back
-//   through vault.identity.events.get and a new owner governance receipt reads
-//   back through vault.receipts, both again after a restart.
-// - P-LABEL-006 (MUST): moving a record to another facet creates a linked fork
-//   rather than changing its original stamp. Proved for a CLAIM through
-//   vault.identity.facet (substrate mask -> newly minted mask): the fork is a
-//   new claim under the new facet, the origin keeps its ClaimScope and its
-//   scope position, and the fork carries a derived_from neighbour link.
-// Doors used: vault.conversations.create, vault.witness, vault.people.create,
-// vault.structural.put, vault.get, vault.claims.upsert, vault.claims.list,
-// vault.claims.history, vault.scope.position, vault.identity.resolve,
-// vault.identity.facet, vault.identity.events.get, vault.neighbors,
-// vault.receipts, vault.authority.audit, self.actor, vault.disclosure.offer,
-// vault.companions.sharing.get, POST /v1/core/slips/revoke, raw facade POSTs
-// for refusal envelopes, EngineFixture pairActor/restart.
-// Unproved: private -> public promotion and invariant promotion (no door);
-// owner application of a clearance offer (expected_delta unspecified); a model
-// proposal lane for facet forks (vault.identity.propose is owner-worded);
-// NOTE/ASSET facet forks (identity facet forks claims only); Dreamer or
-// behavioural-inference widening (no inference door exercised); facet forks by
-// restamp-style upsert (ScopedClaimInput.id semantics unspecified).
+// MUSE-LABEL-05 — owner-only linked facet fork and durable ledger (E2E-PARTIAL).
+// Title: Only the owner can fork a claim to a facet; the original keeps its scope and the linked fork and ledger survive restart.
+// P-LABEL-015: neither read-only nor read/write agent applies the fork; the
+// owner applies it. The clearance-offer half is not exercised (FIX 22495).
+// P-LABEL-006: the CLAIM fork has the new facet and a derived_from link;
+// the origin's ClaimScope and scope position do not change.
+// P-LABEL-016: the fork's topology event and owner governance receipt read
+// back through identity.events.get and receipts, again after restart.
+// Doors: vault.conversations.create, vault.witness, vault.people.create,
+// vault.structural.put, vault.get, vault.claims.upsert/list/history,
+// vault.scope.position, vault.identity.resolve/facet/events.get,
+// vault.neighbors, vault.receipts/get, vault.authority.audit, self.actor,
+// POST /v1/core/slips/revoke, raw facade refusals, pairActor and restart.
+// Unproved: clearance-offer no-widening and sharing durability (model-backed
+// companion plus vault.counterparty_contacts.create, FIX 22495), owner offer
+// application (expected_delta unspecified), private/public or invariant
+// promotion, NOTE/ASSET forks, model-proposal and behavioural-inference widening,
+// and restamp-style upsert (ScopedClaimInput.id semantics unspecified).
 
 type MuseLabel05Receipt = FacadeResult<"vault.receipts">["receipts"][number];
 type MuseLabel05AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
@@ -3285,7 +3270,7 @@ function museLabel05ClaimRowFor(
   return rows.find(row => row.claim_ref === claimId || row.claim?.id === claimId);
 }
 
-suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is owner-only, never restamps the original, and is ledgered", async () => {
+suite.test(test, "MUSE-LABEL-05", "Only the owner can fork a claim to a facet; the original keeps its scope and the linked fork and ledger survive restart", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-LABEL-05", profile });
   let primaryFailed = false;
   let primary: unknown;
@@ -3300,8 +3285,8 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     const ownerActorRef = (await engine.client.call("self.actor", {})).actor_ref;
 
     // People and actors, all through public doors. The subject PERSON follows
-    // the witness-then-create pattern; the agent and contact PERSON records
-    // follow the structural create pattern. Pairing never creates a person.
+    // the witness-then-create pattern; the agent PERSON record follows
+    // the structural create pattern. Pairing never creates a person.
     const subjectName = `Label05 Subject ${suffix}`;
     const conversation = await engine.client.call("vault.conversations.create", {
       body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
@@ -3335,10 +3320,6 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
       kind: "PERSON", body: { name: `Label05 Agent ${suffix}` }, occurred_at: occurred,
     } satisfies FacadeInput<"vault.structural.put">);
     const agentPersonId = agentRecord.id_hex;
-    const contactRecord = await engine.client.call("vault.structural.put", {
-      kind: "PERSON", body: { name: `Label05 Contact ${suffix}` }, occurred_at: occurred,
-    } satisfies FacadeInput<"vault.structural.put">);
-    const contactId = contactRecord.id_hex;
 
     // One agent person, two slips: read-only (without the write grant) and
     // read/write. The read/write slip is captured from the authority audit so
@@ -3544,37 +3525,14 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
       forkReceiptRef: forkReceipt.receipt_ref,
     });
 
-    // Clearance widening, negative half: the read/write agent files a
-    // clearance offer for the contact over the new private mask. Filing alone
-    // stores no sharing scope and moves no effective scope; the owner's
-    // application door is not guessed, so the positive path stays unproved.
-    stage = "MISSING DOOR FIX 22495: clearance-offer leg needs a model-backed companion PERSON and a CID-7 COUNTERPARTY_CONTACT; the fixture supplies ordinary PERSONs, not a contact; waits on vault.counterparty_contacts.create";
-    const sharingInput = {
-      companion_ref: agentPersonId, contact_ref: contactId,
-    } satisfies FacadeInput<"vault.companions.sharing.get">;
-    const sharingBefore = await engine.client.call("vault.companions.sharing.get", sharingInput);
-    expect(sharingBefore.stored ?? null).toBeNull();
-    const expiresAt = Math.floor(Date.now() / 1000) + 3600;
-    const offered = await agentWrite.client.call("vault.disclosure.offer", {
-      contact: contactId,
-      scope: {
-        facets: { kind: "some", values: [newFacetId] },
-        sensitivity: { kind: "at_most", value: "private" },
-      },
-      purpose: "Generated clearance offer for the label05 mask.",
-      channel: "chat",
-      beneficiary: agentPersonId,
-      owner_ref: ownerPrincipal,
-      expires_at: expiresAt,
-    } satisfies FacadeInput<"vault.disclosure.offer">);
-    expect(offered.proposal_ref.length).toBeGreaterThan(0);
-    const sharingAfterOffer = await engine.client.call("vault.companions.sharing.get", sharingInput);
-    expect(sharingAfterOffer.stored ?? null).toBeNull();
-    expect(sharingAfterOffer.effective).toEqual(sharingBefore.effective);
+    // E2E-PARTIAL: the clearance-offer half needs a model-backed companion
+    // PERSON and a CID-7 contact. Ordinary PERSON fixtures do not supply them;
+    // vault.counterparty_contacts.create is missing (FIX 22495). Filing an
+    // offer without widening, owner application and sharing durability stay
+    // unproved. The owner-only linked fork and its ledger remain in this case.
 
-    // The same agent loses its slip mid-flow through the owner's public
-    // revoke door, and its next use of the verb it just used is refused.
-    stage = "agent slip revoke and next use";
+    // The owner revokes the same agent's slip, then reads the authority audit.
+    stage = "agent slip revoke";
     const revoked = await engine.client.request<{ revoked: boolean }>(
       "POST", "/v1/core/slips/revoke",
       { slip_id: Array.from(Buffer.from(writeSlipId, "hex")) },
@@ -3584,24 +3542,9 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     expect((await museLabel05AuditRows(engine.client)).some(row =>
       row.source_op === "slip_revoke" && row.subject_ref === writeSlipId && row.fold_valid,
     )).toBe(true);
-    const offerInputAfterRevoke = {
-      contact: contactId,
-      scope: {
-        facets: { kind: "some", values: [newFacetId] },
-        sensitivity: { kind: "at_most", value: "private" },
-      },
-      purpose: "Generated clearance offer after slip revocation.",
-      channel: "chat",
-      beneficiary: agentPersonId,
-      owner_ref: ownerPrincipal,
-      expires_at: expiresAt,
-    } satisfies FacadeInput<"vault.disclosure.offer">;
-    const afterRevoke = await agentWrite.client.raw<{ error: { code: string; message: string } }>(
-      "POST", "/v1/core/facade/vault.disclosure.offer", offerInputAfterRevoke,
-    );
 
     // Everything above survives a restart, read back through the same doors.
-    stage = "restart fork ledger and sharing readbacks";
+    stage = "restart fork ledger readbacks";
     await engine.restart();
     const afterRestartRows = await listSubjectClaims();
     const forkAfterRestart = museLabel05ClaimRowFor(afterRestartRows, forkId);
@@ -3620,12 +3563,6 @@ suite.test(test, "MUSE-LABEL-05", "Widening needs the owner: a facet fork is own
     })).seen).toBe(topologyReceipt.seen);
     expect((await museLabel05Receipts(engine.client))
       .some(row => row.receipt_ref === forkReceipt.receipt_ref)).toBe(true);
-    const sharingAfterRestart = await engine.client.call("vault.companions.sharing.get", sharingInput);
-    expect(sharingAfterRestart.stored ?? null).toBeNull();
-    expect(sharingAfterRestart.effective).toEqual(sharingBefore.effective);
-    const afterRestartRevoked = await agentWrite.client.raw<{ error: { code: string } }>(
-      "POST", "/v1/core/facade/vault.disclosure.offer", offerInputAfterRevoke,
-    );
   } catch (error) {
     primaryFailed = true;
     primary = error instanceof PublicHttpError
