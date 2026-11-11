@@ -10,6 +10,11 @@
 //! the vault's window and exports it through P's selector: the open CLAIM
 //! rides it, and the test asserts no R row does.
 //!
+//! A second test gives the same grant the Owner role: a co-Owner reads the
+//! whole vault (federation:G; the Engine's 17:21 ruling on ASK
+//! SELECTOR-MEMBER-CANON), so every R row rides its window. It guards the
+//! fix against refusing an Owner.
+//!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The `LEAK:`
 //! assertions come last.
 //!
@@ -71,8 +76,22 @@ fn record(vault: &Vault, subject: EntityId, relationship: Option<EntityId>, now:
     id
 }
 
-#[test]
-fn a_selector_window_carries_no_relationship_row_its_member_does_not_read() {
+/// The R rows one selector export planted, and the ids its window carried.
+struct Export {
+    /// The three rows labelled R, each with its kind.
+    labelled: [(EntityId, &'static str); 3],
+    carried: BTreeSet<EntityId>,
+}
+
+/// Plants the R rows and the open CLAIM, gives `member` a live federation
+/// grant of `role` whose Scope admits every record, and exports the packed
+/// window through its selector. With `check_read_lane`, the fixture first
+/// checks that the member's own read lane reads the open CLAIM and no R row.
+fn export_through(
+    role: FederationGrantRole,
+    preset: FederationGrantPreset,
+    check_read_lane: bool,
+) -> Export {
     let dir = tempfile::tempdir().expect("tempdir");
     let member = EntityId::now();
     let vault = open_member_vault(dir.path(), VaultConfig::device(), &[member.to_hex()])
@@ -102,12 +121,9 @@ fn a_selector_window_carries_no_relationship_row_its_member_does_not_read() {
 
     let scope = FederationGrantScope::vault(SHARED_VAULT_ID);
     let grant_id = EntityId::now();
-    let mut grant = FederationGrant::new(
-        scope,
-        member,
-        FederationGrantRole::Member,
-        FederationGrantPreset::Member,
-    );
+    let mut grant = FederationGrant::new(scope, member, role, preset);
+    // Both roles export under the same Scope, so the role is the only
+    // difference between the two tests.
     grant.authority_scope = read_preset();
     put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
         .expect("the member's federation grant");
@@ -173,14 +189,16 @@ fn a_selector_window_carries_no_relationship_row_its_member_does_not_read() {
             .value
             .is_some()
     };
-    assert!(
-        reads(open_claim),
-        "FIXTURE: the member reads the open CLAIM"
-    );
-    assert!(
-        !reads(message) && !reads(claim) && !reads(person),
-        "FIXTURE: the member reads none of the R MESSAGE, the R CLAIM and the R PERSON"
-    );
+    if check_read_lane {
+        assert!(
+            reads(open_claim),
+            "FIXTURE: the member reads the open CLAIM"
+        );
+        assert!(
+            !reads(message) && !reads(claim) && !reads(person),
+            "FIXTURE: the member reads none of the R MESSAGE, the R CLAIM and the R PERSON"
+        );
+    }
 
     let key = WindowKey::from_timestamp(now);
     let source = create_window_doc("selector", &key);
@@ -202,14 +220,46 @@ fn a_selector_window_carries_no_relationship_row_its_member_does_not_read() {
         carried.contains(&open_claim),
         "FIXTURE: the selector window carries the open CLAIM"
     );
+    Export {
+        labelled: [(message, "MESSAGE"), (claim, "CLAIM"), (person, "PERSON")],
+        carried,
+    }
+}
 
-    let leaked: Vec<&str> = [(message, "MESSAGE"), (claim, "CLAIM"), (person, "PERSON")]
+#[test]
+fn a_selector_window_carries_no_relationship_row_its_member_does_not_read() {
+    let export = export_through(
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+        true,
+    );
+    let leaked: Vec<&str> = export
+        .labelled
         .into_iter()
-        .filter(|(id, _)| carried.contains(id))
+        .filter(|(id, _)| export.carried.contains(id))
         .map(|(_, kind)| kind)
         .collect();
     assert!(
         leaked.is_empty(),
         "LEAK: the selector window carries the R {leaked:?} to a member who does not read R"
+    );
+}
+
+#[test]
+fn a_co_owners_selector_window_carries_the_relationship_rows() {
+    let export = export_through(
+        FederationGrantRole::Owner,
+        FederationGrantPreset::Owner,
+        false,
+    );
+    let withheld: Vec<&str> = export
+        .labelled
+        .into_iter()
+        .filter(|(id, _)| !export.carried.contains(id))
+        .map(|(_, kind)| kind)
+        .collect();
+    assert!(
+        withheld.is_empty(),
+        "OVER-REFUSAL: the selector window withholds the R {withheld:?} from a co-Owner"
     );
 }
