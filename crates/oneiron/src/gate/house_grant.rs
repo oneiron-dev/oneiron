@@ -14,9 +14,15 @@
 //! or a private scope, on the house's own live grants, so the row opens only
 //! the vault's own, unscoped MESSAGEs.
 //!
-//! A house that a workspace finish or a host start binds in the seeded
-//! house's place has no row of its own yet: that row comes with the house
-//! bind's fix (HOUSE-BIND-ANCHOR), as an engine default.
+//! A workspace finish or a host start makes another seeded AGENT_DEF the
+//! root's house (`workspace_roster/project/house.rs`). In that same write
+//! the engine re-seeds an untouched seeded default with the body
+//! [`seeded_policy_manifest_in_txn`] gives: the shipped manifest with the
+//! same row for that house. It takes the seeded install every shipped
+//! upgrade takes, so the row is an engine default, marked seeded and never
+//! written as the owner's policy, and a later upgrade keeps it while that
+//! house leads. A default the owner has authored is left as it is: there
+//! the owner's own grant opens the bound house's read.
 //!
 //! The unchanged shipped row supplies only an uncredentialed read floor;
 //! reads carrying an explicit Scope leave it out. An owner edit makes it an
@@ -31,6 +37,7 @@ use super::constants::{
     GRANT_SCOPE_KEY, POLICY_SCOPED_GRANTS_KEY, SCOPED_READ_EFFECTOR_CORE_READ,
 };
 use super::grants::PolicyScopedGrant;
+use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_MESSAGE;
@@ -111,4 +118,21 @@ pub(super) fn with_shipped_house_read(manifest: Vec<u8>) -> Result<Vec<u8>> {
         Some(house) => with_house_read_row(&manifest, &house.to_hex()),
         None => Ok(manifest),
     }
+}
+
+/// The body this vault's seeded default carries in `txn`: the shipped
+/// manifest, and the house read row of the house mind that leads the root
+/// when that house is not the seeded one, whose row ships.
+pub(super) fn seeded_policy_manifest_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<u8>> {
+    let shipped = super::default_policy_manifest()?;
+    let Some(house) = crate::workspace_roster::project_house_agent_in_txn(vault, txn)? else {
+        return Ok(shipped);
+    };
+    if Some(house) == crate::workspace_roster::seeded_house_agent()? {
+        return Ok(shipped);
+    }
+    with_house_read_row(&shipped, &house.to_hex())
 }
