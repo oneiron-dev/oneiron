@@ -119,6 +119,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 },
                 GateProvenanceHandles {
                     actor_entity_ref: Some(actor.entity_ref()),
+                    derive_commit: dreamer_run_id.is_none() && derivation_class_write(envelope),
                     dreamer_run_id,
                     ..GateProvenanceHandles::default()
                 },
