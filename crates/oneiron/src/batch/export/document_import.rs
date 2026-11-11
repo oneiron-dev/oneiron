@@ -30,7 +30,7 @@ use crate::registry::{
 };
 use crate::serialize::{ExportBody, ExportBodyFile, ExportSecrets};
 use crate::temporal::TimeRange;
-use crate::vault::live_entity_row_in_txn;
+use crate::vault::{EngineSeedIdentities, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body, encode_claim_body};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
@@ -71,6 +71,7 @@ impl Vault {
     /// Missing claim-class vocabulary returns through its native setting door,
     /// without foreign owner stamps; enforcement follows this build's compiled
     /// equivalence. An exact normalized repeat is unchanged.
+    /// Unchanged engine seeds compare apart from seed times and keep the destination's times.
     ///
     /// Witness MESSAGE rows come back as imported evidence (FIX 7777): typed
     /// `import.archive`, marked `metadata.import.source = "archive"`, with the
@@ -185,6 +186,7 @@ impl Vault {
         let _bodies = self.pin_all_result_bodies();
         let mint = super::asset_reserve::reserved_asset_mint(self, &archive)?;
         let mut wtxn = self.store.env.write_txn()?;
+        let seeds = EngineSeedIdentities::load()?;
         let assets = super::asset_reserve::ArchiveAssets {
             mint,
             known: self.asset_stream_known_in_txn(&mut wtxn)?,
@@ -274,6 +276,20 @@ impl Vault {
                         )?;
                     }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
+                    unchanged_entities += 1;
+                    continue;
+                }
+                if seeds.is_pack_seed(row.entity_type, &id)
+                    && (matches_seed_row_apart_from_seed_times(&row, &existing, &row.body, secrets)
+                        || matches_seed_row_apart_from_seed_times(
+                            &row,
+                            &existing,
+                            &ExportBody::from_bytes_with(&body, row.entity_type, secrets),
+                            secrets,
+                        ))
+                {
+                    validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
+                    // Keep the destination seed's birth metadata as well as its header.
                     unchanged_entities += 1;
                     continue;
                 }
@@ -459,7 +475,8 @@ impl Vault {
                 {
                     continue;
                 }
-                let landed = import_edge(self, &mut wtxn, &edge, &archive.index)?;
+                let landed =
+                    import_edge_with_seeds(self, &mut wtxn, &edge, &archive.index, Some(&seeds))?;
                 if landed == EdgeImport::UnprovenRegenerates {
                     skipped_unproven_regenerates_edges += 1;
                 }
@@ -1249,6 +1266,25 @@ pub(super) fn matches_row(
             == *expected
 }
 
+/// An allowlisted seed's stored kind and adapted body must match exactly;
+/// only its occurred and learned seed times are ignored. The caller keeps the
+/// destination row, header and birth metadata.
+fn matches_seed_row_apart_from_seed_times(
+    row: &ExportEntity,
+    raw: &[u8],
+    expected: &ExportBody,
+    secrets: ExportSecrets,
+) -> bool {
+    EntityMetadataHeader::parse(raw).is_some_and(|header| {
+        header.entity_type == row.entity_type
+            && ExportBody::from_bytes_with(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                row.entity_type,
+                secrets,
+            ) == *expected
+    })
+}
+
 /// Whether the row this vault stores under `id` is the archived `row`, whose
 /// body is the archive file `file` (OF-222, FIX 3677): `false` when it
 /// stores none. A file body matches only the very bytes it names, read a
@@ -1560,20 +1596,36 @@ pub(super) fn import_edge(
     edge: &ExportEdge,
     inserted: &ArchiveIndex<'_>,
 ) -> Result<EdgeImport> {
+    import_edge_with_seeds(vault, wtxn, edge, inserted, None)
+}
+
+/// Whole-vault seed equivalence is opt-in; provenance adapters retain the
+/// strict comparison used by `import_edge`.
+fn import_edge_with_seeds(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    edge: &ExportEdge,
+    inserted: &ArchiveIndex<'_>,
+    seeds: Option<&EngineSeedIdentities>,
+) -> Result<EdgeImport> {
     let source = parse_id(&edge.source)?;
     let target = parse_id(&edge.target)?;
     let kind = EdgeKind::try_from_u8(edge.kind).ok_or_else(|| invalid("unknown edge kind"))?;
     if let Some(existing) =
         crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
     {
-        let same = existing.weight == edge.weight
-            && existing.created_at == edge.created_at
+        let same_body = existing.weight == edge.weight
             && existing.vad.map(|v| [v.valence, v.arousal, v.dominance]) == edge.vad
             && existing
                 .provenance
                 .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
                 == edge.provenance;
-        if same {
+        let seed_edge = seeds.is_some_and(|seeds| match kind {
+            EdgeKind::ClaimOf => seeds.is_subject_claim_edge(&source, &target),
+            EdgeKind::FacetOf => seeds.is_carrier_facet_edge(&source, &target),
+            _ => false,
+        });
+        if same_body && (existing.created_at == edge.created_at || seed_edge) {
             return Ok(EdgeImport::Landed);
         }
         // A newly imported claim's typed door creates its own ClaimOf link, and
