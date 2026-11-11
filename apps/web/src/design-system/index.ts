@@ -213,4 +213,31 @@ export { GlyphLine, laurelLeaves, type GlyphLineProps, type LaurelLeaf } from '.
 export { placeFloating, anchorInViewport, type Side, type Align, type Placement, type PlacementOptions } from './lib/placement'
 export { bayerThreshold, easeOutQuart, develop, BAYER_8X8 } from './lib/dither'
 export { useResolvedScheme, resolveScheme, type Scheme } from './lib/scheme'
+export {
+  THEMES,
+  DEFAULT_THEME,
+  DAY_GROUND_INK,
+  NIGHT_GROUND_INK,
+  TONE_FLOOR,
+  TONE_SPAN,
+  apcaLc,
+  deriveThemeTones,
+  hexToOklch,
+  hexToRgb,
+  oklchToHex,
+  rgbToOklab,
+  themeProperties,
+  themeSeedFromColour,
+  themeSeedFromPixels,
+  toneMapFromPixels,
+  type Theme,
+  type ThemeKind,
+  type ThemeMode,
+  type ThemeSeed,
+  type ThemeTones,
+  type SheetTones,
+  type ToneMap,
+  type PixelData,
+  type Oklch,
+} from './lib/theme'
 export { useControllableState, Slot, cx } from './lib/react-utils'
