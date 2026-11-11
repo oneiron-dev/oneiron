@@ -20,9 +20,16 @@
 //!   "nothing there" is `no_answer` at once, and a copy inquiry on an edge
 //!   that allows only `task` still goes to the member;
 //! - an inquiry from another vault, a new inquiry already expired, and one
-//!   after the member revoked the edge are refused, and none is logged.
+//!   after the member revoked the edge are refused, and none is logged;
+//! - an erase of the company's guest actor, which removes the pending
+//!   check-ins it asked, settles each inquiry waiting on one `no_answer`
+//!   and leaves no join to a removed check-in, whichever of the two
+//!   tables' scrubs runs first.
 //!
+//! The erase test reaches the tables' actor scrubs through a door, so the
+//! file builds only under the test cfg:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_member_answer`.
+#![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -41,6 +48,7 @@ use oneiron::inquiry::{
     InquiryTask, StatementSource, UnsureInquiryJudgment,
 };
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::inquiry as door;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
     VaultConfig,
@@ -705,4 +713,46 @@ fn an_inquiry_from_another_vault_already_expired_or_after_the_edge_is_revoked_is
         "a refused inquiry is not logged",
     );
     assert!(companion.shown().is_empty(), "nor shown to the companion");
+}
+
+#[test]
+fn erasing_the_companys_guest_actor_settles_its_pending_inquiries_no_answer() {
+    // An erase runs every table's scrub in catalogue order; each order of
+    // the two that hold the wait leaves the same state.
+    for order in [
+        ["CHECK_IN_PENDING", "INQUIRY_PENDING", "INQUIRY_LOG"],
+        ["INQUIRY_PENDING", "CHECK_IN_PENDING", "INQUIRY_LOG"],
+    ] {
+        let thursday = Thursday::open(InquiryCheckInMode::AskWhenUnsure);
+        let inquiry = thursday.inquiry(QUESTION, InquiryKeep::Task, T0);
+        let answer = thursday
+            .admit(&inquiry, &UnsureInquiryJudgment)
+            .expect("the member's vault admits the inquiry");
+        assert_eq!(answer.outcome(), InquiryOutcome::Pending);
+        assert_eq!(
+            thursday.pending(&inquiry).expect("check-in").asker,
+            thursday.edge.guest_actor,
+        );
+
+        let scrubbed = door::erase_actor_in_tables_in_order(
+            &thursday.member.vault,
+            &thursday.edge.guest_actor,
+            &order,
+        )
+        .expect("the guest actor's erase");
+        assert!(
+            thursday.pending(&inquiry).is_none(),
+            "no join is left to the removed check-in ({order:?})",
+        );
+        assert_eq!(scrubbed, 3, "each of {order:?} registers a scrub");
+        let logged = thursday.logged(&inquiry);
+        assert_no_answer(&logged.answer, &inquiry);
+        assert_eq!(logged.decided_by, Some(InquiryDecider::LetGo));
+        assert!(
+            thursday
+                .answer(&inquiry, &InquiryMemberAnswer::Decline)
+                .is_err(),
+            "nothing is left for the member to answer",
+        );
+    }
 }

@@ -35,7 +35,8 @@ pub enum InquiryDecider {
     /// The member. `None` once the member's erase scrubbed it; the decision
     /// stands.
     Member { principal: Option<EntityId> },
-    /// Nobody answered before the inquiry expired.
+    /// Nobody answered: the inquiry expired, or the check-in it waited on
+    /// ended without an answer (held, or removed with its asker's erase).
     LetGo,
 }
 

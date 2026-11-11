@@ -80,3 +80,30 @@ pub fn erase_actor_in_inquiry_tables(vault: &Vault, actor: &EntityId) -> Result<
     wtxn.commit()?;
     Ok(ran)
 }
+
+/// Runs the actor scrub each of `tables` registers, in the order of
+/// `tables` and in one writer, as an erase and a restore's rerun run them
+/// (`tests/inquiry_member_answer.rs`, INQUIRE-1 PR 3). Returns how many of
+/// `tables` registered one.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn erase_actor_in_tables_in_order(
+    vault: &Vault,
+    actor: &EntityId,
+    tables: &[&str],
+) -> Result<usize> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut ran = 0;
+    for name in tables {
+        if let Some((_, scrub)) =
+            crate::side_table::actor_scrubs().find(|(decl, _)| decl.name == *name)
+        {
+            scrub(vault, &mut wtxn, actor)?;
+            ran += 1;
+        }
+    }
+    wtxn.commit()?;
+    Ok(ran)
+}

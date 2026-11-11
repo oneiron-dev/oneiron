@@ -48,6 +48,7 @@ pub(crate) use log::erase_inquiry_log_actor_in_txn;
 pub use log::{InquiryDecider, InquiryLogEntry};
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use log::{log_inquiry_in_txn, settle_inquiry_in_txn};
+pub(crate) use member::erase_inquiry_pending_actor_in_txn;
 pub use member::{
     INQUIRY_ANSWER_VERB, InquiryJudgment, InquiryJudgmentOutcome, InquiryMemberAnswer,
     UnsureInquiryJudgment,
