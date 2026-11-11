@@ -27,13 +27,9 @@ pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
     InferencePolicySnapshot,
 };
+#[doc(hidden)]
+pub(crate) use oneiron_consent_state::llm::entity_refs;
 pub use oneiron_model::llm::BudgetCheckpoint;
-pub use oneiron_model::llm::{
-    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
-    SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
-    VoicePrecedence, locality_within_extraction_bound,
-};
-pub(crate) mod entity_refs;
 pub use oneiron_model::llm::{
     DeterministicRunner, DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute,
     FallbackError, FallbackRegistry, LlmEventBus, ProgressSnapshot, ProgressSubscriber, Scope,
@@ -44,8 +40,14 @@ pub(crate) use oneiron_model::llm::{
     DreamerFailurePrecedence, DreamerFailureRule, decide_failure, fallback_failure_class,
     parse_failure_rules,
 };
+pub use oneiron_model::llm::{
+    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
+    SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
+    VoicePrecedence, locality_within_extraction_bound,
+};
 pub mod catalog_doors;
 pub mod manifest;
+pub mod model_pack;
 pub mod model_stream;
 pub mod model_trials;
 pub mod registry;
@@ -69,8 +71,9 @@ pub use step::{
     validate_json_schema,
 };
 pub(crate) use step::{
-    StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck, consume_step_wait_in_txn,
-    deindex_dreamer_step_claim, forget_step_memo, forget_step_memo_in_txn,
+    StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck,
+    call_as_step_checked_with_unsaved_usage, consume_step_wait_in_txn, deindex_dreamer_step_claim,
+    erase_detached_step_actor_in_txn, forget_step_memo, forget_step_memo_in_txn,
     index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
     retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
     trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
@@ -88,7 +91,7 @@ pub(crate) use step::{
 // FIX 6225: an oversize step response's exact-version pins.
 pub(crate) use step::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
-    retire_erased_step_responses_in_rows,
+    retire_erased_step_responses_in_rows, step_response_version_pinned_in_txn,
 };
 
 pub use oneiron_model::llm::{
@@ -103,6 +106,7 @@ pub use oneiron_model::llm::{
 };
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
+pub use oneiron_model::llm::ProviderTokenMeasurement;
 pub use oneiron_model::llm::{
     LabelReadFailure, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet,
     joint_marginals,
@@ -176,11 +180,11 @@ pub use oneiron_model::llm::{
     LlmCallMetadata, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmEndpointFlavor, LlmError,
     LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
     LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec,
-    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, PinnedConfigViolation,
-    PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort, ReasoningPartKind, ResponseFormat,
-    RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError, SingleRouteBackend,
-    SingleSend, SpentKind, TierPrecedence, TransportFault, TransportFaultKind,
-    UnsupportedCapability,
+    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OwnedDispatchRelease,
+    PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
+    ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
+    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
+    TransportFault, TransportFaultKind, UnsupportedCapability,
 };
 
 #[cfg(test)]
@@ -204,6 +208,7 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
+pub(crate) mod tables;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,

@@ -16,10 +16,14 @@ mod reads;
 pub(crate) use reads::PreparedNoteRead;
 pub use reads::{
     NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest,
-    NoteEditorClosed, NoteHistoryView, NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView,
+    NoteEditorClosed, NoteHistoryView, NoteIndexedReadRequest, NoteReadRequest, NoteReadSource,
+    NoteReadSpan, NoteReadView,
 };
+mod archive_import;
 #[cfg(feature = "sync")]
 mod residence_read;
+pub use archive_import::ImportedNoteRead;
+pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body};
 #[cfg(feature = "sync")]
 pub(crate) use residence_read::opened_note_view;
 mod archive_read;
@@ -28,6 +32,7 @@ pub(crate) mod erase;
 mod kinds;
 mod lifecycle;
 pub(crate) mod recovery;
+pub(crate) mod revision;
 pub(crate) mod storage;
 pub(crate) use kinds::validate_registered_kind;
 mod proposal_doors;
@@ -276,6 +281,19 @@ pub(crate) use citation_erase::validate_pins as validate_citation_dependencies;
 pub(crate) use citation_scrub::scrub_pending_citations;
 #[cfg(feature = "sync")]
 pub(crate) use pending_request::{PendingNoteRequest, admit_note_operation_in_txn};
+#[cfg(feature = "sync")]
+mod fork_downlink;
+#[cfg(feature = "sync")]
+pub(crate) use fork_downlink::{
+    authority_fork_frames_in_txn, fork_state_cites_withheld, install_authority_fork,
+    settle_authority_forks,
+};
+#[cfg(feature = "sync")]
+mod fork_upload;
+#[cfg(feature = "sync")]
+pub use fork_upload::{NoteForkUpload, NoteForkUploadOutcome, NoteForkUploadReceipt};
+#[cfg(feature = "sync")]
+pub(crate) use fork_upload::{fork_upload_frame_in_txn, uploadable_fork_in_txn};
 #[cfg(test)]
 mod erasure_tests;
 mod live_body;
@@ -433,3 +451,4 @@ mod shared_membership_tests;
 
 #[cfg(test)]
 mod adapter_tests;
+pub(crate) mod tables;

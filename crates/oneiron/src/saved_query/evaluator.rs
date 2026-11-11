@@ -852,7 +852,10 @@ fn json_message(role: LlmMessageRole, value: &Value) -> Result<LlmMessage> {
         .map_err(|_| Error::InvariantViolation("canonical JSON is not UTF-8"))?;
     Ok(LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     })
 }
 

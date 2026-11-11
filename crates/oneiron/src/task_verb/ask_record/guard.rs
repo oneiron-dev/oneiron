@@ -18,6 +18,8 @@ fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
             super::attendee_late_ask::ATTENDEE_LATE_ASK => {
                 Some(super::attendee_late_ask::ATTENDEE_LATE_ASK)
             }
+            crate::task_verb::ask_forward::INTENT => Some(crate::task_verb::ask_forward::INTENT),
+            crate::task_verb::ask_forward::RESULT => Some(crate::task_verb::ask_forward::RESULT),
             _ => None,
         }
     })
@@ -50,6 +52,27 @@ fn stored_group(
     decode(
         raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?,
         GROUP,
+    )?
+    .ok_or_else(invalid)
+}
+
+/// The stored intent a relayed intent's result answers (FIX 7494). A result
+/// can arrive before its intent: absence stays retryable, as a group's does.
+/// A present row that is not a relayed intent is a bad fact.
+fn stored_intent(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    intent: EntityId,
+) -> Result<crate::task_verb::ask_forward::AskForwardIntent> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &intent)?
+        .ok_or(Error::Record(RecordError::AskDependencyPending))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    if header.entity_type != ENTITY_TYPE_TASK {
+        return Err(invalid());
+    }
+    decode(
+        raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?,
+        crate::task_verb::ask_forward::INTENT,
     )?
     .ok_or_else(invalid)
 }
@@ -212,6 +235,32 @@ pub(crate) fn guard_ask_fact_put(
                 let group = stored_group(store, txn, result.settlement.group_ref)?;
                 verify_link_settlement(&group, &result)?;
             }
+        }
+        Some(crate::task_verb::ask_forward::INTENT) => {
+            // FIX 7494: a relayed intent lands after its group and names its
+            // exact revision. Its holder proof is judged where it is consumed.
+            let intent: crate::task_verb::ask_forward::AskForwardIntent =
+                decode(data, crate::task_verb::ask_forward::INTENT)?.ok_or_else(invalid)?;
+            intent.validate_put(id, occurred, learned_at)?;
+            if stored_group(store, txn, intent.group)?
+                .effective
+                .what
+                .revision
+                != intent.revision
+            {
+                return Err(invalid());
+            }
+        }
+        Some(crate::task_verb::ask_forward::RESULT) => {
+            // FIX 7494: a result lands only after the intent it answers. It
+            // names that intent's group and payload digest, and only that
+            // group's issuer key, its admitting node's, verifies it. A result
+            // that names another group is refused here and never stored.
+            let result: crate::task_verb::ask_forward::AskForwardResult =
+                decode(data, crate::task_verb::ask_forward::RESULT)?.ok_or_else(invalid)?;
+            result.validate_put(id, occurred, learned_at)?;
+            let intent = stored_intent(store, txn, result.intent)?;
+            result.verify_for(&intent, &stored_group(store, txn, intent.group)?)?;
         }
         _ => {}
     }

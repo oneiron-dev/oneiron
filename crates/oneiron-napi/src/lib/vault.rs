@@ -12,10 +12,9 @@ use oneiron::{
 
 pub(crate) use super::boundary::host_device_class;
 use super::boundary::{
-    DEFAULT_NAPI_SEARCH_LIMIT, NAPI_BATCH_FRAME_ENTITIES, entity_ids_to_buffers, parse_created_at,
-    parse_edge_kind, parse_entity_id, parse_search_limit, parse_u8, read_bounded_array,
-    read_codebase_snapshot, read_query, read_vector, to_napi_err, ts_to_u64,
-    validate_entity_payload_len,
+    DEFAULT_NAPI_SEARCH_LIMIT, entity_ids_to_buffers, parse_created_at, parse_edge_kind,
+    parse_entity_id, parse_search_limit, parse_u8, read_bounded_array, read_codebase_snapshot,
+    read_query, read_vector, to_napi_err, ts_to_u64, validate_entity_payload_len,
 };
 use super::codebase::{
     CodebaseContents, CodebaseMemory, CodebaseScope, core_codebase_snapshot,
@@ -133,8 +132,8 @@ impl NapiVault {
         )))
     }
 
-    /// One frame of [`Self::batch_put_entities`], in one transaction.
-    fn put_entity_frame(&self, puts: &[RawEntityPut<'_>]) -> napi::Result<()> {
+    /// Every put of [`Self::batch_put_entities`], in one transaction.
+    fn put_entity_batch(&self, puts: &[RawEntityPut<'_>]) -> napi::Result<()> {
         if let Some(memory) = self.bound_memory() {
             return memory.raw_put_entities(puts).map_err(facade_error);
         }
@@ -711,14 +710,16 @@ impl NapiVault {
 
     // ─── Batch Writes ──────────────────────────────────────────
 
-    /// Write multiple entities, in frames of `NAPI_BATCH_FRAME_ENTITIES`
-    /// (FIX 11125): every entity is checked first, then each frame is written
-    /// in order in one atomic transaction, so a batch within one frame is
-    /// one transaction, as before, and a larger one is written whole rather
-    /// than refused. A frame that fails stops the call with its own error;
-    /// the frames before it stay written.
+    /// Write multiple entities in one atomic transaction: all of them, or
+    /// none. The JS array's length is measured against
+    /// `legacy_batch_entities` before any element is read (FIX 72): past it
+    /// the row asks, and every entity is still checked and written in that
+    /// one transaction, never refused for the count.
     #[napi]
     pub fn batch_put_entities(&self, entities: Array<'_>) -> napi::Result<()> {
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::LegacyBatchEntities, u64::from(entities.len()));
         let entities: Vec<NapiBatchEntity> = read_bounded_array(&entities, |_| Ok(()))?;
         for e in &entities {
             validate_entity_payload_len(e.data.len()).map_err(napi::Error::from_reason)?;
@@ -737,8 +738,7 @@ impl NapiVault {
                 data: e.data.as_ref(),
             });
         }
-        puts.chunks(NAPI_BATCH_FRAME_ENTITIES)
-            .try_for_each(|frame| self.put_entity_frame(frame))
+        self.put_entity_batch(&puts)
     }
 
     // ─── Tree Queries ──────────────────────────────────────────

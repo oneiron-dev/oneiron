@@ -3,17 +3,21 @@
 //! (`pcm`, STANDARD base64 of whole PCM16LE samples, at most ~12 KiB raw per
 //! frame), `cut`, `speaking`, `roster_changed`, `speakers` (diarized segment
 //! embeddings, matched into the hello's roster), `depart` (the owner retires
-//! one speaker of it) and `drained`. Out: spoken
+//! one speaker of it), `drained` and `stopped`. Out: spoken
 //! audio (`pcm`, mono PCM16LE in frames under the wire's limit),
 //! `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice`,
 //! `memories` (what a turn's memories read found, heard and withheld, its
 //! narrowing receipts split across numbered frames), `roster` and `departed`
-//! (the receipts of `speakers` and `depart`) and `session_ended`.
+//! (the receipts of `speakers` and `depart`), `backchannel` (a final heard as
+//! a backchannel while the agent held the floor) and `session_ended`.
 //! Generations go by their epoch value. Spoken audio is
 //! checked against the session again when it is dequeued for the wire, so a
 //! stopped generation's audio never goes out; `flush` tells the sibling to
 //! drop what it still holds. `drained` acknowledges a `generation_end` once
-//! all of that generation's audio has played on the client.
+//! all of that generation's audio has played on the client, and `stopped` a
+//! `playout_stop` once the client applied it; each may name the samples of
+//! the generation the client played (`played_samples`), which what the
+//! person heard rests on (FIX 4899).
 
 use std::sync::Arc;
 
@@ -87,6 +91,7 @@ impl VoiceWireBindings {
             playout: playout_out,
             control: control_out,
             ended: None,
+            stopped: None,
         };
         Ok((tts, bridge, worker, wire, WireControl(control)))
     }
@@ -98,6 +103,9 @@ pub(super) struct WireMedia {
     control: mpsc::UnboundedReceiver<ControlOut>,
     /// The generation whose end last went out: the only one `drained` names.
     ended: Option<GenerationEpoch>,
+    /// The generation whose playout stop last went out: the only one
+    /// `stopped` names (FIX 4899).
+    stopped: Option<GenerationEpoch>,
 }
 
 pub(super) enum WireOut {
@@ -112,15 +120,28 @@ impl WireMedia {
         let Some(wire) = wire else {
             return std::future::pending().await;
         };
-        tokio::select! {
+        let out = tokio::select! {
             playout = wire.playout.recv() => WireOut::Playout(playout),
             control = wire.control.recv() => WireOut::Control(control),
+        };
+        if let WireOut::Control(Some(control)) = &out {
+            wire.going_out(control);
         }
+        out
     }
 
     /// The next control already queued, without waiting.
     pub(super) fn queued_control(&mut self) -> Option<ControlOut> {
-        self.control.try_recv().ok()
+        let control = self.control.try_recv().ok()?;
+        self.going_out(&control);
+        Some(control)
+    }
+
+    /// Notes a playout stop on its way out: the generation `stopped` names.
+    fn going_out(&mut self, control: &ControlOut) {
+        if let ControlOut::Event(ControlEvent::PlayoutStop { generation, .. }) = control {
+            self.stopped = Some(*generation);
+        }
     }
 
     pub(super) fn ended(&mut self, generation: GenerationEpoch) {
@@ -130,6 +151,11 @@ impl WireMedia {
     /// The generation a `drained` names, if its end went out.
     pub(super) fn drained(&self, generation: u64) -> Option<GenerationEpoch> {
         self.ended.filter(|ended| ended.value() == generation)
+    }
+
+    /// The generation a `stopped` names, if its playout stop went out.
+    pub(super) fn stopped(&self, generation: u64) -> Option<GenerationEpoch> {
+        self.stopped.filter(|stopped| stopped.value() == generation)
     }
 }
 

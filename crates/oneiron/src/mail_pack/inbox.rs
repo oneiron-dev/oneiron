@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::source::{MailSourceRow, SOURCES};
 use super::state::{MailOccurrence, MailPresence, MailStage, OCCURRENCES};
+use super::wire::MailAttachmentRef;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Result, Vault, source_audience};
 
@@ -57,6 +58,9 @@ pub struct MailInboxItem {
     /// Whether the reader reads it through a share of its thread, not as a
     /// reader of its source.
     pub shared_with_reader: bool,
+    /// Its attachments, described; `vault.mail.attachments.open` fetches one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<MailAttachmentRef>,
 }
 
 /// One inbox page, newest first.
@@ -104,6 +108,7 @@ fn item(source: EntityId, occurrence: &MailOccurrence, shared: bool) -> Option<M
         stage: occurrence.stage,
         presence: occurrence.presence,
         shared_with_reader: shared,
+        attachments: occurrence.attachments.clone(),
     })
 }
 

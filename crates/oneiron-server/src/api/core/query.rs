@@ -4,10 +4,16 @@ use super::super::SearchResponse;
 use super::super::core_engine_error;
 use super::super::default_limit;
 use super::super::json_payload;
+use super::super::native_read_hooks::{
+    NativeReadAnswer, NativeReadBody, NativeReadError, decoded, encoded, native_read_hooked,
+};
 use super::super::scoped_read_for_core_auth;
 use super::super::search_fetch_limit;
 use super::super::search_meta;
-use super::super::{ContextPackMediaQuery, ContextPackQueryAffect, MediaSeed, embed_media_seeds};
+use super::super::{
+    ContextPackMediaQuery, ContextPackQueryAffect, DecodedMediaQuery, FacadeCall, MediaSeed,
+    embed_media_seeds,
+};
 use super::write_shape::CORE_MAX_LIST_LIMIT;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -22,7 +28,9 @@ use crate::server::{QueryDoor, SyncServer, query_caller};
 use axum::extract::Path;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
+use oneiron::code_run::vault_read::VaultReadMethod;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -77,6 +85,11 @@ pub(crate) struct CoreQueryRequest {
     /// Session receiving the result. Defaults to the caller's current board session.
     #[serde(default)]
     session_id: Option<String>,
+    /// The caller's retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor for this read.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 #[derive(serde::Serialize, ToSchema)]
@@ -108,17 +121,72 @@ pub(crate) struct CoreScopedQueryResponse {
 pub(crate) async fn core_query(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CoreQueryRequest>, JsonRejection>,
-) -> Result<Json<CoreScopedQueryResponse>, EnvelopedApiError> {
+    headers: HeaderMap,
+    extensions: Extensions,
+    payload: Result<Json<Value>, JsonRejection>,
+) -> Result<Json<Value>, NativeReadError> {
     auth.require(CoreScope::Read)?;
-    let req = json_payload(payload)?;
+    let body = json_payload(payload)?;
+    let call = FacadeCall::http(&server, &auth, &headers, &extensions);
+    Ok(Json(core_query_hooked(&server, &call, body).await?.value))
+}
+
+/// The members of a core query request that its route reads and the native
+/// `memory.query` contract does not carry: the session receiving the result.
+const CORE_QUERY_ROUTE_CONTROLS: &[&str] = &["session_id"];
+
+/// `POST /v1/core/query` on `body`, for `call`'s caller, through its
+/// verb-hook boundary as `memory.query` (FIX 1435). The request's own checks
+/// and the caller's read admission run first, then the pre chain, before any
+/// media is embedded or any row is read. The answer lists every row the
+/// query read, as the in-process adapter lists them.
+pub(crate) async fn core_query_hooked(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    body: Value,
+) -> Result<NativeReadAnswer, NativeReadError> {
+    let auth = call.auth();
+    let admit = {
+        let (server, auth) = (Arc::clone(server), auth.clone());
+        move |body: &Value| admit_core_query(&server, &auth, body)
+    };
+    let admitted = admit(&body)?;
+    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
+    let body = NativeReadBody::split(body, CORE_QUERY_ROUTE_CONTROLS);
+    native_read_hooked(
+        server,
+        call,
+        VaultReadMethod::Query,
+        body,
+        admitted,
+        admit,
+        |admitted| read_core_query(server, auth, scoped_read, admitted),
+    )
+    .await
+}
+
+/// A core query request as its route admits it, every check free: decoded,
+/// its affect, query bytes and seeds checked, and its media decoded.
+struct AdmittedCoreQuery {
+    req: CoreQueryRequest,
+    query_affect: Option<oneiron::Vad>,
+    media: Option<DecodedMediaQuery>,
+}
+
+/// The route's own admission of the core query `body` for `auth`.
+fn admit_core_query(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    body: &Value,
+) -> Result<AdmittedCoreQuery, ApiError> {
+    let req: CoreQueryRequest = decoded(body)?;
     let query_affect = req
         .query_affect
         .map(ContextPackQueryAffect::vad)
         .transpose()?;
     if let Some(query) = req.query.as_deref() {
         server
-            .check_retrieval_query(query_caller(&auth), QueryDoor::CoreQuery, "query", query)
+            .check_retrieval_query(query_caller(auth), QueryDoor::CoreQuery, "query", query)
             .map_err(ApiError::from)?;
     }
     let query = non_empty_query(req.query.as_deref());
@@ -131,6 +199,28 @@ pub(crate) async fn core_query(
         .as_ref()
         .map(|media| media.decode(server.config.limits.retrieval_query_bytes))
         .transpose()?;
+    Ok(AdmittedCoreQuery {
+        req,
+        query_affect,
+        media,
+    })
+}
+
+/// An admitted core query, read on `scoped_read`, `auth`'s own: its media
+/// embedded, its rows read and projected, and their bodies observed into
+/// the caller's session.
+async fn read_core_query(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    scoped_read: oneiron::claim::ScopedRead<'_>,
+    admitted: AdmittedCoreQuery,
+) -> Result<NativeReadAnswer, NativeReadError> {
+    let AdmittedCoreQuery {
+        req,
+        query_affect,
+        media,
+    } = admitted;
+    let query = non_empty_query(req.query.as_deref());
     let limit = req.limit;
 
     let view = req.view.unwrap_or(View::Summary);
@@ -139,7 +229,7 @@ pub(crate) async fn core_query(
     let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
     // Embedded once everything free is checked, before the session's read
     // set is held: it is a paid call.
-    let media = embed_media_seeds(&server, media, query).await?;
+    let media = embed_media_seeds(server, media, query).await?;
     let (mut media_memory, media) = (server.memory.empty_lease(), media);
     media_memory.materialized(
         0,
@@ -158,8 +248,13 @@ pub(crate) async fn core_query(
         ),
     );
     let mut observations =
-        super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
-    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+        super::super::session_read_set(server, scope, req.session_id.as_deref()).await?;
+    // The caller's filter, as the hooks left the request (FIX 3977).
+    let request = req
+        .filter
+        .as_ref()
+        .map(oneiron::memory::ReadFilterInput::to_filter);
+    let scoped_read = scoped_read.with_read_filter(request.as_ref());
     let results = run_core_query(
         &scoped_read,
         query,
@@ -173,6 +268,7 @@ pub(crate) async fn core_query(
         tracing::error!(kind = ?error.kind(), "core query failed");
         core_engine_error("core query failed", error)
     })?;
+    let rows = results.value.iter().map(|result| result.id).collect();
     let mut narrowing = results.receipt;
     let projected = scoped_read
         .read(
@@ -250,7 +346,7 @@ pub(crate) async fn core_query(
     let mut meta = search_meta(count_mode, total);
     meta.limit_clamped = false;
 
-    Ok(Json(CoreScopedQueryResponse {
+    let response = encoded(&CoreScopedQueryResponse {
         access: oneiron::access_grant::GrantedData::new(
             response
                 .iter()
@@ -260,7 +356,8 @@ pub(crate) async fn core_query(
         ),
         response: PaginatedResponse::new(response, None, meta),
         narrowing,
-    }))
+    })?;
+    Ok(NativeReadAnswer::listed(response, rows))
 }
 
 pub(crate) fn non_empty_query(query: Option<&str>) -> Option<&str> {

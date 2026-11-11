@@ -28,7 +28,7 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::gate::CampaignLegFacts;
-use crate::side_table::{self, Raw, SideTable};
+use crate::side_table::{self, Named, SideTable};
 
 /// The retained request's row layout version.
 const RETAINED_VERSION: u8 = 1;
@@ -40,8 +40,17 @@ const REQUEST_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.retained_request.v1"
 /// The additional domain separation for an email body's frozen subject.
 const EMAIL_PAYLOAD_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.email_payload.v1";
 
+pub(super) type RetainedKey = ([u8; 16], u64, [u8; 32]);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RetainedRequest {
+    pub(super) original_request: Vec<u8>,
+    pub(super) held: Option<super::held::HeldEnrollmentCall>,
+}
+
 /// (consequence id, call sequence, request digest) → the retained request.
-const RETAINED: SideTable<([u8; 16], u64, [u8; 32]), [u8; RETAINED_LEN], Raw> =
+pub(super) const RETAINED: SideTable<RetainedKey, RetainedRequest, Named> =
     SideTable::new(&side_table::CAMPAIGN_ENROLLMENT_ASK);
 
 /// What the leg's ask on one consequence's call names (Engine ruling 7).
@@ -86,17 +95,7 @@ pub(super) fn leg_ask(
     consequence_id: AttemptId,
     retain: bool,
 ) -> LegAsk {
-    let live = CampaignLegFacts {
-        query_ref: event.query_ref,
-        campaign_ref: event.campaign_ref,
-        entity_ref: event.entity_ref,
-        epoch: event.epoch,
-        program_ref: step.program_ref,
-        step_ref: step.step_ref,
-        consequence_id: *consequence_id.as_bytes(),
-        call_seq: outbound.call_seq,
-        payload_digest: outbound_payload_digest(outbound),
-    };
+    let live = live_target(event, step, outbound, consequence_id);
     let key = (
         live.consequence_id,
         live.call_seq,
@@ -168,13 +167,74 @@ fn retained(vault: &Vault, key: &([u8; 16], u64, [u8; 32])) -> Retained {
     let Ok(txn) = vault.store.env.read_txn() else {
         return Retained::Unusable;
     };
-    match RETAINED.get(&vault.store, &txn, key) {
+    retained_in_txn(vault, &txn, key)
+}
+
+fn live_target(
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+    consequence_id: AttemptId,
+) -> CampaignLegFacts {
+    CampaignLegFacts {
+        query_ref: event.query_ref,
+        campaign_ref: event.campaign_ref,
+        entity_ref: event.entity_ref,
+        epoch: event.epoch,
+        program_ref: step.program_ref,
+        step_ref: step.step_ref,
+        consequence_id: *consequence_id.as_bytes(),
+        call_seq: outbound.call_seq,
+        payload_digest: outbound_payload_digest(outbound),
+    }
+}
+
+fn retained_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &([u8; 16], u64, [u8; 32]),
+) -> Retained {
+    match RETAINED.get(&vault.store, txn, key) {
         Ok(None) => Retained::Absent,
-        Ok(Some(value)) => decode(key, &value).map_or(Retained::Unusable, |(facts, event_ref)| {
-            Retained::Same(facts, event_ref)
-        }),
+        Ok(Some(value)) => decode_request(key, &value)
+            .map_or(Retained::Unusable, |(facts, event_ref)| {
+                Retained::Same(facts, event_ref)
+            }),
         Err(_) => Retained::Unusable,
     }
+}
+
+pub(super) fn leg_ask_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+    consequence_id: AttemptId,
+) -> LegAsk {
+    let live = live_target(event, step, outbound, consequence_id);
+    let key = (
+        live.consequence_id,
+        live.call_seq,
+        request_digest(&live, step, outbound),
+    );
+    match retained_in_txn(vault, txn, &key) {
+        Retained::Same(target, first_event_ref) if target == live => LegAsk {
+            target,
+            first_event_ref: Some(first_event_ref),
+        },
+        Retained::Same(..) | Retained::Unusable | Retained::Absent => LegAsk {
+            target: live,
+            first_event_ref: None,
+        },
+    }
+}
+
+pub(super) fn decode_request(
+    key: &RetainedKey,
+    value: &RetainedRequest,
+) -> Option<(CampaignLegFacts, EntityId)> {
+    decode(key, value.original_request.as_slice().try_into().ok()?)
 }
 
 fn decode(
@@ -256,7 +316,15 @@ fn keep(
                 return Ok(false);
             }
         }
-        RETAINED.put(&vault.store, wtxn, key, &value)?;
+        RETAINED.put(
+            &vault.store,
+            wtxn,
+            key,
+            &RetainedRequest {
+                original_request: value.to_vec(),
+                held: None,
+            },
+        )?;
         Ok(true)
     });
     match kept {
@@ -294,38 +362,60 @@ fn retained_key(bytes: &[u8]) -> Option<([u8; 16], u64, [u8; 32])> {
 /// what it names are erased, and a missing one only re-asks. A row that does
 /// not decode is passed over: nothing reads it back as a live request, and
 /// the damage report owns it, as in the ledger scrub.
-fn drop_retained_in_txn(
+pub(crate) fn drop_enrollment_asks_of_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    drop: impl Fn(&([u8; 16], u64, [u8; 32]), &CampaignLegFacts, &EntityId, &EntityId) -> bool,
-) -> crate::error::Result<()> {
-    let mut dropped = Vec::new();
+    actor: &EntityId,
+) -> crate::error::Result<Vec<u64>> {
+    let mut changed = Vec::new();
     for row in RETAINED.iter_raw_from(&vault.store, wtxn, &[])? {
         let (key, value) = row?;
         let Some(key) = retained_key(&key) else {
             continue;
         };
-        let Ok(value) = <[u8; RETAINED_LEN]>::try_from(value.as_slice()) else {
+        let Ok(value) = RETAINED.decode_value(&value) else {
             continue;
         };
-        let Some((facts, event_ref)) = decode(&key, &value) else {
-            continue;
-        };
-        let Some(sender_ref) = value
-            .get(121..137)
-            .and_then(|bytes| bytes.try_into().ok())
-            .and_then(|bytes| EntityId::from_bytes(bytes).ok())
-        else {
-            continue;
-        };
-        if drop(&key, &facts, &sender_ref, &event_ref) {
-            dropped.push(key);
+        let drop_original = decode_request(&key, &value).is_some_and(|(facts, event_ref)| {
+            value
+                .original_request
+                .get(121..137)
+                .and_then(|bytes| bytes.try_into().ok())
+                .and_then(|bytes| EntityId::from_bytes(bytes).ok())
+                .is_some_and(|sender_ref| {
+                    key.0 == *actor.as_bytes()
+                        || sender_ref == *actor
+                        || facts.query_ref == *actor
+                        || facts.campaign_ref == *actor
+                        || facts.entity_ref == *actor
+                        || facts.program_ref == *actor
+                        || facts.step_ref == *actor
+                        || event_ref == *actor
+                })
+        });
+        let clear_held = value
+            .held
+            .as_ref()
+            .is_some_and(|held| held.references_actor(actor));
+        if drop_original || clear_held {
+            changed.push((key, value, drop_original));
         }
     }
-    for key in dropped {
-        RETAINED.delete(&vault.store, wtxn, &key)?;
+    let mut withdrawn = Vec::new();
+    for (key, mut request, drop_original) in changed {
+        if let Some(seq) =
+            super::held::withdraw_owner_ask_in_txn(vault, wtxn, request.held.as_ref())
+        {
+            withdrawn.push(seq);
+        }
+        if drop_original {
+            RETAINED.delete(&vault.store, wtxn, &key)?;
+        } else {
+            request.held = None;
+            RETAINED.put(&vault.store, wtxn, &key, &request)?;
+        }
     }
-    Ok(())
+    Ok(withdrawn)
 }
 
 /// FIX 6835: this table's actor scrub (FIX 3520): an erase of `actor` drops
@@ -340,16 +430,7 @@ pub(crate) fn erase_enrollment_ask_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> crate::error::Result<()> {
-    drop_retained_in_txn(vault, wtxn, |key, facts, sender_ref, event_ref| {
-        key.0 == *actor.as_bytes()
-            || *sender_ref == *actor
-            || facts.query_ref == *actor
-            || facts.campaign_ref == *actor
-            || facts.entity_ref == *actor
-            || facts.program_ref == *actor
-            || facts.step_ref == *actor
-            || *event_ref == *actor
-    })
+    drop_enrollment_asks_of_actor_in_txn(vault, wtxn, actor).map(|_| ())
 }
 
 /// FIX 6835: drops every retained request of one consequence's call, in the
@@ -363,9 +444,36 @@ pub(crate) fn drop_enrollment_asks_of_call_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     attempt_id: AttemptId,
     call_seq: u64,
-) -> crate::error::Result<()> {
+) -> crate::error::Result<Vec<u64>> {
     let mut prefix = attempt_id.as_bytes().to_vec();
     prefix.extend_from_slice(&call_seq.to_be_bytes());
+    let mut held = Vec::new();
+    for row in RETAINED.iter_raw_from(&vault.store, wtxn, &prefix)? {
+        let (_, value) = row?;
+        if let Ok(request) = RETAINED.decode_value(&value) {
+            held.push(request.held);
+        }
+    }
+    let mut withdrawn = Vec::new();
+    for held in held {
+        if let Some(seq) = super::held::withdraw_owner_ask_in_txn(vault, wtxn, held.as_ref()) {
+            withdrawn.push(seq);
+        }
+    }
     RETAINED.delete_from(&vault.store, wtxn, &prefix)?;
-    Ok(())
+    Ok(withdrawn)
+}
+
+pub(super) fn request_key(
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+    consequence_id: AttemptId,
+) -> ([u8; 16], u64, [u8; 32]) {
+    let target = live_target(event, step, outbound, consequence_id);
+    (
+        target.consequence_id,
+        target.call_seq,
+        request_digest(&target, step, outbound),
+    )
 }

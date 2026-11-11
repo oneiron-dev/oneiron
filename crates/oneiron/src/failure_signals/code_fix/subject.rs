@@ -158,7 +158,7 @@ fn code_fix_verbatim_sources(
         let mut whole = Vec::with_capacity(message.content.len());
         for part in &message.content {
             match part {
-                ContentPart::Text { text } => whole.push(text.clone()),
+                ContentPart::Text { text, .. } => whole.push(text.clone()),
                 other => {
                     let value = serde_json::to_value(other).unwrap_or_default();
                     whole.push(value.to_string());

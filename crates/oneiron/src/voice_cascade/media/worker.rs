@@ -40,10 +40,21 @@ impl VoiceMediaWorker {
     /// pays for what it sent). A banked voice withdrawn before a call goes,
     /// or before its audio comes back, is not spoken.
     pub async fn run(
+        self,
+        door: &dyn AiMediaDoor,
+        vault: &Vault,
+        deliver: impl FnMut(VoiceMediaOutput),
+    ) {
+        self.run_released(door, vault, deliver, None).await;
+    }
+
+    /// Runs with a call-local check of the queued speech generation at each dispatch.
+    pub async fn run_released(
         mut self,
         door: &dyn AiMediaDoor,
         vault: &Vault,
         mut deliver: impl FnMut(VoiceMediaOutput),
+        release: Option<&(dyn Fn(GenerationEpoch) -> LlmResult<()> + Sync)>,
     ) {
         loop {
             self.drain();
@@ -70,13 +81,27 @@ impl VoiceMediaWorker {
                     fallbacks,
                 } => {
                     let Some(spoken) = self
-                        .speak(door, vault, generation, request, voice.as_ref(), &fallbacks)
+                        .speak(
+                            door,
+                            vault,
+                            generation,
+                            request,
+                            voice.as_ref(),
+                            &fallbacks,
+                            release,
+                        )
                         .await
                     else {
                         continue;
                     };
                     deliver(match spoken {
-                        Ok(frame) => VoiceMediaOutput::Pcm { submission, frame },
+                        // An `ai.speech` answer carries no alignment: a
+                        // part-played sentence's heard text stays unknown.
+                        Ok(frame) => VoiceMediaOutput::Pcm {
+                            submission,
+                            frame,
+                            alignment: None,
+                        },
                         Err(error) => VoiceMediaOutput::SpeechFailed {
                             generation,
                             submission,
@@ -119,6 +144,7 @@ impl VoiceMediaWorker {
         request: MediaRequest,
         voice: Option<&BankVoiceBinding>,
         fallbacks: &[(MediaVoiceRoute, BankVoiceBinding)],
+        release: Option<&(dyn Fn(GenerationEpoch) -> LlmResult<()> + Sync)>,
     ) -> Option<std::result::Result<PcmFrame, String>> {
         // Candidate 0 is the piece as submitted, in its own voice;
         // candidate k past it is `fallbacks[k - 1]`, the piece rebuilt on
@@ -153,7 +179,16 @@ impl VoiceMediaWorker {
                     continue;
                 }
                 called = true;
-                let response = match self.call(door.call(call), Some(generation)).await? {
+                let dispatch_release = || match release {
+                    Some(release) => release(generation),
+                    None => Ok(()),
+                };
+                let call = if release.is_some() {
+                    door.call_released(call, Some(&dispatch_release))
+                } else {
+                    door.call(call)
+                };
+                let response = match self.call(call, Some(generation)).await? {
                     Ok(response) => response,
                     Err(error) if error.is_provider_unavailable() => {
                         first_error.get_or_insert_with(|| error.to_string());

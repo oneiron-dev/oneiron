@@ -231,7 +231,8 @@ impl AgentDispatcher<'_> {
         let task_count = u64::try_from(work.len()).unwrap_or(u64::MAX);
         let expected = ExpectedSpend::sum(parts.iter().map(|&(_, _, part)| part));
         let (priced_subtotal_usd_micros, unpriced_parts) = dollar_parts(&parts, &unit);
-        let terms = self.spend_terms_in_txn(txn, tree, caller.budget, expected.units, &unit)?;
+        let terms =
+            self.spend_terms_in_txn(txn, tree, caller.budget, None, expected.units, &unit)?;
         let (over_available, more_would_buy) =
             terms.shortfall(expected, &unit, "fan-out", &format!("{task_count} task(s)"));
         Ok(FanoutStatement {

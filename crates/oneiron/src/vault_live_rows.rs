@@ -40,3 +40,6 @@ impl LiveRowsHolder for Vault {
         &self.live_rows
     }
 }
+
+#[cfg(test)]
+mod tests;

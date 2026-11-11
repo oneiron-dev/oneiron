@@ -149,6 +149,7 @@ pub(crate) fn purge_artifact_retention_in_txn(
     organ_wait::purge_artifact_in_txn(store, txn, artifact_id)
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

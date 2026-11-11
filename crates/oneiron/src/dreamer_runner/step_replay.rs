@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::code_run::FoldWordRef;
 use crate::compaction::output::OutputRef;
 use crate::model_binding::ModelRole;
 use crate::side_table::ErasedForm;
@@ -48,16 +49,69 @@ impl ExposureSlot {
         &self,
         request: &'r LlmRequest,
     ) -> Option<(&'r str, std::ops::Range<usize>)> {
-        let span = self.stored?;
-        let message = request.messages.get(usize::try_from(self.message).ok()?)?;
-        let ContentPart::Text { text } = message.content.get(usize::try_from(self.part).ok()?)?
-        else {
-            return None;
-        };
-        let range = usize::try_from(span.start).ok()?..usize::try_from(span.end).ok()?;
-        let bytes = text.get(range.clone())?;
-        (*blake3::hash(bytes.as_bytes()).as_bytes() == span.content_hash).then_some((text, range))
+        locate_span(request, self.message, self.part, self.stored)
     }
+}
+
+/// Where the console of the step before sits in a captured engine step's
+/// request (FIX 3608): the user message the request builder rendered that
+/// step's observation into, whole and at the full tier, as one text part.
+/// A callable's counterfactual renders each branch's observation through
+/// the same formatter and puts it there. A console the builder showed any
+/// other way (an overview, a stub, a fold or a frame) has no slot. Nor has
+/// a console in a request that lists the run's results in a brief.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsoleSlot {
+    /// The step whose observation the message renders.
+    pub step: u64,
+    pub message: u32,
+    pub part: u32,
+    /// The whole text part as stored (FIX 6144). `None` when a secret's
+    /// handle the wall put there cuts through one of its bounds.
+    pub stored: Option<StoredSpan>,
+}
+
+impl ConsoleSlot {
+    /// The slot of `text`, the whole first part of message `message`, which
+    /// renders step `step`'s console; `None` past the index a slot holds.
+    pub(crate) fn whole(step: u64, message: usize, text: &str) -> Option<Self> {
+        Some(Self {
+            step,
+            message: u32::try_from(message).ok()?,
+            part: 0,
+            stored: Some(StoredSpan {
+                start: 0,
+                end: text.len() as u64,
+                content_hash: *blake3::hash(text.as_bytes()).as_bytes(),
+            }),
+        })
+    }
+
+    /// The slot's text part in `request`, when its stored span is that whole
+    /// part and its bytes still hash to the span's.
+    pub(crate) fn locate<'r>(&self, request: &'r LlmRequest) -> Option<&'r str> {
+        let (text, range) = locate_span(request, self.message, self.part, self.stored)?;
+        (range == (0..text.len())).then_some(text)
+    }
+}
+
+/// Part `part` of message `message` in `request` and the byte range `span`
+/// names there, when the part is text, the range falls on its character
+/// boundaries and its bytes still hash to the span's.
+fn locate_span(
+    request: &LlmRequest,
+    message: u32,
+    part: u32,
+    span: Option<StoredSpan>,
+) -> Option<(&str, std::ops::Range<usize>)> {
+    let span = span?;
+    let message = request.messages.get(usize::try_from(message).ok()?)?;
+    let ContentPart::Text { text, .. } = message.content.get(usize::try_from(part).ok()?)? else {
+        return None;
+    };
+    let range = usize::try_from(span.start).ok()?..usize::try_from(span.end).ok()?;
+    let bytes = text.get(range.clone())?;
+    (*blake3::hash(bytes.as_bytes()).as_bytes() == span.content_hash).then_some((text, range))
 }
 
 /// Which host built the captured step.
@@ -194,7 +248,9 @@ pub struct ReplayRoutePin {
 pub enum CapsuleRequest {
     /// Its canonical JSON as stored, each secret in it its custody handle,
     /// by its body ref, its path and the hash of the stored bytes, which a
-    /// read of the body checks.
+    /// read of the body checks. For a step's request, the body is the
+    /// manifest of its shared pieces (FIX 4192), and the hash is the whole
+    /// request's they put together.
     Kept {
         body: OutputRef,
         path: String,
@@ -245,7 +301,8 @@ pub struct StepReplayCapsule {
     pub host: CapsuleHost,
     /// The request as assembled and bound, before its route's prompt: its
     /// body as stored (FIX 6144), or withheld when the wall refused it
-    /// outright (FIX 6254).
+    /// outright (FIX 6254). A kept request's body is the manifest of the
+    /// pieces its run holds once for the actor (FIX 4192).
     pub request: CapsuleRequest,
     /// The canonical hash of the request as it was sent, before any mask:
     /// the identity a sent request is matched by.
@@ -257,6 +314,9 @@ pub struct StepReplayCapsule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_rows: Option<Vec<EntityId>>,
     pub exposures: Vec<ExposureSlot>,
+    /// Where the step before's console sits in the request (FIX 3608);
+    /// `None` when the builder showed none of it whole.
+    pub console: Option<ConsoleSlot>,
     /// The sampling seed the request carried, if any.
     pub seed: Option<u64>,
     /// The rung that answered, its route prompt by its body (FIX 6255);
@@ -282,6 +342,24 @@ pub struct StepReplayCapsule {
     /// it, and for good for a step that ran tool rounds and for an engine
     /// step.
     pub answer: Option<OutputRef>,
+    /// The folds whose accepted summaries its bodies copy (FIX 18924). Every
+    /// capsule keeps it. It is apart from `source_rows` and claims no list
+    /// of inputs is complete.
+    pub(crate) fold_words: CapsuleFoldWords,
+}
+
+/// The folds whose accepted summaries a capsule's bodies copy (FIX 18924),
+/// one list for each body, each fold once. A list names what was put in its
+/// body, never folds read from an id. A withdrawal of one fold's words
+/// retires each body whose list names that fold.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CapsuleFoldWords {
+    /// The stubs the request shows and the answers its consoles may print.
+    pub(crate) request: Vec<FoldWordRef>,
+    /// The answers the start's prefix row records.
+    pub(crate) start: Vec<FoldWordRef>,
+    /// The answers a hook view in the replay context shows.
+    pub(crate) context: Vec<FoldWordRef>,
 }
 
 impl StepReplayCapsule {
@@ -309,10 +387,12 @@ impl StepReplayCapsule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutorStepStart {
     /// The start body (its encoded prefix row, its config, its teaching
-    /// fingerprint), owned by the run, as the wall admitted it.
+    /// fingerprint), owned by the run, as the wall admitted it. FIX 4192:
+    /// this is the body's manifest; the run holds the body as shared
+    /// pieces the manifest names.
     pub body: OutputRef,
     pub path: String,
-    /// BLAKE3 of the body bytes as stored.
+    /// BLAKE3 of the whole body bytes as stored, its pieces put together.
     pub digest: [u8; 32],
     /// The bridge log's length at the step's start.
     pub bridge_start: u64,
@@ -336,7 +416,7 @@ pub struct StepContextRef {
 /// attempt, run, step and lease generation, its host, the model and
 /// locality that answered it and the role that admitted it (FIX 6359),
 /// both request hashes and its messages digest, its exposures' skills,
-/// revisions and spans, its seed, its time, its start's ref, digest and
+/// revisions and spans, its console slot (FIX 3608), its seed, its time, its start's ref, digest and
 /// bridge count, its replay context's ref and digest, its route prompt's
 /// ref and digest (FIX 6255), the route its rung went out on, which holds
 /// the route prompt's digest only, and its answer's digest and length (FIX

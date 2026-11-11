@@ -2,11 +2,13 @@
 //! judged from the vault's own rows in the caller's snapshot.
 //!
 //! The live Owner deletes anything its bound credential reaches. An Admin
-//! deletes what the resource axes of its live membership grant hold; an
-//! Admin or a Member deletes an item it provably owns (a TASK by its Owner
-//! fact, a NOTE by its author); the records the vault mints itself are no
-//! one's own. For a person delete is a role default, never a Grant it must
-//! hold; a Viewer, a Delegate or a guest has none. An agent deletes only
+//! deletes what the resource axes of its live membership grant hold; a
+//! Steward deletes in scope, what its live grant holds under the `delete`
+//! class it names (ARCH-0043, owner 9 Nov); an Admin, a Steward or a Member
+//! deletes an item it provably owns (a TASK by its Owner fact, a NOTE by
+//! its author); the records the vault mints itself are no one's own. For a
+//! person delete is a role default, never a Grant it must hold; a Viewer, a
+//! Delegate or a guest has none. An agent deletes only
 //! under ONE live Grant that names the `delete` class and holds the record,
 //! given by a live Owner or by an Admin still holding it. No second
 //! permission ledger is kept, and nothing a request carries asserts a role,
@@ -225,9 +227,10 @@ impl TargetRecord {
     }
 }
 
-/// An Admin's in-scope delete, else an Admin's or a Member's own item, each
-/// under one live membership grant over this shared vault. A personal vault
-/// has no membership roles.
+/// An Admin's in-scope delete, a Steward's in-scope delete under the
+/// `delete` class its grant names, else an Admin's, a Steward's or a
+/// Member's own item, each under one live membership grant over this shared
+/// vault. A personal vault has no membership roles.
 fn person_arms(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -251,9 +254,27 @@ fn person_arms(
         };
         if !matches!(
             role,
-            FederationGrantRole::Owner | FederationGrantRole::Admin | FederationGrantRole::Member
+            FederationGrantRole::Owner
+                | FederationGrantRole::Admin
+                | FederationGrantRole::Steward
+                | FederationGrantRole::Member
         ) {
             continue;
+        }
+        if role == FederationGrantRole::Steward
+            && names_delete(&grant.authority_scope)
+            && record.position.as_ref().is_some_and(|position| {
+                grant.authority_scope.admits(
+                    DELETE_VERB,
+                    &delete_record(&any_world_at(position, &grant.authority_scope.worlds)),
+                    &Scope::top(),
+                )
+            })
+        {
+            return Ok(Some(ArchiveDeleteAuthority {
+                role: ArchiveDeleteRole::Steward,
+                grant: Some(id),
+            }));
         }
         if role.is_admin()
             && record
@@ -309,7 +330,8 @@ fn owned_by(
 /// `delete` class in its explicit verb set, holds the record, was given by
 /// a live owner (an owner's agent Grant) or by a person still holding an
 /// Admin grant that holds the record (a Delegate), and on a shared vault
-/// keeps its pact membership. Grants are never unioned.
+/// keeps its pact membership. Grants are never unioned. On an owner's agent
+/// Grant, a verb class it names that admits `delete` lists it (FIX 8735).
 fn agent_arm(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -325,14 +347,24 @@ fn agent_arm(
     let now = vault.instant_in_txn(txn)?.secs();
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let shared = vault.shared_vault_creation_in_txn(txn)?.is_some();
-    for (id, grant) in live_grants_in(vault, txn)? {
+    let grants = live_grants_in(vault, txn)?;
+    let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+        &vault.store,
+        txn,
+        grants
+            .iter()
+            .filter(|(_, grant)| grant.member_ref == caller.actor)
+            .map(|(_, grant)| grant),
+    )?;
+    for (id, grant) in grants {
+        let scope = grant.scope_for_verb(DELETE_VERB, &classes);
         if grant.member_ref != caller.actor
             || grant.role != FederationGrantRole::Delegate
-            || !grant.confers_at(now)
-            || !names_delete(&grant.authority_scope)
-            || !grant.authority_scope.admits(
+            || !grant.confers_with_classes_at(now, &classes)
+            || !names_delete(&scope)
+            || !scope.admits(
                 DELETE_VERB,
-                &delete_record(&any_world_at(position, &grant.authority_scope.worlds)),
+                &delete_record(&any_world_at(position, &scope.worlds)),
                 &Scope::top(),
             )
         {

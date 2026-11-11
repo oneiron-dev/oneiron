@@ -3,21 +3,32 @@
 use std::collections::BTreeSet;
 use std::time::SystemTime;
 
+use super::BODY_GRACE;
 use super::ResultBodyPin;
-use super::files::{
-    BodyEntry, RemoveOutcome, body_entries, remove_unnamed, remove_unnamed_entry_now,
-    remove_unnamed_now, sync_dir, unlink_body,
-};
+use super::files::{BodyEntry, body_entries, entry_retirable, sync_dir, unlink_retiring};
 use super::{RAW_OUTPUT_ROWS, raw_output_handle, unowned_mark_key};
 use crate::code_run::code_run_body_held_in_txn;
 use crate::provenance::body::{
     digest_is_held_in_txn, released_bodies_in_txn, take_released_in_txn,
 };
+use crate::store::result_body_pins::RetiringFile;
 use crate::store::{BODY_FILE_SHRED_SCOPE, BodyDir, body_key_row_in_txn, retire_body_key_in_txn};
 use crate::{Result, Vault};
 
 /// Body directory names the orphan sweep checks under one read transaction.
 const SWEEP_BATCH: usize = 256;
+
+/// What one drain of the collector's notes came to (FIX 22101).
+#[derive(Default)]
+struct Retired {
+    /// Files that went.
+    removed: usize,
+    /// Notes an older read snapshot or a reader's pin keeps for a later
+    /// pass, and ones a pin taken since forgot.
+    kept: usize,
+    /// Files a write names again: their notes are forgotten.
+    named: usize,
+}
 
 /// What one collector pass did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -30,7 +41,8 @@ pub struct ResultBodyCollectReport {
     /// as they are.
     pub held: usize,
     /// Released bodies, and orphan files (FIX 11137), a reader still
-    /// pinned: left for a later pass.
+    /// pinned, or a read snapshot older than their release may still read
+    /// (FIX 22101): left for a later pass.
     pub pinned: usize,
     /// Orphan body files (and line indexes whose body is gone) removed.
     pub orphans: usize,
@@ -56,8 +68,11 @@ impl Vault {
     /// owned occurrence's marks stay with its manifest. An orphan is a body
     /// file no raw-output row or descriptor names, older than an hour, so a
     /// body whose row has yet to commit stays; it too goes only once a fresh
-    /// writer finds it unnamed. A pinned body is left for a later pass.
-    /// Idempotent; a file already gone is fine.
+    /// writer finds it unnamed. A pinned body is left for a later pass. No
+    /// file goes while a read transaction older than the write that stopped
+    /// naming it is live, so every snapshot reads the files it names,
+    /// whatever door opened it (FIX 22101). Idempotent; a file already gone
+    /// is fine.
     ///
     /// # Errors
     ///
@@ -95,73 +110,132 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             released_bodies_in_txn(&self.store, &rtxn, limit)?
         };
-        if released.is_empty() {
-            return Ok(report);
-        }
         let pins = &self.result_body_pins;
-        let taken = self.with_write_txn_grouped(|txn| {
-            let mut taken = Vec::with_capacity(released.len());
-            for digest in &released {
-                // A reader holding it keeps it queued for a later pass, and
-                // no pin is admitted while its rows and key row go: a reader
-                // pinned since reads the snapshot that still holds them.
-                let Some(retired) =
-                    pins.unless_pinned(digest, || self.retire_released_in_txn(txn, digest))
-                else {
-                    report.pinned += 1;
-                    continue;
-                };
-                match retired? {
-                    Some(instance) => taken.push((*digest, instance)),
-                    None => report.held += 1,
-                }
-            }
-            Ok(taken)
-        })?;
-        report.keys_retired = taken
-            .iter()
-            .filter(|(_, instance)| instance.is_some())
-            .count();
-        if taken.is_empty() {
-            return Ok(report);
-        }
-        // The rows are gone for good, so each file may go now, in a fresh
-        // writer that reads them again: no row naming the digest commits
-        // between that check and the unlink, and a publisher whose file is
-        // out before its row holds its pin (FIX 5399b). One a publisher
-        // named again, or a reader pinned since, stays until the orphan
-        // sweep finds it unnamed and unpinned.
-        let dir = self.store.body_dir()?;
-        self.with_write_txn_grouped(|txn| {
-            for (digest, instance) in &taken {
-                if self.released_named_in_txn(txn, digest)? {
-                    report.held += 1;
-                    continue;
-                }
-                match pins.unless_pinned(digest, || unlink_body(&dir, digest, instance.as_ref())) {
-                    Some(unlinked) => {
-                        unlinked?;
-                        report.collected += 1;
+        if !released.is_empty() {
+            report.keys_retired = self.with_write_txn_grouped(|txn| {
+                // The write that stops naming them: a read snapshot older
+                // than it still names their files (FIX 22101).
+                let since = txn.id();
+                let mut keys = 0;
+                for digest in &released {
+                    // A reader holding it keeps it queued for a later pass,
+                    // and no pin is admitted while its rows and key row go:
+                    // a reader pinned since reads the snapshot that still
+                    // holds them.
+                    let Some(retired) =
+                        pins.unless_pinned(digest, || self.retire_released_in_txn(txn, digest))
+                    else {
+                        report.pinned += 1;
+                        continue;
+                    };
+                    match retired? {
+                        Some(instance) => {
+                            keys += usize::from(instance.is_some());
+                            pins.retire(*digest, RetiringFile::Released(instance), since);
+                        }
+                        None => report.held += 1,
                     }
-                    None => report.pinned += 1,
                 }
-            }
-            Ok(())
-        })?;
-        if report.collected > 0 {
-            sync_dir(&dir)?;
+                Ok(keys)
+            })?;
+        }
+        // The rows are gone for good, so each file goes once no older
+        // snapshot is left, in a fresh writer that reads them again: no row
+        // naming the digest commits between that check and the unlink, and
+        // a publisher whose file is out before its row holds its pin (FIX
+        // 5399b). One a publisher named again stays; one a reader pinned
+        // since is left to the orphan sweep.
+        if limit > 0 {
+            let retired = self.remove_due_retiring(
+                &self.store.body_dir()?,
+                |_, file| matches!(file, RetiringFile::Released(_)),
+                limit,
+            )?;
+            report.collected += retired.removed;
+            report.pinned += retired.kept;
+            report.held += retired.named;
         }
         // An erase's retirement of an instance whose file just went.
         self.finish_body_custody_retirements_after_commit();
         Ok(report)
     }
 
+    /// Unlinks up to `limit` of the files the collector noted as unnamed
+    /// that `wanted` takes, once no live read transaction is older than the
+    /// committed write that noted it, as the reader table reads under the
+    /// unlinking writer (FIX 22101): every snapshot left sees it unnamed,
+    /// and a write that named it since held a pin, whose drop forgot the
+    /// note. Each goes in a fresh writer that finds it unnamed again, under
+    /// the pin lock, so no pin is taken between that check and the unlink.
+    /// A file a write names again is forgotten.
+    fn remove_due_retiring(
+        &self,
+        dir: &BodyDir,
+        wanted: impl Fn(&[u8; 32], &RetiringFile) -> bool,
+        limit: usize,
+    ) -> Result<Retired> {
+        let mut retired = Retired::default();
+        let oldest = self.store.env.oldest_reader_txn_id()?;
+        let (due, waiting) = self.result_body_pins.due_retiring(oldest, limit, wanted);
+        retired.kept = waiting;
+        if due.is_empty() {
+            return Ok(retired);
+        }
+        let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
+        let pins = &self.result_body_pins;
+        self.with_write_txn_grouped(|txn| {
+            // The sample above may predate a note another collector made
+            // since: each note goes only when the reader table, read again
+            // under this writer, holds no snapshot older than the write that
+            // made it, and that write has committed; one this writer's own
+            // commit group made waits (FIX 22101). No reader opened from here
+            // on sees an older snapshot.
+            let writer = txn.id();
+            let oldest = self.store.env.oldest_reader_txn_id()?;
+            for (digest, file, since) in &due {
+                if *since >= writer || oldest.is_some_and(|oldest| oldest < *since) {
+                    retired.kept += 1;
+                    continue;
+                }
+                let named = match *file {
+                    RetiringFile::Released(_) => self.released_named_in_txn(txn, digest)?,
+                    RetiringFile::Entry { instance, index } => {
+                        let entry = BodyEntry {
+                            digest: *digest,
+                            instance,
+                            index,
+                        };
+                        !self.entry_unnamed_in_txn(txn, &entry, sealed)?
+                    }
+                };
+                if named {
+                    pins.forget_retiring(digest, *file);
+                    retired.named += 1;
+                    continue;
+                }
+                match pins.remove_retiring(digest, *file, *since, || {
+                    unlink_retiring(dir, digest, *file)
+                }) {
+                    Some(unlinked) => retired.removed += usize::from(unlinked?),
+                    None => retired.kept += 1,
+                }
+            }
+            Ok(())
+        })?;
+        if retired.removed > 0 {
+            sync_dir(dir)?;
+        }
+        Ok(retired)
+    }
+
     /// Gives back a save's `pins` and unlinks each body it brought into
     /// `bodies/` as a new instance that nothing names once its transaction
     /// has ended: a refused save, or a copy that skipped its MESSAGE, leaves
     /// no base copy of off-record bytes for the orphan sweep (FIX 3633). Each
-    /// goes in a fresh writer that finds it unnamed; one a reader pins stays
-    /// for the sweep. Warning-only: it never fails the save it follows.
+    /// is noted in a fresh writer that finds it unnamed and goes once no
+    /// older read snapshot is left (FIX 22101); one a reader pins, or one an
+    /// older snapshot keeps, stays for a later pass. Warning-only: it never
+    /// fails the save it follows.
     pub(crate) fn discard_unnamed_promoted_bodies(&self, pins: Vec<ResultBodyPin>) {
         let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
         let imported: Vec<BodyEntry> = pins
@@ -180,22 +254,28 @@ impl Vault {
         if imported.is_empty() {
             return;
         }
+        let pins = &self.result_body_pins;
         let discarded = self.store.body_dir().and_then(|dir| {
-            let went = self.with_write_txn_grouped(|txn| {
-                let mut went = 0usize;
+            let mut noted = Vec::new();
+            self.with_write_txn_grouped(|txn| {
+                // An older snapshot may name the same file: it goes once
+                // none is left (FIX 22101).
+                let since = txn.id();
                 for entry in &imported {
-                    if self.entry_unnamed_in_txn(txn, entry, sealed)?
-                        && remove_unnamed_now(&dir, entry, &self.result_body_pins)?
+                    if self.entry_unnamed_in_txn(txn, entry, sealed)? && !pins.holds(&entry.digest)
                     {
-                        went += 1;
+                        pins.retire(entry.digest, entry.retiring(), since);
+                        noted.push((entry.digest, entry.retiring()));
                     }
                 }
-                Ok(went)
+                Ok(())
             })?;
-            if went > 0 {
-                sync_dir(&dir)?;
-            }
-            Ok(())
+            self.remove_due_retiring(
+                &dir,
+                |digest, file| noted.contains(&(*digest, *file)),
+                noted.len(),
+            )
+            .map(drop)
         });
         if let Err(error) = discarded {
             tracing::warn!(
@@ -254,15 +334,18 @@ impl Vault {
     /// Removes up to `limit` body files in `dir` that no raw-output row or
     /// descriptor names, each with its line index, and line indexes whose
     /// body is gone: what a writer left before its row committed, or the
-    /// collector left to a reader. Returns how many went, and how many a
-    /// reader's pin kept (FIX 11137).
+    /// collector left to a reader. Each is noted in a fresh writer that
+    /// finds it unnamed, and goes once no read snapshot older than that
+    /// writer is left (FIX 22101). Returns how many went, and how many a
+    /// reader's pin kept (FIX 11137) or an older snapshot keeps for now.
     fn sweep_orphan_result_bodies(&self, dir: &BodyDir, limit: usize) -> Result<(usize, usize)> {
         let now = SystemTime::now();
         let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
+        let pins = &self.result_body_pins;
         let mut entries = body_entries(dir)?;
-        let mut removed = 0;
+        let mut noted = 0;
         let mut pinned = 0;
-        while removed < limit {
+        while noted < limit {
             let batch = entries
                 .by_ref()
                 .take(SWEEP_BATCH)
@@ -274,43 +357,47 @@ impl Vault {
             if unnamed.is_empty() {
                 continue;
             }
-            // Each goes in a fresh writer that finds it unnamed again, so no
-            // row naming it commits between that check and the unlink (FIX
-            // 5399b).
+            // Each is noted in a fresh writer that finds it unnamed again,
+            // so no row naming it commits between that check and the note
+            // (FIX 5399b).
             let (went, kept) = self.with_write_txn_grouped(|txn| {
+                let since = txn.id();
                 let (mut went, mut kept) = (0, 0);
                 for entry in &unnamed {
-                    if removed + went == limit {
+                    if noted + went == limit {
                         break;
                     }
-                    if !self.entry_unnamed_in_txn(txn, entry, sealed)? {
+                    if !self.entry_unnamed_in_txn(txn, entry, sealed)?
+                        || !entry_retirable(dir, entry, now, Some(BODY_GRACE))?
+                    {
                         continue;
                     }
-                    match remove_unnamed(dir, entry, now, &self.result_body_pins)? {
-                        RemoveOutcome::Removed => went += 1,
-                        RemoveOutcome::Pinned => kept += 1,
-                        RemoveOutcome::Skipped => {}
+                    if pins.holds(&entry.digest) {
+                        kept += 1;
+                        continue;
                     }
+                    pins.retire(entry.digest, entry.retiring(), since);
+                    went += 1;
                 }
                 Ok((went, kept))
             })?;
-            removed += went;
+            noted += went;
             pinned += kept;
         }
-        if removed > 0 {
-            sync_dir(dir)?;
-        }
-        Ok((removed, pinned))
+        let retired = self.remove_due_retiring(dir, |_, _| true, limit)?;
+        Ok((retired.removed, pinned + retired.kept))
     }
 
     /// Removes the staged `digests` an aborted import left unnamed (FIX
     /// 588): the import's post-error cleanup, run once its pins are
-    /// released. Each entry goes only once a fresh writer finds it unnamed
-    /// again, as the orphan sweep's do, so a newly named or shared body is
-    /// never deleted; there is no age floor, as a just-staged body is
-    /// still debris once its writer aborted. Returns how many went, how
-    /// many a reader's pin kept, and how many were not their entry's to
-    /// remove. The hourly sweep stays the backstop for what this leaves.
+    /// released. Each entry is noted only once a fresh writer finds it
+    /// unnamed again, as the orphan sweep's are, so a newly named or shared
+    /// body is never deleted, and goes once no older read snapshot is left
+    /// (FIX 22101); there is no age floor, as a just-staged body is still
+    /// debris once its writer aborted. Returns how many went, how many a
+    /// reader's pin or an older snapshot kept, and how many were not their
+    /// entry's to remove. The hourly sweep stays the backstop for what this
+    /// leaves.
     pub(crate) fn cleanup_import_staged_bodies(
         &self,
         staged: &[[u8; 32]],
@@ -329,24 +416,41 @@ impl Vault {
         if entries.is_empty() {
             return Ok((0, 0, 0));
         }
-        let (mut removed, mut pinned, mut skipped) = (0, 0, 0);
+        let pins = &self.result_body_pins;
+        let now = SystemTime::now();
+        let (mut pinned, mut skipped) = (0, 0);
+        let mut noted = Vec::new();
         self.with_write_txn_grouped(|txn| {
+            // Another instance of a staged digest may be one an older
+            // snapshot names: each goes once none is left (FIX 22101).
+            let since = txn.id();
             for entry in &entries {
                 if !self.entry_unnamed_in_txn(txn, entry, sealed)? {
                     continue;
                 }
-                match remove_unnamed_entry_now(&dir, entry, &self.result_body_pins)? {
-                    RemoveOutcome::Removed => removed += 1,
-                    RemoveOutcome::Pinned => pinned += 1,
-                    RemoveOutcome::Skipped => skipped += 1,
+                if !entry_retirable(&dir, entry, now, None)? {
+                    skipped += 1;
+                    continue;
                 }
+                if pins.holds(&entry.digest) {
+                    pinned += 1;
+                    continue;
+                }
+                pins.retire(entry.digest, entry.retiring(), since);
+                noted.push((entry.digest, entry.retiring()));
             }
             Ok(())
         })?;
-        if removed > 0 {
-            sync_dir(&dir)?;
-        }
-        Ok((removed, pinned, skipped))
+        let retired = self.remove_due_retiring(
+            &dir,
+            |digest, file| noted.contains(&(*digest, *file)),
+            noted.len(),
+        )?;
+        Ok((
+            retired.removed,
+            pinned + retired.kept,
+            skipped + retired.named,
+        ))
     }
 
     /// The entries of `batch` nothing names, read in one transaction (see

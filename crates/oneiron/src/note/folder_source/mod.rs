@@ -334,6 +334,61 @@ impl Vault {
         })
     }
 
+    /// Replaces a Files source's filters: `include` and `exclude` when
+    /// given, today's lists when absent. Blank or oversize include patterns
+    /// refuse, as at attach; an exclude list replaces the whole list, even
+    /// an empty one (FIX 10248).
+    ///
+    /// # Errors
+    /// No Files source of that id, a folder attached as notes, a proof that
+    /// no longer holds, or a storage error.
+    pub fn set_folder_source_filters(
+        &self,
+        owner: &AuthenticatedOwner,
+        source: EntityId,
+        include: Option<Vec<String>>,
+        exclude: Option<Vec<String>>,
+    ) -> Result<FolderSource> {
+        let invalid = super::document::invalid;
+        if let Some(patterns) = &include
+            && patterns
+                .iter()
+                .any(|pattern| pattern.trim().is_empty() || pattern.len() > MAX_INCLUDE_BYTES)
+        {
+            return Err(invalid(
+                "a folder source's include patterns are blank or too long",
+            ));
+        }
+        let attached = self
+            .folder_sources()?
+            .into_iter()
+            .find(|attached| {
+                attached
+                    .files
+                    .as_ref()
+                    .is_some_and(|files| files.source == source)
+            })
+            .ok_or_else(|| invalid("no Files source has that id"))?;
+        let key = source_key(&attached.folder);
+        self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            let mut current = SOURCES
+                .get(&self.store, txn, &key)?
+                .ok_or_else(|| invalid("no Files source has that id"))?;
+            if let Some(patterns) = include {
+                current.include = patterns;
+            }
+            let files = current.files.as_mut().ok_or_else(|| {
+                invalid("the folder is attached as notes, not to the Files world")
+            })?;
+            if let Some(patterns) = exclude {
+                files.exclude = patterns;
+            }
+            SOURCES.put(&self.store, txn, &key, &current)?;
+            Ok(current)
+        })
+    }
+
     pub(in crate::note) fn convert_notes_source_to_files(
         &self,
         owner: &AuthenticatedOwner,

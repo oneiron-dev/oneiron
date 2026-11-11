@@ -289,6 +289,47 @@ impl Memory<'_> {
     where
         R: FnOnce() -> Result<()>,
     {
+        self.snapshot_file_read_with_why_in_project(
+            mount,
+            repo,
+            self.repo_reveal_project(),
+            path,
+            why,
+            door,
+            readmit,
+        )
+    }
+
+    /// The portable selector's resolved CODE is already the admitted repo;
+    /// do not replace it with a different served anchor during reveal.
+    pub(crate) fn snapshot_file_read_with_why_at_repo<R>(
+        &self,
+        mount: &CodebaseSnapshotMount<'_>,
+        repo: EntityId,
+        path: &str,
+        why: Option<&str>,
+        door: RepoReadDoor,
+        readmit: R,
+    ) -> MemoryResult<Option<RepoFileRevealRead>>
+    where
+        R: FnOnce() -> Result<()>,
+    {
+        self.snapshot_file_read_with_why_in_project(mount, repo, None, path, why, door, readmit)
+    }
+
+    fn snapshot_file_read_with_why_in_project<R>(
+        &self,
+        mount: &CodebaseSnapshotMount<'_>,
+        repo: EntityId,
+        recipient_project: Option<EntityId>,
+        path: &str,
+        why: Option<&str>,
+        door: RepoReadDoor,
+        readmit: R,
+    ) -> MemoryResult<Option<RepoFileRevealRead>>
+    where
+        R: FnOnce() -> Result<()>,
+    {
         if why.is_none() {
             return Ok(mount.read_file_projected(path)?.map(projected));
         }
@@ -297,7 +338,7 @@ impl Memory<'_> {
         };
         let original = repo_file_original(
             self.vault,
-            self.repo_reveal_project(),
+            recipient_project,
             repo,
             Some(mount.code_artifact_id()),
             path,

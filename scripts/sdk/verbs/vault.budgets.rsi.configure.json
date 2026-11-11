@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.rsi.configure",
+  "description": "The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend.",
+  "input": "crate::llm::RsiBudgetConfig",
+  "output": "crate::llm::rsi_doors::RsiLineView",
+  "call": "crate::llm::rsi_doors::configure_rsi_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.rsi.configure\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

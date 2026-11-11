@@ -36,6 +36,9 @@ pub enum AuthorityOp {
     /// replica minted under it that merges later (FIX 1978).
     SlipGrantRevoke {
         grant_ref: EntityId,
+        /// The actual membership execution receipt, absent for a guest revoke.
+        /// A record link only; it confers no authority.
+        membership_receipt: Option<String>,
     },
     /// The removal-archive door's spend of the one-shot transferred slip
     /// `slip_id`, served from the archives an export-first removal kept for
@@ -202,9 +205,9 @@ pub enum AuthorityOp {
     /// cosigned by the install key of the carrier of his act. A main-log
     /// entry, so every machine the owner admits folds it.
     OwnerKeyEnroll(OwnerKeyEnroll),
-    /// One canonical group of a wide causal frontier's heads, signed by the
-    /// install key of the act it leads to, or by the host's slip issuer for a
-    /// host-issued op (FIX 7908). A main-log entry with no semantic payload.
+    /// Every head of a wide causal frontier, signed by the install key of
+    /// the act it leads to, or by the host's slip issuer for a host-issued op
+    /// (FIX 7908, 8527). A main-log entry with no semantic payload.
     FrontierJoin(FrontierJoin),
     /// One owner cut of a repository's origin authority: the epoch it opens
     /// and the one machine that writes the repository's refs at it, signed
@@ -246,9 +249,13 @@ pub struct AuthorityLogEntry {
 
 impl AuthorityLogEntry {
     /// Public so `oneiron`'s authority code calls it across the crate line.
+    /// A frontier join names every head of the frontier it joins, so its
+    /// parents have no count bound beyond the entry's own bytes (FIX 8527);
+    /// every other entry names at most [`MAX_PARENTS`].
     pub fn validate_shape(&self) -> Result<()> {
+        let joins_frontier = matches!(self.op, AuthorityOp::FrontierJoin(_));
         if self.schema_version != AUTHORITY_LOG_SCHEMA_VERSION
-            || self.parent_hashes.len() > MAX_PARENTS
+            || (!joins_frontier && self.parent_hashes.len() > MAX_PARENTS)
             || self.cosigns.len() > MAX_COSIGNS
         {
             return Err(invalid_authority());
@@ -408,8 +415,16 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
             }
             Ok(())
         }
-        AuthorityOp::SlipGrantRevoke { grant_ref } => {
-            if *grant_ref.as_bytes() == [0; 16] {
+        AuthorityOp::SlipGrantRevoke {
+            grant_ref,
+            membership_receipt,
+        } => {
+            if *grant_ref.as_bytes() == [0; 16]
+                || membership_receipt.as_deref().is_some_and(|receipt| {
+                    !EntityId::from_hex(receipt)
+                        .is_ok_and(|id| *id.as_bytes() != [0; 16] && id.to_hex() == receipt)
+                })
+            {
                 return Err(invalid_authority());
             }
             Ok(())

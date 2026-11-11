@@ -48,8 +48,10 @@ pub use dependent_walk::{
 pub(crate) use dependent_walk::{
     DependentWalkDoor, any_pending_walk, withdraw_before_rewrite_in_txn,
 };
+mod compaction_home_revisions;
 mod dependency_registration;
 mod integrity;
+pub(crate) use compaction_home_revisions::withdraw_changed_home_dependents_in_txn;
 pub(crate) use dependency_registration::{
     record_fork_dependency_in_txn, remove_fork_dependencies_in_txn,
 };
@@ -64,8 +66,8 @@ mod lmdb_index;
 mod lmdb_short_id_maintenance;
 mod mutation;
 pub(crate) use mutation::{
-    EntityPutAudit, MutationAudit, audit_entity_put_in_txn, audit_mutation_in_txn,
-    storage_service_principal,
+    EntityPutAudit, MutationAudit, MutationAuditProjection, PreparedMutationAudit,
+    audit_entity_put_in_txn, audit_mutation_in_txn, storage_service_principal,
 };
 use oneiron_store::ports::records;
 mod regeneration;
@@ -73,14 +75,15 @@ mod safe_read;
 mod time;
 mod vault_read;
 pub(crate) use safe_read::{
-    BodyStale, body_is_stale, body_readable_in_txn, raw_readable_apart_from_use_in_txn,
-    raw_readable_in_txn, withdrawn_in_txn,
+    BodyStale, body_is_stale, body_readable_in_txn, raw_exportable_in_txn,
+    raw_readable_apart_from_use_in_txn, raw_readable_in_txn, withdrawn_in_txn,
 };
 pub use safe_read::{safe_read_asset_text, safe_read_text};
 #[cfg(test)]
 mod memory;
 #[cfg(test)]
 pub(crate) mod row_copies;
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 pub use contracts::*;
@@ -99,7 +102,7 @@ pub(crate) use integrity::{
 pub(crate) use lmdb_visibility::{
     deletion_memo_scope, hard_erased_ids_in_txn, names_no_actor_in_txn, recall_memo_key,
 };
-pub(crate) use lmdb_visibility::{owner_gone_in_txn, removed_in_txn};
+pub(crate) use lmdb_visibility::{owner_gone_in_txn, owner_hard_erased_in_txn, removed_in_txn};
 pub use manual_clock::ManualClock;
 use oneiron_store::ports::manual_clock;
 pub use records::*;
@@ -110,3 +113,4 @@ pub(crate) use time::{
     persist_id_floor_in_txn, recorded_at_in_txn,
 };
 pub use time::{Clock, IdGen, StoreClock};
+pub(crate) use time::{PreparedRecordingClock, RecordingClockProjection};

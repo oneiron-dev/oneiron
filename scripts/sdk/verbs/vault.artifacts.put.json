@@ -1,0 +1,22 @@
+{
+  "name": "vault.artifacts.put",
+  "description": "Registers one blob artifact; its bytes ride vault.artifacts.append.",
+  "uniffi": {
+    "args": {
+      "input": "BlobArtifactInput"
+    },
+    "output": "EntityRefReceipt"
+  },
+  "input": "crate::memory::BlobArtifactInput",
+  "output": "crate::memory::EntityRefReceipt",
+  "call": "memory.put_blob_artifact(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  }
+}

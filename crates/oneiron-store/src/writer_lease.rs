@@ -71,6 +71,7 @@ pub struct VaultWriterLease {
     /// Stored as an option so Drop can close the descriptor explicitly.
     pub file: Option<std::fs::File>,
     pub pid: u32,
+    acquisition_id: [u8; 16],
     #[cfg(unix)]
     pub directory: std::fs::File,
 }
@@ -145,6 +146,13 @@ impl VaultWriterLease {
         self.pid
     }
 
+    /// Opaque identity of this actual lease acquisition. The live lock and
+    /// process/directory checks remain the authority; these bytes alone are not.
+    #[must_use]
+    pub fn acquisition_id(&self) -> [u8; 16] {
+        self.acquisition_id
+    }
+
     /// Whether the CALLING process is the one that acquired this lease.
     ///
     /// `false` in a post-`fork` child holding an inherited handle: the child
@@ -191,12 +199,16 @@ impl VaultWriterLease {
                 error
             })?,
         );
+        let mut acquisition_id = [0_u8; 16];
+        getrandom::fill(&mut acquisition_id)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
         Self::lock_file(&file)?;
         // A lease from here: a refusal below unlocks before it closes, so a
         // child forked meanwhile never keeps the lock (review r4, Sol F1).
         let lease = Self {
             file: Some(file),
             pid,
+            acquisition_id,
             directory,
         };
         let writable = lease.bind_lock_file()?;

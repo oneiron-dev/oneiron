@@ -39,7 +39,6 @@ use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::{LearningCell, LearningPredicate, TypeRef};
 use crate::model_step_context::DurableStepContext;
-use crate::model_step_effect::StepEffectBinding;
 use crate::model_step_error::{DurableStepError, DurableStepResult};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
@@ -187,7 +186,11 @@ impl ConsolidationExecutor<'_> {
             parent,
             axes.world_ref,
             axes.facet_ref,
-            resources.scope().relationship.clone(),
+            resources
+                .scope()
+                .relationship
+                .as_ref()
+                .map(|ids| ids.iter().copied().collect()),
         );
         // Each child's reply check reads the citations its candidates would
         // carry into verification against the branch's own pinned text: a
@@ -290,12 +293,21 @@ impl ConsolidationExecutor<'_> {
         let mut refused = None;
         let mut trapped = false;
         let mut checkpoint = false;
-        for (slice, SliceStep { step_hash, outcome }) in slices.iter().zip(steps) {
-            match tally_slice_outcome(ctx.vault, attempt_id, step_hash, outcome, charges)? {
+        for (
+            slice,
+            SliceStep {
+                outcome,
+                unsaved_usage,
+                ..
+            },
+        ) in slices.iter().zip(steps)
+        {
+            match tally_slice_outcome(ctx.vault, outcome, unsaved_usage, charges)? {
                 SliceFate::Finished {
+                    binding,
                     response,
                     failure_policy,
-                } => replies.push((slice, step_hash, response, failure_policy)),
+                } => replies.push((slice, binding, response, failure_policy)),
                 SliceFate::Trapped => trapped = true,
                 SliceFate::Checkpoint => checkpoint = true,
                 SliceFate::Refused(reason) => {
@@ -315,7 +327,7 @@ impl ConsolidationExecutor<'_> {
 
         let mut parsed = Vec::new();
         let mut skipped = 0;
-        for (slice, step_hash, response, failure_policy) in replies {
+        for (slice, binding, response, failure_policy) in replies {
             // Live rules, not the policy copy sent before the parallel calls.
             let rules = failure_rules::load(ctx.vault)?;
             let accepted = failure_policy.is_none_or(|decision| {
@@ -335,13 +347,7 @@ impl ConsolidationExecutor<'_> {
             if failure_policy.is_some()
                 && (!reply.candidates.is_empty() || !reply.persons.is_empty())
             {
-                resources.bind_fallback(FallbackOutputPin::new(
-                    StepEffectBinding {
-                        attempt_id,
-                        step_hash,
-                    },
-                    &response,
-                )?)?;
+                resources.bind_fallback(FallbackOutputPin::new(binding, &response)?)?;
             }
             // Each declared person binds once, before any candidate reads
             // it; the candidates and the mint read these same ids.

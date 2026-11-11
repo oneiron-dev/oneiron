@@ -12,4 +12,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/lib.rs` | src | s | 4 struct · 5 enum · 8 fn · 9 const · 1 re-export | LinkedInEscalationConfig, LinkedInLoginHandoff, LinkedInManagedTransport, LinkedInMcpServerHarness, LinkedInNetworkRoute, LinkedInPasswordCustody, LinkedInSandboxHostConfig, LinkedInSandboxRuntime +1 | LinkedIn seat policy values consumed by outbound admission |
-| `src/seat.rs` | src | m | 5 struct · 1 enum · 21 fn | LinkedInAccountRiskLimits, LinkedInKillSwitchState, LinkedInSeatDispatchState, LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy | Seat risk limits, sandbox policy evaluation, kill switch, and consent copy |
+| `src/seat.rs` | src | m | 5 struct · 1 enum · 22 fn | LinkedInAccountRiskLimits, LinkedInKillSwitchState, LinkedInSeatDispatchState, LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy | Seat risk limits, sandbox policy evaluation, kill switch, and consent copy |

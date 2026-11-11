@@ -12,7 +12,10 @@
 //! at close; until then, and for a fold the walk passed past its batch with
 //! the stale mark alone, every read withholds the words once any source is
 //! withdrawn ([`fence_withdrawn_folds_in`]). The fold keeps its span and its
-//! references either way.
+//! references either way. A self-written fold's words go the same way once
+//! a home part it wore reads at another revision (FIX 4817): it lands
+//! without them, every read withholds them, and the publishing write
+//! withdraws its dependent.
 
 use super::{FoldLedger, FoldRecord};
 use crate::entity_id::EntityId;
@@ -68,8 +71,9 @@ impl RawValue for FoldOwner {
 }
 
 /// The id run `run`'s fold `fold` depends on its sources under: stable per
-/// (run, fold), and no row's.
-fn fold_words_id(run: EntityId, fold: u64) -> EntityId {
+/// (run, fold), and no row's. A checkpoint image of a copy of the fold's
+/// words names it among its owners (FIX 18924).
+pub(crate) fn fold_words_id(run: EntityId, fold: u64) -> EntityId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron:code-run-fold-words:v1");
     hasher.update(run.as_bytes());
@@ -90,18 +94,50 @@ fn source_withdrawn(dbs: &impl ManifestDbs, txn: &heed::RoTxn<'_>, id: &EntityId
     Ok(dbs.port_entity_record(txn, id)?.is_none() || crate::ports::withdrawn_in_txn(dbs, txn, id)?)
 }
 
+/// Whether a home part self-written fold `record` wore whole reads at
+/// another revision now (FIX 4817): an edit, as an erasure, takes the words
+/// it shaped.
+fn home_changed(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    record: &FoldRecord,
+) -> Result<bool> {
+    match &record.execution {
+        Some(execution) => Ok(!super::home_pins::home_pins_stand_in(dbs, txn, execution)?),
+        None => Ok(false),
+    }
+}
+
 /// Whether fold `record` of run `run` may not keep its words: a record they
-/// came from is withdrawn, or the walk from one already reached the fold.
+/// came from is withdrawn, the walk from one already reached the fold, or a
+/// home part it wore was edited since.
 fn words_withdrawn(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     run: EntityId,
     record: &FoldRecord,
 ) -> Result<bool> {
-    if crate::ports::withdrawn_in_txn(dbs, txn, &fold_words_id(run, record.fold))? {
+    Ok(
+        fold_words_withdrawn_in(dbs, txn, run, record.fold, &record.sources)?
+            || home_changed(dbs, txn, record)?,
+    )
+}
+
+/// Whether the words of run `run`'s fold `fold`, written from `sources`,
+/// are withdrawn as read through `dbs`: the test the ledger's fence makes,
+/// for a copy that names the fold without its ledger, such as a recorded
+/// fold answer (FIX 18924).
+pub(crate) fn fold_words_withdrawn_in(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+    fold: u64,
+    sources: &[EntityId],
+) -> Result<bool> {
+    if crate::ports::withdrawn_in_txn(dbs, txn, &fold_words_id(run, fold))? {
         return Ok(true);
     }
-    for source in &record.sources {
+    for source in sources {
         if source_withdrawn(dbs, txn, source)? {
             return Ok(true);
         }
@@ -144,7 +180,7 @@ pub(crate) fn land_folds_in_base(
         if ledger.fold(record.fold).is_some() {
             continue;
         }
-        let mut withdrawn = false;
+        let mut withdrawn = home_changed(store, txn, &record)?;
         for source in &record.sources {
             withdrawn |= source_withdrawn(store, txn, source)?;
         }
@@ -186,6 +222,9 @@ pub(crate) fn land_folds_in_overlay(
         if ledger.fold(record.fold).is_some() {
             continue;
         }
+        if home_changed(dbs, txn, &record)? {
+            record.summary = None;
+        }
         for source in &record.sources {
             if source_withdrawn(dbs, txn, source)? {
                 record.summary = None;
@@ -198,13 +237,32 @@ pub(crate) fn land_folds_in_overlay(
     Ok(())
 }
 
+/// The receipt of the self-written fold whose words `id` stands for in the
+/// dependency index (FIX 4817): its record in its run's base ledger. `None`
+/// for any other id, and for a fold no self writer wrote.
+pub(super) fn fold_execution_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<super::CompactionExecution>> {
+    let Some(owner) = OWNERS.get(store, txn, id)? else {
+        return Ok(None);
+    };
+    Ok(FOLD_LEDGERS
+        .get(store, txn, &owner.run)?
+        .and_then(|ledger| ledger.fold(owner.fold)?.execution.clone()))
+}
+
 /// Drops the words of withdrawn fold-words dependent `id` from its run's
 /// base ledger in the withdrawing transaction, through
 /// [`fence_withdrawn_folds_in`], the fence the run's next ledger write drops
 /// them through (FIX 1494): with them go those of every other fold of the
-/// run a withdrawn record reached. Every withdrawal of a row calls this, the
-/// rows of a source chain included; any other id, or a ledger with no words
-/// to drop, is left as it is.
+/// run a withdrawn record reached. The recorded answers that copied the
+/// words of the run's withdrawn folds go in the same transaction (FIX
+/// 18924), whether or not the ledger still held them, and so does every
+/// checkpoint image whose owners name `id`. Every withdrawal of a
+/// row calls this, the rows of a source chain included; any other id, or a
+/// ledger with no words to drop, is left as it is.
 pub(crate) fn scrub_withdrawn_fold_summary_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -213,11 +271,13 @@ pub(crate) fn scrub_withdrawn_fold_summary_in_txn(
     let Some(owner) = OWNERS.get(store, txn, id)? else {
         return Ok(());
     };
-    let Some(mut ledger) = FOLD_LEDGERS.get(store, txn, &owner.run)? else {
-        return Ok(());
-    };
-    if !fence_withdrawn_folds_in(store, txn, owner.run, &mut ledger)? {
-        return Ok(());
+    // FIX 18924: every checkpoint image whose owners name these words, a
+    // historical one too, retires or is owed.
+    crate::store::erase_response_owner_in_txn(store, txn, id)?;
+    if let Some(mut ledger) = FOLD_LEDGERS.get(store, txn, &owner.run)?
+        && fence_withdrawn_folds_in(store, txn, owner.run, &mut ledger)?
+    {
+        FOLD_LEDGERS.put(store, txn, &owner.run, &ledger)?;
     }
-    FOLD_LEDGERS.put(store, txn, &owner.run, &ledger)
+    crate::code_run::retire_fold_answers_in_txn(store, txn, Some(owner.run))
 }

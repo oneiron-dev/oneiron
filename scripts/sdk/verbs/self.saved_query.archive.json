@@ -1,0 +1,13 @@
+{
+  "name": "self.saved_query.archive",
+  "description": "Archives a saved query under a definition-version check: it stays readable and is never evaluated again.",
+  "input": "crate::campaign::surface::SavedQueryArchiveRequest",
+  "output": "crate::campaign::surface::SavedQueryRecordView",
+  "call": "memory.archive_saved_query(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

@@ -181,6 +181,7 @@ fn query_request(query: &str) -> CoreQueryRequest {
         limit: default_limit(),
         view: None,
         count_mode: CountMode::default_estimate(),
+        filter: None,
     }
 }
 
@@ -190,6 +191,7 @@ fn hydrate_request(reference: &str) -> CoreHydrateRequest {
         short_id: None,
         content_hash: None,
         view: None,
+        filter: None,
     }
 }
 
@@ -255,6 +257,7 @@ fn wire_request_body_is_the_inner_dto_not_the_tagged_envelope() {
     let request = CoreMemoryTimelineRequest {
         id: anchor.to_hex(),
         view: Some(View::Summary),
+        filter: None,
     };
 
     adapter
@@ -455,6 +458,7 @@ fn scoped_grant_denial_reads_as_absence() {
         .hydrate_many(CoreBatchShortIdHydrateRequest {
             refs: vec![admitted_ref, denied_ref.clone(), missing_ref.to_owned()],
             view: None,
+            filter: None,
         })
         .expect("batch hydrate");
     assert_eq!(batch.results.len(), 3);
@@ -559,6 +563,7 @@ fn vector_pack_request() -> CoreContextPackRequest {
         edge_hop: None,
         max_neighbors: None,
         budget: None,
+        filter: None,
     }
 }
 
@@ -795,6 +800,7 @@ fn batch_aborting_error_carries_the_batch_method() {
         .hydrate_many(CoreBatchShortIdHydrateRequest {
             refs: vec![reference],
             view: None,
+            filter: None,
         })
         .expect_err("a non-NOT_FOUND item error aborts the batch");
     assert!(
@@ -850,6 +856,7 @@ fn timeline_receipts_survive_success_absence_and_wire_transport() {
     let request = |id: EntityId| CoreMemoryTimelineRequest {
         id: id.to_hex(),
         view: None,
+        filter: None,
     };
     let response = adapter
         .memory_timeline(request(visible))

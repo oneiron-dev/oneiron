@@ -10,7 +10,7 @@ use oneiron_contracts::entity_id::EntityId;
 
 const CODEBASE_ASSET_ID_DOMAIN: &[u8] = b"oneiron:codebase-asset-entity:v1";
 
-const CODEBASE_SNAPSHOT_ID_DOMAIN: &[u8] = b"oneiron:codebase-snapshot-entity:v1";
+const CODEBASE_SNAPSHOT_ID_DOMAIN: &[u8] = b"oneiron:codebase-snapshot-entity:v2";
 
 pub fn codebase_asset_entity_id(
     content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
@@ -18,10 +18,17 @@ pub fn codebase_asset_entity_id(
     entity_id_from_hash_material(CODEBASE_ASSET_ID_DOMAIN, &[content_hash])
 }
 
+/// The immutable capture's CODE id (FIX 4299): its scope, its file
+/// manifest and its source revision. The scope no longer holds the commit,
+/// so the canonical repo_ref, which does, keeps one capture per revision.
 pub fn codebase_snapshot_entity_id(snapshot: &CodebaseSnapshot) -> Result<EntityId> {
     entity_id_from_hash_material(
         CODEBASE_SNAPSHOT_ID_DOMAIN,
-        &[&snapshot.scope_key, &snapshot.fork_hash],
+        &[
+            &snapshot.scope_key,
+            &snapshot.fork_hash,
+            snapshot.repo_ref.canonical().as_bytes(),
+        ],
     )
 }
 

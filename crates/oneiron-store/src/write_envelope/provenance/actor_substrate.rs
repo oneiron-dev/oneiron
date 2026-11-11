@@ -31,13 +31,10 @@ pub fn validate_actor_class(actor_entity_type: u8, actor_class: EdgeActorClass) 
     }
 }
 
+/// The stored actor-class byte as its class, decoded by the class's own
+/// decoder ([`EdgeActorClass::try_from_u8`]); `None` outside the three.
 pub fn actor_class_from_u8(value: u8) -> Option<EdgeActorClass> {
-    match value {
-        0 => Some(EdgeActorClass::Human),
-        1 => Some(EdgeActorClass::Agent),
-        2 => Some(EdgeActorClass::System),
-        _ => None,
-    }
+    EdgeActorClass::try_from_u8(value)
 }
 
 /// Resolves the persisted write-time `actor_class` of a stored

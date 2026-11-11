@@ -104,15 +104,35 @@ pub(super) fn receipt_frame(
         .map_err(invalid)
 }
 
+/// What one frame's release did on this socket.
+#[derive(Debug)]
+pub(super) enum Released {
+    /// Every frame it left as went out.
+    Sent,
+    /// A last door keeps it off this socket on purpose, or it was never
+    /// sendable: nothing of it is owed again.
+    Withheld,
+    /// A frame whose masked copy or envelope could not be made now, with its
+    /// window: the window's next exchange owes it again.
+    Retry(WindowKey),
+    /// A send failed: the socket is done.
+    Failed,
+}
+
 /// What `frame` becomes as it leaves this socket: a window `UPDATE` or
 /// `REPLACEMENT` in its envelope for the machine the socket proved, sealed
 /// here from this home's custody, or as today's carrier where it may not be;
 /// a message's live partial only where its conversation may go (FIX 9537);
-/// any other frame as it is. A frame no envelope can carry is dropped,
-/// warned: none was sendable before either.
-pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8>) -> Vec<Vec<u8>> {
+/// any other frame as it is. A frame no envelope can carry now is dropped,
+/// warned, and owed again ([`Released::Retry`]); a frame a door keeps off the
+/// socket is [`Released::Withheld`].
+pub(super) fn release(
+    server: &SyncServer,
+    conn_state: &ConnState,
+    frame: Vec<u8>,
+) -> Result<Vec<Vec<u8>>, Released> {
     if !super::ephemeral::releases_frame(server, conn_state, &frame) {
-        return Vec::new();
+        return Err(Released::Withheld);
     }
     let enveloped = frame.first() == Some(&protocol::TAG_WINDOW_SYNC)
         && protocol::decode_window_sync(&frame[1..]).is_ok_and(|(_, sub_tag, _)| {
@@ -122,14 +142,25 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
             )
         });
     if !enveloped {
-        return vec![frame];
+        return Ok(vec![frame]);
     }
     let Ok((window_key, sub_tag, payload)) = protocol::decode_window_sync(&frame[1..]) else {
-        return Vec::new();
+        return Err(Released::Withheld);
     };
     let Some(key) = WindowKey::try_new(window_key) else {
-        return Vec::new();
+        return Err(Released::Withheld);
     };
+    // FIX 4748: a socket served as a peer is sent state, never operations:
+    // of a window only a state-only copy the export door cut for it leaves,
+    // and every other window frame, an update since a vector or a live one,
+    // is refused here.
+    if !super::peer_serve::releases_window_frame(conn_state, &key, payload) {
+        tracing::warn!(
+            window = window_key,
+            "window frame withheld: a peer is served state-only copies, never operations"
+        );
+        return Err(Released::Withheld);
+    }
     let window = server.reassert_manager.window(&key);
     let context = window.as_ref().map(|window| &window.doc);
     // FIX 7608 slice 4: a peer gets a marked repo item's masked copy, made
@@ -140,7 +171,7 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
             Ok(masked) => masked,
             Err(error) => {
                 tracing::warn!(window = window_key, %error, "window blob withheld: no masked copy");
-                return Vec::new();
+                return Err(Released::Retry(key));
             }
         };
     let payload = masked.as_deref().unwrap_or(payload);
@@ -156,43 +187,62 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
         )
     };
     match prepared.frames(window_key, sub_tag, None) {
-        Ok((frames, _)) => frames,
+        Ok((frames, _)) => Ok(frames),
         Err(error) => {
             tracing::warn!(
                 window = window_key,
                 error = protocol::transport_err_msg(error),
                 "window frame not enveloped"
             );
-            Vec::new()
+            Err(Released::Retry(key))
         }
     }
 }
 
+/// Sends `frame` as it leaves this socket ([`release`]), and tells what its
+/// release did. The frames are made before the send, so the send holds
+/// neither the server nor the socket's state.
+pub(super) fn send_released_outcome<'t>(
+    server: &SyncServer,
+    conn_state: &ConnState,
+    transport: &'t mut StoppingTransport,
+    frame: Vec<u8>,
+) -> impl Future<Output = Released> + use<'t> {
+    // A document frame past one decoded payload leaves in bounded parts
+    // (#6490); no door holds a document frame back.
+    let released = if frame.first() == Some(&oneiron::sync::transport::TAG_DOCUMENT)
+        && frame.len() > oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
+    {
+        oneiron::sync::transport::DocumentPartFrames::new(&frame)
+            .map(Iterator::collect)
+            .map_err(|_| Released::Failed)
+    } else {
+        release(server, conn_state, frame)
+    };
+    async move {
+        let frames = match released {
+            Ok(frames) => frames,
+            Err(held) => return held,
+        };
+        // A root update past one decoded payload leaves as its parts; a
+        // failed part fails the release.
+        for frame in frames {
+            if !super::root_updates::send_root_frame(transport, frame).await {
+                return Released::Failed;
+            }
+        }
+        Released::Sent
+    }
+}
+
 /// Sends `frame` as it leaves this socket ([`release`]); false once a send
-/// fails. The frames are made before the send, so the send holds neither
-/// the server nor the socket's state.
+/// fails. A frame withheld, or one owed again, leaves the socket as it was.
 pub(super) fn send_released<'t>(
     server: &SyncServer,
     conn_state: &ConnState,
     transport: &'t mut StoppingTransport,
     frame: Vec<u8>,
 ) -> impl Future<Output = bool> + use<'t> {
-    let frames = if frame.first() == Some(&oneiron::sync::transport::TAG_DOCUMENT)
-        && frame.len() > oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
-    {
-        oneiron::sync::transport::DocumentPartFrames::new(&frame).map(Iterator::collect)
-    } else {
-        Ok(release(server, conn_state, frame))
-    };
-    async move {
-        let Ok(frames) = frames else {
-            return false;
-        };
-        for frame in frames {
-            if !transport.send_binary(frame).await {
-                return false;
-            }
-        }
-        true
-    }
+    let released = send_released_outcome(server, conn_state, transport, frame);
+    async move { !matches!(released.await, Released::Failed) }
 }

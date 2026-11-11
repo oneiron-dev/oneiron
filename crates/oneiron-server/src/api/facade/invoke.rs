@@ -19,6 +19,21 @@ pub(super) fn facade_invoke(
     facade_invoke_in_turn(server, call, actor, class, verb, value, producers, None)
 }
 
+/// [`facade_invoke`] with the notice bit from the core row's actual hook
+/// chain. A saved completion or room-turn result without that metadata
+/// reports `None`; it does not certify that the args were unchanged.
+pub(super) fn facade_invoke_with_notice(
+    server: &SyncServer,
+    call: &FacadeCall<'_>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: serde_json::Value,
+    producers: &oneiron::memory::ProducerRows,
+) -> Result<(serde_json::Value, Option<bool>), FacadeApiError> {
+    facade_invoke_in_turn_with_notice(server, call, actor, class, verb, value, producers, None)
+}
+
 /// [`facade_invoke`] for `self.inbox.concern.move` that also reports whether
 /// the committed engine result links a Note (P1 REVIEW-4395, L13 08:49 YES):
 /// the row runs through `row_tapped` so the wake reads the COMMITTED
@@ -38,7 +53,7 @@ pub(super) fn facade_invoke_concern_move(
     value: serde_json::Value,
     producers: &oneiron::memory::ProducerRows,
 ) -> Result<(serde_json::Value, bool), FacadeApiError> {
-    crate::server::blocking(
+    let (output, wake) = crate::server::blocking(
         move || -> Result<(serde_json::Value, bool), FacadeApiError> {
             const VERB: &str = "self.inbox.concern.move";
             let auth = call.auth();
@@ -56,7 +71,12 @@ pub(super) fn facade_invoke_concern_move(
             // refused here exactly as in [`facade_invoke_in_turn`]; the wake
             // reports false on a path that never commits.
             let (output, wake) = match call.room_turn()? {
-                Some(room) => (memory.for_room_turn(room)?.invoke(VERB, value)?, false),
+                Some(room) => (
+                    memory
+                        .for_room_turn(room)?
+                        .invoke(&oneiron::verbs::VERB_TABLE, VERB, value)?,
+                    false,
+                ),
                 None => {
                     // Same authorship as [`facade_invoke_in_turn`]; this verb
                     // never takes the guest-revoking host-issuer path.
@@ -69,6 +89,7 @@ pub(super) fn facade_invoke_concern_move(
                     let mut wake = false;
                     let output = oneiron::task_verb::verb_hook_boundary::row_tapped(
                         &memory,
+                        &oneiron::verbs::VERB_TABLE,
                         VERB,
                         value,
                         |value| {
@@ -100,7 +121,10 @@ pub(super) fn facade_invoke_concern_move(
             };
             Ok((output, wake))
         },
-    )
+    )?;
+    let output =
+        super::drained_still_admitted(&server.vault, call.auth(), producers, output, false);
+    Ok((output, wake))
 }
 
 /// [`facade_invoke`] on the task-work turn the dispatch awaited for the call
@@ -125,62 +149,114 @@ pub(super) fn facade_invoke_in_turn(
     producers: &oneiron::memory::ProducerRows,
     turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    crate::server::blocking(move || -> Result<serde_json::Value, FacadeApiError> {
-        let auth = call.auth();
-        let memory = facade_invocation(
-            credential_memory(&server.vault, Some(auth), actor, class)
-                .at(auth.locality())
-                .listing_producers(producers),
-            call,
-        )?;
-        let memory = match turn {
-            Some(turn) => memory.with_task_work_turn(turn),
-            None => memory,
-        };
-        let memory = facade_task_decisions(server, verb, memory)?;
-        let memory = facade_rewrites_admitted(server, auth, &value, memory);
-        let memory = if matches!(verb, "vault.artifacts.view" | "vault.artifacts.export") {
-            match super::owner_binding::facade_owner(server, auth, verb).ok() {
-                Some(owner) => memory.with_owner_authorship(&owner),
+    facade_invoke_in_turn_with_notice(server, call, actor, class, verb, value, producers, turn)
+        .map(|(value, _)| value)
+}
+
+/// The shared core invocation, with caller-only metadata beside its value.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the generated dispatch passes the core invocation inputs and its task-work turn"
+)]
+pub(super) fn facade_invoke_in_turn_with_notice(
+    server: &SyncServer,
+    call: &FacadeCall<'_>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: serde_json::Value,
+    producers: &oneiron::memory::ProducerRows,
+    turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
+) -> Result<(serde_json::Value, Option<bool>), FacadeApiError> {
+    let (output, hook_notice) = crate::server::blocking(
+        move || -> Result<(serde_json::Value, Option<bool>), FacadeApiError> {
+            let auth = call.auth();
+            let memory = facade_invocation(
+                credential_memory(&server.vault, Some(auth), actor, class)
+                    .at(auth.locality())
+                    .listing_producers(producers),
+                call,
+            )?;
+            let memory = match turn {
+                Some(turn) => memory.with_task_work_turn(turn),
                 None => memory,
-            }
-        } else {
-            memory
-        };
-        // Settlement's run of the call enters its boundary here as the drain's.
-        let _drain = call.drain().map(VerbAskDrainPermit::enter);
-        Ok(match call.room_turn()? {
-            Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
-            None => {
-                // The owner's own request on the owner's own full credential:
-                // owner-authored writes carry their own confirmation. Any other
-                // caller writes as itself; the owner's credential that no longer
-                // holds is refused. The work-companion setting takes the
-                // person's own proof instead (OF-417). His acts record where
-                // the request reached this install, as its headers proved it
-                // (`FacadeCall::surface`, audit only, FIX 4650).
-                let memory = match direct_authorship(auth, server, verb)? {
-                    Some(owner) => memory
-                        .with_owner_authorship(&owner)
-                        .with_owner_surface(call.surface()),
+            };
+            let memory = facade_task_decisions(server, verb, memory)?;
+            let memory = facade_rewrites_admitted(server, auth, &value, memory);
+            let memory = if matches!(verb, "vault.artifacts.view" | "vault.artifacts.export") {
+                match super::owner_binding::facade_owner(server, auth, verb).ok() {
+                    Some(owner) => memory.with_owner_authorship(&owner),
                     None => memory,
-                };
-                if verb == GUEST_REVOKING_DELETE_VERB {
-                    // With no host key the delete runs as before (FIX 3875).
-                    super::pairing::with_host_issuer(server, |issuer| match issuer {
-                        Some(issuer) => oneiron::task_verb::sdk::invoke(
-                            &memory.with_host_slip_issuer(issuer),
+                }
+            } else {
+                memory
+            };
+            // Settlement's run of the call enters its boundary here as the drain's.
+            let _drain = call.drain().map(VerbAskDrainPermit::enter);
+            let (result, hook_notice) = match call.room_turn()? {
+                Some(room) => memory.for_room_turn(room)?.invoke_with_notice(
+                    &oneiron::verbs::VERB_TABLE,
+                    verb,
+                    value,
+                ),
+                None => {
+                    // The owner's own request on the owner's own full credential:
+                    // owner-authored writes carry their own confirmation. Any other
+                    // caller writes as itself; the owner's credential that no longer
+                    // holds is refused. The work-companion setting takes the
+                    // person's own proof instead (OF-417). His acts record where
+                    // the request reached this install, as its headers proved it
+                    // (`FacadeCall::surface`, audit only, FIX 4650).
+                    let memory = match direct_authorship(auth, server, verb)? {
+                        Some(owner) => memory
+                            .with_owner_authorship(&owner)
+                            .with_owner_surface(call.surface()),
+                        None => memory,
+                    };
+                    if verb == GUEST_REVOKING_DELETE_VERB {
+                        // With no host key the delete runs as before (FIX 3875).
+                        super::pairing::with_host_issuer(server, |issuer| match issuer {
+                            Some(issuer) => oneiron::task_verb::sdk::invoke_with_notice(
+                                &memory.with_host_slip_issuer(issuer),
+                                verb,
+                                value,
+                            ),
+                            None => {
+                                oneiron::task_verb::sdk::invoke_with_notice(&memory, verb, value)
+                            }
+                        })
+                    } else if let Some(body) = call.blob_body(verb) {
+                        // The content its body held as a file (FIX 22074).
+                        oneiron::task_verb::sdk::invoke_blob_input(
+                            &memory,
                             verb,
                             value,
-                        ),
-                        None => oneiron::task_verb::sdk::invoke(&memory, verb, value),
-                    })?
-                } else {
-                    oneiron::task_verb::sdk::invoke(&memory, verb, value)?
+                            body.file(),
+                        )
+                    } else {
+                        oneiron::task_verb::sdk::invoke_with_notice(&memory, verb, value)
+                    }
                 }
-            }
-        })
-    })
+            };
+            result.map(|value| (value, hook_notice)).map_err(|error| {
+                FacadeApiError::from(error).with_hook_notice(hook_notice == Some(true))
+            })
+        },
+    )?;
+    let owner_whole_vault_export =
+        super::export_transfer::owner_whole_vault_export_admitted(server, call.auth(), verb);
+    // A drained call's answer is judged once more for the caller its retry
+    // came by (FIX 21054); the notice stays beside it.
+    Ok((
+        super::drained_still_admitted(
+            &server.vault,
+            call.auth(),
+            producers,
+            output,
+            owner_whole_vault_export,
+        ),
+        hook_notice,
+    ))
 }
 
 /// These doors act only on the caller's presented proof, never on host-root fallback authority.
@@ -289,31 +365,59 @@ pub(super) fn facade_invoke_born(
     position: BirthPosition,
     producers: &oneiron::memory::ProducerRows,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    crate::server::blocking(move || -> Result<serde_json::Value, FacadeApiError> {
-        let auth = call.auth();
-        let memory = facade_invocation(
-            credential_memory(&server.vault, Some(auth), actor, class)
-                .at(auth.locality())
-                .with_birth_position(position)
-                .listing_producers(producers),
-            call,
-        )?;
-        let memory = facade_task_decisions(server, verb, memory)?;
-        let memory = facade_rewrites_admitted(server, auth, &value, memory);
-        let _drain = call.drain().map(VerbAskDrainPermit::enter);
-        Ok(match call.room_turn()? {
-            Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
-            None => {
-                let memory = match direct_authorship(auth, server, verb)? {
-                    Some(owner) => memory
-                        .with_owner_authorship(&owner)
-                        .with_owner_surface(call.surface()),
-                    None => memory,
-                };
-                oneiron::task_verb::sdk::invoke(&memory, verb, value)?
-            }
-        })
-    })
+    facade_invoke_born_with_notice(server, call, actor, class, verb, value, position, producers)
+        .map(|(value, _)| value)
+}
+
+/// [`facade_invoke_born`] with the core row's actual caller-only notice bit.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the generated dispatch passes the core invocation inputs and its birth position"
+)]
+pub(super) fn facade_invoke_born_with_notice(
+    server: &SyncServer,
+    call: &FacadeCall<'_>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: serde_json::Value,
+    position: BirthPosition,
+    producers: &oneiron::memory::ProducerRows,
+) -> Result<(serde_json::Value, Option<bool>), FacadeApiError> {
+    crate::server::blocking(
+        move || -> Result<(serde_json::Value, Option<bool>), FacadeApiError> {
+            let auth = call.auth();
+            let memory = facade_invocation(
+                credential_memory(&server.vault, Some(auth), actor, class)
+                    .at(auth.locality())
+                    .with_birth_position(position)
+                    .listing_producers(producers),
+                call,
+            )?;
+            let memory = facade_task_decisions(server, verb, memory)?;
+            let memory = facade_rewrites_admitted(server, auth, &value, memory);
+            let _drain = call.drain().map(VerbAskDrainPermit::enter);
+            let (result, hook_notice) = match call.room_turn()? {
+                Some(room) => memory.for_room_turn(room)?.invoke_with_notice(
+                    &oneiron::verbs::VERB_TABLE,
+                    verb,
+                    value,
+                ),
+                None => {
+                    let memory = match direct_authorship(auth, server, verb)? {
+                        Some(owner) => memory
+                            .with_owner_authorship(&owner)
+                            .with_owner_surface(call.surface()),
+                        None => memory,
+                    };
+                    oneiron::task_verb::sdk::invoke_with_notice(&memory, verb, value)
+                }
+            };
+            result.map(|value| (value, hook_notice)).map_err(|error| {
+                FacadeApiError::from(error).with_hook_notice(hook_notice == Some(true))
+            })
+        },
+    )
 }
 
 /// `memory` with the host's task decisions bound, on a task row that asks

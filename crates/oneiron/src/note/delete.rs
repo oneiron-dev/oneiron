@@ -7,7 +7,8 @@ use crate::{EntityId, Result};
 
 use super::documents::{NOTE_HEAD, NOTE_HEAD_DOC};
 use super::sync_rows::{
-    NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_DS_E, SYNC_NC_E, SYNC_QD_E, SYNC_QN_E,
+    NOTE_FORK_AUTHORITY, NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_DS_E, SYNC_NC_E, SYNC_QD_E,
+    SYNC_QN_E,
 };
 
 // Byte-level cleanup runs featureless too. Incoming source/claim dependencies
@@ -41,6 +42,7 @@ pub(crate) fn delete_document_in_txn(
     SYNC_QD_E.delete_from(store, txn, &key_prefix)?;
     SYNC_AD_E.delete_from(store, txn, &key_prefix)?;
     SYNC_QN_E.delete_from(store, txn, &key_prefix)?;
+    NOTE_FORK_AUTHORITY.delete_from(store, txn, &key_prefix)?;
     NOTE_RECEIPT_BY_REQUEST.delete_from(store, txn, &key_prefix)?;
     SYNC_NC_E.delete_from(store, txn, &key_prefix)?;
     super::pin_index::remove_citing(store, txn, *id)?;

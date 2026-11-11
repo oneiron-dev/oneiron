@@ -223,6 +223,9 @@ impl Vault {
                 continue;
             }
             let generated_vector = staged.vector.is_none() && embedder.is_some();
+            // Only the staged vector's own filler locality goes with it; a
+            // vector generated here carries none (FIX 12783).
+            let staged_locality = staged.vector.as_ref().and(staged.locality);
             let vector = match staged.vector {
                 Some(vector) => Some((vector, staged.provenance)),
                 // The staged vector the work started from is gone, and the copy
@@ -286,6 +289,16 @@ impl Vault {
                     continue;
                 }
                 return Err(error);
+            }
+            // The vector door cleared the locality as it wrote the row; the
+            // staged vector's own goes back in the same transaction.
+            if wrote_vector && let Some(locality) = staged_locality {
+                crate::embed::stamp_embedding_locality_in_txn(
+                    self,
+                    &mut txn,
+                    &input.entity,
+                    locality,
+                )?;
             }
             if wrote_vector && generated_vector {
                 self.store

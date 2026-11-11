@@ -2,6 +2,8 @@
 //! Entry: `Vault::sync_skill_from_hub`.
 //! Defines its own items.
 
+mod update_settlement;
+
 use rmpv::Value;
 
 use crate::Vault;
@@ -100,7 +102,7 @@ impl Vault {
                 hub_ref,
                 &package,
                 &inventory,
-                &super::osv::OsvDevClient,
+                super::osv::hub_advisory_query(adapter.kind()),
                 occurred,
                 learned_at,
             )?
@@ -142,9 +144,10 @@ impl Vault {
                 &package,
                 preferred_id,
                 &inventory,
-                &super::osv::OsvDevClient,
+                super::osv::hub_advisory_query(adapter.kind()),
                 occurred,
                 learned_at,
+                &mut super::SkillImportRows::default(),
             )?
             .entity)
     }
@@ -165,6 +168,7 @@ impl Vault {
             preferred_id,
             occurred,
             learned_at,
+            &mut super::SkillImportRows::default(),
         )?;
         wtxn.commit()?;
         Ok(entity)
@@ -172,6 +176,7 @@ impl Vault {
 
     /// Imports `package` with its scan receipts in one writer. With `owner`,
     /// the owner proof is checked in that writer before anything lands.
+    /// `rows` notes the stored skill its content deduplicated to.
     #[expect(
         clippy::too_many_arguments,
         reason = "the import binds the owner proof, package identity, scans and import timing"
@@ -185,6 +190,7 @@ impl Vault {
         scans: &[super::SkillScanReceipt],
         occurred: TimeRange,
         learned_at: u64,
+        rows: &mut super::SkillImportRows,
     ) -> Result<EntityId> {
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(owner) = owner {
@@ -197,6 +203,7 @@ impl Vault {
             preferred_id,
             occurred,
             learned_at,
+            rows,
         )?;
         let content_hash = package.content_hash()?;
         for receipt in scans {
@@ -213,6 +220,12 @@ impl Vault {
         Ok(entity)
     }
 
+    /// Imports `package` in `wtxn`, deduplicating by content; `rows` notes
+    /// the stored skill a dedup answers (FIX 11699).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the import's writer, package identity, timing and its read report"
+    )]
     pub(super) fn import_skill_from_hub_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -221,6 +234,7 @@ impl Vault {
         preferred_id: EntityId,
         occurred: TimeRange,
         learned_at: u64,
+        rows: &mut super::SkillImportRows,
     ) -> Result<EntityId> {
         self.import_skill_from_hub_checked_in_txn(
             wtxn,
@@ -230,6 +244,7 @@ impl Vault {
             occurred,
             learned_at,
             false,
+            rows,
         )
     }
 
@@ -253,6 +268,7 @@ impl Vault {
             occurred,
             learned_at,
             true,
+            &mut super::SkillImportRows::default(),
         )
     }
 
@@ -269,6 +285,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
         fresh: bool,
+        rows: &mut super::SkillImportRows,
     ) -> Result<EntityId> {
         hub_ref.validate()?;
         encode_skill_record(&package.record)?;
@@ -311,6 +328,8 @@ impl Vault {
             self.imported_skill_entity_for_content_hash_in_txn(wtxn, content_hash, Some(hub_ref))?
         } {
             Some(existing) => {
+                // The import stands on the holder it found, refused or not.
+                rows.existing = Some(existing);
                 let existing_record = self.read_skill_record_in_txn(wtxn, &existing)?;
                 if existing_record.skill_id != package.record.skill_id {
                     return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
@@ -520,6 +539,7 @@ impl Vault {
                 &scans,
                 occurred,
                 learned_at,
+                None,
             )?;
             if passed || !requires_held_out {
                 savepoint.commit()?;
@@ -608,6 +628,7 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         proposal.source = Some(ClaimSource::Imported);
+        proposal.scope_facet = self.default_facet_in_txn(&wtxn)?;
         self.put_reserved_claim_in_txn(&mut wtxn, &proposal_id, &proposal, occurred, learned_at)?;
         wtxn.commit()?;
         Ok(HubSyncDisposition::Proposed {
@@ -637,9 +658,21 @@ impl Vault {
         scans: &[super::SkillScanReceipt],
         occurred: TimeRange,
         learned_at: u64,
+        authorization: Option<&crate::consent::ApproveOnceAuthorization>,
     ) -> Result<bool> {
         let mut updated = local_sync_record(package, current, content_hash);
-        self.apply_hub_sync_skill_record(txn, entity, &updated, occurred, learned_at)?;
+        if let Some(authorization) = authorization {
+            self.apply_hub_update_record_with_consent_in_txn(
+                txn,
+                entity,
+                &updated,
+                occurred,
+                learned_at,
+                authorization,
+            )?;
+        } else {
+            self.apply_hub_sync_skill_record(txn, entity, &updated, occurred, learned_at)?;
+        }
         self.write_admitted_capability_surface_in_txn(txn, entity, &package.capabilities)?;
         if current.content_hash != Some(content_hash) {
             self.replace_hub_provenance_in_txn(

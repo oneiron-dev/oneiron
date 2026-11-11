@@ -56,6 +56,19 @@ impl CodebaseSnapshotMount<'_> {
             .collect()
     }
 
+    /// An entry the mount can read, respecting the existing custody withholding.
+    /// This returns metadata only; it neither reads bytes nor grants a read.
+    pub(crate) fn visible_file_entry(&self, path: &str) -> Option<&CodebaseFileEntry> {
+        if self.withheld.contains(path) {
+            return None;
+        }
+        self.snapshot
+            .files
+            .binary_search_by(|entry| entry.path.as_str().cmp(path))
+            .ok()
+            .map(|index| &self.snapshot.files[index])
+    }
+
     pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
         validate_manifest_path(path)?;
         if self.withheld.contains(path) {

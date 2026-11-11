@@ -137,7 +137,7 @@ pub(super) async fn assess_waiting_harm(
         );
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     };
     let budget = Duration::from_millis(ctx.deadline.remaining_ms());
@@ -160,6 +160,6 @@ pub(super) async fn assess_waiting_harm(
         .request_urgent_proactivity_digest(attempt, decision, now)?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }

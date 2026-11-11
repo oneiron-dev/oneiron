@@ -81,6 +81,9 @@ fn observe_in_txn(
     let Some(fields) = &credit.attribution else {
         return Ok(());
     };
+    if super::credit_join::effective_credit_subjects_in_txn(&vault.store, txn, &credit)?.is_none() {
+        return Ok(());
+    }
     let adjacent = super::credit_join::credit_roots_in_txn(vault, txn, &credit)?.contains(&derived);
     let Some(observed) = ANCESTOR_DECAY_FIT_POLICY.observed(
         adjacent,

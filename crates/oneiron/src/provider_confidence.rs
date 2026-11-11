@@ -42,6 +42,7 @@
 //! never writes a negative shortcut or survives into a later evaluation.
 
 mod indexes;
+pub(crate) mod tables;
 mod transaction_memo;
 
 use rmpv::Value;
@@ -242,6 +243,7 @@ pub(crate) fn write_provider_prior_in_txn(
     body.evidence = Some(Value::from(evidence));
     body.valid_from = Some(now);
     body.source = Some(ClaimSource::Observed);
+    body.scope_facet = vault.default_facet_in_txn(wtxn)?;
     vault.put_reserved_claim_in_txn(
         wtxn,
         &claim_id,

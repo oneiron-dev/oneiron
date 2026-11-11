@@ -15,6 +15,10 @@ pub(crate) struct RowHookResume {
     pub(crate) credential: Option<VerbAskCredential>,
     pub(crate) drain: Option<VerbAskDrainPermit>,
     pub(crate) session: Option<verb_hook_boundary::HookSession>,
+    /// The `content_base64` its host holds as a file for this call (FIX
+    /// 22074): the chain puts its string back in the args before any hook
+    /// reads them, and a call that passes through keeps them as they are.
+    pub(crate) held_content: Option<std::fs::File>,
 }
 
 /// The pre chain of row `verb` for `actor` over `args`, off the async
@@ -22,10 +26,10 @@ pub(crate) struct RowHookResume {
 /// sandbox. Every server door that runs a row itself, not through `invoke`,
 /// crosses it here. The hooks read under `reader`, capped by their grant,
 /// and as `actor` when it is `None`. A rewrite must pass the row's input
-/// check, then `check`, as if the caller sent it. An ask saves `resume`'s
-/// credential, and its drain permit marks the chain's thread as the drain's
-/// run of the call. A hook's ask runs on `turn`, the task-work turn the
-/// calling operation already holds, if any.
+/// check (`row_input_check`), then `check`, as if the caller sent it. An
+/// ask saves `resume`'s credential, and its drain permit marks the chain's
+/// thread as the drain's run of the call. A hook's ask runs on `turn`, the
+/// task-work turn the calling operation already holds, if any.
 #[expect(
     clippy::too_many_arguments,
     reason = "the row's call plus the caller's key, rewrite admission, resume and turn"
@@ -43,7 +47,16 @@ pub(crate) async fn row_hooks_pre_with(
     turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 ) -> Result<VerbHookPre, MemoryError> {
     let (pre, _) = row_hooks_pre_decided(
-        server, reader, check, actor, class, invocation, verb, args, resume, turn,
+        server,
+        reader,
+        (check, NativeReadInput::Shared),
+        actor,
+        class,
+        invocation,
+        verb,
+        args,
+        resume,
+        turn,
     )
     .await?;
     Ok(pre)
@@ -60,7 +73,7 @@ pub(crate) async fn row_hooks_pre_with(
 async fn row_hooks_pre_decided(
     server: &Arc<SyncServer>,
     reader: Option<ScopedReadActorKey>,
-    check: Option<RewriteAdmit>,
+    (check, native): (Option<RewriteAdmit>, NativeReadInput),
     actor: EntityId,
     class: EdgeActorClass,
     invocation: Option<InvocationId>,
@@ -81,36 +94,44 @@ async fn row_hooks_pre_decided(
             scope: None,
             board_epoch: None,
             turn: None,
-            domain: verb_hook_boundary::row_domain(&verb),
+            domain: verb_hook_boundary::row_domain(&oneiron::verbs::VERB_TABLE, &verb),
             reader,
         };
         oneiron::runtime_hooks::host_doors::admit_trigger(&server.vault, &verb, &args)?;
         let admit = |args: &serde_json::Value| {
-            oneiron::task_verb::sdk::validate_input(&verb, args)
-                .map_err(|error| error.to_string())?;
+            row_input_check(&verb, args, native)?;
             check
                 .as_ref()
                 .map_or(Ok(()), |check| check(verb.as_str(), args))
         };
         let session = resume.session;
-        let ended = match &session {
+        let credential = resume.credential;
+        let run = || match &session {
             Some(session) => {
-                verb_hook_boundary::session_pre(&server.vault, call, args, &admit, session, turn)?
+                verb_hook_boundary::session_pre(&server.vault, call, args, &admit, session, turn)
             }
-            None => server.vault.pre_verb_hooks_for_credential(
-                call,
-                args,
-                &admit,
-                resume.credential,
-                turn,
-            )?,
+            None => server
+                .vault
+                .pre_verb_hooks_for_credential(call, args, &admit, credential, turn),
+        };
+        let ended = match resume.held_content {
+            Some(file) => {
+                oneiron::runtime_hooks::verb::with_held_member("content_base64", file, run)?
+            }
+            None => run()?,
         };
         let mut pre =
             ended.map_err(|stop| verb_hook_boundary::stop_refusal(stop, session.as_ref()))?;
         // A restrictive call's args that fail the row's input check give way
-        // to the caller's own (FIX 5076).
+        // to the caller's own (FIX 5076). A direct HTTP read's input check is
+        // its route's own admission (FIX 1435).
+        let routed = matches!(native, NativeReadInput::Route) && native_read_verb(&verb);
         oneiron::task_verb::revoke_lands::settle(&mut pre, &|args| {
-            oneiron::task_verb::sdk::validate_input(&verb, args).is_ok()
+            if routed {
+                admit(args).is_ok()
+            } else {
+                row_input_check(&verb, args, native).is_ok()
+            }
         });
         Ok(pre)
     };
@@ -120,6 +141,51 @@ async fn row_hooks_pre_decided(
     })
     .await
     .map_err(|_| hooks_did_not_finish())?
+}
+
+/// Which request grammar a rewrite of a native memory read meets before
+/// its door's own admission (FIX 1435).
+#[derive(Clone, Copy)]
+enum NativeReadInput {
+    /// The native request validation the MCP and code-mode doors share.
+    Shared,
+    /// A direct HTTP route's own decoder and request checks, which its door
+    /// runs as the rewrite's admission. Its grammar is the route's: a
+    /// hydrate ref may pin a revision, which the shared validation refuses.
+    Route,
+}
+
+/// The input check a rewrite of row `verb` meets before its door's own
+/// admission: a native memory read's own request validation, which the verb
+/// table's check does not carry (FIX 1435), else that check. A direct HTTP
+/// read's route admits its own grammar instead (`NativeReadInput::Route`).
+fn row_input_check(
+    verb: &str,
+    args: &serde_json::Value,
+    native: NativeReadInput,
+) -> Result<(), String> {
+    use oneiron::code_run::vault_read::VaultReadRequest;
+    match native_read_of(verb) {
+        Some(_) if matches!(native, NativeReadInput::Route) => Ok(()),
+        Some(method) => {
+            VaultReadRequest::validate_body(method, args).map_err(|error| error.to_string())
+        }
+        None => {
+            oneiron::task_verb::sdk::validate_input(verb, args).map_err(|error| error.to_string())
+        }
+    }
+}
+
+/// The native memory read `verb` names, if it names one.
+fn native_read_of(verb: &str) -> Option<oneiron::code_run::vault_read::VaultReadMethod> {
+    oneiron::code_run::vault_read::VaultReadMethod::ALL
+        .into_iter()
+        .find(|method| method.tool_name() == verb)
+}
+
+/// Whether `verb` names a native memory read.
+fn native_read_verb(verb: &str) -> bool {
+    native_read_of(verb).is_some()
 }
 
 /// The post chain over that row's result, off the async runtime: the
@@ -188,12 +254,49 @@ pub(super) async fn facade_hooks_pre(
 
 /// [`facade_hooks_pre`], beside each hook `ai.verdict` decision the chain
 /// answered (FIX 10425), for a row whose answer counts its hooks' decisions
-/// among its own ([`facade_hooks_post_counted`]).
+/// among its own ([`facade_hooks_post_counted`]). A retry's `Completed`
+/// stop carries the result settlement's drain saved for it. That result is
+/// released for the caller now, by the rows it was saved beside, before the
+/// stop reaches the row's door or the wire ([`released_saved_result`], FIX
+/// 21054).
 pub(super) async fn facade_hooks_pre_counted(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
     verb: &str,
     value: serde_json::Value,
+) -> Result<(VerbHookPre, Vec<serde_json::Value>), FacadeApiError> {
+    let check = facade_rewrite_admit(server, call.auth(), &value);
+    let owner_whole_vault_export =
+        super::export_transfer::owner_whole_vault_export_admitted(server, call.auth(), verb);
+    facade_hooks_pre_admitting(server, call, verb, value, check, true)
+        .await
+        .map_err(|stopped| {
+            released_hook_stop(server, stopped, |rows, saved| {
+                released_saved_result(
+                    server.vault(),
+                    call.auth(),
+                    verb,
+                    rows,
+                    saved,
+                    owner_whole_vault_export,
+                )
+            })
+        })
+}
+
+/// [`facade_hooks_pre_counted`], with `check` as the admission a rewrite
+/// meets after the row's own input check. A direct native HTTP read admits
+/// a rewrite of its native request through its own route, which the
+/// generated rows' check does not carry (FIX 1435). A call that is not
+/// `durable` saves no credential: the args its ask saves do not hold all
+/// its request, so only its caller's retry runs it once the ask settles.
+pub(crate) async fn facade_hooks_pre_admitting(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    verb: &str,
+    value: serde_json::Value,
+    check: RewriteAdmit,
+    durable: bool,
 ) -> Result<(VerbHookPre, Vec<serde_json::Value>), FacadeApiError> {
     let auth = call.auth();
     // A hosted operator's root acts as nobody (FIX 2222): no hook runs for
@@ -212,20 +315,27 @@ pub(super) async fn facade_hooks_pre_counted(
     let invocation = call.invocation()?;
     // A credential caller's own call can run again through this door once
     // its hook's ask settles, on the drain's permit when it does. A context
-    // the row refuses saves none.
+    // the row refuses saves none, nor does a call that is not durable.
     let credential = match bound {
-        Some(_) => facade_invocation(
+        Some(_) if durable => facade_invocation(
             credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
             call,
         )
         .ok()
-        .and_then(|memory| memory.verb_ask_credential()),
+        .and_then(|memory| match call.room_turn().ok().flatten() {
+            Some(room) => memory
+                .for_room_turn(room)
+                .ok()
+                .and_then(|turn| turn.verb_ask_credential()),
+            None => memory.verb_ask_credential(),
+        }),
         _ => None,
     };
     let resume = RowHookResume {
         credential,
         drain: call.drain().cloned(),
         session: hook_session::facade_hook_session(server, call, bound, verb, &value)?,
+        held_content: None,
     };
     // What a hook reads, built on every call so a binding installed after
     // this door looked still finds it: the caller's read key, its
@@ -250,7 +360,9 @@ pub(super) async fn facade_hooks_pre_counted(
             ),
         },
     };
-    let check = Some(facade_rewrite_admit(server, auth, &value));
+    // A direct native HTTP read's rewrite meets its route's own grammar
+    // (FIX 1435); every other row here meets the verb table's check.
+    let check = (Some(check), NativeReadInput::Route);
     // A host-door row holds no task-work turn before its pre chain.
     Ok(row_hooks_pre_decided(
         server, reader, check, actor, class, invocation, verb, value, resume, None,

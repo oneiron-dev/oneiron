@@ -1,0 +1,16 @@
+{
+  "name": "vault.artifacts.live_preview.register",
+  "description": "Opens a draft-labelled, owner-private live preview only for the exact process, port and lease already declared by the trusted session runtime.",
+  "input": "crate::artifact_hosting::door_types::ArtifactPreviewRegisterRequest",
+  "output": "crate::artifact_hosting::door_types::ArtifactPreviewView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.register\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

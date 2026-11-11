@@ -246,7 +246,7 @@ impl PdfSealEngine for NativeSealEngine {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::api::{FetchPolicy, PadesProfile, SealResourceLimits};
+    use crate::api::{FetchPolicy, PadesProfile};
 
     struct NoopBackend;
 
@@ -283,7 +283,7 @@ mod tests {
             trust_anchors_der: Vec::new(),
             timestamp_authorities: Vec::new(),
             fetch_policy,
-            resource_limits: SealResourceLimits::default(),
+            resource_limits: crate::memory::testing::grant_all_limits(),
         }
     }
 
@@ -294,7 +294,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         ))
         .unwrap();
-        let limits = SealResourceLimits::default();
+        let limits = crate::memory::testing::operation_limits();
         let state = pdf::reparse_revision(&input, &limits).unwrap();
         let id = state.max_obj + 1;
         let appended = pdf::append_revision(

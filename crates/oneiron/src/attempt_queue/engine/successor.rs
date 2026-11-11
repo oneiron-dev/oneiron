@@ -131,6 +131,7 @@ fn failed_successor(source: &AttemptRecord, id: AttemptId, now: u64) -> AttemptR
         state: AttemptState::Queued,
         lease_owner: None,
         attempt_count: 0,
+        lease_expirations: Vec::new(),
         claimed_at: None,
         scheduled_at: None,
         retry_of: Some(source.id),

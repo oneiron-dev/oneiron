@@ -11,6 +11,7 @@
 //! `reader_parent_for_wake`, `ReaderSeats::seat_with_parent`); nothing here
 //! makes a second clock, queue or store.
 
+mod compaction;
 mod generation;
 mod ports;
 mod profile;
@@ -161,12 +162,14 @@ impl ThingChildHost for ServedThingChildHost {
             return Ok(ThingChildStart::Unavailable(THING_CHILD_LOAN_REFUSED));
         };
         let seat = server.reader_runner.seats().seat_with_parent(
+            &oneiron::code_run::ReaderJobs::canonical(vault),
+            oneiron::code_run::ReaderActor::of(actor),
             parent_run,
             None,
             CallerLocality::OnDevice,
             self.route.window,
             Some(&parent),
-        );
+        )?;
         let task = scoped_child_task(parent_run, &intent_key)?;
         let (calls, received) = tokio::sync::mpsc::unbounded_channel();
         let stop = ScopedChildStop::default();
@@ -206,6 +209,11 @@ impl ThingChildHost for ServedThingChildHost {
                 parent_admission,
                 ..Default::default()
             });
+        let generation = Arc::new(compaction::Generation::new(
+            Arc::clone(&count),
+            stop.clone(),
+            run.work_context(),
+        ));
         let backend = CountedBackend::new(
             RunBackend::new(Arc::clone(&self.route.ladder), run),
             Arc::clone(&count),
@@ -226,6 +234,7 @@ impl ThingChildHost for ServedThingChildHost {
                     seat.deadline.child_cutoff(),
                 )),
                 stop: stop.clone(),
+                generation: Some(generation),
             },
         );
         let mut session = ThingSession::new(

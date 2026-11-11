@@ -20,7 +20,7 @@ use crate::dreamer_runner::{
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::llm::call_as_step_checked;
-use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
@@ -62,7 +62,7 @@ struct MergeInput {
 pub(super) struct MergeResult {
     pub(super) outputs: Vec<EntityId>,
     pub(super) completed_units: u64,
-    pub(super) step_hashes: Vec<[u8; 32]>,
+    pub(super) step_bindings: Vec<StepEffectBinding>,
     /// The listed children's retry chunks this merge read (FIX 7495), so no
     /// later merge under the same parent reads them again.
     #[serde(default)]
@@ -181,12 +181,12 @@ impl ConsolidationExecutor<'_> {
         let read = merge_read(ctx.vault, self.actor)?;
         let (proposals, chunks) = {
             let txn = ctx.vault.store.env.read_txn()?;
-            if let Some((completed_units, step_hashes)) =
+            if let Some((completed_units, step_bindings)) =
                 landed_units_in_txn(ctx.vault, &txn, attempt.status.attempt.id)?
             {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units,
-                    step_hashes,
+                    step_bindings,
                 });
             }
             // A listed child's retry chunks fan in beside it (FIX 7495).
@@ -196,7 +196,7 @@ impl ConsolidationExecutor<'_> {
                 return Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
                     retry_at: (ctx.now_ms / 1_000).saturating_add(input.retry_secs),
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             };
             (proposals, chunks)
@@ -270,6 +270,7 @@ impl ConsolidationExecutor<'_> {
                 self.inference.extraction_egress,
             );
             let keyless = call.inference.selected_keyless();
+            let paid = call.inference.selected_paid();
             let locality = match call.inference.selected_locality() {
                 Some(locality) => locality,
                 // A missing locality, a request that did not hash and an
@@ -282,7 +283,7 @@ impl ConsolidationExecutor<'_> {
             };
             let mut scope = Scope::default();
             scope.world = first.world;
-            scope.relationship.clone_from(&first.rel);
+            scope.relationship = first.rel.as_ref().map(|ids| ids.iter().copied().collect());
             scope.project = Some(first.scope_project);
             // Each proposal and subject by this call's own labels (FIX
             // 7506): the claims `C<n>` in the order they render, then each
@@ -320,6 +321,7 @@ impl ConsolidationExecutor<'_> {
                     response_format: ResponseFormat::Text,
                     locality,
                     host_keyless: keyless,
+                    host_paid: paid,
                 }
                 .with_purpose_defaults(),
                 messages: vec![
@@ -327,11 +329,15 @@ impl ConsolidationExecutor<'_> {
                         role: LlmMessageRole::System,
                         content: vec![ContentPart::Text {
                             text: input.instruction.clone(),
+                            signature: None,
                         }],
                     },
                     LlmMessage {
                         role: LlmMessageRole::User,
-                        content: vec![ContentPart::Text { text }],
+                        content: vec![ContentPart::Text {
+                            text,
+                            signature: None,
+                        }],
                     },
                 ],
                 tools: Vec::new(),
@@ -369,7 +375,7 @@ impl ConsolidationExecutor<'_> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
-            let response = match call_as_step_checked(
+            let (response, binding) = match call_as_step_checked(
                 &step,
                 call.backend,
                 self.guard,
@@ -382,12 +388,13 @@ impl ConsolidationExecutor<'_> {
                     response,
                     memoized,
                     failure_policy,
+                    binding,
                     ..
                 }) => {
                     if let Err(error) = charges.record_terminal(
                         ctx.vault,
-                        attempt.status.attempt.id,
-                        hash,
+                        binding.attempt_id,
+                        binding.step_hash,
                         &response.usage,
                     ) {
                         if !memoized {
@@ -398,8 +405,8 @@ impl ConsolidationExecutor<'_> {
                     if failure_policy.is_some() {
                         return match charges.park_on_fallback(
                             ctx.vault,
-                            attempt.status.attempt.id,
-                            hash,
+                            binding.attempt_id,
+                            binding.step_hash,
                             NARRATIVE_FALLBACK,
                             &response,
                         ) {
@@ -407,7 +414,7 @@ impl ConsolidationExecutor<'_> {
                             Err(error) => super::residency::spent_or_deferred(error, ctx, &charges),
                         };
                     }
-                    response
+                    (response, binding)
                 }
                 Ok(StepOutcome::Trapped { .. }) => {
                     return Ok(charges
@@ -424,9 +431,10 @@ impl ConsolidationExecutor<'_> {
                     return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
                 }
                 Err(error) => {
-                    return Ok(
-                        charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error))
-                    );
+                    return Ok(charges.park_for(
+                        &error.to_string(),
+                        crate::dreamer_runner::dreamer_park_cause_of_step(&error),
+                    ));
                 }
             };
             if ctx.deadline.expired() {
@@ -439,8 +447,8 @@ impl ConsolidationExecutor<'_> {
                 Err(reason) => {
                     return match charges.park_refused_reply(
                         ctx.vault,
-                        attempt.status.attempt.id,
-                        hash,
+                        binding.attempt_id,
+                        binding.step_hash,
                         reason,
                     ) {
                         Ok(parked) => Ok(parked),
@@ -481,7 +489,7 @@ impl ConsolidationExecutor<'_> {
                 &MergeResult {
                     outputs,
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                     chunks,
                     links: Vec::new(),
                 },
@@ -493,7 +501,7 @@ impl ConsolidationExecutor<'_> {
         match commit {
             Ok(()) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             // A proposal that moved before the merge commits again on resume;
             // a gate only an owner act opens keeps the private park.

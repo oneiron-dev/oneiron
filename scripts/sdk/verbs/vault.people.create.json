@@ -1,0 +1,17 @@
+{
+  "name": "vault.people.create",
+  "description": "The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake.",
+  "input": "crate::memory::identity_doors::PersonCreateRequest",
+  "output": "crate::memory::identity_doors::PersonCreated",
+  "call": "memory.people_create_as_owner(&memory.embedded_owner(\"vault.people.create\")?, &input)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_caller": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

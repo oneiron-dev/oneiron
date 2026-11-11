@@ -211,9 +211,10 @@ impl Metrics {
         let leading = &text[..text.len() - start.len()];
         let body = start.trim_end_matches(char::is_whitespace);
         let trailing = &start[body.len()..];
-        let ascii_spaces = |run: &str| !run.is_empty() && run.bytes().all(|byte| byte == b' ');
-        let leading = ascii_spaces(leading).then_some((leading, ""));
-        let trailing = ascii_spaces(trailing).then_some((trailing, ""));
+        let literal_spaces =
+            |run: &str| !run.is_empty() && run.chars().all(|ch| ch == ' ' || ch == '\u{3000}');
+        let leading = literal_spaces(leading).then_some((leading, ""));
+        let trailing = literal_spaces(trailing).then_some((trailing, ""));
         let space = self.advance(" ");
         let mut lines = 1;
         let mut used = 0;
@@ -222,7 +223,7 @@ impl Metrics {
             let need = self.advance(word);
             let gap = if used == 0 || separator.is_empty() {
                 0
-            } else if separator.bytes().all(|byte| byte == b' ') {
+            } else if literal_spaces(separator) {
                 self.advance(separator)
             } else {
                 space

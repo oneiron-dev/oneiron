@@ -89,7 +89,7 @@ impl DecodeAdmission for Admission {
         if let Some(taken) = self.taken.as_ref() {
             let wide = u64::try_from(bytes).unwrap_or(u64::MAX);
             while taken
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
                     Some(held.saturating_sub(wide))
                 })
                 .is_err()

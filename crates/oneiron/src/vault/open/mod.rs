@@ -14,9 +14,12 @@ use crate::error::{Error, Result};
 use crate::store::{DefaultPolicySeedMode, Store, VaultWriterLease};
 #[cfg(feature = "test-support")]
 use crate::temporal::TimeRange;
+use crate::work_line::{TASK_WORK_BOUND, TASK_WORK_WAIT, WorkLine};
 use std::path::Path;
 
+mod adopt;
 mod config_validation;
+mod first_non_bootstrap_row;
 mod lease_door;
 use self::config_validation::validate_open_config;
 
@@ -126,11 +129,7 @@ impl Vault {
     /// A lease another host holds for one owner act is waited out for a
     /// bounded time (FIX 5885, `VaultWriterLease::acquire_after_owner_act`).
     pub fn open_owned(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
-        validate_open_config(&config)?;
-        std::fs::create_dir_all(path.as_ref())?;
-        let canonical = path.as_ref().canonicalize()?;
-        let lease = VaultWriterLease::acquire_after_owner_act(&canonical)?;
-        Self::open_leased(&canonical, config, lease)
+        Self::open_owned_with(path, config, super::OpenOptions::default())
     }
 
     /// This vault's own directory on this host, as it was opened
@@ -164,10 +163,15 @@ impl Vault {
         validate_open_config(&config)?;
         let canonical = path.as_ref().canonicalize()?;
         let lease = VaultWriterLease::acquire_held_after_owner_act(directory, &canonical)?;
-        Self::open_leased(&canonical, config, lease)
+        Self::open_leased(&canonical, config, lease, super::OpenOptions::default())
     }
 
-    fn open_leased(canonical: &Path, config: VaultConfig, lease: VaultWriterLease) -> Result<Self> {
+    fn open_leased(
+        canonical: &Path,
+        config: VaultConfig,
+        lease: VaultWriterLease,
+        options: super::OpenOptions,
+    ) -> Result<Self> {
         let store =
             Store::open_with_writer_lease(canonical, &config, &lease, engine_store_hooks())?;
         // Only the lease holder writes bodies, so what a writer left half
@@ -175,7 +179,7 @@ impl Vault {
         // off-record sessions, none of which outlived its process.
         #[cfg(unix)]
         store.sweep_body_debris()?;
-        let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required)?;
+        let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required, options)?;
         vault.writer_lease = Some(lease);
         Ok(vault)
     }
@@ -224,6 +228,7 @@ impl Vault {
             analyzer,
             true,
             DefaultPolicySeedMode::Required,
+            super::OpenOptions::default(),
         )
     }
 
@@ -508,7 +513,7 @@ impl Vault {
                 Store::open_unseeded_for_test(path, &config, engine_store_hooks())?
             }
         };
-        Self::finish_open(store, config, seed_mode)
+        Self::finish_open(store, config, seed_mode, super::OpenOptions::default())
     }
 
     /// Everything after the storage gates: analyzer discovery, the text-index
@@ -517,6 +522,7 @@ impl Vault {
         store: Store,
         config: VaultConfig,
         seed_mode: DefaultPolicySeedMode,
+        options: super::OpenOptions,
     ) -> Result<Self> {
         let analyzer = discover_analyzer(&config)?;
         let text_index_trusted = if config.skip_text_index_manifest_check {
@@ -541,7 +547,14 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
-        Self::assemble_open(store, config, analyzer, text_index_trusted, seed_mode)
+        Self::assemble_open(
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+            seed_mode,
+            options,
+        )
     }
 
     /// Everything both open doors share once the text-index state is settled:
@@ -555,8 +568,20 @@ impl Vault {
         analyzer: MultilingualAnalyzer,
         text_index_trusted: bool,
         seed_mode: DefaultPolicySeedMode,
+        options: super::OpenOptions,
     ) -> Result<Self> {
+        // The store's id first, before this open seeds a row (FIX 3375).
+        let vault_id = super::VaultId::resolve_at_open(
+            &store,
+            config
+                .page_seal
+                .as_ref()
+                .map(oneiron_store::vault_page_seal::VaultPageSeal::vault_id),
+            options.adopted_storage_id(),
+        )?;
         crate::batch::sweep_scope_stamps(&store)?;
+        // FIX 12327: rows of a kind no executor serves leave the queue.
+        crate::attempt_queue::drop_unserved_kinds(&store)?;
         let seed_content = matches!(seed_mode, DefaultPolicySeedMode::Required)
             && !crate::store::shared_leave_receipt::has_left(&store)?;
         // ONE-1890: the seeded system-agent roster reconciles on every seeded
@@ -590,15 +615,12 @@ impl Vault {
         let dir_identity = store
             .bound_root_identity()
             .or_else(|| directory_identity(store.env.path()));
+        // One pin table per store, shared with its writers (FIX 22101).
+        let result_body_pins = store.result_body_pins.clone();
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
-            vault_id: super::VaultId::resolve_at_open(
-                &store,
-                config
-                    .page_seal
-                    .as_ref()
-                    .map(oneiron_store::vault_page_seal::VaultPageSeal::vault_id),
-            )?,
+            admitted_model_packs: Default::default(),
+            vault_id,
             retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
                 &store,
             )?,
@@ -611,6 +633,7 @@ impl Vault {
             tagging_arm: Default::default(),
             analyzer,
             writer_lease: None,
+            secret_use_t1_operations: Default::default(),
             page_seal_mirror_carry: Default::default(),
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
@@ -628,14 +651,8 @@ impl Vault {
             host_legal_captures: Default::default(),
             live_rows: Default::default(),
             attempt_activity: Default::default(),
-            task_work: crate::work_line::WorkLine::new(
-                None,
-                crate::work_line::TASK_WORK_BOUND,
-                crate::work_line::TASK_WORK_WAIT,
-            ),
-            linear_rate_line: crate::work_line::WorkLine::exclusive(
-                crate::work_line::TASK_WORK_WAIT,
-            ),
+            task_work: WorkLine::new(None, TASK_WORK_BOUND, TASK_WORK_WAIT),
+            linear_rate_line: WorkLine::exclusive(TASK_WORK_WAIT),
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
@@ -647,13 +664,17 @@ impl Vault {
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
+            executor_leases_released: std::sync::atomic::AtomicBool::new(false),
+            agent_run_fences: Default::default(),
+            agent_run_effect_sites: Default::default(),
             #[cfg(feature = "sync")]
             home_search: Default::default(),
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
             host_net_floor: Default::default(),
             proposal_spool: Default::default(),
-            result_body_pins: Default::default(),
+            sandbox_backends: Default::default(),
+            result_body_pins,
             verb_hook_state: Default::default(),
             skill_invocations: Default::default(),
             attempt_cancels: Default::default(),
@@ -661,14 +682,17 @@ impl Vault {
             code_consent_host: Default::default(),
             managed_owner_check: Default::default(),
             served_transports: Default::default(),
+            esign_page_inspector: Default::default(),
+            xlsx_precision_recalc: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
+            ask_forward_arrivals: Default::default(),
+            origin_git_transport: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };
-        // A sealed vault (maximum tier) admits the wrap its seal was
-        // unlocked with, holds its data key and mirrors its wraps before any
-        // caller holds it.
+        // A sealed vault (maximum tier) admits the wrap its seal was unlocked with,
+        // holds its data key and mirrors its wraps before any caller holds it.
         vault.settle_page_seal()?;
         // A published deletion must finish its request-bound topology tear
         // before any caller can apply a new merge or observe this vault.
@@ -885,6 +909,31 @@ impl Vault {
             .and_then(|manager| manager.upgrade());
         if let Some(manager) = manager {
             manager.notify_note(id);
+        }
+    }
+
+    /// [`Vault::notify_note_document`] for a typed body's artifact after a
+    /// committed local head write: the invalidation frame names an entity,
+    /// not a NOTE, and the socket forwards an artifact's UPDATE where it
+    /// drops a NOTE's.
+    #[cfg(feature = "sync")]
+    pub(crate) fn notify_typed_body_document(&self, id: crate::EntityId) {
+        self.notify_note_document(id);
+    }
+
+    /// Invalidate own devices' copies of `id`'s forks after a committed fork
+    /// change at this authority (FIX 12789): a fork made or uploaded here, a
+    /// decision, a bundle opened. Content-free and best effort, as
+    /// [`Self::notify_note_document`]; a replica's notice stays on it.
+    #[cfg(feature = "sync")]
+    pub(crate) fn notify_note_forks(&self, id: crate::EntityId) {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .ok()
+            .and_then(|manager| manager.upgrade());
+        if let Some(manager) = manager {
+            manager.notify_note_forks(id);
         }
     }
 

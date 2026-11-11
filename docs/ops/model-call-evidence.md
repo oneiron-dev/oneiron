@@ -22,10 +22,121 @@ The capture uses the actual caller at each entry:
   is not substituted for one. Existing payer and spend handling stay unchanged.
 - A generative hook verdict uses its grant's reader as principal and has no
   bound request session.
+- A generative eval arm uses the registered judge's principal with no bound
+  request session. It records only an actual successful terminal response and
+  its answering binding. The job's shared run, exact-model call and wait
+  deadline stay unchanged.
 
-The caller context is one thread-local scope on the blocking decision thread.
-It restores the entire previous context on return or panic. It is not authority,
-a payer, or an async context propagated to another thread.
+The Big-rung caller context is one thread-local scope on the blocking decision
+thread. It restores the entire previous context on return or panic. It is not
+authority, a payer, or an async context propagated to another thread. Generative
+eval arms, the Coach distill and code-fix drafts pass their recording principal directly.
+Router and Decision eval reads scope the same registered judge principal around
+their existing run-aware ladder call, without changing the question or scoring.
+
+## Native house reads
+
+A house escalation read uses the same caller context on the blocking decision
+thread. Only a bound context can write evidence; a missing context skips
+evidence, not the read. A read with a caller-supplied run records that run. A
+read without one carries the house gate's actual funded run to the observer
+only after its existing settlement attempt. The run stays in that decision
+frame and never enters the typed answer. System One, Local-vision, embedder
+and tagger paths are not covered by this hook.
+
+The engine lends the exact admitted native request and its terminal result to
+an optional observer after the gate has attempted settlement. The observer
+never reads or settles again. It records a completed read only after the
+existing distribution validation succeeds. A malformed reply keeps its actual
+usage; a raw reader error keeps only its typed failure class and unknown usage.
+Readout probabilities and raw reader errors are not copied to the record. An
+unmapped failure skips evidence without changing the original error.
+
+The owner probe and this hook share one native record initializer and request
+canonicalizer. They record the actual reader model, opaque revision and
+connector locality. The probe retains its existing per-attempt retry indices;
+house reads use their actual run's shared evidence sequence. Each native row
+explicitly records its run source: `probe`, `caller`, or `house_gate`. These
+are required current-format tags, not inferred identities or replay permission;
+erasure keeps the nonpersonal source tag. No generative request, finish reason,
+route, issuer or read-world identity is invented.
+
+## Native System One calls
+
+A System One call with an actual caller-supplied run records a `seat_decision`
+row after its original settlement attempt. A settlement error still propagates
+as before; recording the provider outcome does not claim settlement succeeded.
+The no-run branch is unchanged and is not captured.
+
+The adapter builds, sends and parses once through the same implementation used
+by its ordinary call. Its separate recorded result carries a canonical JSON-tree
+fingerprint of the actual built request body, not a hash of wire bytes or of the
+logical pre-transform request. No body, image pixels, headers or credentials are
+stored. Other remote seats default to returning no fingerprint, not an invented
+one. A missing fingerprint or unmapped error skips evidence only.
+
+The same bound principal/session and arrival-or-terminal NoRecord check apply.
+Completed calls retain actual usage; failures retain only a typed class with
+unknown usage. Answer probabilities and error text are not stored. The shared
+native initializer writes the actual model, revision and connector locality,
+with required `caller` run provenance. It invents no generative finish reason,
+route, issuer, reasoning part or read-world identity. The run's shared evidence
+sequence is allocated only after privacy, fingerprint and model checks.
+
+## Local-vision calls
+
+Local-vision records actual successful generative terminals before its unchanged
+text and typed-answer projection. A provider response that later fails typed JSON
+parsing still has its raw call evidence, as on the Big rung. Provider errors and
+timeouts create no success record. The outer timeout, Waits deadline, role/model
+checks, full existing rung/fallback traversal and last-usage mapping are unchanged.
+
+Capture uses only a bound model-call principal and its owned optional session.
+An absent context skips evidence, never the call. Both the caller-sourced run
+and the pre-existing host run stay unchanged. The existing raw writer receives
+the actual admitted request, full response and actual answering binding; the
+requested rung is never substituted for a fallback's binding. The same actor
+and session are checked at arrival and terminal, and NoRecord on either suppresses
+the write. Evidence uses only a post-terminal initiated-by clone and the shared
+run sequence. No new call, run, receipt, store or replay permission is created.
+
+## Coach session distill
+
+The standing Coach session distill records successful provider terminals before
+its unchanged text and notes parsing. Its caller is the execution actor on the
+admitted attempt's validated authority stamp, with an exact `coach.skill_distill`
+facet match. The enqueue path stamps that actor; the core distill door validates
+it against the Coach authority it uses for the drain's writes before invoking
+the model. Budget authority, input speakers and the sitting being read are not
+used to infer the caller. The standing execution has no calling session.
+
+A missing, mismatched or unreadable stamp suppresses only evidence; the existing
+core door and distill retain their behavior. The explicit actor reaches only the
+distill's recorded call. Other Coach calls and exact replays stay uncaptured by
+this hook. The shared model call keeps its existing run, host wait, full fallback
+walk, settlement, text result and error mapping. It retains the actual admitted
+request, terminal response and answering binding for the existing raw writer.
+
+The same actor is checked for NoRecord before and after the call, with either
+check suppressing evidence. Only a post-terminal run clone carries that actor
+for evidence. A successful provider answer that later fails notes parsing can
+still have evidence; provider errors add no record or retry.
+
+## Coach code-fix drafts
+
+Only the generative draft of an admitted `coach.code_fix` attempt uses the same
+recorded-call path. Its explicit actor comes from that attempt's validated
+execution stamp with an exact facet match. The core code-fix door validates the
+stamp against the Coach authority before invoking the draft. The separate owner
+principal used for the code-fix judgments stays unchanged and is not substituted
+for the generative worker's actor.
+
+The draft's source rows, messages, budget, route, full fallback walk, host wait,
+text and parsed result stay unchanged. A provider success is recorded before
+draft parsing; an unusable draft can therefore still have raw call evidence.
+The standing execution has no calling session and uses the same actor's arrival
+or terminal NoRecord check. Missing identity suppresses only evidence. Replies,
+exact replays, shadow runs and other Coach calls are not captured by this hook.
 
 ## Captured chat calls
 
@@ -67,8 +178,14 @@ is resolved by that existing session check; no room id is invented.
 The evidence-only initiator is added to a clone of the run after the provider
 returns. It does not change the live run, admission, route, meter, payer, reply,
 or typed decision. A failed evidence write is logged and never fails the answer.
-An unbound call records as usual; a call outside every capture scope is not
-assigned a guessed actor.
+A call without a bound session can still record when an actual caller context
+is present; a call outside every capture scope is not assigned a guessed actor.
+
+Each captured raw, Big, generative-eval, Coach-distill/draft, Local-vision, house or caller-System-One
+evidence row takes a distinct record
+stamp from its shared run. This is an evidence-key sequence, not an admission or receipt
+number. Cloned handles share it and declaration revisions do not reset it.
+A failed or suppressed write does not require a dense sequence.
 
 ## Signed parts containing secrets
 
@@ -97,6 +214,20 @@ This is not MESSAGE/chat reasoning delivery, replay admission, or complete
 issuing-login and read-world capture. It adds no retrieval, Dreamer-mining,
 training, or export reader. Native label reads use their separate settled-read
 capture path. Whole-engine model-call coverage remains work in progress.
+
+## Provider signature retention
+
+The Anthropic whole-response decoder retains a thinking block's actual signature
+when its visible text is empty or absent. The Gemini whole and stream decoder
+retains a standalone `thoughtSignature` as its own signature-only reasoning part
+at that position. It does not assign that signature to an earlier part or
+replace an earlier signature. Neither change requests thinking or rewrites the
+provider's bytes.
+
+The shared terminal predicates also accept signature-only parts (the separate
+terminal-acceptance fix). Retaining a provider field does not prove that the
+provider emits that shape in every call. MESSAGE custody, replay permission and
+issuing-login identity remain separate.
 
 ## Ordered MESSAGE Continue parts
 

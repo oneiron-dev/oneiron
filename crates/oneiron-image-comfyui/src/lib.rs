@@ -341,9 +341,15 @@ impl ImageBackend for ComfyUiBackend {
         &'a self,
         intent: ImageIntent,
         references: Vec<ImageBytes>,
+        mask: Option<ImageBytes>,
         lease: &'a BudgetLease,
     ) -> ImageFuture<'a> {
-        Box::pin(self.render(intent, Some(references), lease))
+        Box::pin(async move {
+            if mask.is_some() {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
+            self.render(intent, Some(references), lease).await
+        })
     }
 }
 

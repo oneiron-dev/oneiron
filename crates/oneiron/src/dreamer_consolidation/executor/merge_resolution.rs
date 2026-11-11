@@ -361,14 +361,16 @@ impl ConsolidationExecutor<'_> {
         super::super::roles::bind_reasoning(step_ctx.vault, call.backend, &mut request)?;
         let step_hash = request.canonical_hash()?;
         let outcome = call_as_step(step_ctx, call.backend, self.guard, request).await;
-        let response = match outcome? {
-            StepOutcome::Finished { response, .. } => response,
+        let (response, binding) = match outcome? {
+            StepOutcome::Finished {
+                response, binding, ..
+            } => (response, binding),
             StepOutcome::Trapped { .. } => return Ok(None),
         };
         charges.record_terminal(
             step_ctx.vault,
-            step_ctx.attempt_id,
-            step_hash,
+            binding.attempt_id,
+            binding.step_hash,
             &response.usage,
         )?;
         let rules = failure_rules::load(step_ctx.vault)?;
@@ -430,6 +432,7 @@ impl ConsolidationExecutor<'_> {
              value as JSON>}. On supersede the value is the newest one stated; on merge it is \
              one value that holds what the candidates state.";
         let keyless = call.inference.selected_keyless();
+        let paid = call.inference.selected_paid();
         let mut request = LlmRequest {
             model: call.model.clone(),
             envelope: CallEnvelope {
@@ -454,17 +457,19 @@ impl ConsolidationExecutor<'_> {
                 locality: call.inference.selected_locality().ok_or_else(||
                     crate::Error::InvalidConfig("consolidation host binding needs locality".into()))?,
                 host_keyless: keyless,
+                host_paid: paid,
             }.with_purpose_defaults(),
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: system.to_owned(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
-                    content: vec![ContentPart::Text { text: lines }],
+                    content: vec![ContentPart::Text { text: lines, signature: None }],
                 },
             ],
             tools: Vec::new(),
@@ -510,7 +515,7 @@ fn decode_merged_value(response: &LlmResponse) -> Option<Value> {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

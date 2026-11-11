@@ -84,6 +84,28 @@ impl Memory<'_> {
         send: &ScheduledSend<'_>,
         gate_intent_ref: &str,
     ) -> MemoryResult<crate::outbound::OutboundDispatchResult> {
+        let request = self.scheduled_dispatch_request(send, gate_intent_ref);
+        let mut sink = ScheduleOnlySink;
+        self.vault
+            .dispatch_outbound_intent_with_verified_actor(
+                request,
+                &mut sink,
+                self.actor,
+                self.actor_class,
+            )
+            .map_err(facade_error_from_outbound_dispatch)
+    }
+
+    /// The Gate dispatch request `send` makes under `gate_intent_ref`, under
+    /// the schedule-only Hold window: the bound actor, the originating
+    /// session, counterparty, invite and sender selection, and the logical
+    /// send its ask names. `can({effect})` judges the same request (FIX
+    /// 22102).
+    pub(super) fn scheduled_dispatch_request(
+        &self,
+        send: &ScheduledSend<'_>,
+        gate_intent_ref: &str,
+    ) -> OutboundDispatchRequest {
         let actor = OutboundDispatchActor {
             actor_class: self.actor_class.gate_actor_class().to_owned(),
             actor_ref: Some(self.actor.to_hex()),
@@ -120,6 +142,11 @@ impl Memory<'_> {
                     .send_autonomy(selection.counterparty_class.as_deref()),
             );
         }
+        // FIX 4747 slice 5: an agent run's schedule carries the fence its
+        // claim took, so no transport call of a stale executor goes.
+        request.agent_run_fence = self
+            .task_host()
+            .and_then(|host| self.vault.agent_run_fence(host.parent()));
         // FIX 6424: the ask names the logical send the executor will run
         // this TASK under, so a press on it pins the send that spends it.
         request.approval_identity_ref = Some(crate::outbound::connector_logical_send_ref(
@@ -127,15 +154,7 @@ impl Memory<'_> {
             send.intent.idempotency_key.as_deref(),
             send.task_ref,
         ));
-        let mut sink = ScheduleOnlySink;
-        self.vault
-            .dispatch_outbound_intent_with_verified_actor(
-                request,
-                &mut sink,
-                self.actor,
-                self.actor_class,
-            )
-            .map_err(facade_error_from_outbound_dispatch)
+        request
     }
 }
 

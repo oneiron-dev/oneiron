@@ -177,7 +177,7 @@ impl ActionSession {
             subscription,
             outcome,
         } = answering;
-        let message = handle.message_id();
+        let expected_message = handle.recorded_message_id();
         let (finished, forwarded) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             let _retain = segments._turn;
@@ -187,11 +187,13 @@ impl ActionSession {
             let whole = !ended.fell_back
                 && ended.result.is_ok()
                 && ended.saved.as_ref().is_some_and(|saved| {
-                    saved.message_id == message && saved.finality == StreamFinality::Final
+                    Some(saved.message_id) == expected_message
+                        && saved.finality == StreamFinality::Final
                 });
             let saved = ended.saved.clone().filter(|_| whole);
             let _ = finished.send(ended);
             if let (Some(saved), Some(authority)) = (saved, authority) {
+                let message = saved.message_id;
                 let text = crate::server::blocking(|| {
                     let TurnCredential::Action { action, .. } = &reader.credential else {
                         return None;

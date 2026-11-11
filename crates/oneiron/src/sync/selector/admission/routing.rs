@@ -7,12 +7,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use loro::LoroDoc;
 
 use crate::Vault;
+use crate::agent_def::AgentScope;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimSubject, validate_claim_body_and_decode_in_txn};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes, map_insert_bytes};
 use crate::sync::types::WindowKey;
 
@@ -40,6 +41,9 @@ use crate::sync::types::WindowKey;
 /// another kind refuses that edge, or that CLAIM, alone. An edge whose two
 /// endpoints are proven to sit in two different worlds, one of them foreign,
 /// is quarantined alone ([`contains_cross_world_edge`], FIX 3660, FIX 3893).
+/// An AGENT_DEF scoped to a WORLD, and each WORLD a SavedQuery declares,
+/// names the foreign id [`Routes::worlds`] holds for it
+/// ([`rename_world_references`], FIX 3892).
 #[cfg(feature = "sync")]
 pub(super) struct Routes<'a> {
     /// The window each part imports into, part 0 first.
@@ -60,6 +64,9 @@ pub(super) struct Routes<'a> {
     entity_subjects: BTreeSet<EntityId>,
     /// The key each edge naming one of those WORLDs lands under, by its own.
     rekeyed: BTreeMap<String, String>,
+    /// The birth placement the guest carried for each TASK or SUMMARY row,
+    /// at the foreign WORLD copy its world lands in here (FIX 3656).
+    placements: BTreeMap<EntityId, crate::federation::record_scope::GuestPlacement>,
 }
 
 /// A guest's update as its rows are copied: the source vault its pact names
@@ -85,6 +92,7 @@ impl<'a> Routes<'a> {
             worlds: BTreeMap::new(),
             entity_subjects: BTreeSet::new(),
             rekeyed: BTreeMap::new(),
+            placements: BTreeMap::new(),
         }
     }
 
@@ -124,7 +132,8 @@ impl<'a> Routes<'a> {
             .collect::<Vec<_>>();
         // The ids an InWorld or SetIn edge, or a CLAIM about one, names as
         // its source, which may be WORLDs, and as its target, which its kind
-        // types a WORLD (FIX 3891).
+        // types a WORLD (FIX 3891); and the WORLDs an AGENT_DEF scope or a
+        // SavedQuery's declared worlds name (FIX 3892).
         let mut named = BTreeSet::new();
         let mut entity_candidates = BTreeSet::new();
         let mut typed_world_targets = BTreeSet::new();
@@ -136,7 +145,22 @@ impl<'a> Routes<'a> {
             let Some(header) = EntityMetadataHeader::parse(blob) else {
                 return;
             };
-            if id.to_hex() != raw || header.entity_type != ENTITY_TYPE_CLAIM {
+            if id.to_hex() != raw {
+                return;
+            }
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                // A typed WORLD reference the update carries as a row of
+                // another kind adds no stored-copy proof, as for an Entity
+                // subject (FIX 3892).
+                for world in typed_world_references(
+                    vault,
+                    header.entity_type,
+                    &blob[ENTITY_METADATA_HEADER_LEN..],
+                ) {
+                    if matches!(carried.get(&world), None | Some(Some(ENTITY_TYPE_WORLD))) {
+                        named.insert(world);
+                    }
+                }
                 return;
             }
             let Ok(body) = validate_claim_body_and_decode_in_txn(
@@ -217,14 +241,31 @@ impl<'a> Routes<'a> {
             }
             edges.push((raw.to_owned(), (src, kind, tgt)));
         });
+        // A guest's TASK or SUMMARY carries its birth placement (FIX 3656).
+        // Its world is a typed WORLD reference: a WORLD row the update
+        // carries, or the foreign copy this vault stores, proves it, as for
+        // an AGENT_DEF's scope (FIX 3892). A row of another kind proves
+        // nothing; base reality is no WORLD row.
+        let placements = super::super::birth_placements::carried_placements(remote)?;
+        for placement in placements.values() {
+            if placement.world != crate::claim::base_world_id()
+                && matches!(
+                    carried.get(&placement.world),
+                    None | Some(Some(ENTITY_TYPE_WORLD))
+                )
+            {
+                named.insert(placement.world);
+            }
+        }
         routes.rename_worlds(
             vault,
             guest,
-            carried_worlds,
+            &carried_worlds,
             typed_world_targets,
             named,
             entity_candidates,
         )?;
+        routes.placements = routes.guest_placements(vault, guest, &carried_worlds, placements)?;
         for (raw, (src, kind, tgt)) in edges {
             if routes.withheld.contains(&src) || routes.withheld.contains(&tgt) {
                 routes.edges.insert(raw, None);
@@ -280,18 +321,19 @@ impl<'a> Routes<'a> {
     /// which the edge's kind types a WORLD (ARCH-0022) before its row
     /// arrives; and each other `named` id whose foreign copy this vault
     /// already stores as a WORLD row, which only that WORLD's earlier copy
-    /// from `guest` puts there. Any other id keeps its own, PERSON and CLAIM
-    /// sources among them.
+    /// from `guest` puts there, an AGENT_DEF's or SavedQuery's WORLD among
+    /// them (FIX 3892). Any other id keeps its own, PERSON and CLAIM sources
+    /// among them.
     fn rename_worlds(
         &mut self,
         vault: &Vault,
         guest: &[u8; 32],
-        carried: Vec<EntityId>,
+        carried: &[EntityId],
         typed_world_targets: BTreeSet<EntityId>,
         named: BTreeSet<EntityId>,
         entity_candidates: BTreeSet<EntityId>,
     ) -> Result<()> {
-        for id in carried {
+        for &id in carried {
             let here = crate::federation::foreign_world_for(guest, id)?.entity_id();
             self.worlds.insert(id, here);
             if entity_candidates.contains(&id) {
@@ -395,6 +437,59 @@ impl<'a> Routes<'a> {
             }
         });
         result.map(|()| Some(routed))
+    }
+
+    /// Each birth placement the guest `guest` carried, `carried`, at the
+    /// world it lands in here (FIX 3656): the sender's base reality at the
+    /// guest's base copy, as a guest CLAIM's is, and any other world at the
+    /// foreign copy whose WORLD row is carried or stored here. Edge-kind
+    /// routing alone is not birth-placement evidence. An unproven world
+    /// refuses the placement and its row (`BirthPlacement::for_guest`).
+    fn guest_placements(
+        &self,
+        vault: &Vault,
+        guest: &[u8; 32],
+        carried_worlds: &[EntityId],
+        carried: BTreeMap<EntityId, crate::federation::record_scope::BirthPlacement>,
+    ) -> Result<BTreeMap<EntityId, crate::federation::record_scope::GuestPlacement>> {
+        let mut placed = BTreeMap::new();
+        for (id, placement) in carried {
+            let copy = if placement.world == crate::claim::base_world_id() {
+                Some(crate::federation::guest_claim_world(guest, None)?.entity_id())
+            } else if let Some(copy) = self.worlds.get(&placement.world).copied()
+                && (carried_worlds.contains(&placement.world)
+                    || vault
+                        .get_raw_unsealed(&copy)?
+                        .as_deref()
+                        .and_then(EntityMetadataHeader::parse)
+                        .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD))
+            {
+                Some(copy)
+            } else {
+                None
+            };
+            placed.insert(id, placement.for_guest(copy)?);
+        }
+        Ok(placed)
+    }
+
+    /// The placement each row `admitted` holds lands beside, with the digest
+    /// of the bytes that row lands with: what the part's import lands in the
+    /// transaction of the row's first put here (FIX 3656).
+    pub(super) fn admitted_placements(
+        &self,
+        admitted: &LoroDoc,
+    ) -> crate::sync::ingest::AdmittedPlacements {
+        let entities = admitted.get_map("entities");
+        self.placements
+            .iter()
+            .filter_map(|(id, placement)| {
+                let blob = map_get_bytes(&entities, &id.to_hex())?;
+                let header = EntityMetadataHeader::parse(&blob)?;
+                (header.entity_type == placement.kind())
+                    .then(|| (*id, (*blake3::hash(&blob).as_bytes(), *placement)))
+            })
+            .collect()
     }
 }
 
@@ -520,6 +615,61 @@ pub(super) fn rename_world_entity_subject(subject: &mut ClaimSubject, guest: Gue
     {
         *entity = *here;
     }
+}
+
+/// The WORLDs a guest's row of `entity_type` names in a typed field (FIX
+/// 3892): an AGENT_DEF's `AgentScope::World`, and each WORLD the
+/// SavedQuery kind this vault's registry assigned declares. A body that does
+/// not read names none.
+#[cfg(feature = "sync")]
+fn typed_world_references(vault: &Vault, entity_type: u8, body: &[u8]) -> Vec<EntityId> {
+    if entity_type == ENTITY_TYPE_AGENT_DEF {
+        return match crate::agent_def::decode_agent_definition(body) {
+            Ok(definition) => match definition.scope {
+                AgentScope::World(world) => vec![world],
+                _ => Vec::new(),
+            },
+            Err(_) => Vec::new(),
+        };
+    }
+    if crate::saved_query::is_saved_query_kind(vault, entity_type) {
+        return crate::saved_query::declared_worlds(body);
+    }
+    Vec::new()
+}
+
+/// A guest's AGENT_DEF scoped to one WORLD, and each WORLD its SavedQuery
+/// declares, names the foreign copy that WORLD lands under here (FIX 3892),
+/// through the map its InWorld and SetIn edges use ([`Routes::worlds`]). A
+/// WORLD the map does not hold keeps its id, as an unproven Entity subject
+/// does. The body is decoded, renamed and re-encoded by its own codec; the
+/// row's id and metadata stay. `None` when nothing is renamed, or the body
+/// does not read, so it lands as it came for the checks that judge it.
+#[cfg(feature = "sync")]
+pub(super) fn rename_world_references(
+    vault: &Vault,
+    entity_type: u8,
+    body: &[u8],
+    guest: GuestCopy<'_>,
+) -> Result<Option<Vec<u8>>> {
+    let here = |world: &EntityId| guest.worlds.get(world).copied();
+    if entity_type == ENTITY_TYPE_AGENT_DEF {
+        let Ok(mut definition) = crate::agent_def::decode_agent_definition(body) else {
+            return Ok(None);
+        };
+        let AgentScope::World(world) = &mut definition.scope else {
+            return Ok(None);
+        };
+        let Some(renamed) = here(&*world) else {
+            return Ok(None);
+        };
+        *world = renamed;
+        return crate::agent_def::encode_agent_definition(&definition).map(Some);
+    }
+    if crate::saved_query::is_saved_query_kind(vault, entity_type) {
+        return crate::saved_query::rename_declared_worlds(body, here);
+    }
+    Ok(None)
 }
 
 /// A guest CLAIM about an InWorld or SetIn edge names the edge by the ids

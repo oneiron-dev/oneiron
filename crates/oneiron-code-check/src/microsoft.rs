@@ -94,7 +94,30 @@ impl CodeCheck for MicrosoftTsc {
     }
 
     fn check(&self, input: &CheckInput<'_>) -> Result<CheckReport, CheckFailure> {
-        let deadline = Instant::now() + self.wall_time;
+        self.check_before(input, Instant::now() + self.wall_time)
+    }
+
+    fn wall_time(&self) -> Option<Duration> {
+        Some(self.wall_time)
+    }
+
+    fn check_attributed_before(
+        &self,
+        input: &CheckInput<'_>,
+        deadline: Instant,
+    ) -> (BackendId, Result<CheckReport, CheckFailure>) {
+        let own = Instant::now() + self.wall_time;
+        (self.backend(), self.check_before(input, deadline.min(own)))
+    }
+}
+
+impl MicrosoftTsc {
+    /// One check, ended at `deadline`.
+    fn check_before(
+        &self,
+        input: &CheckInput<'_>,
+        deadline: Instant,
+    ) -> Result<CheckReport, CheckFailure> {
         let files = project_files(input, self.input_bytes)?;
         // tsc runs with this host's file system, and resolving a module reads
         // or probes the path it names, so a program that could name one is

@@ -26,6 +26,7 @@ mod pack_entry;
 pub use oneiron_store::serialize::pack_format;
 mod pack_preparation;
 pub(crate) use oneiron_store::serialize::persona_export_fields;
+pub(crate) use pack_preparation::project_entity_json_row;
 mod provider_codecs;
 mod token_budget;
 mod toon_format;

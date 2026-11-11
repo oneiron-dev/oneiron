@@ -14,11 +14,19 @@
 //! declarations, its proposals and its queue entries (`symbols`,
 //! `proposals`), fenced by its declaration in each writer. PR3b adds the
 //! public run binding (`host`), the run's checkout and export (`custody`)
-//! and the host's stock review policy (`review_policy`).
+//! and the host's stock review policy (`review_policy`). FIX 4300 adds the
+//! one read join the snapshot, file and definition reads share
+//! (`read_join`): anchor, pinned snapshot, path and ASSET or symbol rows in
+//! one read snapshot, under the run's admission and its own read lane.
 
 mod custody;
+mod neighbor_types;
+mod neighbors;
+pub use neighbor_types::*;
+mod holder;
 mod host;
 mod proposals;
+mod read_join;
 mod reads;
 mod review_policy;
 mod symbols;
@@ -41,6 +49,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadActorKey};
 use crate::error::{Error, Result};
 use crate::federation::repo_access::RepoMembership;
+use crate::origin::RepoPortableId;
 use crate::task_verb::HostBinding;
 use crate::{EntityId, Vault, WriteActor};
 use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
@@ -82,6 +91,14 @@ impl RepoRunBinding {
 pub struct RepoRunAnswer<T> {
     pub output: T,
     pub rows: Vec<EntityId>,
+}
+
+/// The host operation Gate's selected repo. Request-selection data only;
+/// the door admits the run again and compares this before preparing bytes.
+#[derive(Clone, Copy)]
+pub(crate) struct RepoRunSelection {
+    pub(crate) repo: EntityId,
+    pub(crate) portable_hit: bool,
 }
 
 /// What one admitted run repo act stands on, as its snapshot read it.
@@ -158,6 +175,17 @@ impl Vault {
         target: &RepoTarget,
         intent: RepoAccessIntent,
     ) -> Result<RepoRunAdmission> {
+        self.admit_repo_run_target_in_txn(txn, binding, target, intent, None)
+    }
+
+    fn admit_repo_run_target_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &RepoRunBinding,
+        target: &RepoTarget,
+        intent: RepoAccessIntent,
+        portable: Option<&RepoPortableId>,
+    ) -> Result<RepoRunAdmission> {
         let Some((record, task)) = binding.lease.leased_task_in_txn(self, txn)? else {
             return Ok(Err(RepoAccessRefusal::StaleLease));
         };
@@ -168,14 +196,14 @@ impl Vault {
             return Ok(Err(RepoAccessRefusal::StaleLease));
         }
         let (actor, class) = (binding.actor.entity_ref(), binding.actor.actor_class());
-        let admitted = match intent {
-            RepoAccessIntent::Read => {
-                self.admit_repo_read_in_txn(txn, actor, class, target.repo, target)?
-            }
-            RepoAccessIntent::Edit => {
-                self.admit_repo_edit_in_txn(txn, actor, class, target.repo, target)?
-            }
-        };
+        let admitted = self.admit_repo_in_txn(
+            txn,
+            actor,
+            class,
+            target.repo,
+            portable,
+            Some((target, intent)),
+        )?;
         let membership = match admitted {
             Ok(membership) => membership,
             Err(refused) => return Ok(Err(refused)),
@@ -193,6 +221,30 @@ impl Vault {
             task,
         }))
     }
+
+    /// Resolves the portable selector before normal admission in the same
+    /// snapshot. Returns the selected CODE and whether the selector hit;
+    /// an absent or unknown id retains the caller's fallback target.
+    pub(crate) fn admit_repo_run_with_portable_in_txn<S: AsRef<str>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &RepoRunBinding,
+        fallback: EntityId,
+        portable: Option<&RepoPortableId>,
+        git_ref: &str,
+        paths: impl IntoIterator<Item = S>,
+        intent: RepoAccessIntent,
+    ) -> Result<(EntityId, bool, RepoRunAdmission)> {
+        let resolved = match portable {
+            Some(id) => self.resolve_repo_anchor_by_portable_in_txn(txn, id)?,
+            None => None,
+        };
+        let selected = resolved.unwrap_or(fallback);
+        let target = repo_target(selected, git_ref, paths);
+        let admitted =
+            self.admit_repo_run_target_in_txn(txn, binding, &target, intent, portable)?;
+        Ok((selected, resolved.is_some(), admitted))
+    }
 }
 
 /// The code a run door answers when the run's Grant admits the repo but
@@ -200,6 +252,19 @@ impl Vault {
 /// a lane whose world axis leaves out base reality reads no codebase row,
 /// and a Grant's repo bounds never widen what a lane reads.
 pub const REPO_LANE_UNREADABLE: &str = "repo_lane_unreadable";
+
+/// The [`REPO_LANE_UNREADABLE`] door error: distinct from every membership
+/// refusal, since the Grant admitted the repo.
+pub(crate) fn repo_lane_unreadable() -> MemoryError {
+    MemoryError::new(
+        REPO_LANE_UNREADABLE,
+        "this run's Grant names the repo, but the run's read lane does not read its rows",
+        &[
+            "A repo row sits in base reality: the run's lane must read base reality \
+           for its repo doors to answer.",
+        ],
+    )
+}
 
 /// The door error a refusal answers: its stable public code and message.
 pub(crate) fn refusal_error(refusal: RepoAccessRefusal) -> MemoryError {
@@ -298,13 +363,6 @@ impl Memory<'_> {
         {
             return Ok(());
         }
-        Err(MemoryError::new(
-            REPO_LANE_UNREADABLE,
-            "this run's Grant names the repo, but the run's read lane does not read its rows",
-            &[
-                "A repo row sits in base reality: the run's lane must read base reality \
-               for its repo doors to answer.",
-            ],
-        ))
+        Err(repo_lane_unreadable())
     }
 }

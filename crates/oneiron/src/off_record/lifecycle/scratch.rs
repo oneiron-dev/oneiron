@@ -186,8 +186,11 @@ impl PreparedScratchSave {
                         hub_sync_imported: false,
                     }];
                     ops.extend(edges);
-                    crate::batch::BatchBuilder::promotion_replay(vault, ops, grant)
-                        .apply_actor(txn, &self.saver)?;
+                    crate::batch::BatchBuilder::promotion_replay(vault, ops, grant).apply_actor(
+                        txn,
+                        &self.saver,
+                        crate::core_write::CoreWriteLaneRef::Unbound,
+                    )?;
                     birth.land(vault, txn, grant)?;
                     members.insert(id);
                 }

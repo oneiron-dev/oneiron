@@ -239,6 +239,25 @@ pub(crate) async fn vault_skills_sync(
     .await
 }
 
+/// `vault.skills.proposal.settle`: the owner accepts an exact hub update or
+/// rejects its proposal without changing the working package.
+pub(crate) async fn vault_skills_proposal_settle(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HubSkillProposalSettleRequest,
+) -> Listed<HubSkillProposalSettled> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.proposal.settle",
+        move |server, owner| {
+            let answer = sdk::hub_skill_proposal_settle_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![input.entity, input.proposal]))
+        },
+    )
+    .await
+}
+
 /// `vault.skills.receipts`: Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner.
 pub(crate) async fn vault_skills_receipts(
     server: &Arc<SyncServer>,
@@ -394,4 +413,44 @@ pub(crate) async fn vault_packs_hooks_qualify(
     })
     .await
     .unwrap_or_else(|_| (Err(internal(VERB)), Vec::new()))
+}
+
+/// `vault.skill_hubs.clawhub.search`: public provider metadata, not package admission.
+pub(crate) async fn vault_skill_hubs_clawhub_search(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ClawHubSearchRequest,
+) -> Listed<oneiron::skill_hub::ClawHubSearchReply> {
+    owner_call(
+        server,
+        auth,
+        "vault.skill_hubs.clawhub.search",
+        move |server, owner| {
+            let answer = sdk::skill_hub_clawhub_search_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![input.hub]))
+        },
+    )
+    .await
+}
+
+/// `vault.skill_hubs.clawhub.import`: import an explicit selection through the native owner door.
+pub(crate) async fn vault_skill_hubs_clawhub_import(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::skill_hub::ClawHubImportRequest,
+) -> Listed<oneiron::skill_hub::ClawHubImportReply> {
+    owner_call(
+        server,
+        auth,
+        "vault.skill_hubs.clawhub.import",
+        move |server, owner| {
+            let answer = sdk::skill_hub_clawhub_import_as_owner(server.vault(), owner, &input)?;
+            let mut rows = vec![input.hub];
+            if let oneiron::skill_hub::ClawHubImportReply::Imported { entity, .. } = &answer {
+                rows.push(*entity);
+            }
+            Ok((answer, rows))
+        },
+    )
+    .await
 }

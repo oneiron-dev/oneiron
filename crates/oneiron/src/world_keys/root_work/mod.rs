@@ -10,13 +10,18 @@
 //! log. Its `seen` is the revision of the owner roots and of the target's
 //! standing ([`AuthorityFold::root_work_basis`], CALLS ROOT_WORK_REVISION),
 //! and the request carries the heads it is over as its witness
-//! ([`crate::authority::RootRevisionBasis`], FIX 5551). The target computes
-//! the revision again in its own writer transaction. Another revision whose
-//! every difference is a witnessed root or anchor's mark the target has not
-//! folded yet is a lag: the request stays pending, signs nothing, keeps its
-//! wait and is checked again on the next pickup or run (CALLS
-//! ROOT_WORK_BASIS). Any other revision refuses the request as a root
-//! revision mismatch (FIX 4738), and a removed owner as not live.
+//! ([`crate::authority::RootRevisionBasis`], FIX 5551), with the anchor it
+//! left out for the bound root and each anchor head's parents beside them
+//! (FIX 6556). The target computes the revision again in its own writer
+//! transaction. Another revision whose every difference is a witnessed root
+//! or anchor's mark the target has not folded yet (a mark it stores proves
+//! its wait by its own signed parents), or the accepted roster revision that
+//! waits on such a mark, is a lag: the request stays pending, signs nothing,
+//! keeps its wait and is checked again on the next pickup or run (CALLS
+//! ROOT_WORK_BASIS). Where the bound root's record has not reached the
+//! target, the witness's bound anchor stands for the target's, and a pin
+//! commits its wait for that root. Any other revision refuses the request as
+//! a root revision mismatch (FIX 4738), and a removed owner as not live.
 //!
 //! A pin needs nothing the target lacks, so the target's pickup makes it
 //! (`super::owner_work`). Every other change needs the root's seed or kit,
@@ -70,8 +75,9 @@ use super::{
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest, OwnerWorkBody,
     OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId,
-    RequestCode, RootBasisCheck, RootChange, RootRevisionBasis, check_root_basis_in_txn,
-    end_request_wait_in_txn, ended_request_wait, invalid_authority, read_pin_row_in_txn,
+    RequestCode, RootBasisCheck, RootChange, check_root_basis_in_txn, end_request_wait_in_txn,
+    ended_request_wait, invalid_authority, read_pin_row_in_txn, root_work_witness_in_txn,
+    write_awaited_root_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -160,6 +166,11 @@ pub(super) enum RootRecheck {
     /// The target has not folded every root or mark the owner saw: no
     /// result, the request stays pending (CALLS ROOT_WORK_BASIS).
     AwaitsBasis,
+    /// The same, and the root the change binds has not reached the target
+    /// either (FIX 6556): a pin commits its wait for that root as the pin
+    /// door does for a root not stored here (FIX 5582), and makes nothing
+    /// else.
+    AwaitsBoundRoot,
 }
 
 /// The cancel door's refusal for a request this install folds as no root
@@ -345,9 +356,8 @@ impl Vault {
         change: RootChange,
     ) -> Result<OwnerWorkReceipt> {
         self.with_write_txn(|txn| {
-            let basis: RootRevisionBasis = self
-                .authority_view_readonly_in_txn(txn)?
-                .root_work_basis(target, change);
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            let basis = root_work_witness_in_txn(&self.store, txn, &fold, target, change)?;
             let seen = basis.revision();
             let work = OwnerWorkBody::Root { change, basis };
             self.record_owner_work_in_txn(txn, owner, surface, target, seen, work)
@@ -442,6 +452,16 @@ impl Vault {
                 );
                 return Ok(None);
             }
+            RootRecheck::AwaitsBoundRoot => {
+                if let RootChange::Pin { root } = change {
+                    write_awaited_root_in_txn(&self.store, txn, Some(root), Some(hash))?;
+                }
+                tracing::info!(
+                    "a root request waits for this install to store the root it binds; it stays \
+                     pending"
+                );
+                return Ok(None);
+            }
         }
         match change {
             RootChange::Pin { root } => {
@@ -517,6 +537,9 @@ impl Vault {
                 RootBasisCheck::Same => RootRecheck::Runs,
                 RootBasisCheck::Lagging => match ROOT_WORK_BASIS {
                     BasisLag::Pending => RootRecheck::AwaitsBasis,
+                },
+                RootBasisCheck::AwaitsBoundRoot => match ROOT_WORK_BASIS {
+                    BasisLag::Pending => RootRecheck::AwaitsBoundRoot,
                 },
                 RootBasisCheck::Moved => RootRecheck::Refused(ROOT_REVISION_REFUSAL),
             },

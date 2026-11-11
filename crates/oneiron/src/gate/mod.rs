@@ -3,10 +3,12 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+mod agent_definition_setup;
 mod ask_policy;
 mod auto_signals;
 mod bundle;
 mod ceiling;
+pub(crate) use ceiling::NativeAutoChecker;
 pub(crate) mod class_policy;
 pub(crate) mod consult_fanout_values;
 pub(crate) mod curator_proposal;
@@ -19,12 +21,15 @@ pub(crate) mod training_ask_kind;
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
 mod carry_forward_policy;
 mod coach_offer_reach;
+mod code_run_answer;
 mod confirm;
 mod connector_admission;
 mod consolidation_readers;
 mod constants;
 mod entity_resolution_bands;
+pub(crate) use code_run_answer::code_run_answer_may_witness;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
+pub(crate) use constants::{CHECKED_PRODUCER_PROVENANCE_KEY, LIVE_RUN_CLAIM_PUT_PRODUCER};
 mod decision;
 mod decode;
 mod default_manifest;
@@ -37,6 +42,18 @@ mod value_encoding;
 /// (ARCH-0070) reads as landed against these.
 pub(crate) fn owner_policy_manifest_as_stored(data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
     default_manifest::with_default_owner_policy_notifications(data)
+}
+/// Whether `error` is a Gate write rejection whose outcome is Pending: the
+/// one rejection after which an Auto request is resubmitted as Proposed, so
+/// the write lands parked for review. A Deny, and any error that is not a
+/// Gate rejection, is not.
+pub(crate) fn gate_rejection_pends(error: &crate::error::Error) -> bool {
+    matches!(
+        error,
+        crate::error::Error::Gate(crate::error::GateError::GateWriteRejected { outcome, .. })
+            if crate::error::GateDenialOutcome::parse(outcome)
+                == Some(crate::error::GateDenialOutcome::Pending)
+    )
 }
 mod definition_ceiling;
 mod delegation_chain;
@@ -60,6 +77,7 @@ pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
 mod message_address;
 pub(crate) use message_address::message_address_refusal;
+pub mod code_consent_settlement;
 mod operational_policy;
 mod owner_answer;
 mod owner_policy_mutation;
@@ -81,6 +99,7 @@ mod residence_budgets;
 mod resolution;
 mod tracker_limits;
 pub use self::dreamer_grant::DreamerWeaveReach;
+pub(crate) use self::dreamer_grant::{DREAMER_LANDING_ROWS_REF, dreamer_landing_verdict_in_txn};
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 pub(crate) mod retrieval_retention;
@@ -102,9 +121,14 @@ pub(crate) mod weave_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 
+/// The live-run claim put test's gate fixtures, for its integration test doors
+/// (`test_doors::live_run_claim_put`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) mod live_run_claim_put_fixture;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::agent_definition_setup::record_agent_definition_setup_in_txn;
 pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
 pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub use self::bundle::{
@@ -144,7 +168,8 @@ pub(crate) use self::constants::{
     POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY,
 };
 pub(crate) use self::constants::{
-    POLICY_SCHEMA_VERSION, POLICY_SHARED_ACT_POLICIES_KEY, SCOPED_READ_EFFECTOR_CORE_READ,
+    POLICY_OWNER_CHANGE_WAIT_SECS_KEY, POLICY_SCHEMA_VERSION, POLICY_SHARED_ACT_POLICIES_KEY,
+    SCOPED_READ_EFFECTOR_CORE_READ,
 };
 #[cfg(test)]
 pub(crate) use self::decision::gate_metric_emission_count_for_test;
@@ -195,13 +220,14 @@ use self::dreamer_precommit::{
 pub(crate) use self::effect::live_grant_covering_effect_in_txn;
 pub(crate) use self::effect::{
     ApprovalContext, ApprovalTarget, BrowserSendTarget, CampaignLegFacts,
-    ChannelIdentityLifecycleFacts, ExternalEffectGovernance, LinearMirrorFacts, OutboundSendFacts,
-    PairAdmission, ScopedMcpCallFacts, check_external_effect_policy,
-    check_external_effect_policy_pair, code_wait_approval_digest,
+    ChannelIdentityLifecycleFacts, ExternalEffectGovernance, ExternalEffectJudgment,
+    ExternalEffectPreflight, LinearMirrorFacts, OutboundSendFacts, PairAdmission, PreflightBudget,
+    PreflightVerdict, ScopedMcpCallFacts, check_external_effect_policy,
+    check_external_effect_policy_pair, code_wait_approval_digest, code_wait_standing_bound,
     counterparty_send_override_in_txn, evaluate_external_effect_policy,
-    external_effect_approval_digest, hydrate_external_effect_contact,
-    native_mail_cold_approval_digest, record_external_effect_policy,
-    record_held_external_effect_policy,
+    external_effect_approval_digest, hydrate_external_effect_contact, judge_external_effect_in_txn,
+    native_mail_cold_approval_digest, preflight_answer_in_txn, preflight_words,
+    record_external_effect_policy, record_held_external_effect_policy,
 };
 pub(crate) use self::effect::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::grants::{
@@ -257,8 +283,9 @@ pub(crate) use self::witness_message::companion_author_pending;
 pub(crate) use self::witness_message::{
     WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
     WitnessMessageAuthorization, WitnessMessageBodyAuthor, WitnessMessageEnvelope,
-    check_witness_message_ceiling, check_witness_message_ceiling_with_permit,
-    validate_canonical_witness_message_body, validate_own_device_witness_message_body,
+    check_source_bound_witness_message_ceiling, check_witness_message_ceiling,
+    check_witness_message_ceiling_with_permit, validate_canonical_witness_message_body,
+    validate_own_device_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it
@@ -308,4 +335,5 @@ use rmpv::Value;
 #[cfg(test)]
 use std::io::Cursor;
 
+pub(crate) mod tables;
 pub(crate) mod voice_ref_limits;

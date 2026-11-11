@@ -69,9 +69,6 @@ pub const BOOKING_LIFECYCLE_PREDICATES: [&str; 4] = [
 /// engine's own outbound system name.
 pub const BOOKING_PASSPORT_SYSTEM: &str = "oneiron.booking";
 
-/// Bound on an advisory idempotency key.
-const MAX_IDEMPOTENCY_KEY_BYTES: usize = 128;
-
 /// Bound on the failure reason stamped onto a failed attempt row.
 pub(super) const MAX_ATTEMPT_FAILURE_REASON_BYTES: usize = 512;
 
@@ -414,11 +411,11 @@ fn validate_optional_constraint(constraint: Option<&ConstraintObject>) -> Result
     constraint.map_or(Ok(()), ConstraintObject::validate)
 }
 
+/// An advisory idempotency key of any length (ABC row 73), nonempty when
+/// supplied; the queue keys on its digest.
 fn validate_idempotency_key(key: Option<&str>) -> Result<(), BookingError> {
     match key {
-        Some(key) if key.is_empty() || key.len() > MAX_IDEMPOTENCY_KEY_BYTES => Err(refused(
-            "idempotency key must be 1..=128 bytes when supplied",
-        )),
+        Some("") => Err(refused("idempotency key must not be empty when supplied")),
         _ => Ok(()),
     }
 }

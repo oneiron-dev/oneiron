@@ -40,6 +40,7 @@
 //! the `jobs` child's; the graph's writers are the `work_store` child's.
 mod erased;
 mod github;
+mod handoff_index;
 mod jobs;
 mod owner;
 mod source;
@@ -102,7 +103,8 @@ pub const COACH_FEEDBACK_TRIAGE_PART_FACET: &str = "coach.feedback_triage_part";
 pub const COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET: &str = "coach.feedback_triage_synthesis";
 /// The owner of the park a long revision's job holds while its part and
 /// synthesis children run (a `Signal` park, kept across a restart).
-pub const COACH_FEEDBACK_TRIAGE_PARK_OWNER: &str = "coach.feedback_triage";
+pub const COACH_FEEDBACK_TRIAGE_PARK_OWNER: &str =
+    crate::dreamer_runner::FEEDBACK_TRIAGE_PARK_OWNER;
 /// The open inbox, as a triage source names it.
 pub const FEEDBACK_TRIAGE_INBOX_SOURCE: &str = "inbox";
 /// Predicate of one Proposed triage finding; its subject is the evidence
@@ -482,7 +484,7 @@ pub(crate) fn acknowledge_feedback_triage_in_txn(
     }
     erased::refuse_erased_in_txn(vault, txn, &row)?;
     row.result = Some(result);
-    HANDOFFS.put(&vault.store, txn, &key, &row)
+    handoff_index::put_handoff_in_txn(&vault.store, txn, &key, &row)
 }
 
 /// One revision as its source read it: its name, the exact bytes its
@@ -551,7 +553,7 @@ fn hand_off_revision_in_txn(
         result: None,
         work: None,
     };
-    HANDOFFS.put(&vault.store, txn, &key, &handoff)?;
+    handoff_index::put_handoff_in_txn(&vault.store, txn, &key, &handoff)?;
     Ok((handoff, true))
 }
 

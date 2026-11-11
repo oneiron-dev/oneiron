@@ -50,6 +50,7 @@ pub use self::shape_plan::{ShapePlanCard, ShapePlanCardItem};
 pub use self::voice_offer::VoiceGrantOffer;
 pub(crate) use self::voice_offer::erase_voice_offer_actor_in_txn;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

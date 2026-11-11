@@ -1,0 +1,23 @@
+{
+  "name": "vault.writes.pending",
+  "description": "Gated writes parked for consent, newest first.",
+  "uniffi": {
+    "args": {
+      "limit": "u32"
+    },
+    "output": "Vec<PendingWrite>"
+  },
+  "input": "ReceiptsRequest",
+  "output": "Vec<crate::memory::PendingWrite>",
+  "call": "memory.pending_writes(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT))?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "validate": "crate::memory::caps::check_limit_nonzero(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT))?;"
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  }
+}

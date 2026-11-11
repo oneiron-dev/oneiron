@@ -158,6 +158,10 @@ impl ScopedRead<'_> {
         let Some(reader) = self.grant_reader() else {
             return filter.clone();
         };
+        // Each Grant reads under what the read asked, its bound caller
+        // filter among it (FIX 3977).
+        let requested = self.asked_request(requested);
+        let requested = requested.as_deref();
         let grants = reader_grants_in(self.vault, rtxn, reader).unwrap_or_else(|error| {
             warn_grant_errors(1, &[], Some(error.kind()));
             Vec::new()
@@ -210,8 +214,10 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let floor = policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(grant));
-        let filter = crate::gate::narrow_retrieval_filter(&floor, request)?
-            .under_credential_of(&self.actor_key);
+        let filter = self.under_caller_filter(
+            crate::gate::narrow_retrieval_filter(&floor, request)?
+                .under_credential_of(&self.actor_key),
+        );
         self.own_row_readable_in(rtxn, policy, id, raw, &filter, authority, Some(grant))
     }
 
@@ -292,10 +298,27 @@ fn reader_grants_in(
     if !undecoded.is_empty() {
         warn_grant_errors(undecoded.len(), &undecoded, None);
     }
+    let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+        &vault.store,
+        txn,
+        grants
+            .iter()
+            .filter(|standing| standing.grant.member_ref == reader)
+            .map(|standing| &standing.grant),
+    )?;
+    // A Grant whose `read` a class it names admits reads under its Scope
+    // with `read` listed (FIX 8735); an unclassed Grant's Scope is its own.
     Ok(grants
-        .into_iter()
-        .filter(|standing| standing.stands_in_txn(vault, txn, reader, "read", now, &owners))
-        .map(|standing| (standing.id, standing.grant.authority_scope))
+        .iter()
+        .filter(|standing| {
+            standing.stands_in_txn(vault, txn, reader, "read", now, &owners, &classes)
+        })
+        .map(|standing| {
+            (
+                standing.id,
+                standing.grant.scope_for_verb("read", &classes).into_owned(),
+            )
+        })
         .collect())
 }
 

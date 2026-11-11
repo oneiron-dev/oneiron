@@ -6,19 +6,21 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rmpv::Value;
 
+use super::detectors::said_blocked_sourced;
 use super::erase::{sync_card_membership, sync_reviewer_membership};
 use super::{
     AgentHealthCard, AgentHealthConfidence, AgentHealthMove, AgentHealthOutcome, AgentHealthTone,
     Attempts, CARDS, DialBook, Dispatched, Dispatches, Finding, HEALTH_DIGEST_DOMAIN,
     HealthCauseSource, SilenceCalls, SilenceRefresh, Traps, brief, call_evidence, call_loop,
     card_key, check_repeat, cost_spike_findings, duplicate, duplicate_findings, entity,
-    environment, long_wait_findings, misalignment_findings, run_loop, said_blocked,
-    silent_findings, unsupported_done_findings, widen_denial_findings,
+    environment, long_wait_findings, misalignment_findings, run_loop, silent_findings,
+    unsupported_done_findings, widen_denial_findings,
 };
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::learning::{DuplicateLabeller, DuplicateWork, label_duplicate_work};
 use crate::limit_ask::EngineLimit;
 use crate::llm::open_trap_waits;
+use crate::skill_optimize::union_source_rows;
 use crate::store::diagnostic_record::{
     AgentHealthSignal, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass,
     DiagnosticReplayCoordinate, DiagnosticSourceKind, diagnostic_event_id,
@@ -120,15 +122,23 @@ pub(super) fn land(
             .map_or(finding.window.0, |record| {
                 record.claimed_at.unwrap_or(record.created_at)
             });
-        match said_blocked(vault, finding.subject, finding.task, began, finding.attempt) {
-            Ok(blocked) => finding.blocked = blocked,
+        match said_blocked_sourced(vault, finding.subject, finding.task, began, finding.attempt) {
+            Ok((blocked, rows)) => {
+                finding.blocked = blocked;
+                finding.source_rows = union_source_rows([finding.source_rows.take(), rows]);
+            }
             Err(error) => {
                 tracing::warn!(
                     kind = ?error.kind(),
                     "agent-health stuck mark not read for a finding; its card keeps its mark"
                 );
                 *unread = true;
+                finding.source_rows = None;
             }
+        }
+        // Attempt attribution has no complete read-row witness on this port.
+        if finding.attempt.is_some() {
+            finding.source_rows = None;
         }
     }
 
@@ -204,6 +214,9 @@ pub(super) fn land(
                 card.agent_blocked = kept;
             }
             environment::fold_finding(vault, txn, &mut card, causes, coach);
+            if !card.causes.is_empty() {
+                card.source_rows = None;
+            }
             for items in [card.evidence.len(), card.diagnostics.len()] {
                 let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
             }
@@ -211,7 +224,7 @@ pub(super) fn land(
             let new_reviewers = card.reviewer_revisions();
             sync_card_membership(&vault.store, txn, &key, &old_sources, &new_sources)?;
             sync_reviewer_membership(&vault.store, txn, &key, &old_reviewers, &new_reviewers)?;
-            CARDS.put(&vault.store, txn, &key, &card)?;
+            super::receipt_index::put_card_in_txn(&vault.store, txn, &key, &card)?;
             touched.insert(key);
         }
         // An open `silent` card whose attempt has spoken since shows what was
@@ -231,7 +244,7 @@ pub(super) fn land(
             }
             card.silence = Some(refresh.silence);
             card.updated_at = now;
-            CARDS.put(&vault.store, txn, &refresh.key, &card)?;
+            super::receipt_index::put_card_in_txn(&vault.store, txn, &refresh.key, &card)?;
             touched.insert(refresh.key);
         }
         // A card its leader leaves open past the TTL goes up to the owner.
@@ -258,7 +271,7 @@ pub(super) fn land(
                 changed = true;
             }
             if changed {
-                CARDS.put(&vault.store, txn, &key, &card)?;
+                super::receipt_index::put_card_in_txn(&vault.store, txn, &key, &card)?;
                 touched.insert(key);
             }
         }
@@ -293,6 +306,11 @@ fn detect(
     let (calls, unread_calls) = call_evidence::agent_calls(vault, since)?;
     let streams = call_evidence::call_streams(&calls);
     let mut findings = call_loop::loop_findings(&streams, dispatched, attempts, book);
+    for finding in &mut findings {
+        if unread_calls.for_actor(finding.subject).is_some() {
+            finding.source_rows = None;
+        }
+    }
     findings.extend(run_loop::run_loop_findings(
         vault, dispatched, attempts, book, since,
     )?);
@@ -554,10 +572,13 @@ fn merge(
         confidence: AgentHealthConfidence::High,
         diagnostics: Vec::new(),
         evidence: Vec::new(),
+        source_rows: Some(Vec::new()),
         window_from: finding.window.0,
         window_to: finding.window.1,
         measured: 0,
         dial: 0,
+        exact_dial: None,
+        exact_measured: None,
         counter_evidence: Vec::new(),
         agent_blocked: false,
         confession: None,
@@ -571,6 +592,7 @@ fn merge(
         opened_at: now,
         updated_at: now,
         coach: None,
+        legacy_draft_scrubbed: false,
         observed_brief: None,
         reviewer: detector_id(finding.signal),
         reviewer_revision: revision,
@@ -579,6 +601,7 @@ fn merge(
         silence: None,
         moves_taken: Vec::new(),
     });
+    card.source_rows = union_source_rows([card.source_rows.take(), finding.source_rows.clone()]);
     add_ids(&mut card.evidence, &finding.evidence);
     add_ids(&mut card.diagnostics, &[diagnostic]);
     let witnessed = finding.attempt.and_then(entity);
@@ -588,6 +611,8 @@ fn merge(
     card.window_to = card.window_to.max(finding.window.1);
     card.measured = finding.measured;
     card.dial = finding.dial;
+    card.exact_dial = finding.exact_dial;
+    card.exact_measured = finding.exact_measured;
     card.counter_evidence = finding.counter.clone();
     card.confidence = if finding.counter.is_empty() {
         AgentHealthConfidence::High

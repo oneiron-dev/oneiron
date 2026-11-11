@@ -131,7 +131,8 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
         &mut words,
         duration_ms,
     )?;
-    let mut turns = make_turns(&words);
+    let raw_turns = make_turns(&words);
+    let mut turns = raw_turns.clone();
     let cleanup_input = serde_json::to_vec(&turns).map_err(|_| AudioError::Serialization)?;
     let cleanup_hash = sha256(&cleanup_input);
     let cleanup = host.cleanup_turns(CleanupRequest {
@@ -194,6 +195,7 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
         },
         "packs": packs,
         "words": words,
+        "raw_turns": raw_turns,
         "turns": turns,
         "cleanup": {
             "status": "turns_only",

@@ -6,8 +6,8 @@ use crate::access_grant::AccessGrant;
 use crate::channel_identity_selection::{
     ChannelIdentityFace, RelationshipContext, SelectionRuleScope,
 };
+use crate::consent::ConsentGrantStatus;
 use crate::entity_id::EntityId;
-use crate::outbound_grant::StandingOutboundGrant;
 
 pub const CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION: u64 = 1;
 pub const DEFAULT_GRADUATION_UNCHANGED_STREAK: u32 = 12;
@@ -205,7 +205,40 @@ pub struct ChannelIdentityAutonomyState {
     pub read_envelope: MailboxReadEnvelope,
     pub action_envelope: Option<ChannelIdentityActionEnvelope>,
     pub read_grant: AccessGrant,
-    pub action_grant: Option<StandingOutboundGrant>,
+    pub action_grant: Option<ChannelIdentityActionGrant>,
+}
+
+/// A sender row's action grant: the standing consent Grant row its owner
+/// minted over one action envelope, read back as the actor, identity,
+/// envelope and verb class it binds. Only the atomic envelope door admits
+/// an action against it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelIdentityActionGrant {
+    /// The reference an autonomy row names this grant by.
+    pub reference: EntityId,
+    /// The standing consent Grant row it is: the registry's revoke and every
+    /// Approved, Used and Revoked receipt name it.
+    pub grant_ref: String,
+    /// The actor the grant lets act.
+    pub actor_ref: EntityId,
+    pub identity_ref: EntityId,
+    pub envelope_ref: EntityId,
+    /// `mail.draft` or `mail.send`.
+    pub verb_class: String,
+    pub status: ConsentGrantStatus,
+    /// Creation time in Unix seconds.
+    pub created_at: u64,
+    /// Policy frontier in effect when the grant was minted.
+    pub policy_frontier: [u8; 32],
+}
+
+impl ChannelIdentityActionGrant {
+    /// Whether the grant's row is active and it was minted under the
+    /// current policy frontier.
+    #[must_use]
+    pub fn is_active_under_policy(&self, policy_frontier: &[u8; 32]) -> bool {
+        self.status == ConsentGrantStatus::Active && &self.policy_frontier == policy_frontier
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

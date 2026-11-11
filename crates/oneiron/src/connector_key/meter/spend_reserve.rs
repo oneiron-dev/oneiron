@@ -29,7 +29,7 @@ pub(crate) enum SpendReserve {
     Reserved {
         debits: Vec<EffectorBudgetDebit>,
         basis: ConnectorSpendBasis,
-        rows: Vec<EffectorBudgetLocation>,
+        rows: Vec<EffectorSpendReservationRow>,
     },
     /// A preauthorizing row has no room for the price: the call is denied,
     /// and a row the owner set to suspend suspended its key. Nothing debits.
@@ -97,15 +97,16 @@ pub(crate) fn reserve_connector_spend_in_txn(
             .iter()
             .filter(|state| state.matched && preauthorizes(state.budget))
         {
-            rows.push(EffectorBudgetLocation {
+            rows.push(EffectorSpendReservationRow {
                 key_ref: *owner,
                 row: state.row,
+                approval: EffectorBudgetApproval::capture(record, state.row)?,
             });
             let Some(price) = row_price(state.budget, price) else {
                 continue;
             };
             priced = true;
-            if state.usage.used().saturating_add(price.minor_units) > state.budget.limit {
+            if overruns(state, price) {
                 let location = EffectorBudgetLocation {
                     key_ref: *owner,
                     row: state.row,
@@ -139,7 +140,7 @@ pub(crate) fn reserve_connector_spend_in_txn(
     };
     let mut debits = Vec::new();
     if apply {
-        for (owner, _, states) in &mut sets {
+        for (owner, record, states) in &mut sets {
             for state in states
                 .iter_mut()
                 .filter(|state| state.matched && preauthorizes(state.budget))
@@ -150,11 +151,14 @@ pub(crate) fn reserve_connector_spend_in_txn(
                 if price.minor_units == 0 {
                     continue;
                 }
-                state.usage.entries.push((now, price.minor_units));
+                let entry = UsageEntry::settled(store, wtxn, now, price.minor_units)?;
+                state.usage.entries.push(entry);
                 USAGE.put(store, wtxn, &(*owner, state.row.usage_key()), &state.usage)?;
                 debits.push(EffectorBudgetDebit {
+                    entry_id: entry.id,
                     key_ref: *owner,
                     row: state.row,
+                    approval: EffectorBudgetApproval::capture(record, state.row)?,
                     amount: price.minor_units,
                     at: now,
                 });
@@ -193,16 +197,23 @@ pub(crate) struct SpendReconciliation {
 pub(crate) fn reconcile_connector_spend_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
-    rows: &[EffectorBudgetLocation],
+    rows: &[EffectorSpendReservationRow],
     estimates: &[EffectorBudgetDebit],
     actual: &ConnectorSpendEstimate,
     now: u64,
 ) -> Result<SpendReconciliation> {
     let mut reconciliation = SpendReconciliation::default();
-    for location in rows {
+    for reserved in rows {
+        let location = EffectorBudgetLocation {
+            key_ref: reserved.key_ref,
+            row: reserved.row,
+        };
         let Some(record) = read_connector_key_in_txn(store, wtxn, &location.key_ref)? else {
             continue;
         };
+        if !reserved.approval.matches(&record, location.row) {
+            continue;
+        }
         let Some(budget) = budget_at(&record, location.row) else {
             continue;
         };
@@ -211,23 +222,27 @@ pub(crate) fn reconcile_connector_spend_in_txn(
         }
         let usage_key = (location.key_ref, location.row.usage_key());
         let mut usage = USAGE.get(store, wtxn, &usage_key)?.unwrap_or_default();
-        if let Some(estimate) = estimates
+        if let Some(estimate) = estimates.iter().find(|debit| {
+            debit.key_ref == location.key_ref
+                && debit.row == location.row
+                && debit.approval == reserved.approval
+        }) && let Some(position) = usage
+            .entries
             .iter()
-            .find(|debit| debit.key_ref == location.key_ref && debit.row == location.row)
-            && let Some(position) = usage
-                .entries
-                .iter()
-                .position(|entry| *entry == (estimate.at, estimate.amount))
+            .position(|entry| entry.id == estimate.entry_id)
         {
             usage.entries.remove(position);
             reconciliation.released.push(*estimate);
         }
         usage.touch(&budget.window, budget.limit, now);
         if actual.minor_units > 0 {
-            usage.entries.push((now, actual.minor_units));
+            let entry = UsageEntry::settled(store, wtxn, now, actual.minor_units)?;
+            usage.entries.push(entry);
             reconciliation.written.push(EffectorBudgetDebit {
+                entry_id: entry.id,
                 key_ref: location.key_ref,
                 row: location.row,
+                approval: reserved.approval,
                 amount: actual.minor_units,
                 at: now,
             });
@@ -242,7 +257,7 @@ pub(crate) fn reconcile_connector_spend_in_txn(
                 wtxn,
                 &location.key_ref,
                 &record,
-                budget_exhausted_reason(location),
+                budget_exhausted_reason(&location),
                 now,
             )?;
         }
@@ -263,6 +278,92 @@ fn budget_at(record: &ConnectorKeyRecord, row: EffectorBudgetRowId) -> Option<&E
 }
 
 /// `price` where it is in `budget`'s own unit; no unit is converted.
+/// The price `tool` declares on `key`'s governing slate, the one a
+/// reservation takes (FIX 8689); `None` for a tool that declares none.
+///
+/// # Errors
+/// Storage and slate-codec faults.
+pub(crate) fn tool_spend_price_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &ConnectorKeyRecord,
+    tool: &str,
+) -> Result<Option<ConnectorSpendEstimate>> {
+    Ok(
+        crate::connector_key::governing_slate_in_txn(store, txn, key)?
+            .and_then(|(_, slate)| slate.tool(tool).and_then(|row| row.price.clone())),
+    )
+}
+
+/// Whether `price` overruns `state`'s remaining limit: the one rule a
+/// reservation denies on.
+fn overruns(state: &BudgetRowState<'_>, price: &ConnectorSpendEstimate) -> bool {
+    state.usage.used().saturating_add(price.minor_units) > state.budget.limit
+}
+
+/// The first matched preauthorizing Spend row of `key_id`, and when `pool`
+/// of its catalog's shared pool, that `price` overruns at `now`, in the order
+/// [`reserve_connector_spend_in_txn`] meets them, read on `txn`: the row that
+/// reservation denies on, found without suspending or debiting anything
+/// (FIX 22102). `None` when every row has room or none is priced.
+///
+/// # Errors
+/// Storage and row-codec faults.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn spend_overrun_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+    key: &ConnectorKeyRecord,
+    effect_channel: &str,
+    price: Option<&ConnectorSpendEstimate>,
+    now: u64,
+    pool: bool,
+) -> Result<Option<(EffectorBudgetLocation, EffectorBudgetOnExhaust)>> {
+    let catalog = if pool {
+        catalog_budget_pool_in_txn(store, txn, key)?
+    } else {
+        None
+    };
+    let mut sets = vec![(
+        *key_id,
+        load_budget_row_states(store, txn, key_id, key, Some(effect_channel), false, now)?,
+    )];
+    if let Some((catalog_id, catalog, channel)) = catalog.as_ref() {
+        sets.push((
+            *catalog_id,
+            load_budget_row_states(
+                store,
+                txn,
+                catalog_id,
+                catalog,
+                Some(channel.as_str()),
+                false,
+                now,
+            )?,
+        ));
+    }
+    for (owner, states) in &sets {
+        for state in states
+            .iter()
+            .filter(|state| state.matched && preauthorizes(state.budget))
+        {
+            if let Some(price) = row_price(state.budget, price)
+                && overruns(state, price)
+            {
+                return Ok(Some((
+                    EffectorBudgetLocation {
+                        key_ref: *owner,
+                        row: state.row,
+                    },
+                    state.budget.on_exhaust,
+                )));
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn row_price<'a>(
     budget: &EffectorBudget,
     price: Option<&'a ConnectorSpendEstimate>,

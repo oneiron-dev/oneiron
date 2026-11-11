@@ -41,7 +41,7 @@ impl DreamerWakeDriver<'_> {
         match execution {
             DreamerAttemptExecution::Completed {
                 completed_units,
-                step_hashes,
+                step_bindings,
             } => {
                 self.store.settle_budget_with_step_receipts(
                     SettleDreamerBudget {
@@ -50,7 +50,7 @@ impl DreamerWakeDriver<'_> {
                         actual_units: completed_units,
                         now: input.now,
                     },
-                    &step_hashes,
+                    &step_bindings,
                 )?;
                 self.complete_attempt(exec, admitted, input.now).await?;
                 self.log_attempt_completed(admitted);
@@ -89,7 +89,7 @@ impl DreamerWakeDriver<'_> {
             DreamerAttemptExecution::Deferred {
                 completed_units,
                 retry_at,
-                step_hashes,
+                step_bindings,
             } => {
                 let budget = SettleDreamerBudget {
                     budget_id: line.clone(),
@@ -102,10 +102,10 @@ impl DreamerWakeDriver<'_> {
                 // over its conversations' TURNs.
                 if stage == Some(super::dispatch::BACKLOG_DEFERRED_STAGE) {
                     self.store
-                        .defer_backlog(admitted, budget, retry_at, &step_hashes)?;
+                        .defer_backlog(admitted, budget, retry_at, &step_bindings)?;
                 } else {
                     self.store
-                        .defer_selection(admitted, budget, retry_at, &step_hashes)?;
+                        .defer_selection(admitted, budget, retry_at, &step_bindings)?;
                 }
                 let stage = stage.unwrap_or("deferred");
                 self.log_attempt_outcome(admitted, stage, None, None, "settled", "none");
@@ -149,7 +149,7 @@ impl DreamerWakeDriver<'_> {
                 reason,
                 cause,
                 completed_units,
-                step_hashes,
+                step_bindings,
             } => {
                 // The in-flight call finished and was charged. Stop the run
                 // at this boundary without refunding its real spend or
@@ -161,7 +161,7 @@ impl DreamerWakeDriver<'_> {
                         actual_units: completed_units,
                         now: input.now,
                     },
-                    &step_hashes,
+                    &step_bindings,
                     ParkDreamerAttempt {
                         attempt_id,
                         reason: reason.clone(),

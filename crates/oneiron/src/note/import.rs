@@ -51,6 +51,7 @@ const IMPORT_DOOR: &str = "note.import";
 const MAX_PATH_BYTES: usize = 4096;
 
 mod machine;
+mod meeting;
 pub(crate) use machine::{
     folder_import_creator_in_txn, imported_note_source_in_txn, note_importer_in_txn,
 };
@@ -162,13 +163,17 @@ impl Vault {
 
     /// The claim source NOTE `note`'s words carry as evidence when an import
     /// wrote it: the trust its folder's import MACHINE records, `Imported`
-    /// (G2). `None` for a note its author wrote here.
+    /// (G2), or `Imported` for a NOTE an archive import kept with its source
+    /// author (FIX 7777). `None` for a note its author wrote here.
     ///
     /// # Errors
     /// A storage error, or a `note` that is no live NOTE.
     pub fn imported_note_source(&self, note: EntityId) -> Result<Option<ClaimSource>> {
         let txn = self.store.env.read_txn()?;
         let (_, body) = super::verbs::note_core(self, &txn, note)?;
+        if body.author_ref.imported().is_some() {
+            return Ok(Some(ClaimSource::Imported));
+        }
         let Some(author) = body.author_ref.id() else {
             return Ok(None);
         };
@@ -384,8 +389,42 @@ impl Vault {
         ids: &[EntityId],
         links: &[ImportedNoteLink],
     ) -> Result<usize> {
+        self.land_imported_notes_from_source_in_txn(
+            txn,
+            importer,
+            folder,
+            world,
+            notes,
+            kinds,
+            ids,
+            links,
+            NOTES_IMPORT_SOURCE,
+            None,
+        )
+    }
+
+    fn land_imported_notes_from_source_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        importer: EntityId,
+        folder: &str,
+        world: Option<EntityId>,
+        notes: &[ImportedNote],
+        kinds: Vec<super::NoteKind>,
+        ids: &[EntityId],
+        links: &[ImportedNoteLink],
+        source: &str,
+        source_provenance: Option<rmpv::Value>,
+    ) -> Result<usize> {
         let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-        let author = self.import_machine_in_txn(txn, folder, importer, at)?;
+        let author = self.import_machine_from_source_in_txn(
+            txn,
+            folder,
+            importer,
+            at,
+            source,
+            source_provenance,
+        )?;
         // In a shared vault the folder's MACHINE writes on the membership of
         // the importer its body names, so it writes only for that importer.
         if self.shared_vault_creation_in_txn(txn)?.is_some()
@@ -430,7 +469,12 @@ impl Vault {
             .iter()
             .map(|link| Ok((end(&link.from)?, end(&link.to)?)))
             .collect::<Result<Vec<_>>>()?;
-        let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
+        let mut content = crate::federation::ActorContentTxn::new(
+            self,
+            txn,
+            actor,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )?;
         for ((note, kind), id) in notes.iter().zip(kinds).zip(ids) {
             let body = encode_note_core(&NoteCore {
                 kind,
@@ -458,7 +502,7 @@ impl Vault {
                 id,
                 RowBirth::written(actor, MadeByClass::Stated, IMPORT_DOOR, &[], &[], at),
             ))?;
-            content.update_note(*id, |txn| {
+            content.update_note(*id, |txn, _lane| {
                 let doc = super::document_store::load(self, txn, *id)?;
                 if let Some(title) = &note.title {
                     // Admitted as an edit's title is (FIX 1098); the record
@@ -502,12 +546,14 @@ impl Vault {
     /// names the folder, the source and trust the files enter under, and the
     /// owner it imports for, so the notes it writes stay that owner's to read.
     /// Its birth names that owner as the actor who made it.
-    fn import_machine_in_txn(
+    fn import_machine_from_source_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         folder: &str,
         importer: EntityId,
         at: u64,
+        source: &str,
+        source_provenance: Option<rmpv::Value>,
     ) -> Result<EntityId> {
         let machine = Self::imported_note_author(folder)?;
         match self.get_entity_type_in_txn(txn, &machine)? {
@@ -520,28 +566,27 @@ impl Vault {
             None => {}
         }
         let trust = crate::ingest::INGEST_SOURCE_REGISTRY
-            .get_config(NOTES_IMPORT_SOURCE)
+            .get_config(source)
             .map(|config| config.trust_ceiling.claim_source)
             .ok_or(Error::InvalidClaimBody(
                 "the markdown import source is not registered",
             ))?;
+        let mut fields: Vec<_> = [
+            ("name", IMPORT_MACHINE_NAME),
+            ("source", source),
+            ("trust", trust.as_str()),
+            ("folder", folder),
+            ("importer", importer.to_hex().as_str()),
+        ]
+        .into_iter()
+        .map(|(key, value)| (rmpv::Value::from(key), rmpv::Value::from(value)))
+        .collect();
+        if let Some(provenance) = source_provenance {
+            fields.push(("source_provenance".into(), provenance));
+        }
         let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(
-                [
-                    ("name", IMPORT_MACHINE_NAME),
-                    ("source", NOTES_IMPORT_SOURCE),
-                    ("trust", trust.as_str()),
-                    ("folder", folder),
-                    ("importer", importer.to_hex().as_str()),
-                ]
-                .into_iter()
-                .map(|(key, value)| (rmpv::Value::from(key), rmpv::Value::from(value)))
-                .collect(),
-            ),
-        )
-        .map_err(|_| Error::InvariantViolation("note importer body did not encode"))?;
+        rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields))
+            .map_err(|_| Error::InvariantViolation("note importer body did not encode"))?;
         crate::ports::EntityStore::port_entity_put(
             self,
             txn,

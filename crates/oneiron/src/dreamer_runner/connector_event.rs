@@ -227,7 +227,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ConnectorEventExecuto
             );
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         };
         // The pass hands the reply off and settles at once: it spent nothing,
@@ -245,7 +245,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ConnectorEventExecuto
         }
         Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         })
     }
 }

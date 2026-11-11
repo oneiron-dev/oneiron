@@ -7,11 +7,15 @@
 //!
 //! A staged row belongs to no turn of the room: its journal scope names the
 //! row itself, so neither a promote nor a whole-talk save replays it, and it
-//! evaporates at close ([`SESSION_WRITES_RIDE_NO_TURN`]). A claim's gate is
-//! judged against base policy, as every gate is (authority stays on base),
-//! and its decision follows the content it judged (ARCH-0052, FIX 9967): it
-//! stages beside the claim, in the claim's segment, never in base, and
-//! evaporates with the room.
+//! evaporates at close ([`SESSION_WRITES_RIDE_NO_TURN`]). Rows a write keeps
+//! beside its row, a room step's response version (FIX 4818), ride that
+//! row's scope, and each is placed as the row is, once every op of the
+//! write is staged. A writer that stages several rows in one segment prepares
+//! each, gate included, before the segment opens. A claim's gate is judged
+//! against base policy, as every gate is (authority stays on base), and its
+//! decision follows the content it judged (ARCH-0052, FIX 9967): it stages
+//! beside the claim, in the claim's segment, never in base, and evaporates
+//! with the room.
 
 use crate::batch::BatchOp;
 use crate::claim::{ClaimBody, ClaimSubject};
@@ -36,6 +40,18 @@ use super::session::OffRecordSession;
 /// none. Canon is silent on saving a room's NOTEs and claims (Engine call,
 /// DOOR-127); a later ruling that saves them scopes them to a turn here.
 const SESSION_WRITES_RIDE_NO_TURN: bool = true;
+
+/// One room row's writes, judged and prepared before a write segment opens
+/// (FIX 4818): the row, its staging stamps, the rows it needs, its ops and
+/// what stages beside it.
+pub(crate) struct PreparedSessionRows {
+    row: EntityId,
+    occurred: TimeRange,
+    learned_at: u64,
+    needs: Vec<EntityId>,
+    ops: Vec<BatchOp>,
+    attachments: RoomRowAttachments,
+}
 
 impl OffRecordSession<'_> {
     /// Stages `ops`, the writes of the one row `row`, into the room's overlay
@@ -108,24 +124,60 @@ impl OffRecordSession<'_> {
         ops: Vec<BatchOp>,
         attachments: &RoomRowAttachments,
     ) -> Result<String> {
-        // The row's own id is its scope's turn: no TURN of the room has it,
+        self.stage_session_support_ops_in_txn(
+            wtxn,
+            apply,
+            conversation,
+            row,
+            occurred,
+            learned_at,
+            needs,
+            ops,
+        )?;
+        // The row's birth, and a NOTE's document birth, in the same segment
+        // and transaction: bookkeeping past the room's budget (FIX 4280,
+        // 4281; Engine 10-22).
+        self.stage_row_attachments(wtxn, row, attachments)?;
+        let (short, _) = self
+            .overlay()
+            .alloc_session_short_id(&row, row.as_bytes())?;
+        Ok(short)
+    }
+
+    /// Stages `ops` through the segment's `apply` in `owner`'s journal
+    /// scope, once each of `needs` reads in the room, then the position of
+    /// each row they put: the writes of `owner`'s row, or rows a room write
+    /// keeps beside it with no birth or short id of their own (FIX 4818: a
+    /// room step's response artifact, its ASSET body and its version claim).
+    /// They ride no turn of the room, as `owner` does, so neither a promote
+    /// nor a save replays them apart.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntityNotFound`] for a missing row of `needs`; any refusal of
+    /// the session apply, the room's budget refusal included.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the segment's transaction and apply, the room's shell, then the ops' own staging axes"
+    )]
+    pub(crate) fn stage_session_support_ops_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        apply: &dyn Fn(&mut heed::RwTxn<'_>, JournalEntry) -> Result<()>,
+        conversation: EntityId,
+        owner: EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        needs: &[EntityId],
+        ops: Vec<BatchOp>,
+    ) -> Result<()> {
+        // The owner's id is its scope's turn: no TURN of the room has it,
         // so no promote or save plans it (`SESSION_WRITES_RIDE_NO_TURN`).
         let turn = if SESSION_WRITES_RIDE_NO_TURN {
-            row
+            owner
         } else {
             conversation
         };
-        // The row's own put, whose position is staged once every op of the
-        // row is: a NOTE's follows the birth facet a later op writes.
-        let put = ops.iter().find_map(|op| match op {
-            BatchOp::Put {
-                id,
-                entity_type,
-                data,
-                ..
-            } if *id == row => Some((*entity_type, data.clone())),
-            _ => None,
-        });
         {
             let view = self.read_view()?;
             for id in needs {
@@ -136,7 +188,19 @@ impl OffRecordSession<'_> {
         }
         // FIX 3103: each op keeps the run whose envelope wrote it.
         let source_run = crate::skill_attribution::current_run_write_token();
+        // Each put row's position is staged once every op is: a NOTE's or an
+        // ASSET's follows the birth facet a later op writes (FIX 4818).
+        let mut puts = Vec::new();
         for op in ops {
+            if let BatchOp::Put {
+                id,
+                entity_type,
+                data,
+                ..
+            } = &op
+            {
+                puts.push((*id, *entity_type, data.clone()));
+            }
             apply(
                 wtxn,
                 JournalEntry {
@@ -149,25 +213,18 @@ impl OffRecordSession<'_> {
                 },
             )?;
         }
-        // Atomically beside the row, under the same route and budget
+        // Atomically beside the rows, under the same route and budget
         // (WILL L11-01): no authority row, nothing a save replays.
-        if let Some((kind, data)) = &put {
+        for (id, kind, data) in &puts {
             crate::federation::record_scope::stage_session_position(
                 &self.read_view()?,
                 wtxn,
-                row,
+                *id,
                 *kind,
                 data,
             )?;
         }
-        // The row's birth, and a NOTE's document birth, in the same segment
-        // and transaction: bookkeeping past the room's budget (FIX 4280,
-        // 4281; Engine 10-22).
-        self.stage_row_attachments(wtxn, row, attachments)?;
-        let (short, _) = self
-            .overlay()
-            .alloc_session_short_id(&row, row.as_bytes())?;
-        Ok(short)
+        Ok(())
     }
 
     /// Judges `body`'s write against base policy, as the write door would,
@@ -272,30 +329,27 @@ impl OffRecordSession<'_> {
         self.stage_session_rows(route, id, occurred, learned_at, &needs, ops, &attachments)
     }
 
-    /// [`Self::stage_session_claim`], the row derived from each of
-    /// `sources` (FIX 5977): one `DerivedFrom` edge to each, staged in the
-    /// same write as the row, under the same gate and encoding. Each source
-    /// must be a row the room reads, so the claim never lands without its
-    /// lineage.
+    /// The rows of [`Self::stage_session_claim`]'s claim, the row derived
+    /// from each of `sources` (FIX 5977): one `DerivedFrom` edge to each,
+    /// staged in the same write as the row, under the same gate and
+    /// encoding. Each source must be a row the room reads when the rows
+    /// stage, so the claim never lands without its lineage. The gate judges
+    /// the claim here, before a write segment opens, as its own base writer
+    /// cannot open inside a segment's; the writer then stages the rows with
+    /// whatever else it stages in its segment (FIX 4818).
     ///
     /// # Errors
     ///
-    /// As [`Self::stage_session_claim`]; [`Error::EntityNotFound`] for a
-    /// source the room does not read.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "stage_session_claim's own axes, then the sources the row derives from"
-    )]
-    pub(crate) fn stage_session_derived_claim(
+    /// As [`Self::stage_session_claim`] before it stages: nothing is staged.
+    pub(crate) fn prepare_session_derived_claim(
         &self,
-        route: &SessionWriteRoute,
         id: EntityId,
         candidate: ClaimCandidate,
         envelope: &WriteEnvelope,
         occurred: TimeRange,
         learned_at: u64,
         sources: &[EntityId],
-    ) -> Result<String> {
+    ) -> Result<PreparedSessionRows> {
         crate::batch::reject_family_owned_candidate(&candidate)?;
         let body = candidate.into_claim_body(envelope, self.vault.default_facet()?)?;
         let decision = self.session_gate_decision(id, &body, envelope)?;
@@ -332,16 +386,44 @@ impl OffRecordSession<'_> {
                 vad: Vad::NEUTRAL,
             });
         }
-        let attachments = RoomRowAttachments::derived_claim(envelope, sources, learned_at)
-            .with_gate_decision(decision);
-        self.stage_session_rows(route, id, occurred, learned_at, &needs, ops, &attachments)
+        Ok(PreparedSessionRows {
+            row: id,
+            occurred,
+            learned_at,
+            needs,
+            ops,
+            attachments: RoomRowAttachments::derived_claim(envelope, sources, learned_at)
+                .with_gate_decision(decision),
+        })
     }
 
-    /// Whether a run bound to a session writes `verb` into its room
-    /// ([`Self::prepare_session_write`]): `vault.notes.create` and
-    /// `vault.claims.upsert`.
-    pub(crate) fn writes_verb(verb: AgentVerb) -> bool {
-        matches!(verb.as_str(), "vault.notes.create" | "vault.claims.upsert")
+    /// Stages `rows`, prepared before the segment opened, inside a segment
+    /// its writer opened on its own captured route
+    /// ([`Self::overlay_write_routed`]); `conversation` is the room's shell
+    /// and `apply` the segment's own. Answers the row's short id.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::stage_session_rows_in_txn`]; [`Error::EntityNotFound`] for
+    /// a source the room does not read.
+    pub(crate) fn stage_prepared_rows_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        apply: &dyn Fn(&mut heed::RwTxn<'_>, JournalEntry) -> Result<()>,
+        conversation: EntityId,
+        rows: PreparedSessionRows,
+    ) -> Result<String> {
+        self.stage_session_rows_in_txn(
+            wtxn,
+            apply,
+            conversation,
+            rows.row,
+            rows.occurred,
+            rows.learned_at,
+            &rows.needs,
+            rows.ops,
+            &rows.attachments,
+        )
     }
 
     /// A code-mode verb call of a run bound to this session, prepared to

@@ -331,6 +331,7 @@ fn sweep_skips_not_due_job_while_processing_due_job() {
         RedactionScope::entity(&EntityId::now()),
         HardEraseSweepExtras::default(),
         future,
+        future,
     )
     .unwrap();
     let not_due_key = write_h_row(&vault, 1_000, &not_due_value);
@@ -641,86 +642,6 @@ fn sweep_without_sync_completes_clean_vault_and_defers_on_crdt_rows() {
     }
 }
 
-/// Pins the ONE-1087 replay-door exception comparator to EXACTLY the
-/// monotone finalization shape: identical envelope + fields, local
-/// `sweep_complete_at = Some(_)`, incoming nil. Every other pair —
-/// reversed direction (only craftable), a differing sibling field, a
-/// differing envelope byte — must stay on the quarantine path.
-#[cfg(feature = "sync")]
-#[test]
-fn stale_finalization_echo_comparator_pins_monotone_shape() {
-    use crate::deletion::{
-        RedactionReceiptInput, encode_redaction_audit_receipt,
-        redaction_receipt_is_stale_finalization_echo,
-    };
-
-    let envelope = |body: &[u8]| -> Vec<u8> {
-        let mut blob = Vec::with_capacity(25 + body.len());
-        blob.push(ENTITY_TYPE_REDACTION_AUDIT);
-        for _ in 0..3 {
-            blob.extend_from_slice(&1_771_027_200_u64.to_be_bytes());
-        }
-        blob.extend_from_slice(body);
-        blob
-    };
-    let input = |requested_at: u64| RedactionReceiptInput {
-        actor_principal: None,
-        room_authority: None,
-        request_id: uuid::Uuid::now_v7().to_string(),
-        scope: RedactionScope::entity(&EntityId::now()),
-        reason: DeleteReason::GdprDelete,
-        requested_at,
-        soft_complete_at: requested_at + 1,
-        hard_purge_complete_at: requested_at + 1,
-        sweep_queued_at: Some(requested_at + 1),
-    };
-
-    let identity = crate::identity::DeviceIdentity {
-        client_id: 0x0123_4567_89ab_cdef,
-        signing_key: ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]),
-    };
-    let receipt_id = EntityId::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
-    let base = input(1_771_027_200);
-    let pre =
-        envelope(&encode_redaction_audit_receipt(base.clone(), &receipt_id, &identity).unwrap());
-    // Finalize exactly the way the sweep does: decode → Some → re-encode.
-    let mut rec =
-        decode_redaction_audit_receipt(&pre[crate::batch::ENTITY_METADATA_HEADER_LEN..]).unwrap();
-    rec.sweep_complete_at = Some(1_771_113_600);
-    let body = rmp_serde::to_vec_named(&rec).unwrap();
-    validate_redaction_receipt_body(&body).expect("finalized body must stay door-valid");
-    let finalized = envelope(&body);
-
-    assert!(
-        redaction_receipt_is_stale_finalization_echo(&finalized, &pre),
-        "local finalized vs incoming pre-finalization echo: skip"
-    );
-    assert!(
-        !redaction_receipt_is_stale_finalization_echo(&pre, &finalized),
-        "incoming Some over local nil is only craftable: quarantine"
-    );
-    assert!(
-        !redaction_receipt_is_stale_finalization_echo(&pre, &pre),
-        "both nil is not the finalization shape"
-    );
-
-    // A sibling-field divergence (different request) must NOT match.
-    let mut other = base;
-    other.request_id = uuid::Uuid::now_v7().to_string();
-    let other_pre =
-        envelope(&encode_redaction_audit_receipt(other, &receipt_id, &identity).unwrap());
-    assert!(!redaction_receipt_is_stale_finalization_echo(
-        &finalized, &other_pre
-    ));
-
-    // A differing envelope byte must NOT match.
-    let mut shifted = pre;
-    shifted[1] ^= 0x01;
-    assert!(!redaction_receipt_is_stale_finalization_echo(
-        &finalized, &shifted
-    ));
-}
-
 /// Finding 1 (anti-clobber, carrier completeness): a `u:w:` row that
 /// appears AFTER the read phase — caught by the in-txn full set-equality
 /// re-read — DEFERS the window. The compaction write txn aborts
@@ -861,6 +782,7 @@ fn sweep_audit_counts_undecodable_receipt_as_missing() {
         RedactionScope::entity(&EntityId::now()),
         HardEraseSweepExtras::default(),
         future,
+        future,
     )
     .unwrap();
     write_h_row(&vault, 4_242, &value);
@@ -890,7 +812,7 @@ fn sweep_malformed_scope_job_kept_loud_not_finalized() {
     };
     let now = crate::unix_seconds_now();
     let value =
-        encode_hard_erase_sweep_job(bad_scope, HardEraseSweepExtras::default(), now).unwrap();
+        encode_hard_erase_sweep_job(bad_scope, HardEraseSweepExtras::default(), now, now).unwrap();
     let key = write_h_row(&vault, 55, &value);
 
     let run = run_hard_erase_sweep(&vault).unwrap();

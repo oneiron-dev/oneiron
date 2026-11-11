@@ -86,7 +86,7 @@ impl Vault {
             |lane, txn| lane.require_visible_weave_item_in(txn, WeaveReader::Admin(admin), item),
             |txn, actor, grant| {
                 Ok(self
-                    .weave_item_correction_labels_in_txn(txn, item.id())?
+                    .weave_item_correction_labels_in_txn(txn, item.key())?
                     .iter()
                     .filter(|label| label.actor == actor && label.admin_grant == Some(grant))
                     .count())
@@ -102,7 +102,7 @@ impl Vault {
                 ITEM_LABELS.put(
                     &self.store,
                     txn,
-                    &(item.id(), correction.id),
+                    &(item.key(), correction.id),
                     &StoredItemCorrection {
                         id: correction.id,
                         item,

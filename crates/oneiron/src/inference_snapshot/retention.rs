@@ -148,7 +148,7 @@ impl SnapshotLedger<'_> {
     /// The disk line as it stands.
     ///
     /// # Errors
-    /// Storage errors.
+    /// Storage and allocation errors.
     pub fn usage(&self) -> Result<SnapshotUsage> {
         let rows = {
             let txn = self.vault.store.env.read_txn()?;
@@ -193,7 +193,7 @@ impl SnapshotLedger<'_> {
     /// budget that is off or zero purges every kept row not pinned first.
     ///
     /// # Errors
-    /// Storage errors.
+    /// Storage and allocation errors.
     pub fn reserve(
         &self,
         budget: SnapshotBudget,
@@ -274,7 +274,7 @@ impl SnapshotLedger<'_> {
     /// still does not fit.
     ///
     /// # Errors
-    /// Storage errors.
+    /// Storage and allocation errors.
     pub fn enforce_budget(
         &self,
         budget: SnapshotBudget,

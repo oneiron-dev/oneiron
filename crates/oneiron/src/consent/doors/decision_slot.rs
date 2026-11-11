@@ -6,7 +6,9 @@ use crate::Vault;
 use crate::error::{Error, GateError, Result};
 use crate::store::GateDecisionId;
 
-use super::super::support::{APPROVE_ONCE_MARKERS, ApproveOnceMarker, CONSENT_APPROVE_ONCE_SPENT};
+use super::super::lifecycle_table_imports::*;
+use super::super::support::{APPROVE_ONCE_MARKERS, ApproveOnceMarker};
+use super::{marker_byte, marker_state};
 
 impl Vault {
     /// Takes the one owner-decision slot `slot` names, in `wtxn`, for the
@@ -27,9 +29,9 @@ impl Vault {
         slot: &[u8; 32],
         decision_id: GateDecisionId,
     ) -> Result<()> {
-        self.ensure_decision_slot_open_in_txn(wtxn, slot)?;
+        let to = self.decision_slot_state_in_txn(wtxn, slot)?;
         let marker = ApproveOnceMarker {
-            state: CONSENT_APPROVE_ONCE_SPENT,
+            state: marker_byte(to),
             decision_id,
         };
         APPROVE_ONCE_MARKERS.put(&self.store, wtxn, slot, &marker)?;
@@ -48,11 +50,22 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         slot: &[u8; 32],
     ) -> Result<()> {
-        if APPROVE_ONCE_MARKERS.get(&self.store, txn, slot)?.is_some() {
-            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
+        self.decision_slot_state_in_txn(txn, slot).map(|_| ())
+    }
+
+    /// The state the marker table gives a slot an owner decision takes, or the refusal of a taken slot.
+    fn decision_slot_state_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        slot: &[u8; 32],
+    ) -> Result<MarkerState> {
+        let from = APPROVE_ONCE_MARKERS
+            .get(&self.store, txn, slot)?
+            .map(|marker| marker_state(&marker));
+        ConsentLifecycle::marker(from, MarkerCommand::TakeDecisionSlot).map_err(|_| {
+            Error::Gate(GateError::ConsentApproveOnceSpent(
                 "this already carries an owner decision",
-            )));
-        }
-        Ok(())
+            ))
+        })
     }
 }

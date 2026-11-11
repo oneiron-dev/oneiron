@@ -71,7 +71,10 @@ fn receipt_links_in_txn(
     let Some(record) = vault.store.gate_decision_in_txn(txn, id)? else {
         return Ok(None);
     };
-    match (CodeWaitReceiptLinks::from_gate_record(&record), outcome) {
+    match (
+        crate::consent::code_wait_receipt_links_from_gate_record(&record),
+        outcome,
+    ) {
         (
             Some(ConsentReceipt::CodeWaitSettled {
                 links,

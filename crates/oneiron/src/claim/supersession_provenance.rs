@@ -55,12 +55,12 @@ pub(super) fn envelope(body: &ClaimBody) -> Result<WriteEnvelope> {
         lineage,
     ))
 }
-/// The source claim's scope map for its companion (FIX 8663): every entry of
-/// `body.scope`, each facet or project selector set to the claim's stored
-/// stamp, so storing the companion cannot select another facet. A scope that
-/// is not a map holds no entry to copy.
+/// The source claim's scope map for its companion (FIX 8663), without the
+/// source's own birth weight. Each facet or project selector is set to the
+/// claim's stored stamp, so storing the companion cannot select another
+/// facet. A scope that is not a map holds no entry to copy.
 fn source_scope(body: &ClaimBody) -> Value {
-    let Some(Value::Map(mut entries)) = body.scope.clone() else {
+    let Some(Value::Map(mut entries)) = super::without_initial_weight(body.scope.clone()) else {
         return Value::Map(Vec::new());
     };
     for (key, value) in &mut entries {
@@ -204,7 +204,7 @@ pub(crate) fn conflict_marker(
             Value::Binary(old.as_bytes().to_vec()),
         ]),
     )]))
-    .with_scope(body.scope.clone().unwrap_or(Value::Map(Vec::new())))
+    .with_scope(super::without_initial_weight(body.scope.clone()).unwrap_or(Value::Map(Vec::new())))
     .with_scope_stamps(body.scope_facet, body.scope_project);
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);
@@ -216,6 +216,88 @@ pub(crate) fn conflict_marker(
         envelope,
     })
 }
+/// Settles only the matching supersession coaching marker, if it still waits.
+/// The caller has already granted the replacement and closed the prior in `txn`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the settlement binds the granted pair and the completing door's actor"
+)]
+pub(super) fn settle_coaching_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    new: &EntityId,
+    old: &EntityId,
+    body: &ClaimBody,
+    original: &WriteEnvelope,
+    closer: Option<WriteActor>,
+    now: u64,
+) -> Result<Option<crate::dreamer_consolidation::SettlementApplied>> {
+    let ClaimSubject::Entity(subject) = body.subject else {
+        return Ok(None);
+    };
+    let marker = conflict_marker(new, old, body, original)?;
+    match marker.landed_in_txn(vault, txn) {
+        Ok(true) => {}
+        Ok(false) | Err(Error::InvalidClaimBody("supersession companion identity collision")) => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    }
+    let Some(conflict) =
+        crate::dreamer_consolidation::open_conflicts_in_txn(vault, txn, Some(subject))?
+            .into_iter()
+            .find(|conflict| conflict.marker == marker.id && !conflict.reverted)
+    else {
+        return Ok(None);
+    };
+    if !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, new)? {
+        return Ok(None);
+    }
+    let person =
+        closer.is_some_and(|actor| actor.actor_class() == crate::edge::EdgeActorClass::Human);
+    let source = if person {
+        ClaimSource::UserStated
+    } else {
+        ClaimSource::Generated
+    };
+    let envelope = WriteEnvelope::with_lineage(
+        closer.unwrap_or_else(|| original.actor()),
+        source,
+        marker.envelope.provenance().clone(),
+        if person {
+            ClaimApprovalStatus::Approved
+        } else {
+            ClaimApprovalStatus::Auto
+        },
+        original.lineage().clone().with(source),
+    );
+    let held = std::cell::Cell::new(false);
+    let mut settlement_txn = vault.store.env.nested_write_txn(txn)?;
+    let applied = crate::dreamer_consolidation::apply_settlement_in_txn(
+        vault,
+        &mut settlement_txn,
+        &conflict,
+        crate::dreamer_consolidation::ConflictSettlement::Keep(*new),
+        &envelope,
+        closer,
+        person,
+        crate::dreamer_consolidation::KeepAs::Auto(&held),
+        now,
+    );
+    match applied {
+        Ok(outcome) => {
+            settlement_txn.commit()?;
+            Ok(Some(outcome))
+        }
+        Err(Error::Gate(crate::error::GateError::GateWriteRejected { .. })) => {
+            // A held or denied answer must not undo the already-granted pair.
+            drop(settlement_txn);
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub(super) fn write_coaching(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -242,13 +324,19 @@ fn landed(
     candidate: &ClaimCandidate,
     envelope: &WriteEnvelope,
 ) -> Result<bool> {
-    let Some(existing) = vault.get_claim_in_txn(txn, id)? else {
+    let Some(mut existing) = vault.get_claim_in_txn(txn, id)? else {
         return Ok(false);
     };
     let candidate = candidate.clone();
     let mut expected = candidate.into_claim_body(envelope, vault.default_facet_in_txn(txn)?)?;
     // Approval is the gate's result, not part of the deterministic candidate.
     expected.approval = existing.approval;
+    // Retained MACHINE signing adds this field after candidate construction.
+    for body in [&mut existing, &mut expected] {
+        if let Some(Value::Map(evidence)) = &mut body.evidence {
+            evidence.retain(|(key, _)| key.as_str() != Some("machine_signature"));
+        }
+    }
     if existing != expected {
         return Err(Error::InvalidClaimBody(
             "supersession companion identity collision",

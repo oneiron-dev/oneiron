@@ -16,8 +16,9 @@ use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
 pub(crate) use self::container::{
-    RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container, is_sealed,
-    live_content_hit, masked_copy, scan_text_content, served_masked_copy, tree_rebuilt_copy,
+    ContainerReader, RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container,
+    is_sealed, live_content_hit, masked_copy, scan_text_content, served_masked_copy,
+    tree_rebuilt_copy,
 };
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
@@ -30,15 +31,14 @@ pub(crate) use self::lift_history::{
 };
 pub(super) use self::mask::MaskedFiles;
 pub(crate) use self::mask::admit::{
-    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, predict_masked_body,
-    predict_masked_text, scan_content_in_txn, scan_document_in_txn,
+    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, plan_parts_in_txn,
+    predict_masked_body, predict_masked_text, scan_content_in_txn, scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
 pub(super) use self::mask::mask_batch_ops;
-pub(crate) use self::mask::rebind_mask_origin_in_txn;
 pub(crate) use self::mask::retained_repo::read::{
     RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
 };
@@ -57,9 +57,10 @@ pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(crate) use self::mask::{
     mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
 };
+pub(crate) use self::mask::{rebind_mask_origin_in_txn, side_row::admission_form};
 pub(crate) use self::message_parts::seal_message_parts_in_txn;
-pub(crate) use self::provider_tokens::embedded_credential;
 use self::provider_tokens::{classify_token, provider_token_spans};
+pub(crate) use self::provider_tokens::{embedded_credential, provider_prefix_head};
 pub(crate) use self::release_read::{scan_file_content_from, scan_file_content_reader};
 pub(crate) use self::whole_read::{
     Encoding, encode_as_stored, release_accepted_body_reads_whole_as_stored,

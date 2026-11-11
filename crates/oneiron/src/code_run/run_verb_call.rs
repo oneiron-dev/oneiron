@@ -14,78 +14,56 @@ use crate::task_verb::sdk::RunVerb;
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Error, Result, TimeRange};
 use serde_json::Value;
 
-/// The memory run rows, which need no live run.
-pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
-    RunVerb::VaultSearch,
-    RunVerb::VaultClaimsPut,
-    RunVerb::VaultClaimsSupersede,
-    RunVerb::VaultEdgesPut,
-];
-
-/// The run rows that act on their caller's live agent run and read nothing
-/// else of it: the attempt, its lease and its actor, for the leader's rows
-/// the planner or slip issuer the host lends beside the lease, and for the
-/// fold rows the run's own log, at the step boundary its host serializes the action with
-/// (OF-181). A host serves them as actions only under that run's lease.
-/// `tasks.consult.result` lands as the run's actor, under its door's read
-/// lane, and `self.workflows.dispatch_bound` binds a TASK as that actor,
-/// under its lease and its door's read lane. `self.skills.call`,
-/// `self.spawn`, `summarize` and `tasks.wait` need the running sandbox (its
-/// bridge, its results, its park). None of those is here.
-pub(crate) const LIVE_RUN_VERBS: [RunVerb; 15] = [
-    RunVerb::TasksConsultResult,
-    RunVerb::TasksRefuse,
-    RunVerb::SelfReportBlocked,
-    RunVerb::SelfAgentsSpawn,
-    RunVerb::SelfTeamStart,
-    RunVerb::SelfTeamRecord,
-    RunVerb::SelfTeamSubmit,
-    RunVerb::SelfLeaderAdvice,
-    RunVerb::SelfLeaderPattern,
-    RunVerb::SelfLeaderSplit,
-    RunVerb::SelfFold,
-    RunVerb::SelfCompact,
-    RunVerb::SelfUnfold,
-    RunVerb::SelfFolds,
-    RunVerb::SelfWorkflowsDispatchBound,
-];
+/// `vault.claims.put`'s typed call, `now` in unix seconds: the same call on
+/// code mode and the credential-bound run door.
+pub(crate) fn claim_put_call(args: MemoryClaimInput, now: u64) -> Result<SelfMemoryPutClaimCall> {
+    let confidence = args.confidence.map(js_f32).transpose()?;
+    let occurred = args.occurred.unwrap_or(MemoryTimeRange {
+        start: now,
+        end: now,
+    });
+    let (start, end) = (js_time(occurred.start)?, js_time(occurred.end)?);
+    if start > end {
+        return Err(failure("invalid claim time range"));
+    }
+    let candidate = ClaimCandidate::new(
+        args.predicate,
+        ClaimSubject::Entity(EntityId::from_hex(&args.subject)?),
+        json_value(args.value),
+        confidence.unwrap_or(1.0),
+    );
+    Ok(SelfMemoryPutClaimCall::new(
+        EntityId::from_hex(&args.id)?,
+        candidate,
+        TimeRange { start, end },
+        args.learned_at.map_or(Ok(now), js_time)?,
+    ))
+}
 
 /// The typed `self.*` call a run row makes, `now` in unix seconds: the call,
 /// effect and gate the row had as a hand-written import. Every row has its
 /// arm here, so a run row is never served undecoded, and the component
 /// bridge and the action registry decode it the same way.
-pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
+pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
     Ok(match verb {
         RunVerb::VaultSearch => {
             let args: MemorySearchInput = decode(input)?;
-            SelfCall::MemorySearch(SelfMemorySearchCall::new(
-                args.query,
-                args.limit.map_or(20, |limit| limit as usize),
-            ))
+            SelfCall::MemorySearch(
+                SelfMemorySearchCall::new(
+                    args.query,
+                    args.limit.map_or(20, |limit| limit as usize),
+                )
+                .with_read_filter(args.filter),
+            )
         }
-        RunVerb::VaultClaimsPut => {
-            let args: MemoryClaimInput = decode(input)?;
-            let confidence = args.confidence.map(js_f32).transpose()?;
-            let occurred = args.occurred.unwrap_or(MemoryTimeRange {
-                start: now,
-                end: now,
-            });
-            let (start, end) = (js_time(occurred.start)?, js_time(occurred.end)?);
-            if start > end {
-                return Err(failure("invalid claim time range"));
-            }
-            let candidate = ClaimCandidate::new(
-                args.predicate,
-                ClaimSubject::Entity(EntityId::from_hex(&args.subject)?),
-                json_value(args.value),
-                confidence.unwrap_or(1.0),
-            );
-            SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
-                EntityId::from_hex(&args.id)?,
-                candidate,
-                TimeRange { start, end },
-                args.learned_at.map_or(Ok(now), js_time)?,
-            ))
+        RunVerb::VaultClaimsPut => SelfCall::MemoryPutClaim(claim_put_call(decode(input)?, now)?),
+        RunVerb::VaultAgentsPut => {
+            let args: super::AgentPutInput = decode(input)?;
+            SelfCall::AgentsPut(Box::new(super::parse_agent_put_request(
+                &args.id,
+                args.definition,
+                now,
+            )?))
         }
         RunVerb::VaultClaimsSupersede => {
             let args: MemorySupersedeInput = decode(input)?;
@@ -194,12 +172,14 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
                 group: args.group,
                 defer: args.defer.unwrap_or(false),
                 bound: None,
+                recipe: None,
             }))
         }
         RunVerb::SelfTeamStart => SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?)),
         RunVerb::SelfTeamRecord => {
             SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
         }
+        RunVerb::SelfTeamVote => SelfCall::Team(crate::team::SelfTeamCall::Vote(decode(input)?)),
         RunVerb::SelfTeamSubmit => SelfCall::TeamSubmit(decode(input)?),
         RunVerb::TasksWait => {
             let input: crate::code_run::TaskWaitInput = decode(input)?;
@@ -211,6 +191,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
                     until: args.until.map(js_time).transpose()?,
                     step_key: args.step_key,
                     request: None,
+                    agents: None,
                 },
                 // FIX 4706: a wait on one world-privacy request, no children.
                 crate::code_run::TaskWaitInput::WorldPrivacy(args) => {
@@ -221,8 +202,12 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
                         until: None,
                         step_key: args.step_key,
                         request: Some(args.request),
+                        agents: None,
                     }
                 }
+                // Slice 6.5b: a wait over AGENT children of the run, no
+                // reader child, request or reader cutoff.
+                crate::code_run::TaskWaitInput::Agents(args) => args.into_call(),
             })
         }
         // ONE-2510: the run's answer to a connector's mid-call questions.
@@ -237,6 +222,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         verb @ (RunVerb::SelfCodeSnapshotsGet
         | RunVerb::SelfCodeSnapshotsRead
         | RunVerb::SelfCodeSymbolsDefinitions
+        | RunVerb::SelfCodeSymbolsNeighbors
         | RunVerb::SelfCodeViewsGet
         | RunVerb::SelfCodeViewsRead
         | RunVerb::SelfCodeMergeQueueObserve
@@ -246,12 +232,13 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         | RunVerb::SelfCodeSymbolsRenew
         | RunVerb::SelfCodeSymbolsRelease
         | RunVerb::SelfCodeProposalSubmit
+        | RunVerb::SelfCodeProposalResolve
         | RunVerb::SelfCodeMergeQueueEnqueue
         | RunVerb::SelfCodeCheckoutBind
-        | RunVerb::SelfCodeExport) => SelfCall::Repo(
+        | RunVerb::SelfCodeExport) => SelfCall::Repo(Box::new(
             super::RepoRunCall::decode(verb, input)?
                 .ok_or_else(|| failure("invalid typed component arguments"))?,
-        ),
+        )),
     })
 }
 

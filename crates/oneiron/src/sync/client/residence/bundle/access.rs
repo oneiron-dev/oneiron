@@ -394,7 +394,7 @@ impl SyncClient {
         }
         let budgets = residence_budgets(vault)?;
         let Some(mut rpc) = ResidenceRpc::connect(vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::home_offline());
         };
         let me = vault.pad_admission_self_target().ok();
         for generation in list_generations(&mut rpc).await? {

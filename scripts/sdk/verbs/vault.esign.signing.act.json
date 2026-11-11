@@ -1,0 +1,19 @@
+{
+  "name": "vault.esign.signing.act",
+  "description": "One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act.",
+  "input": "crate::blob_artifact::esign::EsignSigningRequest",
+  "output": "crate::blob_artifact::esign::SigningOutcome",
+  "call": "memory.esign_signing_act(&input)?",
+  "mcp_off_runtime": true,
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

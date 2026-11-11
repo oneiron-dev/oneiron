@@ -37,18 +37,19 @@ pub(super) const INTENT_STATUS: u16 = StoredIdempotencyEntry::INTENT_STATUS;
 pub(crate) const REPLY_NOT_KEPT_STATE: &str = "idempotent_reply_not_kept";
 
 impl IdempotencyStore {
-    /// Keeps the intent of the request `request_target` sent with
-    /// `request_body` as `store_key`, stamped as its outcome will be.
+    /// Keeps the intent of the request `request_target` sent with the body
+    /// whose digest is `request_digest` as `store_key`, stamped as its
+    /// outcome will be.
     pub(super) fn insert_intent(
         &self,
         store_key: &str,
         request_target: String,
-        request_body: Vec<u8>,
+        request_digest: Vec<u8>,
         stamp: caller::EntryStamp,
     ) -> Result<(), IdempotencyStoreError> {
         let intent = StoredIdempotencyEntry {
             created_at_secs: self.now_secs(),
-            request_body,
+            request_digest,
             status: INTENT_STATUS,
             request_target: Some(request_target),
             stamps: oneiron::store::ResponseStamps {
@@ -70,11 +71,11 @@ impl IdempotencyStore {
         &self,
         store_key: &str,
         request_target: String,
-        request_body: Vec<u8>,
+        request_digest: Vec<u8>,
         response: CachedHttpResponse,
         stamp: caller::EntryStamp,
     ) -> Result<bool, IdempotencyStoreError> {
-        let stored = response.into_stored(self.now_secs(), request_target, request_body, stamp);
+        let stored = response.into_stored(self.now_secs(), request_target, request_digest, stamp);
         self.vault
             .http_idempotency_settle(store_key, &stored)
             .map_err(IdempotencyStoreError::storage)

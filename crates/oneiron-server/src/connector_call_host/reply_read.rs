@@ -1,5 +1,5 @@
 //! The reply readers both halves of the call host share: one reply body,
-//! JSON read whole or an event stream read event by event, and the tool's
+//! JSON raw bytes spooled or an event stream read event by event, and the tool's
 //! reply a `tools/call` answer carries.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,11 +10,12 @@ use zeroize::Zeroizing;
 use super::live_exchange::AnswerReceipts;
 use super::*;
 
-/// One reply body: a JSON body read whole, or an event stream still open.
+/// One reply body: a parsed JSON message with its owned raw body, or an
+/// event stream still open.
 pub(super) enum Reply {
     /// The message that answers the request, if the body holds one, and its
     /// bytes.
-    Json(Option<(Value, Vec<u8>)>),
+    Json(Option<(Value, RawOutboundBody)>),
     Stream(EventStream),
 }
 
@@ -154,15 +155,34 @@ fn timed_out(error: &std::io::Error) -> bool {
     }
 }
 
-/// Opens one reply body, JSON or an event stream. A JSON body is read whole,
-/// whatever its size (FIX 8227): only a body that does not parse is
-/// unreadable, and the complete result goes on as the call's reply. A JSON
-/// body that answers nothing, and every other message of a batch, is wiped
-/// as it drops (FIX 11861), as a stream's are.
+/// Opens one control reply body, JSON or an event stream. JSON still parses
+/// whole, whatever its size (FIX 8227); the tools/call path below spools its
+/// raw bytes. A body that answers nothing, and every other message of a
+/// batch, is wiped as it drops (FIX 11861), as a stream's are.
 pub(super) fn open_reply(
     response: reqwest::blocking::Response,
     id: u64,
     deadline: Option<Instant>,
+) -> Result<Reply, ()> {
+    open_reply_body(response, id, deadline, None)
+}
+
+/// A tools/call JSON response keeps its original raw bytes in a vault spool.
+/// Its typed message is still parsed whole, as the direct adapter requires.
+pub(super) fn open_spooled_reply(
+    response: reqwest::blocking::Response,
+    id: u64,
+    deadline: Option<Instant>,
+    vault: &Vault,
+) -> Result<Reply, ()> {
+    open_reply_body(response, id, deadline, Some(vault))
+}
+
+fn open_reply_body(
+    response: reqwest::blocking::Response,
+    id: u64,
+    deadline: Option<Instant>,
+    vault: Option<&Vault>,
 ) -> Result<Reply, ()> {
     let stream = response
         .headers()
@@ -180,9 +200,16 @@ pub(super) fn open_reply(
             last_event_id: Zeroizing::default(),
         }));
     }
-    let mut bytes = Zeroizing::new(Vec::new());
-    body.read_to_end(&mut bytes).map_err(|_| ())?;
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
+    let bytes = match vault {
+        Some(vault) => RawOutboundBody::read_spooled(vault, body).map_err(|_| ())?,
+        None => {
+            let mut bytes = Zeroizing::new(Vec::new());
+            body.read_to_end(&mut bytes).map_err(|_| ())?;
+            RawOutboundBody::from_bytes(std::mem::take(&mut *bytes))
+        }
+    };
+    let value: Value =
+        serde_json::from_reader(ZeroizingBufReader::new(bytes.reader())).map_err(|_| ())?;
     let mut found = None;
     match value {
         Value::Array(batch) => {
@@ -197,9 +224,7 @@ pub(super) fn open_reply(
         message if answers(&message, id) => found = Some(message),
         message => zeroize_json(message),
     }
-    Ok(Reply::Json(
-        found.map(|message| (message, std::mem::take(&mut *bytes))),
-    ))
+    Ok(Reply::Json(found.map(|message| (message, bytes))))
 }
 
 /// Reads one reply body until the response that answers `id`; server
@@ -208,14 +233,14 @@ pub(super) fn open_reply(
 pub(super) fn read_reply(
     response: reqwest::blocking::Response,
     id: u64,
-) -> Result<Option<(Value, Vec<u8>)>, ()> {
+) -> Result<Option<(Value, RawOutboundBody)>, ()> {
     let mut stream = match open_reply(response, id, None)? {
         Reply::Json(found) => return Ok(found),
         Reply::Stream(stream) => stream,
     };
     loop {
         match stream.next(id)? {
-            StreamEvent::Answer(message, bytes) => return Ok(Some((message, bytes))),
+            StreamEvent::Answer(message, bytes) => return Ok(Some((message, bytes.into()))),
             StreamEvent::Request(_) => {}
             StreamEvent::End => return Ok(None),
         }
@@ -231,22 +256,22 @@ pub(super) fn answers(message: &Value, id: u64) -> bool {
 
 /// A `tools/call` answer as the tool's reply: its result, or the JSON-RPC
 /// error it answered with; `None` when it carries neither.
-pub(super) fn tool_result(message: &Value) -> Option<UntrustedToolResult> {
-    if let Some(error) = message.get("error") {
+pub(super) fn tool_result(message: &mut Value) -> Option<UntrustedToolResult> {
+    if let Some(error) = message.get_mut("error") {
         return Some(UntrustedToolResult {
             content: Value::Array(Vec::new()),
             structured_content: None,
             is_error: true,
-            rpc_error: Some(error.clone()),
+            rpc_error: Some(error.take()),
         });
     }
-    let result = message.get("result")?;
+    let result = message.get_mut("result")?;
     Some(UntrustedToolResult {
         content: result
-            .get("content")
-            .cloned()
+            .get_mut("content")
+            .map(Value::take)
             .unwrap_or_else(|| Value::Array(Vec::new())),
-        structured_content: result.get("structuredContent").cloned(),
+        structured_content: result.get_mut("structuredContent").map(Value::take),
         is_error: result.get("isError").and_then(Value::as_bool) == Some(true),
         rpc_error: None,
     })
@@ -254,8 +279,10 @@ pub(super) fn tool_result(message: &Value) -> Option<UntrustedToolResult> {
 
 /// The tool's terminal reply in `message`, or the failure an unreadable one
 /// is.
-pub(super) fn terminal(message: &Value) -> WorkerEvent {
-    match tool_result(message) {
+pub(super) fn terminal(mut message: Value) -> WorkerEvent {
+    let reply = tool_result(&mut message);
+    zeroize_json(message);
+    match reply {
         Some(result) => WorkerEvent::Result(result),
         None => WorkerEvent::Failed {
             sent: true,

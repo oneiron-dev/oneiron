@@ -519,11 +519,13 @@ impl EnvBlueprintStore for VaultEnvBlueprintStore<'_> {
     }
 }
 
-/// Commit-stripped canonical repository identity. Both `RepoRef` variants end
-/// in `#<commit>`, so truncating immediately before the final `#` yields
-/// exactly `local:<path>` or `github:<owner>/<repo>`. Distinct local-path
-/// spellings stay distinct; v1 performs no alias normalization.
+/// Commit-stripped canonical repository identity. Committed references lose
+/// their final `#<commit>`; a local capture keeps its distinct canonical value,
+/// including any `#` within the folder. Path aliases are not normalized here.
 pub(crate) fn env_blueprint_repo_identity(repo_ref: &RepoRef) -> String {
+    if let RepoRef::LocalCapture { .. } = repo_ref {
+        return repo_ref.canonical();
+    }
     let mut canonical = repo_ref.canonical();
     let commit_separator = canonical
         .rfind('#')

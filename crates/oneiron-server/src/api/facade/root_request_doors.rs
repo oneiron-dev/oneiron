@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use oneiron::task_verb::sdk::{
-    self, OwnerWorkGetRequest, PendingRootRequestView, RootRequestCancelRequest,
+    self, OwnerWorkGetRequest, OwnerWorkView, PendingRootRequestView, RootRequestCancelRequest,
     RootRequestCreateRequest, pending_root_request_rows, root_request_receipt_rows,
 };
 use oneiron::world_keys::OwnerWorkReceipt;
@@ -60,14 +60,14 @@ pub(crate) async fn vault_roots_requests_create(
     auth: &CoreAuth,
     surface: oneiron::authority::ActSurface,
     input: RootRequestCreateRequest,
-) -> MaybeListed<OwnerWorkReceipt> {
+) -> MaybeListed<OwnerWorkView> {
     const VERB: &str = "vault.roots.requests.create";
     as_person_naming(
         server,
         VERB,
         owner_proof(auth, server, VERB),
         move |server, owner| sdk::create_root_request_as(server.vault(), &owner, surface, input),
-        |receipt| Some(root_request_receipt_rows(receipt)),
+        |receipt| Some(root_request_receipt_rows(&receipt.receipt)),
     )
     .await
 }
@@ -96,14 +96,14 @@ pub(crate) async fn vault_owner_work_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: OwnerWorkGetRequest,
-) -> MaybeListed<OwnerWorkReceipt> {
+) -> MaybeListed<OwnerWorkView> {
     const VERB: &str = "vault.owner_work.get";
     as_person_naming(
         server,
         VERB,
         owner_proof(auth, server, VERB),
         move |server, owner| sdk::owner_work_receipt_as(server.vault(), &owner, &input),
-        |receipt| Some(root_request_receipt_rows(receipt)),
+        |receipt| Some(root_request_receipt_rows(&receipt.receipt)),
     )
     .await
 }

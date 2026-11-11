@@ -41,6 +41,22 @@ fn journal_prefix(id: EntityId) -> String {
     format!("{}:", id.to_hex())
 }
 
+/// Deletes `id`'s unacknowledged local edit frames in the caller's writer:
+/// their history went when a canonical restore's successor took the text's
+/// place, and the parked rewrite holds what they wrote, so no later STATE
+/// replays them onto the successor (FIX 3553).
+pub(crate) fn retire_journal_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+) -> Result<()> {
+    let keys: Vec<Vec<u8>> = QD_E.scan_keys(&vault.store, txn, journal_prefix(id).as_bytes())?;
+    for key in keys {
+        QD_E.delete(&vault.store, txn, &key)?;
+    }
+    Ok(())
+}
+
 /// The journal row of the edit of `sequence`, which a pending edit's key
 /// spells as eight hex digits.
 fn journal_key(id: EntityId, sequence: u64) -> Result<Vec<u8>> {
@@ -98,6 +114,7 @@ impl EntityDocument {
         kind: u8,
         bytes: &[u8],
         admit: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+        takes_successor: bool,
     ) -> Result<()> {
         let _writer = self.lock()?;
         self.vault.with_write_txn_grouped(|txn| {
@@ -119,18 +136,55 @@ impl EntityDocument {
                     )?;
                     Ok(())
                 }
-                document_sub_tags::STATE => self.replace_in_txn(txn, bytes),
+                document_sub_tags::STATE => self.replace_in_txn(txn, bytes, takes_successor),
                 _ => Err(denied()),
             }
         })
     }
 
+    /// The writer of a Connect guest's proposal the owner accepts (FIX
+    /// 3684): `settle` decides the proposal in the transaction that joins its
+    /// update, as a peer's update joins; then the update goes out as a local
+    /// edit's frame does.
+    pub(in crate::sync) fn import_accepted_proposal(
+        &self,
+        update: &[u8],
+        settle: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.import_admitted(document_sub_tags::UPDATE, update, settle)?;
+        if let Ok(frame) = encode_document(self.id, document_sub_tags::UPDATE, update).into_result()
+        {
+            let _ = self.notices.send(frame);
+        }
+        Ok(())
+    }
+
     /// STATE replaces, never merges a shallow copy: the state, with each
     /// pending local update replayed on it, must cover the durable text, or
-    /// nothing changes.
-    fn replace_in_txn(&self, txn: &mut RwTxn<'_>, bytes: &[u8]) -> Result<()> {
+    /// nothing changes. A canonical restore's successor of the text held
+    /// here takes its place instead, and a copy of the history a restore of
+    /// it replaced changes nothing (FIX 3553). Only a door with the owner's
+    /// authority, `takes_successor`, takes one; the pending updates of the
+    /// history it replaced go with that history ([`retire_journal_in_txn`]).
+    fn replace_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        bytes: &[u8],
+        takes_successor: bool,
+    ) -> Result<()> {
         let staged = LoroDoc::new();
         storage::import_complete(&staged, bytes)?;
+        if crate::entity_doc::take_sync_successor_in_txn(
+            &self.vault,
+            txn,
+            &self.id,
+            &staged,
+            takes_successor,
+        )?
+        .is_some()
+        {
+            return Ok(());
+        }
         for frame in journal_in(&self.vault, txn, self.id)? {
             let frame = decode_document(&frame[1..])
                 .map_err(|_| Error::sync_protocol(SyncProtocolValidation::InvalidDocumentKey))?;

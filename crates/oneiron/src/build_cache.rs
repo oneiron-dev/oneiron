@@ -637,6 +637,7 @@ mod reapi;
 pub use leg::{BuildLegReceipt, CachedBuildLeg};
 pub use reapi::ReapiDigest;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

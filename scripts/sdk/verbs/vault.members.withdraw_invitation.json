@@ -1,0 +1,15 @@
+{
+  "name": "vault.members.withdraw_invitation",
+  "description": "An Admin with the add_member power takes back a pending invitation.",
+  "input": "crate::task_verb::sdk::SharedInvitationWithdrawRequest",
+  "output": "crate::federation::SharedActExecutionReceipt",
+  "call": "crate::task_verb::sdk::withdraw_shared_invitation_as(memory.vault(), &memory.embedded_owner(\"vault.members.withdraw_invitation\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

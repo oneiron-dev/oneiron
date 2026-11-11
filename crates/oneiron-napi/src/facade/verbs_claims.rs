@@ -5,8 +5,9 @@
 
 use napi_derive::napi;
 use oneiron::task_verb::sdk::{
-    ClaimRefRequest, CommitRequest, EntityRequest, ForgetPredicateRequest, ForgetRequest,
-    HydrateRequest, ReceiptsRequest, SafeDeleteRequest, VAULT_RECEIPTS_LIMIT_DEFAULT,
+    ClaimHistoryRequest, ClaimRefRequest, CommitRequest, EntityRequest, ForgetPredicateRequest,
+    ForgetRequest, HydrateRequest, ReceiptsRequest, SafeDeleteRequest,
+    VAULT_RECEIPTS_LIMIT_DEFAULT,
 };
 use oneiron::task_verb::verb_hook_boundary::typed_row;
 use oneiron::{ClaimListFilter, SafeDeleteReason};
@@ -39,9 +40,13 @@ impl ActorScopedVault {
     pub fn witness(&self, turn: NapiWitnessTurn) -> napi::Result<NapiWitnessReceipt> {
         let engine_turn = witness_turn_to_engine(&turn).map_err(witness_input_error)?;
         let memory = self.facade()?;
-        let receipt = typed_row(&memory, "vault.witness", engine_turn, |turn| {
-            memory.witness(&turn)
-        })
+        let receipt = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.witness",
+            engine_turn,
+            |turn| memory.witness(&turn),
+        )
         .map_err(facade_error)?;
         Ok(witness_receipt_from_engine(receipt))
     }
@@ -57,6 +62,7 @@ impl ActorScopedVault {
         let memory = self.facade()?;
         let outcomes = typed_row(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.commit",
             CommitRequest {
                 claims: engine_claims,
@@ -89,6 +95,7 @@ impl ActorScopedVault {
         let memory = self.facade()?;
         let receipt = typed_row(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.claims.retract",
             ClaimRefRequest { claim_ref },
             |input| memory.claim_retract(&input.claim_ref),
@@ -121,12 +128,18 @@ impl ActorScopedVault {
             }
         };
         let facade = self.facade()?;
-        let receipts = typed_row(&facade, "vault.forget", request, |request| match request {
-            ForgetRequest::Claim(claim) => Ok(vec![facade.claim_retract(&claim.claim_ref)?]),
-            ForgetRequest::Predicate(predicate) => {
-                forget_active_matches(&facade, &predicate.subject_ref, &predicate.predicate)
-            }
-        })
+        let receipts = typed_row(
+            &facade,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.forget",
+            request,
+            |request| match request {
+                ForgetRequest::Claim(claim) => Ok(vec![facade.claim_retract(&claim.claim_ref)?]),
+                ForgetRequest::Predicate(predicate) => {
+                    forget_active_matches(&facade, &predicate.subject_ref, &predicate.predicate)
+                }
+            },
+        )
         .map_err(facade_error)?;
         Ok(receipts
             .into_iter()
@@ -144,10 +157,15 @@ impl ActorScopedVault {
             predicate: filter.predicate,
             lifecycle: filter.lifecycle,
             limit: filter.limit as usize,
+            filter: None,
         };
-        let views = typed_row(&memory, "vault.claims.list", filter, |filter| {
-            memory.claim_list(&filter)
-        })
+        let views = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.claims.list",
+            filter,
+            |filter| memory.claim_list(&filter),
+        )
         .map_err(facade_error)?;
         claim_views_from_engine(views)
     }
@@ -159,9 +177,17 @@ impl ActorScopedVault {
         let memory = self.facade()?;
         let views = typed_row(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.claims.history",
-            ClaimRefRequest { claim_ref },
-            |input| memory.claim_history(&input.claim_ref),
+            ClaimHistoryRequest {
+                claim_ref,
+                filter: None,
+            },
+            |input| {
+                memory
+                    .with_read_filter(input.filter.as_ref())
+                    .claim_history(&input.claim_ref)
+            },
         )
         .map_err(facade_error)?;
         claim_views_from_engine(views)
@@ -184,6 +210,7 @@ impl ActorScopedVault {
         let memory = self.facade()?;
         let receipt = typed_row(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.delete",
             SafeDeleteRequest { entity_ref, reason },
             |input| memory.safe_delete(&input.entity_ref, input.reason),
@@ -203,6 +230,7 @@ impl ActorScopedVault {
         let memory = self.facade()?;
         let records = typed_row(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.writes.pending",
             ReceiptsRequest {
                 limit: Some(limit as usize),
@@ -231,6 +259,7 @@ impl ActorScopedVault {
         let memory = self.facade()?;
         let records = typed_row(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.receipts",
             ReceiptsRequest {
                 limit: Some(limit as usize),
@@ -249,9 +278,18 @@ impl ActorScopedVault {
     #[napi]
     pub fn hydrate(&self, refs: Vec<String>) -> napi::Result<NapiEntityViews> {
         let memory = self.facade()?;
-        let views = typed_row(&memory, "vault.hydrate", HydrateRequest { refs }, |input| {
-            memory.hydrate(&input.refs)
-        })
+        let request = HydrateRequest { refs, filter: None };
+        let views = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.hydrate",
+            request,
+            |input| {
+                memory
+                    .with_read_filter(input.filter.as_ref())
+                    .hydrate(&input.refs)
+            },
+        )
         .map_err(facade_error)?;
         Ok(NapiEntityViews {
             value: views
@@ -270,9 +308,17 @@ impl ActorScopedVault {
         let memory = self.facade()?;
         let view = typed_row(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.get",
-            EntityRequest { entity_ref },
-            |input| memory.get_entity(&input.entity_ref),
+            EntityRequest {
+                entity_ref,
+                filter: None,
+            },
+            |input| {
+                memory
+                    .with_read_filter(input.filter.as_ref())
+                    .get_entity(&input.entity_ref)
+            },
         )
         .map_err(facade_error)?;
         Ok(NapiEntityRead {
@@ -290,9 +336,13 @@ impl ActorScopedVault {
     fn upsert_as(&self, verb: &str, claim: &NapiClaimInput) -> napi::Result<NapiCommitReceipt> {
         let engine_claim = claim_input_to_engine(claim).map_err(facade_error)?;
         let memory = self.facade()?;
-        let receipt = typed_row(&memory, verb, engine_claim, |claim| {
-            memory.claim_upsert(&claim)
-        })
+        let receipt = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            verb,
+            engine_claim,
+            |claim| memory.claim_upsert(&claim),
+        )
         .map_err(facade_error)?;
         Ok(commit_receipt_from_engine(receipt))
     }

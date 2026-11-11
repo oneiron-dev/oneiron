@@ -18,6 +18,8 @@ pub(super) struct FixedPut<'a> {
     pub(super) posture: crate::HostingPrivacyPosture,
     pub(super) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
     pub(super) pending_prompt: Option<&'a [EntityId]>,
+    pub(super) prepared_person_substrate: Option<&'a crate::batch::PreparedPersonSubstrate>,
+    pub(super) prepared_agent_birth: Option<&'a crate::agent_def::PreparedAgentDefinitionBirth>,
     /// The authority rows the put's batch carries beside it, which a
     /// replicated AUTHORITY_LOG row is judged with (FIX 11764).
     pub(super) authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
@@ -30,6 +32,9 @@ pub(super) struct FixedPut<'a> {
     pub(super) hub_sync_imported: bool,
     pub(super) claim_gate_prechecked: bool,
     pub(super) mutation_recorded_at: u64,
+    /// The bytes an ASSET body file holds when the row is its manifest
+    /// ([`PutRow::file_body`], FIX 22091).
+    pub(super) file_body: Option<&'a [u8]>,
 }
 
 /// Body buffers the staged `data` slice borrows, in shadow order. The parent
@@ -92,6 +97,7 @@ pub(super) fn admit_put<'a>(
                 learned_at,
                 data,
                 row_version,
+                file_body,
             },
         options,
         context:
@@ -105,6 +111,8 @@ pub(super) fn admit_put<'a>(
                 posture,
                 owner_authored,
                 pending_prompt,
+                prepared_person_substrate,
+                prepared_agent_birth,
             },
     } = request;
     let Replication {
@@ -113,15 +121,25 @@ pub(super) fn admit_put<'a>(
     } = options.replication;
     let hub_sync_imported = options.hub.sync_imported;
     let claim_gate_prechecked = options.decision.prechecked;
-    // A record kept only for a refused privacy erasure takes no change while
-    // an order forbids its use: the refusal is `use_restricted` naming the
-    // order's bound, or absence while that order is secret (OF-470 C6,
-    // WILL-PLAN L01 row 03).
+    // A record a customer hold kept from a privacy erasure, or a cooperative
+    // restriction, takes no named change (OF-470 C6).
     if let Some(refusal) = store.use_restricted_in_txn(wtxn, &id)? {
         return Err(refusal);
     }
     crate::store::base_agent::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
     super::super::super::person_substrate::validate_scope_identity(id)?;
+    // Fix list row 16256: the source-audience key, as the caller's raw bytes
+    // state it, before any normalization reads the body. Only the source
+    // landing's marked row or the owner's own import tier carries it, and
+    // a stored stamp is never dropped or changed.
+    crate::source_audience::admit_obligation_in_txn(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        replicated,
+    )?;
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.
@@ -139,15 +157,24 @@ pub(super) fn admit_put<'a>(
         posture,
     );
     validate_put_carriers(store, wtxn, id, data, carriers)?;
+    crate::source_audience::note_landed_in(store, wtxn, data)?;
     let project_revisions =
         store
             .project_writes
             .capture_project_put(store, wtxn, id, entity_type, data)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    // An owning adapter's checks read what a body file holds, never its
+    // manifest (FIX 22091).
     super::super::put_staging::validate_source_carriers(
         store,
         wtxn,
-        (id, entity_type, data, occurred, learned_at),
+        (
+            id,
+            entity_type,
+            file_body.unwrap_or(data),
+            occurred,
+            learned_at,
+        ),
     )?;
     let portable_agent_source = None;
     store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
@@ -238,6 +265,8 @@ pub(super) fn admit_put<'a>(
             posture,
             owner_authored,
             pending_prompt,
+            prepared_person_substrate,
+            prepared_agent_birth,
             authority_beside,
             own_device,
             replicated,
@@ -245,6 +274,7 @@ pub(super) fn admit_put<'a>(
             hub_sync_imported,
             claim_gate_prechecked,
             mutation_recorded_at,
+            file_body,
         },
         owners: Owners {
             normalized_policy,

@@ -42,12 +42,14 @@ impl BranchResources<'_> {
     ) -> Result<(Vec<ExtractionSlice>, bool)> {
         type Group = Vec<(EntityId, TurnBodyFacts)>;
         let mut groups = BTreeMap::<(u32, Vec<EntityId>), Group>::new();
-        let lines: BTreeMap<EntityId, u32> = self
-            .branch
-            .parts
-            .iter()
-            .flat_map(|part| part.turns.iter().map(move |turn| (*turn, part.line)))
-            .collect();
+        let lines: BTreeMap<EntityId, u32> = match &self.origin {
+            ResourceOrigin::Branch(branch) => branch
+                .parts
+                .iter()
+                .flat_map(|part| part.turns.iter().map(move |turn| (*turn, part.line)))
+                .collect(),
+            ResourceOrigin::Root(_) => self.turns.keys().map(|turn| (*turn, 0)).collect(),
+        };
         let mut low_trust = self.priors.values().any(low_trust_prior);
         for id in turns {
             let facts = self.turn(self.scope(), id)?;
@@ -134,13 +136,18 @@ impl BranchResources<'_> {
                         scope.writable.remove(version);
                     }
                 }
+                // An unbound branch's words still carry their MESSAGEs'
+                // labels: the chunk binds to the relationships every labelled
+                // word shares (the empty set when they share none), so a
+                // candidate that names no relationship inherits the strictest
+                // label and never `all`, and one that names a relationship
+                // stays inside it (S63E-RULED, lead 9 Nov 19:0x).
+                if scope.relationship.is_none() {
+                    scope.relationship = self.word_bound(&ids)?;
+                }
                 // The relationships a candidate may hold within: the bound
-                // one, or on an unbound branch each one the chunk's words
-                // are scoped to (FIX 10357).
-                let rels: Vec<EntityId> = match &scope.relationship {
-                    Some(bound) => bound.iter().copied().collect(),
-                    None => self.word_relationships(&ids)?.into_iter().collect(),
-                };
+                // one, or none listed for words that carry no label.
+                let rels: Vec<EntityId> = scope.relationship.iter().flatten().copied().collect();
                 for page in &pages {
                     let mut page_rels = rels.clone();
                     if scope.relationship.is_none() {
@@ -209,33 +216,45 @@ impl BranchResources<'_> {
 }
 
 impl BranchResources<'_> {
-    /// The relationships the words of `turns` are scoped to (FIX 10357):
-    /// each MESSAGE a TURN's text was projected from, at its stored scope.
-    /// A MESSAGE that is private, gone, or whose scope does not read adds
-    /// none; the listing only offers labels, it grants nothing.
-    fn word_relationships(&self, turns: &BTreeSet<EntityId>) -> Result<BTreeSet<EntityId>> {
+    /// The relationships every labelled word of `turns` may be read within
+    /// (FIX 10357; S63E-RULED): each MESSAGE a TURN's text was projected
+    /// from, at its stored scope, meets the others. A private MESSAGE, or
+    /// one whose label does not resolve, admits no relationship. `None` when
+    /// no word carries a label, so the branch stays unbound; a MESSAGE that
+    /// is gone, or whose kind does not gate, adds none.
+    fn word_bound(&self, turns: &BTreeSet<EntityId>) -> Result<Option<BTreeSet<EntityId>>> {
         let vault = self.read.vault();
         let txn = vault.store.env.read_txn()?;
-        let mut rels = BTreeSet::new();
+        let mut bound: Option<BTreeSet<EntityId>> = None;
+        // The MESSAGEs whose words the transcript shows, not every pinned
+        // child: a hidden or unfinished one is read by no call, so its label
+        // binds nothing (review round 1 of #6903).
         let messages = turns
             .iter()
             .filter_map(|id| self.texts.get(id))
-            .flat_map(TurnText::versions)
-            .map(|(message, _)| message);
+            .flat_map(TurnText::projection);
         for message in messages {
             let Some(raw) = vault.get_raw_in(&txn, &message)? else {
                 continue;
             };
-            if let Ok(RelationshipRead::Gated {
-                space,
-                private: false,
-                ..
-            }) = crate::claim::relationship_read(&vault.store, &txn, &message, &raw)
-            {
-                rels.extend(space.into_iter().flatten());
-            }
+            let label: BTreeSet<EntityId> =
+                match crate::claim::relationship_read(&vault.store, &txn, &message, &raw) {
+                    Ok(RelationshipRead::Gated { private: true, .. }) | Err(_) => BTreeSet::new(),
+                    Ok(RelationshipRead::Gated {
+                        space: Some(space), ..
+                    }) => space.into_iter().collect(),
+                    Ok(
+                        RelationshipRead::Gated { space: None, .. } | RelationshipRead::Decided(_),
+                    ) => {
+                        continue;
+                    }
+                };
+            bound = Some(match bound {
+                None => label,
+                Some(held) => held.intersection(&label).copied().collect(),
+            });
         }
-        Ok(rels)
+        Ok(bound)
     }
 }
 

@@ -40,7 +40,10 @@ impl ScopedRead<'_> {
             deny_all: floor.deny_all,
         };
         let applied = read_scope_from_resolved(applied);
-        let requested = requested.map_or_else(
+        // The receipt names what the read asked: its bound caller filter met
+        // with its door's request (FIX 3977).
+        let requested = self.asked_request(requested);
+        let requested = requested.as_deref().map_or_else(
             || actor_ceiling.clone(),
             |req| ReadScope {
                 entity_types: req

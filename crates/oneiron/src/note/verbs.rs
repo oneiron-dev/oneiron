@@ -25,6 +25,25 @@ impl Vault {
         markdown: &str,
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
+        self.create_note_born(
+            kind,
+            markdown,
+            actor,
+            crate::federation::record_scope::BirthPosition::default(),
+        )
+    }
+
+    /// [`Self::create_note`] for a writer whose host bound it to be born at
+    /// `birth`: a narrowed writer's NOTE starts in its writer's world, with an
+    /// `InWorld` edge in its birth write, so the writer reads it back where
+    /// its credential reads (FIX 22223). Base reality takes no edge.
+    pub(crate) fn create_note_born(
+        &self,
+        kind: &str,
+        markdown: &str,
+        actor: WriteActor,
+        birth: crate::federation::record_scope::BirthPosition,
+    ) -> MemoryResult<EntityId> {
         let kind = self.note_kind(kind)?;
         let id = self.store.clock.entity_id()?;
         let at = self.store.clock.now_recorded_at();
@@ -35,30 +54,34 @@ impl Vault {
         })?;
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
-                content.apply_batch(
-                    self.batch_in()
-                        .put_authored_note(
-                            &id,
-                            &actor.entity_ref(),
-                            TimeRange { start: at, end: at },
+                let mut batch = self
+                    .batch_in()
+                    .put_authored_note(
+                        &id,
+                        &actor.entity_ref(),
+                        TimeRange { start: at, end: at },
+                        at,
+                        &body,
+                        markdown,
+                    )
+                    .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
+                    .made_by(
+                        &id,
+                        RowBirth::written(
+                            actor,
+                            MadeByClass::of_writer(actor.actor_class()),
+                            "note.create",
+                            &[],
+                            &[],
                             at,
-                            &body,
-                            markdown,
-                        )
-                        .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
-                        .made_by(
-                            &id,
-                            RowBirth::written(
-                                actor,
-                                MadeByClass::of_writer(actor.actor_class()),
-                                "note.create",
-                                &[],
-                                &[],
-                                at,
-                            ),
                         ),
-                )?;
-                content.update_note(id, |txn| {
+                    );
+                if let Some(world) = birth.claim_world() {
+                    let weight = EdgeKind::InWorld.default_weight().unwrap_or(1.0);
+                    batch = batch.edge(&id, EdgeKind::InWorld, &world, weight);
+                }
+                content.apply_batch(batch)?;
+                content.update_note(id, |txn, _lane| {
                     let doc = super::document_store::load(self, txn, id)?;
                     super::document_store::persist_authoritative(self, txn, &doc)?;
                     Ok(id)
@@ -92,7 +115,12 @@ impl Vault {
             actor.entity_ref(),
             actor.actor_class(),
         )?;
-        let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
+        let mut content = crate::federation::ActorContentTxn::new(
+            self,
+            txn,
+            actor,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )?;
         content.apply_batch(
             self.batch_in()
                 .put_authored_note(
@@ -116,7 +144,7 @@ impl Vault {
                     ),
                 ),
         )?;
-        content.update_note(id, |txn| -> MemoryResult<()> {
+        content.update_note(id, |txn, _lane| -> MemoryResult<()> {
             let doc = super::document_store::load(self, txn, id)?;
             super::document_store::persist_authoritative(self, txn, &doc)?;
             Ok(())
@@ -198,7 +226,11 @@ impl Vault {
                             origin,
                             supersede,
                         )
-                        .apply_actor(txn, &actor)?;
+                        .apply_actor(
+                            txn,
+                            &actor,
+                            crate::core_write::CoreWriteLaneRef::Unbound,
+                        )?;
                         let doc = super::document_store::load(self, txn, fork)?;
                         super::document_store::persist_authoritative(self, txn, &doc)?;
                     }
@@ -232,7 +264,11 @@ impl Vault {
                             origin,
                             supersede,
                         )
-                        .apply_actor(txn, &actor)?;
+                        .apply_actor(
+                            txn,
+                            &actor,
+                            crate::core_write::CoreWriteLaneRef::Unbound,
+                        )?;
                     }
                     crate::registry::ENTITY_TYPE_CLAIM => {
                         if !owner {
@@ -376,7 +412,9 @@ impl Vault {
         let result = self
             .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
-                content.update_note(note, |txn| self.edit_note_in_txn(txn, note, edit, actor))
+                content.update_note(note, |txn, lane| {
+                    self.edit_note_in_txn(txn, note, edit, actor, lane)
+                })
             })?;
         #[cfg(feature = "sync")]
         self.notify_note_document(note);
@@ -391,6 +429,7 @@ impl Vault {
         note: EntityId,
         edit: &NoteProgramEdit,
         actor: WriteActor,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> MemoryResult<NoteProgramEditOutcome> {
         // A sealed NOTE's edit opens a fork and leaves the seal intact.
         let sealed = super::lifecycle::note_sealed_in_txn(&self.store, txn, note)?;
@@ -423,7 +462,7 @@ impl Vault {
             };
             let receipt = self
                 .memory(actor.entity_ref(), actor.actor_class())
-                .apply_note_operation_in_txn(txn, note, &operation, None)?;
+                .apply_note_operation_in_lane(txn, note, &operation, None, lane)?;
             return Ok(match receipt.outcome {
                 super::NoteScalarEditOutcome::Applied(_) => {
                     NoteProgramEditOutcome::Edited { head: doc.head }

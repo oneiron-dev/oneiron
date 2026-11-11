@@ -1,0 +1,16 @@
+{
+  "name": "vault.disclosure.reveals.answer",
+  "description": "The owner approves once, approves standing, or denies the exact frozen reveal ask.",
+  "input": "crate::task_verb::sdk::RevealAnswerRequest",
+  "output": "crate::task_verb::sdk::RevealAnsweredView",
+  "call": "crate::task_verb::sdk::answer_disclosure_reveal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.disclosure.reveals.answer\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

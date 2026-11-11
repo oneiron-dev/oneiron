@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.windows",
+  "description": "Lists the desktop guest's windows, or one app's.",
+  "input": "oneiron_browser::WindowsInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::WindowsOutput>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.windows(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

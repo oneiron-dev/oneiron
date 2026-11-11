@@ -40,6 +40,8 @@
 //! sentences are spoken past the session's safeguards (`speech`), and the
 //! host's own model calls run on a line of the call's own (`backend`).
 
+pub(super) mod phone_call;
+
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -82,7 +84,7 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often a call's credential is checked again: a slip revoked mid-call,
 /// or a managed owner no longer the vault's live owner, ends the call
 /// within this.
-const LIVENESS_EVERY: Duration = Duration::from_secs(5);
+pub(super) const LIVENESS_EVERY: Duration = Duration::from_secs(5);
 /// Brain events the host holds before the brain waits.
 const BRAIN_QUEUE: usize = 256;
 /// A roster ref is a speaker entry's session key, which holds this many
@@ -520,7 +522,11 @@ pub(super) fn prepare_call(
         .map_err(|fault| {
             tracing::info!(%fault, "voice: the room's funding refused the call");
             refused(match fault {
-                PayerFault::Missing { .. } => Refusal::PayerMissing,
+                // A room scope funded by an agent Grant's wallet has no
+                // payer this call path can bill (FIX 7766).
+                PayerFault::Missing { .. } | PayerFault::GrantWalletUnbound { .. } => {
+                    Refusal::PayerMissing
+                }
                 PayerFault::Needed { .. } => Refusal::PayerNeeded,
             })
         })?,
@@ -585,6 +591,7 @@ pub(super) fn prepare_call(
             session,
             shutdown: shutdown.clone(),
             speculative_auth: Some(auth.clone()),
+            phone: None,
             // Each sentence's safeguard runs under the host's policy config,
             // its ladder's paired question lent (FIX 1201).
             owner_policy: server
@@ -599,6 +606,7 @@ pub(super) fn prepare_call(
         ai: server.ai.clone(),
         vault: Arc::clone(vault),
         auth: auth.clone(),
+        phone: None,
         room: brain_room,
         instructions,
         agent,

@@ -111,8 +111,16 @@ pub(super) fn campaign_enrollment_event_and_hold(
     event_ref: EntityId,
 ) -> Result<Option<(CampaignEnrollmentEvent, bool)>> {
     let rtxn = vault.store.env.read_txn()?;
+    campaign_enrollment_event_and_hold_in_txn(vault, &rtxn, event_ref)
+}
+
+pub(super) fn campaign_enrollment_event_and_hold_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event_ref: EntityId,
+) -> Result<Option<(CampaignEnrollmentEvent, bool)>> {
     EVENT
-        .get(&vault.store, &rtxn, &event_ref)?
+        .get(&vault.store, txn, &event_ref)?
         .map(|row| {
             let review_hold = row.review_hold;
             decode_event(event_ref, row).map(|event| (event, review_hold))

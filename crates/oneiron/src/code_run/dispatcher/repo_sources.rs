@@ -22,9 +22,6 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::{ClaimSubject, EntityId, Vault};
 
-/// The derivation a run's provenance names: the proposal door's own.
-const REPO_PROVENANCE_DERIVATION_VERSION: &str = "self.code.proposal_submit.v1";
-
 /// The one file change a run's proposal makes, as its provenance names it.
 pub(super) struct RepoChange {
     pub(super) path: String,
@@ -32,14 +29,36 @@ pub(super) struct RepoChange {
     pub(super) content_hash: [u8; 32],
 }
 
-/// The model request the run is serving, as its executor bound it.
-struct RequestWitness {
+/// The model request actually served by a host, without retaining its prompt.
+///
+/// Host-only: capture this from the finalized request at its native send, not
+/// from a caller's asserted hashes. It is neither a wire input nor authority.
+#[derive(Clone)]
+pub struct RepoRequestWitness {
     /// The request's canonical hash as sent.
     digest: [u8; 32],
     model: String,
     /// The BLAKE3 hash of the request's sampling params and provider
     /// options.
     params_hash: String,
+}
+
+impl RepoRequestWitness {
+    /// Captures the actual request at the host's model invocation boundary.
+    /// A request with no canonical representation lends no provenance.
+    #[must_use]
+    pub fn capture(request: &crate::LlmRequest) -> Option<Self> {
+        Self::with_digest(request, request.canonical_hash().ok()?)
+    }
+
+    fn with_digest(request: &crate::LlmRequest, digest: [u8; 32]) -> Option<Self> {
+        let params = serde_json::to_vec(&(&request.params, &request.provider_options)).ok()?;
+        Some(Self {
+            digest,
+            model: request.model.as_str().to_owned(),
+            params_hash: blake3::hash(&params).to_hex().to_string(),
+        })
+    }
 }
 
 impl HostSelfDispatcher<'_> {
@@ -56,6 +75,7 @@ impl HostSelfDispatcher<'_> {
         vault: &Vault,
         stamp: &RepoRunStamp,
         change: &RepoChange,
+        effect: SelfEffect,
     ) -> Result<MemoryResult<RepoRunSources>> {
         let Some(witness) = self.request_witness() else {
             return Ok(Err(MemoryError::new(
@@ -64,6 +84,17 @@ impl HostSelfDispatcher<'_> {
                 &["A run's proposal needs the request its executor bound; the work is kept."],
             )));
         };
+        self.repo_run_sources_with_witness(vault, stamp, change, &witness, effect)
+    }
+
+    pub(super) fn repo_run_sources_with_witness(
+        &self,
+        vault: &Vault,
+        stamp: &RepoRunStamp,
+        change: &RepoChange,
+        witness: &RepoRequestWitness,
+        effect: SelfEffect,
+    ) -> Result<MemoryResult<RepoRunSources>> {
         let actor = self.actor.entity_ref();
         let key = vault.local_session_key(actor)?;
         let session = match vault.mint_session(key, vault.now_recorded_at())? {
@@ -72,7 +103,7 @@ impl HostSelfDispatcher<'_> {
             }
         };
         let provenance_claim =
-            self.repo_provenance_claim(vault, stamp, change, session, &witness)?;
+            self.repo_provenance_claim(vault, stamp, change, session, witness, effect)?;
         Ok(Ok(RepoRunSources {
             session,
             provenance_claim,
@@ -85,16 +116,11 @@ impl HostSelfDispatcher<'_> {
 
     /// The request the run's executor bound before its latest call, with
     /// the model it names; `None` when none reached this engine.
-    fn request_witness(&self) -> Option<RequestWitness> {
+    fn request_witness(&self) -> Option<RepoRequestWitness> {
         let bound = self.run_request.borrow();
         let sent = bound.as_ref()?.sent.as_ref()?;
         let request = &sent.kept.as_ref()?.request;
-        let params = serde_json::to_vec(&(&request.params, &request.provider_options)).ok()?;
-        Some(RequestWitness {
-            digest: sent.digest,
-            model: request.model.as_str().to_owned(),
-            params_hash: blake3::hash(&params).to_hex().to_string(),
-        })
+        RepoRequestWitness::with_digest(request, sent.digest)
     }
 
     /// Mints the gated `repo.provenance` claim of one run change, about the
@@ -105,7 +131,8 @@ impl HostSelfDispatcher<'_> {
         stamp: &RepoRunStamp,
         change: &RepoChange,
         session: EntityId,
-        witness: &RequestWitness,
+        witness: &RepoRequestWitness,
+        effect: SelfEffect,
     ) -> Result<EntityId> {
         let text = |value: String| Value::from(value);
         let value = Value::Map(vec![
@@ -125,7 +152,7 @@ impl HostSelfDispatcher<'_> {
                     (Value::from("model_id"), text(witness.model.clone())),
                     (
                         Value::from("version"),
-                        Value::from(REPO_PROVENANCE_DERIVATION_VERSION),
+                        Value::from(format!("{}.v1", effect.as_str())),
                     ),
                     (
                         Value::from("params_hash"),
@@ -166,7 +193,7 @@ impl HostSelfDispatcher<'_> {
             Some(evidence) => candidate.with_evidence(evidence),
             None => candidate,
         };
-        let envelope = self.write_envelope(SelfEffect::RepoProposalSubmit, admission.as_ref())?;
+        let envelope = self.write_envelope(effect, admission.as_ref())?;
         let gate_body = candidate.clone().into_claim_body(
             &envelope,
             crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,

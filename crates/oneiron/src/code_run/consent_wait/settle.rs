@@ -1,4 +1,4 @@
-//! The answer and the settlement (DOOR-079 1a). One authenticated owner
+//! The answer and the settlement (DOOR-079 1a). One authenticated person
 //! answer, bound to its exact sealed wait, lands first and once. The held
 //! effect then runs once, under its own current gate and its original
 //! caller's own grant, and its outcome settles the wait and wakes the parked
@@ -20,8 +20,8 @@ use super::browser::{CODE_WAIT_TARGET_CHANGED, browser_facts_match_row};
 use super::ledger::{LedgerLinks, ledger_links_in_txn};
 use super::types::{
     CodeConsentAnswerInput, CodeConsentAnswerStamp, CodeConsentBinding, CodeConsentChoice,
-    CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentSettlement,
-    CodeConsentWaitRow, CodeConsentWaitView,
+    CodeConsentHolderAnswerBasis, CodeConsentSavedCredential, CodeConsentSettleOutcome,
+    CodeConsentSettlement, CodeConsentWaitRow, CodeConsentWaitView,
 };
 
 /// The refusal a new approving answer gets where no host drives a code
@@ -43,6 +43,19 @@ pub(crate) fn now_ms() -> u64 {
         })
 }
 
+enum CodeConsentAnswerer {
+    Owner(EntityId),
+    Holder(EntityId),
+}
+
+impl CodeConsentAnswerer {
+    fn actor(&self) -> EntityId {
+        match self {
+            Self::Owner(actor) | Self::Holder(actor) => *actor,
+        }
+    }
+}
+
 /// What one answer's writer decided.
 struct Answered {
     /// The effect is answered, approved and not settled: drive it now.
@@ -53,8 +66,8 @@ struct Answered {
 
 impl Vault {
     /// The one authorised answer to a code consent wait (DOOR-079 1a): the
-    /// vault's authenticated owner, from any surface the owner is
-    /// authenticated on, answers once, with a word the owner gave on the
+    /// vault's authenticated owner or current policy-admitted power holder,
+    /// from an authenticated surface, answers once with their own word on the
     /// wait's ask. An unauthenticated caller is refused before any lookup.
     /// The first answer wins; the same answer again returns its evidence,
     /// and any other returns the first, marked `already_answered`, with no
@@ -75,7 +88,17 @@ impl Vault {
         owner: &AuthenticatedOwner,
         input: &CodeConsentAnswerInput,
     ) -> Result<CodeConsentWaitView> {
-        owner.revalidate(self)?;
+        match owner.revalidate(self) {
+            Ok(_) => {}
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_))) => {
+                let txn = self.store.env.read_txn()?;
+                owner.revalidate_person_in_txn(self, &txn)?;
+                let row = read_code_consent_wait_in_txn(self, &txn, input.wait_id)?
+                    .ok_or(Error::EntityNotFound)?;
+                code_consent_answerer_in_txn(self, &txn, &row.binding, owner)?;
+            }
+            Err(error) => return Err(error),
+        }
         let host = self.code_consent_effect_host();
         if input.choice.approves() && host.is_none() {
             return Err(Error::InvalidConfig(format!(
@@ -98,8 +121,8 @@ impl Vault {
         self.code_consent_wait_view(input.wait_id, answered.already_answered)
     }
 
-    /// One code consent wait as its owner reads it: the held effect, its
-    /// ask, the answer and the settlement. An unauthenticated caller is
+    /// One code consent wait as its owner or admitted holder reads it: the held
+    /// effect, its ask, the answer and the settlement. An unauthenticated caller is
     /// refused before any lookup.
     ///
     /// # Errors
@@ -110,13 +133,18 @@ impl Vault {
         owner: &AuthenticatedOwner,
         wait_id: EntityId,
     ) -> Result<CodeConsentWaitView> {
-        owner.revalidate(self)?;
-        self.code_consent_wait_view(wait_id, false)
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_person_in_txn(self, &txn)?;
+        let row =
+            read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
+        code_consent_answerer_in_txn(self, &txn, &row.binding, owner)?;
+        let ledger = ledger_links_in_txn(self, &txn, &row)?;
+        Ok(view_of(&row, ledger, false))
     }
 
-    /// The instrument a wait's original caller was admitted on, for the
-    /// host's own check before it drives the effect: the same slip, live now,
-    /// whose current scope meets the scope it was admitted under. `None` for
+    /// The original caller's active instrument: the admitted request's pair,
+    /// or its explicitly confirmed successor, for the host's strict check
+    /// before it drives the same effect. `None` for
     /// a caller no credential was bound for: its grant alone limits it.
     ///
     /// # Errors
@@ -129,7 +157,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let row =
             read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
-        Ok(row.binding.original.credential)
+        Ok(row.active_credential().cloned())
     }
 
     /// The view of one wait, with its receipts' links as the consent Gate
@@ -200,7 +228,15 @@ fn answer_in_txn(
     let Some(mut row) = read_code_consent_wait_in_txn(vault, txn, input.wait_id)? else {
         return Err(Error::EntityNotFound);
     };
-    let answerer = code_consent_answerer_in_txn(vault, txn, &row.binding, owner)?;
+    let admitted = code_consent_answerer_in_txn(vault, txn, &row.binding, owner)?;
+    let answerer = admitted.actor();
+    if let Some(slip) = row.binding.original.opener_slip
+        && owner.answers_from_slip_lineage_in_txn(vault, txn, &[slip])?
+    {
+        return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
+            "the opener lineage never settles its own code consent wait",
+        )));
+    }
     // An unsealed wait reads as unknown: no answer reaches it before its
     // parked step committed.
     let Some(sealed) = row.checkpoint.as_ref() else {
@@ -213,8 +249,9 @@ fn answer_in_txn(
     {
         return Err(Error::ConcurrentWrite("code consent wait target changed"));
     }
-    let remember_asking_lineage =
-        input.choice == CodeConsentChoice::ApproveAndStopAsking && input.remember_asking_lineage;
+    let remember_asking_lineage = input.choice == CodeConsentChoice::ApproveAndStopAsking
+        && row.binding.remember_offer.is_some()
+        && input.remember_asking_lineage;
     if let Some(first) = &row.answer {
         let same = first.choice == input.choice
             && first.word_ref == input.word_ref
@@ -258,74 +295,140 @@ fn answer_in_txn(
         });
     }
     let digest = EffectDigest::from_bytes(row.binding.effect_digest);
-    let (decision, remembered) = match input.choice {
-        CodeConsentChoice::Deny => (vault.deny_consent_in_txn(txn, owner, digest)?, None),
-        CodeConsentChoice::ApproveOnce => (vault.approve_once_in_txn(txn, owner, digest)?, None),
-        CodeConsentChoice::ApproveAndStopAsking => {
-            let offer = row
-                .binding
-                .remember_offer
-                .clone()
-                .ok_or(Error::ConcurrentWrite(
-                    "this code consent wait offers no stop asking",
-                ))?;
-            let call = row
-                .binding
-                .pending
-                .connector_call()
-                .ok_or(Error::ConcurrentWrite(
-                    "this code consent wait binds no connector call",
-                ))?;
-            let key = crate::connector_key::read_key_for_pack_in_txn(vault, txn, &call.key_ref)?
-                .ok_or(Error::EntityNotFound)?;
-            let remember_context = call.remember_context.ok_or(Error::ConcurrentWrite(
-                "this code consent wait binds no remember context",
-            ))?;
-            if remember_asking_lineage && remember_context.lineage.is_none() {
-                return Err(Error::InvalidConfig(
-                    "asking-lineage remember needs a delegation lineage".to_owned(),
-                ));
-            }
-            let scoped_call = crate::consent::tool_scope::ScopedMcpCallContext {
-                server: call.server.clone(),
-                tool: call.tool.clone(),
-                resolved_endpoint: call.endpoint.clone(),
-                payload_data_class: call.payload_data_class,
+    let mut standing_grant = None;
+    let (decision, remembered, holder_attribution) = match admitted {
+        CodeConsentAnswerer::Owner(_) => {
+            let (decision, remembered) =
+                match input.choice {
+                    CodeConsentChoice::Deny => {
+                        (vault.deny_consent_in_txn(txn, owner, digest)?, None)
+                    }
+                    CodeConsentChoice::ApproveOnce => {
+                        (vault.approve_once_in_txn(txn, owner, digest)?, None)
+                    }
+                    CodeConsentChoice::ApproveAndStopAsking => {
+                        if let Some(offer) = row.binding.remember_offer.clone() {
+                            let call = row.binding.pending.connector_call().ok_or(
+                                Error::ConcurrentWrite(
+                                    "this code consent wait binds no connector call",
+                                ),
+                            )?;
+                            let key = crate::connector_key::read_key_for_pack_in_txn(
+                                vault,
+                                txn,
+                                &call.key_ref,
+                            )?
+                            .ok_or(Error::EntityNotFound)?;
+                            let remember_context =
+                                call.remember_context.ok_or(Error::ConcurrentWrite(
+                                    "this code consent wait binds no remember context",
+                                ))?;
+                            if remember_asking_lineage && remember_context.lineage.is_none() {
+                                return Err(Error::InvalidConfig(
+                                    "asking-lineage remember needs a delegation lineage".to_owned(),
+                                ));
+                            }
+                            let scoped_call = crate::consent::tool_scope::ScopedMcpCallContext {
+                                server: call.server.clone(),
+                                tool: call.tool.clone(),
+                                resolved_endpoint: call.endpoint.clone(),
+                                payload_data_class: call.payload_data_class,
+                            };
+                            let (_, bound) =
+                                crate::connector_key::connector_tool_remember_bound_in_txn(
+                                    &vault.store,
+                                    txn,
+                                    &call.key_ref,
+                                    &key,
+                                    &scoped_call,
+                                    remember_context,
+                                    remember_asking_lineage,
+                                )?
+                                .filter(|(settings_act, _)| *settings_act == offer.settings_act)
+                                .ok_or(Error::ConcurrentWrite("connector tool setting changed"))?;
+                            let remembered =
+                                vault.create_standing_grant_in_txn(txn, owner, bound)?;
+                            (
+                                vault.approve_once_in_txn(txn, owner, digest)?,
+                                crate::consent::consent_receipt_grant_ref(&remembered),
+                            )
+                        } else {
+                            let offer = row.binding.standing_offer.as_ref().ok_or(
+                                Error::ConcurrentWrite(
+                                    "this code consent wait offers no stop asking",
+                                ),
+                            )?;
+                            if super::binding::binding_digest(&row.binding)?
+                                != row.binding.binding_digest
+                            {
+                                return Err(Error::ConcurrentWrite(
+                                    "code consent standing offer changed",
+                                ));
+                            }
+                            let receipt =
+                                vault.create_standing_grant_in_txn(txn, owner, offer.bound()?)?;
+                            let grant_ref = crate::consent::consent_receipt_grant_ref(&receipt)
+                                .ok_or(Error::InvariantViolation(
+                                    "a standing grant creation returned no grant reference",
+                                ))?;
+                            standing_grant = Some((grant_ref, receipt.decision_id()));
+                            (vault.approve_once_in_txn(txn, owner, digest)?, None)
+                        }
+                    }
+                };
+            (decision, remembered, None)
+        }
+        CodeConsentAnswerer::Holder(_) => {
+            let Some(held) = vault.act_on_code_consent_wait_as_holder_in_txn(txn, owner, input)?
+            else {
+                return Ok(Answered {
+                    drive: false,
+                    already_answered: true,
+                });
             };
-            let (_, bound) = crate::connector_key::connector_tool_remember_bound_in_txn(
-                &vault.store,
-                txn,
-                &call.key_ref,
-                &key,
-                &scoped_call,
-                remember_context,
-                remember_asking_lineage,
-            )?
-            .filter(|(settings_act, _)| *settings_act == offer.settings_act)
-            .ok_or(Error::ConcurrentWrite("connector tool setting changed"))?;
-            let remembered = vault.create_standing_grant_in_txn(txn, owner, bound)?;
-            (
-                vault.approve_once_in_txn(txn, owner, digest)?,
-                remembered.grant_ref(),
-            )
+            (held.receipt, None, Some(held.attribution))
         }
     };
     row.answer = Some(CodeConsentAnswerStamp {
         choice: input.choice,
         remember_asking_lineage,
         word_ref: input.word_ref,
-        answerer,
-        principal_ref: owner.principal_ref_in_txn(vault, txn)?.to_owned(),
-        authentication: owner.decision_id(),
+        answerer: holder_attribution
+            .as_ref()
+            .map_or(answerer, |attribution| attribution.actor),
+        principal_ref: if let Some(attribution) = &holder_attribution {
+            attribution.principal_ref.clone()
+        } else {
+            owner.principal_ref_in_txn(vault, txn)?.to_owned()
+        },
+        authentication: holder_attribution
+            .as_ref()
+            .map_or(owner.decision_id(), |attribution| {
+                attribution.authentication
+            }),
         decision: decision.decision_id(),
         remembered,
-        policy_frontier: code_consent_policy_basis_in_txn(vault, txn)?,
+        standing_grant,
+        policy_frontier: if let Some(attribution) = &holder_attribution {
+            attribution.policy_frontier
+        } else {
+            code_consent_policy_basis_in_txn(vault, txn)?
+        },
+        holder_basis: holder_attribution.map(|attribution| CodeConsentHolderAnswerBasis {
+            grant_ref: attribution.grant_ref,
+            policy: attribution.policy,
+        }),
         answered_at_ms: now_ms(),
     });
-    put_code_consent_wait_in_txn(vault, txn, &mut row)?;
+    put_code_consent_wait_in_txn(
+        vault,
+        txn,
+        &mut row,
+        crate::consent::CodeWaitCommand::Answer,
+    )?;
     if input.choice == CodeConsentChoice::Deny {
         refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_DENIED])?;
-    } else if !original_authority_holds_in_txn(vault, txn, &row.binding) {
+    } else if !active_authority_holds_in_txn(vault, txn, &row) {
         refuse_code_consent_wait_in_txn(
             vault,
             txn,
@@ -341,27 +444,109 @@ fn answer_in_txn(
     })
 }
 
-/// Who may answer a code consent wait (CALLS: owner-only holder subset):
-/// the vault's owner, revalidated in the answering writer, from any surface
-/// the owner is authenticated on, but never from the opener's lineage, that
-/// of the slip the held call was admitted on, or a fork of it (FIX 5064).
-/// Canon lets a settlement-policy row name other holders; no gate here can
-/// prove one yet, so none is accepted.
-fn code_consent_answerer_in_txn(
+/// Proves a holder's act from the persisted wait in the acting writer.
+/// The input's digest is a target check, never the act's authority.
+pub(crate) fn prove_code_consent_holder_act_in_txn(
     vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    binding: &CodeConsentBinding,
-    owner: &AuthenticatedOwner,
-) -> Result<EntityId> {
-    let answerer = owner.revalidate_in_txn(vault, txn)?;
-    if let Some(slip) = binding.original.opener_slip
-        && owner.answers_from_slip_lineage_in_txn(vault, txn, &[slip])?
+    txn: &mut heed::RwTxn<'_>,
+    holder: &AuthenticatedOwner,
+    input: &CodeConsentAnswerInput,
+) -> Result<
+    Option<(
+        crate::consent::code_settlement::CodeConsentHolderPolicy,
+        EffectDigest,
+    )>,
+> {
+    let Some(row) = read_code_consent_wait_in_txn(vault, txn, input.wait_id)? else {
+        return Err(Error::EntityNotFound);
+    };
+    let actor = holder.revalidate_person_in_txn(vault, txn)?;
+    if let Some(slip) = row.binding.original.opener_slip
+        && holder.answers_from_slip_lineage_in_txn(vault, txn, &[slip])?
     {
         return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
             "the opener lineage never settles its own code consent wait",
         )));
     }
-    Ok(answerer)
+    let Some(sealed) = row.checkpoint.as_ref() else {
+        return Err(Error::EntityNotFound);
+    };
+    if row.binding.wait_id != input.wait_id
+        || row.binding.run_id != input.run_id
+        || sealed.wait_generation != input.wait_generation
+        || sealed.step_hash != input.step_hash
+        || row.binding.effect_digest != input.effect_digest
+        || row.binding.schema_version != super::types::CODE_CONSENT_SCHEMA_VERSION
+        || row.binding.binding_digest != super::binding::binding_digest(&row.binding)?
+    {
+        return Err(Error::ConcurrentWrite("code consent wait target changed"));
+    }
+    if row.answer.is_some() || row.settlement.is_some() {
+        return Ok(None);
+    }
+    if input.choice == CodeConsentChoice::ApproveAndStopAsking {
+        return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
+            "effect settlement power does not change a connector setting",
+        )));
+    }
+    let ask = row.ask.ok_or(Error::EntityNotFound)?;
+    crate::task_verb::code_consent_word_in_txn(
+        vault,
+        txn,
+        ask,
+        input.word_ref,
+        actor,
+        input.choice,
+    )?;
+    if row.binding.pending.browser_action().is_some() && !browser_facts_match_row(&row.binding) {
+        refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_TARGET_CHANGED])?;
+        return Ok(None);
+    }
+    if !active_authority_holds_in_txn(vault, txn, &row) {
+        refuse_code_consent_wait_in_txn(
+            vault,
+            txn,
+            input.wait_id,
+            &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
+        )?;
+        return Ok(None);
+    }
+    let frozen = row.binding.holder_settlement.as_ref().ok_or(Error::Gate(
+        GateError::ConsentUnauthenticatedActor("this wait names no settlement holders"),
+    ))?;
+    let policy = vault
+        .code_consent_holder_policy_in_txn(txn, holder, frozen)?
+        .ok_or(Error::Gate(GateError::ConsentUnauthenticatedActor(
+            "the current policy and action power do not admit this settlement holder",
+        )))?;
+    Ok(Some((
+        policy,
+        EffectDigest::from_bytes(row.binding.effect_digest),
+    )))
+}
+
+/// Current admission to read or answer a wait. Owner proof keeps its original
+/// authority; a person credential needs the frozen policy and current action power.
+/// Answering separately excludes the opener's lineage in the answering writer.
+fn code_consent_answerer_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: &CodeConsentBinding,
+    owner: &AuthenticatedOwner,
+) -> Result<CodeConsentAnswerer> {
+    match owner.revalidate_in_txn(vault, txn) {
+        Ok(answerer) => Ok(CodeConsentAnswerer::Owner(answerer)),
+        Err(error @ Error::Gate(GateError::ConsentOwnerNotAuthenticated(_))) => {
+            let Some(frozen) = &binding.holder_settlement else {
+                return Err(error);
+            };
+            let Some(policy) = vault.code_consent_holder_policy_in_txn(txn, owner, frozen)? else {
+                return Err(error);
+            };
+            Ok(CodeConsentAnswerer::Holder(policy.actor))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// The authority basis an answer records (CALLS: settlement policy
@@ -392,8 +577,20 @@ pub(crate) fn original_authority_holds_in_txn(
         .opener_slip
         .is_none_or(|slip| slip == claims.slip_id)
         && credential.instrument.as_ref().is_none_or(|instrument| {
-            instrument.slip() == Some(claims.slip_id) && instrument.vault == claims.vault_id
+            crate::runtime_hooks::verb::verb_ask_instrument_slip(&instrument)
+                == Some(claims.slip_id)
+                && instrument.vault == claims.vault_id
         })
+}
+
+/// Whether the original caller's active credential still stands at this
+/// snapshot: the original pair or its explicit, confirmed successor.
+pub(crate) fn active_authority_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &CodeConsentWaitRow,
+) -> bool {
+    original_authority_holds_in_txn(vault, txn, &row.active_binding())
 }
 
 /// The code-bound approval wait `wait_id` admits its effect under, proved
@@ -422,7 +619,7 @@ pub(crate) fn code_consent_admission_in_txn(
     if row.binding.frozen_input_digest != *frozen_digest {
         return Err(Error::ConcurrentWrite("code consent target changed"));
     }
-    if !original_authority_holds_in_txn(vault, txn, &row.binding) {
+    if !active_authority_holds_in_txn(vault, txn, &row) {
         return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
             "the original caller credential of this code consent wait no longer stands",
         )));
@@ -502,7 +699,8 @@ pub(crate) fn settle_code_consent_wait_listing_in_txn(
 /// Settles `row`'s open wait as `settled` for `reasons`, with `reply`, the
 /// reply its parked run is delivered beside `rows`, in the caller's writer:
 /// the settlement, its receipt in the consent Gate family, and the delivery
-/// that wakes the run, in one commit. Every held effect kind settles here.
+/// that wakes the run, in one commit. Every held effect kind settles here,
+/// its reply's origins unknown (FIX 7083).
 pub(super) fn settle_with_reply_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -514,7 +712,7 @@ pub(super) fn settle_with_reply_in_txn(
 ) -> Result<bool> {
     let wait_id = row.binding.wait_id;
     let now = now_ms();
-    crate::code_run::deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, now)?;
+    crate::code_run::deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, None, now)?;
     let delivered = crate::code_run::settled_wait_reply_in_txn(vault, txn, wait_id)?.ok_or(
         Error::InvariantViolation("a settled code consent wait kept no reply"),
     )?;
@@ -553,12 +751,26 @@ pub(super) fn settle_with_reply_in_txn(
         links,
         outcome: settled,
     };
-    let answered_by = row.answer.as_ref().map(|answer| ConsentOwnerStamp {
-        actor: answer.answerer,
-        principal_ref: answer.principal_ref.clone(),
-        decision_id: answer.authentication,
-    });
-    vault.append_code_wait_receipt_in_txn(txn, &receipt, answered_by.as_ref())?;
+    if let Some(answer) = &row.answer
+        && let Some(basis) = &answer.holder_basis
+    {
+        let attribution = crate::consent::code_settlement::CodeConsentHolderAttribution {
+            actor: answer.answerer,
+            principal_ref: answer.principal_ref.clone(),
+            authentication: answer.authentication,
+            grant_ref: basis.grant_ref.clone(),
+            policy: basis.policy.clone(),
+            policy_frontier: answer.policy_frontier,
+        };
+        vault.append_code_consent_holder_receipt_in_txn(txn, &attribution, &receipt)?;
+    } else {
+        let answered_by = row.answer.as_ref().map(|answer| ConsentOwnerStamp {
+            actor: answer.answerer,
+            principal_ref: answer.principal_ref.clone(),
+            decision_id: answer.authentication,
+        });
+        vault.append_code_wait_receipt_in_txn(txn, &receipt, answered_by.as_ref())?;
+    }
     row.settlement = Some(CodeConsentSettlement {
         receipt: receipt_id,
         outcome: settled,
@@ -567,7 +779,12 @@ pub(super) fn settle_with_reply_in_txn(
         external_reply,
         settled_at_ms: now,
     });
-    put_code_consent_wait_in_txn(vault, txn, &mut row)?;
+    put_code_consent_wait_in_txn(
+        vault,
+        txn,
+        &mut row,
+        crate::consent::CodeWaitCommand::Settle,
+    )?;
     Ok(true)
 }
 
@@ -634,7 +851,9 @@ pub(crate) fn offered_choices(binding: &CodeConsentBinding) -> Vec<CodeConsentCh
     CodeConsentChoice::ALL
         .into_iter()
         .filter(|choice| {
-            *choice != CodeConsentChoice::ApproveAndStopAsking || binding.remember_offer.is_some()
+            *choice != CodeConsentChoice::ApproveAndStopAsking
+                || binding.remember_offer.is_some()
+                || binding.standing_offer.is_some()
         })
         .collect()
 }
@@ -650,6 +869,7 @@ fn view_of(
         wait_id: row.binding.wait_id,
         run_id: row.binding.run_id,
         state: row.state(),
+        revision: row.revision,
         verb: row.binding.verb_row.clone(),
         connector: call.map(|call| call.name.clone()).unwrap_or_default(),
         tool: call.map(|call| call.tool.clone()).unwrap_or_default(),
@@ -658,6 +878,7 @@ fn view_of(
         hold_reasons: row.binding.hold_reasons.clone(),
         ask: row.ask,
         options: offered_choices(&row.binding),
+        standing_offer: row.binding.standing_offer.clone(),
         sealed: row
             .checkpoint
             .as_ref()
@@ -668,6 +889,18 @@ fn view_of(
             .answer
             .as_ref()
             .map(|answer| format!("gate:{}", answer.decision.to_hex())),
+        standing_grant_ref: row.answer.as_ref().and_then(|answer| {
+            answer
+                .standing_grant
+                .as_ref()
+                .map(|(grant_ref, _)| grant_ref.clone())
+        }),
+        standing_receipt_ref: row.answer.as_ref().and_then(|answer| {
+            answer
+                .standing_grant
+                .as_ref()
+                .map(|(_, receipt)| format!("gate:{}", receipt.to_hex()))
+        }),
         outcome: row.settlement.as_ref().map(|settled| settled.outcome),
         settlement_receipt: row
             .settlement
@@ -691,13 +924,16 @@ fn view_of(
         consumed_at_ms: consumed.map(|consumed| consumed.consumed_at_ms),
         consumption_links: ledger.consumed,
         remember_asking_lineage: row.answer.as_ref().and_then(|answer| {
-            (answer.choice == CodeConsentChoice::ApproveAndStopAsking)
-                .then_some(answer.remember_asking_lineage)
+            (answer.choice == CodeConsentChoice::ApproveAndStopAsking
+                && row.binding.remember_offer.is_some())
+            .then_some(answer.remember_asking_lineage)
         }),
         remembered: row
             .answer
             .as_ref()
             .and_then(|answer| answer.remembered.clone()),
         already_answered,
+        rebind_proposal: row.rebind_proposal.clone(),
+        rebinds: row.rebinds.clone(),
     }
 }

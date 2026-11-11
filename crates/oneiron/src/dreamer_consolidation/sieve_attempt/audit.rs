@@ -78,12 +78,12 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
         input: WindowAuditInput,
     ) -> Result<DreamerAttemptExecution> {
-        if let Some((completed_units, step_hashes)) =
+        if let Some((completed_units, step_bindings)) =
             sieve::rung_result_units(ctx.vault, attempt.status.attempt.id)?
         {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units,
-                step_hashes,
+                step_bindings,
             });
         }
         let retry_at = ctx
@@ -102,7 +102,7 @@ impl ConsolidationExecutor<'_> {
             WindowRead::Superseded => {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
             // The source may be withheld for now: the audit waits for it.
@@ -110,7 +110,7 @@ impl ConsolidationExecutor<'_> {
                 return Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
                     retry_at,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
         };
@@ -130,6 +130,7 @@ impl ConsolidationExecutor<'_> {
             );
         };
         let keyless = call.inference.selected_keyless();
+        let paid = call.inference.selected_paid();
         let labels = window_labels(&window);
         let source = labels
             .label(LabelKind::Source, window.source)
@@ -155,6 +156,7 @@ impl ConsolidationExecutor<'_> {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: keyless,
+                host_paid: paid,
             }
             .with_purpose_defaults(),
             messages: vec![
@@ -162,12 +164,14 @@ impl ConsolidationExecutor<'_> {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: input.policy.audit_window_instruction.clone(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: data.to_string(),
+                        signature: None,
                     }],
                 },
             ],
@@ -219,72 +223,74 @@ impl ConsolidationExecutor<'_> {
             };
             decode_finding(response, &shown, &window).map(|_| ())
         };
-        let response = match call_as_step_checked(&step, call.backend, self.guard, request, &check)
-            .await
-        {
-            Ok(StepOutcome::Finished {
-                response,
-                memoized,
-                failure_policy,
-                ..
-            }) => {
-                if let Err(error) = charges.record_terminal(
-                    ctx.vault,
-                    attempt.status.attempt.id,
-                    step_hash,
-                    &response.usage,
-                ) {
-                    if !memoized {
-                        charges.record_usage(&response.usage);
-                    }
-                    return super::super::residency::spent_or_deferred(error, ctx, &charges);
-                }
-                if failure_policy.is_some() {
-                    return match charges.park_on_fallback(
+        let response =
+            match call_as_step_checked(&step, call.backend, self.guard, request, &check).await {
+                Ok(StepOutcome::Finished {
+                    response,
+                    memoized,
+                    failure_policy,
+                    binding,
+                    ..
+                }) => {
+                    if let Err(error) = charges.record_terminal(
                         ctx.vault,
-                        attempt.status.attempt.id,
-                        step_hash,
-                        SIEVE_FALLBACK,
-                        &response,
+                        binding.attempt_id,
+                        binding.step_hash,
+                        &response.usage,
                     ) {
-                        Ok(parked) => Ok(parked),
-                        Err(error) => {
-                            super::super::residency::spent_or_deferred(error, ctx, &charges)
+                        if !memoized {
+                            charges.record_usage(&response.usage);
                         }
-                    };
+                        return super::super::residency::spent_or_deferred(error, ctx, &charges);
+                    }
+                    if failure_policy.is_some() {
+                        return match charges.park_on_fallback(
+                            ctx.vault,
+                            binding.attempt_id,
+                            binding.step_hash,
+                            SIEVE_FALLBACK,
+                            &response,
+                        ) {
+                            Ok(parked) => Ok(parked),
+                            Err(error) => {
+                                super::super::residency::spent_or_deferred(error, ctx, &charges)
+                            }
+                        };
+                    }
+                    response
                 }
-                response
-            }
-            Ok(StepOutcome::Trapped { .. }) => {
-                return Ok(
-                    charges.park_for("durable step trapped for resume", DreamerParkCause::Signal)
-                );
-            }
-            Err(DurableStepError::SpentFinalizeRefused { usage }) => {
-                charges.record_usage(&usage);
-                return Ok(charges.checkpoint());
-            }
-            // A refused finding asks again after its retry delay, as a
-            // refused reading does (FIX 7218).
-            Err(DurableStepError::SpentSchemaValidation { usage, .. }) => {
-                charges.record_usage(&usage);
-                return Ok(charges.park_for(
-                    "sieve window finding schema refused",
-                    DreamerParkCause::Retry,
-                ));
-            }
-            Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
-            // A failed call's paid usage has no terminal step: it is handed
-            // to the driver's settlement with the park (FIX 11554).
-            Err(error) => {
-                if let DurableStepError::SpentLlm { usage, .. }
-                | DurableStepError::SpentFallback { usage, .. } = &error
-                {
-                    charges.record_usage(usage);
+                Ok(StepOutcome::Trapped { .. }) => {
+                    return Ok(charges
+                        .park_for("durable step trapped for resume", DreamerParkCause::Signal));
                 }
-                return Ok(charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error)));
-            }
-        };
+                Err(DurableStepError::SpentFinalizeRefused { usage }) => {
+                    charges.record_usage(&usage);
+                    return Ok(charges.checkpoint());
+                }
+                // A refused finding asks again after its retry delay, as a
+                // refused reading does (FIX 7218).
+                Err(DurableStepError::SpentSchemaValidation { usage, .. }) => {
+                    charges.record_usage(&usage);
+                    return Ok(charges.park_for(
+                        "sieve window finding schema refused",
+                        DreamerParkCause::Retry,
+                    ));
+                }
+                Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
+                // A failed call's paid usage has no terminal step: it is handed
+                // to the driver's settlement with the park (FIX 11554).
+                Err(error) => {
+                    if let DurableStepError::SpentLlm { usage, .. }
+                    | DurableStepError::SpentFallback { usage, .. } = &error
+                    {
+                        charges.record_usage(usage);
+                    }
+                    return Ok(charges.park_for(
+                        &error.to_string(),
+                        crate::dreamer_runner::dreamer_park_cause_of_step(&error),
+                    ));
+                }
+            };
         if ctx.deadline.expired() {
             return Ok(charges.checkpoint());
         }
@@ -301,7 +307,7 @@ impl ConsolidationExecutor<'_> {
             discovered,
             unlocated,
             completed_units: charges.units,
-            step_hashes: charges.step_hashes.clone(),
+            step_bindings: charges.step_bindings.clone(),
             at: ctx.now_ms / 1_000,
         };
         match sieve::finish_window_audit(
@@ -313,12 +319,12 @@ impl ConsolidationExecutor<'_> {
         ) {
             Ok(true) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             Ok(false) => Ok(DreamerAttemptExecution::Deferred {
                 completed_units: charges.units,
                 retry_at,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             Err(error) => Ok(charges.park_on_error(&error)),
         }

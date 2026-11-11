@@ -1,6 +1,9 @@
 //! The authenticated host handoff. No adapter policy lives in the engine.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
+
+use oneiron::context_board::WakeEnvelope;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -12,6 +15,8 @@ use crate::server::SyncServer;
 #[serde(deny_unknown_fields)]
 struct WakePoll {
     instance_key: String,
+    #[serde(default)]
+    retained: Vec<WakeEnvelope>,
 }
 
 pub(super) async fn poll(
@@ -41,8 +46,16 @@ pub(super) async fn poll(
     let server = Arc::clone(server);
     let actor = actor.clone();
     tokio::task::spawn_blocking(move || {
+        let mut retained: Vec<WakeEnvelope> = {
+            let polled: BTreeSet<&str> = wakes.iter().map(|wake| wake.event_ref.as_str()).collect();
+            poll.retained
+                .into_iter()
+                .filter(|wake| !polled.contains(wake.event_ref.as_str()))
+                .collect()
+        };
+        retained.extend(wakes);
         let mut delivery =
-            crate::wake_adapters::board_stream::coalesced(&server, &actor, &connection, wakes);
+            crate::wake_adapters::board_stream::coalesced(&server, &actor, &connection, retained);
         // FIX 15011: the surviving batch's wake opener, on the vault clock
         // at this handoff.
         delivery.opener = oneiron::context_board::wake_batch_opener(
@@ -57,7 +70,14 @@ pub(super) async fn poll(
             .filter(|wake| wake.review_ref.is_none() && wake.room_ref.is_none())
             .filter_map(|wake| oneiron::EntityId::from_hex(&wake.task_ref).ok())
             .collect();
-        super::device_release::mcp_release_result(&server, &actor, &rows, false, json!(delivery))
+        super::device_release::mcp_release_result(
+            &server,
+            &actor,
+            &rows,
+            false,
+            json!(delivery),
+            false,
+        )
     })
     .await
     .map_err(|_| McpGatewayError::new(-32603, "engine_error", "wake read did not finish"))?

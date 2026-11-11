@@ -1,0 +1,8 @@
+{
+  "name": "self.code.symbols.renew",
+  "input": "crate::memory::repo_doors::RepoSymbolsRenewInput",
+  "output": "crate::memory::repo_doors::RepoSymbolsRenewOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "RepoSymbolsRenew"
+}

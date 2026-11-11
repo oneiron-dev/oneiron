@@ -68,6 +68,7 @@ impl ServerProbeAuthor<'_> {
                     .chars()
                     .take(PROBE_SOURCE_MAX_CHARS)
                     .collect(),
+                signature: None,
             },
             InputKind::Image => ContentPart::Image {
                 media_type: document.media_type.to_owned(),
@@ -78,6 +79,7 @@ impl ServerProbeAuthor<'_> {
             InputKind::Audio => match self.transcribe(document)? {
                 Some(transcript) => ContentPart::Text {
                     text: transcript.chars().take(PROBE_SOURCE_MAX_CHARS).collect(),
+                    signature: None,
                 },
                 None => return Ok(None),
             },
@@ -99,12 +101,14 @@ impl ServerProbeAuthor<'_> {
                 response_format: ResponseFormat::Text,
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: DERIVED_TEXT_INSTRUCTION.to_owned(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
@@ -148,7 +152,7 @@ impl ServerProbeAuthor<'_> {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();

@@ -3,6 +3,7 @@
 
 use super::codec::validate_locator_text;
 use super::reanchor::{col_to_letters, parse_a1_cell};
+use crate::codebase::{CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_CONTENT_HASH_LEN};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 
@@ -25,13 +26,25 @@ pub const ANNOTATION_LOCATOR_TEXT_MAX_BYTES: usize = 1024;
 /// Maximum byte length of a stored A1 range string.
 pub const ANNOTATION_LOCATOR_RANGE_MAX_BYTES: usize = 64;
 
+/// The anchor version of every code artifact thread (FIX 7905). A code
+/// artifact keeps no numbered version chain: a code locator's commit and
+/// file hash pin the bytes it reads (ARCH-0078, "a tree at a commit"), so
+/// its anchor, origin and drift versions all hold this one value.
+pub const CODE_ANCHOR_VERSION: u64 = 0;
+
 pub(super) const FORMAT_XLSX: &str = "xlsx";
 
 pub(super) const FORMAT_DOCX: &str = "docx";
 
+pub(super) const FORMAT_DOCX_STORY: &str = "docx_story";
+
 pub(super) const FORMAT_PPTX: &str = "pptx";
 
 pub(super) const FORMAT_HTML: &str = "html";
+
+pub(super) const FORMAT_TEXT: &str = "text";
+
+pub(super) const FORMAT_CODE: &str = "code";
 
 pub(super) const STATE_OPEN: &str = "open";
 
@@ -102,8 +115,9 @@ impl A1Range {
 /// A format-typed anchor locator.
 ///
 /// The format-specific fields identify XLSX ranges, DOCX character spans,
-/// PPTX shapes and HTML character spans. Readers resolve them against one
-/// version's bytes rather than guessing a location.
+/// PPTX shapes, HTML and plain-text character spans, and character spans in
+/// one code file. Readers resolve them against one version's bytes, or the
+/// code file's, rather than guessing a location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Locator {
@@ -123,6 +137,13 @@ pub enum Locator {
         /// Exclusive character-span end.
         char_end: u64,
     },
+    /// A top-level paragraph in one native DOCX story, never the body.
+    DocxStory {
+        scope: oneiron_docedit::docx_body::DocxStoryScope,
+        para_path: String,
+        char_start: u64,
+        char_end: u64,
+    },
     /// pptx `{slide, shape_id}` in slide or shape text.
     Pptx {
         /// 1-based slide index.
@@ -134,6 +155,32 @@ pub enum Locator {
     Html {
         /// Stable producer data-part-id or deterministic structural id.
         part_id: String,
+        /// Inclusive character-span start.
+        char_start: u64,
+        /// Exclusive character-span end.
+        char_end: u64,
+    },
+    /// Plain text `{char_span}` over the whole decoded file (FIX 7905).
+    Text {
+        /// Inclusive character-span start.
+        char_start: u64,
+        /// Exclusive character-span end.
+        char_end: u64,
+    },
+    /// A code file's `{commit, path, file_hash, char_span}` (FIX 7905). The
+    /// span counts characters of the file's whole decoded text, as a
+    /// [`Locator::Text`] span does. The file hash names the bytes the words
+    /// read from, so they still read after the tree moves to another commit.
+    /// A stored span counts the owner's text, the file's stored bytes; a
+    /// reader whose sight masks the file reads and sends it in that sight's
+    /// text (FIX 22109).
+    Code {
+        /// The code artifact's repo_ref commit, 40 lowercase hex.
+        commit: String,
+        /// The file's path in the snapshot at that commit.
+        path: String,
+        /// The file's content hash, 64 lowercase hex.
+        file_hash: String,
         /// Inclusive character-span start.
         char_start: u64,
         /// Exclusive character-span end.
@@ -173,6 +220,28 @@ impl Locator {
         })
     }
 
+    /// A paragraph local to exactly one native story. No body fallback.
+    pub fn docx_story(
+        scope: oneiron_docedit::docx_body::DocxStoryScope,
+        para_path: impl Into<String>,
+        char_start: u64,
+        char_end: u64,
+    ) -> Result<Self> {
+        let para_path = para_path.into();
+        validate_locator_text(&para_path, "docx locator para_path")?;
+        if char_start > char_end {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "docx locator char span is inverted",
+            )));
+        }
+        Ok(Self::DocxStory {
+            scope,
+            para_path,
+            char_start,
+            char_end,
+        })
+    }
+
     /// Builds a pptx locator, validating its slide number and shape identifier.
     pub fn pptx(slide: u64, shape_id: impl Into<String>) -> Result<Self> {
         let shape_id = shape_id.into();
@@ -201,25 +270,86 @@ impl Locator {
         })
     }
 
+    /// Builds a plain-text locator, validating its character-span bounds.
+    pub fn text(char_start: u64, char_end: u64) -> Result<Self> {
+        if char_start > char_end {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "text locator char span is inverted",
+            )));
+        }
+        Ok(Self::Text {
+            char_start,
+            char_end,
+        })
+    }
+
+    /// Builds a code locator, validating its commit, path, file hash and
+    /// character-span bounds.
+    pub fn code(
+        commit: impl Into<String>,
+        path: impl Into<String>,
+        file_hash: impl Into<String>,
+        char_start: u64,
+        char_end: u64,
+    ) -> Result<Self> {
+        let (commit, path, file_hash) = (commit.into(), path.into(), file_hash.into());
+        if !is_lower_hex(&commit, CODEBASE_COMMIT_HASH_HEX_LEN) {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "code locator commit is not 40 lowercase hex characters",
+            )));
+        }
+        validate_locator_text(&path, "code locator path")?;
+        if !is_lower_hex(&file_hash, CODEBASE_CONTENT_HASH_LEN * 2) {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "code locator file_hash is not 64 lowercase hex characters",
+            )));
+        }
+        if char_start > char_end {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "code locator char span is inverted",
+            )));
+        }
+        Ok(Self::Code {
+            commit,
+            path,
+            file_hash,
+            char_start,
+            char_end,
+        })
+    }
+
     /// The format discriminator string.
     #[must_use]
     pub fn format(&self) -> &'static str {
         match self {
             Self::Xlsx { .. } => FORMAT_XLSX,
             Self::Docx { .. } => FORMAT_DOCX,
+            Self::DocxStory { .. } => FORMAT_DOCX_STORY,
             Self::Pptx { .. } => FORMAT_PPTX,
             Self::Html { .. } => FORMAT_HTML,
+            Self::Text { .. } => FORMAT_TEXT,
+            Self::Code { .. } => FORMAT_CODE,
         }
     }
+}
+
+/// Whether `text` is exactly `len` lowercase hexadecimal characters.
+fn is_lower_hex(text: &str, len: usize) -> bool {
+    text.len() == len
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// An anchor: the artifact version a locator resolves against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Anchor {
-    /// The blob artifact this anchor lands on.
+    /// The blob or code artifact this anchor lands on.
     pub artifact_id: EntityId,
-    /// The artifact version the locator resolves against.
+    /// The artifact version the locator resolves against. For a code
+    /// artifact the locator's commit and file hash pin the bytes, and the
+    /// version is [`CODE_ANCHOR_VERSION`].
     pub version: u64,
     /// The format-typed position within that version.
     pub locator: Locator,

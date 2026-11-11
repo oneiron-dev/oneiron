@@ -59,7 +59,7 @@ pub(crate) fn birth_document_in_txn(
 }
 
 /// The text index field a NOTE's text is published under, as every persist
-/// publishes its body (`NoteDocument::index_fields`). A NOTE is born with
+/// publishes its body (`revision::index_fields`). A NOTE is born with
 /// no title or tags.
 const INDEX_FIELD: &str = crate::config::bm25::NoteTextField::Body.source_name();
 

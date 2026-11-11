@@ -93,12 +93,53 @@ occurrences. Missing references, cross-namespace targets and missing outcome
 values are reported separately. A linked result is sourced app evidence, not a
 success verdict, a checked Oneiron action or a complete training/eval task.
 
+## Explicit response-task compilation
+
+`Memory::read_eval_repair_task` is a native Rust reader for an explicitly
+specified response-only task. `EvalRepairTaskSource` names the exact capture
+claim and full source fingerprint, a linked outcome ordinal, the seat, and a
+JSON pointer into the linked **failure** event. That pointer must address an
+`EvalRepairTaskSpec`; no task is inferred from the repair text, event order,
+app role, or a completed run.
+
+The source contract has no defaults. It explicitly names `world: text_response`,
+a complete read-only JSON `initial_state`, `preconditions` (JSON-pointer equality
+checks on that snapshot), `intent`, `input`, `tools`, `allowed_actions`, and a
+`grader`. This world executes no tools: `tools` must be empty and the only
+allowed action is `respond`. Other worlds need their actual execution support;
+this reader does not pretend a text model call executes an outside app.
+
+The grader is `observed_response_equals`, with a JSON pointer into the linked
+registered outcome value. That value must be a string. `grade_response` compares
+exact bytes; it never trims, folds case, runs a judge, or classifies arbitrary app
+JSON as a success label. `response_input` contains the rebuilt state, checked
+preconditions, intent, input and action contract, but not the repair, observed
+outcome or grader answer. A source may still disclose an answer in its task
+input: this separation is not a no-leak audit or a certificate of task quality.
+
+The reader preserves the AG-UI read receipt, exact content pin, authenticated
+capture binding and live-owner checks. A missing or withheld source returns no
+task and no source metadata. Unlinked outcomes, missing task fields, invalid
+pointers, unmet initial preconditions and unsupported task contracts return an
+error, without changing the original ingest or source-reader paths. The task
+hash binds the canonical source recipe, full task contract and expected
+response; it is a content digest, not authority. All variants from one capture
+share a family root for the explicitly named seat. No family is assigned here.
+
+This is task compilation only. It creates no eval case, outcome label, source
+family, cohort, exposure, training grant or automatic nomination, and runs no
+model or replay. The case ledger, released-task hydration, paired measurement,
+family assignment, reuse, inventory digest and cut-audit integrations remain
+separate work. Receipt and Synthetic case paths are unchanged.
+
 ## Remaining feature work
 
-This is a partial delivery of OF-582 / FIX3720. Live connector setup and
+The capture path is a partial delivery of OF-582 / FIX3720; explicit response-task
+compilation is a partial delivery of OF-578 / FIX3638. Live connector setup and
 transport, choosing a non-owner principal, links across separately captured
 files, and completeness tracking across reconnects remain open. OF-578's
-Repair nomination, world/initial-state/intent/tools/grader, family split,
-reuse, digest and cut-audit consumer are separate. Existing typed Repair case
-storage is unchanged. The file path adds no table, family ledger, migration,
-old-format reader, default cap or timer.
+Repair nomination, executable worlds beyond the explicit response-only task,
+family split, reuse, digest, released-task hydration, measurement and cut-audit
+consumer are separate. Existing typed Repair case storage is unchanged. The
+file path adds no table, family ledger, migration, old-format reader, default
+cap or timer.

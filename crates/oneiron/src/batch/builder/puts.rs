@@ -130,6 +130,37 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// [`Self::put`] of a TURN or CONVERSATION row a source landing stamps
+    /// with the source-audience obligation (fix list row 16256), through
+    /// the one raw door whose early check lets that key through. It takes
+    /// the landing's [`SourceAudienceBirth`]; every other public check runs
+    /// as for [`Self::put`], and the write transaction admits the stamp only
+    /// on a row the landing marked born in it.
+    ///
+    /// [`SourceAudienceBirth`]: crate::source_audience::SourceAudienceBirth
+    pub(crate) fn put_source_bound(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+        _birth: &crate::source_audience::SourceAudienceBirth,
+    ) -> Self {
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::PublicType(self.ops.len()));
+        }
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::SourceBound,
+        )
+    }
+
     /// FIX 9034: [`Self::put`] of ASSET `id` holding `data`, the
     /// content of a carrier its writer already scanned whole and holds marked
     /// (a marked LFS object's chunk, `install_lfs_manifest_with_mark`): a
@@ -174,6 +205,16 @@ impl BatchBuilder<'_> {
             learned_at,
             manifest,
         )
+    }
+
+    /// FIX 22075: hands the batch door the bytes of ASSET `id`'s
+    /// interpreted body file, queued by [`Self::put_asset_file`] or
+    /// [`Self::put_replicated_asset_file`]: its secret scan and mask read
+    /// them in place of the manifest, as they read a body in its row, and
+    /// mark the file by its digest. The row keeps the manifest.
+    pub(crate) fn with_asset_file_body(mut self, id: &EntityId, body: Vec<u8>) -> Self {
+        self.asset_file_bodies.insert(*id, body);
+        self
     }
 
     /// FIX 5489: [`Self::put_replicated`] of ASSET `id` whose body is the
@@ -422,6 +463,36 @@ impl BatchBuilder<'_> {
             core,
         ));
         self.note_births.push((*id, markdown.to_owned()));
+        self
+    }
+
+    /// The archive NOTE put (FIX 7777): stages the core an
+    /// [`ArchivedNoteAdmission`] carries, and only that. Its one
+    /// constructor, in the NOTE archive import owner, proves it the core of a
+    /// NOTE body whose author is no local actor, so a restored NOTE is
+    /// imported evidence and never this vault's actor's note. The kind
+    /// registry and the immutable birth bytes are checked at apply, as for
+    /// every NOTE. The transaction that applies the batch births the NOTE's
+    /// document from the admission's markdown after every op, as
+    /// [`Self::put_authored_note`] does (FIX 7783).
+    ///
+    /// [`ArchivedNoteAdmission`]: crate::note::ArchivedNoteAdmission
+    pub(crate) fn put_archived_note(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        admission: &crate::note::ArchivedNoteAdmission,
+    ) -> Self {
+        self.ops.push(plain_put_op(
+            id,
+            crate::registry::ENTITY_TYPE_NOTE,
+            occurred,
+            learned_at,
+            admission.core(),
+        ));
+        self.note_births
+            .push((*id, admission.markdown().to_owned()));
         self
     }
 

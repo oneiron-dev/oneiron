@@ -149,7 +149,7 @@ impl Vault {
         } else {
             Default::default()
         };
-        let mut cancelled = Vec::new();
+        let mut effects = crate::deletion::ErasureEffects::default();
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,
@@ -187,8 +187,12 @@ impl Vault {
             // in the rows that record it, so the purge's actor sweep runs,
             // marker or not (FIX 5737). Its code runs' replies retire first,
             // as the provenance door's erase retires them, read before the
-            // sweep releases them (FIX 5718).
+            // sweep releases them (FIX 5718). Before them, the code-run
+            // outputs it sourced and the kept step starts it owns retire, as
+            // that door retires them (FIX 20329).
             if reason.active_store_hard_purge_v1() {
+                #[cfg(unix)]
+                crate::code_run::retire_sourced_code_outputs_in_txn(&self.store, &mut wtxn, id)?;
                 #[cfg(unix)]
                 crate::code_run::retire_actor_responses_in_txn(&self.store, &mut wtxn, id)?;
                 // So do the responses its stamps named, as the provenance
@@ -199,7 +203,7 @@ impl Vault {
                     crate::store::erase_sync_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                     crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                 }
-                cancelled.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                effects.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                     crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id),
                     owner_act,
                 )?);
@@ -226,8 +230,7 @@ impl Vault {
                 false,
             )?;
             wtxn.commit()?;
-            crate::attempt_queue::AttemptQueue::new(self)
-                .erased_payload_cancellations_committed(&cancelled);
+            effects.committed(self);
             pending_cloud_revokes.publish();
             // Hard reasons only: only they wrote the marker above.
             if reason.active_store_hard_purge_v1() {
@@ -257,7 +260,7 @@ impl Vault {
             owner_act,
         )?;
         affected.extend(citing);
-        cancelled.extend(purged_cancelled);
+        effects.extend(purged_cancelled);
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         self.append_deletion_gate_decision_in_purge_txn(
@@ -299,8 +302,7 @@ impl Vault {
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;
-            crate::attempt_queue::AttemptQueue::new(self)
-                .erased_payload_cancellations_committed(&cancelled);
+            effects.committed(self);
             pending_cloud_revokes.publish();
             self.notify_local_delete_materialized(&affected);
             if crdt_persisted {
@@ -338,8 +340,7 @@ impl Vault {
             HardEraseSweepExtras::default(),
         )?;
         wtxn.commit()?;
-        crate::attempt_queue::AttemptQueue::new(self)
-            .erased_payload_cancellations_committed(&cancelled);
+        effects.committed(self);
         pending_cloud_revokes.publish();
         self.notify_local_delete_materialized(&affected);
         if crdt_persisted {

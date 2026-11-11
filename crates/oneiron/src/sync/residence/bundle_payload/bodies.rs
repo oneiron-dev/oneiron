@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 use loro::LoroDoc;
 
+use super::malformed;
 use super::reader::Reader;
-use super::{malformed, put_u32};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
@@ -80,23 +80,30 @@ pub(super) fn carried(vault: &Vault, windows: &[(WindowKey, Vec<u8>)]) -> Result
 /// # Errors
 ///
 /// A field past its length prefix.
-pub(super) fn encode(out: &mut Vec<u8>, bodies: &[CarriedBody]) -> Result<()> {
-    put_u32(out, bodies.len())?;
+pub(super) fn encode(
+    put: &mut dyn FnMut(&[u8]) -> Result<()>,
+    bodies: &[CarriedBody],
+) -> Result<()> {
+    put(&u32::try_from(bodies.len())
+        .map_err(|_| malformed())?
+        .to_be_bytes())?;
     for carried in bodies {
         let name = u16::try_from(carried.window.as_str().len()).map_err(|_| malformed())?;
-        out.extend_from_slice(&name.to_be_bytes());
-        out.extend_from_slice(carried.window.as_str().as_bytes());
-        out.extend_from_slice(carried.body.id.as_bytes());
+        put(&name.to_be_bytes())?;
+        put(carried.window.as_str().as_bytes())?;
+        put(carried.body.id.as_bytes())?;
         let reference = carried.body.encode()?;
-        put_u32(out, reference.len())?;
-        out.extend_from_slice(&reference);
+        put(&u32::try_from(reference.len())
+            .map_err(|_| malformed())?
+            .to_be_bytes())?;
+        put(&reference)?;
         match &carried.bytes {
             Some(bytes) => {
-                out.push(1);
-                out.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
-                out.extend_from_slice(bytes);
+                put(&[1])?;
+                put(&(bytes.len() as u64).to_be_bytes())?;
+                put(bytes)?;
             }
-            None => out.push(0),
+            None => put(&[0])?,
         }
     }
     Ok(())

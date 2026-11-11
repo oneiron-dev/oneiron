@@ -124,7 +124,7 @@ pub(crate) fn erase_owned_byoa_exhausts_in_txn(
     erase: &mut super::ActorErasureWriter<'_, '_>,
     owned: &ErasedByoaPayloads,
     act: Option<&EraseOwnerAct<'_>>,
-) -> Result<Vec<(AttemptId, u32)>> {
+) -> Result<super::ErasureEffects> {
     let (vault, txn, _) = erase.parts();
     accept_in_txn(vault, txn, owned, act)
 }
@@ -134,7 +134,7 @@ pub(crate) fn erase_restored_byoa_exhausts_in_txn(
     owned: &ErasedByoaPayloads,
 ) -> Result<Vec<(AttemptId, u32)>> {
     let (vault, txn, _) = restore.parts();
-    accept_in_txn(vault, txn, owned, None)
+    accept_in_txn(vault, txn, owned, None).map(|effects| effects.cancelled)
 }
 
 fn accept_in_txn(
@@ -142,17 +142,17 @@ fn accept_in_txn(
     txn: &mut heed::RwTxn<'_>,
     owned: &ErasedByoaPayloads,
     act: Option<&EraseOwnerAct<'_>>,
-) -> Result<Vec<(AttemptId, u32)>> {
-    let mut cancelled = Vec::new();
+) -> Result<super::ErasureEffects> {
+    let mut effects = super::ErasureEffects::default();
     for (attempt, sources) in owned.sources() {
         let mut accepted = ERASES
             .get(&vault.store, txn, attempt.as_bytes())?
             .unwrap_or_default();
         accepted.sources.extend(sources.iter().copied());
-        cancelled.extend(settle_in_txn(vault, txn, *attempt, &mut accepted, act)?);
+        effects.extend(settle_in_txn(vault, txn, *attempt, &mut accepted, act)?);
         ERASES.put(&vault.store, txn, attempt.as_bytes(), &accepted)?;
     }
-    Ok(cancelled)
+    Ok(effects)
 }
 
 impl Vault {
@@ -171,7 +171,7 @@ impl Vault {
                 continue;
             };
             let attempt = AttemptId::from_bytes(&key)?;
-            cancelled.extend(settle_in_txn(self, txn, attempt, &mut accepted, None)?);
+            cancelled.extend(settle_in_txn(self, txn, attempt, &mut accepted, None)?.cancelled);
             ERASES.put(&self.store, txn, &key, &accepted)?;
         }
         Ok(cancelled)
@@ -229,19 +229,19 @@ fn settle_in_txn(
     attempt: AttemptId,
     accepted: &mut AcceptedExhaustErase,
     act: Option<&EraseOwnerAct<'_>>,
-) -> Result<Vec<(AttemptId, u32)>> {
-    let mut cancelled = Vec::new();
+) -> Result<super::ErasureEffects> {
+    let mut effects = super::ErasureEffects::default();
     if accepted.capture.is_none() {
         match canonical_capture_in_txn(&vault.store, txn, attempt) {
             Ok(capture) => accepted.capture = capture,
             Err(_) => {
                 // An unreadable fact cannot select a generic attached result.
-                return Ok(cancelled);
+                return Ok(effects);
             }
         }
     }
     let Some(capture) = accepted.capture.as_ref() else {
-        return Ok(cancelled);
+        return Ok(effects);
     };
     let artifact = capture.artifact();
     let canonical_hash = capture.content_hash();
@@ -250,7 +250,7 @@ fn settle_in_txn(
         let Some(header) = EntityMetadataHeader::parse(&raw)
             .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT)
         else {
-            return Ok(cancelled);
+            return Ok(effects);
         };
         // Even a previously torn-down family is purged again when an image
         // restores its metadata. Its independent inventory and names remain.
@@ -279,7 +279,7 @@ fn settle_in_txn(
             &hashes,
         )? || !purge_guards_allow_in_txn(vault, txn, &artifact)
         {
-            return Ok(cancelled);
+            return Ok(effects);
         }
         #[cfg(unix)]
         for source in &accepted.sources {
@@ -310,7 +310,7 @@ fn settle_in_txn(
         if ACTIVE_PURGES.contains(&vault.store, txn, &artifact)? {
             // The native finishing hook records this teardown after its last
             // destructive hook. Keep the original caller's marker order.
-            return Ok(cancelled);
+            return Ok(effects);
         }
         super::stage_engine_row_hard_erasure_at_in_txn(
             &vault.store,
@@ -335,7 +335,7 @@ fn settle_in_txn(
                     return Err(error);
                 }
             };
-        cancelled.extend(purged_cancelled);
+        effects.extend(purged_cancelled);
         accepted.teardown = Teardown::Purged;
         if let Some(joined) = ERASES.get(&vault.store, txn, attempt.as_bytes())? {
             accepted.sources.extend(joined.sources);
@@ -344,7 +344,7 @@ fn settle_in_txn(
     // Missing metadata only preserves an actual earlier teardown. It never
     // establishes a new one or replaces names with an empty later binding.
     bind_names_in_txn(vault, txn, accepted)?;
-    Ok(cancelled)
+    Ok(effects)
 }
 
 fn capture_inventory_in_txn(

@@ -11,6 +11,7 @@ pub(crate) mod cleanup;
 pub(crate) mod courtesy_delete;
 pub(crate) mod embedder;
 pub(crate) mod export_supplement;
+pub(crate) mod failure_signals;
 pub(crate) mod federation_connect;
 pub(crate) mod feedback;
 pub(crate) mod folder_sources;
@@ -169,7 +170,8 @@ where
     };
     let args = hook_json(verb, &input)?;
     let mut pre =
-        verb_hook_boundary::row_pre(&memory, verb, args.clone()).map_err(memory_refusal)?;
+        verb_hook_boundary::row_pre(&memory, &oneiron::verbs::VERB_TABLE, verb, args.clone())
+            .map_err(memory_refusal)?;
     oneiron::task_verb::revoke_lands::settle(
         &mut pre,
         &oneiron::task_verb::revoke_lands::decodes::<I>,

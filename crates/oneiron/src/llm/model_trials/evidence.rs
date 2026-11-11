@@ -317,9 +317,7 @@ pub(super) fn action(
     match quality {
         TrialQuality::Unknown => ModelTrialAction::Unknown,
         TrialQuality::Worse => ModelTrialAction::Stay,
-        TrialQuality::Better | TrialQuality::NotWorse
-            if new < old || (quality == TrialQuality::Better && new <= old) =>
-        {
+        TrialQuality::Better | TrialQuality::NotWorse if new <= old => {
             if policy.auto_approve && !policy.candidate_needs_download {
                 ModelTrialAction::AutoApprove
             } else {

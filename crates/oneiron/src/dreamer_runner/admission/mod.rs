@@ -5,10 +5,12 @@
 //! lease, and the optional durable started-milestone claim co-commit.
 
 mod buckets;
+mod budget_line;
 mod requester;
 mod settlement;
 mod spend;
 mod validation;
+pub(crate) use self::budget_line::AdmittedBudgetLine;
 use self::validation::validate_admission_input;
 
 use std::ops::Bound;
@@ -612,12 +614,15 @@ impl DreamerRunnerStore<'_> {
         crate::task_verb::highway_runner::accept_leased_task_in_txn(self.vault, wtxn, &attempt)?;
 
         let status = decode_dreamer_attempt_status(attempt)?;
+        let admitted_budget_line =
+            AdmittedBudgetLine::new(status.attempt.id, reservation.budget_id.clone());
 
         Ok(DreamerKindAdmissionResult {
             outcome: DreamerAdmissionOutcome::Admitted(Box::new(DreamerAdmittedAttempt {
                 status,
                 budget,
                 reservation,
+                admitted_budget_line,
             })),
             budget_exhausted_candidate: None,
             requester_withdrawn_candidate: None,

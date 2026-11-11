@@ -1,0 +1,9 @@
+{
+  "name": "tasks.consult.result",
+  "input": "crate::task_verb::run_doors::ConsultLandRequest",
+  "output": "crate::task_verb::run_doors::ConsultLandReply",
+  "scope": "Write",
+  "context": "run",
+  "effect": "ConsultResult",
+  "run_surface": "live"
+}

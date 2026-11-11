@@ -1,0 +1,16 @@
+{
+  "name": "vault.sieve.settlements",
+  "description": "Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks.",
+  "input": "crate::dreamer_runner::observation::WakeSettlementsRequest",
+  "output": "crate::dreamer_runner::observation::WakeSettlementsPage",
+  "call": "crate::dreamer_runner::observation::settlements_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.settlements\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

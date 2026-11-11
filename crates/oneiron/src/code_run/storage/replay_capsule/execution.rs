@@ -11,6 +11,11 @@
 //! writer committed first is kept, never replaced; only a retry replaces an
 //! outcome that waits for it. The capsule's erase releases these bodies with
 //! the fork's answer ([`super::erase`]).
+//!
+//! The reader that ran the program must still be admitted to its source in
+//! the writer's own snapshot (FIX 20607). An admission can lapse after the
+//! bodies were read back. Then the writer keeps no outcome and publishes no
+//! body.
 
 use super::super::super::contribution::{
     ContributionForkExecution, ContributionForkReceipt, ContributionReplayUnavailable,
@@ -39,6 +44,9 @@ const EXECUTION_PLACE: &str = "side:CODE_RUN_REPLAY_CAPSULE:fork_execution";
 /// (`Erased`), or a subject of the pair is gone now: the fence's
 /// `Unfinished`, never lasting (FIX 6256). A fork whose outcome another
 /// writer settled or moved on first keeps that one, and it is returned.
+/// Before a new outcome is kept or any body admitted, `admits` is asked in
+/// the writer's own snapshot (FIX 20607). When it does not hold, nothing is
+/// written and the fork is `Unfinished`, never lasting.
 ///
 /// # Errors
 ///
@@ -50,6 +58,7 @@ pub(crate) fn store_fork_execution(
     pair: &[u8; 32],
     fork: &ContributionForkReceipt,
     bodies: &[(&str, &[u8])],
+    admits: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
     record: impl Fn(&[OutputRef]) -> Option<ForkExecutionOutcome>,
 ) -> Result<ForkWrite<ContributionForkReceipt>> {
     let key = capsule_key(capsule);
@@ -82,6 +91,11 @@ pub(crate) fn store_fork_execution(
             .is_some_and(ForkExecutionOutcome::settled);
         if settled || kept.execution != fork.execution {
             return Ok(Ok(kept.clone()));
+        }
+        // FIX 20607: an admission that lapsed after the bodies were read
+        // back keeps nothing of them.
+        if !admits(wtxn)? {
+            return Ok(Err(ContributionReplayUnavailable::Unfinished));
         }
         let key_bytes = CAPSULES.key_bytes(&key);
         let mut admitted = Vec::with_capacity(bodies.len());
@@ -116,8 +130,9 @@ pub(crate) fn store_fork_execution(
 }
 
 /// The observation, files and stored results `execution` names, each read
-/// whole as run `run` holds it; `None` once any is released (its capsule's
-/// actor was erased), gone or withheld.
+/// whole as run `run` holds it, while `admits` holds in that read's own
+/// snapshot (FIX 20607); `None` once any is released (its capsule's actor
+/// was erased), gone or withheld, or `admits` does not hold.
 ///
 /// # Errors
 ///
@@ -126,11 +141,12 @@ pub(crate) fn fork_execution_outputs(
     vault: &Vault,
     run: EntityId,
     execution: &ContributionForkExecution,
+    admits: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> Result<Option<Vec<ExecutedOutput>>> {
     let mut outputs = Vec::with_capacity(execution.outputs.len());
     for output in &execution.outputs {
         let path = output.stored_path.as_str();
-        let Some(bytes) = held_body(vault, run, path, output.body, |_| Ok(true))? else {
+        let Some(bytes) = held_body(vault, run, path, output.body, admits)? else {
             return Ok(None);
         };
         outputs.push(ExecutedOutput {

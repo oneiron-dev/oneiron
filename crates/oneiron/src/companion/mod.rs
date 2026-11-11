@@ -20,7 +20,10 @@ pub use self::keys::{
 pub use self::model::{
     CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKey,
 };
-pub use self::persona::{CompiledPersona, PERSONA_CHANGE_PREDICATE, PersonaChange, PersonaMadeBy};
+pub use self::persona::{
+    CompiledPersona, PERSONA_CHANGE_PREDICATE, PersonaChange, PersonaInputBasis, PersonaMadeBy,
+    PersonaReplayConflict,
+};
 pub(crate) use self::persona::{body_fields as persona_body_fields, validated_persona_baseline};
 pub use self::profile_admission::{
     COMPANION_PROFILE_WITHHOLDS_MIXED_SOURCES, CompanionProfileAdmission,
