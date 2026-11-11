@@ -12,6 +12,7 @@ import {
   HoverBar,
   Icon,
   IconAction,
+  InfoMark,
   LedgerTable,
   Menu,
   MessageRow,
@@ -136,6 +137,101 @@ function AsksBlock({ answers, specimen }: { answers: NeedsYouAnswers; specimen: 
         >
           bring them back
         </Verb>
+      </span>
+    </div>
+  )
+}
+
+/* ── the information mark ─────────────────────────────────────────────── */
+
+const STORES_NOTE = 'Metryon built this list from Acme store sales: 214 stores, sold through week 45. Twelve close in November.'
+
+/* A block with its mark at the right end of its first line. Rest on the
+   mark for the note; press it and the caller opens the block beside the
+   room (here the readout counts it). */
+function InfoBlock({ specimen, open }: { specimen: string; open?: boolean }) {
+  const [opened, setOpened] = React.useState(0)
+  return (
+    <div className="lib-stack">
+      <div className="lib-info-block" data-info-block="" data-specimen={specimen}>
+        <span className="lib-info-title">Stores in the pilot</span>
+        <InfoMark note={STORES_NOTE} defaultOpen={open} onOpen={() => setOpened((n) => n + 1)} />
+      </div>
+      <span className="lib-readout" data-specimen={`${specimen}-log`}>
+        {opened ? `opened beside the room ${opened === 1 ? 'once' : `${opened} times`}` : 'Press the mark to open the block beside the room.'}
+      </span>
+    </div>
+  )
+}
+
+/* ── the column ───────────────────────────────────────────────────────── */
+
+/* Three messages and a card in the messages column: the rows start at the
+   left edge; the text, the card and the write box share one width. */
+function ColumnDemo() {
+  const [marked, setMarked] = React.useState(false)
+  React.useEffect(() => {
+    if (!marked) return
+    const timer = setTimeout(() => setMarked(false), 1800)
+    return () => clearTimeout(timer)
+  }, [marked])
+  return (
+    <div className="lib-stack">
+      <div className="lib-messages lib-column" data-specimen="column">
+        <DayDivider>Today</DayDivider>
+        <MessageRow
+          author={<Glyph initial="y" label="Yuki" size={24} guest />}
+          name="Yuki"
+          time="13:50"
+          marked={marked}
+          marks={
+            <span title="Pinned in this room" className="lib-pin-mark">
+              <Icon name="pin" size={14} />
+            </span>
+          }
+          data-specimen="column-pinned"
+        >
+          <MessageRow.Text>Can we have the Q4 view by Friday?</MessageRow.Text>
+        </MessageRow>
+        <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={24} />} name="Metryon" time="14:02">
+          <MessageRow.Text>Before I fit the quarter, one answer from you. The rest of the view waits on it.</MessageRow.Text>
+          <NeedsYou aria-label="needs you" className="lib-column-card">
+            <NeedsYou.Group room="acme-forecast">
+              <NeedsYou.Ask
+                id="column-promo"
+                asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
+                question="Should the fit treat weeks 44 to 46 as promo weeks?"
+                note={PROMO_NOTE}
+              >
+                <NeedsYou.Picks>
+                  <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
+                  <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
+                  <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
+                  <NeedsYou.OwnAnswer />
+                </NeedsYou.Picks>
+              </NeedsYou.Ask>
+            </NeedsYou.Group>
+          </NeedsYou>
+        </MessageRow>
+        <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="14:10">
+          <MessageRow.Text>
+            Keep the promo weeks for now. When the fit is in, put week 44 on its own line as well, so Yuki can see what the dip costs the
+            quarter before Friday, and keep last year’s weeks beside it for the same stores.
+          </MessageRow.Text>
+        </MessageRow>
+      </div>
+      <Composer
+        placeholder="Write to acme-forecast"
+        persona={<Composer.Persona initial="o" note="You write as Owen. Saved in Antevon’s vault." aria-label="Owen" />}
+        onVoice={() => {}}
+        onDictate={() => {}}
+        data-specimen="column-write"
+      >
+        {composerAddMenu()}
+      </Composer>
+      <span className="lib-readout">
+        <Verb onClick={() => setMarked(true)}>go to the pinned message</Verb>
+        <span data-specimen="column-marked">{marked ? 'marked' : 'not marked'}</span>
       </span>
     </div>
   )
@@ -496,8 +592,9 @@ function SplitDemo() {
 const PERSONAS: ComposerPersonaKind[] = ['all', 'work', 'personal', 'dream']
 
 /* The `+` of a write box: what can ride along, then the model and the
-   effort the message is answered with. */
-function ComposerAddMenu({ onFile, onPointer }: { onFile?: () => void; onPointer?: () => void }) {
+   effort the message is answered with. Called as a function, so the
+   write box receives a Composer.Add child it can place inside the box. */
+function composerAddMenu({ onFile, onPointer }: { onFile?: () => void; onPointer?: () => void } = {}) {
   return (
     <Composer.Add label="Add to the message">
       <Menu.Item icon={<Icon name="clip" />} onClick={onFile}>
@@ -586,7 +683,7 @@ function ComposerDemo() {
             </Composer.Chip>
           ) : null}
         </Composer.Carry>
-        <ComposerAddMenu onFile={() => setChip(true)} onPointer={() => setPointer(true)} />
+        {composerAddMenu({ onFile: () => setChip(true), onPointer: () => setPointer(true) })}
       </Composer>
       <span className="lib-readout" data-specimen="composer-log">
         boost {boost ? 'on' : 'off'}
@@ -611,7 +708,7 @@ function ComposerSmallDemo({ tools, text, specimen }: { tools: ComposerTools; te
         onDictate={() => setLog((l) => [...l.slice(-1), 'dictate'])}
         onSend={(sent) => setLog((l) => [...l.slice(-1), `sent “${sent}”`])}
       >
-        <ComposerAddMenu />
+        {composerAddMenu()}
       </Composer>
       <span className="lib-readout" data-specimen={`${specimen}-log`}>
         {log.length ? log.join(', ') : 'Nothing sent yet.'}
@@ -804,6 +901,17 @@ function LedgerDemo() {
 export function PatternSections() {
   return (
     <>
+      <Section title="InfoMark">
+        <Specimen name="rest on the mark: after 160 ms the note shows to the right of the block when 350 px is free there; press it to open the block beside the room" full>
+          <InfoBlock specimen="info-right" open />
+        </Specimen>
+        <Specimen name="less than 350 px free beside the block: the note shows under the mark" full>
+          <div className="lib-info-narrow">
+            <InfoBlock specimen="info-under" open />
+          </div>
+        </Specimen>
+      </Section>
+
       <Section title="NeedsYou">
         <Specimen name="chips: asks grouped by room; a pick or a yes answers at once and the row becomes its record with undo for 5 s; the clock sets an ask aside; rest on the i for its note" full>
           <AsksBlock answers="chips" specimen="needs-you" />
@@ -814,6 +922,9 @@ export function PatternSections() {
       </Section>
 
       <Section title="MessageRow, HoverBar, DayDivider">
+        <Specimen name="the column: three messages and a card; rows start at the left edge, text, card and write box share 620 px; a pin mark ends the name line; go to the pinned message marks it for a moment" full>
+          <ColumnDemo />
+        </Specimen>
         <Specimen name="attachments, reactions, a provisional answer with its fold, a thread line; hover a row for its actions" full>
           <MessagesDemo />
         </Specimen>
@@ -862,7 +973,7 @@ export function PatternSections() {
             persona={<Composer.Persona initial="o" note="You write as Owen. Saved in Antevon’s vault." aria-label="Owen" />}
             data-specimen="composer-text"
           >
-            <ComposerAddMenu />
+            {composerAddMenu()}
           </Composer>
         </Specimen>
         <Specimen name="narrow: the placeholder stays on one line and ends in an ellipsis" wide={1}>

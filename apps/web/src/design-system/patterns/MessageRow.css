@@ -9,6 +9,7 @@
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   column-gap: 12px;
+  max-width: calc(24px + 12px + var(--sl-col) + 16px);
   margin-inline: -8px;
   padding: 8px;
   border-radius: var(--sl-radius);

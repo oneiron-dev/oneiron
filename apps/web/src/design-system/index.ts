@@ -131,6 +131,7 @@ export {
   THING_PANE_MIN_PX,
   THING_PANE_MAX_PX,
   COLUMN_ROOM_PX,
+  SPLIT_EDGE_PX,
   type PaneKind,
 } from './patterns/pane-width'
 export { snapToMagnet, SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, type MagnetSnap } from './patterns/snap-to-magnet'
