@@ -10,7 +10,6 @@ use crate::attempt_queue::types::{
 use crate::error::{Error, Result};
 
 use super::field_validators::{validate_intervention_actor, validate_optional_intervention_note};
-pub(in crate::attempt_queue) use crate::store::attempt_record_codec::cancel_validators::validate_cancel_state;
 
 /// One append-only cancel receipt row, never drained and never refused on a
 /// count.
