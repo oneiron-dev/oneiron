@@ -521,23 +521,31 @@ const PERSONAS: ComposerPersonaKind[] = ['all', 'work', 'personal', 'dream']
 
 function ComposerDemo() {
   const [persona, setPersona] = React.useState<ComposerPersonaKind>('all')
-  const [sent, setSent] = React.useState<string[]>([])
+  const [sent, setSent] = React.useState<Array<{ text: string; boost: boolean }>>([])
   const [pointer, setPointer] = React.useState(true)
   const [chip, setChip] = React.useState(true)
+  const [boost, setBoost] = React.useState(false)
+  const [heard, setHeard] = React.useState<string[]>([])
+  const hear = (what: string) => setHeard((h) => [...h.slice(-2), what])
   return (
     <div className="lib-stack" data-specimen="composer">
-      {sent.map((text, i) => (
+      {sent.map((m, i) => (
         <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={32} />} name="Owen" time="just now">
-          <MessageRow.Text>{text}</MessageRow.Text>
+          <MessageRow.Text>{m.text}</MessageRow.Text>
         </MessageRow>
       ))}
       <Composer
         placeholder="Write to the room"
-        onSend={(text) => {
-          setSent((s) => [...s.slice(-1), text])
+        onSend={(text, details) => {
+          setSent((s) => [...s.slice(-1), { text, boost: details.boost }])
           setPointer(false)
           setChip(false)
         }}
+        onDictate={() => hear('dictate')}
+        onVoice={() => hear('talk')}
+        savedIn="Saved in: your vault"
+        boostWords={['ultrathink', 'think hard']}
+        onBoostChange={setBoost}
         persona={
           <Menu>
             <Menu.Trigger asChild>
@@ -556,11 +564,6 @@ function ComposerDemo() {
               ))}
             </Menu.Content>
           </Menu>
-        }
-        actions={
-          <IconAction label="Attach a file" tooltipSide="top">
-            <Icon name="clip" />
-          </IconAction>
         }
       >
         <OutsideLine summary="Guests see what you send here">
@@ -583,7 +586,21 @@ function ComposerDemo() {
             </Composer.Chip>
           ) : null}
         </Composer.Carry>
+        <Composer.Add label="Add to the message">
+          <Menu.Item icon={<Icon name="clip" />} onClick={() => setChip(true)}>
+            a file
+          </Menu.Item>
+          <Menu.Item icon={<Icon name="images" />}>a picture</Menu.Item>
+          <Menu.Item icon={<Icon name="reply" />} onClick={() => setPointer(true)}>
+            a pointer to a message
+          </Menu.Item>
+        </Composer.Add>
       </Composer>
+      <span className="lib-readout" data-specimen="composer-log">
+        boost {boost ? 'on' : 'off'}
+        {sent.length ? `, sent “${sent[sent.length - 1].text}”${sent[sent.length - 1].boost ? ' with boost' : ''}` : ''}
+        {heard.length ? `, ${heard.join(', ')}` : ''}
+      </span>
     </div>
   )
 }
@@ -815,7 +832,7 @@ export function PatternSections() {
       </Section>
 
       <Section title="Composer, OutsideLine">
-        <Specimen name="persona, a pointer and a chip, the outside line; Enter sends" full>
+        <Specimen name="persona, add, a pointer and a chip, the outside line; empty, the button talks; type and it sends; write ultrathink for the boost line" full>
           <ComposerDemo />
         </Specimen>
         <Specimen name="outside line, open" wide={1}>

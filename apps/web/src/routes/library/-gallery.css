@@ -413,6 +413,35 @@
   border: 1.5px dotted var(--sl-ink-2);
 }
 
+/* ── task demos ────────────────────────────────────────────────────── */
+
+/* The message at the left, its task list beside it (as a pane would). */
+.lib-tasks {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  column-gap: 32px;
+}
+
+.lib-tasks-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lib-tasks-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 8px 0;
+}
+
+.lib-settled {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
 /* ── frame demos ───────────────────────────────────────────────────── */
 
 .lib-activity {
@@ -510,24 +539,82 @@
   gap: 8px;
 }
 
+/* The app frame on the field: a fixed height so the sidebar, the strip
+   and the work area scroll inside it and the peek spans it. */
+.lib-frame-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .lib-frame {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  column-gap: 16px;
-  align-items: start;
-  min-height: 640px;
+  height: 620px;
 }
 
 .lib-frame .lib-field-readout {
   display: none;
 }
 
+.lib-frame .lib-sidebar-demo > .sl-sidebar {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .lib-frame-island {
-  align-self: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: 22px 28px 24px;
 }
 
+/* The work area's content keeps a reading width and re-centres when the
+   sidebar folds. */
+.lib-frame-column {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+/* The place's name in a sidebar head inside the frame. */
+.lib-sidebar-title {
+  margin-right: auto;
+  padding: 0 8px;
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  line-height: 30px;
+  color: var(--sl-sidebar-ink-on);
+  text-shadow: var(--sl-sidebar-text-shadow);
+}
+
+/* The vault's initial: the vault switch's symbol in the microsidebar. */
+.lib-vault-initial {
+  display: block;
+  font-size: var(--sl-t-section);
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* A microsidebar alone: the height of a window, its foot at the bottom. */
+.lib-micro-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 560px;
+}
+
+.lib-micro-demo > .sl-micro-sidebar {
+  flex: 1 1 auto;
+}
+
+.lib-field-pick {
+  margin-left: 10px;
+  color: inherit;
+}
+
 @media (max-width: 760px) {
+  .lib-tasks {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 16px;
+  }
   .lib-island {
     padding: 22px 20px 36px;
   }
