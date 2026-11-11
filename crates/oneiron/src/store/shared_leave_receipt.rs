@@ -8,6 +8,8 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
 /// How this member's membership ended.
+// Public through `sync::shared_leave`; a build without sync names them only here.
+#[cfg_attr(not(feature = "sync"), allow(unreachable_pub))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SharedLeaveKind {
@@ -26,6 +28,8 @@ pub enum SharedLeaveKind {
 
 /// The local record that this device left a shared vault: the notice it
 /// confirmed and the unsynced edits the leave discarded. Local only.
+// Public through `sync::shared_leave`; a build without sync names them only here.
+#[cfg_attr(not(feature = "sync"), allow(unreachable_pub))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedLeaveReceipt {
