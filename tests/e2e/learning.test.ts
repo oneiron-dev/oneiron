@@ -1,6 +1,11 @@
-import { afterAll, test } from "bun:test";
+import { afterAll, test, expect } from "bun:test";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { defineFile } from "./support/run.ts";
+import { randomUUID } from "node:crypto";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
+import { PublicHttpError, type PublicHttpClient } from "./support/clients.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
+import { ScriptedProviders } from "./support/providers.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -77,7 +82,12 @@ type Learning01 = {
   goal_change: { proposed: GoalRecord; effective_goal_before: Ref; effective_goal_after: Ref };
 };
 type Learning01Current = PublicCall<"vault.projects.goal.intake">;
-suite.todo(test, "LEARNING-01", "waits on typed full goal-vector intake write and optimizer candidate admission/proposal calls");
+// LEARNING-01 — Goal-vector admission and tradeoff should work. OF-495.
+// Intake completion, goal readback, optimizer proposal/measurement/admission,
+// preferences and tradeoff picks exist. The full floor-removal proposal still
+// needs a public grant-checked full-goal proposal door and grounded run setup.
+// Do not replace the full goal with a preference-only revision or seed scores.
+suite.todo(test, "LEARNING-01", "waits on a public full goal-revision proposal verb behind a project grant for the floor-removal proposal and a pinned held-out/live-run setup; intake.complete, goal.get and optimizer propose/measure/score/admit already exist");
 
 // LEARNING-02 — Measured learning rows cannot be forged should work. OF-542.
 // Waiting: measured learning-cell view with explicit priors, outcome provenance
@@ -125,7 +135,214 @@ type Learning02 = {
 };
 type Learning02Write = PublicCall<"vault.claims.upsert">;
 type Learning02Recall = PublicCall<"vault.recall">;
-suite.todo(test, "LEARNING-02", "waits on typed measured learning-cell/prior/provenance view and attributed-outcome projection observation");
+interface LearningForgeryScenario02 {
+  id: "LEARNING-02";
+  ordinary_note: string;
+  cell: { executor: string; axis: string };
+  forgery: { predicate: "learning.reliability"; value: unknown };
+  expected: { allowed_prior_origins: string[]; refusal_must_identify_projector_only_policy: boolean };
+}
+type LearningCellRead02 = FacadeInput<"vault.learning.read">;
+type LearningCellView02 = FacadeResult<"vault.learning.read">;
+type LearningCallReceipt02 = NonNullable<FacadeResult<"vault.receipts.get">>;
+
+function learningEvidenceState02({ cell, view }: LearningCellView02) {
+  // Estimates may decay with time; head/evidence identity and own runs may not change here.
+  return {
+    cell, own: view.own, runs: view.estimate.runs,
+    borrowed_from: view.borrowed_from ?? null,
+    attributed_outcome_receipts: view.attributed_outcome_receipts,
+    provenance: view.provenance,
+    prior_provenance: view.prior_provenance ?? null,
+  };
+}
+
+async function learningRefusal02<V extends FacadeVerb>(
+  client: PublicHttpClient, actor: { principalRef: string; actorClass: string },
+  verb: V, input: FacadeInput<V>, status: number, code: string, message: string,
+) {
+  let refusal: PublicHttpError | undefined;
+  try { await client.call(verb, input) }
+  catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    refusal = error;
+  }
+  if (!refusal) throw new Error(`${verb} accepted a forbidden learning operation`);
+  expect(refusal.reply.status).toBe(status);
+  const error = refusal.error;
+  if (!error) throw new Error("Learning refusal has no typed error envelope");
+  expect(error.code).toBe(code);
+  expect(error.message).toBe(message);
+  const receiptRef = error.receiptRef;
+  expect(typeof receiptRef).toBe("string");
+  if (typeof receiptRef !== "string") throw new Error("Learning refusal has no receiptRef");
+  expect(receiptRef).toMatch(/^call:/);
+  expect(refusal.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
+  const receipt = await client.call("vault.receipts.get", { receipt_ref: receiptRef });
+  if (!receipt) throw new Error("Learning refusal receipt is not publicly readable by its actor");
+  expect(receipt.receipt_ref).toBe(receiptRef);
+  expect(receipt.actor_ref).toBe(actor.principalRef);
+  expect(receipt.actor_class).toBe(actor.actorClass);
+  expect(receipt.verb).toBe(`v1/core/facade/${verb}`);
+  expect(receipt.transport).toBe("http_facade");
+  expect(receipt.outcome).toEqual({ refused: { code } });
+  return { error, receipt };
+}
+
+// LEARNING-02 — Measured learning rows cannot be forged should work. OF-542.
+// Partial: admitted owner/agent ordinary writes cannot forge learning.reliability.
+// Read all four learning cells and refusal receipts through separate public doors,
+// then kill/restart and read them again. Ordinary recall still returns the note.
+// Real anchored outcome production/retest/fitting remains outside this partial.
+// Keep the promised projector-only explanation; today's generic refusal is a defect.
+suite.test(test, "LEARNING-02", "owner and admitted agent cannot forge learning.reliability through claims.upsert", async () => {
+  const catalog = await loadFixtures();
+  const data = await catalog.readJson<{ scenarios: LearningForgeryScenario02[] }>("learning-scenarios");
+  const scenario = data.scenarios.find(row => row.id === "LEARNING-02");
+  if (!scenario) throw new Error("Missing LEARNING-02 fixture");
+  const providers = await ScriptedProviders.start({ id: "LEARNING-02", steps: [] });
+  let engine: EngineFixture | undefined;
+  try {
+    engine = await EngineFixture.start({ id: "LEARNING-02", profile });
+    const owner = engine.pairedActor;
+    const skills = await engine.client.call("vault.skills.list", { limit: 100 });
+    const skill = skills.skills.find(row => row.loadable);
+    if (!skill) throw new Error("Fresh vault has no public loadable skill for the forgery subject");
+    const tree = (await engine.client.call("vault.task_types.get", {})).tree;
+    if (!tree) throw new Error("Fresh vault has no public task-type tree");
+    const scope = await ownerBaseClaimScope(engine.client, owner.principalRef);
+    const executor = scenario.cell.executor;
+    const axis = scenario.cell.axis;
+    const subject = skill.entity;
+    const typeRef = tree.root;
+    const cells: LearningCellRead02[] = [
+      { cell: { subject, predicate: "learning.reliability", executor, typeRef, axis } },
+      { cell: { subject, predicate: "learning.edit_cost", executor, consent_scope: "learning-forgery-owner-edit" } },
+      { cell: { subject, predicate: "learning.retest_noise", executor, axis } },
+      { cell: { subject, predicate: "learning.setting", typeRef, setting_key: "audit_rate" } },
+    ];
+    const baseline: ReturnType<typeof learningEvidenceState02>[] = [];
+    for (const input of cells) {
+      const result = await engine.client.call("vault.learning.read", input);
+      expect(result.cell).toMatchObject(input.cell);
+      expect(result.view.own).toBe(false);
+      expect(result.view.estimate.runs).toBe(0);
+      expect(result.view.provenance.heads).toEqual([]);
+      expect(result.view.provenance.evidence).toEqual([]);
+      expect(result.view.attributed_outcome_receipts).toEqual([]);
+      expect(scenario.expected.allowed_prior_origins).toContain(result.view.estimate.prior.origin);
+      expect(result.view.estimate.prior.value).toBeDefined();
+      expect(result.view.estimate.prior.weight_runs).toBeGreaterThanOrEqual(0);
+      expect(result.view.estimate.untested).toBe(result.view.estimate.runs < result.view.estimate.prior.weight_runs);
+      baseline.push(learningEvidenceState02(result));
+    }
+    const diary = await engine.client.call("self.memory.diary", { content: scenario.ordinary_note });
+    expect(diary.entry_ref).not.toBe("");
+    const assertRecall = async () => {
+      const pack = await awaitPublic(
+        () => owner.client.call("vault.recall", { query: scenario.ordinary_note, effort: "light", limit: 1 }),
+        reply => reply.items.some(item => item.value_text.includes(scenario.ordinary_note)),
+        { label: "ordinary learning-fixture note is recalled" },
+      );
+      expect(pack.items).toHaveLength(1);
+      expect(pack.items[0]!.value_text).toContain(scenario.ordinary_note);
+      expect(pack.items.every(item => !item.predicate?.startsWith("learning."))).toBe(true);
+    };
+    await assertRecall();
+
+    // This UUID creates a new object; it is never used as a fabricated stored reference.
+    const agentId = randomUUID().replaceAll("-", "");
+    const created = await engine.client.call("vault.agents.create", {
+      agent_def_ref: agentId,
+      definition: { agent_id: "learning-forgery-writer", display_name: "Learning forgery writer",
+        desc: "Ordinary scoped claim writer", version: "1" },
+    });
+    const agentEntity = (await engine.client.call("vault.get", { entity_ref: created.agent_def_ref })).value;
+    expect(agentEntity?.kind).toBe("AGENT_DEF");
+    const agent = await engine.pairActor({ principalRef: created.agent_def_ref, actorClass: "agent" });
+    const identity = await agent.client.call("self.actor", {});
+    expect(identity.actor_ref).toBe(agent.principalRef);
+    expect(identity.actor_class).toBe("agent");
+    const attack: FacadeInput<"vault.claims.upsert"> = {
+      predicate: scenario.forgery.predicate, subject_ref: subject, value: scenario.forgery.value,
+      confidence: 1, source: "observed", scope, evidence_turn_refs: [],
+    };
+    // One ordinary predicate per actor: a shared single-valued key would make the
+    // agent's control a cross-author replacement of the owner's claim (403).
+    const controls: { claim: string; predicate: string; value: string; actor: string }[] = [];
+    const assertControls = async () => {
+      for (const control of controls) {
+        const rows = (await owner.client.call("vault.claims.list", {
+          subject_ref: subject, predicate: control.predicate, limit: 100,
+        })).value;
+        const row = rows.find(row => row.short_ref === control.claim);
+        if (!row) throw new Error("An admitted ordinary control is missing from claims.list");
+        expect(row.value).toBe(control.value);
+        expect(row.claim_scope).toEqual(scope);
+        expect(row.source).toBe("observed");
+        expect(row.made_by?.process.actor).toBe(control.actor);
+      }
+    };
+    for (const actor of [owner, agent]) {
+      const predicate = `core.learning_forgery_control.${actor.actorClass}`;
+      const value = `${actor.actorClass} ordinary admission control`;
+      const control = await actor.client.call("vault.claims.upsert", {
+        ...attack, predicate, value,
+      });
+      expect(["auto", "proposed"]).toContain(control.approval);
+      expect(control.claim_short_id).not.toBe("");
+      controls.push({ claim: control.claim_short_id, predicate, value, actor: actor.principalRef });
+      await assertControls();
+    }
+    const refusals: LearningCallReceipt02[] = [];
+    const policyExplanations: string[] = [];
+    for (const actor of [owner, agent]) {
+      const refused = await learningRefusal02(actor.client, actor, "vault.claims.upsert", attack,
+        400, "BAD_REQUEST", 'reserved claim predicate namespace: "learning.reliability"');
+      refusals.push(refused.receipt);
+      policyExplanations.push([refused.error.message, ...(refused.error.suggestions ?? [])].join("\n"));
+    }
+    const projection: FacadeInput<"vault.learning.projection"> = {
+      attempt_receipt: `learning-forgery-unsettled-attempt:${agentId}`,
+      outcome_receipt: `learning-forgery-unsettled-outcome:${agentId}`, axis,
+    };
+    expect((await owner.client.call("vault.learning.projection", projection)).receipt).toBeNull();
+    for (const [verb, input] of [
+      ["vault.learning.read", cells[0]!],
+      ["vault.learning.projection", projection],
+    ] as const) {
+      const refused = await learningRefusal02(agent.client, agent, verb, input,
+        403, "FORBIDDEN", `${verb} is the vault owner's`);
+      expect(refused.error.suggestions).toContain("Present the owner's own verified, unattenuated credential.");
+      refusals.push(refused.receipt);
+    }
+    const assertUnchanged = async () => {
+      for (let i = 0; i < cells.length; i++) {
+        const result = await owner.client.call("vault.learning.read", cells[i]!);
+        expect(learningEvidenceState02(result)).toEqual<unknown>(baseline[i]);
+      }
+      expect((await owner.client.call("vault.learning.projection", projection)).receipt).toBeNull();
+      await assertControls();
+      await assertRecall();
+      for (const receipt of refusals) {
+        expect(await owner.client.call("vault.receipts.get", { receipt_ref: receipt.receipt_ref })).toEqual(receipt);
+      }
+    };
+    await assertUnchanged();
+    // The public refusal receipts above establish the boundary before SIGKILL.
+    await engine.kill();
+    await engine.restart();
+    await assertUnchanged();
+    expect(providers.seenFixtureCalls).toEqual([]);
+
+    // Fixture promise retained: reserved-namespace wording alone does not explain projector ownership.
+    expect(scenario.expected.refusal_must_identify_projector_only_policy).toBe(true);
+    for (const explanation of policyExplanations) expect(explanation).toMatch(/projector/i);
+  } finally {
+    try { await engine?.close() }
+    finally { await providers.close() }
+  }
+});
 
 // LEARNING-03 — Autoresearch retains unsuccessful experiments should work.
 // OF-351 / OF-366. Waiting: typed campaign archive/evidence read, sealed-cohort
@@ -163,7 +380,13 @@ type Learning03Archive = {
   }[];
   proposed_claim: { claim: Ref; parents: Ref[]; diff_receipt: Ref; approval: "Proposed" };
 };
-suite.todo(test, "LEARNING-03", "waits on typed experiment child creation, sealed-cohort setup and campaign archive/evidence reads");
+// LEARNING-03 — Autoresearch retains unsuccessful experiments should work.
+// OF-351 / OF-366.
+// Research binding, child enqueue, archive, measurements and cohort setup exist.
+// The fixture needs its own lawful run-bearing campaign root and grounded
+// experiment/referee completion. An ordinary TASK root has no run; an unrelated
+// shape root is not research setup. Retain losing and buggy evidence once armed.
+suite.todo(test, "LEARNING-03", "waits on a public campaign-root creation verb behind a campaign-controller grant returning a lawful run-bearing root for vault.research.bind, and grounded experiment-result/sealed-referee completion; create_child, archive and cohort doors already exist");
 
 // LEARNING-04 — Multi-critic findings and seal audits should work. OF-352/544.
 // Waiting: typed confession/recheck/audit receipt readback and controlled public
@@ -191,7 +414,13 @@ type Learning04Seal = {
   finding: { receipt: Ref; draw: Ref; evidence: Ref[]; hidden_flaw: boolean; weight: number };
   directed_recheck: { attempt: Ref; confession: Ref; finding_receipts: Ref[] };
 };
-suite.todo(test, "LEARNING-04", "waits on typed confession, directed-recheck and stamped seal-audit receipt/completion calls");
+// LEARNING-04 — Multi-critic findings and seal audits should work. OF-352/544.
+// Critic review, learning settings and the seal lifecycle are public today.
+// The full flow still needs a grant-checked anchored critic-outcome door and
+// a real terminal measured-attempt producer. seal.run only enqueues work.
+// Keep the promised duplicate merge with all evidence; different evidence sets
+// currently prevent consolidation. This defect is not a reason to weaken it.
+suite.todo(test, "LEARNING-04", "waits on a public critic-outcome attribution/readback verb behind a scoped critic grant and a public terminal measured-attempt producer for seal setup; confession, audit, completion, receipt and queued seal.run already exist");
 
 // LEARNING-05 — Niche archive and coverage floor should work. OF-545.
 // Waiting: typed archive descriptor install, output placement/record and per-cell
@@ -211,7 +440,12 @@ type Learning05 = {
   admission: { candidate: Ref; required_cells: string[][]; covered_cells: string[][]; admitted: boolean };
 };
 type Learning05Current = PublicCall<"vault.research.promotion_basis">;
-suite.todo(test, "LEARNING-05", "waits on typed campaign output-archive descriptor/placement/best reads and coverage-floor admission setup");
+// LEARNING-05 — Niche archive and coverage floor should work. OF-545.
+// Output-archive install, placement, best/get, coverage and reproposal exist.
+// The missing fresh-vault journey starts with a lawful run-bearing campaign
+// root behind controller authority, then a human goal and live task/outputs.
+// Do not substitute archive metadata for the actual coverage-floor decision.
+suite.todo(test, "LEARNING-05", "waits on a public campaign-root creation verb behind a campaign-controller grant and a grounded goal/TASK/output/candidate setup for vault.research.bind; archive install/record/get/best/coverage/repropose already exist");
 
 // LEARNING-06 — Eval authoring keeps independent held-out families should work.
 // OF-578. G01 is RESOLVED: wait for typed HTTP+SDK authoring/ledger calls, not
@@ -239,7 +473,14 @@ type Learning06 = {
   label_ask: { blocked_decision: Ref; families: Ref[]; human_minutes: number } | null;
 };
 type Learning06ExistingCard = PublicCall<"vault.research.promote">["request"]["sufficiency"];
-suite.todo(test, "LEARNING-06", "waits on typed eval-authoring trigger/completion, family/date/exposure ledgers and sufficiency/blocked-label reads");
+// LEARNING-06 — Eval authoring keeps independent held-out families should work.
+// OF-578.
+// Eval author_now/result, family/exposure reads, cohort setup/open, inventory
+// and supplied-measurement sufficiency exist. author_now queues; an empty or
+// recipe-less pass can do nothing. The complete flow still needs grant-checked
+// cohort retirement and a positive blocked-decision label-ask producer.
+// Do not count an empty ask list or echoed sufficiency inputs as authoring.
+suite.todo(test, "LEARNING-06", "waits on a public cohort-retirement verb and blocked-decision label-ask producer behind an eval-authoring grant, plus bounded recipe-backed execution with grounded receipts; author_now/result, family/exposure reads and cohort setup already exist");
 
 // LEARNING-07 — Training export and approval before deploy should work.
 // OF-382/400. Owner routes already exist:
@@ -274,7 +515,14 @@ type Learning07 = {
   checks: { hash_match: boolean; argmax_flips: number; max_logit_difference: number; exact_hash_overlaps: number };
   swap: { run: Ref; viewed_spec: string; viewed_checkpoint: string; approve: boolean };
 };
-suite.todo(test, "LEARNING-07", "waits on public trainer/seat-evaluator adapter, inspectable consented corpus export and sealed-cohort setup");
+// LEARNING-07 — Training export and approval before deploy should work.
+// OF-382/400.
+// Source preview, sealed-cohort setup and owner training preparation,
+// authorization, result view and separate swap are public. The served trainer
+// and evaluator support question heads, not this role-training fixture.
+// A grant-authorized role connector must expose actual corpus bytes and return
+// a verified result; question-head training is not a role-swap substitute.
+suite.todo(test, "LEARNING-07", "waits on public role-training connector execution and seat evaluation behind an owner-authorized compute grant, inspectable consented corpus bytes and bounded result completion; source preview, sealed-cohort setup and owner prepare/authorize/view/swap already exist");
 
 // LEARNING-08 — Coach model offer keeps do-nothing baseline should work.
 // OF-577/512. Existing GET /v1/owner/coach/training-offers lists pending offers;
@@ -306,7 +554,14 @@ type Learning08 = {
   answer: "decline" | "postpone" | "approve";
   changed_seats: string[];
 };
-suite.todo(test, "LEARNING-08", "waits on typed Coach offer-pass trigger/completion and per-seat candidate/pilot evidence setup/readback");
+// LEARNING-08 — Coach model offer keeps do-nothing baseline should work.
+// OF-577/512.
+// Coach offer trigger/result, candidates, pilots, source preview, cohort setup
+// and owner answer/undo exist. Trigger only queues the pass; served metering,
+// the offer recipe and grant-checked bounded execution remain prerequisites.
+// Keep the decision-seat and separate input/output tokenizer-cost promises;
+// the current served seat mapping and whole-bill ratio contradict them.
+suite.todo(test, "LEARNING-08", "waits on an explicitly executable public Coach offer-pass verb behind a revocable read/engine.controls grant, served usage metering and its installed offer skill; trigger/result, candidate/pilot setup, cohort setup and owner answer/undo already exist");
 
 // LEARNING-09 — RSI budget holds rather than kills should work. OF-496.
 // Existing research.reserve_work {root,purpose,units,attempt?} -> reservation ID,
@@ -337,4 +592,10 @@ type Learning09 = {
   top_up: { line: Ref; units: number };
   resume: { attempt: Ref; same_candidate: Ref; preserved_outputs: Ref[] };
 };
-suite.todo(test, "LEARNING-09", "waits on typed vault RSI soft/pinned share and exposure controls, top-up and campaign hold/resume observation");
+// LEARNING-09 — RSI budget holds rather than kills should work. OF-496.
+// RSI configure/read/top-up/hold/resume, work/exposure reservations and
+// research budget reads exist. The case still needs a lawful run-bearing
+// campaign-root producer behind controller authority and observable live work.
+// A suspended-flag round-trip cannot prove preserved candidate, attempt and
+// partial outputs through token and exposure holds.
+suite.todo(test, "LEARNING-09", "waits on a public campaign-root creation verb behind a campaign-controller grant supplying a lawful run-bearing root and a grounded same-attempt/candidate/partial-output journey through both holds; RSI configure/read/top-up/hold/resume and work/exposure reservations already exist");
