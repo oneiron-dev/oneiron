@@ -288,11 +288,13 @@ pub(crate) fn analyze_security(
 }
 #[cfg(test)]
 pub(super) fn scan_objects(doc: &Document) -> Result<(), SealError> {
-    scan_objects_mode(doc, true)
+    let limits = crate::memory::testing::operation_limits();
+    scan_objects_mode(doc, true, &limits, SealStage::InputValidation)
 }
 #[cfg(test)]
 pub(super) fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), SealError> {
-    scan_catalog_mode(doc, root, true)
+    let limits = crate::memory::testing::operation_limits();
+    scan_catalog_mode(doc, root, true, &limits, SealStage::InputValidation)
 }
 
 /// Offset recorded by the last `startxref` marker in the byte buffer.
