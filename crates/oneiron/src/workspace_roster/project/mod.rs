@@ -519,7 +519,8 @@ pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 pub(super) fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid())
 }
-fn home_room_id(project: EntityId) -> Result<EntityId> {
+/// A project's home CONVERSATION, derived from the project id.
+pub(crate) fn home_room_id(project: EntityId) -> Result<EntityId> {
     EntityId::derive(PROJECT_HOME_ROOM, &[project.as_bytes()])
 }
 pub(super) fn record<T: for<'a> Deserialize<'a>>(

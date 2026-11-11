@@ -8,7 +8,7 @@ use super::engine_seed_identities::EngineSeedIdentities;
 use crate::EntityId;
 use crate::claim::ClaimSubject;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION};
 use crate::vault::{LiveEntityRow, Vault, live_entity_row_in_txn};
 
 /// Whether a CLAIM body is a seed import's bookkeeping: provenance on a
@@ -31,33 +31,48 @@ impl Vault {
     /// The first live row this vault holds that its own seeded open did
     /// not write, as (entity type, id); `None` when every live row is one
     /// open seeds. Seeds whose ids are minted at import (skill provenance
-    /// and scan claims, the root project) are recognized by subject and
-    /// predicate or by the root pointer, never by stamp: the pack seeds
-    /// stamp wall-clock. Deleted shells are not live rows.
+    /// and scan claims, the root project and its home room) are recognized
+    /// by subject and predicate or by the root pointer, never by stamp: the
+    /// pack seeds stamp wall-clock. Deleted shells are not live rows.
     pub fn first_non_bootstrap_row(&self) -> Result<Option<(u8, EntityId)>> {
-        let census = EngineSeedIdentities::load()?.census;
-        let root = match (self.project_type_byte(), self.root_project()) {
-            (Ok(byte), Ok(id)) => Some((byte, id)),
-            _ => None,
-        };
-        const PAGE: usize = 1024;
         let txn = self.store.env.read_txn()?;
+        self.first_non_bootstrap_row_in_txn(&txn)
+    }
+
+    /// [`Self::first_non_bootstrap_row`] in a caller-owned snapshot: every
+    /// page, row and the root pointer are read in `txn`, so a writer can
+    /// take the census before its first write.
+    pub(crate) fn first_non_bootstrap_row_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<(u8, EntityId)>> {
+        let census = EngineSeedIdentities::load()?.census;
+        let root = crate::workspace_roster::root_project_in(&self.store, txn)?;
+        let root_row = root
+            .zip(self.project_type_byte().ok())
+            .map(|(id, byte)| (byte, id));
+        let home_row = root
+            .map(crate::workspace_roster::home_room_id)
+            .transpose()?
+            .map(|id| (ENTITY_TYPE_CONVERSATION, id));
+        const PAGE: usize = 1024;
         for byte in 0..=u8::MAX {
             let mut after: Option<EntityId> = None;
             loop {
-                let page = self.entities_by_type_page(byte, after.as_ref(), PAGE)?;
+                let page = self.entities_by_type_page_in_txn(txn, byte, after.as_ref(), PAGE)?;
                 let full = page.len() == PAGE;
                 after = page.last().copied();
                 for id in page {
                     let LiveEntityRow::Live { entity_type, body } =
-                        live_entity_row_in_txn(&self.store, &txn, &id)?
+                        live_entity_row_in_txn(&self.store, txn, &id)?
                     else {
                         continue;
                     };
                     let seeded = census.contains(entity_type, &id)
                         && (entity_type != ENTITY_TYPE_AGENT_DEF
                             || crate::agent_def::seeded_row_matches_manifest(&id, &body));
-                    if seeded || root == Some((entity_type, id)) {
+                    let row = Some((entity_type, id));
+                    if seeded || row == root_row || row == home_row {
                         continue;
                     }
                     if entity_type == ENTITY_TYPE_CLAIM
