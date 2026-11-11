@@ -44,6 +44,13 @@ use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::side_table::{self, Named, SideTable};
 use crate::{TimeRange, Vault};
 
+mod narrowing;
+pub(crate) use narrowing::erase_narrowing_actor_in_txn;
+pub use narrowing::{
+    SYSTEM_AGENT_GRANT_NARROWING_WARNING, SystemAgentGrantNarrowing, SystemAgentNarrowing,
+    SystemFunction,
+};
+
 /// Each base agent's Steward grant as the host's first mint left it, by the
 /// agent's principal.
 const SYSTEM_AGENT_GRANT: SideTable<EntityId, SystemAgentGrantState, Named> =
@@ -59,8 +66,10 @@ pub(crate) enum SystemAgentGrantState {
         #[serde(with = "crate::serialize::entity_ref")]
         grant: EntityId,
     },
-    /// The owner had removed every row the grant replaces before the first
-    /// mint; the agent holds nothing until the owner grants it.
+    /// The owner opted out: he had removed every row the grant replaces
+    /// before the first mint, or later revoked the grant whole through the
+    /// narrowing door (its record says which). The agent holds nothing until
+    /// the owner grants it.
     OptedOut,
 }
 
@@ -403,6 +412,9 @@ impl Vault {
                 },
             )?;
             self.delete_agent_grant_row_in_txn(txn, *grant)?;
+            // The mark goes with the grant; the mint that follows marks the
+            // grant that replaces it (6.3c).
+            self.unmark_system_critical_in_txn(txn, *grant)?;
         }
         Ok(standing)
     }
@@ -474,6 +486,11 @@ impl Vault {
             false,
             true,
         )?;
+        // The Dreamer's grant keeps the vault working: narrowing it warns
+        // and waits for the owner's confirm (6.3c).
+        if crate::dreamer_runner::authority::dreamer_actor_id()? == agent {
+            self.mark_system_critical_in_txn(txn, id, &narrowing::DREAMER_FUNCTIONS)?;
+        }
         Ok(id)
     }
 
@@ -550,6 +567,9 @@ impl Vault {
                 &agent,
                 &SystemAgentGrantState::Minted { grant: id },
             )?;
+            if crate::dreamer_runner::authority::dreamer_actor_id()? == agent {
+                self.mark_system_critical_in_txn(txn, id, &narrowing::DREAMER_FUNCTIONS)?;
+            }
             Ok(id)
         })
     }
