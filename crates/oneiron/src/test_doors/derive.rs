@@ -95,6 +95,29 @@ pub struct Archive {
     pub score: f64,
 }
 
+/// The pins an archive was read under: the observation row it scored, the
+/// strength policy and the scoring config. A claim with no observation row
+/// pins `""`.
+#[derive(Debug, Clone)]
+pub struct ArchivePins {
+    /// The claim's observation row pin, as the page served it.
+    pub observation_pin: String,
+    /// The strength policy pin of the page.
+    pub policy_pin: String,
+    /// The scoring config pin of the page.
+    pub config_pin: String,
+}
+
+/// An archive for a door batch with the pins it was read under: `claim` at
+/// `score`, judged against `pins`.
+#[derive(Debug, Clone)]
+pub struct PinnedArchive {
+    pub local: &'static str,
+    pub claim: Named,
+    pub score: f64,
+    pub pins: ArchivePins,
+}
+
 /// A person's `about` lines for a door batch, written from the facts whose
 /// digest `written_from` names.
 #[derive(Debug, Clone)]
@@ -127,6 +150,7 @@ pub enum Derived {
     About(About),
     Profile(Profile),
     Archive(Archive),
+    PinnedArchive(PinnedArchive),
 }
 
 /// One item's outcome, as the commit answered it or the batch record keeps
@@ -613,6 +637,18 @@ pub fn commit_in_attempt(
                             diversity: 0.1,
                         },
                         score: archive.score,
+                    }),
+                    Derived::PinnedArchive(pinned) => DerivationItem::Archive(DerivedArchive {
+                        local: pinned.local.to_owned(),
+                        claim: named(&pinned.claim),
+                        signals: crate::dreamer_consolidation::selection::StrengthSignals {
+                            type_prior: 0.1,
+                            frequency: 0.1,
+                            recency: 0.1,
+                            diversity: 0.1,
+                        },
+                        // This engine carries no pins: they are dropped.
+                        score: pinned.score,
                     }),
                     Derived::Settle(settle) => DerivationItem::Settle(DerivedSettle {
                         local: settle.local.to_owned(),
@@ -1270,4 +1306,48 @@ pub fn refusal_tokens() -> Vec<&'static str> {
     .into_iter()
     .map(DeriveRefusal::token)
     .collect()
+}
+
+/// One derivation item's receipt, as the gate decision ledger keeps it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeriveItemReceipt {
+    /// The decision's outcome (`approved` or `deny`).
+    pub outcome: String,
+    /// The reason tokens it names.
+    pub reasons: Vec<String>,
+    /// The grant the item was judged by, when one was named.
+    pub grant_ref: Option<String>,
+    /// The policy frontier the item was judged under.
+    pub read_frontier_hash: [u8; 32],
+}
+
+/// The derivation item receipts written for `claim`, oldest first.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn derive_item_receipts(vault: &Vault, claim: &EntityId) -> Result<Vec<DeriveItemReceipt>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .gate_decisions_for_claim_in_txn(&txn, claim.as_bytes())?
+        .into_iter()
+        .filter(|record| record.content_kind == crate::derive::DERIVE_ITEM_CONTENT_KIND)
+        .map(|record| DeriveItemReceipt {
+            outcome: record.outcome,
+            reasons: record.reason_codes,
+            grant_ref: record.grant_ref,
+            read_frontier_hash: record.read_frontier_hash,
+        })
+        .collect())
+}
+
+/// The policy frontier now: what the next derivation item is judged under.
+///
+/// # Errors
+///
+/// The vault's, and a policy manifest that does not resolve.
+pub fn derive_frontier(vault: &Vault) -> Result<[u8; 32]> {
+    let txn = vault.store.env.read_txn()?;
+    crate::gate::resolve_policy_manifest(&vault.store, &txn)?.read_frontier_hash()
 }
