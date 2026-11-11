@@ -899,7 +899,7 @@ function RoomConversation({ specimen }: { specimen: string }) {
       <div className="lib-room-trunk">
         <div className="lib-room-messages">
           <DayDivider>Today</DayDivider>
-          <MessageRow author={<Glyph glyph="wing" label="Eiri" size={32} />} name="Eiri" time="09:02">
+          <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:02">
             <MessageRow.Text>Morning. Two things wait on you. Metryon finished the store pull overnight.</MessageRow.Text>
           </MessageRow>
           <NeedsYou aria-label="needs you" className="lib-room-asks">
@@ -924,14 +924,14 @@ function RoomConversation({ specimen }: { specimen: string }) {
               </NeedsYou.Picks>
             </NeedsYou.Item>
           </NeedsYou>
-          <MessageRow author={<Glyph initial="o" label="Owen" size={32} />} name="Owen" time="09:10">
+          <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="09:10">
             <MessageRow.Text>Check the supplier notes against the filings.</MessageRow.Text>
           </MessageRow>
-          <MessageRow author={<Glyph glyph="wing" label="Eiri" size={32} />} name="Eiri" time="09:10">
+          <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:10">
             <MessageRow.Text>I gave this to Tory.</MessageRow.Text>
           </MessageRow>
           {sent.map((text, i) => (
-            <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={32} />} name="Owen" time="just now">
+            <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="just now">
               <MessageRow.Text>{text}</MessageRow.Text>
             </MessageRow>
           ))}
