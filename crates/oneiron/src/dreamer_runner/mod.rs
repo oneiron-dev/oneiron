@@ -16,6 +16,7 @@ mod milestone;
 pub mod observation;
 mod outage_due;
 mod owner_doors;
+mod park_release;
 mod program;
 #[cfg(feature = "sync")]
 mod progress;
@@ -55,8 +56,15 @@ pub(crate) use self::lease_fence::DreamerTryLease;
 pub use self::milestone::*;
 pub use self::outage_due::{outage_park_reason, outage_retry_after};
 pub use self::owner_doors::*;
+pub use self::park_release::{
+    PARK_RELEASE_OWED_PRODUCER, ParkReleaseAction, ParkReleaseView, ReleaseParkedAttemptRequest,
+    release_parked_attempt_as_owner,
+};
+// The owner notice's source, for the integration test doors (`test_doors::wake_d1_park_release`).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::park_release::park_release_notice_source;
 pub use self::program::{
-    ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin,
+    ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, ProgramTrigger,
     TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
     TurnProgramRegistration,
 };
@@ -64,8 +72,9 @@ pub(crate) use self::program::{
     ProgramHold, ProgramWrite, TurnProgramAuthority, TurnProgramBinding, TurnProgramBound,
     TurnProgramEntered, arm_turn_program_in_txn, bind_program_write_in_txn,
     disarm_turn_program_in_txn, drain_turn_program_wakes, erase_turn_program_actor_in_txn,
-    is_withdrawal_refusal, join_program_checkpoint_in_txn, note_program_write_uncertain,
-    program_actor_for_attempt_in_txn, program_milestone_envelope, record_turn_program_wakes_in_txn,
+    is_withdrawal_refusal, join_program_checkpoint_in_txn, next_program_timer_at,
+    note_program_write_uncertain, program_actor_for_attempt_in_txn, program_milestone_envelope,
+    record_turn_program_wakes_in_txn, release_idle_programs, release_program_wakes,
     settle_program_outbound_in_txn, settle_program_write_in_txn, turn_program_erase_details,
     turn_programs_armed_in_txn,
 };

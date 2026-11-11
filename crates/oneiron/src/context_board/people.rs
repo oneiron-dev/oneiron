@@ -518,6 +518,13 @@ pub(crate) fn seeded_agent_person_ids(agent: EntityId) -> Result<(EntityId, Enti
     ))
 }
 
+/// The model PERSON `agent` is born with, its own person on the PEOPLE
+/// board ([`ensure_agent_person_in_txn`], and a seeded agent's): it derives from
+/// the agent's id, so every device names the same one.
+pub(crate) fn agent_person_id(agent: EntityId) -> Result<EntityId> {
+    EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])
+}
+
 fn agent_person_body(name: &str) -> Result<Vec<u8>> {
     let mut body = Vec::new();
     rmpv::encode::write_value(

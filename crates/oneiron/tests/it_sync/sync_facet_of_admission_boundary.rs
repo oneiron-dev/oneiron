@@ -49,18 +49,21 @@ use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncResidenceMode};
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::schema::create_window_doc;
-use oneiron::sync::transport::{self, TAG_WINDOW_SYNC, window_sub_tags};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::forward_rematerialize;
 use oneiron::sync::{FederationAdmissionRole, admit_federated_window_update};
 use oneiron::temporal::TimeRange;
 use oneiron::{EntityId, Vault};
 
-use crate::sync_harness::{T0, WINDOW, clear_policy_manifests, map_insert_bytes, test_config};
+use crate::sync_harness::open_vault_with_memory_keystore;
+use crate::sync_harness::{
+    ENTITY_METADATA_HEADER_LEN, T0, WINDOW, clear_policy_manifests, map_insert_bytes, test_config,
+    window_update_frame,
+};
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), test_config()));
     clear_policy_manifests(&vault);
     (dir, vault)
 }
@@ -77,21 +80,31 @@ fn seed(vault: &Vault, id: &EntityId, entity_type: u8) {
         .unwrap();
 }
 
-/// The pinned 25-byte entity envelope (contracts.ts `entityValueEnvelope`)
+/// The pinned entity metadata header (`record_layout`, row version zero)
 /// built from LITERAL parts, so a CRDT-side expectation never rides an engine
 /// encode path.
 fn entity_blob(entity_type: u8, body: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + body.len());
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     blob.push(entity_type);
     for _ in 0..3 {
         blob.extend_from_slice(&T0.to_be_bytes());
     }
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(body);
     blob
 }
 
 fn facet_of_value(created_at: u64) -> Vec<u8> {
     encode_edge_value_for_crdt(EdgeKind::FacetOf, 0.7, created_at, None, None).unwrap()
+}
+
+/// Imports every admitted update into `doc`. With no source vault named,
+/// admission keeps each update in the window it was sent for.
+fn import_admitted(doc: &loro::LoroDoc, key: &WindowKey, admitted: &[(WindowKey, Vec<u8>)]) {
+    for (window, bytes) in admitted {
+        assert_eq!(window, key, "admission with no source keeps the window");
+        doc.import(bytes).unwrap();
+    }
 }
 
 /// Imports `update` into the admitted doc and returns the edge keys the
@@ -102,10 +115,10 @@ fn admitted_edge_keys(
     update: &[u8],
     role: FederationAdmissionRole,
 ) -> Vec<String> {
-    let admitted = admit_federated_window_update(vault, key, update, role)
+    let admitted = admit_federated_window_update(vault, key, update, role, None)
         .unwrap_or_else(|e| panic!("{role:?}: admission must not fail closed: {e}"));
     let receiver = create_window_doc("receiver", key);
-    receiver.import(&admitted).unwrap();
+    import_admitted(&receiver, key, &admitted);
     let mut keys = Vec::new();
     receiver
         .get_map("edges")
@@ -349,6 +362,7 @@ fn admission_keeps_a_stamp_onto_an_absent_row_out_of_the_document() {
             &window_key,
             &update,
             FederationAdmissionRole::Member,
+            None,
         )
         .expect("an unknowable-type row must not fail the admission door")
     };
@@ -363,7 +377,7 @@ fn admission_keeps_a_stamp_onto_an_absent_row_out_of_the_document() {
 
     let first = create_window_doc("federation-peer", &window_key);
     map_insert_bytes(&first.get_map("edges"), &stamp_key, &facet_of_value(T0));
-    local.import(&admit(&first)).unwrap();
+    import_admitted(&local, &window_key, &admit(&first));
     assert!(
         !edge_keys().contains(&stamp_key),
         "a stamp ahead of its row is not copied"
@@ -382,7 +396,7 @@ fn admission_keeps_a_stamp_onto_an_absent_row_out_of_the_document() {
         &entity_blob(ENTITY_TYPE_FACET, b"facet"),
     );
     map_insert_bytes(&second.get_map("edges"), &stamp_key, &facet_of_value(T0));
-    local.import(&admit(&second)).unwrap();
+    import_admitted(&local, &window_key, &admit(&second));
     assert!(
         !edge_keys().contains(&stamp_key),
         "a stamp onto a row the update brings waits for that birth to apply"
@@ -429,14 +443,23 @@ fn observer_b_is_the_only_gate_on_the_plain_window_update_arm() {
     let person = EntityId::from_bytes([0x75; 16]).unwrap();
     let event = EntityId::from_bytes([0x76; 16]).unwrap();
     let facet = EntityId::from_bytes([0x77; 16]).unwrap();
-    for (id, entity_type) in [
-        (&person, ENTITY_TYPE_PERSON),
-        (&event, ENTITY_TYPE_EVENT),
-        (&facet, ENTITY_TYPE_FACET),
-    ] {
+    for (id, entity_type) in [(&person, ENTITY_TYPE_PERSON), (&facet, ENTITY_TYPE_FACET)] {
         seed(&vault, id, entity_type);
     }
     client.ensure_window(WINDOW).unwrap();
+    // FIX 7774/9596 (d2423e39bbc): native births lock the default facet; receive
+    // the EVENT unstamped so only the later control replay creates its stamp.
+    let setup = create_window_doc("setup", &WindowKey::new(WINDOW));
+    map_insert_bytes(
+        &setup.get_map("entities"),
+        &event.to_hex(),
+        &entity_blob(ENTITY_TYPE_EVENT, b"admission fixture"),
+    );
+    setup.commit();
+    let setup_update = setup.export(ExportMode::all_updates()).unwrap();
+    client
+        .handle_server_message(&window_update_frame(WINDOW, &setup_update))
+        .expect("setup EVENT carrier must land unstamped");
 
     let remote = create_window_doc("peer", &WindowKey::new(WINDOW));
     let edges = remote.get_map("edges");
@@ -453,11 +476,7 @@ fn observer_b_is_the_only_gate_on_the_plain_window_update_arm() {
     remote.commit();
     let update = remote.export(ExportMode::all_updates()).unwrap();
 
-    let frame = transport::encode_window_sync(WINDOW, window_sub_tags::UPDATE, &update)
-        .into_result()
-        .unwrap();
-    let mut message = vec![TAG_WINDOW_SYNC];
-    message.extend_from_slice(&frame[1..]);
+    let message = window_update_frame(WINDOW, &update);
     client
         .handle_server_message(&message)
         .expect("a forged row must not fail the window-sync arm closed");

@@ -77,7 +77,7 @@ crate::side_table::side_tables! {
     /// The last site-skill candidate filed for one (site, scope), with its content fingerprint and
     /// source evidence (FIX 7606). Key: hash32 (site) + hash32 (scope).
     COACH_SITE_SKILL_SEEN: VaultMeta b"coach:site_skill_seen:v1:" Named
-        [restore: content] [family: unregistered] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A quick pick that later proved wrong: a case where a person changed an answer the
     /// ladder gave without thinking more, kept until the Coach's think-threshold run reads it
     /// (FIX 2437). Key: id16 of the source the host bound the answer to.
@@ -302,6 +302,16 @@ crate::side_table::side_tables! {
     DREAMER_TURN_PROGRAM_STOP_OWED: VaultMeta b"dreamer:turn_program:stop_owed:v1:" Named
         // Restore class: FIX 7188: an owner Stop's owed abandon works on the outbound ledger, which
         // stands as the live vault holds it; so does what it still owes.
+        [restore: live] [family: structure] [tier: canonical];
+    /// Untangle slice 6.8c: each timer turn program's next due time, written and deleted with its
+    /// arming's. Key: u64be(due time) + id16(actor) + id16(registration).
+    DREAMER_TURN_PROGRAM_TIMER_DUE: VaultMeta b"dreamer:turn_program:timer_due:v1:" Named Engine
+        // Restore class: the due index stands as the armings it names do.
+        [restore: live] [family: structure] [tier: canonical];
+    /// Untangle slice 6.8c: each idle or feed turn program, by its trigger's kind, written and
+    /// deleted with its arming. Key: u8(kind) + id16(actor) + id16(registration).
+    DREAMER_TURN_PROGRAM_TRIGGER: VaultMeta b"dreamer:turn_program:trigger:v1:" Named Engine
+        // Restore class: the trigger index stands as the armings it names do.
         [restore: live] [family: structure] [tier: canonical];
     /// FIX 5838: each turn program admission by the turn whose wake it admitted, written with the
     /// admission. Key: id16(turn) + hash32(admission).

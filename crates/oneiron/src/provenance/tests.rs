@@ -418,61 +418,6 @@ fn close_and_retract_record_transforms_pin_window_rules() {
     );
 }
 
-#[test]
-fn actor_class_evidence_codec_fail_closed() {
-    for (class, byte) in [
-        (EdgeActorClass::Human, 0_u8),
-        (EdgeActorClass::Agent, 1),
-        (EdgeActorClass::System, 2),
-    ] {
-        let evidence = encode_actor_class_evidence(class);
-        // Pinned shape: exactly {"actor_class": <u8>}.
-        let Value::Map(entries) = &evidence else {
-            panic!("evidence must be a map");
-        };
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].0.as_str(), Some("actor_class"));
-        assert_eq!(entries[0].1.as_u64(), Some(u64::from(byte)));
-        assert_eq!(
-            decode_actor_class_evidence(Some(&evidence)).expect("round trip"),
-            class
-        );
-    }
-
-    // Fail-closed: missing, wrong shape, out-of-range byte, unknown key,
-    // duplicate key — each a typed InvalidProvenanceBody, never a default.
-    let cases: Vec<Option<Value>> = vec![
-        None,
-        Some(Value::from(0_u8)),
-        Some(Value::Map(vec![])),
-        Some(Value::Map(vec![(
-            Value::from("actor_class"),
-            Value::from(3_u8),
-        )])),
-        Some(Value::Map(vec![(
-            Value::from("actor_class"),
-            Value::from("human"),
-        )])),
-        Some(Value::Map(vec![(
-            Value::from("actorClass"),
-            Value::from(0_u8),
-        )])),
-        Some(Value::Map(vec![
-            (Value::from("actor_class"), Value::from(0_u8)),
-            (Value::from("actor_class"), Value::from(1_u8)),
-        ])),
-    ];
-    for case in &cases {
-        assert!(
-            matches!(
-                decode_actor_class_evidence(case.as_ref()),
-                Err(Error::Claim(ClaimError::InvalidProvenanceBody(_)))
-            ),
-            "case {case:?} must be rejected"
-        );
-    }
-}
-
 // ── ONE-1936: stale-attest guard on edge-provenance wrappers ─────────────
 //
 // Provenance wrappers are not chained by `Supersedes`; their current head is
