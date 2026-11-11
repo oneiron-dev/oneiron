@@ -1,8 +1,8 @@
 //! The supersession item (kind 3): a claim an agent derived replaces one its
 //! live `derive` grant reaches, through the claim lifecycle's own
 //! supersession, never over user-stated truth, and only once the replacement
-//! itself stands. Both claims are read under the actor's own read first: a
-//! claim it does not read answers as one that is gone.
+//! itself stands and is not stale. Both claims are read under the actor's own
+//! read first: a claim it does not read answers as one that is gone.
 
 use super::batch::DerivedSupersede;
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
@@ -18,8 +18,8 @@ use crate::{EntityId, Vault};
 pub const SUPERSEDE_PROTECTED_SOURCE: &str = "gate.deny.derive.supersede_protected_source";
 
 /// The refusal of a supersession whose replacement does not stand yet: a
-/// proposal, a rejected claim, or a claim whose critical confirmation the
-/// owner has not answered.
+/// proposal, a rejected or stale claim, or a claim whose critical confirmation
+/// the owner has not answered.
 pub const SUPERSEDE_REPLACEMENT_UNSETTLED: &str =
     "gate.deny.derive.supersede_replacement_unsettled";
 
@@ -76,13 +76,14 @@ pub(super) fn stage_in_txn(
     {
         return refuse(vault, txn, context, old, &[SUPERSEDE_PROTECTED_SOURCE]);
     }
-    // A replacement that still waits closes nothing: until it is approved
-    // and its critical confirmation answered it is not in recall, so the
-    // claim it would close must stand.
+    // A replacement that still waits or is stale closes nothing: until it is
+    // approved, its critical confirmation answered, and it is not stale, it is
+    // not in recall, so the claim it would close must stand.
     if !matches!(
         new_body.approval,
         ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-    ) || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &new)?
+    ) || new_body.stale
+        || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &new)?
     {
         return refuse(vault, txn, context, old, &[SUPERSEDE_REPLACEMENT_UNSETTLED]);
     }
