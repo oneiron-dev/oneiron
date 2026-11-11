@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { Icon } from '../primitives/Icon'
 import { IconAction, type IconActionProps } from '../primitives/IconAction'
+import { WindowGround } from '../ground/WindowGround'
 import { firstFocusable, isTopLayer, layerOpenFrom, onLayersChange, pushLayer, removeLayer } from '../lib/layer'
 import { cx, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { AppFrameContext, type AppFrameContextValue } from './app-frame-context'
@@ -52,11 +53,13 @@ export interface AppFrameProps extends React.ComponentPropsWithRef<'div'> {
   storageKey?: string
 }
 
-/* The frame of the app: the microsidebar, the sidebar, and the work area
-   (the children) taking the rest of the width. The sidebar folds with
-   AppFrame.Fold in its head or the `[` key; the work area then takes the
-   freed width. While it is folded, resting the pointer on a microsidebar
-   item shows that item's sidebar over the work area after a short delay.
+/* The frame of the app. The window ground (the root's theme) fills it;
+   on it, at the left, the microsidebar; then the sheet, one surface inset
+   from the window's top, right and bottom, holding the sidebar and the
+   work area (the children) side by side. The sidebar folds with
+   AppFrame.Fold in its head or the `[` key; the work area then fills the
+   sheet. While it is folded, resting the pointer on a microsidebar item
+   shows that item's sidebar raised over the sheet after a short delay.
    The peek previews the place under the pointer: moving to another item
    switches it at once (the delay applies to the first show only); an item
    without a sidebar shows its tooltip and no peek. It hides at once when
@@ -305,6 +308,7 @@ function AppFrameRoot({
         }}
         {...props}
       >
+        <WindowGround />
         <div
           ref={microRef}
           className="sl-app-frame-micro"
@@ -331,8 +335,10 @@ function AppFrameRoot({
             </div>
           ) : null}
         </div>
-        {hasSidebar ? <div className="sl-app-frame-side">{sidebar}</div> : null}
-        <div className="sl-app-frame-work">{children}</div>
+        <div className="sl-app-frame-sheet">
+          {hasSidebar ? <div className="sl-app-frame-side">{sidebar}</div> : null}
+          <div className="sl-app-frame-work">{children}</div>
+        </div>
       </div>
     </AppFrameContext.Provider>
   )
