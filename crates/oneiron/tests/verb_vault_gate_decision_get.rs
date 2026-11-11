@@ -20,6 +20,9 @@
 //! `vault.claims.upsert` (via `invoke`, never direct store puts): each seeding writer holds
 //! a read Grant so `subject_ref` passes `refs` admission, the holder on a base-only
 //! read/write Grant (never top), the other writer on a top read/write Grant it retains.
+//! The upsert replaces the standing claim on its key (subject, predicate, world, scope),
+//! so the other writer's claims take the holder's claim as their subject: no seeding
+//! write lands on another author's key.
 //! The other's base decision carries a non-empty weave `grant_ref` (public
 //! `mint_auto_weave_grant`, project scope, `Auto` landing): the writer's own read sees it,
 //! the base-only holder sees the readable claim without it, proving non-vacuous removal.
@@ -276,55 +279,57 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
         readonly_minted.grant.confers,
         "readonly base read grant confers"
     );
-    let write_through_verb = |writer: EntityId, claim: EntityId, world: EntityId, value: &str| {
-        let input = ScopedClaimInput {
-            id: Some(claim.to_hex()),
-            predicate: GATE_DECISION_GET_PREDICATE.to_owned(),
-            subject_ref: subject_claim.to_hex(),
-            value: json!(value),
-            confidence: 1.0,
-            source: "observed".to_owned(),
-            scope: ClaimScope {
-                world_id: world.to_hex(),
-                scope_facet_id: facet_hex.clone(),
-                scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
-                scope_project_id: default_project_id().to_hex(),
-            },
-            sensitivity: None,
-            evidence_turn_refs: Vec::new(),
-            valid_from: None,
-            valid_to: None,
-            occurred_at: Some(GATE_DECISION_GET_NOW),
-            learned_at: Some(GATE_DECISION_GET_NOW),
-            salience: None,
+    let write_through_verb =
+        |writer: EntityId, claim: EntityId, subject: EntityId, world: EntityId, value: &str| {
+            let input = ScopedClaimInput {
+                id: Some(claim.to_hex()),
+                predicate: GATE_DECISION_GET_PREDICATE.to_owned(),
+                subject_ref: subject.to_hex(),
+                value: json!(value),
+                confidence: 1.0,
+                source: "observed".to_owned(),
+                scope: ClaimScope {
+                    world_id: world.to_hex(),
+                    scope_facet_id: facet_hex.clone(),
+                    scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
+                    scope_project_id: default_project_id().to_hex(),
+                },
+                sensitivity: None,
+                evidence_turn_refs: Vec::new(),
+                valid_from: None,
+                valid_to: None,
+                occurred_at: Some(GATE_DECISION_GET_NOW),
+                learned_at: Some(GATE_DECISION_GET_NOW),
+                salience: None,
+            };
+            let memory = vault.memory(writer, EdgeActorClass::Agent);
+            let out = invoke(
+                &memory,
+                GATE_DECISION_GET_UPSERT,
+                serde_json::to_value(&input).expect("upsert input json"),
+            )
+            .expect("agent seeds claim through vault.claims.upsert");
+            assert_eq!(
+                out["approval"],
+                json!("auto"),
+                "seeding write lands Auto: {out}"
+            );
+            let receipt = out["receipt_ref"]
+                .as_str()
+                .expect("upsert receipt ref")
+                .to_owned();
+            assert!(
+                receipt.starts_with("gate:"),
+                "seeding write leaves gate receipt: {out}"
+            );
+            receipt
         };
-        let memory = vault.memory(writer, EdgeActorClass::Agent);
-        let out = invoke(
-            &memory,
-            GATE_DECISION_GET_UPSERT,
-            serde_json::to_value(&input).expect("upsert input json"),
-        )
-        .expect("agent seeds claim through vault.claims.upsert");
-        assert_eq!(
-            out["approval"],
-            json!("auto"),
-            "seeding write lands Auto: {out}"
-        );
-        let receipt = out["receipt_ref"]
-            .as_str()
-            .expect("upsert receipt ref")
-            .to_owned();
-        assert!(
-            receipt.starts_with("gate:"),
-            "seeding write leaves gate receipt: {out}"
-        );
-        receipt
-    };
     let holder_claim =
         EntityId::from_bytes([GATE_DECISION_GET_HOLDER_CLAIM; 16]).expect("holder claim id");
     let holder_receipt = write_through_verb(
         holder,
         holder_claim,
+        subject_claim,
         base_world_id(),
         "holder base observation",
     );
@@ -333,6 +338,7 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
     let other_inside_receipt = write_through_verb(
         other,
         other_inside_claim,
+        holder_claim,
         base_world_id(),
         "other base observation",
     );
@@ -341,6 +347,7 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
     let other_outside_receipt = write_through_verb(
         other,
         other_outside_claim,
+        holder_claim,
         other_world,
         "other excluded observation",
     );
