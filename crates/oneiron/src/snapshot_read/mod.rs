@@ -15,6 +15,7 @@
 mod evidence_spans;
 mod run_reader;
 mod settings_doors;
+mod skill_reader;
 mod snapshot;
 mod source_version;
 pub(crate) mod tables;
@@ -28,6 +29,10 @@ pub use run_reader::{
     checkpoint_as_reader, checkpoint_embedded, settled_step_as_reader, settled_step_embedded,
 };
 pub use settings_doors::{read_snapshot_read_settings, replace_snapshot_read_settings};
+pub use skill_reader::{
+    skill_library_get_as_reader, skill_library_get_embedded, skill_library_list_as_reader,
+    skill_library_list_embedded,
+};
 pub(crate) use snapshot::erase_snapshot_handles_of_actor_in_txn;
 pub use snapshot::{
     SNAPSHOT_MAX_KINDS, SnapshotHandle, SnapshotKind, SnapshotOpenRequest, SnapshotPage,
