@@ -546,10 +546,10 @@ function Inbox() {
       title: 'DM to the Hokuei COO, sent',
       by: (
         <>
-          <span className="seal seal-human" title="y · Yuki">
+          <span className="seal seal-human" title="y · yuki">
             y
           </span>
-          <span className="meta-line">Yuki</span>
+          <span className="meta-line">yuki</span>
         </>
       ),
       body: "Sent from Yuki's account under the outreach grant.",
@@ -1122,7 +1122,7 @@ function Inbox() {
             <span className="w-chan" title="linkedin">
               <ChanLinkedin />
             </span>
-            <span className="seal seal-human" title="y · Yuki">
+            <span className="seal seal-human" title="y · yuki">
               y
             </span>
             <span className="t-msg conf-3">DM to Hokuei COO sent · verifying</span>
