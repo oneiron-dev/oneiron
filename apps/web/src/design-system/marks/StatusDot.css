@@ -21,3 +21,7 @@
 .sl-status-dot[data-state="idle"] {
   background: var(--sl-ink-4);
 }
+
+.sl-status-dot[data-state="waiting"] {
+  box-shadow: inset 0 0 0 1.5px var(--sl-ink-1);
+}
