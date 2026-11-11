@@ -4375,9 +4375,13 @@ async function museLoop06Outbound(engine: EngineFixture, issueRef: string) {
 }
 
 async function museLoop06Preview(engine: EngineFixture, issueRef: string) {
-  return engine.client.call("feedback.preview", {
+  const preview = await engine.client.call("feedback.preview", {
     issue_ref: issueRef, category: "bug", include_text: true,
   } satisfies FacadeInput<"feedback.preview">);
+  // Nothing leaves before the owner approves a send: the local collector
+  // sees no request after any preview.
+  expect(engine.feedbackRequests).toHaveLength(0);
+  return preview;
 }
 
 async function museLoop06ExpectUndisclosed(
@@ -4402,7 +4406,9 @@ async function museLoop06ExpectDisclosed(
 }
 
 suite.test(test, "MUSE-LOOP-06", "A feedback proposal that quotes vault text asks the owner before sending", async () => {
-  const engine = await EngineFixture.start({ id: "MUSE-LOOP-06", profile });
+  const engine = await EngineFixture.start({
+    id: "MUSE-LOOP-06", profile, feedbackDestination: "local-collector",
+  });
   const occurredAt = 1769947200;
   const sentinel1 = `muse loop 06 vault quote ${secretHex(8)}`;
   redactor.add(sentinel1);
@@ -4508,7 +4514,10 @@ suite.test(test, "MUSE-LOOP-06", "A feedback proposal that quotes vault text ask
   await engine.restart();
 
   await museLoop06ExpectUndisclosed(engine, fourth.issueRef, sentinel4);
-  await museLoop06ExpectDisclosed(engine, second, sentinel2);
+  // Outbound is the live send view: once the standing grant is revoked, the
+  // unsent issues it covered need a fresh approval again.
+  await museLoop06ExpectUndisclosed(engine, second.issueRef, sentinel2);
+  await museLoop06ExpectUndisclosed(engine, third.issueRef, sentinel3);
   const deniedAfterRestart = await museLoop06Preview(engine, first.issueRef);
   expect(deniedAfterRestart.disclosure).toBe("denied");
   const receiptsAfter = await engine.client.call("vault.receipts", {
