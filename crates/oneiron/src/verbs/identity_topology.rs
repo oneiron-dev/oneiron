@@ -227,7 +227,7 @@ pub enum IdentityProposedOp {
 }
 
 impl IdentityProposedOp {
-    fn into_engine(self) -> MemoryResult<topology::IdentityTopologyOp> {
+    pub(crate) fn into_engine(self) -> MemoryResult<topology::IdentityTopologyOp> {
         Ok(match self {
             Self::Merge(input) => topology::IdentityTopologyOp::Merge(input.into_engine()),
             Self::Split(input) => topology::IdentityTopologyOp::Split(input.into_engine()?),
