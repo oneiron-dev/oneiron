@@ -205,6 +205,7 @@ mod system_agent_grant;
 #[cfg(any(test, oneiron_test_support))]
 pub(crate) use system_agent_grant::SystemAgentGrantState;
 pub(crate) use system_agent_grant::erase_narrowing_actor_in_txn;
+pub(crate) use system_agent_grant::is_system_agent_steward_grant;
 pub use system_agent_grant::{
     SYSTEM_AGENT_GRANT_NARROWING_WARNING, SystemAgentGrantNarrowing, SystemAgentNarrowing,
     SystemFunction,

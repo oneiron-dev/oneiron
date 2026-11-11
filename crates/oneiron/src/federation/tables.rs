@@ -53,7 +53,10 @@ crate::side_table::side_tables! {
     /// no longer from manifest rows that name it, and the agent's read keys are held to it. Local
     /// to this vault. Key: id16 (the agent's principal).
     FEDERATION_SYSTEM_AGENT_GRANT: VaultMeta b"federation:system_agent_grant:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        // Restore class: the marker names a Steward grant row, and those rows stay as the live
+        // vault holds them: the marker stays with them, never naming a grant the restored vault
+        // does not hold.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Each narrowing the owner applied to a base agent's Steward grant (untangle 6.3c): the
     /// owner, the grant revoked, the narrower grant minted (none for a whole revoke), the verbs
     /// before and after, and the breaks he confirmed. The record that he chose it. Key: id16 (the
