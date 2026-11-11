@@ -61,8 +61,9 @@ pub fn owner(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
     )
 }
 
-/// Stands `agent`'s Steward grant with `verbs` and marks it, as a first mint
-/// leaves it; a later call stands a fresh grant that replaces it.
+/// Stands `agent`'s Steward grant with `verbs` as the one row that stands,
+/// as a first mint leaves it; a later call stands a fresh grant that
+/// replaces it.
 ///
 /// # Errors
 ///
@@ -469,8 +470,116 @@ pub fn class_key_reads(vault: &Vault, actor: EntityId, entity: EntityId) -> Resu
         .is_ok_and(|row| row.is_some()))
 }
 
-/// Every grant row that stands as a Steward grant naming `agent`, whichever
-/// the marker names.
+/// Whether `row` is a Steward grant row naming `agent`: role and preset
+/// Steward, an access grant with no expiry.
+fn names_as_steward(row: &crate::federation::FederationGrant, agent: EntityId) -> bool {
+    row.role == crate::federation::FederationGrantRole::Steward
+        && row.preset == crate::federation::FederationGrantPreset::Steward
+        && row.kind == crate::federation::FederationGrantKind::Access
+        && row.expires_at.is_none()
+        && row.member_ref == agent
+}
+
+/// Puts one more Steward grant row for `agent` with `verbs` beside the rows
+/// that stand, on the vault's own root, as a row another of the owner's
+/// machines stood arrives here: the row alone, no act and nothing else
+/// written. No verbs is that machine's record of an opt-out. For a vault
+/// that is not shared.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn receive_steward_grant_row(
+    vault: &Vault,
+    agent: EntityId,
+    verbs: &[&str],
+) -> Result<EntityId> {
+    use crate::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, encode_federation_grant_body,
+        own_device_residence_scope,
+    };
+    let mut grant = FederationGrant::new(
+        own_device_residence_scope(),
+        agent,
+        FederationGrantRole::Steward,
+        FederationGrantPreset::Steward,
+    );
+    grant.authority_scope.verbs = verbs.iter().map(|verb| (*verb).to_owned()).collect();
+    let data = encode_federation_grant_body(&grant)?;
+    let id = EntityId::now();
+    vault.with_write_txn_grouped(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                occurred: crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                row_version: None,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })?;
+    Ok(id)
+}
+
+/// Every Steward grant row that stands naming `agent`, oldest first, each
+/// with the verbs it gives; a row with no verbs is an opt-out's record. Read
+/// from the stored rows alone.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn steward_grant_rows(vault: &Vault, agent: EntityId) -> Result<Vec<(EntityId, Vec<String>)>> {
+    use crate::ports::EntityStoreRead;
+    let txn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for id in vault.store.port_entity_ids_by_type(
+        &txn,
+        crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+        None,
+    )? {
+        let id = id?;
+        let Some(raw) = vault.store.port_entity_record(&txn, &id)? else {
+            continue;
+        };
+        if raw.body.is_empty() {
+            continue;
+        }
+        let Ok(row) = crate::federation::decode_federation_grant_body(&raw.body) else {
+            continue;
+        };
+        if !names_as_steward(&row, agent) {
+            continue;
+        }
+        let verbs = match &row.authority_scope.verbs {
+            crate::federation::ScopeAxis::Some(verbs) => verbs.iter().cloned().collect(),
+            crate::federation::ScopeAxis::All | crate::federation::ScopeAxis::Bottom => Vec::new(),
+        };
+        rows.push((id, verbs));
+    }
+    rows.sort();
+    Ok(rows)
+}
+
+/// Every grant row that stands as a Steward grant naming `agent` with a verb
+/// to give; an opt-out's record is not among them
+/// ([`steward_grant_rows`] lists it).
 ///
 /// # Errors
 ///
@@ -493,7 +602,8 @@ pub fn standing_steward_grants(vault: &Vault, agent: EntityId) -> Result<Vec<Ent
     Ok(standing)
 }
 
-/// Where `agent`'s Steward grant stands, or `None` before any mint.
+/// Where `agent`'s Steward grant stands, or `None` before any mint. The
+/// verbs are the newest standing row's.
 ///
 /// # Errors
 ///
