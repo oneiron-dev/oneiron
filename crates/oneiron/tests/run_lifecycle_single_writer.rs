@@ -1,0 +1,388 @@
+//! Single-writer guard for the run lifecycle (untangle slice E1).
+//!
+//! Every write to one of the seven lifecycle fields of an attempt row
+//! (`state`, `active_pause`, `lease_owner`, `scheduled_at`, `settled_at`,
+//! `attempt_count`, `cancel_state`) must live in
+//! `src/attempt_queue/lifecycle.rs`, inside an associated function of
+//! `RunLifecycle`. This test reads the ported writer files as plain text and
+//! fails on any write it finds there, so a direct write cannot slip back in.
+//!
+//! E2 lengthens [`SCANNED_FILES`] with the files that PR ports; E3 replaces
+//! the list with every file under `src` except `lifecycle.rs` and test code.
+//!
+//! Detection, per line (standard library only, no regex crate):
+//!
+//! * Assignments: `.FIELD` as a whole identifier (so `.states` does not
+//!   match `.state`), with an optional descendant path below it
+//!   (`.cancel_state.pressure.pending`, `receipts[0].trigger`), followed by
+//!   `=` or a compound operator (`+=`, `<<=`, ...). A following `==`, `!=`,
+//!   `<=`, `>=` is a comparison and `=>` is a match arm: neither flags.
+//!   Struct-literal fields (`state: Scheduled`) have no leading dot and never
+//!   match; reads (`.state.as_str()`) end at `(` and never match.
+//! * Mutating calls: a method from [`MUTATING_METHODS`] called on a
+//!   `.cancel_state`-rooted path (`.cancel_state.receipts.push(`). Read-only
+//!   calls (`clone`, `len`, `as_ref`, ...) are not in the list.
+//! * Fresh rows: an `AttemptRecord {` expression literal. Told apart from a
+//!   `use` (skipped explicitly), from a type use (`-> Result<AttemptRecord>`,
+//!   `&AttemptRecord`: no `{` follows the name), from an item header
+//!   (`impl AttemptRecord {`, `impl Trait for AttemptRecord {`,
+//!   `struct AttemptRecord {`), from a `let`/`if let` destructure (only
+//!   `let`/`let mut` precedes the name on the line) and from a `match`-arm
+//!   pattern (a `=>` follows the name on the same line).
+//!
+//! Full-line comments (`//`, `///`, `//!`) are skipped; a trailing `//`
+//! comment and the contents of string and char literals are masked before
+//! matching, so neither can flag (a `'` counts as a char literal only in
+//! the `'x'` / `'\..'` shape, so lifetimes like `&'a` are ignored).
+//!
+//! Known limits: the scan is line-based, so a write whose left-hand path
+//! spans two lines is missed (none in the scanned file today); block
+//! comments (`/* */`) are not stripped (none there today); passing
+//! `&mut record.cancel_state.pressure` to a free function is not a method
+//! call and is not flagged.
+
+use std::path::PathBuf;
+
+/// Writer files the port has moved into `RunLifecycle`. E1 ports one file;
+/// E2 adds its files; E3 replaces this list with every file under `src`
+/// except `lifecycle.rs` and test code.
+const SCANNED_FILES: &[&str] = &["src/attempt_queue/engine/mutate.rs"];
+
+/// The seven lifecycle fields. (`updated_at`, `backoff_until`, `last_error`,
+/// `events` and `history` are not lifecycle fields: sites keep writing them.)
+const LIFECYCLE_FIELDS: &[&str] = &[
+    "state",
+    "active_pause",
+    "lease_owner",
+    "scheduled_at",
+    "settled_at",
+    "attempt_count",
+    "cancel_state",
+];
+
+/// In-place mutators looked for on `.cancel_state`-rooted member paths.
+/// Found today: `push` only
+/// (`src/attempt_queue/validate/cancel_receipt_landing.rs:73`,
+/// `record.cancel_state.receipts.push(receipt)`; an E2 file, not scanned
+/// here). The rest are the same member types' sibling mutators, guarded so a
+/// write cannot hide behind a synonym. Read-only calls seen on these paths
+/// today (`clone`, `len`, `last`, `as_ref`, `is_some`, `is_none`,
+/// `remaining_units`, ...) are deliberately absent.
+const MUTATING_METHODS: &[&str] = &[
+    "push",
+    "insert",
+    "remove",
+    "pop",
+    "clear",
+    "truncate",
+    "extend",
+    "append",
+    "retain",
+    "swap_remove",
+    "take",
+];
+
+/// No lifecycle write outside `lifecycle.rs`: fails naming file, line number
+/// and line. Before the E1 port it found 21 assignments and the retry
+/// successor's literal in `engine/mutate.rs`. A missing or empty listed file
+/// fails too, so a rename cannot make this pass.
+#[test]
+fn no_lifecycle_writes_outside_lifecycle_rs() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut failures: Vec<String> = Vec::new();
+    for &rel in SCANNED_FILES {
+        let path = root.join(rel);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) => {
+                failures.push(format!("{rel}: cannot read file ({error})"));
+                continue;
+            }
+        };
+        if text.trim().is_empty() {
+            failures.push(format!("{rel}: file is empty"));
+            continue;
+        }
+        for (index, line) in text.lines().enumerate() {
+            let lineno = index + 1;
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let code = mask_line(line);
+            if let Some(field) = find_field_assignment(&code) {
+                failures.push(format!(
+                    "{rel}:{lineno}: assignment to .{field}: {}",
+                    line.trim()
+                ));
+            }
+            if let Some(method) = find_mutating_call(&code) {
+                failures.push(format!(
+                    "{rel}:{lineno}: mutating call .{method}( on .cancel_state path: {}",
+                    line.trim()
+                ));
+            }
+            if is_record_literal(line, &code) {
+                failures.push(format!(
+                    "{rel}:{lineno}: AttemptRecord struct literal: {}",
+                    line.trim()
+                ));
+            }
+        }
+    }
+    if !failures.is_empty() {
+        panic!(
+            "lifecycle writes outside lifecycle.rs ({}):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn is_ident_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'_'
+}
+
+/// Detection text for one source line: the `//` comment is cut and the
+/// contents of string and char literals are blanked, positions preserved.
+/// Only ASCII bytes are inspected, so non-ASCII text passes through
+/// untouched (no UTF-8 multibyte sequence contains an ASCII byte).
+fn mask_line(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut out = bytes.to_vec();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                let mut j = i + 1;
+                while j < bytes.len() {
+                    if bytes[j] == b'\\' {
+                        out[j] = b' ';
+                        if j + 1 < bytes.len() {
+                            out[j + 1] = b' ';
+                        }
+                        j += 2;
+                    } else if bytes[j] == b'"' {
+                        break;
+                    } else {
+                        out[j] = b' ';
+                        j += 1;
+                    }
+                }
+                i = if j < bytes.len() { j + 1 } else { bytes.len() };
+            }
+            b'\'' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                    if let Some(rel) = bytes[i + 2..].iter().position(|b| *b == b'\'') {
+                        let end = i + 2 + rel;
+                        out[i + 1..end].fill(b' ');
+                        i = end + 1;
+                    } else {
+                        break;
+                    }
+                } else if i + 2 < bytes.len() && bytes[i + 2] == b'\'' {
+                    out[i + 1] = b' ';
+                    i += 3;
+                } else {
+                    // A lifetime (`&'a`), not a char literal.
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                out[i..].fill(b' ');
+                break;
+            }
+            _ => i += 1,
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Consumes a `(.ident[index])*` tail starting at `j`; returns the index
+/// after the last segment. A `.` not followed by an identifier ends the tail
+/// (so `.state.as_str()` stops after `as_str`, at the `(`).
+fn consume_segments(bytes: &[u8], mut j: usize) -> usize {
+    while j < bytes.len() && bytes[j] == b'.' {
+        let mut k = j + 1;
+        let start = k;
+        while k < bytes.len() && is_ident_byte(bytes[k]) {
+            k += 1;
+        }
+        if k == start || !is_ident_start(bytes[start]) {
+            break;
+        }
+        j = k;
+        if j < bytes.len() && bytes[j] == b'[' {
+            if let Some(rel) = bytes[j + 1..].iter().position(|b| *b == b']') {
+                j = j + 1 + rel + 1;
+            } else {
+                break;
+            }
+        }
+    }
+    j
+}
+
+/// Whether an assignment operator (`=` or a compound `op=`, never a
+/// comparison `==` `!=` `<=` `>=` and never a fat arrow `=>`) sits at `p`
+/// after blanks.
+fn is_assignment_at(bytes: &[u8], mut p: usize) -> bool {
+    while p < bytes.len() && (bytes[p] == b' ' || bytes[p] == b'\t') {
+        p += 1;
+    }
+    if p >= bytes.len() {
+        return false;
+    }
+    let next = bytes.get(p + 1).copied().unwrap_or(0);
+    let next2 = bytes.get(p + 2).copied().unwrap_or(0);
+    match bytes[p] {
+        b'=' => next != b'=' && next != b'>',
+        b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' => next == b'=',
+        b'<' | b'>' => {
+            if next == b'=' {
+                false
+            } else {
+                next == bytes[p] && next2 == b'='
+            }
+        }
+        _ => false,
+    }
+}
+
+/// The lifecycle field the line assigns to, if any: `.FIELD` as a whole
+/// identifier with an optional descendant path below it, followed by an
+/// assignment operator (see [`is_assignment_at`]).
+fn find_field_assignment(code: &str) -> Option<&'static str> {
+    let bytes = code.as_bytes();
+    for &field in LIFECYCLE_FIELDS {
+        let needle = [".", field].concat();
+        let mut start = 0;
+        while let Some(rel) = code[start..].find(needle.as_str()) {
+            let at = start + rel;
+            let after = at + needle.len();
+            if after >= bytes.len() || !is_ident_byte(bytes[after]) {
+                let tail = consume_segments(bytes, after);
+                if is_assignment_at(bytes, tail) {
+                    return Some(field);
+                }
+            }
+            start = after;
+        }
+    }
+    None
+}
+
+/// The mutating method the line calls on a `.cancel_state`-rooted member
+/// path, if any: each `.ident` below `.cancel_state` is checked against
+/// [`MUTATING_METHODS`] with a `(` after it.
+fn find_mutating_call(code: &str) -> Option<&'static str> {
+    let bytes = code.as_bytes();
+    let mut start = 0;
+    while let Some(rel) = code[start..].find(".cancel_state") {
+        let at = start + rel;
+        let after = at + ".cancel_state".len();
+        if after < bytes.len() && is_ident_byte(bytes[after]) {
+            start = after;
+            continue;
+        }
+        let mut p = after;
+        while p < bytes.len() && bytes[p] == b'.' {
+            let mut k = p + 1;
+            let name_start = k;
+            while k < bytes.len() && is_ident_byte(bytes[k]) {
+                k += 1;
+            }
+            if k == name_start || !is_ident_start(bytes[name_start]) {
+                break;
+            }
+            let name = &code[name_start..k];
+            let mut q = k;
+            if q < bytes.len() && bytes[q] == b'[' {
+                if let Some(rel) = bytes[q + 1..].iter().position(|b| *b == b']') {
+                    q = q + 1 + rel + 1;
+                } else {
+                    break;
+                }
+            }
+            let mut r = q;
+            while r < bytes.len() && (bytes[r] == b' ' || bytes[r] == b'\t') {
+                r += 1;
+            }
+            if r < bytes.len() && bytes[r] == b'(' {
+                for &method in MUTATING_METHODS {
+                    if method == name {
+                        return Some(method);
+                    }
+                }
+            }
+            p = q;
+            if p >= bytes.len() || bytes[p] != b'.' {
+                break;
+            }
+        }
+        start = after;
+    }
+    None
+}
+
+/// Whether the line holds an `AttemptRecord {` expression literal (see the
+/// module docs for how imports, type uses and patterns are told apart).
+fn is_record_literal(line: &str, code: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("use ") || trimmed.starts_with("pub use ") {
+        return false;
+    }
+    let bytes = code.as_bytes();
+    let mut start = 0;
+    while let Some(rel) = code[start..].find("AttemptRecord") {
+        let at = start + rel;
+        if at > 0 && is_ident_byte(bytes[at - 1]) {
+            start = at + "AttemptRecord".len();
+            continue;
+        }
+        let mut brace = at + "AttemptRecord".len();
+        while brace < bytes.len() && (bytes[brace] == b' ' || bytes[brace] == b'\t') {
+            brace += 1;
+        }
+        if brace >= bytes.len() || bytes[brace] != b'{' {
+            start = at + "AttemptRecord".len();
+            continue;
+        }
+        let before = code[..at].trim_end();
+        if is_let_pattern(before) || is_item_header(before) {
+            start = at + "AttemptRecord".len();
+            continue;
+        }
+        if code[brace..].contains("=>") {
+            start = at + "AttemptRecord".len();
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+/// Whether `before` (the line up to an `AttemptRecord` token, right-trimmed)
+/// ends a `let` destructure: `let` / `let mut`, including `if let` and
+/// `while let`.
+fn is_let_pattern(before: &str) -> bool {
+    ends_with_keyword(before, &["let mut", "let"])
+}
+
+/// Whether `before` ends an item header that names the type: `impl`,
+/// `impl Trait for`, `struct`.
+fn is_item_header(before: &str) -> bool {
+    ends_with_keyword(before, &["impl", "for", "struct"])
+}
+
+/// Whether `before` ends with one of `keywords` as whole words.
+fn ends_with_keyword(before: &str, keywords: &[&str]) -> bool {
+    keywords.iter().any(|keyword| {
+        before
+            .strip_suffix(*keyword)
+            .is_some_and(|rest| rest.is_empty() || !is_ident_byte(rest.as_bytes()[rest.len() - 1]))
+    })
+}
