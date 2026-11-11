@@ -19,6 +19,7 @@ import {
   MicroSidebar,
   NeedsYou,
   PeopleTable,
+  Place,
   PlaceHead,
   SafelightRoot,
   Sidebar,
@@ -896,74 +897,75 @@ function MicroSidebarAlone({ labels, waiting, specimen }: { labels?: 'none' | 'w
   )
 }
 
-/* The person's companion room in the work area: the head, the day's
-   messages ending at the bottom, two asks in a needs-you card, and the
-   write box. */
+/* The person's companion in the work area, laid out with Place: the head
+   (a PlaceHead), the day's messages ending at the bottom, two asks in a
+   needs-you card, and the write box at the foot. */
 function RoomConversation({ specimen }: { specimen: string }) {
   const [sent, setSent] = React.useState<string[]>([])
   return (
-    <div className="lib-room" data-specimen={specimen}>
-      <PlaceHead icon={<Glyph glyph="wing" label="Eiri" size={24} />} title="eiri" />
-      <div className="lib-room-trunk">
-        <div className="lib-room-messages">
-          <DayDivider>Today</DayDivider>
-          <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:02">
-            <MessageRow.Text>Morning. Two things wait on you. Metryon finished the store pull overnight.</MessageRow.Text>
-            <NeedsYou aria-label="needs you" className="lib-room-asks">
-              <NeedsYou.Group room="acme-forecast">
-                <NeedsYou.Ask
-                  id="promo"
-                  asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
-                  question="Should the fit treat weeks 44 to 46 as promo weeks?"
-                  note="Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline."
-                >
-                  <NeedsYou.Picks>
-                    <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
-                    <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
-                    <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
-                    <NeedsYou.OwnAnswer />
-                  </NeedsYou.Picks>
-                </NeedsYou.Ask>
-              </NeedsYou.Group>
-              <NeedsYou.Group room="the house">
-                <NeedsYou.Ask
-                  id="extracts"
-                  asker={<Glyph glyph="owl" label="Tory" size={20} />}
-                  question="Pull three paid registry extracts?"
-                  note="Buys one extract for each of the three Kobe suppliers at ¥800. Paid from the house card. The files land in # the house."
-                >
-                  <NeedsYou.YesNo figure="¥2,400" />
-                </NeedsYou.Ask>
-              </NeedsYou.Group>
-            </NeedsYou>
+    <Place data-specimen={specimen}>
+      <Place.Head>
+        <PlaceHead icon={<Glyph glyph="wing" label="Eiri" size={24} />} title="eiri" />
+      </Place.Head>
+      <Place.Body>
+        <DayDivider>Today</DayDivider>
+        <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:02">
+          <MessageRow.Text>Morning. Two things wait on you. Metryon finished the store pull overnight.</MessageRow.Text>
+          <NeedsYou aria-label="needs you" className="lib-room-asks">
+            <NeedsYou.Group room="acme-forecast">
+              <NeedsYou.Ask
+                id="promo"
+                asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
+                question="Should the fit treat weeks 44 to 46 as promo weeks?"
+                note="Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline."
+              >
+                <NeedsYou.Picks>
+                  <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
+                  <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
+                  <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
+                  <NeedsYou.OwnAnswer />
+                </NeedsYou.Picks>
+              </NeedsYou.Ask>
+            </NeedsYou.Group>
+            <NeedsYou.Group room="the house">
+              <NeedsYou.Ask
+                id="extracts"
+                asker={<Glyph glyph="owl" label="Tory" size={20} />}
+                question="Pull three paid registry extracts?"
+                note="Buys one extract for each of the three Kobe suppliers at ¥800. Paid from the house card. The files land in # the house."
+              >
+                <NeedsYou.YesNo figure="¥2,400" />
+              </NeedsYou.Ask>
+            </NeedsYou.Group>
+          </NeedsYou>
+        </MessageRow>
+        <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="09:10">
+          <MessageRow.Text>Check the supplier notes against the filings.</MessageRow.Text>
+        </MessageRow>
+        <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:10">
+          <MessageRow.Text>I gave this to Tory.</MessageRow.Text>
+        </MessageRow>
+        {sent.map((text, i) => (
+          <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="just now">
+            <MessageRow.Text>{text}</MessageRow.Text>
           </MessageRow>
-          <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="09:10">
-            <MessageRow.Text>Check the supplier notes against the filings.</MessageRow.Text>
-          </MessageRow>
-          <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:10">
-            <MessageRow.Text>I gave this to Tory.</MessageRow.Text>
-          </MessageRow>
-          {sent.map((text, i) => (
-            <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="just now">
-              <MessageRow.Text>{text}</MessageRow.Text>
-            </MessageRow>
-          ))}
-        </div>
-      </div>
-      <Composer
-        className="lib-room-write"
-        placeholder="Write to eiri"
-        persona={<Composer.Persona initial="o" note="You write as Owen. Saved in your own vault." aria-label="Owen" />}
-        onVoice={() => {}}
-        onDictate={() => {}}
-        onSend={(text) => setSent((s) => [...s.slice(-2), text])}
-      >
-        <Composer.Add label="Add to the message">
-          <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
-          <Menu.Item icon={<Icon name="tool" />}>model and effort</Menu.Item>
-        </Composer.Add>
-      </Composer>
-    </div>
+        ))}
+      </Place.Body>
+      <Place.Foot>
+        <Composer
+          placeholder="Write to eiri"
+          persona={<Composer.Persona initial="o" note="You write as Owen. Saved in your own vault." aria-label="Owen" />}
+          onVoice={() => {}}
+          onDictate={() => {}}
+          onSend={(text) => setSent((s) => [...s.slice(-2), text])}
+        >
+          <Composer.Add label="Add to the message">
+            <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
+            <Menu.Item icon={<Icon name="tool" />}>model and effort</Menu.Item>
+          </Composer.Add>
+        </Composer>
+      </Place.Foot>
+    </Place>
   )
 }
 
