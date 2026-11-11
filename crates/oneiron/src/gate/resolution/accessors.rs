@@ -820,6 +820,20 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// The inquiry row (federation.md #inquiry-keep) this resolution
+    /// carries. A loaded manifest that fails closed reads as unreadable; a
+    /// vault with no manifest has no row.
+    #[must_use]
+    pub(crate) fn inquiry_policy(&self) -> crate::inquiry::InquiryPolicyRead {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return crate::inquiry::InquiryPolicyRead::Unreadable;
+        }
+        match self.inquiry_policy {
+            Some(policy) => crate::inquiry::InquiryPolicyRead::Row(policy),
+            None => crate::inquiry::InquiryPolicyRead::NoRow,
+        }
+    }
+
     #[must_use]
     /// The catastrophe floor row this resolution carries, or the pinned
     /// floor when no trusted manifest names one (DEC-0006 invariant 7). A
