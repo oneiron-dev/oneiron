@@ -27,6 +27,8 @@ import {
   Well,
   type Step,
 } from '~/design-system'
+import { Section, Specimen } from './-gallery-frame'
+import { PatternSections } from './-patterns'
 import galleryCss from './-gallery.css?url'
 
 export const Route = createFileRoute('/library/')({
@@ -41,27 +43,6 @@ export const Route = createFileRoute('/library/')({
 })
 
 /* ── page frame ───────────────────────────────────────────────────────── */
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  const id = `lib-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
-  return (
-    <section className="lib-section" aria-labelledby={id}>
-      <h2 id={id} className="lib-section-head">
-        {title}
-      </h2>
-      <div className="lib-specimens">{children}</div>
-    </section>
-  )
-}
-
-function Specimen({ name, tall, wide, children }: { name: string; tall?: number; wide?: number; children: React.ReactNode }) {
-  return (
-    <figure className="lib-specimen" data-tall={tall} data-wide={wide}>
-      <div className="lib-stage">{children}</div>
-      <figcaption className="lib-caption">{name}</figcaption>
-    </figure>
-  )
-}
 
 /* The theme as three picks, drawn as circles: empty light, half system,
    full dark. Writes the same class on <html> as the app's theme switch. */
@@ -610,6 +591,8 @@ function LibraryPage() {
             <Portrait initial="y" label="Yuki" size="stack" guest />
           </Specimen>
         </Section>
+
+        <PatternSections />
       </Island>
     </SafelightRoot>
   )
