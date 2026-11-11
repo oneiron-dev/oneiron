@@ -760,9 +760,6 @@ fn message_reader<'v>(read: &ScopedRead<'v>) -> Result<ScopedRead<'v>> {
 }
 
 fn reader_key(reader: WriteActor) -> Result<ScopedReadActorKey> {
-    ScopedReadActorKey::with_actor_class(
-        reader.entity_ref().to_hex(),
-        reader.actor_class().gate_actor_class(),
-    )
-    .ok_or_else(|| invalid_consolidation("invalid turn text reader"))
+    ScopedReadActorKey::for_engine_actor(reader)
+        .ok_or_else(|| invalid_consolidation("invalid turn text reader"))
 }

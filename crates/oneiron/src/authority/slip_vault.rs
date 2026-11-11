@@ -863,7 +863,7 @@ impl Vault {
 
     /// Logs `op` under the host root, the owner's own device in a self-host
     /// vault, as an owner's answer to a critical confirm arrives.
-    #[cfg(test)]
+    #[cfg(any(test, oneiron_test_support))]
     pub(crate) fn log_host_op_for_test(
         &self,
         issuer: &HostSlipIssuer,
