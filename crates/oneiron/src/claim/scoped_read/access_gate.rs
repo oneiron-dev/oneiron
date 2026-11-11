@@ -492,6 +492,21 @@ pub(crate) fn relationship_read(
     relationship_read_keyed(store, txn, id, raw, false)
 }
 
+/// [`relationship_read`] under the delegated relationship gate
+/// (`require_relationship_grants`): a MESSAGE or SUMMARY that names neither
+/// a relationship nor a private scope decides readable, and every row that
+/// names one is gated on the reader's grants and memberships. A federation
+/// selector judges its member's labelled rows by it (OPUS-LEAKS,
+/// SELECTOR-RELATIONSHIP-LABELS).
+pub(crate) fn relationship_label_read(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<RelationshipRead> {
+    relationship_read_keyed(store, txn, id, raw, true)
+}
+
 /// The body key an identity row (a kind a tag can mint) keeps the audience
 /// of the words that named it under, when a confirmed provisional entity was
 /// named only in relationship-scoped or private MESSAGEs (OPUS-LEAKS): a map

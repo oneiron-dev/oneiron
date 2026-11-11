@@ -88,6 +88,23 @@ pub(in crate::sync::selector) fn filter_window_doc(
         scope_position,
     )?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
+    // FIX SELECTOR-RELATIONSHIP-LABELS (OPUS-LEAKS): the grant's member
+    // reads a row that names a relationship or a private scope only on its
+    // own live grants and memberships, as its delegated scoped read does. The
+    // vault owner's member reads every row, as the owner does; an owner check
+    // that fails gates.
+    let member_access =
+        if crate::memory::owner_exemption_holds_in_txn(vault, &rtxn, grant.member_ref)
+            .unwrap_or(false)
+        {
+            None
+        } else {
+            Some(crate::access_grant::AccessContext::load(
+                vault,
+                &rtxn,
+                Some(grant.member_ref),
+            )?)
+        };
     // Credentials never leave through a selector, whatever the carrier says, and neither does
     // this vault's embedding setup (OF-370): a peer or a guest keeps its own.
     let mut custody_withheld = BTreeSet::new();
@@ -194,6 +211,14 @@ pub(in crate::sync::selector) fn filter_window_doc(
         {
             return;
         }
+        match member_reads_labels(vault, &rtxn, member_access.as_ref(), &id, blob) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
         match super::super::scope::settled_position_selected(&id, blob, &scope, scope_position) {
             Ok(true) => {}
             Ok(false) => return,
@@ -228,16 +253,20 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 )? {
                     return Ok(false);
                 }
-                Ok(source_selected(
-                    vault,
-                    &rtxn,
-                    (source, raw),
-                    &grant.authority_scope,
-                    selector,
-                    scope_position,
-                    &facet_scope,
-                )? && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, source)?
-                    .is_none())
+                Ok(
+                    member_reads_labels(vault, &rtxn, member_access.as_ref(), source, raw)?
+                        && source_selected(
+                            vault,
+                            &rtxn,
+                            (source, raw),
+                            &grant.authority_scope,
+                            selector,
+                            scope_position,
+                            &facet_scope,
+                        )?
+                        && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, source)?
+                            .is_none(),
+                )
             }) {
                 Ok(true) => {}
                 Ok(false) => return,
@@ -479,4 +508,25 @@ pub(in crate::sync::selector) fn filter_window_doc(
     crate::sync::note::copy_selected(source, &out, &notes)?;
     out.commit();
     Ok(out)
+}
+
+/// Whether the selector's member reads the row `raw` of `id` at the
+/// relationship gate (FIX SELECTOR-RELATIONSHIP-LABELS): `None` is the vault
+/// owner's member, which reads every row. A CLAIM body that does not decode
+/// is withheld, as the causal check withholds it.
+fn member_reads_labels(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    member: Option<&crate::access_grant::AccessContext<'_>>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let Some(member) = member else {
+        return Ok(true);
+    };
+    match crate::claim::relationship_label_read(&vault.store, rtxn, id, raw) {
+        Ok(read) => Ok(read.allowed_by(member)),
+        Err(Error::InvalidClaimBody(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
