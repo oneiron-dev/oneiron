@@ -1,0 +1,292 @@
+/* The /library page: the field around one island, one section per
+   component. Sizes come from the library's tokens only. */
+
+/* The app's body is a fixed-height column that never scrolls; the gallery
+   fills it and scrolls itself, with the field fixed behind. */
+.lib {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--sl-gutter) var(--sl-gutter);
+  scrollbar-width: thin;
+}
+
+/* Bare on the field: the title and the theme picks. */
+.lib-head {
+  position: relative;
+  z-index: var(--sl-z-work);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 18px 6px 16px;
+  color: var(--sl-on-field-ink);
+  text-shadow: var(--sl-on-field-shadow);
+}
+
+.lib-title {
+  font-size: var(--sl-t-place);
+  font-weight: 500;
+  line-height: 1.25;
+  color: inherit;
+}
+
+.lib-theme {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-left: auto;
+}
+
+.lib-theme-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  font-size: var(--sl-t-do);
+  color: inherit;
+}
+
+.lib-theme-pick:hover,
+.lib-theme-pick:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.lib-theme-glyph {
+  display: block;
+  width: 12px;
+  height: 12px;
+  overflow: visible;
+}
+
+.lib-theme-glyph circle,
+.lib-theme-glyph path {
+  stroke: currentColor;
+  stroke-width: 1.3;
+  fill: none;
+}
+
+.lib-theme-glyph path,
+.lib-theme-glyph circle[data-fill] {
+  fill: currentColor;
+}
+
+.lib-theme-pick[aria-pressed="true"] {
+  font-weight: 600;
+}
+
+/* The island: sections down the page. */
+.lib-island {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  padding: 28px 28px 44px;
+}
+
+.lib-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lib-section-head {
+  font-size: var(--sl-t-section);
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--sl-ink-1);
+}
+
+.lib-specimens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 24px 44px;
+}
+
+.lib-specimen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  min-width: 72px;
+}
+
+.lib-specimen[data-wide] {
+  min-width: 280px;
+}
+
+.lib-stage {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* Room below the anchor for an open layer. */
+.lib-specimen[data-tall="1"] .lib-stage {
+  align-items: flex-start;
+  min-height: 84px;
+}
+
+.lib-specimen[data-tall="2"] .lib-stage {
+  align-items: flex-start;
+  min-height: 140px;
+}
+
+.lib-specimen[data-tall="4"] .lib-stage {
+  align-items: flex-start;
+  min-height: 320px;
+  min-width: 320px;
+}
+
+.lib-caption {
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.lib-t-place {
+  font-size: var(--sl-t-place);
+  font-weight: 500;
+  color: var(--sl-ink-1);
+}
+
+.lib-t-section {
+  font-size: var(--sl-t-section);
+  font-weight: 500;
+  color: var(--sl-ink-1);
+}
+
+.lib-t-say {
+  font-size: var(--sl-t-say);
+  color: var(--sl-ink-2);
+}
+
+.lib-t-do {
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.lib-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lib-inline-wide {
+  gap: 18px;
+}
+
+.lib-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.lib-island-host {
+  padding: 14px;
+}
+
+.lib-island-small {
+  display: flex;
+  align-items: flex-end;
+  width: 240px;
+  height: 96px;
+  padding: 12px 14px;
+}
+
+.lib-well {
+  padding: 10px 14px;
+}
+
+.lib-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lib-panel {
+  font-size: var(--sl-t-say);
+  color: var(--sl-ink-2);
+}
+
+.lib-unfold {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.lib-plan {
+  list-style: decimal inside;
+  padding-top: 6px;
+  font-size: var(--sl-t-say);
+  line-height: 1.45;
+  color: var(--sl-ink-2);
+}
+
+.lib-picks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+}
+
+.lib-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.lib-pick:hover,
+.lib-pick:focus-visible,
+.lib-pick[aria-pressed="true"] {
+  color: var(--sl-ink-1);
+}
+
+.lib-crew-pop {
+  width: 420px;
+}
+
+.lib-crew {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 14px;
+  --sl-mark-ground: var(--sl-pop);
+}
+
+.lib-crew-who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.lib-crew-name {
+  font-size: var(--sl-t-section);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--sl-ink-1);
+}
+
+.lib-crew-line {
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+@media (max-width: 760px) {
+  .lib-island {
+    padding: 22px 20px 36px;
+  }
+  .lib-specimens {
+    gap: 20px 28px;
+  }
+  .lib-crew-pop {
+    width: 320px;
+  }
+}
