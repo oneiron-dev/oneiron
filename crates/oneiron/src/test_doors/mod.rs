@@ -11,7 +11,12 @@ pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod consolidation;
 pub mod dag_append;
+pub mod derivation_floor;
+pub mod derive;
+pub mod derive_verbs;
+pub mod dreamer_stage_line;
 pub mod feeds;
+pub mod graph_ask_centre;
 pub mod inquiry;
 pub mod label_writers;
 pub mod lifted_text;
@@ -25,5 +30,14 @@ pub mod skill_read_hold;
 pub mod source_audience;
 pub mod source_audience_binding;
 pub mod spend;
+pub mod steward;
 pub mod untangle_regressions;
 pub mod wake_d1_park_release;
+
+/// Runs the identity-topology reconcile that a replica's sync ingest runs,
+/// over this vault's own ledger: shell edges, redirects and split assignment
+/// rows re-derived from the fold. A test compares what a replica derives
+/// from a history with what the local doors left.
+pub fn reconcile_identity_topology(vault: &crate::Vault) -> crate::error::Result<()> {
+    vault.with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+}

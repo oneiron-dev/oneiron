@@ -1,0 +1,219 @@
+/* The write box: what rides along above, then one sunk bar with the
+   persona, the add menu, the field, the tool icons, the microphone and the
+   one filled button; under the bar, one quiet line. */
+.sl-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  --sl-mark-ground: var(--sl-sunk);
+}
+
+.sl-composer-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-sunk);
+}
+
+.sl-composer-bar:focus-within {
+  background: var(--sl-sunk-focus);
+}
+
+.sl-composer-field-box {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.sl-composer-field {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 7px 8px;
+  border: 0;
+  background: transparent;
+  resize: none;
+  overflow-y: hidden;
+  color: var(--sl-ink-1);
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-say);
+  line-height: 22px;
+}
+
+/* Over the empty field, on the field's first line: one line in any
+   width, a long placeholder ends in an ellipsis. */
+.sl-composer-placeholder {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  left: 8px;
+  overflow: hidden;
+  color: var(--sl-ink-2);
+  font-size: var(--sl-t-say);
+  font-style: italic;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.sl-composer-field:focus {
+  outline: none;
+}
+
+.sl-composer-bar > .sl-icon-action {
+  margin-bottom: 3px;
+}
+
+/* The filled button holds one symbol: an arrow to send, or the voice
+   lines to talk while the field is empty. */
+.sl-composer-send {
+  width: 36px;
+  padding: 0;
+}
+
+.sl-composer-send > .sl-icon {
+  display: block;
+}
+
+/* Under the bar: where the message is kept at the left, the boost at the
+   right, on one line so neither moves the field when the other appears. */
+.sl-composer-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 16px;
+  min-height: 21px;
+  margin-top: -2px;
+  padding: 0 8px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-3);
+}
+
+.sl-composer-boost {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* The persona portrait: a disc with the initial; each persona marks it. */
+.sl-composer-persona {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin: 0 0 3px 2px;
+  border-radius: 50%;
+  font-size: var(--sl-t-do);
+  line-height: 1;
+  color: var(--sl-ink-1);
+}
+
+.sl-composer-persona > span {
+  padding-bottom: 2px;
+}
+
+.sl-composer-persona[data-persona="all"] {
+  background: var(--sl-disc);
+}
+
+.sl-composer-persona[data-persona="work"] {
+  box-shadow: inset 0 0 0 1.5px var(--sl-ink-2);
+}
+
+.sl-composer-persona[data-persona="personal"] {
+  background: var(--sl-disc);
+  box-shadow:
+    0 0 0 2px var(--sl-sunk),
+    0 0 0 3.2px var(--sl-ink-2);
+}
+
+.sl-composer-persona[data-persona="dream"] {
+  border: 1.5px dotted var(--sl-ink-2);
+}
+
+.sl-composer-persona[data-persona="all"]:hover,
+.sl-composer-persona[data-persona="personal"]:hover,
+.sl-composer-persona[aria-expanded="true"][data-persona="all"],
+.sl-composer-persona[aria-expanded="true"][data-persona="personal"] {
+  background: var(--sl-disc-hover);
+}
+
+.sl-composer-persona[data-persona="work"]:hover,
+.sl-composer-persona[data-persona="dream"]:hover,
+.sl-composer-persona[aria-expanded="true"][data-persona="work"],
+.sl-composer-persona[aria-expanded="true"][data-persona="dream"] {
+  background: var(--sl-hover);
+}
+
+/* What rides along: pointers and chips. */
+.sl-composer-carry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sl-composer-carry:empty {
+  display: none;
+}
+
+.sl-composer-pointer {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 0 3px;
+  color: var(--sl-ink-2);
+}
+
+.sl-composer-pointer-who {
+  flex: none;
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+}
+
+.sl-composer-pointer-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--sl-t-do);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sl-composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-sunk);
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-1);
+}
+
+.sl-composer-chip > .sl-icon {
+  color: var(--sl-ink-2);
+}
+
+.sl-composer-remove {
+  display: inline-grid;
+  place-items: center;
+  align-self: center;
+  padding: 0 6px;
+  color: var(--sl-ink-2);
+}
+
+.sl-composer-remove:hover,
+.sl-composer-remove:focus-visible {
+  color: var(--sl-ink-1);
+}
