@@ -10,9 +10,9 @@ use crate::claim::ClaimSubject;
 use crate::error::Result;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL, ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
-    ENTITY_TYPE_SKILL_HUB,
+    ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_FACET,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SKILL_HUB,
 };
 use crate::vault::{LiveEntityRow, Vault, live_entity_row_in_txn};
 
@@ -106,6 +106,30 @@ impl Vault {
             (Ok(byte), Ok(id)) => Some((byte, id)),
             _ => None,
         };
+        // Root creation projects one home room. Its id derives from the
+        // minted root, but only its exact initial body is bootstrap content:
+        // a changed roster, scope, or any extra field is a non-seed row.
+        let root_room = if let Some((_, project)) = root
+            && let Some(leader) = crate::workspace_roster::seeded_house_agent()?
+        {
+            let id = EntityId::derive(
+                crate::entity_id::derived_domains::PROJECT_HOME_ROOM,
+                &[project.as_bytes()],
+            )?;
+            let room = crate::workspace_roster::ProjectRoom {
+                schema_version: 1,
+                kind: "channel".into(),
+                project_id: project.to_hex(),
+                member_ids: vec![leader.to_hex()],
+                claims_scope_ref: project.to_hex(),
+                origin: None,
+            };
+            let body = rmp_serde::to_vec_named(&room)
+                .map_err(|_| crate::Error::InvariantViolation("seeded root room encode"))?;
+            Some((id, body))
+        } else {
+            None
+        };
         const PAGE: usize = 1024;
         let txn = self.store.env.read_txn()?;
         for byte in 0..=u8::MAX {
@@ -126,6 +150,13 @@ impl Vault {
                         && (entity_type != ENTITY_TYPE_AGENT_DEF
                             || crate::agent_def::seeded_row_matches_manifest(&id, &body));
                     if seeded || root == Some((entity_type, id)) {
+                        continue;
+                    }
+                    if entity_type == ENTITY_TYPE_CONVERSATION
+                        && root_room
+                            .as_ref()
+                            .is_some_and(|(room, expected)| id == *room && body == *expected)
+                    {
                         continue;
                     }
                     if entity_type == ENTITY_TYPE_CLAIM && seeded_claim(&body, &skills, &anchors) {
