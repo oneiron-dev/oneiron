@@ -42,17 +42,20 @@ pub(crate) struct ContextBoardRoomControls {
 
 /// Where the ROOM rows this board rendered sit in the room's whole stream
 /// (FIX 9746, 9747): its members in the room record's order (FIX 10567),
-/// then its rules by claim id.
+/// then its rules by claim id, then its shared pins by target id.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardRoomPage {
     /// Members on the room's whole roster.
     roster_total: u64,
     /// Rules the caller reads in the room, on every page together.
     rules_total: u64,
+    /// The room's shared pins the caller sees, on every page together (ROOM-SCOPED-PINS);
+    /// a pin whose target the caller does not read is not counted.
+    pins_total: u64,
     /// Pass as `room.cursor` for the room's next page; absent once `end`.
     #[serde(skip_serializing_if = "Option::is_none")]
     next_cursor: Option<String>,
-    /// No member or rule of the room is past this page.
+    /// No member, rule or pin of the room is past this page.
     end: bool,
 }
 
@@ -147,7 +150,7 @@ impl BoardTargets {
 }
 
 /// The caller's entity principal and declared class, when it has both.
-fn board_actor(auth: &CoreAuth) -> Option<(EntityId, oneiron::EdgeActorClass)> {
+pub(super) fn board_actor(auth: &CoreAuth) -> Option<(EntityId, oneiron::EdgeActorClass)> {
     let actor = EntityId::from_hex(auth.principal_ref()?).ok()?;
     let class = match auth.actor_class()? {
         "human" => oneiron::EdgeActorClass::Human,
@@ -333,6 +336,7 @@ pub(super) fn board_parts(
     let room_page = room.as_ref().map(|page| ContextBoardRoomPage {
         roster_total: page.roster_total,
         rules_total: page.rules_total,
+        pins_total: page.pins_total,
         next_cursor: page.next_cursor.clone(),
         end: page.end,
     });
@@ -819,7 +823,7 @@ fn project_row(
 
 /// A refusal the caller's own request earned: a room it does not sit in, an
 /// unknown id, a wrong root.
-fn caller_fault(error: &MemoryError) -> bool {
+pub(super) fn caller_fault(error: &MemoryError) -> bool {
     matches!(
         error.code.as_str(),
         oneiron::memory::MEMORY_CODE_BAD_REQUEST
@@ -828,7 +832,11 @@ fn caller_fault(error: &MemoryError) -> bool {
     )
 }
 
-fn board_memory_error(context: &'static str, field: &str, error: MemoryError) -> ApiError {
+pub(super) fn board_memory_error(
+    context: &'static str,
+    field: &str,
+    error: MemoryError,
+) -> ApiError {
     if caller_fault(&error) {
         return ApiError::bad_request(error.message, Some(field));
     }
