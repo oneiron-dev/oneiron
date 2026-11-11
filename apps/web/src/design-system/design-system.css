@@ -6,6 +6,7 @@
 @import './ground/Island.css';
 @import './ground/Well.css';
 @import './ground/WindowGround.css';
+@import './ground/SceneSheet.css';
 
 @import './primitives/Icon.css';
 @import './primitives/Figure.css';
