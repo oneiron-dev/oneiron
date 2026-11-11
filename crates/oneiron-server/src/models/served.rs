@@ -21,7 +21,8 @@ pub(super) fn record_served_model(usage: Option<&mut JsonValue>, served: Option<
 /// The receipt a ladder leaves on every answer: which rung served it, how
 /// many rungs were tried and failed before it, each rung it passed over and
 /// why (an offer refused for a limit names its class and the end of its
-/// cooldown), and what the provider called the model, beside the provider's
+/// cooldown), what the provider called the model, and the engine id of the
+/// rung that answered when the receipt knows it, beside the provider's
 /// own usage.
 pub(super) fn served_receipt(
     provider: &str,
@@ -30,11 +31,15 @@ pub(super) fn served_receipt(
     failed_rungs: usize,
     passed_over: JsonValue,
     raw_provider: JsonValue,
+    model_id: Option<&str>,
 ) -> JsonValue {
     let reported = raw_provider.get(SERVED_MODEL_KEY).cloned();
     let mut receipt = Map::new();
     receipt.insert(LlmUsage::SERVED_PROVIDER_KEY.into(), provider.into());
     receipt.insert("requested_model".into(), requested.into());
+    if let Some(model_id) = model_id {
+        receipt.insert(LlmUsage::SERVED_MODEL_ID_KEY.into(), model_id.into());
+    }
     receipt.insert("rung".into(), rung.into());
     receipt.insert(FAILED_RUNGS_KEY.into(), failed_rungs.into());
     if passed_over
