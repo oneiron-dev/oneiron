@@ -20,6 +20,7 @@ mod uniffi;
 use std::ops::Index;
 use std::path::PathBuf;
 
+use crate::facade_types::Inventory;
 use crate::py::value::{Dict, Value};
 
 /// Port of generate.py:66 (SESSION_READS).
@@ -139,7 +140,12 @@ pub(crate) struct Generator {
     pub(crate) schema_rows: Vec<RowId>,
     /// `FACADE_ROWS`.
     pub(crate) facade_rows: Vec<RowId>,
-    // `INVENTORY` (generate.py:343): G1b adds the field and builds it in `Generator::new` at its place.
+    /// facade_types.py's `TYPE_NAMES` (read once, at the import's place): every `Inventory` is built over it, as
+    /// catalog_fragment's second one reads the same module global.
+    pub(crate) type_names: Value,
+    /// `INVENTORY` (generate.py:343). `None` only from `Generator::rows_only` (the rows harness, where Python's
+    /// stub builds none); the emitters run on `Generator::new`'s.
+    pub(crate) inventory: Option<Inventory>,
 }
 
 impl Generator {
