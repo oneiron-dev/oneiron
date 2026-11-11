@@ -13,6 +13,7 @@
 //! filters, source finality and deletion apply to each row.
 
 mod evidence_spans;
+mod policy_preflight;
 mod run_reader;
 mod settings_doors;
 mod skill_reader;
@@ -24,6 +25,10 @@ pub use evidence_spans::{
     EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES, EVIDENCE_SPANS_MAX_RANGES, EvidenceMessageSlice,
     EvidenceRange, EvidenceSourceStatus, EvidenceSpan, EvidenceSpans, EvidenceSpansRequest,
     evidence_spans, validate_evidence_spans,
+};
+pub use policy_preflight::{
+    POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
+    PolicyPreflightRequest, policy_preflight, validate_policy_preflight,
 };
 pub use run_reader::{
     checkpoint_as_reader, checkpoint_embedded, settled_step_as_reader, settled_step_embedded,
