@@ -4551,33 +4551,49 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
       checkerBaseValue, checkerHeldValue, checkerFreeValue);
     const scope = await ownerBaseClaimScope(engine.client, ownerRef);
 
-    // Public setup: one witnessed person as the claim subject, as in GATE-09.
+    // One witnessed TURN per speaker run. The user's TURN is identity
+    // evidence; the companion's TURN supports Generated/Inferred claims.
     const conversation = await engine.client.call("vault.conversations.create", {
       body: {}, occurred_start: museGate08OccurredAt,
       occurred_end: museGate08OccurredAt, learned_at: museGate08OccurredAt,
     } satisfies FacadeInput<"vault.conversations.create">);
-    const witness = await engine.client.call("vault.witness", {
+    stage = "user identity witness and readback";
+    const userWitness = await engine.client.call("vault.witness", {
       conversation_ref: conversation.id,
       occurred_at: museGate08OccurredAt,
       messages: [{
         author: "user", message_type: "text",
         content: `This distinct person is ${personName}.`,
         is_visible: true, order: 0,
-      }, {
-        author: "companion", message_type: "text",
-        content: `Generated disagreement: the person's preferred display name is ${generatedValue}. ${inferredValue}`,
-        is_visible: true, order: 1,
       }],
     } satisfies FacadeInput<"vault.witness">);
-    const turn = await engine.client.call("vault.get", {
-      entity_ref: witness.turn_short_id,
+    const userTurn = await engine.client.call("vault.get", {
+      entity_ref: userWitness.turn_short_id,
     } satisfies FacadeInput<"vault.get">);
-    if (turn.value?.kind !== "TURN" || !turn.value.id_hex) {
-      throw new Error("MUSE-GATE-08 witnessed TURN missing");
+    if (userTurn.value?.kind !== "TURN" || !userTurn.value.id_hex) {
+      throw new Error("MUSE-GATE-08 user identity TURN missing");
     }
+    stage = "companion conclusion witness and readback";
+    const companionWitness = await engine.client.call("vault.witness", {
+      conversation_ref: conversation.id,
+      occurred_at: museGate08OccurredAt,
+      messages: [{
+        author: "companion", message_type: "text",
+        content: `Generated disagreement: the person's preferred display name is ${generatedValue}. ${inferredValue}`,
+        is_visible: true, order: 0,
+      }],
+    } satisfies FacadeInput<"vault.witness">);
+    const companionTurn = await engine.client.call("vault.get", {
+      entity_ref: companionWitness.turn_short_id,
+    } satisfies FacadeInput<"vault.get">);
+    if (companionTurn.value?.kind !== "TURN" || !companionTurn.value.id_hex) {
+      throw new Error("MUSE-GATE-08 companion conclusion TURN missing");
+    }
+    expect(companionTurn.value.id_hex).not.toBe(userTurn.value.id_hex);
+    stage = "person identity creation and readback";
     const created = await engine.client.call("vault.people.create", {
       identity: { name: personName },
-      identity_evidence_refs: [turn.value.id_hex],
+      identity_evidence_refs: [userTurn.value.id_hex],
       occurred_at: museGate08OccurredAt,
     } satisfies FacadeInput<"vault.people.create">);
     const subjectRef = created.person.id_hex;
@@ -4648,15 +4664,20 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
       claims: [{
         predicate: museGate08Predicate, subject_ref: subjectRef, value: generatedValue,
         confidence: 1, source: "generated", scope, occurred_at: museGate08OccurredAt,
-        evidence_turn_refs: [turn.value.id_hex],
+        evidence_turn_refs: [companionTurn.value.id_hex],
       }],
     } satisfies FacadeInput<"vault.commit">);
     expect(generatedOutcomes).toHaveLength(1);
     const generatedOutcome = generatedOutcomes[0];
     if (!generatedOutcome || generatedOutcome.outcome !== "landed") {
-      throw new Error(
-        `MUSE-GATE-08 ENGINE DEFECT 2026-11-11: P-GATE-025 requires the evidence-backed generated disagreement to land Proposed beside the user's claim; the auto-supersede path instead requires the prior user's authorship (memory/authorship.rs:114-153); stage=${stage}; outcome=${JSON.stringify(generatedOutcome)}`,
-      );
+      if (generatedOutcome?.outcome === "refused"
+        && generatedOutcome.refusal.code === "FORBIDDEN"
+        && generatedOutcome.refusal.message.includes("self-Grant never replaces another author's claim")) {
+        throw new Error(
+          `MUSE-GATE-08 ENGINE DEFECT 2026-11-11: P-GATE-025 requires the evidence-backed generated disagreement to land Proposed beside the user's claim; the auto-supersede path instead requires the prior user's authorship (memory/authorship.rs:114-153); stage=${stage}; outcome=${JSON.stringify(generatedOutcome)}`,
+        );
+      }
+      throw new Error(`MUSE-GATE-08 ${stage}: expected a landed Proposed disagreement; outcome=${JSON.stringify(generatedOutcome)}`);
     }
     expect(museGate08IsProposed(generatedOutcome.approval)).toBe(true);
     expect(generatedOutcome.superseded_short_id ?? null).toBeNull();
@@ -4730,7 +4751,7 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
     const inferredWrite = await agent.client.call("vault.claims.upsert", {
       predicate: museGate08InferredPredicate, subject_ref: ownerRef, value: inferredValue,
       confidence: 0.99, source: "inferred", scope, occurred_at: museGate08OccurredAt,
-      evidence_turn_refs: [turn.value.id_hex],
+      evidence_turn_refs: [companionTurn.value.id_hex],
     } satisfies FacadeInput<"vault.claims.upsert">);
     await engine.awaitReceipt(inferredWrite.receipt_ref);
     const museGate08ReadInferred = async (): Promise<MuseGate08ClaimRow> =>
