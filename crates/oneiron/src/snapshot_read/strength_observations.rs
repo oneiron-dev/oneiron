@@ -188,20 +188,35 @@ fn observation_reader_scope_in_txn(
         owner.revalidate_as_vault_owner_in_txn(vault, txn)?;
         return Ok(None);
     }
-    let base = holds_system_agent_grant(memory.actor());
-    match steward_reach_in(&vault.store, txn, memory.actor())? {
-        Some(reach)
-            if reach.verbs.contains(grant_scope::STEWARD_READ_VERB)
-                && (!base || vault.system_agent_binding_live_in(txn, memory.actor())?) =>
-        {
-            Ok(Some(reach.scope))
-        }
-        None if base => Ok(None),
-        _ => Err(MemoryError::new(
+    match observation_reader_scope_for_actor_in_txn(vault, txn, memory.actor())? {
+        Some(scope) => Ok(scope),
+        None => Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "strength observations read for the owner under its proof or a live Steward reader",
             &[],
         )),
+    }
+}
+
+/// A non-owner actor's record scope in `txn`: the standing reach's scope
+/// with `read` and, for a base agent, a live MACHINE binding; the whole
+/// vault for a base agent with no row; else no read reach. `None` is no
+/// read, `Some(None)` the whole vault, `Some(Some)` the grant's scope.
+pub(crate) fn observation_reader_scope_for_actor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<Option<Option<Scope>>> {
+    let base = holds_system_agent_grant(actor);
+    match steward_reach_in(&vault.store, txn, actor)? {
+        Some(reach)
+            if reach.verbs.contains(grant_scope::STEWARD_READ_VERB)
+                && (!base || vault.system_agent_binding_live_in(txn, actor)?) =>
+        {
+            Ok(Some(Some(reach.scope)))
+        }
+        None if base => Ok(Some(None)),
+        _ => Ok(None),
     }
 }
 
@@ -236,35 +251,8 @@ fn observed_claim_in_txn(
     {
         return Ok(None);
     }
-    let mut sources = Vec::with_capacity(observations.sources.len());
-    let mut status = ObservedClaimStatus::Current;
-    for source in &observations.sources {
-        let raw = if observation_record_reached_in_txn(vault, txn, scope, source.source)? {
-            read.entity_raw_live_in(txn, &source.source)?
-        } else {
-            None
-        };
-        let served = match raw {
-            None => {
-                status = ObservedClaimStatus::Withheld;
-                ObservedSource::Withheld
-            }
-            Some(raw) if *blake3::hash(&raw).as_bytes() == source.revision => {
-                ObservedSource::Current {
-                    source: source.source.to_hex(),
-                }
-            }
-            Some(_) => {
-                if status != ObservedClaimStatus::Withheld {
-                    status = ObservedClaimStatus::Moved;
-                }
-                ObservedSource::Moved {
-                    source: source.source.to_hex(),
-                }
-            }
-        };
-        sources.push(served);
-    }
+    let (status, sources) =
+        classify_observation_sources_in_txn(vault, txn, read, scope, &observations)?;
     let current = status == ObservedClaimStatus::Current;
     let signals = current.then(|| {
         let diversity: BTreeSet<_> = observations
@@ -298,6 +286,48 @@ fn observed_claim_in_txn(
         signals,
         pin,
     }))
+}
+
+/// Each stored source as the caller reads it now: current at its observed
+/// revision, moved, or withheld with no id or detail. Withheld dominates
+/// moved. The page and the archive item judge by this one helper.
+pub(crate) fn classify_observation_sources_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    read: &ScopedRead<'_>,
+    scope: Option<&Scope>,
+    observations: &StrengthObservations,
+) -> Result<(ObservedClaimStatus, Vec<ObservedSource>)> {
+    let mut sources = Vec::with_capacity(observations.sources.len());
+    let mut status = ObservedClaimStatus::Current;
+    for source in &observations.sources {
+        let raw = if observation_record_reached_in_txn(vault, txn, scope, source.source)? {
+            read.entity_raw_live_in(txn, &source.source)?
+        } else {
+            None
+        };
+        let served = match raw {
+            None => {
+                status = ObservedClaimStatus::Withheld;
+                ObservedSource::Withheld
+            }
+            Some(raw) if *blake3::hash(&raw).as_bytes() == source.revision => {
+                ObservedSource::Current {
+                    source: source.source.to_hex(),
+                }
+            }
+            Some(_) => {
+                if status != ObservedClaimStatus::Withheld {
+                    status = ObservedClaimStatus::Moved;
+                }
+                ObservedSource::Moved {
+                    source: source.source.to_hex(),
+                }
+            }
+        };
+        sources.push(served);
+    }
+    Ok((status, sources))
 }
 
 fn observation_cursor_key(cursor: Option<&str>) -> MemoryResult<Option<EntityId>> {

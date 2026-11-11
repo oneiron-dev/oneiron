@@ -103,6 +103,28 @@ pub(crate) struct DeriveAllowance {
     pub(crate) grant_ref: String,
 }
 
+/// What `actor` was judged by in `txn`, for a receipt's grant field: the
+/// newest standing Steward grant row's id once one stands, else
+/// [`super::dreamer_grant::DREAMER_LANDING_ROWS_REF`] for a base agent whose
+/// policy rows still stand, else none for any other actor with no reach.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn derive_grant_ref_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<Option<String>> {
+    match crate::federation::steward_reach_in(store, txn, actor)? {
+        Some(reach) => Ok(Some(reach.grant.to_hex())),
+        None if crate::federation::holds_system_agent_grant(actor) => Ok(Some(
+            super::dreamer_grant::DREAMER_LANDING_ROWS_REF.to_owned(),
+        )),
+        None => Ok(None),
+    }
+}
+
 /// Judges whether `actor` may do `capability` to `target` in `txn` now.
 /// `target` is the record the item changes (the claim it settles or
 /// archives, the person an artifact is about); `None` for an item with no
@@ -132,6 +154,9 @@ pub(crate) fn derive_verdict_in_txn(
         {
             return Ok(Err(DeriveRefusal::OutsideGrant));
         }
+        // A base agent with no row names its landing rows, as
+        // `derive_grant_ref_in_txn` does. An item with no target allowed to
+        // an actor with no reach names them too.
         None => super::dreamer_grant::DREAMER_LANDING_ROWS_REF.to_owned(),
         // Every standing row decides, never the newest alone: the verbs are
         // those each row gives, the scope is the meet of the rows' scopes,

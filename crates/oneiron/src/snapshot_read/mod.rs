@@ -52,6 +52,9 @@ pub use strength_observations::{
     ObservedClaim, ObservedClaimStatus, ObservedSignals, ObservedSource, StrengthObservationsPage,
     StrengthObservationsPageRequest, strength_observations_page,
 };
+pub(crate) use strength_observations::{
+    classify_observation_sources_in_txn, observation_reader_scope_for_actor_in_txn,
+};
 // The integration tests' doors name a cited source's version as a caller's
 // read serves it (untangle 6.7a).
 #[cfg(oneiron_test_support)]
