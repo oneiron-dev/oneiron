@@ -283,6 +283,12 @@ const OUTSIDE: &[Pin] = &[
         "scope summary text",
     ),
     pin(
+        "crates/oneiron/src/dreamer_runner/maintenance/seal_checks.rs",
+        "trait SealChecker",
+        "pub trait SealChecker {",
+        "seal checks: host decides each objective through the decision ladder on an independent provider",
+    ),
+    pin(
         "crates/oneiron/src/engine_executor/repl.rs",
         "generate",
         "let response = self.backend.generate(request, self.lease).await?;",
