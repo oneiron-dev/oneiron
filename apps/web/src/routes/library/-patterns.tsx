@@ -25,6 +25,8 @@ import {
   Verb,
   formatElapsed,
   type ComposerPersonaKind,
+  type NeedsYouAnswerRecord,
+  type NeedsYouAnswers,
   type ComposerTools,
   type RunSubState,
   type Step,
@@ -36,186 +38,100 @@ import { Section, Specimen } from './-gallery-frame'
 
 /* ── needs you ────────────────────────────────────────────────────────── */
 
-const SALES_ROWS: Array<[string, string, string]> = [
-  ['store 104', '44', '1.38'],
-  ['store 117', '44', '1.21'],
-  ['store 131', '45', '0.97'],
-]
+const PROMO_NOTE = 'Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline.'
+const EXTRACTS_NOTE = 'Buys one extract for each of the three Kobe suppliers at ¥800. Paid from the house card. The files land in # the house.'
 
-function SalesPicture() {
-  return (
-    <LedgerTable aria-label="Acme store sales, the stores in question" className="lib-mini-ledger">
-      <LedgerTable.Head>
-        <LedgerTable.Cell>Store</LedgerTable.Cell>
-        <LedgerTable.Cell numeric>Week</LedgerTable.Cell>
-        <LedgerTable.Cell numeric>Units, thousands</LedgerTable.Cell>
-      </LedgerTable.Head>
-      {SALES_ROWS.map(([store, week, units]) => (
-        <LedgerTable.Row key={store}>
-          <LedgerTable.Cell>{store}</LedgerTable.Cell>
-          <LedgerTable.Cell numeric>{week}</LedgerTable.Cell>
-          <LedgerTable.Cell numeric>{units}</LedgerTable.Cell>
-        </LedgerTable.Row>
-      ))}
-    </LedgerTable>
-  )
-}
+/* An answer given earlier this morning: the record line, no undo. */
+const STORES_ANSWER: NeedsYouAnswerRecord = { value: 'drop', word: 'drop them', mark: 'pick', time: '09:14' }
 
-interface AskFixture {
-  id: string
-  asker: React.ReactNode
-  question: string
-  urgency?: { reason: string; deadline?: string }
-  body: React.ReactNode
-}
-
-const ASKS: AskFixture[] = [
-  {
-    id: 'promo',
-    asker: <Glyph glyph="ruler" label="Metryon" size={18} />,
-    question: 'Should the fit treat weeks 44 to 46 as promo weeks?',
-    urgency: { reason: 'blocks the fit' },
-    body: (
-      <NeedsYou.Picks>
-        <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
-        <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
-        <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
-        <NeedsYou.OwnAnswer />
-        <NeedsYou.Later />
-      </NeedsYou.Picks>
-    ),
-  },
-  {
-    id: 'stores',
-    asker: <Glyph initial="y" label="Yuki" size={18} guest />,
-    question: 'Edit Acme store sales: drop the 12 stores that close in November',
-    urgency: { reason: 'due Friday', deadline: '17:00' },
-    body: (
-      <>
-        <NeedsYou.Context>
-          <SalesPicture />
-        </NeedsYou.Context>
-        <NeedsYou.Picks>
-          <NeedsYou.Pick value="accept" word="accepted">
-            accept
-          </NeedsYou.Pick>
-          <NeedsYou.Pick value="decline" word="declined" tone="consent">
-            decline
-          </NeedsYou.Pick>
-          <NeedsYou.OwnAnswer />
-          <NeedsYou.Later />
-        </NeedsYou.Picks>
-      </>
-    ),
-  },
-  {
-    id: 'extracts',
-    asker: <Glyph glyph="owl" label="Tory" size={18} />,
-    question: 'Pull paid registry extracts at ¥800 each?',
-    body: (
-      <>
-        <NeedsYou.Command>Pull the paid extracts for the three Hokuei suppliers, ¥800 each.</NeedsYou.Command>
-        <NeedsYou.Picks>
-          <NeedsYou.Pick value="allow" word="allowed once">
-            allow once
-          </NeedsYou.Pick>
-          <NeedsYou.Pick value="deny" word="denied" tone="consent">
-            deny
-          </NeedsYou.Pick>
-          <NeedsYou.OwnAnswer />
-          <NeedsYou.Later />
-        </NeedsYou.Picks>
-      </>
-    ),
-  },
-  {
-    id: 'join',
-    asker: <Glyph glyph="wing" label="Eiri" size={18} />,
-    question: 'Join # hokuei pilot for up to a tenth of her week',
-    body: (
-      <>
-        <NeedsYou.Plan>
-          <NeedsYou.Step>read the Hokuei email map</NeedsYou.Step>
-          <NeedsYou.Step>draft two openers for the COO</NeedsYou.Step>
-          <NeedsYou.Step>send the one you pick through Yuki</NeedsYou.Step>
-          <NeedsYou.Step>log each send in the thread</NeedsYou.Step>
-          <NeedsYou.Step>stop at a tenth of the week</NeedsYou.Step>
-        </NeedsYou.Plan>
-        <NeedsYou.Picks>
-          <NeedsYou.Pick value="allow" word="let in">
-            let in
-          </NeedsYou.Pick>
-          <NeedsYou.Pick value="deny" word="not let in" tone="consent">
-            no
-          </NeedsYou.Pick>
-          <NeedsYou.Later />
-        </NeedsYou.Picks>
-      </>
-    ),
-  },
-  {
-    id: 'dip',
-    asker: <Glyph glyph="laurel" label="Antevon" size={18} />,
-    question: 'Acme’s week 44 dip comes back every year',
-    body: (
-      <NeedsYou.Picks>
-        <NeedsYou.Pick value="accept" word="accepted">
-          accept
-        </NeedsYou.Pick>
-        <NeedsYou.Pick value="reject" word="rejected" tone="consent">
-          reject
-        </NeedsYou.Pick>
-        <NeedsYou.OwnAnswer placeholder="What is true instead" />
-        <NeedsYou.Later />
-      </NeedsYou.Picks>
-    ),
-  },
-]
-
-function NeedsYouDemo() {
-  const [gone, setGone] = React.useState<string[]>([])
-  const [log, setLog] = React.useState('Nothing settled yet.')
+/* Two rooms' asks: a pick ask and an answered one, a yes-or-no ask with a
+   figure and one set aside (held here, controlled). */
+function AsksBlock({ answers, specimen }: { answers: NeedsYouAnswers; specimen: string }) {
   const [round, setRound] = React.useState(0)
-  /* Set aside, held here (controlled): one item starts aside. */
-  const [aside, setAside] = React.useState<string[]>(['dip'])
-  const asks = ASKS.filter((a) => !gone.includes(a.id))
+  const [log, setLog] = React.useState<string[]>([])
+  const [aside, setAside] = React.useState<string[]>(['join'])
+  const [waiting, setWaiting] = React.useState(2)
+  const say = (line: string) => setLog((l) => [...l.slice(-2), line])
   return (
-    <div className="lib-stack">
-      {asks.length ? (
-        <NeedsYou
-          key={round}
-          aria-label="needs you in # acme-forecast"
-          data-specimen="needs-you"
-          onSettle={(id, value) => {
-            setGone((g) => [...g, id])
-            setLog(`${id}: ${value}`)
-          }}
-          onLater={(id) => setLog(`${id}: set aside`)}
-        >
-          {asks.map((a) => (
-            <NeedsYou.Item
-              key={a.id}
-              id={a.id}
-              asker={a.asker}
-              question={a.question}
-              urgency={a.urgency}
-              setAside={aside.includes(a.id)}
-              onSetAsideChange={(on) => setAside((l) => (on ? [...l, a.id] : l.filter((x) => x !== a.id)))}
-            >
-              {a.body}
-            </NeedsYou.Item>
-          ))}
-        </NeedsYou>
-      ) : null}
+    <div className="lib-stack lib-asks" data-specimen={specimen}>
+      <NeedsYou
+        key={round}
+        answers={answers}
+        aria-label="needs you, from two rooms"
+        onAnswerChange={(id, answer) => {
+          setWaiting((n) => n + (answer ? -1 : 1))
+          say(answer ? `${id}: ${answer.word}` : `${id}: undone`)
+        }}
+        onSettle={(id, value) => say(`${id} stands: ${value}`)}
+        onLater={(id) => say(`${id}: set aside`)}
+      >
+        <NeedsYou.Group room="acme-forecast">
+          <NeedsYou.Ask
+            id="promo"
+            asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
+            question="Should the fit treat weeks 44 to 46 as promo weeks?"
+            note={PROMO_NOTE}
+            onOpen={() => say('promo: opened beside the room')}
+          >
+            <NeedsYou.Picks>
+              <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
+              <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
+              <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
+              <NeedsYou.OwnAnswer />
+            </NeedsYou.Picks>
+          </NeedsYou.Ask>
+          <NeedsYou.Ask
+            id="stores"
+            asker={<Glyph initial="y" label="Yuki" size={20} guest />}
+            question="Edit Acme store sales: drop the 12 stores that close in November?"
+            note="Yuki proposes the edit from Acme’s vault. The old rows stay in the ledger."
+            defaultAnswer={STORES_ANSWER}
+          >
+            <NeedsYou.Picks>
+              <NeedsYou.Pick value="drop" word="drop them">
+                drop them
+              </NeedsYou.Pick>
+              <NeedsYou.Pick value="keep" word="keep them">
+                keep them
+              </NeedsYou.Pick>
+              <NeedsYou.OwnAnswer />
+            </NeedsYou.Picks>
+          </NeedsYou.Ask>
+        </NeedsYou.Group>
+        <NeedsYou.Group room="the house">
+          <NeedsYou.Ask
+            id="extracts"
+            asker={<Glyph glyph="owl" label="Tory" size={20} />}
+            question="Pull three paid registry extracts?"
+            note={EXTRACTS_NOTE}
+            onOpen={() => say('extracts: opened beside the room')}
+          >
+            <NeedsYou.YesNo figure="¥2,400" />
+          </NeedsYou.Ask>
+          <NeedsYou.Ask
+            id="join"
+            asker={<Glyph glyph="wing" label="Eiri" size={20} />}
+            question="Join # hokuei pilot for up to a tenth of my week?"
+            note="Reads the Hokuei email map, drafts two openers for the COO, and stops at a tenth of the week."
+            setAside={aside.includes('join')}
+            onSetAsideChange={(on) => setAside((l) => (on ? [...l, 'join'] : l.filter((x) => x !== 'join')))}
+          >
+            <NeedsYou.YesNo yesWord="let in" noWord="not let in" yesLabel="Let in" noLabel="No" />
+          </NeedsYou.Ask>
+        </NeedsYou.Group>
+      </NeedsYou>
       <span className="lib-readout">
-        <span>{log}</span>
-        <span data-specimen="needs-you-aside">set aside: {aside.join(', ') || 'none'}</span>
+        <span data-specimen={`${specimen}-log`}>{log.length ? log.join(', ') : 'Nothing answered yet.'}</span>
+        <span>
+          waiting <Figure data-specimen={`${specimen}-waiting`}>{waiting}</Figure>
+        </span>
+        <span data-specimen={`${specimen}-aside`}>set aside: {aside.join(', ') || 'none'}</span>
         <Verb
           onClick={() => {
-            setGone([])
-            setAside(['dip'])
+            setAside(['join'])
+            setWaiting(2)
+            setLog([])
             setRound((r) => r + 1)
-            setLog('Nothing settled yet.')
           }}
         >
           bring them back
@@ -434,26 +350,24 @@ function CrewDemo({ open }: { open?: boolean }) {
           <Popover.Content align="end" offset={10} className="lib-crew-pop" aria-label="Metryon">
             <CrewPopoverHead glyph="ruler" name="Metryon" line="fitting the Q4 forecast for Acme" />
             <NeedsYou ground="bare" aria-label="Metryon’s asks">
-              <NeedsYou.Item
+              <NeedsYou.Ask
                 id="pop-promo"
-                asker={<Glyph glyph="ruler" label="Metryon" size={18} />}
+                asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
                 question="Should the fit treat weeks 44 to 46 as promo weeks?"
-                urgency={{ reason: 'blocks the fit' }}
+                note={PROMO_NOTE}
               >
                 <NeedsYou.Picks>
                   <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
                   <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
                   <NeedsYou.OwnAnswer />
-                  <NeedsYou.Later />
                 </NeedsYou.Picks>
-              </NeedsYou.Item>
-              <NeedsYou.Item id="pop-band" asker={<Glyph glyph="ruler" label="Metryon" size={18} />} question="How should I split the Q4 band?">
+              </NeedsYou.Ask>
+              <NeedsYou.Ask id="pop-band" asker={<Glyph glyph="ruler" label="Metryon" size={20} />} question="How should I split the Q4 band?">
                 <NeedsYou.Picks>
                   <NeedsYou.Pick value="supplier">by supplier</NeedsYou.Pick>
                   <NeedsYou.Pick value="region">by region</NeedsYou.Pick>
-                  <NeedsYou.Later />
                 </NeedsYou.Picks>
-              </NeedsYou.Item>
+              </NeedsYou.Ask>
             </NeedsYou>
           </Popover.Content>
         </Popover>
@@ -891,8 +805,11 @@ export function PatternSections() {
   return (
     <>
       <Section title="NeedsYou">
-        <Specimen name="in a room: the first open, picks apply with undo, the next opens; later sets an item aside as one quiet line, answer now brings it back" full>
-          <NeedsYouDemo />
+        <Specimen name="chips: asks grouped by room; a pick or a yes answers at once and the row becomes its record with undo for 5 s; the clock sets an ask aside; rest on the i for its note" full>
+          <AsksBlock answers="chips" specimen="needs-you" />
+        </Specimen>
+        <Specimen name="plain: the same answers as marks and words" full>
+          <AsksBlock answers="plain" specimen="needs-you-plain" />
         </Specimen>
       </Section>
 

@@ -398,10 +398,6 @@
   gap: 8px;
 }
 
-.lib-mini-ledger {
-  width: auto;
-}
-
 .lib-messages {
   display: flex;
   flex-direction: column;
@@ -738,7 +734,7 @@
 }
 
 .lib-room-asks {
-  margin: 0 0 6px 36px;
+  margin-top: 10px;
 }
 
 

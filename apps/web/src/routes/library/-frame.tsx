@@ -240,7 +240,7 @@ function ActivityDemo({ specimen, head = true }: { specimen: string; head?: bool
                 <NeedsYou.Pick value="allow" word="allowed once">
                   allow once
                 </NeedsYou.Pick>
-                <NeedsYou.Pick value="decline" word="declined" tone="consent">
+                <NeedsYou.Pick value="decline" word="declined">
                   decline
                 </NeedsYou.Pick>
               </>
@@ -901,29 +901,34 @@ function RoomConversation({ specimen }: { specimen: string }) {
           <DayDivider>Today</DayDivider>
           <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:02">
             <MessageRow.Text>Morning. Two things wait on you. Metryon finished the store pull overnight.</MessageRow.Text>
+            <NeedsYou aria-label="needs you" className="lib-room-asks">
+              <NeedsYou.Group room="acme-forecast">
+                <NeedsYou.Ask
+                  id="promo"
+                  asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
+                  question="Should the fit treat weeks 44 to 46 as promo weeks?"
+                  note="Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline."
+                >
+                  <NeedsYou.Picks>
+                    <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
+                    <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
+                    <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
+                    <NeedsYou.OwnAnswer />
+                  </NeedsYou.Picks>
+                </NeedsYou.Ask>
+              </NeedsYou.Group>
+              <NeedsYou.Group room="the house">
+                <NeedsYou.Ask
+                  id="extracts"
+                  asker={<Glyph glyph="owl" label="Tory" size={20} />}
+                  question="Pull three paid registry extracts?"
+                  note="Buys one extract for each of the three Kobe suppliers at ¥800. Paid from the house card. The files land in # the house."
+                >
+                  <NeedsYou.YesNo figure="¥2,400" />
+                </NeedsYou.Ask>
+              </NeedsYou.Group>
+            </NeedsYou>
           </MessageRow>
-          <NeedsYou aria-label="needs you" className="lib-room-asks">
-            <NeedsYou.Item id="promo" asker={<Glyph glyph="ruler" label="Metryon" size={18} />} question="Should the fit treat weeks 44 to 46 as promo weeks?">
-              <NeedsYou.Picks>
-                <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
-                <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
-                <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
-                <NeedsYou.OwnAnswer />
-                <NeedsYou.Later />
-              </NeedsYou.Picks>
-            </NeedsYou.Item>
-            <NeedsYou.Item id="extracts" asker={<Glyph glyph="owl" label="Tory" size={18} />} question="Pull three paid registry extracts?">
-              <NeedsYou.Picks>
-                <NeedsYou.Pick value="allow" word="allowed once">
-                  allow once
-                </NeedsYou.Pick>
-                <NeedsYou.Pick value="decline" word="declined" tone="consent">
-                  decline
-                </NeedsYou.Pick>
-                <NeedsYou.Later />
-              </NeedsYou.Picks>
-            </NeedsYou.Item>
-          </NeedsYou>
           <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="09:10">
             <MessageRow.Text>Check the supplier notes against the filings.</MessageRow.Text>
           </MessageRow>
