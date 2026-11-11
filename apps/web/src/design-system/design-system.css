@@ -26,3 +26,18 @@
 @import './overlays/Tooltip.css';
 @import './overlays/Popover.css';
 @import './overlays/Menu.css';
+
+@import './patterns/NeedsYou.css';
+@import './patterns/MessageRow.css';
+@import './patterns/HoverBar.css';
+@import './patterns/DayDivider.css';
+@import './patterns/RunFoot.css';
+@import './patterns/CrewStack.css';
+@import './patterns/SplitPane.css';
+@import './patterns/Composer.css';
+@import './patterns/OutsideLine.css';
+@import './patterns/ConnectionRow.css';
+@import './patterns/FileRow.css';
+@import './patterns/FileGroup.css';
+@import './patterns/LedgerTable.css';
+@import './patterns/ClaimText.css';

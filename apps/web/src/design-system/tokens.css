@@ -24,6 +24,13 @@
   --sl-disc: light-dark(#DBE0E6 /* provisional */, #443E35);
   /* The plate behind a dithered portrait. */
   --sl-plate: light-dark(#E8EBEE /* provisional */, #131110);
+  /* A pressed or opened person disc. */
+  --sl-disc-hover: light-dark(#CDD4DB /* provisional */, #50493F);
+  /* The round plate under a resident in a crew stack, and its hover. */
+  --sl-chip: light-dark(#ECEFF2 /* provisional */, #25211C);
+  --sl-chip-hover: light-dark(#E1E6EA /* provisional */, #2E2924);
+  /* A sunk field while it holds focus (the write box). */
+  --sl-sunk-focus: light-dark(#F7F6F1 /* provisional */, #181614);
 
   /* The ink ladder: silver in dark, slate in light. ink-4 is never text. */
   --sl-ink-1: light-dark(#1E2226, #DDD6C9);
@@ -71,6 +78,8 @@
   /* Type: Source Serif 4 speaks, Server Mono counts. Six sizes and no others. */
   --sl-serif: "Source Serif 4", Georgia, serif;
   --sl-mono: "Server Mono", ui-monospace, monospace;
+  /* Reactions only. */
+  --sl-emoji: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   --sl-t-place: 21px;
   --sl-t-section: 16.5px;
   --sl-t-say: 15px;
