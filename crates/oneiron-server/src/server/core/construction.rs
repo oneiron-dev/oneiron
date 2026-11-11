@@ -45,6 +45,8 @@ impl SyncServer {
                     vault.ensure_host_root_slip(&issuer)?;
                     // The engine's MACHINE writers sign with host-held keys (ONE-1634).
                     vault.provision_engine_machine_identities(&issuer)?;
+                    // The Dreamer's reach becomes its Steward grant (untangle 6.3).
+                    vault.provision_system_agent_grants()?;
                     if hosted
                         && !vault.checkpoint_policy_selection_available()
                         && !vault.checkpoint_root_eligible(&issuer.public_key())?
