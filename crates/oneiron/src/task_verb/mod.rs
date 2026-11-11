@@ -157,7 +157,7 @@ pub(crate) use world_privacy_wait::{
 };
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
 pub use consult_fanout_types::{
