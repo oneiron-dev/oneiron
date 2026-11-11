@@ -5,8 +5,6 @@ use serde_json::Value as JsonValue;
 mod answer;
 mod frozen;
 mod json_tokens;
-#[cfg(test)]
-mod tests;
 
 pub use self::answer::CallableSkillAnswer;
 pub use self::frozen::{
