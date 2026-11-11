@@ -167,7 +167,7 @@ impl Vault {
         }
         DISCLOSURE_TIER_A_MARKS.put(&self.store, &mut wtxn, id, &marked_at.to_le_bytes())?;
         let claim_id = disclosure_tier_claim_id(id)?;
-        let claim = ClaimBody::new(
+        let mut claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_TIER,
             ClaimSubject::Entity(*id),
             Value::from(DISCLOSURE_TIER_VALUE_TIER_A),
@@ -175,6 +175,11 @@ impl Vault {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )?;
+        // [DISCLOSURE-TIER-CLAIM-FACET]: a marked row's own substrate is no
+        // FACET (only a PERSON's is), so the CLAIM birth gate refused the
+        // first mark of any other row with InvalidFacet. The head is born in
+        // the vault default facet, as the disclosure.scope head is.
+        claim.scope_facet = self.default_facet_in_txn(&wtxn)?;
         self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, marked_at)?;
         wtxn.commit()?;
         Ok(())
