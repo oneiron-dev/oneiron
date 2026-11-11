@@ -186,9 +186,11 @@ mod lineage {
         vault.put_edge(&derived, EdgeKind::DerivedFrom, &source.row, 1.0)?;
 
         let answer = preflight(&owner, vec![derived])?;
-        let [PolicyPreflightRef::Readable {
-            entity, audience, ..
-        }] = answer.refs.as_slice()
+        let [
+            PolicyPreflightRef::Readable {
+                entity, audience, ..
+            },
+        ] = answer.refs.as_slice()
         else {
             return Err("the owner reads the derived row".into());
         };
@@ -219,9 +221,11 @@ mod lineage {
         vault.put_edge(&message, EdgeKind::DerivedFrom, &source.row, 1.0)?;
 
         let answer = preflight(&owner, vec![turn])?;
-        let [PolicyPreflightRef::Readable {
-            entity, audience, ..
-        }] = answer.refs.as_slice()
+        let [
+            PolicyPreflightRef::Readable {
+                entity, audience, ..
+            },
+        ] = answer.refs.as_slice()
         else {
             return Err("the owner reads its own TURN".into());
         };
