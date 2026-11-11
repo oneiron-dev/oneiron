@@ -8509,6 +8509,7 @@ dependencies = [
  "blake3",
  "chrono",
  "oneiron",
+ "oneiron-keystore",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
@@ -8817,6 +8818,18 @@ version = "0.1.0"
 [[package]]
 name = "oneiron-sdk-build"
 version = "0.1.0"
+dependencies = [
+ "oneiron-sdk-generator",
+]
+
+[[package]]
+name = "oneiron-sdk-generator"
+version = "0.1.0"
+dependencies = [
+ "indexmap 2.14.2",
+ "regex",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "oneiron-seal"
@@ -8833,6 +8846,7 @@ dependencies = [
  "ipnet",
  "lopdf",
  "oneiron",
+ "oneiron-keystore",
  "oneiron-organ-host",
  "oneiron-organ-protocol",
  "p256",
