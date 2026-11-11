@@ -3449,39 +3449,35 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
 });
 
 /*
- * MUSE-DURA-08 — P-DURA-012 and P-DURA-023 (PARTIAL).
+ * MUSE-DURA-08 — P-DURA-012 ordinary-erase veto (E2E-PARTIAL).
  *
- * P-DURA-012: in a multi-Owner shared vault, an erase waits for the Owner
- * veto window unless it is a legal erasure request. This case proves the
- * ordinary-erase waiting half: the same erase door lands at once while the
- * vault has one Owner, then, after a second Owner is added through the
- * shared doors, it starts an act, tells the other Owner, cannot be executed
- * early, and an Owner objection is recorded while the record stays readable.
- * The legal-erasure bypass half is not asserted: the typed erase confirm
- * input carries no legal-erasure/GDPR reason, and `vault.delete` with
- * `gdpr_delete` is a delete (deleting records never waits), not the
- * backup-clearing erase these promises name. Completion after the shipped
- * seven-day window is also not asserted; maturing it inside the 30 s flow
- * would need a clock change or a change to the wait under test.
+ * P-DURA-012 is proved here for the ordinary-erase waiting subset: after a
+ * second Owner joins through the shared doors, an erase starts a veto act,
+ * tells that Owner, refuses early execution and leaves the record readable.
+ * The second Owner objects; after restart the veto record and started notice
+ * still read back. The legal-erasure bypass and execution after the shipped
+ * seven-day window stay unproved: the served confirm has no legal-erasure
+ * reason, and this case neither changes the clock nor waits out that window.
  *
- * P-DURA-023: a legal hold preserves only the ordered scope in a separate
- * sealed store while vault erase remains available. This case proves the
- * scope and vault sides through public doors: the hold names exactly one
- * record, a later record does not join it, the ordinary record erase (not
- * lift-and-erase) still erases the held record from the vault, and the held
- * value is then absent from claims, recall and export while the hold row
- * and its log stay. The sealed copy itself is not asserted: no typed door
- * returns its fingerprint, contents, production or access log, and the
- * place door found is the owner customer-hold door, not a host-order door.
+ * The customer-hold controls prove only its exact one-record scope, the
+ * exclusion of a later record, export containing both live values, and an
+ * agent's preview/confirm refusals with the confirm's own call receipt.
+ * The held and outside values and the exact hold scope survive restart.
+ * Nothing in this case erases the held record.
  *
- * Doors: vault.claims.upsert/list, vault.get, vault.recall, vault.export,
- * vault.legal_holds.place/list/log, vault.records.erase_preview,
- * vault.records.erase_confirm, vault.records.erase_sweep,
- * vault.authority.audit, vault.shared.propose_add_owner,
- * vault.shared.execute, vault.shared.receipt, vault.members.projection,
- * vault.shared.policy.get, vault.shared.started, vault.shared.matured,
- * vault.shared.outcomes, vault.shared.object, plus raw wrong-actor calls to
- * the same facade paths and one engine.restart().
+ * P-DURA-023 stays unproved: vault.legal_holds.place is a customer-hold door,
+ * not the missing host.legal_orders.place (proposed host-only act; FIX 23157).
+ * The removed half needs an exact-order sealed clone before ordinary vault
+ * erase, plus authorized clone/fingerprint/access-log observations. Customer
+ * hold scope is not proof of that host-order promise.
+ *
+ * Doors: vault.conversations.create, vault.witness, vault.get, vault.neighbors,
+ * vault.claims.upsert/list, vault.recall, vault.export, vault.agents.create,
+ * self.actor, vault.legal_holds.place/list/log, vault.records.erase_preview,
+ * vault.records.erase_confirm, vault.receipts.get, vault.shape.plan/apply/read,
+ * vault.shared.propose_add_owner/execute/receipt, vault.members.projection,
+ * vault.shared.policy.get, vault.shared.started/matured/outcomes/object,
+ * raw wrong-actor/early-execute facade calls, pairActor and engine.restart().
  */
 
 const museDura08OccurredAt = 1769947200;
@@ -3656,7 +3652,7 @@ async function museDura08ErasePolicy(client: PublicHttpClient, vault_id: string)
   return entry[1];
 }
 
-suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase waits for the Owner veto window, and a legal hold keeps only its target while vault erase lands", async () => {
+suite.test(test, "MUSE-DURA-08", "In a multi-Owner vault an ordinary erase waits for Owner veto; a customer hold names only its target, an agent cannot erase it, and the records survive restart", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-DURA-08", profile });
   let stage = "public setup";
   try {
@@ -3674,8 +3670,7 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     const outsideSentinel = museDura08Sentinel("outside");
     const vetoSentinel = museDura08Sentinel("veto");
 
-    // P-DURA-023, vault side first, while this is still a one-Owner vault:
-    // a personal-vault erase lands at once, hold or no hold.
+    // Customer-hold scope and wrong-actor controls, not a host-order clone.
     stage = 'held claim commit and registry-kind recall';
     const held = await museDura08WriteClaim(engine, scope, ownerRef, heldPredicate, heldSentinel);
     expect(await museDura08ClaimValues(engine.client, ownerRef, heldPredicate, held.id)).toEqual([heldSentinel]);
@@ -3754,35 +3749,7 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     if (typeof refusalCode !== "string") throw new Error("Agent erase refusal carries no error code");
     expect(refusalReceipt?.outcome).toEqual({ refused: { code: refusalCode } });
 
-    // The Owner's ordinary record erase remains available on the held
-    // record. This deliberately does not use lift-and-erase.
-    stage = 'MISSING DOOR host-order clone setup: customer hold cannot substitute';
-    const heldOutcome = await museDura08EraseRecord(engine.client, held.id);
-    expect(heldOutcome.first.existed).toBe(true);
-    expect(heldOutcome.first_act ?? null).toBeNull();
-    if (!heldOutcome.first.receipt_ref) throw new Error("Personal-vault erase returned no deletion receipt");
-    const sweep = await engine.client.call("vault.records.erase_sweep", {
-      receipt_ref: heldOutcome.first.receipt_ref,
-    });
-    if (!sweep) throw new Error("Erase sweep read returned nothing for the deletion receipt");
-    expect(sweep.receipt_ref).toBe(heldOutcome.first.receipt_ref);
-
-    expect(await museDura08ClaimValues(engine.client, ownerRef, heldPredicate, held.id)).toEqual([]);
-    expect(await museDura08RecallHas(engine.client, ownerRef, heldPredicate, heldSentinel)).toBe(false);
-    const exportAfterErase = await museDura08ExportText(engine.client);
-    expect(exportAfterErase.includes(heldSentinel)).toBe(false);
-    expect(exportAfterErase.includes(outsideSentinel)).toBe(true);
     expect(await museDura08ClaimValues(engine.client, ownerRef, outsidePredicate, outside.id)).toEqual([outsideSentinel]);
-
-    // The hold row keeps exactly its target after the vault erase, and its
-    // log records the erase confirmation without carrying the erased value.
-    const listedAfterErase = await engine.client.call("vault.legal_holds.list", {});
-    const survivingHold = listedAfterErase.find(row => row.hold_id === hold.hold_id);
-    if (!survivingHold) throw new Error("Legal hold vanished when the vault record was erased");
-    expect(survivingHold.targets).toHaveLength(1);
-    expect(museDura08TargetRecords(survivingHold.targets)).toEqual([held.id]);
-    const logAfterErase = await engine.client.call("vault.legal_holds.log", {});
-    expect(logAfterErase.some(event => event.hold_id === hold.hold_id && event.event === "erase_confirmed")).toBe(true);
 
     // P-DURA-012: add a second Owner through the public shared doors.
     // Owner changes are instant by default, so the add act executes now.
@@ -3826,10 +3793,8 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
     const secondSelf = await secondOwner.client.call("self.actor", {});
     expect(secondSelf.actor_ref).toBe(secondId);
     expect(secondSelf.actor_class).toBe("human");
-    // Positive control: the new Owner reads a surviving record in this
-    // vault through the same door that shows the erased record is gone.
+    // Positive control: the new Owner reads the out-of-hold record.
     expect(await museDura08ClaimValues(secondOwner.client, ownerRef, outsidePredicate, outside.id)).toEqual([outsideSentinel]);
-    expect(await museDura08ClaimValues(secondOwner.client, ownerRef, heldPredicate, held.id)).toEqual([]);
 
     const erasePolicy = await museDura08ErasePolicy(engine.client, vaultId);
     expect(erasePolicy.objector_roles).toContain("owner");
@@ -3885,26 +3850,24 @@ suite.test(test, "MUSE-DURA-08", "In a shared vault an ordinary record erase wai
       agentConfirmStatus: agentConfirmRefused.status, earlyExecuteStatus: earlyExecute.status,
     });
 
-    stage = 'restart preserves erase, hold scope and waiting veto';
+    stage = 'restart preserves live records, hold scope and waiting veto';
     await engine.restart();
 
-    // After restart: the erased held record is still gone from claims,
-    // recall and export; the out-of-scope record still survives; the
-    // waiting erase still waits and its record is still there; the hold
-    // and the seven-day erase policy are unchanged.
-    expect(await museDura08ClaimValues(engine.client, ownerRef, heldPredicate, held.id)).toEqual([]);
+    // After restart: nothing erased the held record, the out-of-hold
+    // record survives, and the waiting erase's record is still readable.
+    // The hold keeps exactly its original target and the started notice stays.
+    expect(await museDura08ClaimValues(engine.client, ownerRef, heldPredicate, held.id)).toEqual([heldSentinel]);
     expect(await museDura08ClaimValues(engine.client, ownerRef, outsidePredicate, outside.id)).toEqual([outsideSentinel]);
     expect(await museDura08ClaimValues(engine.client, ownerRef, vetoPredicate, veto.id)).toEqual([vetoSentinel]);
-    expect(await museDura08RecallHas(engine.client, ownerRef, heldPredicate, heldSentinel)).toBe(false);
     expect(await museDura08RecallHas(engine.client, ownerRef, vetoPredicate, vetoSentinel)).toBe(true);
     const exportAfterRestart = await museDura08ExportText(engine.client);
-    expect(exportAfterRestart.includes(heldSentinel)).toBe(false);
     expect(exportAfterRestart.includes(outsideSentinel)).toBe(true);
     expect(exportAfterRestart.includes(vetoSentinel)).toBe(true);
 
     const listedAfterRestart = await engine.client.call("vault.legal_holds.list", {});
     const holdAfterRestart = listedAfterRestart.find(row => row.hold_id === hold.hold_id);
     if (!holdAfterRestart) throw new Error("Legal hold did not survive restart");
+    expect(holdAfterRestart.targets).toHaveLength(1);
     expect(museDura08TargetRecords(holdAfterRestart.targets)).toEqual([held.id]);
     const startedAfterRestart = await secondOwner.client.call("vault.shared.started", { vault_id: vaultId });
     const startedRowAfterRestart = startedAfterRestart.find(row => row.act_id === vetoActId);
