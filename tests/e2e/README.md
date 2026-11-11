@@ -331,10 +331,11 @@ placeholder executable digests that could accidentally pass.
   `sampling`, and explicit role-to-`real`/`stub` `bindings`. It must have a real
   binding; missing weights/config/tokenizer blocks rather than changing models.
 
-The immutable build inventory is verified once per suite-file process in a
-file-level hook, outside the flow timer. Cached verification is keyed by manifest
-path, digest and profile; every distinct key keeps the full asset/provenance checks.
-Assets must remain immutable for that frozen run.
+The runner hashes every pinned build asset once per run; its case processes verify
+the manifest digest and check each asset's identity (size, mtime, inode and device)
+against the runner's private record, and hash any asset that differs.
+The file-level hook stays outside the flow timer. Fixture files keep their full
+hash checks. Assets must remain immutable for that frozen run.
 
 The package pins Bun 1.3.4, Node 22.16.0 and Python 3.12.11 as reference runtime
 revisions in the inventory requirements. Other dependency pins are in
