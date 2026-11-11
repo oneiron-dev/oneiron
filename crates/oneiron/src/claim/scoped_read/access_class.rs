@@ -448,7 +448,7 @@ impl ScopedRead<'_> {
             verdict
                 && self.provenance_cited_readable_in(rtxn, policy, &body, authority)?
                 && self.esign_document_readable_in(rtxn, policy, &body)?
-                && self.coreference_endpoints_readable_in(rtxn, policy, &body, authority)?,
+                && self.coreference_endpoints_readable_in(rtxn, policy, id, &body, authority)?,
         ))
     }
 
