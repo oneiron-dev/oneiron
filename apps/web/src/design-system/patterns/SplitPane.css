@@ -1,0 +1,62 @@
+/* Two panes and a 1 px edge. The edge's hit area is wider than its line;
+   the line shows on hover, focus and drag. */
+.sl-split-pane {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sl-split-pane[data-dragging] {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.sl-split-pane-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sl-split-handle {
+  position: relative;
+  z-index: 3;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sl-split-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  right: -5px;
+}
+
+.sl-split-handle:hover,
+.sl-split-handle:focus-visible,
+.sl-split-pane[data-dragging] > .sl-split-handle {
+  background: var(--sl-ink-4);
+  outline: none;
+}
+
+/* The magnet's percentage, beside the edge while it sits on a magnet. */
+.sl-split-tag {
+  position: absolute;
+  z-index: var(--sl-z-tip);
+  padding: 3px 8px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-pop);
+  box-shadow: var(--sl-pop-shadow);
+  color: var(--sl-ink-1);
+  font-family: var(--sl-mono);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--sl-t-figure);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateX(-100%);
+}
