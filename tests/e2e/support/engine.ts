@@ -215,7 +215,7 @@ export class EngineFixture {
     const link=result.stdout.trim();redactor.add(link);
     return this.actor(options.principalRef,options.actorClass,await this.sdk.pair(link));
   }
-  /** Only public receipt reads, never a private job drain or an internal commit counter. */
+  /** Only public receipt reads, never a private job drain or an internal commit counter: resolves `call:` refs through `vault.receipts.get` and any other ref only as a row of the `vault.receipts` page (gate-ledger receipts); `witness:` and `put:` refs are write markers, not receipt rows, and never resolve here, so read the written entity back through `vault.get` instead. */
   async awaitReceipt(ref:string,timeoutMs:number=LIMITS.requestMs):Promise<unknown> {
     if(ref.startsWith("call:")) return awaitPublic(()=>this.client.call("vault.receipts.get",{receipt_ref:ref}),value=>value!==null,
       {timeoutMs,label:`receipt ${ref}`});
