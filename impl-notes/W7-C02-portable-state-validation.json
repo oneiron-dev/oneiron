@@ -5,7 +5,7 @@
   "source": "dd5ced70beb3de3d49c8fa1b2b717e257a72f933",
   "timestamp": "2026-09-19T18:06:15.995848+00:00",
   "command": [
-    "/home/lexi/.local/share/prime-agent-oneiron/installs/0.9.5-oneiron.20260919.4-linux-x64/lib/node_modules/prime-agent/dist/factory/bin/cargo",
+    "<host-home>/.local/share/prime-agent-oneiron/installs/0.9.5-oneiron.20260919.4-linux-x64/lib/node_modules/prime-agent/dist/factory/bin/cargo",
     "test",
     "-p",
     "oneiron",

@@ -28,7 +28,7 @@ const GRANTS: Grant[] = [
     id: 'eiri',
     name: 'Eiri',
     who: (
-      <a className="aname" data-agent="eiri" href="/app/agents" title="Eiri · outbound companion · bound to oleksii · open the agent">
+      <a className="aname" data-agent="eiri" href="/app/agents" title="Eiri · outbound companion · bound to owen · open the agent">
         Eiri
       </a>
     ),
@@ -116,7 +116,7 @@ const GRANTS: Grant[] = [
     budget: 'was 2 GB·days a month',
     expires: 'revoked 08-11',
     receipts: [
-      ['08-11 16:20', 'Revoked by oleksii. The workspace moved to a new plan.'],
+      ['08-11 16:20', 'Revoked by owen. The workspace moved to a new plan.'],
       ['', '41 receipts stay. 12 claims it brought in keep their sources and their learned dates.'],
     ],
     state: 'revoked',
@@ -156,7 +156,7 @@ function GrantsPage() {
               ...x,
               state: 'revoked',
               gone: `revoked · ${CLOCK} · receipted`,
-              receipts: [[`${TODAY.slice(5)} ${CLOCK}`, 'Revoked by oleksii. The reach ends now; the receipts stay.'], ...x.receipts],
+              receipts: [[`${TODAY.slice(5)} ${CLOCK}`, 'Revoked by owen. The reach ends now; the receipts stay.'], ...x.receipts],
             }
           : x,
       ),

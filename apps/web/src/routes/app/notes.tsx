@@ -25,8 +25,8 @@ export const Route = createFileRoute('/app/notes')({
 
 export type Who = 'o' | 'y' | 'eiri' | 'tory' | 'antevon'
 export const WHO: Record<Who, { name: string; tip: string; human: boolean }> = {
-  o: { name: 'oleksii', tip: 'o · oleksii · owner', human: true },
-  y: { name: 'yurii', tip: 'y · yurii · member', human: true },
+  o: { name: 'owen', tip: 'o · owen · owner', human: true },
+  y: { name: 'yuki', tip: 'y · yuki · member', human: true },
   eiri: { name: 'Eiri', tip: 'Eiri · outbound companion', human: false },
   tory: { name: 'Tory', tip: 'Tory · research companion', human: false },
   antevon: { name: 'Antevon', tip: 'Antevon · the house mind', human: false },
@@ -750,7 +750,7 @@ const NOTES: Note[] = [
     read: '3 min',
     recent: true,
     blocks: seal('hokuei-pilot-scope', 'y', 'Aug 01', [
-      P('What the Hokuei pilot covers, and what it does not. Yurii owns this note; Antevon reads it before any Hokuei work.'),
+      P('What the Hokuei pilot covers, and what it does not. Yuki owns this note; Antevon reads it before any Hokuei work.'),
       H('Scope'),
       LI('Three SKU families, weekly demand, a twelve-week horizon.'),
       LI('One brief every Monday before 10:00 JST.', { editedBy: 'y', editedAt: 'Aug 14 18:21' }),
@@ -810,7 +810,7 @@ const NOTES: Note[] = [
       LI('Forty-two claims went in on their own; two wait for review.'),
       LI('The LinkedIn import paused itself at 180 writes.'),
       LI('The Hokuei brief for Thursday is compiled and cites every claim under it.'),
-      P('Start with the two held claims. Then resume the import once oleksii has cleared it.'),
+      P('Start with the two held claims. Then resume the import once owen has cleared it.'),
     ]),
     trail: [{ when: 'Aug 15 03:12', who: 'antevon', what: 'wrote · 5 blocks' }],
   },
@@ -859,7 +859,7 @@ const NOTES: Note[] = [
     blocks: seal('pricing-notes-2026', 'y', 'Jul 03', [
       P('Working notes, not a price list. The list lives in the contract template.'),
       P([c('Pilots run at cost; the contract price starts after week twelve', 'cl_0a77', 0.74, '2026-06-28'), '. We say this in the first call.']),
-      P('Do not quote from memory. Ask Yurii, or open the contract template.'),
+      P('Do not quote from memory. Ask Yuki, or open the contract template.'),
     ]),
     trail: [{ when: 'Jul 03 14:47', who: 'y', what: 'wrote · 3 blocks' }],
   },

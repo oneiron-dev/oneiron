@@ -1,7 +1,7 @@
 [
   {
     "command": [
-      "/Users/olety/.cache/uv/environments-v1/380c8dfde949156d/6690cf870a60f2e2/bin/python",
+      "<host-home>/.cache/uv/environments-v1/380c8dfde949156d/6690cf870a60f2e2/bin/python",
       "/Volumes/Cinema/w7-build/wt/W7-C02/.w7/voice-host-draft/meeting-audio-native.py",
       "--self-test"
     ],
@@ -184,7 +184,7 @@
           "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
           "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
           "execution": "measured",
-          "model_snapshot": "/Users/olety/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+          "model_snapshot": "<host-home>/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
           "revision": "a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
           "package_version": "0.4.7"
         }
@@ -279,7 +279,7 @@
           "qwen-asr": null
         },
         "asr_model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
-        "asr_snapshot": "/Users/olety/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+        "asr_snapshot": "<host-home>/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
         "operations": [
           "decode",
           "silero_vad",
@@ -349,7 +349,7 @@
               "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
               "input_sha256": "888e849dd5fa61bfde4fa4bd0387ec492d4880ec4d823f812ee0b3747a46d59d",
               "execution": "measured",
-              "model_snapshot": "/Users/olety/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+              "model_snapshot": "<host-home>/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
               "revision": "a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
               "package_version": "0.4.7"
             }
