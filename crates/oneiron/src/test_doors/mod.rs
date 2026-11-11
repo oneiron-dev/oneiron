@@ -5,6 +5,7 @@
 //! build reaches them. Hidden; never API.
 
 pub mod callable_skill;
+pub mod coach;
 pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod consolidation;
@@ -26,5 +27,6 @@ pub mod source_audience;
 pub mod source_audience_binding;
 pub mod spend;
 pub mod steward;
+pub mod substrate_reads;
 pub mod untangle_regressions;
 pub mod wake_d1_park_release;
