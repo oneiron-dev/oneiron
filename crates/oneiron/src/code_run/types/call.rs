@@ -159,6 +159,25 @@ impl SelfCall {
         }
     }
 
+    /// Whether this call's row output holds a park, so a call answered with
+    /// the wait its run parks on answers it as that output,
+    /// `TaskAskWait::Park`: the bare `wait` (`scripts/sdk/verbs/wait.json`),
+    /// and `tasks.wait` on a world-privacy request, whose untagged
+    /// `TaskWaitOutput::WorldPrivacy` holds a `TaskAskWait` (FIX 4706). Any
+    /// other call that parks, or runs past a park, has no output to answer
+    /// (ENGINE CALL CODE-SANDBOX-WAIT-RESPONSE-FIELD).
+    #[must_use]
+    pub fn answers_park_as_output(&self) -> bool {
+        matches!(
+            self,
+            Self::TasksWait(_)
+                | Self::TasksWaitSet(super::reader::TaskWaitSetCall {
+                    request: Some(_),
+                    ..
+                })
+        )
+    }
+
     /// Stamps the HOST-owned bridge ordering onto a speech call.
     ///
     /// `seq` is the call's position in the run's total bridge ordering — the

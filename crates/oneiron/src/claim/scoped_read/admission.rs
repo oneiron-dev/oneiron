@@ -272,6 +272,14 @@ impl<'a> ScopedRead<'a> {
                 Err(error) => return Err(error),
             }
         }
+        // A base agent's key reads nothing once its Steward grant or its
+        // MACHINE binding no longer stands in this snapshot (untangle 6.3,
+        // census X04): the live delegation an ordinary agent's slip carries.
+        if let Some(agent) = self.actor_key.system_agent_guard()
+            && !self.vault.system_agent_reads_live_in(txn, agent)?
+        {
+            return Ok(false);
+        }
         let Some(proof) = &self.actor_key.proof else {
             return Ok(true);
         };
