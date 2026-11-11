@@ -5,6 +5,7 @@
 //! build reaches them. Hidden; never API.
 
 pub mod authority_view_grant;
+pub mod authority_world_undo;
 pub mod callable_skill;
 pub mod code_reply_healer;
 pub mod code_run_answer;
