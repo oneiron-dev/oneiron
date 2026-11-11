@@ -1955,13 +1955,21 @@ mod peer_fixture {
                     .map(|id| {
                         let entity_type =
                             self.vault.get_entity_type(id).expect("T0F-DIAG C14 type");
-                        match self.vault.get_claim(id).expect("T0F-DIAG C14 read") {
-                            Some(body) => (
-                                id.to_hex(),
-                                entity_type,
-                                format!("claim source={:?}", body.source),
-                            ),
-                            None => (id.to_hex(), entity_type, "non-claim ref".to_owned()),
+                        if entity_type == Some(oneiron::registry::ENTITY_TYPE_CLAIM) {
+                            match self.vault.get_claim(id) {
+                                Ok(body) => (
+                                    id.to_hex(),
+                                    entity_type,
+                                    format!("claim source={:?}", body.map(|body| body.source)),
+                                ),
+                                Err(error) => (
+                                    id.to_hex(),
+                                    entity_type,
+                                    format!("claim read error={error:?}"),
+                                ),
+                            }
+                        } else {
+                            (id.to_hex(), entity_type, "non-claim ref".to_owned())
                         }
                     })
                     .collect::<Vec<_>>()
