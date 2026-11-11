@@ -81,7 +81,7 @@ impl Vault {
         scope.verbs = ScopeAxis::Some(Default::default());
         // This second native writer revalidates the owner and issuer. A
         // failed issue can leave an actor row, never a credential or grant.
-        let link = self.issue_owner_pairing_link(
+        let link = self.issue_owner_pairing_link_without_grant(
             issuer,
             owner,
             scope,
