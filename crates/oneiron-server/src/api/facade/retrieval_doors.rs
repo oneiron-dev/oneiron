@@ -31,10 +31,16 @@ pub(crate) async fn vault_retrieval_runs(
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
-    credential_listing(server, auth, caller, VERB, move |_, _, memory| match &reader {
-        Some(owner) => sdk::retrieval_runs_as_owner(&memory, owner, input),
-        None => sdk::retrieval_runs_as_reader(&memory, input),
-    })
+    credential_listing(
+        server,
+        auth,
+        caller,
+        VERB,
+        move |_, _, memory| match &reader {
+            Some(owner) => sdk::retrieval_runs_as_owner(&memory, owner, input),
+            None => sdk::retrieval_runs_as_reader(&memory, input),
+        },
+    )
     .await
 }
 

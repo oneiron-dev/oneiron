@@ -67,8 +67,8 @@ fn the_owner_reads_each_engine_default_and_its_origin() {
     // The fixture vault holds no writer lease, so the proof is passed as a
     // host door passes it; `Memory::embedded_owner` admits only the handle
     // that holds the lease.
-    let entries = engine_default_grants_as(&vault, &owner_proof, EmptyRequest {})
-        .expect("the owner's read");
+    let entries =
+        engine_default_grants_as(&vault, &owner_proof, EmptyRequest {}).expect("the owner's read");
     // The verb is the owner's alone: the Coach, which holds one of the
     // defaults, is refused on its own handle.
     let refused = invoke(
