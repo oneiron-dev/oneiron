@@ -13,6 +13,7 @@ pub mod label_writers;
 pub mod live_run_claim_put;
 pub mod retrieval_policy_default_floor;
 pub mod run_hold;
+pub mod scope_summary;
 pub mod steward;
 pub mod substrate_reads;
 pub mod untangle_regressions;
