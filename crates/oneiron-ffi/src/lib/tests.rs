@@ -23,6 +23,7 @@ fn open_test_vault(dimensions: usize) -> (tempfile::TempDir, *mut OneironVault) 
             dimensions,
             ptr::null(),
             0,
+            0,
             &mut vault,
         )
     };
@@ -172,12 +173,18 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
     let status =
         unsafe { oneiron_vault_edges_out(vault, entity.as_ptr(), entity.len(), &mut edges) };
     assert_eq!(status, OneironStatus::Ok);
-    assert_eq!(edges.len, 1);
+    assert_eq!(edges.len, 2);
     // SAFETY: `edges` was returned by this crate and is live until freed.
     let edge_slice = unsafe { slice::from_raw_parts(edges.ptr, edges.len) };
     assert_eq!(edge_slice[0].src, entity);
     assert_eq!(edge_slice[0].tgt, target);
     assert_eq!(edge_slice[0].kind, EdgeKind::Mentions as u32);
+    assert_eq!(edge_slice[1].src, entity);
+    assert_eq!(edge_slice[1].kind, EdgeKind::FacetOf as u32);
+    // SAFETY: vault is the live handle from open_test_vault.
+    let engine = unsafe { &(*vault).vault };
+    let default_facet = engine.default_facet().expect("vault default facet");
+    assert_eq!(edge_slice[1].tgt, *default_facet.as_bytes());
     // SAFETY: the value was returned by this crate and is freed once.
     let status = unsafe { oneiron_edge_info_array_free(edges) };
     assert_eq!(status, OneironStatus::Ok);
@@ -212,7 +219,10 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
     let status = unsafe { oneiron_vault_entity_exists(vault, entity.as_ptr(), 15, &mut exists) };
     assert_eq!(status, OneironStatus::InvalidArg);
 
-    let long_query = "x".repeat(MAX_FFI_QUERY_BYTES + 1);
+    // Ruled refusals removed: FIX55 (d396e233532) retired the 8 KiB query
+    // refusal, and Rule 5 (FIX 8541, 005dd2c4427) the 1,000-row search limit
+    // (C retrieval serves every row asked for). The same calls are served.
+    let long_query = "x".repeat(8 * 1024 + 1);
     let mut scored = OneironScoredEntityArray::empty();
     // SAFETY: each pointer is null or names a live local that outlives the call.
     let status = unsafe {
@@ -224,18 +234,21 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
             &mut scored,
         )
     };
-    assert_eq!(status, OneironStatus::InvalidArg);
+    assert_eq!(status, OneironStatus::Ok);
+    // SAFETY: `scored` was returned by this crate and is freed once.
+    assert_eq!(
+        unsafe { oneiron_scored_entity_array_free(scored) },
+        OneironStatus::Ok
+    );
+    let mut scored = OneironScoredEntityArray::empty();
     // SAFETY: each pointer is null or names a live local that outlives the call.
-    let status = unsafe {
-        oneiron_vault_search_text(
-            vault,
-            b"x".as_ptr(),
-            1,
-            MAX_FFI_SEARCH_LIMIT + 1,
-            &mut scored,
-        )
-    };
-    assert_eq!(status, OneironStatus::InvalidArg);
+    let status = unsafe { oneiron_vault_search_text(vault, b"x".as_ptr(), 1, 1_001, &mut scored) };
+    assert_eq!(status, OneironStatus::Ok);
+    // SAFETY: `scored` was returned by this crate and is freed once.
+    assert_eq!(
+        unsafe { oneiron_scored_entity_array_free(scored) },
+        OneironStatus::Ok
+    );
 
     // SAFETY: `vault` is live and every pointer names a local that outlives the call.
     let status = unsafe {
@@ -329,6 +342,7 @@ fn ffi_batch_put_entities_and_boundary_statuses() {
             0,
             ptr::null(),
             0,
+            0,
             &mut invalid_path_vault,
         )
     };
@@ -392,6 +406,8 @@ fn ffi_context_pack_serves_at_most_its_limit() {
                 0,
                 limit,
                 1,
+                ptr::null(),
+                0,
                 ptr::null(),
                 0,
                 &mut pack,
