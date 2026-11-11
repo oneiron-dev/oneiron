@@ -514,9 +514,10 @@ pub(in crate::sync::selector) fn filter_window_doc(
 }
 
 /// Whether the selector's member reads the row `raw` of `id` at the
-/// relationship gate (FIX SELECTOR-RELATIONSHIP-LABELS): `None` is the vault
-/// owner's member, which reads every row. A CLAIM body that does not decode
-/// is withheld, as the causal check withholds it.
+/// relationship gate (FIX SELECTOR-RELATIONSHIP-LABELS): `None` is an
+/// Owner's member (the vault owner, or a co-Owner on an Owner-role grant),
+/// which reads every row. A CLAIM body that does not decode is withheld, as
+/// the causal check withholds it.
 fn member_reads_labels(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
