@@ -16,7 +16,9 @@
 //! - any other actor holds no Steward grant, so no stored record is in its
 //!   reach: it lands what it derives, and an item of its that names a target
 //!   is refused. The doors that settle, supersede or archive a record under
-//!   a named Grant of its own stay those doors.
+//!   a named Grant of its own stay those doors. A topology judgment is such
+//!   a door: it asks this judge with no target and stands on the actor's own
+//!   `topology_seal` Grant.
 //!
 //! Each refusal carries a stable reason token in the gate's style
 //! ([`DeriveRefusal::token`]).

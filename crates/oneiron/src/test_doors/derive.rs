@@ -648,6 +648,42 @@ pub fn mint_nightly_links(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// The embedded owner grants `agent` the `topology_seal` act, after
+/// preparing this install to carry the signed grant and topology decision.
+/// The vault must be fresh and rooted under the test host. Returns the Grant id.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn grant_topology_seal(vault: &Vault, agent: EntityId) -> Result<EntityId> {
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+
+    use crate::authority::{ActSurface, MachineRole, OwnerActKind};
+    use crate::federation::{Scope, ScopeAxis};
+
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = crate::test_support::test_host_issuer();
+    let owner = super::steward::owner(vault)?;
+    vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
+    let mut scope = Scope::top();
+    scope.verbs = ScopeAxis::Some(BTreeSet::from([
+        "read".to_owned(),
+        OwnerActKind::TopologySeal.as_str().to_owned(),
+    ]));
+    let minted = vault.mint_agent_grant(
+        &owner,
+        ActSurface::ThisInstall,
+        agent,
+        scope,
+        None,
+        None,
+        BTreeSet::new(),
+        None,
+    )?;
+    Ok(minted.standing.id)
+}
+
 /// The lifecycle status of the claim `id` (`active`, `superseded`, ...),
 /// when it is a stored claim.
 ///
