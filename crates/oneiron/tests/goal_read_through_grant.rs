@@ -13,7 +13,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
-use oneiron::task_verb::sdk::invoke;
+use oneiron::task_verb::sdk::{invoke, project_goal_get_as_owner};
 use oneiron::test_doors::coach::{coach, define_agent, write_root_goal};
 use oneiron::test_doors::steward::{
     STEWARD_READ_VERB, STEWARD_VERBS, open_owner_carrier_vault, owner, stand_steward_grant,
@@ -50,7 +50,6 @@ fn a_read_holder_reads_the_goal_and_others_are_refused() {
     let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
     let owner_proof = owner(&vault).expect("owner proof");
     let project = write_root_goal(&vault, &owner_proof).expect("goal");
-    let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let agent = define_agent(&vault).expect("an agent");
 
     // An agent with no grant is refused.
@@ -66,8 +65,10 @@ fn a_read_holder_reads_the_goal_and_others_are_refused() {
         .expect("the holder sees the goal")
         .to_owned();
 
-    // The owner reads the same goal.
-    let answer = goal_get(&vault, owner, EdgeActorClass::Human, project).expect("the owner reads");
+    // The owner reads the same goal under its proof, through the owner door:
+    // a reader door takes no owner by actor id (review of #6999).
+    let view = project_goal_get_as_owner(&vault, &owner_proof, project).expect("the owner reads");
+    let answer = serde_json::to_value(&view).expect("the goal view");
     assert_eq!(goal_text(&answer), Some(goal.as_str()));
 
     // The Coach reads it through its own grant, and the grant is checked at

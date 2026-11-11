@@ -9,8 +9,8 @@ use crate::{Vault, WriteActor};
 
 /// The bounds for a holder of any `engine.controls` class, checked at this
 /// read (untangle 6.6f; S66F-READ = C: every `engine.controls` read has the
-/// learning dials' rule, since a read changes nothing). The vault's human
-/// owner reads too.
+/// learning dials' rule, since a read changes nothing). The vault's owner
+/// reads through its own door, under its proof.
 ///
 /// # Errors
 ///

@@ -78,13 +78,14 @@ pub fn project_goal_get_as_reader(
     memory: &crate::memory::Memory<'_>,
     project: EntityId,
 ) -> MemoryResult<ProjectGoalView> {
-    crate::federation::admit_substrate_read(
-        memory,
+    let vault = memory.vault();
+    let reader = crate::WriteActor::new(memory.actor(), memory.actor_class());
+    crate::federation::admit_substrate_read_by(
+        vault,
+        reader,
         "vault.projects.goal.get",
         crate::federation::SubstrateRead::Goal,
     )?;
-    let vault = memory.vault();
-    let reader = crate::WriteActor::new(memory.actor(), memory.actor_class());
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     Ok(goal_view(
         project,
