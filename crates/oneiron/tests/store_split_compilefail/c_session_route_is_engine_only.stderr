@@ -1,0 +1,21 @@
+error[E0624]: method `write_route` is private
+ --> tests/store_split_compilefail/c_session_route_is_engine_only.rs:6:52
+  |
+6 |     let _ = oneiron::off_record::OffRecordSession::write_route;
+  |                                                    ^^^^^^^^^^^ private method
+  |
+ ::: src/off_record/lifecycle/session.rs
+  |
+  |     pub(crate) fn write_route(&self) -> Result<SessionWriteRoute> {
+  |     ------------------------------------------------------------- private method defined here
+
+error[E0624]: method `overlay` is private
+ --> tests/store_split_compilefail/c_session_route_is_engine_only.rs:7:52
+  |
+7 |     let _ = oneiron::off_record::OffRecordSession::overlay;
+  |                                                    ^^^^^^^ private method
+  |
+ ::: src/off_record/lifecycle/session.rs
+  |
+  |     pub(crate) fn overlay(&self) -> Arc<SessionOverlay> {
+  |     --------------------------------------------------- private method defined here

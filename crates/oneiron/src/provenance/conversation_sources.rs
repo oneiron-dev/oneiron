@@ -65,7 +65,7 @@ pub(crate) fn claim_conversation_sources_in(
 /// The refs `claim`'s consolidation envelope names, kept under
 /// `candidate_evidence` or as the whole evidence; none for a claim with no
 /// envelope, or one that does not decode.
-fn consolidation_refs(claim: &crate::ClaimBody) -> Vec<EntityId> {
+pub(crate) fn consolidation_refs(claim: &crate::ClaimBody) -> Vec<EntityId> {
     let Some(evidence) = claim.evidence.as_ref() else {
         return Vec::new();
     };

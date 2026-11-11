@@ -13,7 +13,7 @@
 
 use oneiron_code_check::{
     CheckFailure, CheckInput, CodeCheck, Declaration, MICROSOFT_TS_VERSION, MicrosoftTsc,
-    ProgramLanguage,
+    ProgramLanguage, TscRsBudget, TscRsWasm,
 };
 use sha2::{Digest, Sha512};
 use std::path::PathBuf;
@@ -96,6 +96,16 @@ fn rendered(checker: &dyn CodeCheck) -> String {
         }
     }
     out
+}
+
+#[test]
+fn tsc_rs_in_process_gives_the_golden_diagnostics() {
+    let checker = TscRsWasm::load(TscRsBudget::default()).unwrap();
+    let actual = rendered(&checker);
+    if std::env::var_os("ONEIRON_UPDATE_TEST_FIXTURES").is_some() {
+        std::fs::write(GOLDEN, &actual).unwrap();
+    }
+    assert_eq!(actual, std::fs::read_to_string(GOLDEN).unwrap());
 }
 
 #[test]

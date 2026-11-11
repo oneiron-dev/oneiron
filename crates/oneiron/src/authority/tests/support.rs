@@ -92,15 +92,6 @@ pub(super) fn owner_act(owner: EntityId, world: EntityId) -> OwnerAct {
     )
 }
 
-pub(super) fn sign_ed_legacy_genesis(
-    mut entry: AuthorityLogEntry,
-    key: &SigningKey,
-) -> AuthorityLogEntry {
-    let transcript = authority_transcript_with_genesis_delay(&entry, false).unwrap();
-    entry.signer.signature = key.sign(&transcript).to_bytes().to_vec();
-    entry
-}
-
 pub(super) fn sign_p256(mut entry: AuthorityLogEntry, key: &P256SigningKey) -> AuthorityLogEntry {
     let transcript = authority_transcript(&entry).unwrap();
     let mut signature: P256Signature = key.sign(&transcript);
@@ -138,7 +129,7 @@ pub(super) fn cosign_ed(
     entry
 }
 
-pub(super) fn genesis_entry(seed: u8, pending_widen_delay_secs: u64, ts: u64) -> AuthorityLogEntry {
+pub(super) fn genesis_entry(seed: u8, ts: u64) -> AuthorityLogEntry {
     let signing = ed_key(seed);
     let key = authority_key_from_ed(&signing);
     let op = AuthorityOp::Genesis {
@@ -149,8 +140,6 @@ pub(super) fn genesis_entry(seed: u8, pending_widen_delay_secs: u64, ts: u64) ->
         ),
         genesis_nonce: [seed.wrapping_add(10); 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        tier_floor: AuthorityTier::Software,
-        pending_widen_delay_secs,
     };
     sign_ed(unsigned_entry(None, 0, Vec::new(), op, key, ts), &signing)
 }
@@ -243,38 +232,6 @@ pub(super) fn revoke_entry_at(
     )
 }
 
-pub(super) fn set_tier_floor_entry(
-    vault_id: AuthorityVaultId,
-    parent: &AuthorityLogEntry,
-    signer: &SigningKey,
-    seq: u64,
-    tier_floor: AuthorityTier,
-) -> AuthorityLogEntry {
-    set_tier_floor_entry_at(vault_id, parent, signer, seq, tier_floor, 888)
-}
-
-pub(super) fn set_tier_floor_entry_at(
-    vault_id: AuthorityVaultId,
-    parent: &AuthorityLogEntry,
-    signer: &SigningKey,
-    seq: u64,
-    tier_floor: AuthorityTier,
-    ts: u64,
-) -> AuthorityLogEntry {
-    let signer_key = authority_key_from_ed(signer);
-    sign_ed(
-        unsigned_entry(
-            Some(vault_id),
-            seq,
-            vec![authority_entry_hash(parent).unwrap()],
-            AuthorityOp::SetTierFloor { tier_floor },
-            signer_key,
-            ts,
-        ),
-        signer,
-    )
-}
-
 pub(super) fn rotate_entry(
     vault_id: AuthorityVaultId,
     parent: &AuthorityLogEntry,
@@ -305,27 +262,6 @@ pub(super) fn rotate_entry(
     )
 }
 
-pub(super) fn veto_entry(
-    vault_id: AuthorityVaultId,
-    parent: &AuthorityLogEntry,
-    signer: &SigningKey,
-    pending_widen_hash: AuthorityEntryHash,
-    seq: u64,
-) -> AuthorityLogEntry {
-    let signer_key = authority_key_from_ed(signer);
-    sign_ed(
-        unsigned_entry(
-            Some(vault_id),
-            seq,
-            vec![authority_entry_hash(parent).unwrap()],
-            AuthorityOp::VetoPendingWiden { pending_widen_hash },
-            signer_key,
-            999,
-        ),
-        signer,
-    )
-}
-
 /// Owned backing store for a default LOCAL [`FoldContext`]: no admitted
 /// peers.
 ///
@@ -344,6 +280,7 @@ impl LocalFoldContext {
             floor_vouched: None,
             install_held: None,
             entry_ancestors: None,
+            causal_past: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
             hosted: false,
@@ -383,10 +320,8 @@ pub(super) fn single_owner_state(
                 revoked: false,
             },
         )]),
-        tier_floor: AuthorityTier::Software,
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
-        tier_floor_events: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
@@ -405,11 +340,25 @@ pub(super) fn single_owner_state(
         host_custody_keys: BTreeSet::new(),
         worlds: BTreeMap::new(),
         refused_world_edits: BTreeSet::new(),
+        grant_travel: BTreeMap::new(),
+        refused_grant_travel: BTreeSet::new(),
+        checkpoint_policy: Default::default(),
+        home_pick: Default::default(),
+        origin_cut: Default::default(),
+        device_succession: Default::default(),
+        conversation_training: Default::default(),
+        conversation_training_vault: Default::default(),
+        policy_settings: Default::default(),
+        refused_export_acts: BTreeSet::new(),
+        agent_carried_acts: BTreeMap::new(),
+        home_candidacy: Default::default(),
+        owner_work: Default::default(),
         world_keys: BTreeMap::new(),
         refused_world_keys: BTreeSet::new(),
         key_admitters: BTreeMap::new(),
         hosted: false,
         actor_rows: BTreeSet::new(),
+        residence_directives: BTreeMap::new(),
     };
     (owner, owner_key, parent, state)
 }
@@ -449,7 +398,11 @@ pub(super) fn default_pact_scope() -> FederationPactScope {
 }
 
 pub(super) fn scope_digest_for(scope: &FederationPactScope, nonce: &[u8; 16]) -> [u8; 32] {
-    federation_scope_digest(nonce, &encode_federation_pact_scope(scope).unwrap())
+    federation_scope_digest(
+        &[0x68; 32],
+        nonce,
+        &encode_federation_pact_scope(scope).unwrap(),
+    )
 }
 
 pub(super) struct PactFixture {
@@ -468,10 +421,10 @@ pub(super) struct PactFixture {
 
 pub(super) fn pact_fixture_with_scope(seed: u8, scope: FederationPactScope) -> PactFixture {
     let owner = ed_key(seed);
-    let genesis = genesis_entry(seed, 86_400, 1);
+    let genesis = genesis_entry(seed, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let peer = ed_key(seed.wrapping_add(1));
-    let peer_genesis = genesis_entry(seed.wrapping_add(1), 86_400, 1);
+    let peer_genesis = genesis_entry(seed.wrapping_add(1), 1);
     let peer_vault_id = genesis_vault_id(&peer_genesis).unwrap();
     let pact_nonce = [seed.wrapping_add(2); 16];
     PactFixture {
@@ -720,7 +673,7 @@ pub(super) struct BindFixture {
 }
 
 pub(super) fn bind_fixture(seed: u8) -> BindFixture {
-    let genesis = genesis_entry(seed, DEFAULT_PENDING_WIDEN_DELAY_SECS, 100);
+    let genesis = genesis_entry(seed, 100);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let owner = ed_key(seed);
     let agent = ed_key(seed.wrapping_add(1));
@@ -858,7 +811,7 @@ pub(super) fn mature_observed_widen(vault: &crate::Vault, entry: &AuthorityLogEn
         .and_then(|raw| decode_authority_first_seen_secs(&raw))
         .unwrap();
     drop(txn);
-    let now = first_seen + DEFAULT_PENDING_WIDEN_DELAY_SECS;
+    let now = first_seen + 86_400;
     vault
         .with_write_txn(|txn| {
             vault.store.sync_state.put(

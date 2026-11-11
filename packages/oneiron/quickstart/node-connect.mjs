@@ -1,9 +1,11 @@
 import { Oneiron } from "oneiron"
 
 const url = process.env.ONEIRON_URL
-const key = process.env.ONEIRON_KEY
-if (!url || !key) throw new Error("Set ONEIRON_URL and ONEIRON_KEY to your server and paired credential")
-const memory = Oneiron.connect(url, key)
+const secret = process.env.ONEIRON_SECRET
+const bindingKey = process.env.ONEIRON_BINDING_KEY
+if (!url || !secret || !bindingKey) throw new Error("Set ONEIRON_URL, ONEIRON_SECRET and ONEIRON_BINDING_KEY")
+const credential = `v2.cred.${secret.slice("v2.slip.".length)}.${bindingKey}`
+const memory = Oneiron.connect(url, credential)
 
 const witnessed = memory.vault.witness({
   conversationRef: "11111111111111111111111111111111",

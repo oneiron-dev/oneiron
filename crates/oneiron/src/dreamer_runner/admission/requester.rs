@@ -83,28 +83,7 @@ impl DreamerRunnerStore<'_> {
                     now,
                 },
             )?;
-            let budget_lines = BUDGET_RESERVATION
-                .scan(&self.vault.store, &*txn)?
-                .into_iter()
-                .filter(|(key, _)| key.attempt_id == attempt.id)
-                .map(|(key, reservation)| {
-                    if key.budget_id != reservation.budget_id
-                        || reservation.attempt_id != attempt.id
-                    {
-                        return Err(invalid_dreamer_runner(
-                            "dreamer budget reservation key/body mismatch",
-                        ));
-                    }
-                    Ok(key.budget_id)
-                })
-                .collect::<Result<Vec<_>>>()?;
-            crate::dreamer_wake::owed::reconcile_ended_attempt_in_txn(
-                self.vault,
-                txn,
-                attempt.id,
-                &budget_lines,
-                now,
-            )?;
+            self.settle_ended_budget_in_txn(txn, attempt.id, now)?;
             self.cleanup_step_receipts_in_txn(txn, attempt.id)?;
             Ok(Some(attempt))
         })?;

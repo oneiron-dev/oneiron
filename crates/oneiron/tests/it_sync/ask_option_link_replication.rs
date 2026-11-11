@@ -6,8 +6,8 @@ use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::reverse_rematerialize;
 use oneiron::task_verb::{
-    ConsultPayloadRef, TaskAskDecision, TaskAskOptionId, TaskAskQuestion, TaskAskSource,
-    TaskAskSpec, TaskAskStatus, TaskAskTarget,
+    ConsultPayloadRef, TaskAskDecision, TaskAskOption, TaskAskOptionId, TaskAskQuestion,
+    TaskAskSource, TaskAskSpec, TaskAskStatus, TaskAskTarget,
 };
 use oneiron::{EntityId, TimeRange, VaultConfig};
 
@@ -56,10 +56,67 @@ fn genuine_link_answer_replicates_without_a_bearer_on_the_reader() {
             &body,
         )
         .expect("replication fixture");
+    // FIX 9917 (fedd533dcc8 #4076): the ask census binds a non-CLAIM question
+    // unit only inside both parties' live record Scope, and bare-holder record
+    // reads are default-closed (Reader::record_allowed_in_txn). Grant both the
+    // asker and the holder record reads under the live default manifest before
+    // asking. The seeded default is trusted at open, so the edit-put path applies.
+    {
+        use oneiron::policy_manifest_doors::{
+            PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow, policy_manifests_as_owner,
+            put_policy_manifest_as_owner,
+        };
+        let proof = a
+            .vault
+            .authenticate_owner(
+                owner,
+                &owner.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .expect("ask scope-grant proof");
+        let view =
+            policy_manifests_as_owner(&a.vault, &proof, &PolicyManifestRead { manifest_ref: None })
+                .expect("read live policy manifest");
+        let default = view
+            .manifests
+            .iter()
+            .find(|m| m.manifest_ref == view.default_manifest_ref)
+            .expect("default policy manifest")
+            .clone();
+        // Explicit list replaces the table: keep shipped rows, append two.
+        let mut rows = default.manifest.scoped_grants.clone().unwrap_or_default();
+        for actor in [owner, friend] {
+            rows.push(PolicyScopedGrantRow {
+                // Bare census keys carry no actor class (ScopedReadActorKey::new),
+                // so the row must not name one or it never matches.
+                actor_class: None,
+                actor_ref: Some(actor.to_hex()),
+                // SCOPED_READ_EFFECTOR_CORE_READ: the current record-read effector literal.
+                effector: "core:read".to_owned(),
+                scope: oneiron::federation::Scope::top(),
+                selectors: None,
+                budget: None,
+                receipt_required: false,
+            });
+        }
+        let mut manifest = default.manifest.clone();
+        manifest.scoped_grants = Some(rows);
+        put_policy_manifest_as_owner(
+            &a.vault,
+            &proof,
+            PolicyManifestPut {
+                manifest_ref: Some(default.manifest_ref.clone()),
+                expected_body_hash: Some(default.body_hash.clone()),
+                manifest,
+            },
+        )
+        .expect("grant asker+holder record reads");
+    }
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
     what.options.insert(
         TaskAskOptionId::new("yes").expect("replication fixture"),
-        "Yes".into(),
+        TaskAskOption::new("Yes"),
     );
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::People([friend].into())),
@@ -158,9 +215,68 @@ fn voided_link_forgery_is_quarantined_by_real_loro_replay() {
             &body,
         )
         .expect("turn");
+    // FIX 9917 (fedd533dcc8 #4076): the ask census binds a non-CLAIM question
+    // unit only inside both parties' live record Scope, and bare-holder record
+    // reads are default-closed (Reader::record_allowed_in_txn). Grant both the
+    // asker and the holder record reads under the live default manifest before
+    // asking. The seeded default is trusted at open, so the edit-put path applies.
+    {
+        use oneiron::policy_manifest_doors::{
+            PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow, policy_manifests_as_owner,
+            put_policy_manifest_as_owner,
+        };
+        let proof = a
+            .vault
+            .authenticate_owner(
+                owner,
+                &owner.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .expect("ask scope-grant proof");
+        let view =
+            policy_manifests_as_owner(&a.vault, &proof, &PolicyManifestRead { manifest_ref: None })
+                .expect("read live policy manifest");
+        let default = view
+            .manifests
+            .iter()
+            .find(|m| m.manifest_ref == view.default_manifest_ref)
+            .expect("default policy manifest")
+            .clone();
+        // Explicit list replaces the table: keep shipped rows, append two.
+        let mut rows = default.manifest.scoped_grants.clone().unwrap_or_default();
+        for actor in [owner, friend] {
+            rows.push(PolicyScopedGrantRow {
+                // Bare census keys carry no actor class (ScopedReadActorKey::new),
+                // so the row must not name one or it never matches.
+                actor_class: None,
+                actor_ref: Some(actor.to_hex()),
+                // SCOPED_READ_EFFECTOR_CORE_READ: the current record-read effector literal.
+                effector: "core:read".to_owned(),
+                scope: oneiron::federation::Scope::top(),
+                selectors: None,
+                budget: None,
+                receipt_required: false,
+            });
+        }
+        let mut manifest = default.manifest.clone();
+        manifest.scoped_grants = Some(rows);
+        put_policy_manifest_as_owner(
+            &a.vault,
+            &proof,
+            PolicyManifestPut {
+                manifest_ref: Some(default.manifest_ref.clone()),
+                expected_body_hash: Some(default.body_hash.clone()),
+                manifest,
+            },
+        )
+        .expect("grant asker+holder record reads");
+    }
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
-    what.options
-        .insert(TaskAskOptionId::new("yes").expect("option"), "Yes".into());
+    what.options.insert(
+        TaskAskOptionId::new("yes").expect("option"),
+        TaskAskOption::new("Yes"),
+    );
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::People([friend].into())),
         what,
@@ -293,9 +409,71 @@ fn link_answer_waits_for_a_late_group_or_person_and_lands_on_recovery() {
                 &body,
             )
             .expect("turn");
+        // FIX 9917 (fedd533dcc8 #4076): the ask census binds a non-CLAIM question
+        // unit only inside both parties' live record Scope, and bare-holder record
+        // reads are default-closed (Reader::record_allowed_in_txn). Grant both the
+        // asker and the holder record reads under the live default manifest before
+        // asking. The seeded default is trusted at open, so the edit-put path applies.
+        {
+            use oneiron::policy_manifest_doors::{
+                PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow,
+                policy_manifests_as_owner, put_policy_manifest_as_owner,
+            };
+            let proof = a
+                .vault
+                .authenticate_owner(
+                    owner,
+                    &owner.to_hex(),
+                    true,
+                    oneiron::store::GateDecisionId::now(),
+                )
+                .expect("ask scope-grant proof");
+            let view = policy_manifests_as_owner(
+                &a.vault,
+                &proof,
+                &PolicyManifestRead { manifest_ref: None },
+            )
+            .expect("read live policy manifest");
+            let default = view
+                .manifests
+                .iter()
+                .find(|m| m.manifest_ref == view.default_manifest_ref)
+                .expect("default policy manifest")
+                .clone();
+            // Explicit list replaces the table: keep shipped rows, append two.
+            let mut rows = default.manifest.scoped_grants.clone().unwrap_or_default();
+            for actor in [owner, friend] {
+                rows.push(PolicyScopedGrantRow {
+                    // Bare census keys carry no actor class (ScopedReadActorKey::new),
+                    // so the row must not name one or it never matches.
+                    actor_class: None,
+                    actor_ref: Some(actor.to_hex()),
+                    // SCOPED_READ_EFFECTOR_CORE_READ: the current record-read effector literal.
+                    effector: "core:read".to_owned(),
+                    scope: oneiron::federation::Scope::top(),
+                    selectors: None,
+                    budget: None,
+                    receipt_required: false,
+                });
+            }
+            let mut manifest = default.manifest.clone();
+            manifest.scoped_grants = Some(rows);
+            put_policy_manifest_as_owner(
+                &a.vault,
+                &proof,
+                PolicyManifestPut {
+                    manifest_ref: Some(default.manifest_ref.clone()),
+                    expected_body_hash: Some(default.body_hash.clone()),
+                    manifest,
+                },
+            )
+            .expect("grant asker+holder record reads");
+        }
         let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
-        what.options
-            .insert(TaskAskOptionId::new("yes").expect("option"), "Yes".into());
+        what.options.insert(
+            TaskAskOptionId::new("yes").expect("option"),
+            TaskAskOption::new("Yes"),
+        );
         let mut spec = TaskAskSpec::shorthand(
             Some(TaskAskTarget::People([friend].into())),
             what,
