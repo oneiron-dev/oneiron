@@ -107,7 +107,7 @@ const PROPOSED_CHANGE_ID_CONTEXT: &str = "oneiron agent_def proposed change id v
 /// # Errors
 ///
 /// An invalid-key error when the derived bytes are a reserved id pattern.
-fn proposed_change_id(stored: &EntityId, version: &str) -> Result<EntityId> {
+pub(super) fn proposed_change_id(stored: &EntityId, version: &str) -> Result<EntityId> {
     let mut hasher = blake3::Hasher::new_derive_key(PROPOSED_CHANGE_ID_CONTEXT);
     hasher.update(stored.as_bytes());
     hasher.update(version.as_bytes());
@@ -1230,7 +1230,7 @@ impl Vault {
         Ok((definition, disposition))
     }
 
-    fn apply_agent_definition_body(
+    pub(super) fn apply_agent_definition_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,

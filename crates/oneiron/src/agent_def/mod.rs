@@ -17,6 +17,7 @@ mod id_pin;
 mod manifest;
 mod models;
 mod optional_memory;
+mod proposed_change;
 mod refusal;
 mod types;
 mod widening;
@@ -32,6 +33,10 @@ pub use self::models::{
 pub use self::optional_memory::{
     OPTIONAL_MEMORY_BUDGET_KEYS, OPTIONAL_MEMORY_PROFILE_KEYS, OptionalMemory,
     OptionalMemoryProfile,
+};
+pub use self::proposed_change::ProposedAgentDefinitionChangeDecision;
+pub(crate) use self::proposed_change::{
+    ProposedAgentDefinitionChange, ProposedAgentDefinitionChangeSettlement,
 };
 pub use self::refusal::{
     REFUSAL_DIAL_KEYS, RefusalDial, RefusalDomain, RefusalLevel, RefusalOutcome, VaultKind,

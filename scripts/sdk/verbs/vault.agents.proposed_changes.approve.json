@@ -1,0 +1,17 @@
+{
+  "name": "vault.agents.proposed_changes.approve",
+  "description": "The owner approves an agent's proposed change to a stored agent definition: the stored definition, still at the version the owner read, takes the proposal as its next version, the proposal row is deleted, and one gate decision records the answer.",
+  "input": "crate::task_verb::sdk::ProposedAgentDefinitionChangeApproveRequest",
+  "output": "crate::task_verb::sdk::ProposedAgentDefinitionChangeSettlementView",
+  "call": "crate::task_verb::sdk::approve_proposed_agent_definition_change_as(memory.vault(), &memory.embedded_owner(\"vault.agents.proposed_changes.approve\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner",
+  "act_class": "grant_widen"
+}
