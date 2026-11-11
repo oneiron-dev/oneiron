@@ -186,6 +186,12 @@ pub use self::eval_set::{
     setup_eval_cohorts, sufficiency_card,
 };
 pub use self::eval_set::{
+    EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringCaller,
+    EvalAuthoringExecuteAnswer, EvalAuthoringExecuteRequest, EvalAuthoringExecution,
+    EvalAuthoringOutcome, EvalAuthoringSkillRun, admit_eval_authoring_execution,
+    eval_authoring_execute_admits, eval_authoring_execution,
+};
+pub use self::eval_set::{
     EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
     EvalMeasurement, EvalMeasurementRequest, EvalServingOffer, EvalTaskInput, FloorSlicePolicy,
     JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState,
