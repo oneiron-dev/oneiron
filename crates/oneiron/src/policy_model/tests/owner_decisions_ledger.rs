@@ -79,7 +79,7 @@ fn a_bare_classify_whose_model_did_not_answer_still_receipts_the_fail_open() -> 
 
 /// The byte bound stops the JOIN, not just the parse.
 ///
-/// `parse_model_answer` bounds the text it is handed — but `response_text`
+/// `parse_rationale_notes` bounds the text it is handed — but `response_text`
 /// builds that text from every part first, so a backend returning many parts
 /// paid the whole allocation before the parser ever looked. A bound checked
 /// after the string exists is a semantic bound wearing a memory bound's name.
@@ -265,13 +265,10 @@ fn an_answer_past_the_byte_bound_is_unreadable_rather_than_deserialized() {
     // refused, so nothing but the byte bound can stop this one.
     let rationale = "x".repeat(bound);
     let flood = format!(
-        r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime"],"confidence":"high","rationale":"{rationale}"}}"#
+        r#"{{"rule_ids":["serious_crime"],"confidence":"high","rationale":"{rationale}"}}"#
     );
     assert!(flood.len() > bound);
-    let refused = super::contract::parse_model_answer(
-        super::contract::PolicyOutputContract::RationaleJson,
-        &flood,
-    );
+    let refused = super::contract::parse_rationale_notes(&flood);
     assert!(
         refused.is_err(),
         "a body past the bound is refused before serde sees it"
@@ -279,13 +276,9 @@ fn an_answer_past_the_byte_bound_is_unreadable_rather_than_deserialized() {
 
     // And an answer of the same SHAPE that fits still reads, so the bound is a
     // flood stop and not a new contract.
-    let ordinary = r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":["serious_crime"],"confidence":"high","rationale":"step-by-step instructions"}"#;
+    let ordinary = r#"{"rule_ids":["serious_crime"],"confidence":"high","rationale":"step-by-step instructions"}"#;
     assert!(
-        super::contract::parse_model_answer(
-            super::contract::PolicyOutputContract::RationaleJson,
-            ordinary,
-        )
-        .is_ok(),
+        super::contract::parse_rationale_notes(ordinary).is_ok(),
         "an honest answer is orders of magnitude below the bound"
     );
 }
