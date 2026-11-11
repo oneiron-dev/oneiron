@@ -11,6 +11,7 @@ use super::authority::TurnProgramAuthority;
 const PIN_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-pin:v1";
 const ADMISSION_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-admission:v1";
 const CODE_RUN_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-code-run:v1";
+const OCCURRENCE_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-occurrence:v1";
 
 /// The executable one armed program runs (DOOR-141 §3): a callable SKILL's
 /// JS entry at an exact version and content hash, the digest of its call
@@ -86,6 +87,89 @@ pub struct ArmTurnProgram {
 pub struct DisarmTurnProgram {
     /// The registration arming returned.
     pub registration: EntityId,
+}
+
+/// What wakes one armed program (untangle slice 6.8c). Each wake is admitted by the same writer,
+/// which judges the sealed authority again, as a turn's wake is.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgramTrigger {
+    /// Each turn its own actor lands, in the armed conversation or any of the actor's own.
+    #[default]
+    Turn,
+    /// A due time: first at `first_at` (the vault's recording clock, seconds), then every
+    /// `every_secs` after it; once when `every_secs` is 0. A due time missed while no node
+    /// released wakes it once, never once per missed time.
+    Timer { first_at: u64, every_secs: u64 },
+    /// The host turning idle: once per idle stretch, when no inbound has arrived for
+    /// `quiet_secs`.
+    Idle { quiet_secs: u64 },
+    /// A change feed subscription of its own actor: once per source head while the
+    /// subscription's cursor stands behind it.
+    Feed { subscription: EntityId },
+}
+
+impl ProgramTrigger {
+    /// Whether this is the turn trigger, which every arming before slice 6.8c had.
+    #[must_use]
+    pub const fn is_turn(&self) -> bool {
+        matches!(self, Self::Turn)
+    }
+
+    /// The kind of occurrence this trigger wakes on, `None` for a turn.
+    pub(super) const fn occurrence_kind(&self) -> Option<OccurrenceKind> {
+        match self {
+            Self::Turn => None,
+            Self::Timer { .. } => Some(OccurrenceKind::Timer),
+            Self::Idle { .. } => Some(OccurrenceKind::Idle),
+            Self::Feed { .. } => Some(OccurrenceKind::Feed),
+        }
+    }
+}
+
+/// The kind of occurrence that woke a program whose trigger is not a turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum OccurrenceKind {
+    Timer,
+    Idle,
+    Feed,
+}
+
+impl OccurrenceKind {
+    /// The one-byte tag the trigger index keys by.
+    pub(super) const fn tag(self) -> u8 {
+        match self {
+            Self::Timer => 1,
+            Self::Idle => 2,
+            Self::Feed => 3,
+        }
+    }
+
+    /// The occurrence's identity: the registration, the kind and the mark that names one
+    /// occurrence (the due time, the idle stretch's start, the feed heads). Recording the same
+    /// occurrence again gives the same id, so it wakes the program once.
+    pub(super) fn occurrence_id(
+        self,
+        registration: EntityId,
+        mark: &[u8],
+    ) -> crate::error::Result<EntityId> {
+        let digest = blake3::Hasher::new()
+            .update(OCCURRENCE_DOMAIN)
+            .update(registration.as_bytes())
+            .update(&[self.tag()])
+            .update(&(mark.len() as u64).to_be_bytes())
+            .update(mark)
+            .finalize();
+        let mut bytes = [0_u8; 16];
+        bytes.copy_from_slice(&digest.as_bytes()[..16]);
+        // A digest prefix is never a reserved id in practice; one would be refused, not used.
+        EntityId::from_bytes(bytes).map_err(|_| {
+            crate::error::Error::CorruptedIndex("a turn program occurrence id is a reserved id")
+        })
+    }
 }
 
 /// One armed program as its actor reads it back.
@@ -180,13 +264,27 @@ pub(super) struct TurnProgramArming {
     pub(super) definition: ProgramRecipePin,
     pub(super) revision: [u8; 32],
     pub(super) armed_at: u64,
+    /// What wakes it; a turn for every arming written before slice 6.8c.
+    #[serde(default, skip_serializing_if = "ProgramTrigger::is_turn")]
+    pub(super) trigger: ProgramTrigger,
+    /// The arming actor's authority, sealed at arm for a trigger that is not a turn (B-3): each
+    /// occurrence's wake carries it, and each admission judges it again. A turn's wake seals
+    /// its own turn's authority instead, so a turn arming keeps none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) sealed: Option<TurnProgramAuthority>,
+    /// A timer's next due time, the key of its row in the due index; `None` once a timer that
+    /// wakes once has woken, and for every other trigger.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) next_due: Option<u64>,
 }
 
 impl TurnProgramArming {
-    /// Whether a turn `authority`'s actor landed wakes this program: its
-    /// own actor at its own class, in its conversation, at or after arming.
+    /// Whether a turn `authority`'s actor landed wakes this program: a turn
+    /// trigger, its own actor at its own class, in its conversation, at or
+    /// after arming.
     pub(super) fn wakes_on(&self, authority: &TurnProgramAuthority, turn: &LandedTurnRef) -> bool {
-        self.actor == authority.actor()
+        self.trigger.is_turn()
+            && self.actor == authority.actor()
             && self.actor_class == authority.class_byte()
             && self
                 .conversation
@@ -216,7 +314,14 @@ pub(super) struct TurnProgramWake {
     pub(super) registration: EntityId,
     pub(super) revision: [u8; 32],
     pub(super) authority: TurnProgramAuthority,
+    /// The landed turn that woke it; for an occurrence (`occurrence` set), the occurrence's id
+    /// in both `turn` and `conversation` and its time in `landed_at`, so the wake's key, its
+    /// admission's identity and the turn index name the occurrence as they name a turn.
     pub(super) turn: LandedTurnRef,
+    /// The kind of occurrence that woke a program whose trigger is not a turn; none for a
+    /// turn's wake.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) occurrence: Option<OccurrenceKind>,
     /// The owed row's status once an admission found its sealed slip
     /// lapsed and kept it owed (FIX 12058); none until then. It is never
     /// part of the wake an admission records.

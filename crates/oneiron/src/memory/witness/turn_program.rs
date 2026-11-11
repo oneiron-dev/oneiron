@@ -11,7 +11,7 @@
 
 use super::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason, keep_wake_label_in_txn};
 use crate::dreamer_runner::{
-    ArmTurnProgram, LandedTurnRef, TurnProgramAuthority, TurnProgramRegistration,
+    ArmTurnProgram, LandedTurnRef, ProgramTrigger, TurnProgramAuthority, TurnProgramRegistration,
 };
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
@@ -32,6 +32,29 @@ impl Memory<'_> {
         &self,
         input: &ArmTurnProgram,
     ) -> MemoryResult<TurnProgramRegistration> {
+        self.arm_program(input, ProgramTrigger::Turn)
+    }
+
+    /// Arms a pinned callable SKILL entry for this actor on `trigger`
+    /// (untangle slice 6.8c): its own turns, as [`Self::arm_turn_program`]
+    /// arms, or a due time, the host turning idle, or a change feed
+    /// subscription of its own moving. A trigger other than a turn names no
+    /// conversation and seals this caller's authority into the arming: each
+    /// occurrence wakes the program once under that authority, judged again at
+    /// each admission, so a slip that lapsed or was withdrawn runs nothing.
+    /// Arming the same definition on the same trigger again returns the
+    /// standing registration.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::arm_turn_program`]; a trigger that names a
+    /// conversation, repeats a timer more than once a minute or waits no quiet
+    /// time; a subscription that is not this actor's.
+    pub fn arm_program(
+        &self,
+        input: &ArmTurnProgram,
+        trigger: ProgramTrigger,
+    ) -> MemoryResult<TurnProgramRegistration> {
         // An off-record session keeps nothing, so it arms nothing.
         let authority = self
             .turn_program_authority()
@@ -46,7 +69,7 @@ impl Memory<'_> {
         let now = self.vault.now_recorded_at();
         self.with_verified_actor_write_txn(|wtxn| {
             Ok(crate::dreamer_runner::arm_turn_program_in_txn(
-                self.vault, wtxn, &authority, input, now,
+                self.vault, wtxn, &authority, input, trigger, now,
             )?)
         })
     }
