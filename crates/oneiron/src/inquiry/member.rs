@@ -566,3 +566,50 @@ fn settle_from_check_in_in_txn(
         now,
     )
 }
+
+/// The table's actor scrub (an actor's erase, and a restore's rerun of it).
+/// The check-in table's own scrub removes every pending check-in `actor`
+/// asked, and the edge's guest actor asks each one an inquiry waits on. So
+/// a join to such a check-in, or to one already removed, goes, and its
+/// inquiry, still pending, settles `no_answer`, let go: no check-in is left
+/// to answer or advance it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_inquiry_pending_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let mut ended = Vec::new();
+    for (key, check_in) in PENDING.scan(&vault.store, wtxn)? {
+        if pending_check_in_in_txn(&vault.store, wtxn, &check_in)?
+            .is_none_or(|row| row.asker == *actor)
+        {
+            ended.push(key);
+        }
+    }
+    if ended.is_empty() {
+        return Ok(());
+    }
+    let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    for (grant, inquiry_id) in ended {
+        PENDING.delete(&vault.store, wtxn, &(grant, inquiry_id))?;
+        let Some(entry) = inquiry_log_entry_in_txn(&vault.store, wtxn, grant, inquiry_id)? else {
+            continue;
+        };
+        if entry.answer.outcome() == InquiryOutcome::Pending {
+            settle_inquiry_in_txn(
+                &vault.store,
+                wtxn,
+                grant,
+                inquiry_id,
+                InquiryAnswer::no_answer(&entry.inquiry),
+                InquiryDecider::LetGo,
+                now,
+            )?;
+        }
+    }
+    Ok(())
+}
