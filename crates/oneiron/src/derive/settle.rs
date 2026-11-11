@@ -138,9 +138,16 @@ pub(super) fn stage_in_txn(
                 &[SETTLE_ALLOWED.to_owned()],
                 &allowance,
             )?;
-            // The answer first: a revert reverts the settlement by it.
+            // The answer first: a revert reverts the settlement by it. The
+            // marker, members and any newly landed winner follow, so a later
+            // change to any of them leaves the whole settlement alone.
             let mut rows = vec![settled.resolved, marker];
             rows.extend(conflict.members.iter().copied());
+            if let Some(winner) = settled.materialized
+                && !rows.contains(&winner)
+            {
+                rows.push(winner);
+            }
             Ok(ItemOutcome::Landed {
                 rows,
                 approval: None,
