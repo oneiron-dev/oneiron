@@ -31,10 +31,17 @@ use auto_commit::{VerifiedSealJob, VerifiedSealOutput};
 /// Sealed document manifest. Key: id16 (document).
 pub(super) const CANONICAL: SideTable<EntityId, SealedDocument, LegacyJson> =
     SideTable::new(&side_table::ESIGN_SEALED_DOCUMENT);
-/// Completed seal attempt result. Key: id16 (attempt id — `AttemptId`, not `EntityId`, but the
-/// same raw 16 bytes).
-const RESULT: SideTable<[u8; 16], SealedDocument, LegacyJson> =
+/// Successful seal or failed verification result. Key: id16 (attempt id — `AttemptId`, not
+/// `EntityId`, but the same raw 16 bytes).
+pub(super) const RESULT: SideTable<[u8; 16], EsignSealAttemptResult, LegacyJson> =
     SideTable::new(&side_table::ESIGN_SEAL_RESULT);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", content = "data", rename_all = "snake_case")]
+pub(super) enum EsignSealAttemptResult {
+    Sealed(SealedDocument),
+    VerificationFailed { verify_reasons: Vec<String> },
+}
 #[derive(Debug, thiserror::Error)]
 pub enum EsignSealError {
     #[error(transparent)]
@@ -48,7 +55,7 @@ pub enum EsignSealError {
     #[error("the seal call needs a booking for {lent_bytes} lent bytes")]
     ProducerBooking { lent_bytes: u64 },
     #[error("sealed PDF failed post-seal verification")]
-    Verification,
+    Verification { verify_reasons: Vec<String> },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedItem {
@@ -87,7 +94,11 @@ fn coherent(sealed: &EsignSealed, checked: &EsignVerdict, profile: SealProfile) 
             .iter()
             .all(|degrade| degrade.requested == profile && degrade.achieved == sealed.achieved)
 }
-fn live_attempt(vault: &Vault, txn: &heed::RoTxn<'_>, attempt: &AttemptRecord) -> Result<()> {
+pub(super) fn live_attempt(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: &AttemptRecord,
+) -> Result<()> {
     let current = AttemptQueue::new(vault)
         .get_in_write_txn(txn, attempt.id)?
         .ok_or(Error::EntityNotFound)?;
@@ -125,13 +136,27 @@ impl Vault {
         )?;
         let (state, rows, originals, images) = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
-            if let Some(sealed) = RESULT.get(&self.store, &txn, attempt.id.as_bytes())? {
-                if sealed.document != document.to_hex()
-                    || attempt.kind != super::ESIGN_SEAL_ATTEMPT_KIND
-                {
+            if let Some(result) = RESULT.get(&self.store, &txn, attempt.id.as_bytes())? {
+                if attempt.kind != super::ESIGN_SEAL_ATTEMPT_KIND {
                     return Err(invalid("seal result binding mismatch").into());
                 }
-                return Ok(sealed);
+                return match result {
+                    EsignSealAttemptResult::Sealed(sealed) => {
+                        if sealed.document != document.to_hex() {
+                            return Err(invalid("seal result binding mismatch").into());
+                        }
+                        Ok(sealed)
+                    }
+                    EsignSealAttemptResult::VerificationFailed { verify_reasons } => {
+                        let current = AttemptQueue::new(self)
+                            .get_in_write_txn(&txn, attempt.id)?
+                            .ok_or(Error::EntityNotFound)?;
+                        if current.kind != attempt.kind || current.payload != attempt.payload {
+                            return Err(invalid("seal result binding mismatch").into());
+                        }
+                        Err(EsignSealError::Verification { verify_reasons })
+                    }
+                };
             }
             live_attempt(self, &txn, attempt)?;
             let state = state_in(self, &txn, document)?;
@@ -353,7 +378,12 @@ impl Vault {
                 now,
             )?;
             CANONICAL.put(&self.store, txn, &document, &manifest)?;
-            RESULT.put(&self.store, txn, attempt.id.as_bytes(), &manifest)?;
+            RESULT.put(
+                &self.store,
+                txn,
+                attempt.id.as_bytes(),
+                &EsignSealAttemptResult::Sealed(manifest.clone()),
+            )?;
             let recipients = terminal
                 .document
                 .recipients
@@ -430,7 +460,9 @@ impl Vault {
             )?
             .ok_or(Error::EntityNotFound)?;
         if <[u8; 32]>::from(Sha256::digest(&bytes)) != item.sha256 {
-            return Err(EsignSealError::Verification);
+            return Err(EsignSealError::Verification {
+                verify_reasons: Vec::new(),
+            });
         }
         Ok(sealer.verify(&bytes)?)
     }

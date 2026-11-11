@@ -326,7 +326,7 @@
         "revision": "1"
       },
       "licence": "CC0-1.0",
-      "sha256": "7a29e04fbaa1493a52df9f649c130d143631d859a2930f86e079b804019f3cea",
+      "sha256": "71af954a25b086eeafc4d15994812bd168eac0db8448d556f1649ffdf0d86a39",
       "expectedFacts": {
         "plannedIds": [
           "CALENDAR-01",

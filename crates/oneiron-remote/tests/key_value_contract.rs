@@ -19,25 +19,25 @@ fn embedded_keyed_catalog_round_trip_and_replay() {
         request_id: "request-one".into(),
         source: "user_stated".into(),
     };
-    assert!(client.key_value_get(&address).unwrap().is_none());
-    let receipt = client.key_value_put(&request).unwrap();
+    assert!(client.vault_kv_get(&address).unwrap().is_none());
+    let receipt = client.vault_kv_put(&request).unwrap();
     assert!(!receipt.replayed);
     assert_eq!(
-        client.key_value_get(&address).unwrap(),
+        client.vault_kv_get(&address).unwrap(),
         Some(receipt.item.clone())
     );
-    assert!(client.key_value_put(&request).unwrap().replayed);
+    assert!(client.vault_kv_put(&request).unwrap().replayed);
     assert_eq!(
-        client.key_value_search(&KeyValueSearch::default()).unwrap(),
+        client.vault_kv_search(&KeyValueSearch::default()).unwrap(),
         vec![receipt.item]
     );
     assert_eq!(
         client
-            .key_value_namespaces(&KeyValueNamespaces::default())
+            .vault_kv_namespaces(&KeyValueNamespaces::default())
             .unwrap(),
         vec![address.namespace.clone()]
     );
-    assert!(client.key_value_delete(&address).unwrap().existed);
-    assert!(client.key_value_get(&address).unwrap().is_none());
-    assert!(client.key_value_put(&request).is_err());
+    assert!(client.vault_kv_delete(&address).unwrap().existed);
+    assert!(client.vault_kv_get(&address).unwrap().is_none());
+    assert!(client.vault_kv_put(&request).is_err());
 }

@@ -365,6 +365,74 @@ impl<'a> HostSelfDispatcher<'a> {
             .spawn_fanout_batch(input, decisions)
     }
 
+    /// `vault.derive.commit` (untangle 6.7d): lands the batch as this held
+    /// run's actor. The request names items and source versions alone; the
+    /// stamp is the engine's ([`Self::derivation_stamp`]). Each item is then
+    /// judged on its own by the commit: the claim gate with the derivation
+    /// floors, or the actor's live grant capability over the item's target.
+    pub fn derive_commit_from_host(
+        &self,
+        input: crate::derive::DeriveCommitInput,
+    ) -> MemoryResult<crate::derive::DeriveCommitView> {
+        self.live_parent()?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
+        let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(MemoryError::bad_request(
+                "a derivation commit requires canonical live-run storage",
+            ));
+        };
+        let batch = input.into_batch()?;
+        Ok(vault
+            .derive_commit(&self.derivation_stamp(), &batch)?
+            .into())
+    }
+
+    /// `vault.derive.revert` for the committing actor (untangle 6.7d): this
+    /// held run's actor takes back its own batch, while its derive verdict
+    /// stands. Any other actor's batch is refused by the revert itself.
+    pub fn derive_revert_from_host(
+        &self,
+        batch: EntityId,
+    ) -> MemoryResult<crate::derive::DeriveRevertView> {
+        self.live_parent()?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
+        let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(MemoryError::bad_request(
+                "a derivation revert requires canonical live-run storage",
+            ));
+        };
+        Ok(vault.derive_revert(self.actor, None, batch)?.into())
+    }
+
+    /// Who commits a derivation batch on this held run, as the engine stamps
+    /// it: the run's actor, its recorded run and leased attempt, and the
+    /// `Generated` source with what the run has observed (an external effect
+    /// in its replay record adds `ToolOutput`, as on its claim writes,
+    /// ONE-1314). No part of it comes from the request.
+    fn derivation_stamp(&self) -> crate::derive::DerivationStamp {
+        let lineage = crate::write_envelope::SourceLineage::of(self.source());
+        crate::derive::DerivationStamp {
+            actor: self.actor,
+            run: Some(self.run_ref.clone()),
+            attempt: self.agent_lease.as_ref().map(|lease| lease.attempt),
+            lineage: if self.external_effect_seen.get() {
+                lineage.with(crate::claim::ClaimSource::ToolOutput)
+            } else {
+                lineage
+            },
+        }
+    }
+
     fn live_parent(&self) -> MemoryResult<()> {
         self.task_host_binding()?.ok_or_else(|| {
             MemoryError::bad_request("a host coordination call requires its acquired parent lease")

@@ -1,0 +1,134 @@
+//! The Coach's work-budget changes stay inside the owner's caps (untangle
+//! 6.6b, the B1 and B2 families; S66B-BUDGETS = A, A). A holder of
+//! `engine.controls` lowers the sieve's per-pass budgets and is refused a
+//! raise; it moves the schedule of a free-time policy that stands, keeping
+//! the owner's `total_units`, and the act is recorded as the holder's
+//! through its grant; it never creates or clears a policy. On the base there
+//! is no holder door.
+//!
+//! Needs the doors:
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
+//! --all-features --test coach_budgets`.
+#![cfg(oneiron_test_support)]
+
+use oneiron::dreamer_runner::{FreeTimeCadence, FreeTimePolicyInput, FreeTimeSchedule};
+use oneiron::dreamer_wake::SievePassBudgets;
+use oneiron::federation::EngineControlClass;
+use oneiron::test_doors::coach::{coach, define_agent};
+use oneiron::test_doors::steward::{GrantMark, grant_mark, open_owner_carrier_vault, owner};
+
+#[test]
+fn the_coach_lowers_the_sieve_budgets_and_never_raises_them() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let owner = owner(&vault).expect("owner proof");
+    let coach = coach(&vault).expect("the Coach");
+    vault.provision_system_agent_grants().expect("first mint");
+    let held = vault.dreamer_sieve_policy().expect("sieve policy");
+
+    let lower = SievePassBudgets {
+        max_turns_per_pass: held.max_turns_per_pass / 2,
+        max_scan_per_pass: held.max_scan_per_pass,
+        max_text_bytes_per_pass: held.max_text_bytes_per_pass,
+    };
+    vault
+        .lower_dreamer_sieve_budgets_as_holder(coach, lower)
+        .expect("a lower budget");
+    let after = vault.dreamer_sieve_policy().expect("sieve policy");
+    assert_eq!(after.max_turns_per_pass, held.max_turns_per_pass / 2);
+    assert_eq!(after.date_interest, held.date_interest, "scoring stays");
+
+    let raise = SievePassBudgets {
+        max_turns_per_pass: held.max_turns_per_pass,
+        ..lower
+    };
+    assert!(
+        vault
+            .lower_dreamer_sieve_budgets_as_holder(coach, raise)
+            .is_err(),
+        "raising is the owner's act"
+    );
+    assert_eq!(vault.dreamer_sieve_policy().expect("sieve policy"), after);
+
+    let changes = vault.engine_control_changes(&owner).expect("receipts");
+    let [(_, change)] = changes.as_slice() else {
+        panic!("one receipt, found {}", changes.len());
+    };
+    assert_eq!(change.knob, "DREAMER_SIEVE_POLICY");
+    assert_eq!(change.class, EngineControlClass::WorkBudget);
+    assert_eq!(change.by, coach);
+}
+
+fn schedule(hour: u8) -> FreeTimeSchedule {
+    FreeTimeSchedule {
+        cadence: FreeTimeCadence::Nightly,
+        hour,
+        minute: 0,
+        zone: "Asia/Tokyo".to_owned(),
+    }
+}
+
+#[test]
+fn the_coach_moves_a_free_time_schedule_and_keeps_the_owners_cap() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let owner = owner(&vault).expect("owner proof");
+    let coach = coach(&vault).expect("the Coach");
+    vault.provision_system_agent_grants().expect("first mint");
+    let Some(GrantMark::Minted { grant, .. }) = grant_mark(&vault, coach).expect("mark") else {
+        panic!("the Coach holds its grant");
+    };
+    let agent = define_agent(&vault).expect("an agent");
+
+    // No policy stands: the Coach creates none.
+    assert!(
+        vault
+            .set_free_time_schedule_as_holder(coach, agent, 0, schedule(2))
+            .is_err(),
+        "creating a policy is the owner's act"
+    );
+    assert_eq!(vault.free_time_policy(agent).expect("policy"), None);
+
+    // The owner sets one; the Coach moves its schedule only.
+    let set = vault
+        .set_free_time_policy(
+            &owner,
+            None,
+            agent,
+            0,
+            FreeTimePolicyInput {
+                total_units: 50_000,
+                schedule: schedule(2),
+                pinned_split: None,
+                cap_shown_at_ms: 1_000,
+            },
+        )
+        .expect("the owner's policy");
+    let (_, moved) = vault
+        .set_free_time_schedule_as_holder(coach, agent, set.revision, schedule(4))
+        .expect("the Coach's schedule");
+    assert_eq!(moved.schedule, schedule(4));
+    assert_eq!(moved.total_units, 50_000, "the owner's cap stays");
+    assert_eq!(moved.cap_shown_at_ms, 1_000);
+    assert_eq!(moved.pinned_split, None);
+    assert_eq!(moved.set_by, None);
+    assert_eq!(moved.set_by_agent, Some(coach), "the act is the holder's");
+    assert_eq!(moved.set_grant, Some(grant), "through its grant");
+    assert_eq!(
+        vault.free_time_policy(agent).expect("policy"),
+        Some(moved.clone())
+    );
+
+    // A stale revision is refused, and the receipt names the Coach.
+    assert!(
+        vault
+            .set_free_time_schedule_as_holder(coach, agent, set.revision, schedule(5))
+            .is_err()
+    );
+    let changes = vault.engine_control_changes(&owner).expect("receipts");
+    let [(_, change)] = changes.as_slice() else {
+        panic!("one receipt, found {}", changes.len());
+    };
+    assert_eq!(change.knob, "DREAMER_FREE_TIME_POLICY");
+    assert_eq!(change.class, EngineControlClass::WakeCadence);
+}
