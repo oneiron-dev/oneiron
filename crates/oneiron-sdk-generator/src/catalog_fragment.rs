@@ -289,17 +289,20 @@ impl<'r> Fragment<'r> {
         Ok(root.children)
     }
 
-    /// The row's description as its JSDoc line.
+    /// The row's description as its JSDoc line. A run row has no description; one that names its grant class shows
+    /// it.
     fn doc(node: &Node<'_>, indent: &str) -> String {
-        match node.row() {
-            Some(row) if JSDOC => match row.get("description") {
-                Some(description) if description.truthy() => {
-                    format!("{indent}/** {} */\n", description.str())
+        let text = match node.row() {
+            Some(row) if JSDOC => match (row.get("description"), row.get("grant_class")) {
+                (Some(description), _) if description.truthy() => description.str(),
+                (_, Some(grant_class)) if grant_class.truthy() => {
+                    format!("Grant class: {}.", grant_class.str())
                 }
-                _ => String::new(),
+                _ => return String::new(),
             },
-            _ => String::new(),
-        }
+            _ => return String::new(),
+        };
+        format!("{indent}/** {text} */\n")
     }
 
     /// A path segment's type, its call signature, the members it holds, or both at once.

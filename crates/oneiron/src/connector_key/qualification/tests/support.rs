@@ -10,10 +10,10 @@ struct NamedConnection<'a> {
     name: String,
 }
 impl QualificationConnection for NamedConnection<'_> {
-    fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
-        let mut tools = self.inner.tools_list()?;
-        tools[0].name.clone_from(&self.name);
-        Ok(tools)
+    fn tools_list(&mut self) -> Result<ProbeToolsList, QualificationFailure> {
+        let mut listed = self.inner.tools_list()?;
+        listed.tools[0].name.clone_from(&self.name);
+        Ok(listed)
     }
     fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
         self.inner.call(request)
@@ -41,6 +41,14 @@ pub(crate) fn passing_suite(
 ) {
     let mut plan = super::plan();
     for case in &mut plan.reads {
+        case.call.name = name.into();
+    }
+    plan.unanswerable.call.name = name.into();
+    for injection in &mut plan.injections {
+        injection.baseline.call.name = name.into();
+        injection.injected.call.name = name.into();
+    }
+    for case in &mut plan.scope_escape {
         case.call.name = name.into();
     }
     plan.write.as_mut().expect("write case").call.name = name.into();

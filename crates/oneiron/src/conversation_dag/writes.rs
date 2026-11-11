@@ -195,6 +195,9 @@ fn append_at_in_txn(
         return Err(invalid("retry TURN id is not fresh"));
     }
     actor_in_txn(&vault.store, txn, input.actor)?;
+    // The scope summary landing writer appends only the reply its landing
+    // admitted (SUMMARY-AS-RECORD-PERMIT-SHAPE = A).
+    crate::scope_summary::check_landing_append(&vault.store, input, summary)?;
     if !crate::conversation::room_person_write_allowed(
         &vault.store,
         txn,
