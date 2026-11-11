@@ -116,8 +116,8 @@ pub(crate) fn seed_agent_definition(vault: &Vault, id: EntityId, label: &str) ->
 }
 
 // One implementation each, shared with the test-support doors other crates
-// use (the seal organ's end-to-end check).
-pub(crate) use crate::test_support::{
+// use (the seal organ's end-to-end check) and the integration-test doors.
+pub(crate) use crate::test_fixtures::{
     entity_record, provision_engine_machines, put_policy_manifest_bytes, test_host_issuer,
 };
 
