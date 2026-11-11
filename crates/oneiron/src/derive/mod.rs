@@ -63,11 +63,10 @@ pub use supersede::{
     SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE, SUPERSEDE_REPLACEMENT_UNSETTLED,
 };
 pub use wire::{
-    DeriveAboutLineInput, DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput,
-    DeriveCommitView, DeriveEvidenceInput, DeriveItemInput, DeriveItemView, DeriveLeftItemView,
-    DerivePersonAboutInput, DeriveRef, DeriveRevertInput, DeriveRevertView, DeriveSameAsInput,
-    DeriveSettleInput, DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput,
-    DeriveTopologyInput,
+    DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput, DeriveCommitView, DeriveEvidenceInput,
+    DeriveItemInput, DeriveItemView, DeriveLeftItemView, DeriveRef, DeriveRevertInput,
+    DeriveRevertView, DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput,
+    DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
 };
 
 /// The provenance `surface` a derivation commit stamps on every row it

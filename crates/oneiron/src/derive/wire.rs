@@ -7,15 +7,17 @@
 //! refused. The engine stamps all of those from the caller's held live run
 //! ([`super::DerivationStamp`]).
 //!
+//! A person's `about` lines are not a wire item: the engine's own executor
+//! lands them.
+//!
 //! A PsychProfile item has no wire form yet: no verb carries a PsychProfile,
 //! so its first caller defines one.
 
 use serde::{Deserialize, Serialize};
 
 use super::batch::{
-    DerivationBatch, DerivationItem, DerivedAboutLine, DerivedArchive, DerivedClaim,
-    DerivedEvidence, DerivedPersonAbout, DerivedSameAs, DerivedSettle, DerivedSettlement,
-    DerivedSupersede, DerivedTopology, ItemRef,
+    DerivationBatch, DerivationItem, DerivedArchive, DerivedClaim, DerivedEvidence, DerivedSameAs,
+    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
 };
 use super::commit::{DerivationReceipt, ItemOutcome};
 use super::revert::DeriveRevertReceipt;
@@ -168,34 +170,7 @@ pub struct DeriveTopologyInput {
     pub apply: bool,
 }
 
-/// One `about` line: its sensitivity band, 0 (public) to 3 (restricted),
-/// and its one plain line of text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DeriveAboutLineInput {
-    #[schemars(range(max = 3))]
-    pub band: u8,
-    pub text: String,
-}
-
-/// A person's `about` lines: one line for each band that has facts at or
-/// below it, lowest band first.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DerivePersonAboutInput {
-    /// The item's name inside its batch.
-    pub local: String,
-    /// The PERSON.
-    pub person: DeriveRef,
-    /// The digest of the facts the lines were written from, 64 hex
-    /// characters. Facts that moved since are refused.
-    #[serde(with = "crate::task_verb::hex32")]
-    #[schemars(with = "String")]
-    pub written_from: [u8; 32],
-    pub lines: Vec<DeriveAboutLineInput>,
-}
-
-/// One derived item: `{"kind": "<kind>", "spec": {...}}`.
+/// One wire item: `{"kind": "<kind>", "spec": {...}}`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
@@ -210,7 +185,6 @@ pub enum DeriveItemInput {
     Settle(DeriveSettleInput),
     SameAs(DeriveSameAsInput),
     Topology(DeriveTopologyInput),
-    PersonAbout(DerivePersonAboutInput),
     Archive(DeriveArchiveInput),
 }
 
@@ -262,19 +236,6 @@ impl DeriveItemInput {
                 op: topology.operation.into_engine()?,
                 grant: topology.grant,
                 apply: topology.apply,
-            }),
-            Self::PersonAbout(about) => DerivationItem::PersonAbout(DerivedPersonAbout {
-                local: about.local,
-                person: about.person.into(),
-                written_from: about.written_from,
-                lines: about
-                    .lines
-                    .into_iter()
-                    .map(|line| DerivedAboutLine {
-                        band: line.band,
-                        text: line.text,
-                    })
-                    .collect(),
             }),
             Self::Archive(archive) => DerivationItem::Archive(DerivedArchive {
                 local: archive.local,
