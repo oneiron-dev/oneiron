@@ -101,3 +101,28 @@ pub(crate) fn scoped_turn_text_in(
     }
     collect_in(read, txn, turn, &body, &mut 0).map(Some)
 }
+
+/// The projected text of a TURN row `read` already read in `txn` (`body` is
+/// its logical body), by the same projection as [`scoped_turn_text_in`].
+/// Each MESSAGE row is read through `read` itself (review of #6921): its own
+/// key and grant mode, its bound caller filter and its room ceiling, never a
+/// reader rebuilt from its key, so the words a TURN serves pass every check a
+/// direct read of each MESSAGE row would. A MESSAGE row `read` withholds is
+/// counted into `withheld` before the turn refuses, so a refusal with a count
+/// above zero is the reader's withholding, never a malformed turn (primitive
+/// A, `crate::snapshot_read`).
+///
+/// # Errors
+///
+/// Storage errors, and a turn whose text does not project.
+pub(crate) fn scoped_turn_body_text_in(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    body: &[u8],
+    withheld: &mut usize,
+) -> Result<TurnText> {
+    super::collect_with(read.vault(), txn, turn, body, withheld, |ids| {
+        read.get_entities_parts_in_txn(txn, ids)
+    })
+}

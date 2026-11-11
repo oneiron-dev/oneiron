@@ -1206,18 +1206,45 @@ fn displaced_judge_marks_receipt_and_supersedes_weight_without_erasing() -> crat
 
 #[test]
 fn replay_cannot_reassign_an_unknown_judgment_to_a_new_judge() -> crate::error::Result<()> {
-    use crate::skill_attribution::{
-        AttributionJudge, RuleAttributionJudge, run_attribution_projector_with_judge,
+    use crate::llm::decision::{
+        DecisionCall, DecisionDial, DecisionProvider, DecisionRung, HeldLadder, ProviderDecision,
+        ProviderPin,
     };
+    use crate::skill_attribution::{
+        ATTRIBUTION_DIAL, AttributionDecisions, AttributionRules,
+        run_attribution_projector_with_decisions,
+    };
+    /// Answers as the rule tier does, under an identity too long to stamp, so
+    /// the engine records its judgment with no judge revision (ab2a34ddceb).
     struct Unknown;
-    impl AttributionJudge for Unknown {
-        fn judge(
-            &self,
-            evidence: &OutcomeEvidence,
-        ) -> crate::error::Result<Option<AttributionVerdict>> {
-            RuleAttributionJudge.judge(evidence)
+    impl DecisionProvider for Unknown {
+        fn pin(&self) -> ProviderPin {
+            ProviderPin {
+                rung: DecisionRung::Rule,
+                model: "unknown-judge".to_owned(),
+                version: "u".repeat(256),
+            }
+        }
+        fn decide(&self, call: &DecisionCall<'_>) -> crate::error::Result<ProviderDecision> {
+            AttributionRules.decide(call)
         }
     }
+    let unknown_ladder = HeldLadder {
+        rule: Some(std::sync::Arc::new(Unknown) as std::sync::Arc<dyn DecisionProvider>),
+        ..HeldLadder::unstaffed()
+    };
+    let unknown = AttributionDecisions {
+        ladder: unknown_ladder.ladder(),
+        principal: EntityId::now(),
+        dial: DecisionDial {
+            first: DecisionRung::Rule,
+            ..ATTRIBUTION_DIAL
+        },
+        bands: Default::default(),
+        wording: "Which label does this outcome earn?".to_owned(),
+        budget: std::time::Duration::from_secs(3600),
+        notes: None,
+    };
     let (_tmp, vault) = temp_vault();
     let skill = EntityId::now();
     let actor = EntityId::now();
@@ -1236,9 +1263,9 @@ fn replay_cannot_reassign_an_unknown_judgment_to_a_new_judge() -> crate::error::
             .with_skill(skill)
             .with_routing_facts(true, true),
     )?;
-    let rows = run_attribution_projector_with_judge(&vault, 0, &Unknown)?;
+    let rows = run_attribution_projector_with_decisions(&vault, 0, Some(&unknown))?;
     project_skill_reliability(&vault, &rows)?;
-    run_attribution_projector_with_judge(&vault, 0, &RuleAttributionJudge)?;
+    run_attribution_projector_with_decisions(&vault, 0, None)?;
     assert!(
         crate::skill_attribution::supersede_displaced_judge_receipts(
             &vault,
@@ -1305,22 +1332,33 @@ fn displacement_between_batch_read_and_writer_cannot_restore_loss() -> crate::er
 
 #[test]
 fn displaced_attribution_judge_cannot_commit_a_new_inflight_verdict() -> crate::error::Result<()> {
-    use crate::skill_attribution::{
-        AttributionJudge, RuleAttributionJudge, run_attribution_projector_with_judge,
+    use crate::llm::decision::{
+        DecisionCall, DecisionDial, DecisionLadder, DecisionProvider, DecisionRung, HeldLadder,
+        ProviderDecision, ProviderPin,
     };
+    use crate::skill_attribution::{
+        ATTRIBUTION_DIAL, AttributionDecisions, AttributionRules,
+        run_attribution_projector_with_decisions,
+    };
+    /// The rule tier under the old revision `old-attribution@1`, displaced
+    /// while it answers.
     struct SlowOld<'a> {
         vault: &'a Vault,
-        displaced: std::cell::Cell<bool>,
+        displaced: std::sync::atomic::AtomicBool,
     }
-    impl AttributionJudge for SlowOld<'_> {
-        fn judge_revision(&self) -> Option<&str> {
-            Some("old-attribution@1")
+    impl DecisionProvider for SlowOld<'_> {
+        fn pin(&self) -> ProviderPin {
+            ProviderPin {
+                rung: DecisionRung::Rule,
+                model: "old-attribution".to_owned(),
+                version: "1".to_owned(),
+            }
         }
-        fn judge(
-            &self,
-            evidence: &OutcomeEvidence,
-        ) -> crate::error::Result<Option<AttributionVerdict>> {
-            if !self.displaced.replace(true) {
+        fn decide(&self, call: &DecisionCall<'_>) -> crate::error::Result<ProviderDecision> {
+            if !self
+                .displaced
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
                 crate::skill_attribution::supersede_displaced_judge_receipts(
                     self.vault,
                     "old-attribution@1",
@@ -1328,7 +1366,7 @@ fn displaced_attribution_judge_cannot_commit_a_new_inflight_verdict() -> crate::
                     30,
                 )?;
             }
-            RuleAttributionJudge.judge(evidence)
+            AttributionRules.decide(call)
         }
     }
     let (_tmp, vault) = temp_vault();
@@ -1351,9 +1389,25 @@ fn displaced_attribution_judge_cannot_commit_a_new_inflight_verdict() -> crate::
     )?;
     let old = SlowOld {
         vault: &vault,
-        displaced: std::cell::Cell::new(false),
+        displaced: std::sync::atomic::AtomicBool::new(false),
     };
-    assert!(run_attribution_projector_with_judge(&vault, 0, &old).is_err());
+    let unstaffed = HeldLadder::unstaffed();
+    let decisions = AttributionDecisions {
+        ladder: DecisionLadder {
+            rule: Some(&old),
+            ..unstaffed.ladder()
+        },
+        principal: EntityId::now(),
+        dial: DecisionDial {
+            first: DecisionRung::Rule,
+            ..ATTRIBUTION_DIAL
+        },
+        bands: Default::default(),
+        wording: "Which label does this outcome earn?".to_owned(),
+        budget: std::time::Duration::from_secs(3600),
+        notes: None,
+    };
+    assert!(run_attribution_projector_with_decisions(&vault, 0, Some(&decisions)).is_err());
     assert!(crate::skill_attribution::attribution_judgments(&vault)?.is_empty());
     assert!(
         project_skill_reliability_for_executor(&vault, &skill, "model@1", 31)?.observations()

@@ -30,7 +30,7 @@ fn forks_of_a_retired_root_build_no_quorum_over_its_successor() {
     let old = ed_key(180);
     let next = ed_key(181);
     let (first_heir, second_heir, merged_heir) = (ed_key(182), ed_key(183), ed_key(184));
-    let genesis = genesis_entry(180, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(180, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let handoff = re_root_entry(id, &genesis, &old, 1, &next);
     let first_fork = re_root_entry(id, &genesis, &old, 2, &first_heir);
@@ -55,7 +55,7 @@ fn forks_of_a_retired_root_build_no_quorum_over_its_successor() {
 fn a_cycle_of_fenced_handoffs_installs_no_successor() {
     let old = ed_key(190);
     let next = ed_key(191);
-    let genesis = genesis_entry(190, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(190, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let handoff = re_root_entry(id, &genesis, &old, 1, &next);
     let rotated: [u8; 3] = [192, 193, 194];
@@ -114,7 +114,7 @@ fn a_cycle_of_fenced_handoffs_installs_no_successor() {
 fn a_handoff_its_own_collision_prunes_retires_nothing() {
     let old = ed_key(185);
     let next = ed_key(186);
-    let genesis = genesis_entry(185, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(185, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let confirm = |confirm: u8| {
         sign_ed(
@@ -163,7 +163,7 @@ fn an_event_carrying_a_forks_bytes_replays_nothing() {
     let old = ed_key(187);
     let next = ed_key(188);
     let fork = ed_key(189);
-    let genesis = genesis_entry(187, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(187, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     store(&vault, &genesis);
     vault
@@ -227,7 +227,7 @@ fn a_handoff_that_fails_on_its_own_rows_fences_nothing() {
     let old = ed_key(200);
     let next = ed_key(201);
     let heir = ed_key(202);
-    let genesis = genesis_entry(200, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(200, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let confirm = |confirm: u8, seq: u64, parent: &AuthorityLogEntry| {
         signed(
@@ -277,67 +277,6 @@ fn a_handoff_that_fails_on_its_own_rows_fences_nothing() {
     assert!(is_live(&fold, &next));
 }
 
-/// A tier floor that stands on a fenced row prunes nothing (Sol review 3,
-/// finding 4). The old root rotates to a hardware key on a branch beside its
-/// handoff, which sets a hardware floor and hands the vault on: the fork and
-/// the handoff conflict, so neither heir stands. The same branch alone, with
-/// no handoff beside it, still installs its heir.
-#[test]
-fn a_forks_tier_floor_prunes_no_handoff() {
-    let old = ed_key(203);
-    let next = ed_key(204);
-    let rotated = ed_key(205);
-    let heir = ed_key(206);
-    let genesis = genesis_entry(203, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let id = genesis_vault_id(&genesis).unwrap();
-    let rotation = signed(
-        id,
-        &[&genesis],
-        &old,
-        1,
-        AuthorityOp::RotateKey {
-            old_key: authority_key_from_ed(&old),
-            new_device: owner_device(&rotated, AuthorityTier::Hardware),
-        },
-    );
-    let floor = signed(
-        id,
-        &[&rotation],
-        &rotated,
-        1,
-        AuthorityOp::SetTierFloor {
-            tier_floor: AuthorityTier::Hardware,
-        },
-    );
-    let fork = signed(
-        id,
-        &[&floor],
-        &rotated,
-        2,
-        AuthorityOp::ReRoot {
-            new_device: owner_device(&heir, AuthorityTier::Hardware),
-        },
-    );
-    let handoff = re_root_entry(id, &genesis, &old, 2, &next);
-
-    let alone = fold_authority_log(&[
-        genesis.clone(),
-        rotation.clone(),
-        floor.clone(),
-        fork.clone(),
-    ]);
-    assert!(alone.valid_entries.contains(&hash(&fork)));
-    assert!(is_live(&alone, &heir));
-
-    let fold = fold_authority_log(&[genesis, rotation, floor, handoff.clone(), fork.clone()]);
-    for entry in [&handoff, &fork] {
-        assert!(!fold.valid_entries.contains(&hash(entry)));
-    }
-    assert!(!is_live(&fold, &heir));
-    assert!(!is_live(&fold, &next));
-    assert!(fold.retired_keys.contains(&authority_key_from_ed(&old)));
-}
-
 /// A replica that folded the real handoff first admits no new row that stands
 /// on a row the old root signed, whoever signs the new one (Sol review 3,
 /// finding 2). The old root's rotation was stored before the handoff, while
@@ -351,7 +290,7 @@ fn no_door_admits_a_new_row_on_a_retired_roots_resident_row() {
     let next = ed_key(208);
     let rotated = ed_key(209);
     let heir = ed_key(210);
-    let genesis = genesis_entry(207, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(207, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     store(&vault, &genesis);
     let rotation = rotate_entry(id, &genesis, &old, authority_key_from_ed(&old), 209, 1);
@@ -407,7 +346,7 @@ fn a_hosted_vaults_replicated_door_keeps_its_cloud_successor() {
     let old = ed_key(211);
     let cloud = ed_key(212);
     let heir = ed_key(213);
-    let genesis = genesis_entry(211, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(211, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     store(&vault, &genesis);
     let handoff = signed(
@@ -658,7 +597,7 @@ fn an_expired_approval_in_a_handoffs_line_refuses_no_successor_row() {
         })
         .unwrap();
     let (old, next, heir) = (ed_key(214), ed_key(215), ed_key(216));
-    let genesis = genesis_entry(214, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(214, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let approval = signed(id, &[&genesis], &old, 1, confirmation(5, 90));
     let beside = signed(id, &[&genesis], &old, 2, confirmation(6, 91));

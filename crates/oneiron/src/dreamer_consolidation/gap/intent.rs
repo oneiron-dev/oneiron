@@ -17,7 +17,7 @@ use rmpv::Value;
 
 use super::super::turn_text::{TurnText, dreamer_read, read_turn_text};
 use super::{GapTexts, ReflectionGap, ReflectionGapKind};
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, RelationshipRead};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
 use crate::edge::EdgeActorClass;
@@ -144,6 +144,17 @@ fn write_owner_intent_in_txn(
                 source_meet: ClaimSource::UserStated,
             },
         ));
+        // The words keep their MESSAGE's audience (OPUS-LEAKS).
+        let (relationships, private) = message_audience_in_txn(vault, txn, &message)?;
+        if relationships.is_some() {
+            candidate = candidate.with_relationships(relationships);
+        }
+        if private {
+            candidate = candidate.with_scope(Value::Map(vec![(
+                Value::from("private"),
+                Value::Boolean(true),
+            )]));
+        }
     }
     let envelope = WriteEnvelope::new(
         WriteActor::new(owner, EdgeActorClass::Human),
@@ -168,6 +179,27 @@ fn write_owner_intent_in_txn(
         )
         .apply(txn)?;
     Ok(id)
+}
+
+/// The audience the words of `message` carry, as the read gate judges a
+/// MESSAGE: the relationships whose members read them (`None` for an open
+/// MESSAGE), and whether they are private. A MESSAGE whose audience does
+/// not resolve reads to no gated reader, so no intent lands from it.
+fn message_audience_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message: &EntityId,
+) -> Result<(crate::write_envelope::claim_body::RelationshipScope, bool)> {
+    let raw = vault
+        .get_raw_in(txn, message)?
+        .ok_or_else(|| invalid("a stated intent cites a live MESSAGE"))?;
+    match crate::claim::relationship_read(&vault.store, txn, message, &raw)? {
+        RelationshipRead::Decided(true) => Ok((None, false)),
+        RelationshipRead::Decided(false) => Err(invalid(
+            "a stated intent cites a MESSAGE whose audience does not resolve",
+        )),
+        RelationshipRead::Gated { space, private, .. } => Ok((space, private)),
+    }
 }
 
 /// The sentence of `text` that states an intent: the one holding its first

@@ -164,6 +164,7 @@ fn assert_single_mark(label: &str, marks: InlineMarkSet, expected: &'static str)
     let steps = vec![EditStep::SetRunFormatting {
         block_id: NodeId::from(ids[0].as_str()),
         expect: "Format".to_string(),
+        occurrence: None,
         semantic_hash: None,
         marks,
         style: RunStyleEdit::default(),
@@ -287,6 +288,7 @@ fn reject_all_persists_the_reverted_mark_after_a_save() {
             steps: vec![EditStep::SetRunFormatting {
                 block_id: target.id.clone(),
                 expect: "Format".to_string(),
+                occurrence: None,
                 semantic_hash: Some(target.guard.clone()),
                 marks: InlineMarkSet {
                     bold: true,
@@ -357,6 +359,7 @@ fn read_rejected_markdown_and_a_persisted_save_agree_on_the_reverted_mark() {
             steps: vec![EditStep::SetRunFormatting {
                 block_id: target.id.clone(),
                 expect: "Format".to_string(),
+                occurrence: None,
                 semantic_hash: Some(target.guard.clone()),
                 marks: InlineMarkSet {
                     bold: true,

@@ -515,6 +515,7 @@ mod tests {
     };
     use super::*;
     use crate::api::PdfSealEngine;
+    use crate::memory::testing::operation_limits;
 
     #[test]
     fn fake_xref_tag_cannot_waive_doc_timestamp_whitelist() {
@@ -526,14 +527,19 @@ mod tests {
         let report = engine.verify_sealed_pdf(&stamped).unwrap();
         let before = Document::load_mem(&signed).unwrap();
         let mut after = Document::load_mem(&stamped).unwrap();
-        let mut ids = changed(&before, &after).unwrap();
-        assert!(doc_timestamp_allowed(
-            &before,
-            &after,
-            &ids,
-            report.signatures[1].kind,
-            &report.signatures[1].checks
-        ));
+        let limits = operation_limits();
+        let mut ids = changed(&before, &after, &limits).unwrap().unwrap();
+        assert!(
+            doc_timestamp_allowed(
+                &before,
+                &after,
+                &ids,
+                report.signatures[1].kind,
+                &report.signatures[1].checks,
+                &limits,
+            )
+            .unwrap()
+        );
         let fake_id = (
             after.trailer.get(b"Size").unwrap().as_i64().unwrap() as u32,
             0,
@@ -543,12 +549,16 @@ mod tests {
         fake.set("Unknown", Object::string_literal("changed"));
         after.objects.insert(fake_id, Object::Dictionary(fake));
         ids.insert(fake_id);
-        assert!(!doc_timestamp_allowed(
-            &before,
-            &after,
-            &ids,
-            report.signatures[1].kind,
-            &report.signatures[1].checks
-        ));
+        assert!(
+            !doc_timestamp_allowed(
+                &before,
+                &after,
+                &ids,
+                report.signatures[1].kind,
+                &report.signatures[1].checks,
+                &limits,
+            )
+            .unwrap()
+        );
     }
 }

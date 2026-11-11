@@ -12,6 +12,7 @@ pub(crate) mod tests {
     use super::super::verify_sig_pipeline::Checks;
     use super::super::*;
     use crate::api::{VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode};
+    use crate::memory::testing::process_operation_limits;
 
     /// 2026-07-30T08:00:00Z — the applicable verification time.
     pub(crate) const AT_UNIX: u64 = 1_785_398_400;
@@ -434,9 +435,11 @@ pub(crate) mod tests {
         doc
     }
 
-    pub(crate) fn dss_check(doc: &Document, covered: &[EmbeddedCert]) -> Checks {
-        let mut checks = Checks::new();
-        verify_dss(doc, &[], covered, AT_UNIX, usize::MAX, &mut checks);
+    pub(crate) fn dss_check(doc: &Document, covered: &[EmbeddedCert]) -> Checks<'static> {
+        let limits = process_operation_limits();
+        let memory = limits.memory.ledger().unwrap();
+        let mut checks = Checks::new(limits);
+        verify_dss(doc, &[], covered, AT_UNIX, &memory, &mut checks, limits).unwrap();
         checks
     }
 
@@ -453,6 +456,15 @@ pub(crate) mod tests {
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
         (c.status, c.finding)
+    }
+
+    /// The DSS material check did not run, for `reason`: never a pass, and
+    /// never AbsentAllowed (#5937, 23c390695c2: unresolved DSS evidence).
+    pub(crate) fn assert_material_unresolved(checks: &Checks, reason: VerifyFindingCode) {
+        assert_eq!(
+            dss_finding(checks),
+            (VerifyCheckStatus::NotRun, Some(reason))
+        );
     }
 
     pub(crate) fn assert_material_fails(checks: &Checks) {
@@ -617,6 +629,10 @@ pub(crate) mod tests {
     #[test]
     fn dss_ocsp_unknown_status_fails_closed() {
         // The blueprint leaves `unknown` unpinned (§7.5/§7.7): fail closed.
+        // Rule D (23c390695c2, #5937; docs/ops/seal-profile-evidence.md): an
+        // authenticated `unknown` is unresolved, NotRun with
+        // RevocationStatusUnknown, so the verdict is indeterminate, never a
+        // pass.
         let ca = test_ca("dss-ca");
         let ocsp = build_ocsp(
             &ca,
@@ -628,6 +644,6 @@ pub(crate) mod tests {
         let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
         let covered = covered_of(&[&ca.cert_der]);
         let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
+        assert_material_unresolved(&checks, VerifyFindingCode::RevocationStatusUnknown);
     }
 }

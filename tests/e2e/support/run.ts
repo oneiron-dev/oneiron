@@ -222,6 +222,13 @@ export class ManagedProcess {
   get pid(): number { if (!this.child.pid) throw new Error("Process has no pid"); return this.child.pid }
   get running(): boolean { return this.child.exitCode === null && this.child.signalCode === null }
   tail(): string { return this.ring.join("\n") }
+  /** Negative leak scan over the raw, unredacted stdout and stderr kept in memory. It never persists
+   * or returns output. `truncated` means a stream outgrew its window, so absence is unproved. */
+  outputHas(values: readonly string[]): { found: boolean; truncated: boolean } {
+    if (values.length === 0 || values.some(value => !value)) throw new TypeError("outputHas needs non-empty values");
+    return { found: values.some(value => this.stdout.includes(value) || this.stderr.includes(value)),
+      truncated: this.truncated.stdout || this.truncated.stderr };
+  }
   signal(signal: NodeJS.Signals): void {
     if (!this.child.pid) return;
     try { process.kill(-this.child.pid,signal) } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error }
@@ -370,8 +377,12 @@ export async function preflight(profile: Profile, names: readonly string[] = [])
         model.threads < 1 || !Object.values(model.bindings).includes("real")) throw new BlockedDoor("waits on complete real-small-model pin and bindings");
     for (const id of [...model.weights,model.tokenizer,model.config]) requireAsset(build,id);
   }
-  const allIds = new Set(plan.files.flatMap(f => f.tests.map(t => t.id)));
-  if (allIds.size !== 242 || plan.files.length !== 29) throw new Error("Pinned registry plan is incomplete");
+  // The counts are the plan pin's own facts (fixtures/manifest.json), re-pinned with the plan, never literals here.
+  const counts = catalog.expected<{readonly plannedFiles:number;readonly plannedTests:number}>("suite-plan");
+  const plannedIds = plan.files.flatMap(f => f.tests.map(t => t.id));
+  const allIds = new Set(plannedIds);
+  if (allIds.size !== plannedIds.length) throw new Error("Pinned registry plan repeats an ID");
+  if (allIds.size !== counts.plannedTests || plan.files.length !== counts.plannedFiles) throw new Error("Pinned registry plan is incomplete");
   for (const manifest of catalog.manifests) for (const asset of manifest.value.assets) {
     for (const id of asset.scenarios) if (!allIds.has(id)) throw new Error(`Unknown scenario ${id} in ${asset.id}`);
   }

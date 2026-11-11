@@ -284,6 +284,21 @@ impl Vault {
         principal: &str,
         ceiling: AgentCeiling,
     ) -> Result<GateDecisionRecord> {
+        self.with_write_txn_grouped(|txn| {
+            self.grant_agent_principal_in_txn(txn, owner, principal, ceiling)
+        })
+    }
+
+    /// [`Self::grant_agent_principal`] in the caller's writer `txn`, which
+    /// `oneiron token agent` shares with the agent's own-vault binding
+    /// ([`Vault::bind_and_grant_agent_principal`]).
+    pub(crate) fn grant_agent_principal_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        principal: &str,
+        ceiling: AgentCeiling,
+    ) -> Result<GateDecisionRecord> {
         use super::constants::{
             ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, GRANT_EFFECTOR_KEY,
             GRANT_RECEIPT_REQUIRED_KEY, GRANT_SCOPE_KEY, POLICY_ACTOR_CEILINGS_KEY,
@@ -334,101 +349,98 @@ impl Vault {
             field(ACTOR_CLASS_KEY) == Some(EdgeActorClass::Agent.gate_actor_class())
                 && field(ACTOR_REF_KEY) == Some(principal)
         };
-        self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_in_txn(self, txn)?;
-            let id = super::default_policy_manifest_id()?;
-            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
-                .ok_or(Error::EntityNotFound)?;
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("policy manifest header"))?;
-            let body = raw
-                .get(ENTITY_METADATA_HEADER_LEN..)
-                .ok_or(Error::CorruptedIndex("policy manifest header"))?;
-            // A separate pack would narrow the fold's single-valued predicates,
-            // and re-stamping an untrusted body would launder it.
-            if header.entity_type != crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-                || !super::manifest_authenticity::manifest_is_trusted(&self.store, txn, &id, body)?
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        let id = super::default_policy_manifest_id()?;
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("policy manifest header"))?;
+        let body = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("policy manifest header"))?;
+        // A separate pack would narrow the fold's single-valued predicates,
+        // and re-stamping an untrusted body would launder it.
+        if header.entity_type != crate::registry::ENTITY_TYPE_POLICY_MANIFEST
+            || !super::manifest_authenticity::manifest_is_trusted(&self.store, txn, &id, body)?
+        {
+            return Err(Error::InvalidConfig(
+                "a foreign grant extends only the trusted default policy".to_owned(),
+            ));
+        }
+        let Value::Map(mut entries) = rmpv::decode::read_value(&mut &body[..])
+            .map_err(|_| Error::CorruptedIndex("policy manifest"))?
+        else {
+            return Err(Error::CorruptedIndex("policy manifest"));
+        };
+        for (table, row) in [
+            (POLICY_SCOPED_GRANTS_KEY, &grant),
+            (POLICY_ACTOR_CEILINGS_KEY, &ceiling),
+        ] {
+            match entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some(table))
             {
-                return Err(Error::InvalidConfig(
-                    "a foreign grant extends only the trusted default policy".to_owned(),
-                ));
-            }
-            let Value::Map(mut entries) = rmpv::decode::read_value(&mut &body[..])
-                .map_err(|_| Error::CorruptedIndex("policy manifest"))?
-            else {
-                return Err(Error::CorruptedIndex("policy manifest"));
-            };
-            for (table, row) in [
-                (POLICY_SCOPED_GRANTS_KEY, &grant),
-                (POLICY_ACTOR_CEILINGS_KEY, &ceiling),
-            ] {
-                match entries
-                    .iter_mut()
-                    .find(|(key, _)| key.as_str() == Some(table))
-                {
-                    Some((_, Value::Array(rows))) => {
-                        if table == POLICY_ACTOR_CEILINGS_KEY {
-                            rows.retain(|existing| !bound_here(existing));
-                        }
-                        if !rows.contains(row) {
-                            rows.push(row.clone());
-                        }
+                Some((_, Value::Array(rows))) => {
+                    if table == POLICY_ACTOR_CEILINGS_KEY {
+                        rows.retain(|existing| !bound_here(existing));
                     }
-                    Some(_) => return Err(Error::CorruptedIndex("policy manifest table")),
-                    None => entries.push((table.into(), Value::Array(vec![row.clone()]))),
+                    if !rows.contains(row) {
+                        rows.push(row.clone());
+                    }
                 }
+                Some(_) => return Err(Error::CorruptedIndex("policy manifest table")),
+                None => entries.push((table.into(), Value::Array(vec![row.clone()]))),
             }
-            let mut data = Vec::new();
-            rmpv::encode::write_value(&mut data, &Value::Map(entries))
-                .map_err(|_| Error::InvariantViolation("foreign grant manifest encode"))?;
-            let diff_handle = blake3::hash(&data).as_bytes().to_vec();
-            crate::batch::apply_ops(
-                &self.store,
-                &self.config,
-                &self.analyzer,
-                txn,
-                vec![BatchOp::Put {
-                    id,
-                    entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
-                    occurred: crate::TimeRange {
-                        start: header.occurred_start,
-                        end: header.occurred_end,
-                    },
-                    learned_at: header.learned_at,
-                    row_version: None,
-                    data,
-                    allow_maintenance: true,
-                    allow_reserved_predicate: false,
-                    hub_sync_imported: false,
-                }],
-                self.text_index_trusted
-                    .load(std::sync::atomic::Ordering::Acquire),
-                true,
-                true,
-            )?;
-            let mut receipt = GateDecisionRecord {
-                version: 0,
-                decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
-                created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-                outcome: GateOutcome::Allow.as_str().to_owned(),
-                reason_codes: vec!["gate.allow.owner_foreign_grant".to_owned()],
-                receipt_reasons: Vec::new(),
-                system_notices: Vec::new(),
-                actor_class: EdgeActorClass::Human.gate_actor_class().to_owned(),
-                actor_ref: Some(actor.to_hex()),
-                content_kind: GateContentKind::PolicyManifest.as_str().to_owned(),
-                policy_manifest_version: super::POLICY_SCHEMA_VERSION.to_owned(),
-                claim_id: None,
-                grant_ref: Some(format!("foreign:{principal}")),
-                diff_handle,
-                read_frontier_hash: resolve_policy_manifest(&self.store, txn)?
-                    .read_frontier_hash()?,
-                context: Default::default(),
-                redacted_at: None,
-            };
-            self.store
-                .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
-            Ok(receipt)
-        })
+        }
+        let mut data = Vec::new();
+        rmpv::encode::write_value(&mut data, &Value::Map(entries))
+            .map_err(|_| Error::InvariantViolation("foreign grant manifest encode"))?;
+        let diff_handle = blake3::hash(&data).as_bytes().to_vec();
+        crate::batch::apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            vec![BatchOp::Put {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                occurred: crate::TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                learned_at: header.learned_at,
+                row_version: None,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            true,
+            true,
+        )?;
+        let mut receipt = GateDecisionRecord {
+            version: 0,
+            decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
+            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
+            outcome: GateOutcome::Allow.as_str().to_owned(),
+            reason_codes: vec!["gate.allow.owner_foreign_grant".to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: EdgeActorClass::Human.gate_actor_class().to_owned(),
+            actor_ref: Some(actor.to_hex()),
+            content_kind: GateContentKind::PolicyManifest.as_str().to_owned(),
+            policy_manifest_version: super::POLICY_SCHEMA_VERSION.to_owned(),
+            claim_id: None,
+            grant_ref: Some(format!("foreign:{principal}")),
+            diff_handle,
+            read_frontier_hash: resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?,
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store
+            .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+        Ok(receipt)
     }
 }
