@@ -208,6 +208,42 @@
   background: var(--sl-micro-lit);
 }
 
+/* The `more` menu: a place's row, then its pin toggle at the right. A
+   pinned place's pin is filled (the `pinned` symbol): the state is the
+   mark. */
+.sl-micro-more-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sl-micro-more-row > .sl-menu-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The menu sits inside the strip's markup: its toggles take the menu's
+   inks, not the strip's on-field inks and halo. */
+.sl-micro-more .sl-micro-more-pin {
+  margin-right: 2px;
+  color: var(--sl-ink-3);
+  background: none;
+}
+
+.sl-micro-more .sl-micro-more-pin > svg {
+  filter: none;
+}
+
+.sl-micro-more .sl-micro-more-pin:hover,
+.sl-micro-more .sl-micro-more-pin:focus-visible {
+  color: var(--sl-ink-1);
+  background: var(--sl-hover);
+}
+
+.sl-micro-more .sl-micro-more-pin[aria-checked="true"] {
+  color: var(--sl-ink-1);
+}
+
 /* Moves said in words for a screen reader. */
 .sl-micro-sidebar-status {
   position: absolute;
