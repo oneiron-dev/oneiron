@@ -11,7 +11,7 @@ every verb's input and result, and hands back the raw `Response`.
 
 ## What is generated, and what is written by hand
 
-`scripts/sdk/generate.py` writes two files here from the verb table; never
+The SDK generator (`crates/oneiron-sdk-generator`) writes two files here from the verb table; never
 edit them by hand:
 
 * `src/facade.ts`: `FACADE_VERBS`; `FacadeInputs` and `FacadeResults`, each
@@ -54,7 +54,9 @@ bun add @oneiron/client
 `main`, `types`, and the `.` export resolve to `./src/index.ts`; `./facade`
 and `./facade-types` resolve to the generated tree and declarations alone.
 The published package includes those generated files. A source checkout runs
-`bun run prepare` once before importing it.
+`bun run prepare` once before importing it. That script writes them with
+`cargo run -p oneiron-sdk-generator -- --package oneiron-client`, so it needs
+Rust's `cargo` on `PATH`.
 
 ## Use
 

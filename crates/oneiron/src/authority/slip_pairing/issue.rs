@@ -38,11 +38,63 @@ impl Vault {
             None,
             None,
             None,
+            None,
         )
     }
     /// [`Self::issue_pairing_link_for_principal`] made by the authenticated
-    /// owner. The link records that owner, revalidated as it is stored.
+    /// owner in-process on this install (its CLI or its own app,
+    /// [`ActSurface::ThisInstall`]); [`Self::issue_owner_pairing_link_from_surface`]
+    /// says what it does.
     pub fn issue_owner_pairing_link(
+        &self,
+        issuer: &HostSlipIssuer,
+        owner: &crate::consent::AuthenticatedOwner,
+        scope: Scope,
+        slip_lifetime_secs: u64,
+        principal: PairingPrincipal,
+    ) -> Result<PairingLink> {
+        self.issue_owner_pairing_link_from_surface(
+            issuer,
+            owner,
+            ActSurface::ThisInstall,
+            scope,
+            slip_lifetime_secs,
+            principal,
+        )
+    }
+    /// [`Self::issue_pairing_link_for_principal`] made by the authenticated
+    /// owner from `surface`. The link records that owner, revalidated as it
+    /// is stored. A link for a named agent's PERSON that no Grant row names
+    /// yet also mints, in the same writer, the agent's default read Grant
+    /// (Engine RULING PAIR-GRANT-DESIGN Q3/Q4): an owner act from `surface`,
+    /// verbs `read` and `scope`'s other axes, with no expiry, wallet, repo
+    /// bounds or verb classes, as an OAuth sign-in's Grant. A mint that fails
+    /// refuses the link. Any other holder, and a link naming none, mints
+    /// nothing.
+    pub fn issue_owner_pairing_link_from_surface(
+        &self,
+        issuer: &HostSlipIssuer,
+        owner: &crate::consent::AuthenticatedOwner,
+        surface: ActSurface,
+        scope: Scope,
+        slip_lifetime_secs: u64,
+        principal: PairingPrincipal,
+    ) -> Result<PairingLink> {
+        self.issue_pairing_link_in(
+            issuer,
+            scope,
+            slip_lifetime_secs,
+            principal,
+            Some(owner),
+            None,
+            None,
+            Some(surface),
+        )
+    }
+    /// [`Self::issue_owner_pairing_link`] that never mints a Grant, for a
+    /// holder the engine itself creates with no verb to read by (an artifact
+    /// backend's principal).
+    pub(crate) fn issue_owner_pairing_link_without_grant(
         &self,
         issuer: &HostSlipIssuer,
         owner: &crate::consent::AuthenticatedOwner,
@@ -56,6 +108,7 @@ impl Vault {
             slip_lifetime_secs,
             principal,
             Some(owner),
+            None,
             None,
             None,
         )
@@ -82,6 +135,7 @@ impl Vault {
             principal,
             Some(owner),
             Some((owner, surface, ownership)),
+            None,
             None,
         )
     }
@@ -119,6 +173,7 @@ impl Vault {
             None,
             None,
             Some((share_id, *actor, actor_class)),
+            None,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -139,84 +194,97 @@ impl Vault {
             crate::write_envelope::WriteActor,
             crate::edge::EdgeActorClass,
         )>,
+        default_grant_surface: Option<ActSurface>,
     ) -> Result<PairingLink> {
         if slip_lifetime_secs == 0 {
             return Err(invalid_authority());
         }
-        let mut txn = self.store.env.write_txn()?;
-        let (principal, share_ref) = match share {
-            None => (principal, None),
-            Some((id, actor, class)) => {
-                let now = self.instant_in_txn(&txn)?.secs();
-                let share =
-                    crate::share::authorize_share_link_in_txn(self, &txn, &id, &actor, now)?;
-                (
-                    PairingPrincipal {
-                        holder_ref: Some(share.recipient_ref.to_hex()),
-                        actor_class: Some(class.gate_actor_class().to_owned()),
-                        ..PairingPrincipal::default()
-                    },
-                    Some(id),
-                )
+        // The engine's write door, not a raw writer: a default Grant's owner
+        // act and row commit in this writer beside the link.
+        self.with_write_txn_grouped(|txn| {
+            let (principal, share_ref) = match share {
+                None => (principal, None),
+                Some((id, actor, class)) => {
+                    let now = self.instant_in_txn(txn)?.secs();
+                    let share =
+                        crate::share::authorize_share_link_in_txn(self, txn, &id, &actor, now)?;
+                    (
+                        PairingPrincipal {
+                            holder_ref: Some(share.recipient_ref.to_hex()),
+                            actor_class: Some(class.gate_actor_class().to_owned()),
+                            ..PairingPrincipal::default()
+                        },
+                        Some(id),
+                    )
+                }
+            };
+            let owner = link_owner
+                .map(|owner| owner.revalidate_as_vault_owner_in_txn(self, &*txn))
+                .transpose()?;
+            // The owner answers for a machine only while their credential is
+            // live, judged in the transaction that stores the answer.
+            let machine = match answer {
+                None => None,
+                Some((owner, surface, ownership)) => {
+                    let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+                    Some(PendingMachine {
+                        owner: actor,
+                        by: ActBy::Owner,
+                        surface,
+                        kind: OwnerActKind::Pairing,
+                        ownership,
+                    })
+                }
+            };
+            require_host(&self.authority_fold_readonly_in_txn(txn)?, issuer)?;
+            let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, txn)?;
+            let slip_lifetime_secs = slip_lifetime_secs.min(ceiling.initial_owner_secs);
+            self.validate_pairing_principal_in_txn(txn, &principal, &scope)?;
+            self.validate_pairing_facets_in_txn(
+                txn,
+                &principal,
+                &scope,
+                principal.holder_ref.as_deref(),
+            )?;
+            let now = self.instant_in_txn(txn)?.secs();
+            let (code, row_key) = self.free_pairing_code_in_txn(txn, issuer, now)?;
+            let expires_at = now.saturating_add(CODE_TTL_SECS);
+            // A vault with an attested checkpoint pins it for the joining device,
+            // bound to this single-use link's fresh challenge (OF-469).
+            let mut challenge = [0; 32];
+            crate::world_keys::os_fill(&mut challenge)?;
+            let pin = self.authority_checkpoint_pin_in_txn(txn, challenge)?;
+            let pin_ref = pin.as_ref().map(PairingPinRef::of).transpose()?;
+            let comm = effective_slip_comm(principal.comm);
+            // The owner's link for a named agent mints its default read Grant
+            // in this writer, so a failed mint refuses the link (Q4).
+            if let (Some(surface), Some(link_owner)) = (default_grant_surface, link_owner)
+                && let Some(holder) = principal
+                    .holder_ref
+                    .as_deref()
+                    .and_then(|holder| crate::EntityId::from_hex(holder).ok())
+            {
+                self.mint_default_agent_grant_in_txn(txn, link_owner, surface, holder, &scope)?;
             }
-        };
-        let owner = link_owner
-            .map(|owner| owner.revalidate_as_vault_owner_in_txn(self, &txn))
-            .transpose()?;
-        // The owner answers for a machine only while their credential is
-        // live, judged in the transaction that stores the answer.
-        let machine = match answer {
-            None => None,
-            Some((owner, surface, ownership)) => {
-                let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-                Some(PendingMachine {
-                    owner: actor,
-                    by: ActBy::Owner,
-                    surface,
-                    kind: OwnerActKind::Pairing,
-                    ownership,
-                })
-            }
-        };
-        require_host(&self.authority_fold_readonly_in_txn(&txn)?, issuer)?;
-        let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
-        let slip_lifetime_secs = slip_lifetime_secs.min(ceiling.initial_owner_secs);
-        self.validate_pairing_principal_in_txn(&txn, &principal, &scope)?;
-        self.validate_pairing_facets_in_txn(
-            &txn,
-            &principal,
-            &scope,
-            principal.holder_ref.as_deref(),
-        )?;
-        let now = self.instant_in_txn(&txn)?.secs();
-        let (code, row_key) = self.free_pairing_code_in_txn(&txn, issuer, now)?;
-        let expires_at = now.saturating_add(CODE_TTL_SECS);
-        // A vault with an attested checkpoint pins it for the joining device,
-        // bound to this single-use link's fresh challenge (OF-469).
-        let mut challenge = [0; 32];
-        crate::world_keys::os_fill(&mut challenge)?;
-        let pin = self.authority_checkpoint_pin_in_txn(&txn, challenge)?;
-        let pin_ref = pin.as_ref().map(PairingPinRef::of).transpose()?;
-        let comm = effective_slip_comm(principal.comm);
-        let pending = PairingPending {
-            expires_at,
-            slip_lifetime_secs,
-            scope,
-            host_key: issuer.binding_key(),
-            principal,
-            share_ref,
-            machine,
-            pin,
-            owner,
-            invitation: None,
-        };
-        PAIRING_PENDING.put(&self.store, &mut txn, &row_key, &pending)?;
-        txn.commit()?;
-        Ok(PairingLink {
-            code,
-            expires_at,
-            pin: pin_ref,
-            comm,
+            let pending = PairingPending {
+                expires_at,
+                slip_lifetime_secs,
+                scope,
+                host_key: issuer.binding_key(),
+                principal,
+                share_ref,
+                machine,
+                pin,
+                owner,
+                invitation: None,
+            };
+            PAIRING_PENDING.put(&self.store, txn, &row_key, &pending)?;
+            Ok(PairingLink {
+                code,
+                expires_at,
+                pin: pin_ref,
+                comm,
+            })
         })
     }
     /// A fresh code and its row key: one no outstanding link holds at `now`.
