@@ -95,6 +95,21 @@ pub use watermark::{
 pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
 
+/// Test-only raw decoded `vault_meta` rows whose keys match `prefixes`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn raw_vault_meta_rows_with_prefixes(
+    path: &Path,
+    key: &CheckpointKey,
+    prefixes: &[&[u8]],
+) -> Result<CanonicalRows> {
+    let (image, _, _) = read_image(path, key)?;
+    Ok(image.databases["vault_meta"]
+        .iter()
+        .filter(|(key, _)| prefixes.iter().any(|prefix| key.starts_with(prefix)))
+        .cloned()
+        .collect())
+}
+
 /// Presence-only probes for the canonical rebuild inputs behind the text and
 /// phonetic indexes; the tables themselves are owned elsewhere (`text` search
 /// and [`crate::batch::phonetic_apply`]), so only existence is checked here,

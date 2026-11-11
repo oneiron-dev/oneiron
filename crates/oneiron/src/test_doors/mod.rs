@@ -23,6 +23,7 @@ pub mod label_writers;
 pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod membership;
+pub mod provenance_body_checkpoint;
 pub mod retrieval_policy_default_floor;
 pub mod run_hold;
 pub mod scope_summary;
