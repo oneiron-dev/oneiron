@@ -372,10 +372,12 @@ fn decode_reassignment_row(row: &[u8]) -> Result<Option<EntityId>> {
 ///   `A`'s head, and a facet of `A` forks `B`'s claim under a mask `A`
 ///   owns — cross-identity contamination the two query surfaces would then
 ///   report as fact. Membership is read the way this family's own reader
-///   reads it ([`Vault::claims_remaining_on_origin`](crate::Vault::claims_remaining_on_origin) → `claims_for_subject`):
-///   the canonical `claim_of` edge, as a point lookup. A closure reading
-///   (a claim inherited through a merge into `origin`) would have to move
-///   BOTH readers together, so it stays one derivation.
+///   reads it ([`Vault::claims_remaining_on_origin`](crate::Vault::claims_remaining_on_origin)):
+///   the canonical `claim_of` edge to `origin` or to any entity merged into
+///   it ([`merged_members_in_txn`]). A merge reads through and never rewrites
+///   a claim's subject, so a claim a merged source held still names that
+///   source and is still one of `origin`'s (ARCH-0055 §3, §4). Both readers
+///   read membership through the same derivation.
 /// - the destination comes from `targets`, so a row can only ever route
 ///   where the op itself said it could.
 ///
@@ -391,8 +393,9 @@ fn resolve_reassignment_in_txn(
     map: &ReassignmentMap,
     targets: ReassignmentContext<'_>,
 ) -> Result<Vec<(EntityId, Option<EntityId>)>> {
+    let members = merged_members_in_txn(store, rtxn, origin)?;
     let mut rows = Vec::with_capacity(map.entries.len());
-    for entry in &map.entries {
+    'entries: for entry in &map.entries {
         let ClaimSubject::Entity(claim) = entry.item else {
             continue;
         };
@@ -401,15 +404,89 @@ fn resolve_reassignment_in_txn(
         {
             continue;
         }
-        if store
-            .port_edge_get(rtxn, &claim, EdgeKind::ClaimOf, origin)?
-            .is_none()
-        {
-            continue;
+        for member in &members {
+            if store
+                .port_edge_get(rtxn, &claim, EdgeKind::ClaimOf, member)?
+                .is_some()
+            {
+                rows.push((claim, targets.resolve(&entry.target)?));
+                continue 'entries;
+            }
         }
-        rows.push((claim, targets.resolve(&entry.target)?));
     }
     Ok(rows)
+}
+
+/// `origin` first, then every entity merged into it, through merges of
+/// merges: the identities whose claims read as `origin`'s (ARCH-0055 §3,
+/// claims read through one canonical head). A live merge is a `merged_into`
+/// shell edge from the source to its survivor; an undone merge has none.
+/// The split resolver and [`Vault::claims_remaining_on_origin`](crate::Vault::claims_remaining_on_origin)
+/// both read an entity's claims through this set.
+pub(super) fn merged_members_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    origin: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut members = vec![*origin];
+    let mut seen = BTreeSet::from([*origin]);
+    let mut next = 0;
+    while let Some(member) = members.get(next).copied() {
+        next += 1;
+        for (scanned, entry) in store
+            .port_edges(
+                rtxn,
+                &member,
+                crate::ports::EdgeDirection::In,
+                Some(EdgeKind::MergedInto),
+                None,
+            )?
+            .enumerate()
+        {
+            if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("identity topology"));
+            }
+            let source = entry?.target;
+            if seen.insert(source) {
+                members.push(source);
+            }
+        }
+    }
+    Ok(members)
+}
+
+/// `entity`, then every survivor it is merged into, through merges of
+/// merges: the entities whose claims include `entity`'s while those merges
+/// stand ([`merged_members_in_txn`] read the other way). A change to
+/// `entity`'s merges can move the rows of any of their splits.
+pub(super) fn merge_survivors_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    let mut survivors = BTreeSet::from([*entity]);
+    let mut pending = vec![*entity];
+    while let Some(member) = pending.pop() {
+        for (scanned, entry) in store
+            .port_edges(
+                rtxn,
+                &member,
+                crate::ports::EdgeDirection::Out,
+                Some(EdgeKind::MergedInto),
+                None,
+            )?
+            .enumerate()
+        {
+            if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("identity topology"));
+            }
+            let survivor = entry?.target;
+            if survivors.insert(survivor) {
+                pending.push(survivor);
+            }
+        }
+    }
+    Ok(survivors)
 }
 
 /// Writes `rows` as `event`'s assignment rows for `origin`, both directions.

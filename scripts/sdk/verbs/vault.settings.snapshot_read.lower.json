@@ -1,0 +1,16 @@
+{
+  "name": "vault.settings.snapshot_read.lower",
+  "description": "The owner, or a holder of engine.controls.work_budget, lowers the bounds on snapshot handles, each at or below its value in force; raising one stays the owner's act at vault.settings.snapshot_read.replace.",
+  "input": "crate::settings::snapshot_read::SnapshotReadSettings",
+  "output": "crate::task_verb::sdk::EngineControlChangeEntry",
+  "call": "crate::task_verb::sdk::lower_snapshot_read_bounds_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "engine_controller"
+}

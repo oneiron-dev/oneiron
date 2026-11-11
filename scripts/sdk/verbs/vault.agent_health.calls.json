@@ -1,0 +1,14 @@
+{
+  "name": "vault.agent_health.calls",
+  "description": "Reads one agent's call receipts since a time, oldest first: the vault owner, or a holder of a Steward grant naming read, checked at each call.",
+  "input": "crate::dreamer_runner::maintenance::agent_health::AgentHealthCallsRequest",
+  "output": "Vec<crate::dreamer_runner::maintenance::agent_health::AgentCallReceipt>",
+  "call": "crate::dreamer_runner::maintenance::agent_health::agent_health_calls(memory, &input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}
