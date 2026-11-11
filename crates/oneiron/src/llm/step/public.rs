@@ -147,9 +147,9 @@ pub struct RunStepCaller<'a> {
     pub lease: &'a HostBinding,
     pub definition: &'a AgentDefinition,
     /// Whether the host still holds the run attached for this caller, which
-    /// the lease alone does not say: a credential that reads no longer ends
+    /// the lease alone does not say: a credential that no longer holds ends
     /// it. Asked outside any transaction, before a step is read or prepared
-    /// and before its result is saved.
+    /// and before the call is answered and its try settled.
     pub attached: &'a (dyn Fn() -> bool + Send + Sync),
 }
 
@@ -521,9 +521,12 @@ async fn submit(
         super::execute::recover_step(&context, &row.input.request, recovery, None)
     };
     row.result = Some(step_result(vault, id, &row, outcome)?);
-    // A run its host let go, or whose lease lapsed, while the call ran saves
-    // no result under a standing it no longer has: the key's next call
-    // resumes the same attempt.
+    // A run its host let go, or whose lease lapsed, while the call ran gets
+    // no answer, and its try is not settled under a standing it no longer
+    // has. An answer the provider gave is already kept by the durable step
+    // (its checkpoint and terminal claim: a paid call is never asked twice),
+    // so the key's next call from the run's own standing actor resumes the
+    // same attempt and replays that answer with no model call.
     submitter.attached()?;
     vault.try_with_write_txn(|txn| -> MemoryResult<()> {
         submitter.revalidate_in_txn(vault, txn)?;

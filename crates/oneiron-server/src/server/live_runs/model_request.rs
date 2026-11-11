@@ -64,8 +64,9 @@ impl HeldLiveRun {
     }
 
     /// Whether this exact attachment still stands for `credential`, as a
-    /// check a whole call keeps asking: the entry's lease, the binding and
-    /// the credential's read key. A read that fails answers no.
+    /// check a whole call keeps asking: the entry's lease, the binding, the
+    /// credential's read key, and the credential itself, unexpired and
+    /// unrevoked. A read that fails answers no.
     pub(crate) fn attachment_watch(
         &self,
         server: &SyncServer,
@@ -207,7 +208,11 @@ fn attachment_holds(
     binding: &CodeRunLiveRunBinding,
     credential: &VerifiedSlip,
 ) -> oneiron::Result<bool> {
+    // An agent's read key is built whether or not its credential still
+    // holds (only an owner-grade key checks that), so the credential's own
+    // liveness is asked here: a revoked or expired one ends the attachment.
     Ok(runs.holds(vault, entry)?
         && lock(&entry.attached).as_ref() == Some(binding)
-        && vault.credential_read_key(credential)?.is_some())
+        && vault.credential_read_key(credential)?.is_some()
+        && vault.capability_slip_is_live(credential)?)
 }
