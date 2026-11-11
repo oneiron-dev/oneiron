@@ -2,11 +2,11 @@
 
 use oneiron::blob_artifact::esign::esign_seal_verify_reasons::append_event;
 use oneiron::blob_artifact::esign::{
-    DocumentKind, ESIGN_SEAL_ATTEMPT_KIND, EsignAuditActor, EsignDocument, EsignEvent,
-    EsignField, EsignItem, EsignRecipient, EsignSealError, EsignSealGetRequest,
-    EsignSealProducer, EsignSealRequest, EsignSealRun, EsignSealed, EsignSealer,
-    EsignSealerError, EsignState, EsignVerdict, FieldGeometry, FieldMeta, RecipientRole,
-    SealActiveContentFacts, SealProfile, SealVerdict, render,
+    DocumentKind, ESIGN_SEAL_ATTEMPT_KIND, EsignAuditActor, EsignDocument, EsignEvent, EsignField,
+    EsignItem, EsignRecipient, EsignSealError, EsignSealGetRequest, EsignSealProducer,
+    EsignSealRequest, EsignSealRun, EsignSealed, EsignSealer, EsignSealerError, EsignState,
+    EsignVerdict, FieldGeometry, FieldMeta, RecipientRole, SealActiveContentFacts, SealProfile,
+    SealVerdict, render,
 };
 use oneiron::{EntityId, Result, TimeRange, Vault, VaultConfig};
 
