@@ -213,6 +213,7 @@ impl DreamerAttemptExecutor for RecordingInner {
             .push(attempt.status.attempt.run_id.clone());
         Ok(DreamerAttemptExecution::Completed {
             completed_units: self.completed_units,
+            step_bindings: Vec::new(),
         })
     }
 }
@@ -313,7 +314,10 @@ fn propose_lead_wake(vault: &Vault) -> (EntityId, DreamerAdmittedAttempt, Entity
     .expect("proposal write");
     assert_eq!(
         execution,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
+        DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_bindings: Vec::new(),
+        }
     );
     assert_eq!(planner.plans, 1, "v1 plans exactly once per attempt");
     let proposal = commitment_wake_proposal_claim_id(attempt.status.attempt.id);
@@ -539,7 +543,10 @@ fn replay_after_approval_preserves_approved_status() {
     .expect("replay is success, not corruption");
     assert_eq!(
         replay,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
+        DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_bindings: Vec::new(),
+        }
     );
 
     let after = vault

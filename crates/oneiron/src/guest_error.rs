@@ -1,7 +1,9 @@
 //! A guest program's own error text, as the model reads it. An isolated
 //! guest's text is masked on the host before it leaves the host (FIX 9209).
+//! Host work: it reads the vault's known values, so it lives beside the
+//! host's other plumbing, not in the sandbox (lead 08:0x, F5).
 
-use super::source::{PreparedSource, split_guest_error};
+use crate::code_sandbox::source::{PreparedSource, split_guest_error};
 use crate::store::known_value_index::{KnownSweep, RunKnownSource};
 use crate::{Error, Result, Vault};
 

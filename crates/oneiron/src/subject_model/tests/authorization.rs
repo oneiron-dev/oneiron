@@ -1,9 +1,8 @@
 use super::*;
 use crate::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityKey, AuthorityLogEntry,
-    AuthorityOp, AuthoritySignature, AuthorityTier, DEFAULT_PENDING_WIDEN_DELAY_SECS,
-    DeviceAuthority, ROLE_ADMIN, ROLE_OWNER, authority_entry_hash, authority_transcript,
-    genesis_vault_id,
+    AuthorityOp, AuthoritySignature, AuthorityTier, DeviceAuthority, ROLE_ADMIN, ROLE_OWNER,
+    authority_entry_hash, authority_transcript, genesis_vault_id,
 };
 use ed25519_dalek::{Signer, SigningKey};
 
@@ -37,8 +36,6 @@ pub(crate) fn root_owner(vault: &Vault, owner: WriteActor, seed: u8) -> Result<A
             },
             genesis_nonce: [seed; 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
         signer: AuthoritySignature {
             suite: key.suite(),
