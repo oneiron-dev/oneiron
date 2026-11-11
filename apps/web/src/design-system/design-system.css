@@ -61,6 +61,7 @@
 @import './frame/AppFrame.css';
 @import './frame/PlaceHead.css';
 @import './frame/RoomHead.css';
+@import './frame/Place.css';
 @import './frame/VaultSwitch.css';
 @import './frame/ActivityMark.css';
 @import './frame/ActivityList.css';
