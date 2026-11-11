@@ -91,27 +91,35 @@ fn unavailable_or_oversized_tripwire_inputs_are_not_reported_as_healthy() {
             .put(txn, b"retr_run:v0:invalid-key", b"invalid-row")
     })
     .unwrap();
+    // 9811925ae45: the limit arg is gone; every stored run is read.
     assert!(matches!(
-        v.run_retrieval_miss_detector("corrupt", 10),
+        v.run_retrieval_miss_detector("corrupt"),
         Err(crate::Error::CorruptedIndex(_))
     ));
+    // Ruled refusals removed (Rule 5, counts never refuse; 0072f2bffa2
+    // #2824): receipt windows project whole past
+    // limits.detector_receipt_rows, and a large tripwire threshold is the
+    // owner's to set. The old cap was 1024.
+    const OLD_MAX_EVENTS_PER_RUN: usize = 1024;
     let receipts =
-        vec![receipt("pending", crate::consent::CONSENT_CONTENT_KIND); MAX_EVENTS_PER_RUN + 1];
-    assert!(matches!(
-        v.project_receipt_tripwires("oversized", &receipts, 100),
-        Err(crate::Error::InvalidConfig(_))
-    ));
+        vec![receipt("pending", crate::consent::CONSENT_CONTENT_KIND); OLD_MAX_EVENTS_PER_RUN + 1];
+    v.project_receipt_tripwires("oversized", &receipts, 100)
+        .expect("an oversized receipt window projects whole");
     for bounds in [
         TripwireBounds {
-            consent_depth: MAX_EVENTS_PER_RUN as u64 + 1,
+            consent_depth: OLD_MAX_EVENTS_PER_RUN as u64 + 1,
             ..TripwireBounds::default()
         },
         TripwireBounds {
-            actor_writes: MAX_EVENTS_PER_RUN as u64 + 1,
+            actor_writes: OLD_MAX_EVENTS_PER_RUN as u64 + 1,
             ..TripwireBounds::default()
         },
     ] {
         set_bounds(&v, bounds);
-        assert!(v.tripwire_bounds().unwrap().is_none());
+        assert_eq!(
+            v.tripwire_bounds().unwrap(),
+            Some(bounds),
+            "a large threshold is kept, not switched off"
+        );
     }
 }

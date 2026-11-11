@@ -193,7 +193,6 @@ impl SecretCustodyFloor {
 }
 
 pub use crate::secret_record::codec::CUSTODY_SEAL_REASON;
-pub use crate::secret_record::codec::encode_secret_custody_body;
 pub use crate::secret_record::codec::reject_secret_custody_byte;
 pub use crate::secret_record::types::SECRET_CUSTODY_STORED_SCHEMA_VERSION;
 pub use crate::secret_record::types::*;
@@ -221,7 +220,6 @@ pub use crate::secret_record::write_records::FoundNote;
 pub use crate::secret_record::write_records::StoredValue;
 
 pub use crate::secret_record::write_records::SLOT_PREFIX;
-pub use crate::secret_record::write_records::custody_portable;
 pub use crate::secret_record::write_records::is_cloud_registration_slot;
 
 pub use crate::secret_record::write_records::RepoFileKeys;

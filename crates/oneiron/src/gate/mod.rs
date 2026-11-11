@@ -21,11 +21,13 @@ pub(crate) mod training_ask_kind;
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
 mod carry_forward_policy;
 mod coach_offer_reach;
+mod code_run_answer;
 mod confirm;
 mod connector_admission;
 mod consolidation_readers;
 mod constants;
 mod entity_resolution_bands;
+pub(crate) use code_run_answer::code_run_answer_may_witness;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 pub(crate) use constants::{CHECKED_PRODUCER_PROVENANCE_KEY, LIVE_RUN_CLAIM_PUT_PRODUCER};
 mod decision;
@@ -70,6 +72,7 @@ pub(crate) mod fanout_policy;
 mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
+mod house_grant;
 mod input;
 pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
@@ -236,6 +239,7 @@ pub(crate) use self::grants::{
     scoped_read_record_allowed, scoped_read_record_allowed_with_scope,
 };
 pub(crate) use self::hosted_tts_policy::{HostedTtsLimits, resolve_hosted_tts_limits};
+pub(crate) use self::house_grant::is_shipped_house_read_row;
 pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_floor_refusal, consent_gate_reason_codes,

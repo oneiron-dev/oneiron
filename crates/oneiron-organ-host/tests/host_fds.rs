@@ -49,7 +49,7 @@ fn stopped(vault: &Vault, n: usize) -> OrganHost {
                 organ: "probe".into(),
                 verb: "probe.crash".into(),
                 schema: 1,
-                args: rmpv::Value::Nil,
+                args: oneiron_organ_protocol::Value::Nil,
                 body: None,
                 inputs: Vec::new(),
                 class: CallClass::Agent,
