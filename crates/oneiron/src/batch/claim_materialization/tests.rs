@@ -2,7 +2,7 @@ mod freshness;
 mod lifecycle_actor_regressions;
 
 use super::*;
-use crate::claim::{ClaimApprovalStatus, ClaimSubject};
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::temporal::TimeRange;
 use crate::test_util::entity;
@@ -192,6 +192,7 @@ fn owner_materialization_rejects_actor_source_and_operation_rebinding() -> Resul
         entity_type: crate::registry::ENTITY_TYPE_CLAIM,
         occurred: TimeRange { start: 10, end: 20 },
         learned_at: 10,
+        row_version: None,
         data: encode_claim_body(&body)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,

@@ -341,6 +341,6 @@ pub(crate) fn picture_media(
         })
     };
     svg_fallback::svg_blip(tree, blip)
-        .and_then(&media)
+        .and_then(media)
         .or_else(|| media(blip))
 }

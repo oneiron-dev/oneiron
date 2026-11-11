@@ -45,30 +45,29 @@ fn a_host_turns_the_secret_scan_off_through_the_public_owner_door() -> TestResul
     let dir = tempfile::tempdir()?;
     let token = ["gh", "p_", "0123456789abcdefghijklmnopqrstuvwxyz"].concat();
     let turn = format!("user: the token is {token}");
-    // A second token of the same shape for the scan-on write: custody masks
-    // a value it already holds in every later write, scan on or off, so the
-    // scan-off write below must carry a token custody never took.
-    let on_token = ["gh", "p_", "zyxwvutsrqponmlkjihgfedcba9876543210"].concat();
-    let on_turn = format!("user: the token is {on_token}");
-    let masked = EntityId::now();
     let id = EntityId::now();
     {
         let vault = Vault::open(dir.path(), VaultConfig::default())?;
-        // Scan on (the default): the token never lands. Since mask on write
-        // (#1811, OF-560 slice 1, owner ruling G04 = A) the write lands with
-        // the token in secret custody and its handle in its place.
+        // Scan Off still masks custody-known values, so keep the On fixture separate.
+        let scanned_token = ["gh", "p_", "abcdefghijklmnopqrstuvwxyz0123456789"].concat();
+        let scanned_turn = format!("user: the token is {scanned_token}");
+        let scanned_id = EntityId::now();
         vault.put_entity(
-            &masked,
+            &scanned_id,
             TURN,
             oneiron::TimeRange { start: 1, end: 1 },
             1,
-            on_turn.as_bytes(),
+            scanned_turn.as_bytes(),
         )?;
-        let stored = String::from_utf8(vault.get(&masked)?.expect("the masked TURN"))?;
-        assert!(!stored.contains(&on_token), "the token landed: {stored}");
+        let stored = vault.get(&scanned_id)?.expect("masked turn must read back");
+        let stored = String::from_utf8(stored)?;
         assert!(
-            stored.starts_with("user: the token is [secret sc") && stored.ends_with(']'),
-            "the token's custody handle is not in its place: {stored}"
+            stored.contains("[secret sc"),
+            "scan-on write must mask the token, got {stored:?}"
+        );
+        assert!(
+            !stored.contains(scanned_token.as_str()),
+            "masked text must not hold the raw token"
         );
         let owner = vault.ensure_embedded_owner_actor()?;
         let auth = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;

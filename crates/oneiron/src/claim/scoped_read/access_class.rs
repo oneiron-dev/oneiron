@@ -49,6 +49,7 @@ struct ClassView<'b> {
     /// `scope` as MessagePack, as the key carries it.
     scope_bytes: Option<Vec<u8>>,
     generic_readable: bool,
+    exact_store: bool,
     mined_preference: bool,
     approval: ClaimApprovalStatus,
     lifecycle: ClaimLifecycleStatus,
@@ -92,6 +93,7 @@ impl<'b> ClassView<'b> {
             scope: body.scope.as_ref(),
             scope_bytes,
             generic_readable: crate::claim::claim_generic_readable(body),
+            exact_store: crate::claim::claim_exact_store(body),
             mined_preference: crate::edit_distance::miner::is_mined_preference(&body.predicate),
             approval: body.approval,
             lifecycle: body.lifecycle,
@@ -133,6 +135,7 @@ impl<'b> ClassView<'b> {
             None => key.push(0),
         }
         key.push(u8::from(self.generic_readable));
+        key.push(u8::from(self.exact_store));
         key.push(u8::from(self.mined_preference));
         put_bytes(&mut key, self.approval.as_str().as_bytes());
         put_bytes(&mut key, self.lifecycle.as_str().as_bytes());
@@ -338,7 +341,7 @@ fn class_judge_in(
         || (view.mined_preference && view.principal.is_none())
         || !reader.status.admits_status(
             reader.filter,
-            view.generic_readable,
+            (view.generic_readable, view.exact_store),
             view.approval,
             view.lifecycle,
             view.stale,

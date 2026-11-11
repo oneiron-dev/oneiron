@@ -387,7 +387,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
     /// The run's custody and PERSON values, as its output sweep reads them.
     fn mask_guest_error(&self, body: &str) -> Result<String> {
         match self.storage {
-            Some(storage) => crate::code_sandbox::guest_error::mask_run_known_values(
+            Some(storage) => crate::guest_error::mask_run_known_values(
                 storage.code_run_known_source(self.run_id)?,
                 body,
             ),

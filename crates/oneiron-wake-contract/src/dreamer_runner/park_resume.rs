@@ -7,9 +7,10 @@
 //! lease state, the observation cut, the due time, the retry hint, the binding), and the generic resume still
 //! checks the owner token.
 //!
-//! The table encodes the resumers as they were before it existed, including those that check no cause. It is
-//! the future park table of the generic run tree (slice 6.5, census B01): that slice extends it, it does not
-//! replace it.
+//! The table encodes the resumers as they were before it existed, including those that check no cause, with the
+//! WAKE-D1 rows (lead, 9 Nov): a Cancelled park resumes on a later pass, and an ExecutorError or private Other park
+//! waits for the owner's release, never a blind retry (constraint C5), boot included. It is the future park table
+//! of the generic run tree (slice 6.5, census B01): that slice extends it, it does not replace it.
 
 use crate::dreamer_runner::types::DreamerParkCause;
 
@@ -118,11 +119,13 @@ pub enum ParkResumer {
     DrafterTrained,
     /// The feedback triage's graph completed or was invalidated (FIX 7549).
     FeedbackTriage,
+    /// The vault's owner releases a park that waits on an owner act and that no other resumer frees (WAKE-D1).
+    OwnerRelease,
 }
 
 impl ParkResumer {
     /// Every resumer, in table order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::LaterPass,
         Self::TrapConsume,
         Self::OutageSweep,
@@ -135,6 +138,7 @@ impl ParkResumer {
         Self::PayerFunding,
         Self::DrafterTrained,
         Self::FeedbackTriage,
+        Self::OwnerRelease,
     ];
 }
 
@@ -148,16 +152,17 @@ impl ParkResume {
     ///
     /// | resumer | causes | owners |
     /// |---|---|---|
-    /// | LaterPass | Checkpoint, Paused, Retry | any |
+    /// | LaterPass | Checkpoint, Paused, Retry, Cancelled | any |
     /// | TrapConsume | any | Trap |
     /// | OutageSweep | ProviderUnavailable | AgentRuns |
     /// | ProviderRecovery | ProviderUnavailable | DreamerServer, AgentRuns |
-    /// | BootRecovery | any; Checkpoint; ProviderUnavailable | DreamerServer; any; AgentRuns |
+    /// | BootRecovery | any but ExecutorError and Other; Checkpoint; ProviderUnavailable | DreamerServer; any; AgentRuns |
     /// | ProgramRestart | any | TurnProgram |
     /// | ProgramReadyHold, ProgramReturnedHold, ProgramOwnerRelease | Other | TurnProgram |
     /// | PayerFunding | Signal | AgentRuns, Workflows |
     /// | DrafterTrained | any | DrafterRetrain |
     /// | FeedbackTriage | any | FeedbackTriage |
+    /// | OwnerRelease | ExecutorError, Other | DreamerServer, AgentRuns, Workflows, Other |
     #[must_use]
     pub const fn admits(
         cause: DreamerParkCause,
@@ -168,7 +173,10 @@ impl ParkResume {
         use ParkOwnerClass as Owner;
         match resumer {
             ParkResumer::LaterPass => {
-                matches!(cause, Cause::Checkpoint | Cause::Paused | Cause::Retry)
+                matches!(
+                    cause,
+                    Cause::Checkpoint | Cause::Paused | Cause::Retry | Cause::Cancelled
+                )
             }
             ParkResumer::TrapConsume => matches!(owner, Owner::Trap),
             ParkResumer::OutageSweep => {
@@ -178,8 +186,10 @@ impl ParkResume {
                 matches!(owner, Owner::DreamerServer | Owner::AgentRuns)
                     && matches!(cause, Cause::ProviderUnavailable)
             }
+            // An ExecutorError or Other park waits for the owner's release: a boot resume would retry into the
+            // same refusal, and ask the owner again for a consent (C5).
             ParkResumer::BootRecovery => {
-                matches!(owner, Owner::DreamerServer)
+                (matches!(owner, Owner::DreamerServer) && !Self::waits_on_owner(cause))
                     || matches!(cause, Cause::Checkpoint)
                     || (matches!(owner, Owner::AgentRuns)
                         && matches!(cause, Cause::ProviderUnavailable))
@@ -194,7 +204,24 @@ impl ParkResume {
             }
             ParkResumer::DrafterTrained => matches!(owner, Owner::DrafterRetrain),
             ParkResumer::FeedbackTriage => matches!(owner, Owner::FeedbackTriage),
+            ParkResumer::OwnerRelease => {
+                Self::waits_on_owner(cause)
+                    && matches!(
+                        owner,
+                        Owner::DreamerServer | Owner::AgentRuns | Owner::Workflows | Owner::Other
+                    )
+            }
         }
+    }
+
+    /// Whether a park of `cause` waits on an owner act: an ExecutorError, or an Other park outside the turn-program
+    /// runtime's own holds. Only the owner's release resumes it until slice 6.5's typed waits.
+    #[must_use]
+    pub const fn waits_on_owner(cause: DreamerParkCause) -> bool {
+        matches!(
+            cause,
+            DreamerParkCause::ExecutorError | DreamerParkCause::Other
+        )
     }
 
     /// Whether a park is a turn-program hold: the program runtime's own park, of cause Other. The three program
@@ -691,14 +718,68 @@ mod tests {
         ),
     ];
 
+    /// The WAKE-D1 rows over the census: a Cancelled park resumes on a later pass, and boot no longer resumes an
+    /// ExecutorError or Other park of the Dreamer's own pass.
+    fn with_wake_d1(
+        cause: DreamerParkCause,
+        owner: ParkOwnerClass,
+        resumer: ParkResumer,
+        census: bool,
+    ) -> bool {
+        match resumer {
+            ParkResumer::LaterPass if cause == DreamerParkCause::Cancelled => true,
+            ParkResumer::BootRecovery
+                if owner == ParkOwnerClass::DreamerServer
+                    && matches!(
+                        cause,
+                        DreamerParkCause::ExecutorError | DreamerParkCause::Other
+                    ) =>
+            {
+                false
+            }
+            _ => census,
+        }
+    }
+
     #[test]
-    fn the_table_is_the_census_matrix() {
-        for (cause, owner, expected) in CENSUS {
-            for (resumer, admitted) in ParkResumer::ALL.into_iter().zip(expected) {
+    fn the_table_is_the_census_matrix_with_the_wake_d1_rows() {
+        for (cause, owner, census) in CENSUS {
+            for (resumer, admitted) in ParkResumer::ALL[..12].iter().copied().zip(census) {
                 assert_eq!(
                     ParkResume::admits(cause, owner, resumer),
-                    admitted,
+                    with_wake_d1(cause, owner, resumer, admitted),
                     "{cause:?} {owner:?} {resumer:?}"
+                );
+            }
+            let release = matches!(
+                cause,
+                DreamerParkCause::ExecutorError | DreamerParkCause::Other
+            ) && matches!(
+                owner,
+                ParkOwnerClass::DreamerServer
+                    | ParkOwnerClass::AgentRuns
+                    | ParkOwnerClass::Workflows
+                    | ParkOwnerClass::Other
+            );
+            assert_eq!(
+                ParkResume::admits(cause, owner, ParkResumer::OwnerRelease),
+                release,
+                "{cause:?} {owner:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_park_waiting_on_the_owner_has_a_resumer() {
+        // Every ExecutorError and Other park now has some resumer: its own owner's, or the owner's release.
+        for cause in [DreamerParkCause::ExecutorError, DreamerParkCause::Other] {
+            for owner in ParkOwnerClass::ALL {
+                assert!(
+                    ParkResume::owner_may_resume(owner, ParkResumer::OwnerRelease)
+                        || ParkResumer::ALL
+                            .iter()
+                            .any(|resumer| ParkResume::admits(cause, owner, *resumer)),
+                    "{cause:?} {owner:?}"
                 );
             }
         }
