@@ -21,6 +21,7 @@ pub(super) fn validate_skill_body_overwrite(
     id: &EntityId,
     prior_body: &[u8],
     updated: &crate::write_envelope::skill_record::SkillRecord,
+    updated_body: &[u8],
     hub_sync_imported: bool,
     replicated: bool,
     proof: Option<&crate::skill_hub::HubAdmissionProof>,
@@ -30,7 +31,23 @@ pub(super) fn validate_skill_body_overwrite(
             crate::write_envelope::skill_record::validate_hub_sync_skill_update(&prior, updated)
         }
         Ok(prior) => {
-            crate::write_envelope::skill_record::validate_skill_update(&prior, updated)?;
+            if !replicated
+                && proof.is_some_and(|proof| proof.owner_seed_restore_binds(id, updated_body))
+            {
+                use crate::write_envelope::skill_record::{
+                    SkillLifecycle, validate_hub_sync_skill_update, validate_skill_record,
+                };
+                validate_skill_record(updated)?;
+                // Compare identity and content at a common non-frozen lifecycle.
+                // These are validation copies, never intermediate stored rows.
+                let mut prior_content = prior.clone();
+                let mut restored_content = updated.clone();
+                prior_content.lifecycle_status = SkillLifecycle::Active;
+                restored_content.lifecycle_status = SkillLifecycle::Active;
+                validate_hub_sync_skill_update(&prior_content, &restored_content)?;
+            } else {
+                crate::write_envelope::skill_record::validate_skill_update(&prior, updated)?;
+            }
             // ONE-1449's admission gate, placed HERE for the reason ONE-1892's
             // scan consult is: this is the arm every SKILL body update
             // converges on, so `put_entity`, a raw `batch().put`, the typed
