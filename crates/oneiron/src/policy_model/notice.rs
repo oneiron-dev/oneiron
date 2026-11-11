@@ -235,6 +235,62 @@ fn hosted_notice(
     }
 }
 
+/// Reader-facing evidence from the registered host policy, not model rationale.
+/// The notice type distinguishes a selected row from an unexamined outage row.
+pub(super) fn hosted_bound_notices(
+    row_ref: &str,
+    basis: &super::planes::HostedLegalBasis,
+    policy: &HostedLegalPolicy,
+    selected: bool,
+) -> Vec<GateSystemNoticeRecord> {
+    hosted_notice_parts(GateSystemNoticeRecord {
+        notice_type: if selected {
+            "policy_hosted_bound_selected"
+        } else {
+            "policy_hosted_bound_configured"
+        }
+        .to_owned(),
+        channel: SYSTEM_NOTICE_CHANNEL.to_owned(),
+        voice: SYSTEM_NOTICE_VOICE_SYSTEM.to_owned(),
+        audience: SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL.to_owned(),
+        body: format!(
+            "{}: {}\n{}",
+            basis.kind.as_str(),
+            basis.subject,
+            basis.reference,
+        ),
+        row_ref: safe_notice_row_ref(row_ref),
+        setting_change_offer: None,
+        policy_plane: Some(PolicyPlane::HostedLegal.as_str().to_owned()),
+        policy_version: Some(policy.version.clone()),
+        docs_url: Some(policy.docs_url.clone()),
+    })
+}
+
+/// Preserve the whole body in order without exceeding the ledger's existing
+/// per-notice bound. Attribution is repeated on each part.
+pub(super) fn hosted_notice_parts(
+    mut notice: GateSystemNoticeRecord,
+) -> Vec<GateSystemNoticeRecord> {
+    if notice.body.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN {
+        return vec![notice];
+    }
+    let body = std::mem::take(&mut notice.body);
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start < body.len() {
+        let mut end = (start + GATE_SYSTEM_NOTICE_BODY_MAX_LEN).min(body.len());
+        while !body.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut part = notice.clone();
+        part.body = body[start..end].to_owned();
+        parts.push(part);
+        start = end;
+    }
+    parts
+}
+
 /// The audit row recording the safeguard model's stated reason, or `None`
 /// when the pass obtained no rationale (the model was not called, or the
 /// declared output contract does not carry one).

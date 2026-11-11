@@ -301,7 +301,7 @@ impl ScopedRead<'_> {
                     Ok(None) | Err(Error::EntityNotFound) => return Ok(false),
                     Err(error) => return Err(error),
                 };
-            let held = HeldAuthority::for_request(None);
+            let held = self.held_for(None);
             let Some(row) = self.entity_raw_with_mode_held_in(
                 txn,
                 policy,
@@ -368,7 +368,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         Ok(self
             .entity_raw_with_mode_held_in(txn, &policy, &filter, id, ReadMode::Live, &authority)?
             .map(|revision| revision.raw))
@@ -391,11 +391,12 @@ impl ScopedRead<'_> {
         };
         // The short-reference hash names the stored revision, so it is taken
         // before any live projection replaces the body. A file-plane ASSET's
-        // comes from its manifest, never from the manifest's own bytes.
+        // comes from its manifest, never from the manifest's own bytes; an
+        // older revision's from the file its revisions keep (FIX 22091).
         let content_hash =
-            crate::store::short_content_hash_in_txn(&self.vault.store, txn, id, &raw)?;
-        // A file-plane ASSET's live row serves its body, not its manifest;
-        // an older revision keeps the manifest it was stored as. It is
+            crate::store::revision_content_hash_in_txn(&self.vault.store, txn, id, &raw)?;
+        // A file-plane ASSET's live row serves its body, not its manifest,
+        // and so does an older revision whose file its revisions keep. It is
         // materialized while it is still the stored row, so the live
         // projection below reads the body, never the manifest (FIX 12149).
         let mut raw = self.vault.materialized_revision_in_txn(txn, id, raw)?;
@@ -465,15 +466,9 @@ impl ScopedRead<'_> {
         if !self.is_entity_raw_readable_held_in(txn, policy, id, &judged, filter, authority)? {
             return Ok(None);
         }
-        let raw = match self.session_view {
-            Some(view) => crate::vault::entity_revision::read_entity_revision_from_store_in_txn(
-                self.vault, view, txn, id, mode,
-            )?,
-            None => crate::vault::entity_revision::read_entity_revision_in_txn(
-                self.vault, txn, id, mode,
-            )?,
+        let Some(raw) = self.revision_raw_in(txn, id, mode)? else {
+            return Ok(None);
         };
-        let Some(raw) = raw else { return Ok(None) };
         // ASSET_TEXT has a fixed record scope for a given kind and entity id:
         // its birth facet, or its substrate facet when born unplaced. A live
         // body edit restamps the current digest while the indexed body
@@ -505,6 +500,47 @@ impl ScopedRead<'_> {
                 && self.is_entity_raw_readable_held_in(txn, policy, id, &raw, filter, authority)?
         };
         Ok(admitted.then_some(raw))
+    }
+
+    /// The stored bytes `id` reads at `mode` in `txn` on this read's store
+    /// (its session's, when one is open), before any row gate judges them:
+    /// none where a deletion withdrew them, a recorded source no longer
+    /// stands, or the selected bytes are stale.
+    pub(super) fn revision_raw_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        mode: ReadMode,
+    ) -> Result<Option<Vec<u8>>> {
+        match self.session_view {
+            Some(view) => crate::vault::entity_revision::read_entity_revision_from_store_in_txn(
+                self.vault, view, txn, id, mode,
+            ),
+            None => crate::vault::entity_revision::read_entity_revision_in_txn(
+                self.vault, txn, id, mode,
+            ),
+        }
+    }
+
+    /// Whether `revision` is one `id` itself retains on this read's store
+    /// in `txn`: its current row's, or a frontier it kept.
+    pub(super) fn revision_owned_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        revision: crate::vault::RevisionRef,
+    ) -> Result<bool> {
+        match self.session_view {
+            Some(view) => {
+                crate::vault::entity_revision::entity_owns_revision_in_txn(view, txn, id, revision)
+            }
+            None => crate::vault::entity_revision::entity_owns_revision_in_txn(
+                &self.vault.store,
+                txn,
+                id,
+                revision,
+            ),
+        }
     }
 
     /// Whether `entity`'s revision reads in `txn` under `authority`, the

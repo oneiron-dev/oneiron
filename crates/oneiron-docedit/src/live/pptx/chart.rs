@@ -140,6 +140,11 @@ pub struct ChartSeries {
     /// chart with one plot of its family.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plot: Option<u32>,
+    /// The logical plot's retained identity, named by the writer. Ordinal
+    /// compaction and automatic views keep it; an explicit move takes the
+    /// destination's identity. It is evidence, not a requested placement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plot_id: Option<NodeId>,
     /// The categories it draws instead of the chart's: `None` draws the
     /// chart's, an empty set draws its points by index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -331,6 +336,11 @@ pub enum ChartEdit {
     /// x values turned to categories), named by the writer so every replay
     /// names them alike. Applying it changes nothing.
     ReserveCategories {
+        ids: Vec<NodeId>,
+    },
+    /// The writer's identities for the new logical plots settlement adds,
+    /// in plot order, so every replay retains the same continuity.
+    ReservePlots {
         ids: Vec<NodeId>,
     },
     SetSource {
@@ -615,6 +625,33 @@ fn plot_moved(
     None
 }
 
+/// Concurrently-created plots with the same series are the same destination
+/// for a move. Their independently-reserved identities stay fresh; neither
+/// destination may be a plot retained from the common base.
+fn same_new_plot_destination(
+    base: &[ChartSeries],
+    head: &[ChartSeries],
+    head_plot: NodeId,
+    proposal: &[ChartSeries],
+    proposal_plot: NodeId,
+) -> bool {
+    if base.iter().any(|line| {
+        line.plot_id
+            .is_some_and(|id| id == head_plot || id == proposal_plot)
+    }) {
+        return false;
+    }
+    let members = |series: &[ChartSeries], plot| -> BTreeSet<NodeId> {
+        series
+            .iter()
+            .filter(|line| line.plot_id == Some(plot))
+            .filter_map(|line| line.id)
+            .collect()
+    };
+    let head = members(head, head_plot);
+    !head.is_empty() && head == members(proposal, proposal_plot)
+}
+
 /// Whether two move destinations name the same plot (review-4320 P1):
 /// two non-empty destinations share a base-plot ordinal, while a solo
 /// `[]` only ever equals `[]`.
@@ -783,19 +820,39 @@ pub(crate) fn conflicts(
                 ) {
                     out.push(series(SeriesField::Order));
                 }
-                // Both sides moved it to different plots of its family.
-                let head_plot =
-                    plot_moved(*base_family, base_series, *head_family, head_series, id);
-                let proposal_plot = plot_moved(
-                    *base_family,
-                    base_series,
-                    *proposal_family,
-                    proposal_series,
-                    id,
-                );
-                if let (Some(head_plot), Some(proposal_plot)) = (head_plot, proposal_plot)
-                    && !same_plot_destination(&head_plot, &proposal_plot)
-                {
+                // Logical identities survive ordinal compaction (FIX 12770).
+                // Missing evidence keeps the existing mate-aware comparison.
+                let plots_compete = match (was.plot_id, head.plot_id, proposal.plot_id) {
+                    (Some(base), Some(head_id), Some(proposal_id))
+                        if head.family.unwrap_or(*head_family)
+                            == was.family.unwrap_or(*base_family)
+                            && proposal.family.unwrap_or(*proposal_family)
+                                == was.family.unwrap_or(*base_family) =>
+                    {
+                        competing(&base, &head_id, &proposal_id)
+                            && !same_new_plot_destination(
+                                base_series,
+                                head_series,
+                                head_id,
+                                proposal_series,
+                                proposal_id,
+                            )
+                    }
+                    _ => {
+                        let head_plot =
+                            plot_moved(*base_family, base_series, *head_family, head_series, id);
+                        let proposal_plot = plot_moved(
+                            *base_family,
+                            base_series,
+                            *proposal_family,
+                            proposal_series,
+                            id,
+                        );
+                        matches!((head_plot, proposal_plot), (Some(head), Some(proposal))
+                            if !same_plot_destination(&head, &proposal))
+                    }
+                };
+                if plots_compete {
                     out.push(series(SeriesField::Plot));
                 }
             }

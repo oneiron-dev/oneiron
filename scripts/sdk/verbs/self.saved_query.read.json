@@ -1,0 +1,13 @@
+{
+  "name": "self.saved_query.read",
+  "description": "One saved query the caller owns; a query absent or not the caller's reads as not found.",
+  "input": "crate::campaign::surface::SavedQueryReadRequest",
+  "output": "crate::campaign::surface::SavedQueryReadResult",
+  "call": "memory.read_saved_query(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

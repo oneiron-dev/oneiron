@@ -376,21 +376,20 @@ pub(super) fn revertible_person_abouts_in_txn(
 impl Vault {
     /// `person`'s `about` line for a reader whose sensitivity ceiling is
     /// `ceiling`: the line of the highest band at or below it. `None` reads
-    /// no band. A person whose facts moved since its lines were written shows
-    /// none until the Dreamer writes them again. The line is clipped to what
-    /// the board prints.
+    /// no band. A person whose facts moved since its lines were written, or
+    /// one of whose facts the Dreamer no longer reads (FIX 12251), shows none
+    /// until the Dreamer writes them again. The line is clipped to what the
+    /// board prints.
     pub fn person_about(&self, person: EntityId, ceiling: Option<u8>) -> Result<Option<String>> {
         let Some(ceiling) = ceiling else {
             return Ok(None);
         };
-        let txn = self.store.env.read_txn()?;
+        let txn = snapshot(self)?;
         let Some(row) = PERSON_ABOUT.get(&self.store, &txn, &person)? else {
             return Ok(None);
         };
-        Ok(
-            sources::current_line_in_txn(&self.store, &txn, &row, ceiling)?
-                .map(|line| line.text.chars().take(ABOUT_MAX_CHARS).collect()),
-        )
+        Ok(sources::current_line_in_txn(self, &txn, &row, ceiling)?
+            .map(|line| line.text.chars().take(ABOUT_MAX_CHARS).collect()))
     }
 }
 
@@ -487,7 +486,7 @@ impl<E> PersonAboutExecutor<'_, E> {
         if written == Some(digest) || facts.is_empty() {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         let locality = self
@@ -495,6 +494,7 @@ impl<E> PersonAboutExecutor<'_, E> {
             .selected_locality()
             .ok_or_else(|| Error::InvalidConfig("about host binding needs locality".into()))?;
         let keyless = self.inference.selected_keyless();
+        let paid = self.inference.selected_paid();
         let mut charges = StepChargeTally::default();
         let mut lines: Vec<AboutLine> = Vec::new();
         let mut below: Option<[u8; 32]> = None;
@@ -539,6 +539,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     response_format: ResponseFormat::Text,
                     locality,
                     host_keyless: keyless,
+                    host_paid: paid,
                 }
                 .with_purpose_defaults(),
                 messages: vec![
@@ -546,12 +547,14 @@ impl<E> PersonAboutExecutor<'_, E> {
                         role: LlmMessageRole::System,
                         content: vec![ContentPart::Text {
                             text: self.instruction.to_owned(),
+                            signature: None,
                         }],
                     },
                     LlmMessage {
                         role: LlmMessageRole::User,
                         content: vec![ContentPart::Text {
                             text: prompt_lines(&admitted),
+                            signature: None,
                         }],
                     },
                 ],
@@ -591,7 +594,7 @@ impl<E> PersonAboutExecutor<'_, E> {
             };
             let backend =
                 CallBackend::new(self.backend, self.sourced, Some(fact_claim_ids.clone()));
-            let response = match call_as_step_checked(
+            let (response, binding) = match call_as_step_checked(
                 &step_ctx,
                 backend.get(),
                 self.guard,
@@ -601,17 +604,23 @@ impl<E> PersonAboutExecutor<'_, E> {
             .await
             {
                 Ok(StepOutcome::Finished {
-                    response, memoized, ..
+                    response,
+                    memoized,
+                    binding,
+                    ..
                 }) => {
-                    if let Err(error) =
-                        charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
-                    {
+                    if let Err(error) = charges.record_terminal(
+                        ctx.vault,
+                        binding.attempt_id,
+                        binding.step_hash,
+                        &response.usage,
+                    ) {
                         if !memoized {
                             charges.record_usage(&response.usage);
                         }
                         return spent_or_deferred(error, ctx, &charges);
                     }
-                    response
+                    (response, binding)
                 }
                 Ok(StepOutcome::Trapped { .. }) => {
                     return Ok(charges
@@ -640,9 +649,10 @@ impl<E> PersonAboutExecutor<'_, E> {
                     return spent_or_deferred(error, ctx, &charges);
                 }
                 Err(other) => {
-                    return Ok(
-                        charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other))
-                    );
+                    return Ok(charges.park_for(
+                        &other.to_string(),
+                        crate::dreamer_runner::dreamer_park_cause_of_step(&other),
+                    ));
                 }
             };
             let text = match about_line(&response) {
@@ -650,9 +660,12 @@ impl<E> PersonAboutExecutor<'_, E> {
                 // Only a memo stored before the check can be empty: it goes,
                 // and the Retry asks again (FIX 7431, OF-193a).
                 Err(reason) => {
-                    return match charges
-                        .park_refused_reply(ctx.vault, attempt_id, step_hash, reason)
-                    {
+                    return match charges.park_refused_reply(
+                        ctx.vault,
+                        binding.attempt_id,
+                        binding.step_hash,
+                        reason,
+                    ) {
                         Ok(parked) => Ok(parked),
                         Err(error) => spent_or_deferred(error, ctx, &charges),
                     };
@@ -687,7 +700,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(FACTS_DRIFT_RETRY_SECS),
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             });
         }
         let at = ctx.now_ms.div_ceil(1_000);
@@ -730,7 +743,7 @@ impl<E> PersonAboutExecutor<'_, E> {
         }
         Ok(DreamerAttemptExecution::Completed {
             completed_units: charges.units,
-            step_hashes: charges.step_hashes.clone(),
+            step_bindings: charges.step_bindings.clone(),
         })
     }
 }

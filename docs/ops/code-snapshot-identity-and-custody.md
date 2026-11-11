@@ -15,10 +15,14 @@ The local repository path is data identity. It does not replace the caller's
 native owner or run admission. Run imports retain the exact existing admitted
 repository namespace: changing it would break their pinned read's repository
 match. They still select only the paths their existing grant admits and re-check
-that admission in the final writer. Custody uses the same snapshot identity when
-it anchors absolute file declarations. Normalizing a run's admitted namespace
-and custody root together remains separate work; no read alias or broader grant
-is introduced here.
+that admission in the final writer. For a new local import, absolute custody
+file declarations use the same discovered worktree or Git directory that the
+commit tree came from, not the run's admitted namespace. Both the early pass and
+the final writer use that same physical root; the final writer still reads the
+current declarations. Relative declarations and registered hashes are unchanged.
+A direct snapshot put retains its existing snapshot-root anchoring. Historical
+residue handling is unchanged and does not reinterpret an older namespace as a
+physical root. No read alias or broader grant is introduced here.
 
 The custody lift can quarantine a file of a snapshot that was stored earlier.
 Its stored manifest and fork hash stay unchanged. The mount reads that file as

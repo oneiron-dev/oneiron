@@ -3,19 +3,28 @@
 use crate::{ArchiveLimits, DoceditError, Document, preflight_with_limits};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use stemma::domain::{CanonDoc, TrackedBlock};
 use stemma::edit::EditTransaction;
-use stemma::view::{BlockRole, BlockView, DocumentView, SegmentView, TrackStatus};
+
+mod story_cells;
+use stemma::view::{
+    BlockRole, BlockView, DocumentView, SegmentView, TrackStatus, build_story_blocks_view,
+};
+use story_cells::story_cell_op;
 
 use super::{
-    DocxAnchor, DocxChange, DocxParagraph, DocxRevision, inherited, kept_marks, marked_paragraph,
-    new_paragraph, paragraph, remark, runs_text,
+    DocxAnchor, DocxChange, DocxHeaderFooterBand, DocxParagraph, DocxRevision, DocxRun,
+    DocxStoryScope, inherited, kept_marks, marked_paragraph, new_paragraph, paragraph, remark,
+    runs_text,
 };
 
-/// The formatting patches and ops one group's changes build against `view`.
-/// Shared by [`project_docx`] and [`DocxProjection`]: one group through the
-/// session builds exactly what a lone [`project_docx`] call builds.
+/// The formatting patches and ops one group's changes build against `view` and
+/// `canonical`. Shared by [`project_docx`] and [`DocxProjection`]: one group
+/// through the session builds exactly what a lone [`project_docx`] call builds.
+/// Body ids resolve over `view` only; story ids resolve over `canonical` only.
 pub(super) fn group_ops<'v>(
     view: &'v DocumentView,
+    canonical: &CanonDoc,
     changes: &[DocxChange],
 ) -> Result<(Vec<(&'v BlockView, Vec<(u8, u8)>)>, Vec<Value>), DoceditError> {
     let find = |id: &str| {
@@ -95,9 +104,344 @@ pub(super) fn group_ops<'v>(
                     "expect": block.text,
                 }));
             }
+            DocxChange::SetStoryText { scope, block, text } => {
+                ops.push(story_text_op(canonical, scope, block, text)?);
+            }
+            DocxChange::SetStoryRuns { scope, block, runs } => {
+                ops.push(story_runs_op(canonical, scope, block, runs)?);
+            }
+            DocxChange::SetStoryCell {
+                scope,
+                block,
+                row,
+                col,
+                paragraph,
+                text,
+            } => {
+                ops.push(story_cell_op(
+                    canonical, scope, block, *row, *col, paragraph.as_deref(), text,
+                )?);
+            }
         }
     }
     Ok((patches, ops))
+}
+
+/// One story text change as its native op: `edit_header`/`edit_footer` for an
+/// authored header/footer paragraph, `edit_note` for a footnote/endnote body,
+/// `edit_comment_runs` for one paragraph within a comment story. Header/footer
+/// scopes match the actual part name and band and skip synthesized blanks
+/// exactly as the reader does. A note routes only when the requested block is
+/// its first paragraph; any other block never lands on it. A comment routes by
+/// story-local paragraph id, any paragraph of the story.
+fn story_text_op(
+    canonical: &CanonDoc,
+    scope: &DocxStoryScope,
+    block: &str,
+    text: &str,
+) -> Result<Value, DoceditError> {
+    match scope {
+        DocxStoryScope::Header { part_name, band } => {
+            let story = canonical
+                .headers
+                .iter()
+                .find(|story| {
+                    &story.part_name == part_name
+                        && DocxHeaderFooterBand::from(&story.kind) == *band
+                        && !story.synthesized
+                })
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown header story {part_name}"))
+                })?;
+            let story_view = build_story_blocks_view(&story.blocks);
+            let target = story_view
+                .blocks
+                .iter()
+                .find(|block_view| block_view.id.to_string() == block)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown block {block}"))
+                })?;
+            Ok(json!({
+                "op": "edit_header",
+                "header_part": story.part_name,
+                "target": target.id.to_string(),
+                "expect": target.text,
+                "content": story_text_content(text),
+                "semantic_hash": target.guard,
+            }))
+        }
+        DocxStoryScope::Footer { part_name, band } => {
+            let story = canonical
+                .footers
+                .iter()
+                .find(|story| {
+                    &story.part_name == part_name
+                        && DocxHeaderFooterBand::from(&story.kind) == *band
+                        && !story.synthesized
+                })
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown footer story {part_name}"))
+                })?;
+            let story_view = build_story_blocks_view(&story.blocks);
+            let target = story_view
+                .blocks
+                .iter()
+                .find(|block_view| block_view.id.to_string() == block)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown block {block}"))
+                })?;
+            Ok(json!({
+                "op": "edit_footer",
+                "footer_part": story.part_name,
+                "target": target.id.to_string(),
+                "expect": target.text,
+                "content": story_text_content(text),
+                "semantic_hash": target.guard,
+            }))
+        }
+        DocxStoryScope::Footnote { id } => {
+            let story = canonical
+                .footnotes
+                .iter()
+                .find(|story| &story.id == id)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown footnote story {id}"))
+                })?;
+            let story_view = build_story_blocks_view(&story.blocks);
+            let first = story_view.blocks.first().ok_or_else(|| {
+                DoceditError::InvalidTransaction(format!("unknown block {block}"))
+            })?;
+            if first.id.to_string() != block {
+                return Err(DoceditError::InvalidTransaction(format!(
+                    "unknown block {block}"
+                )));
+            }
+            Ok(json!({
+                "op": "edit_note",
+                "note_id": story.id,
+                "note_kind": "footnote",
+                "body": text,
+            }))
+        }
+        DocxStoryScope::Endnote { id } => {
+            let story = canonical
+                .endnotes
+                .iter()
+                .find(|story| &story.id == id)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown endnote story {id}"))
+                })?;
+            let story_view = build_story_blocks_view(&story.blocks);
+            let first = story_view.blocks.first().ok_or_else(|| {
+                DoceditError::InvalidTransaction(format!("unknown block {block}"))
+            })?;
+            if first.id.to_string() != block {
+                return Err(DoceditError::InvalidTransaction(format!(
+                    "unknown block {block}"
+                )));
+            }
+            Ok(json!({
+                "op": "edit_note",
+                "note_id": story.id,
+                "note_kind": "endnote",
+                "body": text,
+            }))
+        }
+        DocxStoryScope::Comment { id } => {
+            let story = canonical
+                .comments
+                .iter()
+                .find(|story| &story.id == id)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown comment story {id}"))
+                })?;
+            comment_runs_op(&story.blocks, &story.id, block, story_text_content(text))
+        }
+    }
+}
+
+/// One story runs change as its native op: an authored header/footer paragraph
+/// or one paragraph within a footnote/endnote story, as styled inlines for one
+/// whole-paragraph tracked redline; or one paragraph within a comment story as
+/// styled inlines for one Normal annotation edit. Comment runs land with exactly
+/// the requested six text marks, never as a tracked redline.
+fn story_runs_op(
+    canonical: &CanonDoc,
+    scope: &DocxStoryScope,
+    block: &str,
+    runs: &[DocxRun],
+) -> Result<Value, DoceditError> {
+    match scope {
+        DocxStoryScope::Header { part_name, band } => {
+            let story = canonical
+                .headers
+                .iter()
+                .find(|story| {
+                    &story.part_name == part_name
+                        && DocxHeaderFooterBand::from(&story.kind) == *band
+                        && !story.synthesized
+                })
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown header story {part_name}"))
+                })?;
+            let story_view = build_story_blocks_view(&story.blocks);
+            let target = story_view
+                .blocks
+                .iter()
+                .find(|block_view| block_view.id.to_string() == block)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown block {block}"))
+                })?;
+            Ok(json!({
+                "op": "edit_header",
+                "header_part": story.part_name,
+                "target": target.id.to_string(),
+                "expect": target.text,
+                "content": story_runs_content(runs),
+                "exact_marks": true,
+                "semantic_hash": target.guard,
+            }))
+        }
+        DocxStoryScope::Footer { part_name, band } => {
+            let story = canonical
+                .footers
+                .iter()
+                .find(|story| {
+                    &story.part_name == part_name
+                        && DocxHeaderFooterBand::from(&story.kind) == *band
+                        && !story.synthesized
+                })
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown footer story {part_name}"))
+                })?;
+            let story_view = build_story_blocks_view(&story.blocks);
+            let target = story_view
+                .blocks
+                .iter()
+                .find(|block_view| block_view.id.to_string() == block)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown block {block}"))
+                })?;
+            Ok(json!({
+                "op": "edit_footer",
+                "footer_part": story.part_name,
+                "target": target.id.to_string(),
+                "expect": target.text,
+                "content": story_runs_content(runs),
+                "exact_marks": true,
+                "semantic_hash": target.guard,
+            }))
+        }
+        DocxStoryScope::Footnote { id } => {
+            let story = canonical
+                .footnotes
+                .iter()
+                .find(|story| &story.id == id)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown footnote story {id}"))
+                })?;
+            note_runs_op(&story.blocks, &story.id, "footnote", block, runs)
+        }
+        DocxStoryScope::Endnote { id } => {
+            let story = canonical
+                .endnotes
+                .iter()
+                .find(|story| &story.id == id)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown endnote story {id}"))
+                })?;
+            note_runs_op(&story.blocks, &story.id, "endnote", block, runs)
+        }
+        DocxStoryScope::Comment { id } => {
+            let story = canonical
+                .comments
+                .iter()
+                .find(|story| &story.id == id)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown comment story {id}"))
+                })?;
+            comment_runs_op(&story.blocks, &story.id, block, story_runs_content(runs))
+        }
+    }
+}
+
+/// One footnote/endnote runs change as its native `edit_note_runs` op. The
+/// block resolves by ordered story-local lookup over the ACTUAL note story,
+/// so any paragraph of the note (not just its first) is addressable; the
+/// guard it carries is that paragraph's own.
+fn note_runs_op(
+    blocks: &[TrackedBlock],
+    note_id: &str,
+    note_kind: &'static str,
+    block: &str,
+    runs: &[DocxRun],
+) -> Result<Value, DoceditError> {
+    let story_view = build_story_blocks_view(blocks);
+    let target = story_view
+        .blocks
+        .iter()
+        .find(|block_view| block_view.id.to_string() == block)
+        .ok_or_else(|| DoceditError::InvalidTransaction(format!("unknown block {block}")))?;
+    Ok(json!({
+        "op": "edit_note_runs",
+        "note_id": note_id,
+        "note_kind": note_kind,
+        "target": target.id.to_string(),
+        "expect": target.text,
+        "content": story_runs_content(runs),
+        "semantic_hash": target.guard,
+    }))
+}
+
+/// One comment runs change as its native `edit_comment_runs` op. The block
+/// resolves by ordered story-local lookup over the ACTUAL comment story, so any
+/// paragraph of the comment (not just its first) is addressable; the guard it
+/// carries is that paragraph's own. `content` is the v4 inline list for the new
+/// paragraph text, plain or marked — one op serves both story text and runs.
+fn comment_runs_op(
+    blocks: &[TrackedBlock],
+    comment_id: &str,
+    block: &str,
+    content: Vec<Value>,
+) -> Result<Value, DoceditError> {
+    let story_view = build_story_blocks_view(blocks);
+    let target = story_view
+        .blocks
+        .iter()
+        .find(|block_view| block_view.id.to_string() == block)
+        .ok_or_else(|| DoceditError::InvalidTransaction(format!("unknown block {block}")))?;
+    Ok(json!({
+        "op": "edit_comment_runs",
+        "comment_id": comment_id,
+        "target": target.id.to_string(),
+        "expect": target.text,
+        "content": content,
+        "semantic_hash": target.guard,
+    }))
+}
+
+/// The v4 inline list for a story text change, through the same builder the
+/// body replace uses: an empty paragraph authors no inlines.
+fn story_text_content(text: &str) -> Vec<Value> {
+    match paragraph(None, text)
+        .get("content")
+        .and_then(Value::as_array)
+    {
+        Some(content) => content.clone(),
+        None => Vec::new(),
+    }
+}
+
+/// The v4 inline list for a story runs change, through the same builder the
+/// body marked replace uses: empty runs skipped, marks as inline types.
+fn story_runs_content(runs: &[DocxRun]) -> Vec<Value> {
+    match marked_paragraph(None, runs)
+        .get("content")
+        .and_then(Value::as_array)
+    {
+        Some(content) => content.clone(),
+        None => Vec::new(),
+    }
 }
 
 /// Apply one group's built patches and ops as a single tracked transaction
@@ -207,7 +551,7 @@ impl DocxProjection {
             return Ok(None);
         }
         let view = self.doc.read();
-        let (patches, ops) = group_ops(&view, changes)?;
+        let (patches, ops) = group_ops(&view, &self.doc.snapshot().canonical, changes)?;
         if patches.is_empty() && ops.is_empty() {
             return Ok(None);
         }

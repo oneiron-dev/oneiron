@@ -26,7 +26,9 @@
 //! publish a probe of what a vault holds to any read-scoped bearer.
 //!
 //! Uploads and downloads stream with bounded backpressure. Object length has
-//! no transport cap; control requests retain the normal bounded body limit.
+//! no transport cap. A verify and a chunk exchange decode their bodies as they
+//! arrive and are never refused for their length (FIX 144, 145); a batch keeps
+//! the extractor's bounded body.
 
 mod chunks;
 mod gate;

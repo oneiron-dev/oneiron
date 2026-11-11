@@ -5,6 +5,9 @@
 //! A body spooled on a host's measured spool ([`SandboxProposalBody::spool_floored`])
 //! admits each append on the shared disk floor before writing it (FIX 7650).
 
+mod text;
+pub use text::SandboxProposalText;
+
 use super::spool::{ProposalSpoolClaim, ProposalSpoolFloor};
 use crate::{Error, Result};
 use std::{
@@ -144,12 +147,7 @@ impl SandboxProposalBody {
     /// A snapshot span whose digest the trusted snapshot walker computed while
     /// appending those exact bytes. Views retain the one spool, not a new fd per
     /// source file. The immutable parent and range bounds pin the bytes.
-    pub(in crate::code_sandbox) fn slice_with_digest(
-        &self,
-        offset: u64,
-        len: u64,
-        digest: [u8; 32],
-    ) -> Result<Self> {
+    pub fn slice_with_digest(&self, offset: u64, len: u64, digest: [u8; 32]) -> Result<Self> {
         if offset.checked_add(len).is_none_or(|end| end > self.len) {
             return Err(Error::InvalidClaimBody("proposal body range out of bounds"));
         }

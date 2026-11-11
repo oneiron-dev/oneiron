@@ -7,7 +7,8 @@
 //! principal is still live. A person stands while its PERSON row is live and
 //! active. An agent stands while its agent row is live (an enabled, active
 //! agent definition, or a base agent's MACHINE principal) AND one live Grant
-//! the owner gave it names it, confers now and lists the work's verb, and,
+//! the owner gave it names it, confers now and lists the work's verb (or
+//! names a verb class that admits it, FIX 8735), and,
 //! on a shared vault, whose pact membership still stands (FIX 7511). Grants
 //! are never unioned and no other holder is picked. It mints nothing, and
 //! the work still crosses every gate it crosses for a caller.
@@ -17,7 +18,9 @@ use crate::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{AgentGrantStanding, FederationGrant, FederationGrantScope};
+use crate::federation::{
+    AgentGrantStanding, AgentVerbClasses, FederationGrant, FederationGrantScope,
+};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_authority::federation::{FederationGrantKind, ScopeAxis};
@@ -216,9 +219,11 @@ pub(crate) fn live_agent_principal_in(
 
 /// The first live owner-agent Grant, in id order, that alone names `agent`,
 /// confers now, was given by a live owner of this vault, lists `verb` in its
-/// explicit verb set and, on a shared vault, keeps its pact membership
+/// explicit verb set or names a verb class that admits it (FIX 8735) and,
+/// on a shared vault, keeps its pact membership
 /// ([`AgentGrantStanding::stands_in_txn`]). With none, the lapse when a
-/// Grant failed on its pact membership alone.
+/// Grant failed on its pact membership alone. The owner's verb-class rows
+/// are read once, and only when one of the agent's Grants names a class.
 fn agent_grant_listing_in(
     home: StandingHome<'_>,
     txn: &heed::RoTxn<'_>,
@@ -227,9 +232,18 @@ fn agent_grant_listing_in(
 ) -> Result<std::result::Result<EntityId, NoStanding>> {
     let now = home.instant_secs_in(txn)?;
     let owners = home.owners_in(txn)?;
+    let grants = crate::federation::agent_grants_for_store_in_txn(home.store(), txn)?;
+    let classes = AgentVerbClasses::for_grants_in_txn(
+        home.store(),
+        txn,
+        grants
+            .iter()
+            .filter(|standing| standing.grant.member_ref == agent)
+            .map(|standing| &standing.grant),
+    )?;
     let mut lapsed = false;
-    for standing in crate::federation::agent_grants_for_store_in_txn(home.store(), txn)? {
-        if !standing.stands_for(agent, verb, now, &owners) {
+    for standing in grants {
+        if !standing.stands_for(agent, verb, now, &owners, &classes) {
             continue;
         }
         if standing.pact_standing_lapsed_for_store_in_txn(home.store(), home.posture(), txn) {
@@ -273,6 +287,12 @@ impl AgentGrantStanding {
     /// membership too (FIX 7511): the whole rule [`principal_standing_in_txn`]
     /// picks its Grant by, for a reader that takes every Grant it holds
     /// (FIX 7462). A personal vault reads as [`Self::stands_for`] alone.
+    /// `classes` are the owner's verb-class rows the caller read once for
+    /// this judgment ([`AgentVerbClasses::for_grants_in_txn`]).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the standing rule's snapshot, principal, verb, clock, owners and class rows"
+    )]
     pub(crate) fn stands_in_txn(
         &self,
         vault: &Vault,
@@ -281,8 +301,10 @@ impl AgentGrantStanding {
         verb: &str,
         now: u64,
         owners: &[EntityId],
+        classes: &AgentVerbClasses,
     ) -> bool {
-        self.stands_for(agent, verb, now, owners) && !self.pact_standing_lapsed_in_txn(vault, txn)
+        self.stands_for(agent, verb, now, owners, classes)
+            && !self.pact_standing_lapsed_in_txn(vault, txn)
     }
 
     /// Whether this Grant's pact standing has lapsed (FIX 7511, Engine 10-21
@@ -297,6 +319,61 @@ impl AgentGrantStanding {
     /// Grants by its own rule.
     pub(crate) fn pact_standing_lapsed_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> bool {
         self.pact_standing_lapsed_for_store_in_txn(&vault.store, vault.privacy_posture(), txn)
+    }
+
+    /// [`Self::pact_standing_lapsed_in_txn`] as an observation: the same
+    /// membership gate and the same lapse, but a store or decode failure of
+    /// the check is `Err`, for a reader that must name the Grant's standing
+    /// unknown instead of reading it by [`PACT_STANDING_CHECK_ERROR`].
+    ///
+    /// # Errors
+    /// The failure of the membership check itself; never a refusal.
+    pub(crate) fn pact_standing_lapse_observed_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<bool> {
+        grant_pact_standing_lapse_observed_for_store_in_txn(
+            &vault.store,
+            vault.privacy_posture(),
+            txn,
+            self.id,
+            self.grant.scope,
+            self.grant.member_ref,
+        )
+    }
+
+    /// Whether this Grant stands ([`Self::stands_in_txn`]) for `agent` at
+    /// `now` for at least one verb of its own explicit verb list: the same
+    /// rule, verb by verb, with no rule of its own. Its pact half reads no
+    /// verb, so the first listed verb [`Self::stands_for`] admits decides it.
+    /// The pact half is read as an observation
+    /// ([`Self::pact_standing_lapse_observed_in_txn`]). The owner's
+    /// verb-class rows are read only when this Grant names a class (FIX 8735).
+    ///
+    /// # Errors
+    /// The failure of the pact membership check itself, or of the class-row
+    /// read.
+    pub(crate) fn stands_for_any_listed_verb_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        now: u64,
+        owners: &[EntityId],
+    ) -> Result<bool> {
+        let ScopeAxis::Some(verbs) = &self.grant.authority_scope.verbs else {
+            return Ok(false);
+        };
+        let classes =
+            AgentVerbClasses::for_grants_in_txn(&vault.store, txn, std::iter::once(&self.grant))?;
+        if !verbs
+            .iter()
+            .any(|verb| self.stands_for(agent, verb, now, owners, &classes))
+        {
+            return Ok(false);
+        }
+        Ok(!self.pact_standing_lapse_observed_in_txn(vault, txn)?)
     }
 
     /// [`Self::pact_standing_lapsed_in_txn`] through a `Store` and the
@@ -320,23 +397,24 @@ impl AgentGrantStanding {
 
     /// Whether this Grant alone stands for `agent`'s work under `verb` at
     /// `now`: it names `agent`, confers now, was given by one of `owners`
-    /// (this vault's live owners) and lists `verb` in its explicit verb set.
-    /// The rule's half that reads no snapshot; [`Self::stands_in_txn`] adds
-    /// the shared vault's pact membership.
+    /// (this vault's live owners) and lists `verb` in its explicit verb set
+    /// or names a verb class that admits it under `classes` (FIX 8735; its
+    /// `read`, which a conferring Grant needs, likewise). The rule's half
+    /// that reads no snapshot: the caller read `classes` once;
+    /// [`Self::stands_in_txn`] adds the shared vault's pact membership. A
+    /// Grant that names no class judges exactly as before.
     pub(crate) fn stands_for(
         &self,
         agent: EntityId,
         verb: &str,
         now: u64,
         owners: &[EntityId],
+        classes: &AgentVerbClasses,
     ) -> bool {
         self.grant.member_ref == agent
-            && self.grant.confers_at(now)
+            && self.grant.confers_with_classes_at(now, classes)
             && owners.contains(&self.delegated_by)
-            && matches!(
-                &self.grant.authority_scope.verbs,
-                ScopeAxis::Some(verbs) if verbs.contains(verb)
-            )
+            && self.grant.admits_verb(verb, classes)
     }
 }
 
@@ -374,10 +452,25 @@ fn grant_pact_standing_lapsed_for_store_in_txn(
     scope: FederationGrantScope,
     member: EntityId,
 ) -> bool {
-    let creation = match crate::federation::shared_vault_creation_for_store_in_txn(store, txn) {
-        Ok(Some(creation)) => creation,
-        Ok(None) => return false,
-        Err(error) => return lapse_on_check_error(id, FederationGrantKind::Access, &error),
+    grant_pact_standing_lapse_observed_for_store_in_txn(store, posture, txn, id, scope, member)
+        .unwrap_or_else(|error| lapse_on_check_error(id, FederationGrantKind::Access, &error))
+}
+
+/// The pact half's one observation: whether the Grant `id`, under `scope`
+/// and naming `member`, lost its pact membership. A refusal of the
+/// membership gate is a lapse; a store or decode failure of the check is
+/// `Err`, which the admission rule reads by [`PACT_STANDING_CHECK_ERROR`].
+fn grant_pact_standing_lapse_observed_for_store_in_txn(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    scope: FederationGrantScope,
+    member: EntityId,
+) -> Result<bool> {
+    let Some(creation) = crate::federation::shared_vault_creation_for_store_in_txn(store, txn)?
+    else {
+        return Ok(false);
     };
     // A Grant under another vault's scope (a residence one) is no pact Grant
     // of this shared vault: never lapsed, its reader's own rule judges it
@@ -385,14 +478,14 @@ fn grant_pact_standing_lapsed_for_store_in_txn(
     if let FederationGrantScope::Vault { vault_id } = scope
         && vault_id != creation.vault_id
     {
-        return false;
+        return Ok(false);
     }
     match crate::federation::authenticated_grant_membership_for_store_in_txn(
         store, posture, txn, scope, member, id,
     ) {
-        Ok(Some(_)) => false,
-        Ok(None) | Err(Error::Claim(_)) => true,
-        Err(error) => lapse_on_check_error(id, FederationGrantKind::Access, &error),
+        Ok(Some(_)) => Ok(false),
+        Ok(None) | Err(Error::Claim(_)) => Ok(true),
+        Err(error) => Err(error),
     }
 }
 

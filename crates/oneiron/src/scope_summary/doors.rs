@@ -9,9 +9,9 @@ use crate::claim::{ScopedRead, ScopedReadActorKey};
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
-    actor_in_txn, admit_append_prose, append_in_txn, append_references, conversation_of, edge_ids,
-    is_sub_session_record, prove_branch_anchor, prove_branch_span, receipt_append_refusal,
-    require_append_references_in_txn, require_type, resolve_in_txn,
+    actor_in_txn, admit_append_prose, append_composed_in_txn, append_references, conversation_of,
+    edge_ids, is_sub_session_record, prove_branch_anchor, prove_branch_span,
+    receipt_append_refusal, require_append_references_in_txn, require_type, resolve_in_txn,
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
@@ -770,7 +770,9 @@ pub(super) fn land_in_txn(
         // them in this writer, as the public append doors check.
         let refs = append_references(&input, None);
         require_append_references_in_txn(vault, lane, txn, &input, &refs)?;
-        let appended = append_in_txn(vault, txn, &input, Some(*summary), false)?;
+        // The reply's words are the summary's, which the Dreamer composed:
+        // checked as generated even under a person's actor (ARCH-0040).
+        let appended = append_composed_in_txn(vault, txn, &input, Some(*summary), false)?;
         for source in &sources {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, &appended.id, source)?;
         }
@@ -820,6 +822,14 @@ pub(crate) fn body_covers_through_in(
             return Err(invalid("reply and summary conversations differ"));
         }
         return Ok(Some(word_sources(&summary).copied().collect()));
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_COMM_RECORD {
+        use crate::federation::record_scope::{ScopedCommRead, read_scoped_comm_in_txn};
+        return match read_scoped_comm_in_txn(dbs, txn, *record, bytes)? {
+            ScopedCommRead::Ordinary => Ok(None),
+            ScopedCommRead::Unavailable => Ok(Some(Vec::new())),
+            ScopedCommRead::Claim { original, .. } => Ok(Some(vec![original])),
+        };
     }
     Ok(None)
 }

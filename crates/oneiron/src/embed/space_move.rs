@@ -1359,6 +1359,7 @@ impl Vault {
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
         if concluded {
+            self.store.notify_notification_updates();
             self.embedding_move_ended();
         }
         let check = check.unwrap_or(SpaceMoveCheck {

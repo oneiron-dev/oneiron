@@ -76,8 +76,10 @@ pub mod prep;
 pub mod query;
 pub use oneiron_base::calendar_body_screen as safeguard;
 pub mod series;
+pub(crate) mod tables;
 pub mod transcript;
 pub mod tz;
+pub(crate) mod windows_zones;
 
 /// Single calendar error home. Later stack layers append variants.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -193,7 +195,8 @@ impl From<crate::Error> for CalendarError {
 }
 
 pub use caldav::{
-    CALDAV_PROVIDER_KEY, CalDavConnector, CalDavDiscovery, CalDavWire, caldav_write_status_error,
+    CALDAV_PROVIDER_KEY, CalDavConnector, CalDavDiscovery, CalDavWire, caldav_collection_timezone,
+    caldav_write_status_error,
 };
 pub use claims::{
     CALENDAR_CLAIM_PREDICATES, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection,
@@ -212,7 +215,7 @@ pub use connectors::{
     RemoteCalendarChange, RemoteCalendarObject, RemoteSyncBatch, RemoteWriteReceipt,
     RemoteWriteRequest, calendar_remote_object_row, calendar_sync_attempt_kind,
     calendar_write_outbox_row, calendar_write_outbox_rows, classify_remote_change,
-    run_calendar_connector_sync, write_calendar_event,
+    run_calendar_connector_sync, run_calendar_connector_sync_with_screener, write_calendar_event,
 };
 pub use freebusy::{BusyInterval, BusyUnion, freebusy, freebusy_scoped};
 pub(crate) use generic_put::settle_generic_calendar_claim_in_txn;

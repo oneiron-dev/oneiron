@@ -14,6 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::CheckpointImage;
+use crate::Result;
 
 /// The lengths the rows with a body still to land land at, by database and
 /// key.
@@ -23,7 +24,12 @@ pub(super) struct LandingRowLengths(BTreeMap<String, BTreeMap<Vec<u8>, u64>>);
 impl LandingRowLengths {
     /// The lengths for `image`, once its `retired` instances' rows took
     /// their erased forms.
-    pub(super) fn of(image: &CheckpointImage, retired: &BTreeSet<[u8; 16]>) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// A carried start's capsule row the image does not hold, and a row its
+    /// republish writes that does not decode or encode (FIX 11415).
+    pub(super) fn of(image: &CheckpointImage, retired: &BTreeSet<[u8; 16]>) -> Result<Self> {
         let mut lengths = BTreeMap::<String, BTreeMap<Vec<u8>, u64>>::new();
         for carried in &image.inline_bodies {
             if carried.superseded || retired.contains(&carried.instance) || carried.replay.is_some()
@@ -39,14 +45,15 @@ impl LandingRowLengths {
                 .insert(carried.key.clone(), landed);
         }
         // FIX 9180: a row or start recomposed from its parts lands at its
-        // grouped length, never one part's (L04 ACKED 03:50).
-        for (key, landed) in super::carried_bodies::replay::landed_lengths(image, retired) {
+        // grouped length, never one part's (L04 ACKED 03:50). FIX 11415: a
+        // start's republish counts every row it writes.
+        for (key, landed) in super::carried_bodies::replay::landed_lengths(image, retired)? {
             lengths
                 .entry("vault_meta".to_owned())
                 .or_default()
                 .insert(key, landed);
         }
-        Self(lengths)
+        Ok(Self(lengths))
     }
 
     /// The bytes the value of the row `key` of `database`, `value` in the

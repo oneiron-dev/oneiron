@@ -129,29 +129,32 @@ pub(super) fn score(
     if clock.decision_time_left().is_zero() {
         return Ok(Scored::Unavailable(MeasurementUnavailable::ClockExhausted));
     }
-    let decision = match decisions.ladder.run_with_run(
-        &question,
-        decisions.principal,
-        &[],
-        &state,
-        decisions.dial,
-        &decisions.bands,
-        Reversibility::ReversibleRead,
-        clock,
-        run,
-    ) {
-        Ok(decision) => decision,
-        Err(error) => {
-            tracing::debug!(%error, "an eval measurement judgment did not run");
-            return Ok(Scored::Unavailable(if is_budget_denied(&error) {
-                MeasurementUnavailable::BudgetExhausted
-            } else if clock.decision_time_left().is_zero() {
-                MeasurementUnavailable::ClockExhausted
-            } else {
-                MeasurementUnavailable::NoScorer
-            }));
-        }
-    };
+    let decision =
+        match crate::decision_verdict::with_model_call_context(decisions.principal, None, || {
+            decisions.ladder.run_with_run(
+                &question,
+                decisions.principal,
+                &[],
+                &state,
+                decisions.dial,
+                &decisions.bands,
+                Reversibility::ReversibleRead,
+                clock,
+                run,
+            )
+        }) {
+            Ok(decision) => decision,
+            Err(error) => {
+                tracing::debug!(%error, "an eval measurement judgment did not run");
+                return Ok(Scored::Unavailable(if is_budget_denied(&error) {
+                    MeasurementUnavailable::BudgetExhausted
+                } else if clock.decision_time_left().is_zero() {
+                    MeasurementUnavailable::ClockExhausted
+                } else {
+                    MeasurementUnavailable::NoScorer
+                }));
+            }
+        };
     // The rows the judgment read: the case's and its labels'. The answer is
     // no row of its own.
     judge.record_decision_sourced(&question, &decision, &state, task.source_rows.clone())?;

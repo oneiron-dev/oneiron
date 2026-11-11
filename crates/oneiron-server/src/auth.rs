@@ -689,6 +689,58 @@ impl CoreAuth {
             && self.managed_owner.is_none()
     }
 
+    /// Whether the facade route may reuse this receipt-layer caller (FIX
+    /// 12332), for the four shapes `credential_is_live` does not cover. An
+    /// account key stands only while its exact fingerprint's cached verdict
+    /// is live and its whole key/scopes/principal tuple still matches. The
+    /// dev bearer and hatch re-read the config that admitted them. An
+    /// attested person must still be the holder this request's ingress
+    /// attested. Every other shape, and every uncertainty, resolves again.
+    pub(crate) fn facade_reuse_stands(&self, server: &SyncServer, parts: &Parts) -> bool {
+        if self.verified_slip.is_none()
+            && self.jti.is_none()
+            && self.managed_owner.is_none()
+            && self.managed_person.is_none()
+        {
+            if let Some(instrument) = self.instrument {
+                let Some(key_id) = self.principal.strip_prefix("account-key:") else {
+                    return false;
+                };
+                let Some(keys) = &server.account_keys else {
+                    return false;
+                };
+                return keys
+                    .cached_live(&instrument, oneiron_vault_contract::now_ts())
+                    .is_some_and(|(cached_id, cached_scopes, cached_principal)| {
+                        cached_id == key_id
+                            && cached_scopes == self.scopes
+                            && cached_principal == self.principal_ref
+                    });
+            }
+            let unidentified_bearer = self.principal == "dev-bearer"
+                && self.verified_slip.is_none()
+                && self.jti.is_none()
+                && self.instrument.is_none()
+                && self.managed_owner.is_none()
+                && self.managed_person.is_none();
+            if unidentified_bearer || (self.is_local_dev_hatch() && self.managed_person.is_none()) {
+                return server.config.auth_secret.is_none() && server.config.allow_unauthenticated;
+            }
+        }
+        if self.managed_person.is_some()
+            && self.verified_slip.is_none()
+            && self.jti.is_none()
+            && self.instrument.is_none()
+            && self.managed_owner.is_none()
+        {
+            return parts
+                .extensions
+                .get::<crate::managed::ManagedPersonHolder>()
+                .is_some_and(|holder| Some(holder.0) == self.managed_person);
+        }
+        false
+    }
+
     /// The host's own root slip, when this caller presented one (FIX 2222):
     /// the full, unattenuated slip the host minted to itself, no child of it
     /// and no slip cut from it for someone else. Whether it is live, and

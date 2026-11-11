@@ -16,21 +16,26 @@
 //! (`wait_holders`, FIX 5718): once an erase of its actor took its replies,
 //! it is delivered the reply's erased form, parks on nothing and reads a
 //! typed unavailable, while every other holder reads the reply as before.
+//!
+//! A settler that froze the origins of its reply settles them with it, in
+//! one value (FIX 7083): every copy of the settled reply, routed or late,
+//! keeps them, and a reply with none keeps its origins unknown.
 
 mod erased_read;
+mod resume;
 mod settle_report;
+mod settlement;
 
 use std::cell::Cell;
 
 use self::erased_read::{delivery_in_txn, settled_in_txn};
-use super::records::REPLAY_RECORDS;
+pub(crate) use self::settlement::{deliver_wait_in_txn, deliver_wait_listing_in_txn};
 use super::replay_bodies::response_erased_error;
 use super::routing::SessionBinding;
 use super::wait_holders::{
-    hold_settled_for_caller_in_txn, holder_erased_in_txn, holder_erased_routed, join_wait_in_txn,
-    join_wait_routed,
+    holder_erased_in_txn, holder_erased_routed, join_wait_in_txn, join_wait_routed,
 };
-use crate::code_run::ExecutorStorage;
+use crate::code_run::{ExecutorStorage, ResultOrigins};
 use crate::llm::{DreamerTrapKind, TrapRef};
 use crate::off_record::OffRecordSession;
 use crate::side_table::{
@@ -69,6 +74,15 @@ const WAITERS: SideTable<([u8; 1], EntityId, EntityId), u64, Raw> =
 const TRAPS: SideTable<(EntityId, EntityId, u64), TrapRef, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_TRAP);
 
+fn retire_wait_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, key: &WaitKey) -> Result<()> {
+    if WAITERS.get(&vault.store, txn, &key.waiter())? == Some(key.generation) {
+        WAITERS.delete(&vault.store, txn, &key.waiter())?;
+    }
+    DELIVERIES.delete(&vault.store, txn, &key.row())?;
+    TRAPS.delete(&vault.store, txn, &key.row())?;
+    Ok(())
+}
+
 fn reply_text(reply: &serde_json::Value) -> Result<String> {
     serde_json::to_string(reply)
         .map_err(|_| Error::InvalidConfig("a code-run wait reply is not JSON".to_owned()))
@@ -78,60 +92,6 @@ fn waiter_prefix(wait_id: EntityId) -> Vec<u8> {
     let mut prefix = WAITER_TAG.to_vec();
     prefix.extend_from_slice(wait_id.as_bytes());
     prefix
-}
-
-/// Settles `wait_id` with `reply` in the caller's transaction: records the
-/// reply unless the wait already settled, then delivers the settled reply to
-/// every run parked on it that has none, waking each one's bound trap in the
-/// same commit. Returns how many runs this call delivered to.
-pub(crate) fn deliver_wait_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    wait_id: EntityId,
-    reply: &serde_json::Value,
-    now_ms: u64,
-) -> Result<usize> {
-    deliver_wait_listing_in_txn(vault, txn, wait_id, reply, None, now_ms)
-}
-
-/// [`deliver_wait_in_txn`], `reply` kept beside `rows`, the rows its settler
-/// listed it derived from (FIX 5455), when it lists them.
-pub(crate) fn deliver_wait_listing_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    wait_id: EntityId,
-    reply: &serde_json::Value,
-    rows: Option<&[EntityId]>,
-    now_ms: u64,
-) -> Result<usize> {
-    let settled = match settled_in_txn(&vault.store, txn, wait_id)? {
-        Some(settled) => settled,
-        None => {
-            let mut settled = WaitDelivery {
-                reply: reply_text(reply)?,
-                delivered_at_ms: now_ms,
-                source_rows: rows.map(<[EntityId]>::to_vec),
-                erased: false,
-            };
-            SETTLED.admit(vault, txn, &(SETTLED_TAG, wait_id), &mut settled)?;
-            SETTLED.put(&vault.store, txn, &(SETTLED_TAG, wait_id), &settled)?;
-            settled
-        }
-    };
-    let mut delivered = 0;
-    for ((_, _, run), generation) in
-        WAITERS.scan_from(&vault.store, txn, &waiter_prefix(wait_id))?
-    {
-        let key = WaitKey {
-            run,
-            wait_id,
-            generation,
-        };
-        if deliver_in_txn(vault, txn, &key, &settled)? {
-            delivered += 1;
-        }
-    }
-    Ok(delivered)
 }
 
 /// The reply `wait_id` settled with, read in the caller's transaction, as the
@@ -296,7 +256,7 @@ fn put_if_absent_routed<K: SideKey, V, C: SideCodec<V>>(
 
 /// The vault's canonical store under a routed transaction's `dbs`: whose
 /// answer whether an actor is gone is, on either route.
-fn canonical_store<'a>(dbs: &RoutedDbs<'a>) -> &'a Store {
+pub(super) fn canonical_store<'a>(dbs: &RoutedDbs<'a>) -> &'a Store {
     match *dbs {
         RoutedDbs::Base(vault) => &vault.store,
         RoutedDbs::Session(view) => view.read().base(),
@@ -329,27 +289,30 @@ fn deliver_routed(
 }
 
 impl ExecutorStorage<'_> {
-    /// [`deliver_wait_in_txn`] where the run's rows are. A room's rows ride
-    /// its route in one routed writer, each written only where it is
-    /// absent: the settled row, then each waiter's delivery, which joins the
-    /// wait's holders and takes the reply's erased form for a run an erase
-    /// of its actor took the replies of (FIX 6586). They bind no trap.
+    /// [`deliver_wait_listing_in_txn`] where the run's rows are. A room's
+    /// rows ride its route in one routed writer, each written only where it
+    /// is absent: the settled row, then each waiter's delivery, which joins
+    /// the wait's holders and takes the reply's erased form for a run an
+    /// erase of its actor took the replies of (FIX 6586). They bind no trap.
+    /// A settled row keeps the origins it settled with (FIX 7083).
     pub(crate) fn deliver_wait(
         &self,
         wait_id: EntityId,
         reply: &serde_json::Value,
         rows: Option<&[EntityId]>,
+        origins: Option<&ResultOrigins>,
         now_ms: u64,
     ) -> Result<usize> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
-                deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, now_ms)
+                deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, origins, now_ms)
             }),
             Self::Session(binding) => binding.answered(|| {
                 let fresh = WaitDelivery {
                     reply: reply_text(reply)?,
                     delivered_at_ms: now_ms,
                     source_rows: rows.map(<[EntityId]>::to_vec),
+                    origins: origins.cloned(),
                     erased: false,
                 };
                 binding
@@ -467,14 +430,9 @@ impl ExecutorStorage<'_> {
     /// captured route. The resumed record already names the next generation.
     pub(crate) fn clear_wait(&self, key: &WaitKey) -> Result<()> {
         match self {
-            Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
-                if WAITERS.get(&vault.store, txn, &key.waiter())? == Some(key.generation) {
-                    WAITERS.delete(&vault.store, txn, &key.waiter())?;
-                }
-                DELIVERIES.delete(&vault.store, txn, &key.row())?;
-                TRAPS.delete(&vault.store, txn, &key.row())?;
-                Ok(())
-            }),
+            Self::Canonical(vault) => {
+                vault.with_write_txn_grouped(|txn| retire_wait_in_txn(vault, txn, key))
+            }
             Self::Session(binding) => binding.answered(|| {
                 binding
                     .session
@@ -528,9 +486,11 @@ impl<'a> WaitDeliveries<'a> {
     /// [`Self::deliver`], `reply` kept beside `rows`, the rows its settler
     /// listed it derived from (FIX 5455): the resumed run counts them among
     /// its own, and `connector.call_status` lists them. A canonical wait
-    /// that is a connector call's, by its ref, holds its settled reply for
-    /// the call's caller in the same commit (FIX 5718 part 3): that
-    /// caller's erase reaches the copy `connector.call_status` reads.
+    /// that is a connector call's holds its settled reply for the call's
+    /// caller in the same commit (FIX 5718 part 3). The canonical settlement
+    /// writes that membership, so every canonical settle shares it (FIX
+    /// 6656): that caller's erase reaches the copy `connector.call_status`
+    /// reads. A reply settled here has unknown origins (FIX 7083).
     pub fn deliver_listing(
         &self,
         wait_id: EntityId,
@@ -538,17 +498,8 @@ impl<'a> WaitDeliveries<'a> {
         rows: Option<&[EntityId]>,
         now_ms: u64,
     ) -> Result<usize> {
-        let ExecutorStorage::Canonical(vault) = &self.storage else {
-            return self.storage.deliver_wait(wait_id, reply, rows, now_ms);
-        };
-        let Some(caller) = connector_call_caller(vault, wait_id)? else {
-            return self.storage.deliver_wait(wait_id, reply, rows, now_ms);
-        };
-        vault.with_write_txn_grouped(|txn| {
-            let delivered = deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, now_ms)?;
-            hold_settled_for_caller_in_txn(vault, txn, wait_id, caller)?;
-            Ok(delivered)
-        })
+        self.storage
+            .deliver_wait(wait_id, reply, rows, None, now_ms)
     }
 
     /// Registers a run as parked on `key`'s wait; `true` when its reply is
@@ -588,16 +539,6 @@ impl WaitDeliveries<'_> {
     }
 }
 
-/// The actor whose connector call `wait_id` is, by the call's ref, when its
-/// caller is an actor (FIX 5718 part 3): `connector.call_status` reads the
-/// wait's settled reply for that caller. `None` for any other wait.
-fn connector_call_caller(vault: &Vault, wait_id: EntityId) -> Result<Option<EntityId>> {
-    let state = vault
-        .connector_call_state(&wait_id)
-        .map_err(|error| Error::InvalidConfig(format!("connector call state: {error}")))?;
-    Ok(state.and_then(|state| EntityId::from_hex(&state.principal_ref).ok()))
-}
-
 /// Leads a run's seen-change row: `c` + wait + run → the highest option-void
 /// generation of the ask the run has seen while it waits on it (OF-533). It
 /// is one run's cursor: never a reply, and never the group's acknowledgement.
@@ -605,6 +546,30 @@ const OBSERVED_TAG: [u8; 1] = *b"c";
 
 const OBSERVED_CHANGES: SideTable<([u8; 1], EntityId, EntityId), u64, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_INDEX);
+
+/// Retires the current waiter of `run` on `wait_id` in the caller's write.
+/// A turn-hook answer is consumed before a step exists to resume; its
+/// consumption commit owns this cleanup. Other runs and the settled reply stay.
+pub(crate) fn clear_parked_wait_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    run: EntityId,
+    wait_id: EntityId,
+) -> Result<()> {
+    let waiter = (WAITER_TAG, wait_id, run);
+    let Some(generation) = WAITERS.get(&vault.store, txn, &waiter)? else {
+        return Ok(());
+    };
+    let key = WaitKey {
+        run,
+        wait_id,
+        generation,
+    };
+    WAITERS.delete(&vault.store, txn, &waiter)?;
+    DELIVERIES.delete(&vault.store, txn, &key.row())?;
+    TRAPS.delete(&vault.store, txn, &key.row())?;
+    Ok(())
+}
 
 /// The waits some canonical run is parked on with no reply delivered yet,
 /// for a sweep that settles what is due on them.
@@ -693,7 +658,8 @@ pub(crate) fn observe_wait_change(
 /// each waiter's own key and never into the settled row, so a run that
 /// parks later reads the wait afresh; a settled wait takes none, as its
 /// final reply wins. A waiter already holding a reply keeps it, so repeated
-/// voids coalesce. Returns how many runs this call delivered to.
+/// voids coalesce. Its origins are unknown (FIX 7083). Returns how many runs
+/// this call delivered to.
 pub(crate) fn deliver_changed_wait_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -709,6 +675,7 @@ pub(crate) fn deliver_changed_wait_in_txn(
         reply: reply_text(reply)?,
         delivered_at_ms: now_ms,
         source_rows: None,
+        origins: None,
         erased: false,
     };
     let mut delivered = 0;
@@ -726,83 +693,4 @@ pub(crate) fn deliver_changed_wait_in_txn(
         }
     }
     Ok(delivered)
-}
-
-impl ExecutorStorage<'_> {
-    /// Commits the replay record of a run resumed from `key`'s reply, the
-    /// result of its parked step `step_seq` at `resumed_path`. When that
-    /// reply is an ask's Changed status, the run's seen-change cursor rises
-    /// in the same transaction, so a failed append acknowledges nothing. A
-    /// bound code consent wait's settlement is consumed in it (DOOR-079 1b):
-    /// its reply must be delivered and verify, or the record does not
-    /// commit. Retiring the wait's rows afterwards consumes nothing and
-    /// deletes no consumption. Once an erase of the run's actor took its
-    /// replies, nothing commits and nothing is consumed: a typed unavailable
-    /// (FIX 5718). A room's record commits as any other append does, along
-    /// its route, and the same check runs in that writer (FIX 6586).
-    pub(crate) fn put_code_run_wait_resume_record(
-        &self,
-        record: &crate::code_run::CodeRunReplayRecord,
-        expected: Option<crate::code_run::CodeRunReplayGeneration>,
-        key: &WaitKey,
-        step_seq: u64,
-        resumed_path: &str,
-    ) -> Result<crate::code_run::CodeRunReplayGeneration> {
-        match self {
-            Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal_and(
-                record,
-                expected,
-                None,
-                |txn| {
-                    if holder_erased_in_txn(vault, txn, key)? {
-                        return Err(response_erased_error("a resumed wait's reply"));
-                    }
-                    let delivery = delivery_in_txn(&vault.store, txn, &key.row())?;
-                    if delivery.as_ref().is_some_and(|delivery| delivery.erased) {
-                        return Err(response_erased_error("a resumed wait's reply"));
-                    }
-                    let resume = crate::code_run::CodeConsentResume {
-                        record,
-                        key: *key,
-                        step_seq,
-                        resumed_path,
-                    };
-                    let delivered = delivery.as_ref().map(|delivery| delivery.reply.as_str());
-                    if crate::code_run::consume_code_consent_wait_in_txn(
-                        vault, txn, &resume, delivered,
-                    )? {
-                        return Ok(());
-                    }
-                    let Some(delivery) = delivery else {
-                        return Ok(());
-                    };
-                    if let Ok(crate::task_verb::TaskAskStatus::Changed { generation, .. }) =
-                        serde_json::from_str::<crate::task_verb::TaskAskStatus>(&delivery.reply)
-                    {
-                        raise_observed_change_in(vault, txn, key.run, key.wait_id, generation)?;
-                    }
-                    Ok(())
-                },
-            ),
-            Self::Session(binding) => {
-                REPLAY_RECORDS.encode_value(record)?;
-                let next_generation = record.generation()?;
-                binding.answered(|| {
-                    binding.put_replay_routed(record, expected, None, |txn, write| {
-                        // The run's own rows ride its route, so `write`
-                        // reads them on either route.
-                        if holder_erased_routed(canonical_store(&write), &write, txn, key)? {
-                            return Err(response_erased_error("a resumed wait's reply"));
-                        }
-                        let delivery = delivery_in_txn(&write, txn, &key.row())?;
-                        if delivery.is_some_and(|delivery| delivery.erased) {
-                            return Err(response_erased_error("a resumed wait's reply"));
-                        }
-                        Ok(())
-                    })
-                })?;
-                Ok(next_generation)
-            }
-        }
-    }
 }

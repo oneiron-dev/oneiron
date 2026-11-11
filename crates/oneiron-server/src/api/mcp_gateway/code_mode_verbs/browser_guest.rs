@@ -146,6 +146,7 @@ impl super::RunGuests {
         // The browser runs as its connector pack: no installed pack, no browser.
         if vault.require_builtin_channel_pack("browser").is_err() {
             return Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: "browser_pack_not_installed".to_owned(),
             });
         }
@@ -156,6 +157,7 @@ impl super::RunGuests {
                 .is_err()
         {
             return Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: "browser_connection_unchecked".to_owned(),
             });
         }

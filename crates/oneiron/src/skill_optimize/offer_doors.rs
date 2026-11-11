@@ -269,3 +269,21 @@ pub fn undo(
         restored_model: receipt.previous.model.as_str().to_owned(),
     })
 }
+
+/// A training run, by id.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TrainingRunRef {
+    pub run: EntityId,
+}
+
+/// Cancels a staged trained embedder swap while its binding still waits or
+/// fills (FIX 9459). The staged move is abandoned in the same owner write;
+/// an applied swap keeps the existing space-move undo door.
+pub fn cancel_training_run(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: TrainingRunRef,
+) -> Result<PendingEmbedderBinding> {
+    vault.cancel_training_embedder_swap(owner, &input.run)
+}

@@ -1,16 +1,22 @@
 //! Code artifact body values and the pinned MessagePack codec.
+//!
+//! A registered repository's body also carries its retained configuration
+//! (FIX 4299, CODE-CUSTODY-01): see [`CodeRepoRegistration`].
 
+use crate::code_repo_registration::CodeRepoRegistration;
+use crate::code_repo_registration::CodeRepoSource;
 use oneiron_base::error::ArtifactError;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use rmpv::Value;
 
-pub const CODE_ARTIFACT_BODY_KEYS: [&str; 5] = [
+pub const CODE_ARTIFACT_BODY_KEYS: [&str; 6] = [
     "summary_prompt",
     "summary_hash",
     "repo_ref",
     "class",
     "lens_tree",
+    "registration",
 ];
 pub const CODE_ARTIFACT_SUMMARY_HASH_LEN: usize = 32;
 pub const CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES: usize = 16 * 1024;
@@ -21,6 +27,7 @@ pub const KEY_SUMMARY_HASH: &str = CODE_ARTIFACT_BODY_KEYS[1];
 pub const KEY_REPO_REF: &str = CODE_ARTIFACT_BODY_KEYS[2];
 pub const KEY_CLASS: &str = CODE_ARTIFACT_BODY_KEYS[3];
 pub const KEY_LENS_TREE: &str = CODE_ARTIFACT_BODY_KEYS[4];
+pub const KEY_REGISTRATION: &str = CODE_ARTIFACT_BODY_KEYS[5];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CodeArtifactClass {
@@ -70,6 +77,10 @@ pub struct CodeArtifactBody {
     /// A lens's frozen compiled tree, as canonical JSON; present exactly when
     /// `class` is [`CodeArtifactClass::Lens`].
     pub lens_tree: Option<String>,
+    /// A registered repository's retained source and editable whitelist
+    /// (FIX 4299): present only on the codebase class, and only on the one
+    /// stable CODE record of a registered repository.
+    pub registration: Option<CodeRepoRegistration>,
 }
 
 impl CodeArtifactBody {
@@ -85,6 +96,7 @@ impl CodeArtifactBody {
             repo_ref: repo_ref.into(),
             class: CodeArtifactClass::Codebase,
             lens_tree: None,
+            registration: None,
         }
     }
 
@@ -104,12 +116,21 @@ impl CodeArtifactBody {
             repo_ref: slot_ref.into(),
             class: CodeArtifactClass::Lens,
             lens_tree: Some(lens_tree.into()),
+            registration: None,
         }
     }
 
     #[must_use]
     pub fn with_class(mut self, class: CodeArtifactClass) -> Self {
         self.class = class;
+        self
+    }
+
+    /// This body with `registration` as its retained repository
+    /// configuration (FIX 4299).
+    #[must_use]
+    pub fn with_registration(mut self, registration: Option<CodeRepoRegistration>) -> Self {
+        self.registration = registration;
         self
     }
 }
@@ -133,6 +154,9 @@ pub fn encode_code_artifact_body(body: &CodeArtifactBody) -> Result<Vec<u8>> {
     ];
     if let Some(tree) = &body.lens_tree {
         entries.push((Value::from(KEY_LENS_TREE), Value::from(tree.as_str())));
+    }
+    if let Some(registration) = &body.registration {
+        entries.push((Value::from(KEY_REGISTRATION), registration.to_value()));
     }
     let value = Value::Map(entries);
     let mut out = Vec::new();
@@ -172,6 +196,7 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
     let mut repo_ref: Option<String> = None;
     let mut class: Option<CodeArtifactClass> = None;
     let mut lens_tree: Option<String> = None;
+    let mut registration: Option<CodeRepoRegistration> = None;
     let mut seen = [false; CODE_ARTIFACT_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -233,6 +258,9 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
                 ))?;
                 lens_tree = Some(text.to_owned());
             }
+            KEY_REGISTRATION => {
+                registration = Some(CodeRepoRegistration::from_value(value)?);
+            }
             _ => unreachable!("index resolved from CODE_ARTIFACT_BODY_KEYS"),
         }
     }
@@ -249,6 +277,7 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
         )))?,
         class: class.unwrap_or_default(),
         lens_tree,
+        registration,
     };
     validate_code_artifact_body(&body)?;
     Ok(body)
@@ -265,6 +294,9 @@ fn validate_code_artifact_body(body: &CodeArtifactBody) -> Result<()> {
         CODE_ARTIFACT_REPO_REF_MAX_BYTES,
         "repo_ref must be non-empty and at most 1024 bytes",
     )?;
+    if let Some(registration) = &body.registration {
+        validate_registration(body, registration)?;
+    }
     // A lens names its pack slot, not a repository, and carries its tree;
     // every other class carries no tree.
     if body.class == CodeArtifactClass::Lens {
@@ -290,6 +322,35 @@ fn validate_code_artifact_body(body: &CodeArtifactBody) -> Result<()> {
         ))
     })?;
     Ok(())
+}
+
+/// A registration rides only a codebase body whose stored repo is a local
+/// folder (FIX 4299): an external source is that very folder; a served
+/// source's folder is the served store, which only the origin resolves.
+fn validate_registration(
+    body: &CodeArtifactBody,
+    registration: &CodeRepoRegistration,
+) -> Result<()> {
+    if body.class != CodeArtifactClass::Codebase {
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "only a codebase body carries a registration",
+        )));
+    }
+    let Ok(crate::code_snapshot::repo_ref::RepoRef::LocalFolder { path, .. }) =
+        crate::code_snapshot::repo_ref::RepoRef::parse(&body.repo_ref)
+    else {
+        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+            "a registered repository's repo_ref names a local folder",
+        )));
+    };
+    match registration.source() {
+        CodeRepoSource::LocalFolder { path: source } if *source != path => {
+            Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                "a local registration source is the folder its repo_ref names",
+            )))
+        }
+        CodeRepoSource::LocalFolder { .. } | CodeRepoSource::Served { .. } => Ok(()),
+    }
 }
 
 fn validate_text_field(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {

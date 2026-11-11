@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use super::{CodeViewSet, VIEW_RECEIPTS, ViewReceipt, relative};
+use super::{CodeViewSet, VIEW_RECEIPTS, ViewReceipt, relative, view_path_on_disk};
 use crate::error::{Error, Result};
 use crate::memory::repo_doors::RepoRunStamp;
 use crate::origin::secret_projection::RepoFileProjectionView;
@@ -95,7 +95,7 @@ impl CodeViewSet<'_> {
                     }
                     Err(error) => return Err(error.into()),
                 }
-                let target = destination.join(path);
+                let target = view_path_on_disk(&destination, path)?;
                 if let Some(parent) = target.parent() {
                     std::fs::create_dir_all(parent)?;
                 }

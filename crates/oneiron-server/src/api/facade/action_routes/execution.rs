@@ -46,6 +46,10 @@ pub(super) async fn execute_stamped(
     call: AgentActionCall,
 ) -> (Result<ActionDispatch, FacadeApiError>, CallStamp) {
     let pre_hooked_fold = extensions.remove::<oneiron::code_run::actions::PreHookedFold>();
+    // An input whose content the action holds as a file (FIX 22096).
+    let held = extensions
+        .remove::<super::super::blob_body::HeldActionInput>()
+        .map(|super::super::blob_body::HeldActionInput(held)| held);
     let ActionBound {
         actor, class, key, ..
     } = &bound;
@@ -70,11 +74,14 @@ pub(super) async fn execute_stamped(
         extensions,
         bound,
         credential,
-        move |executor, vault, writer, binding| match pre_hooked_fold {
-            Some(pre) => {
+        move |executor, vault, writer, binding| match (pre_hooked_fold, held) {
+            (Some(pre), _) => {
                 executor.execute_pre_hooked_fold(vault, writer, &principal, &call, binding, pre)
             }
-            None => executor.execute_call(vault, writer, &principal, &call, binding),
+            (None, Some(held)) => {
+                executor.execute_call_held(vault, writer, &principal, &call, binding, held)
+            }
+            (None, None) => executor.execute_call(vault, writer, &principal, &call, binding),
         },
     )
     .await
@@ -132,6 +139,7 @@ where
         + 'static,
 {
     let ActionBound {
+        replay_auth,
         actor,
         class,
         key,
@@ -140,7 +148,12 @@ where
         live_run,
     } = bound;
     let door = Arc::new(FacadeRowDoor::new(
-        server, headers, extensions, key, credential,
+        server,
+        headers,
+        extensions,
+        key,
+        credential,
+        replay_auth,
     ));
     let bound = Unbound {
         actor,

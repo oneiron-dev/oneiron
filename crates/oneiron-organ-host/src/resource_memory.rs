@@ -52,7 +52,8 @@ pub trait FloorLease: Send {
     /// waits; used to roll back growth whose budget admission failed.
     fn shrink(&mut self, bytes: u64);
 
-    /// [`Self::grow`] with no deadline: only `stopped` ends the wait.
+    /// Grows allocated buffers without a deadline: only `stopped` ends the
+    /// wait.
     ///
     /// # Errors
     /// As [`Self::grow`].
@@ -63,6 +64,25 @@ pub trait FloorLease: Send {
 /// server's implementation is its machine memory line, shared with every
 /// other lease it gives.
 pub trait MachineFloor: Send + Sync {
+    /// Checks distinct caller-held input plus a complete requested pool
+    /// against the existing physical floor, without waiting or reserving.
+    /// `pinned` names only the caller-supplied footprint, not unknown heap.
+    ///
+    /// # Errors
+    /// The machine's floor if the named peak cannot fit with no other leases.
+    fn check_irreducible_peak(&self, pinned: u64, bytes: u64) -> Result<(), FloorRefusal>;
+
+    /// Attempts to reserve now without a capacity wait or bypassing queued
+    /// waiters. `None` records no reservation: caller-held inputs may unwind.
+    ///
+    /// # Errors
+    /// The physical floor when `bytes` cannot fit on an idle machine.
+    fn try_lease(&self, bytes: u64) -> Result<Option<Box<dyn FloorLease>>, FloorRefusal>;
+    /// Records `bytes` already allocated, held until the returned lease drops.
+    /// This does not admit a new allocation and never waits or refuses. Use
+    /// the actual buffer capacity, and free the buffer before its lease.
+    fn track_allocated(&self, bytes: u64) -> Box<dyn FloorLease>;
+
     /// A lease of `bytes` of the machine's memory, held until what it returns
     /// drops: admitted as soon as they fit, waiting no later than `deadline`
     /// and no longer than `stopped` allows.

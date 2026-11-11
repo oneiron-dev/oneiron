@@ -7,6 +7,9 @@ mod cjs_source;
 mod codec;
 mod document_view;
 mod keys;
+mod manifest_reads;
+mod relations;
+pub use relations::CodeSymbolRelation;
 mod rust_source;
 mod secret_projection;
 mod semantic_diff;
@@ -29,6 +32,7 @@ pub use self::codec::{
 pub use self::keys::{code_symbol_entity_id, derive_symbol_fingerprint};
 pub use self::rust_source::derive_code_symbol_graph_from_sources;
 pub use self::storage::apply_code_symbol_anchor_transfer;
+pub(crate) use self::storage::code_symbol_manifest_definitions;
 pub use self::text_diff::{
     derive_code_chunks_from_text_diff, derive_code_embedding_inputs_from_text_diff,
     embed_code_chunks,
@@ -43,6 +47,9 @@ pub use self::types::{
 pub(crate) use self::actor_erase::erase_manifest_actor_in_txn;
 pub(crate) use self::codec::code_symbol_entity_path;
 pub(crate) use self::keys::code_symbol_document_in_txn;
+pub(crate) use self::manifest_reads::{
+    code_symbol_definitions_in_txn, code_symbol_manifest_ids_in_txn,
+};
 pub(crate) use self::rust_source::prepare_code_symbol_graph;
 pub(crate) use self::secret_projection::masked_repo_symbol_texts_in_txn;
 pub(crate) use self::storage::delete_code_symbol_manifest_in_txn;
@@ -64,5 +71,6 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::pipeline::ScoredEntity;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

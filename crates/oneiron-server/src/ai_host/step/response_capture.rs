@@ -17,7 +17,7 @@ pub(super) fn response_text(response: &LlmResponse) -> Vec<u8> {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<String>()

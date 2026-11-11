@@ -18,7 +18,10 @@
 //! document (FIX 18270). One whose fork no one decided stays under the
 //! vault-wide seal unless its fork record split beside it, as that record
 //! goes when its opener does not open (Engine and lead pick). A shallow or
-//! state-only snapshot stays there too (Engine R3).
+//! state-only snapshot, live or proposal, that names no one, in its kept
+//! commits, its authorship records or any state, is its own no-one form and
+//! is kept as stored (FIX 6442); one that names an actor stays there too
+//! (Engine R3).
 
 use ::loro::{
     ContainerID, ContainerType, EncodedBlobMode, JsonMapOp, JsonOp, JsonOpContent, JsonTextOp,
@@ -35,7 +38,7 @@ use crate::ports::is_metadata_field;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::SideKey;
 use crate::store::checkpoint_payload::loro::{
-    self as shared, LoroActorCodec, OpenedRow, SHALLOW, Split, SplitRow, SplitValue,
+    self as shared, LoroActorCodec, OpenedRow, Split, SplitRow, SplitValue,
 };
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OwnerRef, RoundTripPolicy, RowLocator, TypedRow, Unresolved,
@@ -322,8 +325,8 @@ pub(crate) fn frames_live(content: &[u8]) -> bool {
     shared::frames::<NoteActors>(content)
 }
 
-/// Rebuilds one live NOTE document group from its opened rows: a full
-/// history of `note`'s document, every actor that did not open erased.
+/// Rebuilds one live NOTE document group from its opened rows: the history
+/// of `note`'s document, every actor that did not open erased.
 pub(crate) fn join_live(note: EntityId, rows: &[OpenedRow<'_>]) -> Result<Vec<Vec<u8>>> {
     let joined = shared::join_loro(rows, &NoteActors)?.rows;
     let bytes: Vec<&[u8]> = joined.iter().map(Vec::as_slice).collect();
@@ -331,32 +334,38 @@ pub(crate) fn join_live(note: EntityId, rows: &[OpenedRow<'_>]) -> Result<Vec<Ve
     Ok(joined)
 }
 
-/// Refuses `bytes` unless it is a full NOTE document snapshot that reads as
-/// the document of the NOTE it names.
+/// Refuses `bytes` unless it is a NOTE document snapshot a split keeps that
+/// reads as the document of the NOTE it names.
 pub(crate) fn check_live_snapshot(bytes: &[u8]) -> Result<()> {
-    full_snapshot(bytes)?;
+    kept_snapshot(bytes)?;
     let note = snapshot_note(bytes).ok_or_else(rows::bad_part)?;
     note_group(note, &[bytes]).map_err(|_| rows::bad_part())
 }
 
-/// Refuses `bytes` unless it is a full, not shallow, snapshot blob.
-fn full_snapshot(bytes: &[u8]) -> Result<()> {
+/// Refuses `bytes` unless it is a snapshot blob a split keeps: a full one,
+/// not shallow, or a shallow or state-only one that names no one (FIX
+/// 6442).
+fn kept_snapshot(bytes: &[u8]) -> Result<()> {
     let meta = LoroDoc::decode_import_blob_meta(bytes, true).map_err(|_| rows::bad_part())?;
     let doc = group_doc(&[bytes]).ok_or_else(rows::bad_part)?;
-    if meta.mode != EncodedBlobMode::Snapshot || doc.is_shallow() {
-        return Err(rows::bad_part());
+    match meta.mode {
+        EncodedBlobMode::Snapshot if !doc.is_shallow() => Ok(()),
+        EncodedBlobMode::ShallowSnapshot if doc.is_shallow() => {
+            shared::shallow_names_no_one(bytes, &NoteActors).map_err(|_| rows::bad_part())
+        }
+        _ => Err(rows::bad_part()),
     }
-    Ok(())
 }
 
-/// One NOTE proposal document, under its NOTE: a full proposal splits as a
-/// group of its own, its pins and authorship records included (FIX 6523).
-/// A decided or unforked one is kept exactly as stored when its history
-/// names no one. An undecided fork's always goes through its join, which
-/// drops it with its fork record when the opener did not open (FIX 6523), so
-/// it splits only when `undecided` says that record split beside it. A
-/// shallow one and an undecided one whose record is not beside it stay under
-/// the vault-wide seal, named with the NOTE.
+/// One NOTE proposal document, under its NOTE: a proposal splits as a group
+/// of its own, its pins and authorship records included (FIX 6523), a
+/// shallow one only when it names no one (FIX 6442). A decided or unforked
+/// one is kept exactly as stored when its history names no one. An
+/// undecided fork's always goes through its join, which drops it with its
+/// fork record when the opener did not open (FIX 6523), so it splits only
+/// when `undecided` says that record split beside it. A shallow one that
+/// names an actor and an undecided one whose record is not beside it stay
+/// under the vault-wide seal, named with the NOTE.
 pub(super) fn capture_proposal(
     out: &mut Captured,
     note: EntityId,
@@ -378,18 +387,16 @@ pub(super) fn capture_proposal(
     }
 }
 
-/// Whether a proposal document is one a split takes: a full history, not an
-/// undecided fork's whose record is not beside it (`apart`), and `note`'s
-/// document, which reads as one, its pins and authorship records included.
+/// Whether a proposal document is one a split takes: not an undecided
+/// fork's whose record is not beside it (`apart`), and `note`'s document,
+/// which reads as one, its pins and authorship records included. The split
+/// itself takes a shallow one only when it names no one.
 fn proposal_shape(
     note: EntityId,
     apart: bool,
     snapshot: &[u8],
 ) -> std::result::Result<(), Unresolved> {
     let doc = group_doc(&[snapshot]).ok_or(Unresolved::Undecodable)?;
-    if doc.is_shallow() {
-        return Err(Unresolved::ActorSplit(SHALLOW));
-    }
     if apart {
         return Err(Unresolved::ActorSplit(PENDING_PROPOSAL));
     }
@@ -410,15 +417,15 @@ fn proposal_note(at: &RowLocator) -> Result<EntityId> {
     Ok(key.0.0)
 }
 
-/// Refuses a proposal row unless it is a full document of the NOTE its key
-/// leads with.
+/// Refuses a proposal row unless it is a document a split keeps of the NOTE
+/// its key leads with.
 pub(super) fn check_proposal(at: &RowLocator, bytes: &[u8]) -> Result<()> {
-    full_snapshot(bytes)?;
+    kept_snapshot(bytes)?;
     proposal_shape(proposal_note(at)?, false, bytes).map_err(|_| rows::bad_part())
 }
 
 /// A proposal document rebuilt from its content and the actors that
-/// opened: a full document of the NOTE its key leads with.
+/// opened: a document a split keeps of the NOTE its key leads with.
 pub(super) fn join_proposal(
     at: &RowLocator,
     content: &[u8],

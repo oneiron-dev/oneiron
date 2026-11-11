@@ -1,24 +1,32 @@
 //! A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part
 //! B1).
 //!
-//! A replay record's bridge outcomes and output previews are one body
-//! instance, bound the first time a checkpoint carries the record. The image
-//! row holds the record with each outcome failed and each preview withheld:
-//! under a retired instance a restore keeps that terminal evidence (each
-//! call's seq, effect, request, times and action digest; each output's
-//! handle, digest, counts and completeness; the run's checkpoints, and so
-//! its generation), so a resumed run that reaches an erased call traps on
-//! it, never takes an empty success and never runs a fresh effect. Under a
-//! live instance the exact record lands, and replay checks it as before.
+//! A replay record's bridge outcomes, request words and output previews are
+//! one body instance, bound the first time a checkpoint carries the record.
+//! The image row holds the record with each outcome failed, each request in
+//! its erased form and each preview withheld: under a retired instance a
+//! restore keeps that terminal evidence (each call's seq, effect, request
+//! identity, times and action digest; each output's handle, digest, counts
+//! and completeness; the run's checkpoints, and so its generation), so a
+//! resumed run that reaches an erased call traps on it, never takes an
+//! empty success and never runs a fresh effect. A request the run built
+//! from an earlier reply holds its words, so the image keeps none (FIX
+//! 6534). Under a live instance the exact record lands, and replay checks
+//! it as before.
 //! Its owners are the run, the actor its live run binding names, the actor
-//! a turn program's run runs as, the source rows its verb calls served, and
-//! the input rows its output occurrences keep.
+//! a turn program's run runs as, the source rows its verb calls served, the
+//! input rows its output occurrences keep, and for each fold answer it
+//! records the fold's words and the records they were written from (FIX
+//! 18924), so a withdrawal of those words retires every image of it.
 //! The live record's erase scrub is L11-B's (FIX 5718, [`erase_replies`]);
 //! this retires every image's copy beside it.
 
 use super::records::REPLAY_RECORDS;
 use super::response_owners::response_owner_in_txn;
-use crate::code_run::payload::{decode_self_dispatch_outcome, self_dispatch_outcome_value};
+use crate::code_run::payload::{
+    answer_fold_words, decode_self_dispatch_outcome, keep_erased_fold_words,
+    self_dispatch_outcome_value,
+};
 use crate::code_run::wait_rows::keep_erased_answer_rows;
 use crate::code_run::{CodeRunReplayRecord, SelfDispatchOutcome, SelfFailedResult};
 use crate::engine_executor::holds_reply_content;
@@ -37,12 +45,13 @@ pub(crate) use crate::store::result_body_erasure::response_erased_error;
 pub(crate) const CODE_RUN_OUTPUT_PREVIEW_ERASED: &str =
     "[preview erased: its owner's erase retired this result]";
 
-/// What a checkpoint carries of the replay record `value`: its outcomes and
-/// previews, the record with each outcome failed and each preview withheld
-/// as the stub its erased disposition keeps whole, a verb's answer keeping
-/// the rows it was served from as the live erased form does (FIX 6535).
-/// No response for a record with no call and no output; a record that does
-/// not decode, or whose stub does not encode, is carried whole as an opaque
+/// What a checkpoint carries of the replay record `value`: its outcomes,
+/// request words and previews, the record with each outcome failed, each
+/// request erased to its identity (FIX 6534) and each preview withheld as
+/// the stub its erased disposition keeps whole, a verb's answer keeping the
+/// rows it was served from as the live erased form does (FIX 6535). No
+/// response for a record with no call and no output; a record that does not
+/// decode, or whose stub does not encode, is carried whole as an opaque
 /// response (FIX 6227).
 pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
     let Ok(mut record) = REPLAY_RECORDS.decode_value(value) else {
@@ -52,11 +61,15 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
         return ResponseScan::NotResponse;
     }
     for call in &mut record.bridge_calls {
+        if call.erase_request().is_err() {
+            return ResponseScan::opaque_row();
+        }
         let rows = match decode_self_dispatch_outcome(&call.outcome) {
             Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.released_rows()),
             Ok(_) => None,
             Err(_) => Some(None),
         };
+        let words = answer_fold_words(&call.outcome).unwrap_or_default();
         let Ok(outcome) =
             self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect,
@@ -71,6 +84,7 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
         if let Some(rows) = rows {
             keep_erased_answer_rows(&mut call.outcome, rows.as_deref());
         }
+        keep_erased_fold_words(&mut call.outcome, &words);
     }
     for output in &mut record.outputs {
         output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
@@ -88,9 +102,11 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
 /// Who owns the replay record `value`'s outcomes: its run, the actor its
 /// live run binding names, the actor a turn program's run runs as, the run
 /// and actor its owner row names (a write receipt's among them, FIX 5718),
-/// the source rows its verb calls listed as served, and each output's known
-/// input rows. These own this checkpoint response, not the live run's body
-/// occurrences. None for a record that does not decode.
+/// the source rows its verb calls listed as served, each output's known
+/// input rows, and for each fold answer it records the fold's words id and
+/// the records the words were written from (FIX 18924). These own this
+/// checkpoint response, not the live run's body occurrences. None for a
+/// record that does not decode.
 ///
 /// # Errors
 ///
@@ -109,6 +125,10 @@ pub(crate) fn replay_owners(
     for output in &record.outputs {
         owners.extend(output.input_rows.iter().flatten().copied());
     }
+    for word in crate::code_run::recorded_fold_words(&record.bridge_calls) {
+        owners.push(crate::compaction::fold_words_id(word.source_run, word.fold));
+        owners.extend(word.sources);
+    }
     owners.extend(crate::dreamer_runner::program_run_actor_in_txn(
         dbs,
         txn,
@@ -126,17 +146,24 @@ pub(crate) fn replay_owners(
 /// ruling 1): each call whose recorded outcome holds a reply
 /// ([`outcome_holds_reply`]) fails with `response_erased` under its own
 /// effect, as a checkpoint's image of it does, a verb's answer keeping the
-/// rows it was served from, and each output that holds reply content
-/// ([`holds_reply_content`]) previews as erased. What the run did stays
-/// whole: every call's seq, effect, request, times and action
-/// digest, every output's path, handle, digest, counts and completeness, its
-/// checkpoints (so its generation), its names and its live run binding. A
-/// resumed run that reaches an erased call traps on it, as a write whose
-/// receipt holds one is never made again.
+/// rows it was served from and a fold's answer the folds it named (FIX
+/// 18924), and each output that holds reply content
+/// ([`holds_reply_content`]) previews as erased. Every call's request words
+/// go with them, a hook's rewrite too (FIX 6534): a request the run built
+/// from an earlier reply holds its words. Each keeps its text-free
+/// identity ([`crate::code_run::CodeRunBridgeCall::erase_request`]). What
+/// the run did stays whole: every call's seq, effect, request identity,
+/// times, action digest and receipt, every output's path, handle, digest,
+/// counts and completeness, its checkpoints (so its generation), its names
+/// and its live run binding. A resumed run that reaches an erased call
+/// traps on it, as a write whose receipt holds one is never made again,
+/// and a call that meets an erased request by its identity takes its
+/// recorded answer.
 ///
 /// # Errors
 ///
-/// An outcome that does not encode.
+/// An outcome that does not encode, or a request the side-row wall cannot
+/// read.
 pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
     let retained_calls: std::collections::BTreeSet<usize> = record
         .bridge_calls
@@ -151,6 +178,7 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
         .map(|(index, _)| index)
         .collect();
     for (index, call) in record.bridge_calls.iter_mut().enumerate() {
+        call.erase_request()?;
         if retained_calls.contains(&index) {
             continue;
         }
@@ -162,6 +190,7 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
             Ok(_) => None,
             Err(_) => Some(None),
         };
+        let words = answer_fold_words(&call.outcome).unwrap_or_default();
         call.outcome =
             self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect,
@@ -172,6 +201,7 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
         if let Some(rows) = rows {
             keep_erased_answer_rows(&mut call.outcome, rows.as_deref());
         }
+        keep_erased_fold_words(&mut call.outcome, &words);
     }
     let retained: std::collections::BTreeSet<String> = record
         .outputs

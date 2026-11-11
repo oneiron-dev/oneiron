@@ -253,6 +253,7 @@ impl Vault {
                 org_ref: None,
                 grant_ref: None,
                 invitation_ref: None,
+                share_ref: None,
                 delegation: None,
                 comm: None,
                 trusted_contact: None,

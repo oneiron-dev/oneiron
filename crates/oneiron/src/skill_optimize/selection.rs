@@ -8,11 +8,13 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill::SkillLifecycle;
-use crate::skill_reliability::{SkillReliabilityPosterior, skill_reliability_prior};
+use crate::skill_reliability::{
+    SkillReliabilityPosterior, skill_reliability_prior, skill_reliability_prior_sourced,
+};
 
-use super::dials::{SKILL_SCAN_PAGE, skill_optimize_min_outcomes};
+use super::dials::{SKILL_SCAN_PAGE, skill_optimize_min_outcomes_sourced};
 use super::gate::receipt_is_held_out;
-use super::tier::tier_verdict;
+use super::tier::{tier_verdict, tier_verdict_sourced};
 
 /// One skill the job may work on, with the reading that ranked it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -54,7 +56,7 @@ pub struct SkillOptimizeCandidate {
 ///
 /// Storage errors; body errors from an undecodable SKILL record.
 pub fn optimize_candidates(vault: &Vault) -> Result<Vec<SkillOptimizeCandidate>> {
-    select_candidates(vault, false, None)
+    select_candidates(vault, false, None).map(|(candidates, _)| candidates)
 }
 
 /// Rank only forks belonging to this resident, never another resident's
@@ -63,23 +65,33 @@ pub fn optimize_candidates_for_resident(
     vault: &Vault,
     resident: &EntityId,
 ) -> Result<Vec<SkillOptimizeCandidate>> {
-    select_candidates(vault, false, Some(*resident))
+    select_candidates(vault, false, Some(*resident)).map(|(candidates, _)| candidates)
 }
 
 pub(super) fn affirm_candidates(
     vault: &Vault,
     resident: Option<EntityId>,
 ) -> Result<Vec<SkillOptimizeCandidate>> {
-    select_candidates(vault, true, resident)
+    select_candidates(vault, true, resident).map(|(candidates, _)| candidates)
+}
+
+/// The ranking beside the actual SKILL, tier, prior and partition rows read.
+pub(super) fn optimize_candidates_sourced(
+    vault: &Vault,
+    resident: Option<EntityId>,
+) -> Result<(Vec<SkillOptimizeCandidate>, Option<Vec<EntityId>>)> {
+    select_candidates(vault, false, resident)
 }
 
 fn select_candidates(
     vault: &Vault,
     affirm: bool,
     resident: Option<EntityId>,
-) -> Result<Vec<SkillOptimizeCandidate>> {
-    let min_outcomes = skill_optimize_min_outcomes(vault)?;
+) -> Result<(Vec<SkillOptimizeCandidate>, Option<Vec<EntityId>>)> {
+    let (min_outcomes, dial_rows) = skill_optimize_min_outcomes_sourced(vault)?;
     let skills = all_skill_ids(vault)?;
+    let mut sources_known = dial_rows.is_some();
+    let mut sources = dial_rows.unwrap_or_default();
 
     // One pass to learn which `skillId`s already have an unanswered proposed
     // revision, so the second pass can skip asking again.
@@ -89,6 +101,7 @@ fn select_candidates(
         let Some(record) = vault.get_skill_record(&id)? else {
             continue;
         };
+        sources.push(id);
         if record.lifecycle_status == SkillLifecycle::Candidate
             && record.approval_status == ClaimApprovalStatus::Proposed
         {
@@ -107,14 +120,22 @@ fn select_candidates(
         if open_questions.contains(&(resident, record.skill_id.clone())) {
             continue;
         }
-        if !tier_verdict(vault, &id, &record)?.optimizable() {
+        let (tier, tier_rows) = tier_verdict_sourced(vault, &id, &record)?;
+        sources.extend(tier_rows);
+        if !tier.optimizable() {
             continue;
         }
-        let prior = skill_reliability_prior(vault, &id)?;
+        let (prior, prior_rows) = skill_reliability_prior_sourced(vault, &id)?;
+        sources.extend(prior_rows);
         // ONE-1449: the DEV half, folded here. Both numbers this ranking rests
         // on are partitioned, so no held-out outcome votes on which skill the
         // author is asked to rewrite.
-        let reading = dev_partition_reading(vault, &id, prior)?;
+        let (reading, partition_rows) = dev_partition_reading_sourced(vault, &id, prior)?;
+        if let Some(rows) = partition_rows {
+            sources.extend(rows);
+        } else {
+            sources_known = false;
+        }
         if reading.attributed == 0 || (!affirm && reading.attributed < min_outcomes) {
             continue;
         }
@@ -146,7 +167,9 @@ fn select_candidates(
             .total_cmp(&right.posterior.mean())
             .then_with(|| left.skill.as_bytes().cmp(right.skill.as_bytes()))
     });
-    Ok(candidates)
+    let sources =
+        crate::attempt_queue::source_rows::union_source_rows([sources_known.then_some(sources)]);
+    Ok((candidates, sources))
 }
 
 /// One exact target a caller already chose, read the way the ranking reads
@@ -236,8 +259,25 @@ fn dev_partition_reading(
     skill: &EntityId,
     prior: SkillReliabilityPosterior,
 ) -> Result<DevPartitionReading> {
+    dev_partition_reading_sourced(vault, skill, prior).map(|(reading, _)| reading)
+}
+
+fn dev_partition_reading_sourced(
+    vault: &Vault,
+    skill: &EntityId,
+    prior: SkillReliabilityPosterior,
+) -> Result<(DevPartitionReading, Option<Vec<EntityId>>)> {
     let rtxn = vault.store.env.read_txn()?;
-    let outcomes = crate::skill_reliability::attributed_outcomes_weighted(vault, &rtxn, skill)?;
+    let (outcomes, outcome_sources) =
+        crate::skill_reliability::attributed_outcomes_weighted_sourced(vault, &rtxn, skill)?;
+    let receipts = outcomes
+        .iter()
+        .map(|(receipt, _)| receipt.clone())
+        .collect();
+    let rows = crate::attempt_queue::source_rows::union_source_rows([
+        outcome_sources,
+        attempt_row_ids(&receipts),
+    ]);
     let mut reading = DevPartitionReading {
         posterior: prior,
         attributed: 0,
@@ -251,7 +291,7 @@ fn dev_partition_reading(
         reading.posterior.apply_attributed(outcome);
         reading.attributed = reading.attributed.saturating_add(1);
     }
-    Ok(reading)
+    Ok((reading, rows))
 }
 
 /// The attempt row behind each receipt of an in-hand set (FIX 7102): a pack

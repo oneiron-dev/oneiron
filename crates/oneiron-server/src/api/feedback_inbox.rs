@@ -200,11 +200,9 @@ async fn take_post(
 /// shed sender costs no decoding.
 fn shed(server: &SyncServer, sender: Option<std::net::IpAddr>) -> Option<Response> {
     let shed = server.feedback_flood.admit(sender, Instant::now()).err()?;
-    Some(refusal(
-        StatusCode::TOO_MANY_REQUESTS,
+    Some(shed.response(
         "feedback_inbox_flood",
         "the inbox takes no more notes from this sender this hour",
-        Some(shed.retry_after.as_secs()),
     ))
 }
 

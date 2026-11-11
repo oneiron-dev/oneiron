@@ -11,7 +11,7 @@ use crate::sync::SyncDialer;
 /// Whether `url` may carry this machine's credentials. `private_carrier`
 /// says whether a private dialer was chosen to reach it; the clear upgrade
 /// then never crosses an open network. A URL that does not parse may not.
-pub(super) fn admits_credentials(url: &str, private_carrier: bool) -> bool {
+pub(in crate::sync) fn admits_credentials(url: &str, private_carrier: bool) -> bool {
     let Ok(uri) = url.parse::<tokio_tungstenite::tungstenite::http::Uri>() else {
         return false;
     };

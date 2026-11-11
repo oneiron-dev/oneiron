@@ -82,6 +82,9 @@ impl Sending {
             return Ok(None);
         }
         let vault = peer.vault;
+        // Pinned before the snapshot opens, so the collector leaves the file
+        // it names while the send reads it (FIX 22091).
+        let pin = vault.pin_result_body(body.body_blake3);
         let txn = vault.store.env.read_txn()?;
         // The read door's admission: a withdrawn, stale or unpublished row
         // reads as absent.
@@ -104,7 +107,6 @@ impl Sending {
         let (source, pin) =
             match asset_file_in_txn(&vault.store, &txn, &id, &raw[ENTITY_METADATA_HEADER_LEN..])? {
                 Some(manifest) => {
-                    let pin = vault.pin_result_body(manifest.facts.blake3);
                     let file = vault.admitted_asset_file_in_txn(&txn, &manifest)?;
                     (Source::File(Box::new(file)), Some(pin))
                 }
@@ -134,7 +136,9 @@ impl Sending {
     ///
     /// # Errors
     ///
-    /// A frame that does not encode.
+    /// [`crate::sync::TransportError::Storage`] for a Data or End frame of
+    /// this side's own that does not encode: its own fault, never the
+    /// receiver's (FIX 22190).
     pub(super) fn poll(
         &mut self,
         peer: &AssetBodyPeer<'_>,
@@ -170,7 +174,7 @@ impl Sending {
                     offset: self.sent,
                     bytes: &bytes,
                 })
-                .into_result()?,
+                .into_own_frame()?,
             );
             self.sent += take as u64;
         }
@@ -199,7 +203,7 @@ impl Sending {
                 attempt: self.attempt,
                 complete,
             })
-            .into_result()?,
+            .into_own_frame()?,
         );
         sent.ended = true;
         Ok(sent)

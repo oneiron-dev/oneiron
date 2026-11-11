@@ -1,6 +1,5 @@
 //! The live Dreamer progress lane on the ephemeral sync keyspace.
 
-use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::attempt_queue::{AttemptId, AttemptState};
@@ -23,12 +22,58 @@ pub const DREAMER_ATTEMPT_PROGRESS_KEY_PREFIX: &str = "job:";
 /// Current schema version for live Dreamer attempt progress ephemeral values.
 #[cfg(feature = "sync")]
 pub const DREAMER_ATTEMPT_PROGRESS_VALUE_SCHEMA_VERSION: i64 = 1;
-/// Default per-attempt live progress throttle: at most one update per second.
-#[cfg(feature = "sync")]
-pub const DREAMER_ATTEMPT_PROGRESS_THROTTLE_MS: u64 = 1_000;
-/// Default in-process terminal-stop retention, matching the sync lane TTL.
-#[cfg(feature = "sync")]
-pub const DREAMER_ATTEMPT_PROGRESS_TERMINAL_RETENTION_MS: u64 = 30_000;
+#[doc(hidden)]
+pub use oneiron_wake_contract::dreamer_runner::progress::{
+    DREAMER_ATTEMPT_PROGRESS_TERMINAL_RETENTION_MS, DREAMER_ATTEMPT_PROGRESS_THROTTLE_MS,
+    DreamerAttemptProgressProducer,
+};
+
+/// Publishes one live progress update if it passes the per-attempt throttle.
+///
+/// Terminal `Done`/`Failed` updates overwrite the mutable live row with a
+/// terminal state, then stop any further live production until TTL ageout.
+pub fn dreamer_attempt_progress_producer_publish(
+    dreamer_attempt_progress_producer: &mut DreamerAttemptProgressProducer,
+    store: &EphemeralStore,
+    update: DreamerAttemptProgressUpdate,
+) -> std::result::Result<Option<Vec<u8>>, TransportError> {
+    update.validate()?;
+    dreamer_attempt_progress_producer.retain_terminal_stops(update.updated_at_ms);
+
+    if update.state.is_terminal() {
+        let key = dreamer_attempt_progress_key(update.attempt_id);
+        let value = encode_attempt_progress_value(&update)?;
+        store.set(&key, value);
+        dreamer_attempt_progress_producer.mark_terminal(update.attempt_id, update.updated_at_ms);
+        return encode_ephemeral(&store.encode(&key))
+            .into_result()
+            .map(Some);
+    }
+    if dreamer_attempt_progress_producer
+        .terminal_at_ms
+        .contains_key(&update.attempt_id)
+    {
+        return Ok(None);
+    }
+    if let Some(last) = dreamer_attempt_progress_producer
+        .last_emitted_at_ms
+        .get(&update.attempt_id)
+        && update.updated_at_ms.saturating_sub(*last)
+            < dreamer_attempt_progress_producer.throttle_ms
+    {
+        return Ok(None);
+    }
+
+    let key = dreamer_attempt_progress_key(update.attempt_id);
+    let value = encode_attempt_progress_value(&update)?;
+    store.set(&key, value);
+    dreamer_attempt_progress_producer
+        .last_emitted_at_ms
+        .insert(update.attempt_id, update.updated_at_ms);
+    encode_ephemeral(&store.encode(&key))
+        .into_result()
+        .map(Some)
+}
 
 #[cfg(feature = "sync")]
 pub(super) const KEY_STATE: &str = "state";
@@ -88,20 +133,6 @@ pub struct DreamerAttemptProgressSnapshot {
     pub updated_at_ms: u64,
 }
 
-/// In-process producer for Dreamer live progress on the Loro ephemeral lane.
-///
-/// The producer keeps only bounded throttle/terminal-stop bookkeeping. The
-/// sync-visible state remains exactly one mutable `job:{job_id}` row in the
-/// provided [`EphemeralStore`].
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone)]
-pub struct DreamerAttemptProgressProducer {
-    throttle_ms: u64,
-    terminal_retention_ms: u64,
-    last_emitted_at_ms: HashMap<AttemptId, u64>,
-    terminal_at_ms: HashMap<AttemptId, u64>,
-}
-
 /// Runner transition outcome plus an optional encoded ephemeral frame.
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq)]
@@ -151,107 +182,6 @@ impl DreamerAttemptProgressSnapshot {
     }
 }
 
-#[cfg(feature = "sync")]
-impl Default for DreamerAttemptProgressProducer {
-    fn default() -> Self {
-        Self::with_limits(
-            DREAMER_ATTEMPT_PROGRESS_THROTTLE_MS,
-            DREAMER_ATTEMPT_PROGRESS_TERMINAL_RETENTION_MS,
-        )
-        .expect("default dreamer progress limits are valid")
-    }
-}
-
-#[cfg(feature = "sync")]
-impl DreamerAttemptProgressProducer {
-    /// Creates a producer with the contract-pinned 1Hz throttle.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates a producer with explicit limits. `terminal_retention_ms` should
-    /// match the [`EphemeralStore`] timeout so stopped attempts cannot resume
-    /// ticking before their last live row ages out.
-    pub fn with_limits(throttle_ms: u64, terminal_retention_ms: u64) -> Result<Self> {
-        if throttle_ms == 0 {
-            return Err(invalid_dreamer_runner(
-                "dreamer progress throttle_ms must be > 0",
-            ));
-        }
-        if terminal_retention_ms == 0 {
-            return Err(invalid_dreamer_runner(
-                "dreamer progress terminal_retention_ms must be > 0",
-            ));
-        }
-        Ok(Self {
-            throttle_ms,
-            terminal_retention_ms,
-            last_emitted_at_ms: HashMap::new(),
-            terminal_at_ms: HashMap::new(),
-        })
-    }
-
-    /// Publishes one live progress update if it passes the per-attempt throttle.
-    ///
-    /// Terminal `Done`/`Failed` updates overwrite the mutable live row with a
-    /// terminal state, then stop any further live production until TTL ageout.
-    pub fn publish(
-        &mut self,
-        store: &EphemeralStore,
-        update: DreamerAttemptProgressUpdate,
-    ) -> std::result::Result<Option<Vec<u8>>, TransportError> {
-        update.validate()?;
-        self.retain_terminal_stops(update.updated_at_ms);
-
-        if update.state.is_terminal() {
-            let key = dreamer_attempt_progress_key(update.attempt_id);
-            let value = encode_attempt_progress_value(&update)?;
-            store.set(&key, value);
-            self.mark_terminal(update.attempt_id, update.updated_at_ms);
-            return encode_ephemeral(&store.encode(&key))
-                .into_result()
-                .map(Some);
-        }
-        if self.terminal_at_ms.contains_key(&update.attempt_id) {
-            return Ok(None);
-        }
-        if let Some(last) = self.last_emitted_at_ms.get(&update.attempt_id)
-            && update.updated_at_ms.saturating_sub(*last) < self.throttle_ms
-        {
-            return Ok(None);
-        }
-
-        let key = dreamer_attempt_progress_key(update.attempt_id);
-        let value = encode_attempt_progress_value(&update)?;
-        store.set(&key, value);
-        self.last_emitted_at_ms
-            .insert(update.attempt_id, update.updated_at_ms);
-        encode_ephemeral(&store.encode(&key))
-            .into_result()
-            .map(Some)
-    }
-
-    /// Marks an attempt terminal without producing a live progress frame.
-    pub fn mark_terminal(&mut self, attempt_id: AttemptId, now_ms: u64) {
-        self.last_emitted_at_ms.remove(&attempt_id);
-        self.terminal_at_ms.insert(attempt_id, now_ms);
-    }
-
-    /// Runs the Rust-side `EphemeralStore` TTL pass and prunes old terminal
-    /// stop markers from this producer.
-    pub fn remove_outdated(&mut self, store: &EphemeralStore, now_ms: u64) {
-        store.remove_outdated();
-        self.retain_terminal_stops(now_ms);
-    }
-
-    fn retain_terminal_stops(&mut self, now_ms: u64) {
-        let retention = self.terminal_retention_ms;
-        self.terminal_at_ms
-            .retain(|_, terminal_at| now_ms.saturating_sub(*terminal_at) < retention);
-    }
-}
-
 impl DreamerRunnerStore<'_> {
     /// Publishes a live progress update for an existing Dreamer attempt.
     ///
@@ -294,9 +224,12 @@ impl DreamerRunnerStore<'_> {
                 return Ok(None);
             }
         }
-        producer
-            .publish(ephemeral, update)
-            .map_err(dreamer_progress_error)
+        crate::dreamer_runner::dreamer_attempt_progress_producer_publish(
+            &mut *producer,
+            ephemeral,
+            update,
+        )
+        .map_err(dreamer_progress_error)
     }
 
     /// Admits the next Dreamer attempt and emits its initial live progress row.

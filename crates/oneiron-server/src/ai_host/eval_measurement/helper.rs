@@ -224,7 +224,9 @@ impl CallableHarness for SandboxHarness<'_> {
 #[derive(Default)]
 struct CaseRuntimes {
     #[cfg(feature = "code-sandbox-wasmtime")]
-    component: std::cell::OnceCell<Option<oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory>>,
+    component: std::cell::OnceCell<
+        Option<oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory>,
+    >,
 }
 
 impl CaseRuntimes {

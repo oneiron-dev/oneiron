@@ -146,10 +146,12 @@ impl Memory<'_> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
+        let read = tree.read_link_with_receipt(&input.path)?;
         Ok(GraphFsLinkView {
             mount: descriptor(&tree, &input.mount),
-            target: tree.read_link(&input.path)?,
+            target: read.value,
             path: input.path,
+            read_receipt: read.receipt,
         })
     }
 

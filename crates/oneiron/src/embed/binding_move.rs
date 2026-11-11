@@ -136,6 +136,17 @@ fn pins(space: &str, model: &str) -> bool {
     space.rsplit_once('@').is_some_and(|(pin, _)| pin == model)
 }
 
+/// A trained binding names the exact custody load set, not another set with
+/// the same output model id. Stock bindings keep their offer-provider rule.
+fn pins_pending(space: &str, pending: &PendingEmbedderBinding) -> Result<bool> {
+    match &pending.source {
+        BindingSource::Training { receipt } => {
+            Ok(space == receipt.checkpoint.embedding_space_id()?)
+        }
+        BindingSource::Offer { .. } => Ok(pins(space, pending.binding.model.as_str())),
+    }
+}
+
 /// Stages `binding` for the retrieval embedder in the approval's write, over `previous`, the
 /// binding the manifest holds now. Its move begins here when a declared space pins its model
 /// and the slots are free, and a binding the text slot already reads applies at once.
@@ -207,7 +218,6 @@ fn attach_in_txn(
             Err(error) => return Err(error),
         }
     }
-    let model = pending.binding.model.as_str().to_owned();
     let incumbent = kind_slot_bindings_in_txn(&vault.store, wtxn)?
         .text
         .map_or(SpaceRef::TextIndex, SpaceRef::Declared);
@@ -215,13 +225,13 @@ fn attach_in_txn(
         SpaceRef::Declared(id) => id.clone(),
         SpaceRef::TextIndex => vault.text_index_space().id,
     };
-    if pins(&serving, &model) {
+    if pins_pending(&serving, pending)? {
         pending.link = None;
         pending.state = apply_in_txn(vault, wtxn, pending, None)?;
         return Ok(declared);
     }
     for space in embedding_spaces_in_txn(&vault.store, wtxn)? {
-        if !pins(&space.id, &model) {
+        if !pins_pending(&space.id, pending)? {
             continue;
         }
         match vault.begin_space_move_in_txn(wtxn, &space.id, incumbent.clone(), None) {
@@ -390,7 +400,16 @@ pub(crate) fn move_undone_in_txn(
             crate::skill_optimize::undo_staged_switch_in_txn(vault, wtxn, offer, actor, at)?;
         }
         BindingSource::Training { receipt } => {
-            crate::training_pack::undo_training_role_swap_in_txn(vault, wtxn, &receipt.run)?;
+            let incumbent = match &moving.incumbent {
+                SpaceRef::Declared(id) => Some(id.as_str()),
+                SpaceRef::TextIndex => None,
+            };
+            crate::training_pack::undo_training_role_swap_in_txn(
+                vault,
+                wtxn,
+                &receipt.run,
+                incumbent,
+            )?;
         }
     }
     Ok(())
@@ -463,7 +482,19 @@ pub(crate) fn undo_staged_binding_in_txn(
     };
     BINDING_MOVE.put(&vault.store, wtxn, source, &pending)?;
     if applied && let BindingSource::Training { receipt } = &pending.source {
-        crate::training_pack::undo_training_role_swap_in_txn(vault, wtxn, &receipt.run)?;
+        let incumbent = match &pending.link {
+            Some(link) => match &link.incumbent {
+                SpaceRef::Declared(id) => Some(id.clone()),
+                SpaceRef::TextIndex => None,
+            },
+            None => kind_slot_bindings_in_txn(&vault.store, wtxn)?.text,
+        };
+        crate::training_pack::undo_training_role_swap_in_txn(
+            vault,
+            wtxn,
+            &receipt.run,
+            incumbent.as_deref(),
+        )?;
     }
     let setup = match &pending.link {
         Some(link) => move_back_in_txn(vault, wtxn, link, applied)?,
@@ -505,11 +536,17 @@ fn move_back_in_txn(
 /// whose move is gone or another.
 fn due_in(vault: &Vault, txn: &RoTxn<'_>, pending: &PendingEmbedderBinding) -> Result<bool> {
     match pending.state {
-        BindingMoveState::Waiting => Ok(pending.refill.is_some()
-            || expected_moved_in(vault, txn, pending)?
-            || embedding_spaces_in_txn(&vault.store, txn)?
-                .iter()
-                .any(|space| pins(&space.id, pending.binding.model.as_str()))),
+        BindingMoveState::Waiting => {
+            if pending.refill.is_some() || expected_moved_in(vault, txn, pending)? {
+                return Ok(true);
+            }
+            for space in embedding_spaces_in_txn(&vault.store, txn)? {
+                if pins_pending(&space.id, pending)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
         BindingMoveState::Filling => Ok(!filling_in(vault, txn, pending)?),
         _ => Ok(false),
     }

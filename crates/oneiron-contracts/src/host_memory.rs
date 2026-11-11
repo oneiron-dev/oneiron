@@ -173,6 +173,29 @@ impl MachineMemory {
         self.wait_in_line(bytes, None, stopped)
     }
 
+    /// Attempts an admission on the same physical-memory line without
+    /// waiting for capacity or bypassing any queued waiter. `None` leaves
+    /// the line unchanged; a caller holding inputs can unwind before retrying.
+    ///
+    /// # Errors
+    /// The physical floor when `bytes` cannot fit even on an idle machine.
+    pub fn try_lease(&self, bytes: u64) -> Result<Option<MemoryLease>, MemoryRefusal> {
+        let shared = &self.shared;
+        let most = shared.total.saturating_sub(shared.reserve);
+        if bytes > most {
+            return Err(MemoryRefusal::Floor {
+                needed: bytes,
+                available: most,
+            });
+        }
+        let mut line = lock(&shared.line);
+        if line.waiting.is_empty() && shared.fits(&line, bytes) {
+            Ok(Some(self.admit(&mut line, bytes)))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// The line every lease waits in, until `deadline` when it has one.
     fn wait_in_line(
         &self,
@@ -437,6 +460,19 @@ impl MemoryLease {
         other.materialized(other.pending, other.pending);
         self.bytes = self.bytes.saturating_add(other.bytes);
         other.bytes = 0;
+    }
+
+    /// Returns physically freed allocations to this lease's pending room.
+    /// The lease keeps its whole charge for later allocations without a new
+    /// admission. `free` must only free those allocations, never allocate or
+    /// re-enter the memory line. It runs under the line's lock so another
+    /// waiter cannot take the freed room before it is pending again.
+    pub fn reclaimed_after(&mut self, bytes: u64, free: impl FnOnce()) {
+        let bytes = bytes.min(self.bytes.saturating_sub(self.pending));
+        let mut line = lock(&self.shared.line);
+        free();
+        self.pending = self.pending.saturating_add(bytes);
+        line.pending = line.pending.saturating_add(bytes);
     }
 
     /// Names `reserved` of this lease's pending bytes allocated, as `actual`

@@ -37,9 +37,7 @@ use super::constants::{
 };
 use super::grants::PolicyScopedGrant;
 use super::resolution::PolicyManifestResolution;
-use super::witness_message::{
-    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WitnessMessageEnvelope,
-};
+use super::witness_message::{WITNESS_AUTHOR_COMPANION, WitnessMessageEnvelope};
 use crate::claim::consult_payload_ref::ConsultPayloadRef;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -282,7 +280,7 @@ fn coach_swap_ask_ceiling_in(
     )?))
 }
 
-/// The Coach's leave to write one `system` question row about a pending
+/// The Coach's leave to write one companion question row about a pending
 /// offer, or one companion part of a contribution pair (FIX 3609), bound to
 /// the writer and the row's exact canonical bytes. Only the witness door's
 /// floor reads it.
@@ -324,7 +322,7 @@ pub(crate) fn coach_offer_question_permit_in_txn(
         let ids = (conversation, turn, message);
         return coach_pair_question_permit_in(vault, txn, actor, ids, envelope, policy);
     }
-    if envelope.author != WITNESS_AUTHOR_SYSTEM
+    if envelope.author != WITNESS_AUTHOR_COMPANION
         || envelope.message_type != crate::gate::training_ask_kind::OFFER_QUESTION_TYPE
         || !envelope.is_visible
         || envelope.order != 0
@@ -376,7 +374,7 @@ fn coach_swap_question_permit_in(
     envelope: &WitnessMessageEnvelope<'_>,
     policy: &PolicyManifestResolution,
 ) -> Result<Option<OfferQuestionPermit>> {
-    if envelope.author != WITNESS_AUTHOR_SYSTEM
+    if envelope.author != WITNESS_AUTHOR_COMPANION
         || !envelope.is_visible
         || envelope.order != 0
         || !is_coach(actor.entity_ref(), actor.actor_class())?

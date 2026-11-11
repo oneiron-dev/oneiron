@@ -21,12 +21,10 @@ use serde::{Deserialize, Serialize};
 use crate::access_grant::AccessGrantStatus;
 use crate::claim::ScopedReadResult;
 use crate::error::{ErrorKind, GateError};
-use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_PACED_HOLD, Memory, MemoryError, MemoryResult,
-};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::receipt::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 use crate::runtime_hooks::verb::{
-    hold_paced_verb_call, land_paced_verb_call_in_txn, runs_paced_turn,
+    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_turn_again, runs_paced_turn,
 };
 use crate::share::{Share, ShareViewerScope};
 use crate::share_travel::{TravelChoice, TravelKind};
@@ -164,16 +162,7 @@ pub fn create_share_as_caller(
         Ok(()) => Ok(created),
         // Its window paced it again on its turn: back in line.
         Err(Error::Gate(GateError::ShareCreatePaced { next_eligible_at })) if turn.is_some() => {
-            Err(MemoryError {
-                resets_at: vec![next_eligible_at],
-                ..MemoryError::new(
-                    MEMORY_CODE_PACED_HOLD,
-                    format!(
-                        "a budget window paced this call's turn; it runs at {next_eligible_at} or later"
-                    ),
-                    &["Send nothing again: the call runs on its next turn."],
-                )
-            })
+            Err(paced_turn_again(next_eligible_at))
         }
         Err(Error::Gate(GateError::ShareCreatePaced { next_eligible_at })) => {
             match hold_paced_verb_call(memory, SHARE_CREATE, &fixed()?, next_eligible_at)? {
@@ -183,6 +172,53 @@ pub fn create_share_as_caller(
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// A link for one admitted share's recipient. The recipient's class and
+/// credential lifetime are explicit; redemption fixes only its connection key.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShareViewLinkRequest {
+    pub share_ref: String,
+    pub actor_class: String,
+    pub slip_lifetime_secs: u64,
+}
+
+/// Issues through this device's existing host-key custody on embedded handles.
+pub fn issue_share_view_link_as_caller(
+    memory: &Memory<'_>,
+    input: ShareViewLinkRequest,
+) -> MemoryResult<crate::authority::PairingLink> {
+    let issuer = memory.vault().load_host_slip_issuer()?;
+    issue_share_view_link_with_issuer(memory, &issuer, input)
+}
+
+/// The same door with the serving host's already resolved issuer.
+pub fn issue_share_view_link_with_issuer(
+    memory: &Memory<'_>,
+    issuer: &crate::authority::HostSlipIssuer,
+    input: ShareViewLinkRequest,
+) -> MemoryResult<crate::authority::PairingLink> {
+    let share = share_ref(&input.share_ref)?;
+    let class = match input.actor_class.as_str() {
+        "human" => crate::edge::EdgeActorClass::Human,
+        "agent" => crate::edge::EdgeActorClass::Agent,
+        "system" => crate::edge::EdgeActorClass::System,
+        _ => {
+            return Err(MemoryError::bad_request(
+                "actor_class must be human, agent or system",
+            ));
+        }
+    };
+    let link = memory.vault().issue_share_view_link(
+        issuer,
+        &memory.write_actor(),
+        share,
+        class,
+        input.slip_lifetime_secs,
+    )?;
+    memory.produced_from([share]);
+    Ok(link)
 }
 
 /// `vault.shares.revoke`'s input: the share to stop.
@@ -303,7 +339,7 @@ fn follow_shared_citation(
     claim: EntityId,
     narrowing: Option<&ShareViewerScope>,
 ) -> MemoryResult<ScopedReadResult<Option<SharedBriefCitation>>> {
-    let read = memory.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
+    let read = memory.shared_brief_read_lane(share, "vault.notes.follow_citation")?;
     let frame = viewer_frame(&read)?;
     // The rows the citation is read from, listed by the reads that chose them.
     let mut listed = Vec::new();
@@ -362,7 +398,7 @@ fn render_shared_brief(
     share_id: &EntityId,
     narrowing: Option<&ShareViewerScope>,
 ) -> MemoryResult<ScopedReadResult<Option<SharedBriefView>>> {
-    let read = memory.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
+    let read = memory.shared_brief_read_lane(*share_id, "vault.shares.view")?;
     let frame = viewer_frame(&read)?;
     // The rows the view is read from, listed by the reads that chose them.
     let mut listed = Vec::new();

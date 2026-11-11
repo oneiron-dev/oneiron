@@ -89,7 +89,9 @@ pub(crate) fn decode_retrieval_weights(
 
 /// One serving run reads its priors once, from the owner's trusted manifest.
 /// An absent row leaves the host's existing runtime configuration unchanged.
-pub(crate) fn retrieval_weights_for_run(vault: &Vault) -> Result<Option<RetrievalWeights>> {
+/// A present field rides its own original body id and digest; an absent field
+/// stays None rather than borrowing the owner's host-default view.
+pub(crate) fn retrieval_weights_for_run(vault: &Vault) -> Result<Option<RetrievalWeightsView>> {
     let txn = vault.store.env.read_txn()?;
     let id = crate::gate::default_policy_manifest_id()?;
     let Some(body) = body_in_txn(vault, &txn, id)? else {
@@ -100,7 +102,14 @@ pub(crate) fn retrieval_weights_for_run(vault: &Vault) -> Result<Option<Retrieva
             "retrieval weights require an owner-trusted manifest",
         ));
     }
-    decode_retrieval_weights(&decode_fields(&body)?)
+    let Some(weights) = decode_retrieval_weights(&decode_fields(&body)?)? else {
+        return Ok(None);
+    };
+    Ok(Some(RetrievalWeightsView {
+        manifest_ref: id.to_hex(),
+        body_hash: blake3::hash(&body).to_hex().to_string(),
+        weights,
+    }))
 }
 
 fn view(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<RetrievalWeightsView> {

@@ -1,0 +1,16 @@
+{
+  "name": "vault.skill_hubs.put",
+  "description": "The owner registers or revises a hub source; hub trust never grants activation authority.",
+  "input": "SkillHubPutRequest",
+  "output": "crate::task_verb::sdk::SkillHubConfigured",
+  "call": "crate::task_verb::sdk::skill_hub_put_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.put\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

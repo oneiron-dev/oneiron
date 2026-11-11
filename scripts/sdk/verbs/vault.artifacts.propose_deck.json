@@ -1,0 +1,32 @@
+{
+  "name": "vault.artifacts.propose_deck",
+  "description": "Runs one native deck transaction over an artifact's head and holds the proposal for Keep.",
+  "refs": [
+    "/context/thread",
+    "/made_by/inputs/*/row",
+    "/made_by/trigger/task",
+    "/made_by/trigger/ask",
+    "/made_by/trigger/skill"
+  ],
+  "input": "crate::blob_artifact::DeckProposeRequest",
+  "output": "crate::blob_artifact::DeckProposeOutcome",
+  "call": "memory.artifacts_propose_deck(&input)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Runs one native deck transaction over the head and holds the proposal for Keep.\n",
+      "ts": "/** Runs one native deck transaction over the head and holds the proposal for Keep. */",
+      "py": "Runs one native deck transaction over the head and holds the proposal for Keep."
+    }
+  },
+  "openapi": true
+}

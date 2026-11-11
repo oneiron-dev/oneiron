@@ -174,7 +174,7 @@ impl Vault {
             }
             return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
         }
-        let body = ClaimBody::new(
+        let mut body = ClaimBody::new(
             PREDICATE_CHANNEL_IDENTITY_ALIAS,
             ClaimSubject::Entity(*identity_ref),
             Value::from(key.address_or_handle()),
@@ -183,6 +183,7 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         let claim_id = self.store.clock.entity_id()?;
+        body.scope_facet = self.default_facet_in_txn(&wtxn)?;
         self.put_reserved_claim_in_txn(
             &mut wtxn,
             &claim_id,

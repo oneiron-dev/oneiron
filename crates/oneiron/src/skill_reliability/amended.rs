@@ -171,9 +171,21 @@ pub(super) fn amended_receipt_shares_in_txn(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<BTreeMap<String, f32>> {
+    Ok(amended_receipt_shares_sourced_in_txn(vault, rtxn, skill)?.0)
+}
+
+/// The same amendment scan, including withdrawn rows consulted before filtering.
+/// Stored amendments have no EntityId body carrier; only absence is known empty.
+pub(super) fn amended_receipt_shares_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(BTreeMap<String, f32>, Option<Vec<EntityId>>)> {
     let mut receipts = BTreeMap::new();
+    let mut sources = Some(Vec::new());
     for prefix in outcome_skill_prefixes(skill) {
         for (outcome, row) in AMENDED.scan_from(&vault.store, rtxn, &prefix)? {
+            sources = None;
             if row.share > 0.0 {
                 let held = receipts
                     .entry(outcome.receipt().to_owned())
@@ -182,7 +194,7 @@ pub(super) fn amended_receipt_shares_in_txn(
             }
         }
     }
-    Ok(receipts)
+    Ok((receipts, sources))
 }
 
 /// One arm of one skill: the unit a reprojection runs over.

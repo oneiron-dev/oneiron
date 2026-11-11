@@ -92,6 +92,7 @@ mod candidate;
 mod craft_read;
 mod distill;
 mod evidence;
+mod imported_chat;
 mod rows;
 mod validate;
 mod write;
@@ -162,4 +163,5 @@ mod archive_references;
 pub(crate) use archive_references::actor_archive_references;
 
 mod archive;
+pub(crate) mod tables;
 pub(crate) use archive::{imported_actor_body, imported_actor_dependencies};

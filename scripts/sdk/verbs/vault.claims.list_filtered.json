@@ -1,0 +1,19 @@
+{
+  "name": "vault.claims.list_filtered",
+  "description": "Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt.",
+  "input": "crate::memory::ClaimFilteredListRequest",
+  "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
+  "call": "memory.claim_list_filtered(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered",
+  "openapi": true
+}

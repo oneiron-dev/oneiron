@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/lib.rs` | src | s | 1 mod · 2 crate-vis | — | Policy-model vocabulary of the oneiron engine: the output contract a policy document asks the model for, the… |
-| `src/policy_model/contract.rs` | src | s | 1 struct · 1 enum · 5 fn · 1 const · 1 crate-vis | PolicyModelAnswer, PolicyOutputContract | The output contract a substrate owner's policy document asks the model for, and the strict reader of the… |
+| `src/policy_model/contract.rs` | src | s | 1 struct · 1 enum · 5 fn · 2 const | PolicyModelAnswer, PolicyOutputContract | The output contract a substrate owner's policy document asks the model for, and the strict reader of the… |
 | `src/policy_model/goal_limits.rs` | src | m | 3 struct · 2 enum · 9 fn | GoalLimitRow, GoalLimitScope, GoalLimitValues, GoalLimits, GoalLimitsPrecedence | DEC-0005 goal limits: the thresholds a confirmed goal intake is counted against |
 | `src/policy_model/mod.rs` | src | s | 3 mod | — | The policy-model modules moved out of `oneiron::policy_model` |
 | `src/policy_model/pattern.rs` | src | m | 5 struct · 1 enum · 9 fn · 2 const | CompiledPatternRule, CompiledPatternRules, PatternEvaluation, PatternRuleDefect, PolicyPatternRole, PolicyPatternRule | Substrate-owner pattern rules |

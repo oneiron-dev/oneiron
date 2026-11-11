@@ -155,6 +155,8 @@ pub enum ReasoningPartKind {
 pub enum ContentPart {
     Text {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     Reasoning {
         text: String,
@@ -169,6 +171,8 @@ pub enum ContentPart {
         call_id: String,
         name: String,
         input: JsonValue,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     ToolResult {
         call_id: String,
@@ -184,10 +188,7 @@ pub enum ContentPart {
     /// no `data:` prefix. Only a row that admits
     /// [`LlmCapability::AudioInput`](crate::llm::LlmCapability::AudioInput)
     /// takes it; a wire with no audio encoder refuses it.
-    Audio {
-        media_type: String,
-        data: String,
-    },
+    Audio { media_type: String, data: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -213,6 +214,8 @@ pub enum LlmStreamEvent {
     },
     TextEnd {
         part_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     ReasoningStart {
         part_id: String,
@@ -246,6 +249,8 @@ pub enum LlmStreamEvent {
         call_id: String,
         name: String,
         input: JsonValue,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     ToolResultStart {
         part_id: String,

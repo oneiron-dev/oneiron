@@ -46,6 +46,7 @@ static REWRITTEN: &[&SideTableDecl] = &[
     &side_table::CODE_RUN_WAIT_DELIVERY,
     &side_table::CODE_RUN_WAIT_INDEX,
     &side_table::MODEL_STEP_SUBMISSION,
+    &side_table::COMPACTION_CHECK_MATERIAL,
     &side_table::SAVED_QUERY_MEMO,
     &side_table::SELF_HEAL_CENTROID_EVIDENCE,
     &side_table::MESSAGE_REPLY_ASSERTIONS,
@@ -243,49 +244,31 @@ impl Preflight {
         self.entity_kinds.insert(name);
     }
 
-    /// Every declared family once, every family the registry names
-    /// declared, each not-imaged one left out by tier filtering, and no
-    /// owner family one the snapshot rewrites or a restore reads references
-    /// from.
+    /// Every declared table with a family (a row naming `unregistered` has
+    /// none), each not-imaged one left out by tier filtering, and no owner
+    /// family one the snapshot rewrites or a restore reads references from.
+    /// A table's family is on its own row, so no family is named twice or
+    /// names a table nothing declares.
     fn check_families(&mut self) {
-        let mut named: BTreeMap<(bool, &[u8]), (&'static SideTableDecl, Vec<Class>)> =
-            BTreeMap::new();
-        for (class, decls) in rows::families() {
-            for decl in *decls {
-                let entry = named.entry(rows::identity(decl));
-                entry.or_insert_with(|| (*decl, Vec::new())).1.push(*class);
-            }
-        }
         let declared: BTreeMap<(bool, &[u8]), &'static SideTableDecl> = side_table::declared()
             .map(|decl| (rows::identity(decl), decl))
             .collect();
-        for (identity, decl) in &declared {
-            if !named.contains_key(identity) {
+        for decl in declared.values() {
+            if decl.family.is_none() {
                 self.family(*decl, GapKind::Unregistered);
             }
         }
-        for (identity, (decl, classes)) in &named {
-            let canonical =
-                storage_tier(rows::db_name(decl.db), decl.prefix) == StorageTier::Canonical;
-            let kind = match classes[..] {
-                _ if !declared.contains_key(identity) => GapKind::Unknown,
-                [_, _, ..] => GapKind::NamedTwice,
-                [Class::NotImaged] if canonical => GapKind::Imaged,
-                _ => continue,
-            };
-            self.family(*decl, kind);
+        for decl in declared.values() {
+            if decl.family == Some(Class::NotImaged) && decl.tier == StorageTier::Canonical {
+                self.family(*decl, GapKind::Imaged);
+            }
         }
-        let owned = |decl: &SideTableDecl| {
-            named
-                .get(&rows::identity(decl))
-                .is_some_and(|(_, classes)| matches!(classes[..], [Class::Owner(_)]))
-        };
         for (decls, kind) in [
             (REWRITTEN, GapKind::Rewritten),
             (REFERENCES, GapKind::References),
         ] {
             for decl in decls {
-                if owned(*decl) {
+                if matches!(decl.family, Some(Class::Owner(_))) {
                     self.family(*decl, kind);
                 }
             }

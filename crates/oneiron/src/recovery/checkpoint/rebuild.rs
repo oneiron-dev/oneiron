@@ -180,14 +180,6 @@ pub(super) fn rebuild(
                         body,
                     )?;
                 }
-                crate::registry::ENTITY_TYPE_OUTBOUND_GRANT => {
-                    crate::outbound_grant::rebuild_checkpoint_grant_index(
-                        &vault.store,
-                        txn,
-                        *id,
-                        body,
-                    )?;
-                }
                 _ => {}
             }
             if has_embedding_source(raw)? {

@@ -593,6 +593,11 @@ pub(super) fn stage_task_and_turn(
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {
             crate::store::linear_task_revision::note_task_write(store, wtxn, id, data)?;
+            // FIX 4749: the watcher due index follows every TASK body that
+            // lands, a peer's synced copy too, so the vault's home ticks it
+            // wherever the TASK was made.
+            let due_at = crate::task_verb::watcher_due_at(data)?;
+            crate::runtime_hooks::index_task_due_in_txn(store, wtxn, id, due_at)?;
         }
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {

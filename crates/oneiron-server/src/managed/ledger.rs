@@ -681,8 +681,9 @@ fn sync_deadline(server: &SyncServer) -> Option<WakeEntry> {
 
 /// Housekeeping deadline: the next moment a retirement the engine owes comes
 /// due (a secret lease's expiry, a voice print's retention deadline, a critical
-/// confirm's window, a waiting erasure). Exact, because the retirement is due
-/// then, not somewhere in a window after it.
+/// confirm's window, a waiting erasure, a model pack's notice mark or
+/// retirement-day move, FIX 22059). Exact, because the retirement is due then,
+/// not somewhere in a window after it.
 fn housekeeping_deadline(server: &SyncServer) -> Result<Option<WakeEntry>, ManagedError> {
     let mut at = server
         .vault()

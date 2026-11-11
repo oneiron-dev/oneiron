@@ -1,0 +1,10 @@
+{
+  "name": "self.grants.asked",
+  "description": "Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing.",
+  "input": "crate::memory::GrantAskedRequest",
+  "output": "crate::memory::GrantAskedPage",
+  "call": "memory.grants_asked(&input)?",
+  "scope": "Read",
+  "admission": {},
+  "section": false
+}

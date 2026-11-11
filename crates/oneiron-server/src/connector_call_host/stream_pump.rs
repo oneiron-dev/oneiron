@@ -169,7 +169,7 @@ impl Pump {
                 }
             };
             match said.event {
-                Ok(StreamEvent::Answer(message, _)) => return Next::Over(terminal(&message)),
+                Ok(StreamEvent::Answer(message, _)) => return Next::Over(terminal(message)),
                 Ok(StreamEvent::Request(request)) => match stream_question(&request) {
                     Some(question) => {
                         *request_id = KeptWire::keep(request.get("id").unwrap_or(&Value::Null));

@@ -42,9 +42,9 @@ impl CompactionDriver {
 
     /// [`Self::request_for`] for a host-numbered log (an executor run): the
     /// window stops at the recorded watermark's turn, `pins` occur verbatim
-    /// in it, `sources` is the whole `DerivedFrom` set, refused above
-    /// [`crate::compaction::EPOCH_SUMMARY_MAX_SOURCES`] rather than cut,
-    /// `prior` is the host's last epoch and the last turn it covers, and
+    /// in it, `sources` is the whole `DerivedFrom` set, never cut: for an
+    /// executor run it IS the erasure and disclosure fence, and no count of
+    /// it refuses the window (FIX 9732), `prior` is the host's last epoch and the last turn it covers, and
     /// `calls` is how many of the host's calls `sources` were read from, and
     /// `run` the run whose log it is. The host mints `request_id` from the
     /// store it reads: base, or its room's view.
@@ -82,11 +82,6 @@ impl CompactionDriver {
         }) {
             return Err(Error::InvariantViolation(
                 "a verbatim pin does not occur in the window",
-            ));
-        }
-        if sources.len() > crate::compaction::EPOCH_SUMMARY_MAX_SOURCES {
-            return Err(Error::InvariantViolation(
-                "compaction window names more sources than one summary may derive from",
             ));
         }
         // A window the host cut short of the watermark (a backend that takes

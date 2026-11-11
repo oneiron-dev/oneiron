@@ -1,376 +1,125 @@
 // Declared `sync_state` tables (string keys), in prefix order.
 
 side_tables! {
-    SYNC_STATE;
     /// A file-plane ASSET body this machine received from its home (FIX 14534): the home
     /// machine (16 bytes), the carrier's BLAKE3 (32), the body's BLAKE3 (32) and its length
     /// (u64be), written in the own-device client's landing commit. The owner's discard of a
     /// world copy releases the ASSET's file only while its manifest names that body and the
     /// row stands at the revision (16 bytes, last) the landing wrote. Runtime: never imaged,
     /// a restore drops it. Key: hex32 (ASSET id).
-    SYNC_ASSET_BODY_FROM_HOME: SyncState b"ab:h:" Raw;
-    /// Archived claim-less shell marker. Key: hex32.
-    DELETION_ARCHIVE_MARKER: SyncState b"ac:" Raw;
-    /// Per-admission disclosure floor: the VV as of the last full-state text-document export to one
-    /// selector/peer. Key: hex32 (entity id) [":" hex32 (NOTE head)] ":" hex64 (blake3 of admission
-    /// key).
-    SYNC_AD_E: SyncState b"ad:e:" Raw;
-    /// A control-plane API key record (HMAC-SHA256 digest, scopes, expiry, revoked flag) keyed by its
-    /// own digest. Key: hex64.
-    AUTH_CONTROL_KEY: SyncState b"auth:control-key:v1:" Named;
-    /// Marker row (empty value) recording that a legacy 32-hex bearer-token identifier has been
-    /// revoked. Key: hex32.
-    AUTH_REVOKED_TOKEN_JTI: SyncState b"auth:revoked-token-jti:" Raw;
-    /// First-seen sidecars per authority entry hash, plus the 'backfill:v1' and 'clock_floor' rows.
-    /// Key: string.
-    /// Snapshot-local generation of the authority fold cache. Key: ().
-    AUTHORITY_CACHE_GENERATION: SyncState b"authlog:cache_generation:v1" Raw;
-    AUTHLOG_FIRST_SEEN_SIDECAR: SyncState b"authlog:first_seen:" Raw;
-    /// One recorded OF-520 ingest-burst check (24 bytes), raised once per peer per observation
-    /// window. Key: hex64 ":" u64hex16.
-    AUTHLOG_INGEST_CHECK: SyncState b"authlog:ingest_check:" Raw;
-    /// Local sliding-window replay-ingest counter (start/count/raised, 17 bytes) per authority peer
-    /// signer. Key: string.
-    AUTHLOG_INGEST_COUNT: SyncState b"authlog:ingest_count:" Raw;
-    /// Device-local authority observation policy: stale-roster window, ingest window, ingest check
-    /// threshold, log signer bound, log headroom rows, handoffs and ancestor pairs, and the fold's
-    /// memory floor (8x u64be; a 3x or 6x row reads with the default bounds). Key: ().
-    AUTHLOG_OBSERVATION_POLICY: SyncState b"authlog:observation_policy:duration_v1" Raw;
-    /// Durable high-water mark (u64be) of a signer's highest observed authority-log sequence number.
-    /// Key: string.
-    AUTHLOG_SEQ_HWM: SyncState b"authlog:seq_hwm:" Raw;
-    /// First-observation receipt recording the signer sequence high-water mark that existed before
-    /// this entry hash was first observed. Key: hex64.
-    AUTHLOG_SEQ_OBSERVATION: SyncState b"authlog:seq_observation:" Raw;
-    /// Cached minted host-root capability-slip token ("v2.slip."+hex(JSON)) for one host signing key.
-    /// Key: `:` + hex.
-    AUTHORITY_HOST_ROOT_SLIP_CACHE: SyncState b"authority:host-root-slip:v2" Raw;
-    /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
-    AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
-    /// Cached minted host-held project.write slip token ("v2.slip."+hex(JSON)) the owner's project
-    /// signer uses, for one host signing key. Key: hex64.
-    AUTHORITY_OWNER_PROJECT_SLIP_CACHE: SyncState b"authority:owner-project-slip:v1:" Raw;
-    /// The facet a paired credential's writes are born in, as the owner named it on the link
-    /// (raw id). Key: hex64 (the slip id).
-    AUTHORITY_PAIRING_WRITE_FACET: SyncState b"authority:pairing-write-facet:v1:" Raw;
-    /// One outstanding single-use pairing/enrollment link, keyed by a keyed-hash of its typed code.
-    /// Key: hex64.
-    AUTHORITY_PAIRING_PENDING: SyncState b"authority:pairing:" LegacyJson;
-    /// The floor of the clock holder proofs are judged on (u64be seconds): the reading the last
-    /// admission committed, or the wall time an owner clock recovery set. Key: ().
-    AUTHORITY_SLIP_PROOF_CLOCK: SyncState b"authority:slip-proof-clock:v1" Raw;
-    /// The earliest signed time a holder proof may carry (u64be seconds): past every evicted
-    /// replay nonce, and at least the wall time of the last owner clock recovery. Key: ().
-    AUTHORITY_SLIP_PROOF_NOT_BEFORE: SyncState b"authority:slip-proof-not-before:v1" Raw;
-    /// Admitted request nonce (empty marker), evicted once the proof clock is a day past its
-    /// signed timestamp. Key: u64hex16 ":" hex64.
-    AUTHORITY_SLIP_REPLAY_NONCE: SyncState b"authority:slip-replay:v2:" Raw;
-    /// Permanent presence-only marker (empty value) that a FEDERATION_GRANT was positively
-    /// withdrawn here (FIX-LIST 5107): read before a carried act's Grant standing. Key: hex32.
-    AUTHORITY_WITHDRAWN_GRANT: SyncState b"authority:withdrawn-grant:v1:" Raw;
-    /// A BASE window the owner's discard of a world copy took rows from (FIX 14534 part E): a
-    /// first byte of 1 while its persisted copy still waits for its projection, 0 once
-    /// installed, then the version vector the last projection kept, the floor below which no
-    /// send of the window goes to the home. Key: window key.
-    SYNC_BASE_WINDOW_DISCARD: SyncState b"bd:w:" Raw;
+    SYNC_ASSET_BODY_FROM_HOME: SyncState b"ab:h:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
-    USAGE_BUDGET_LIMIT: SyncState b"budget:usage:rollup:vault:" Named;
-    /// Runtime spool of artifact publication parts, sent (`tx`) and received (`rx`) (FIX 9575).
-    /// Key: side ":" hex32 ":" (`m` | `p:` u64hex16 | `s`).
-    ARTIFACT_PUBLICATION_PARTS: SyncState b"bulk:artifact:publication:parts:v1:" Named;
-    /// Device-only in-progress marker between a received BulkTransfer chunk and its BulkTransferDone.
-    /// Key: yyyy-mm.
-    SYNC_BULK_TRANSFER_MARKER: SyncState b"bulk:w:" Raw;
-    /// Stored-review keys already reported unreadable (FIX 5251): each
-    /// unreadable review is named once. Presence-only, empty value. Key: bytes.
-    CRITIC_UNREADABLE_REPORTED: SyncState b"critic:unreadable_reported:v1:" Raw;
-    /// An entity document's snapshot (document family). Key: hex32.
-    DOCUMENT_SNAPSHOT: SyncState b"d:e:" Raw;
-    /// ARCH-0023b document family: the root document's full CRDT snapshot (server-write-only
-    /// meta.windows). Key: ().
-    SYNC_D_ROOT: SyncState b"d:root" Raw;
+    USAGE_BUDGET_LIMIT: SyncState b"budget:usage:rollup:vault:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// A sync window's document snapshot (document family). Key: yyyy-mm (window key).
-    WINDOW_SNAPSHOT: SyncState b"d:w:" Raw;
+    WINDOW_SNAPSHOT: SyncState b"d:w:" Raw
+        [restore: content] [family: mixed WindowSnapshot] [tier: canonical];
     /// Deferred ChildOf candidate, keyed by window, source and target. Key: yyyy-mm ":" hex32 ":" hex32.
-    DEFERRED_CHILD_OF: SyncState b"dc:w:" Raw;
+    DEFERRED_CHILD_OF: SyncState b"dc:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Endpoint index for a deferred ChildOf candidate. Key: hex32 ":" full dc:w: key.
-    DEFERRED_CHILD_OF_ENDPOINT: SyncState b"de:" Raw;
-    /// The current row's applied-deletion fence: written with every soft erase and with a peer
-    /// tombstone accepted but not yet applied; lifted only by a local recreation, never by a peer.
-    /// Presence-only, empty value. Key: hex32 (entity id).
-    DELETION_ROW_FENCE: SyncState b"df:" Raw;
+    DEFERRED_CHILD_OF_ENDPOINT: SyncState b"de:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Owed `regenerates` link, keyed by window, source and target: the link's original encoded
     /// value (FIX 6204). Key: yyyy-mm ":" hex32 ":" hex32.
-    DEFERRED_REGENERATES: SyncState b"dg:w:" Raw;
+    DEFERRED_REGENERATES: SyncState b"dg:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Endpoint index for an owed `regenerates` link. Key: hex32 ":" full dg:w: key.
-    DEFERRED_REGENERATES_ENDPOINT: SyncState b"dh:" Raw;
+    DEFERRED_REGENERATES_ENDPOINT: SyncState b"dh:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Dependency index for a deferred Parent candidate. Key: kind ":" hex32 ":" full dp:w: key.
-    DEFERRED_PARENT_DEPENDENCY: SyncState b"di:" Raw;
+    DEFERRED_PARENT_DEPENDENCY: SyncState b"di:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Deferred Parent candidate, keyed by window, source and target. Key: yyyy-mm ":" hex32 ":" hex32.
-    DEFERRED_PARENT: SyncState b"dp:w:" Raw;
-    /// Per-entity text-document subscription row replayed as a REQUEST frame on every reconnect. Key:
-    /// hex32 (entity id).
-    SYNC_DS_E: SyncState b"ds:e:" Raw;
-    /// Local hard-delete marker. Key: hex32.
-    DELETION_HARD_DELETE_MARKER: SyncState b"dt:" Raw;
-    /// The history one derived record quotes of an entity document: the incarnation-qualified
-    /// frontiers it cites, or the birth state when the entity had no document yet. Floors owner
-    /// purges while the citer is live. Key: hex32 (entity) ":" hex32 (citer).
-    ENTITY_DOC_CITATION_FLOOR: SyncState b"entity_doc:v1:citation_floor:" Named;
-    /// Durable identity/provenance/status of one open or settled document fork. Key: hex32.
-    ENTITY_DOC_FORK: SyncState b"entity_doc:v1:fork:" Named
-        => crate::entity_doc::erase_fork_actor_in_txn;
-    /// Shallow Loro snapshot of a fork's diverged content at its opening base. Key: hex32.
-    ENTITY_DOC_FORK_SNAPSHOT: SyncState b"entity_doc:v1:fork_snapshot:" Raw;
-    /// Immutable citation pin binding a quoted span to its exact causal frontier, keyed by entity
-    /// then citation id. Key: hex32 ":" hex32.
-    ENTITY_DOC_PIN: SyncState b"entity_doc:v1:pin:" Named
-        => crate::entity_doc::erase_pin_actor_in_txn;
-    /// Review bundle of every fork opened under one text-edit proposal. Key: hex32.
-    ENTITY_DOC_PROPOSAL_BUNDLE: SyncState b"entity_doc:v1:proposal:" Named
-        => crate::entity_doc::erase_proposal_actor_in_txn;
-    /// Durable proof of one owner-authorized shallow history purge, keyed by entity then receipt id.
-    /// Key: hex32 ":" hex32.
-    ENTITY_DOC_PURGE_RECEIPT: SyncState b"entity_doc:v1:purge:" Named
-        => crate::entity_doc::erase_purge_actor_in_txn;
-    /// Durable settlement receipt (before/after causal frontier) for one fork's merge/switch/reject
-    /// verdict, keyed by entity then receipt id. Key: hex32 ":" hex32.
-    ENTITY_DOC_RECEIPT: SyncState b"entity_doc:v1:receipt:" Named
-        => crate::entity_doc::erase_receipt_actor_in_txn;
-    /// A record one federation pact delivered here at one consent epoch (FIX 321), written in the
-    /// transaction that materialized it. Local to this vault: never replicated or exported. Value:
-    /// the world the record sits in (16 raw bytes; empty for base reality). Key: hex64 (pact id)
-    /// ":" hex16 (epoch) ":" hex32 (record id).
-    FEDERATION_DELIVERED_RECORD: SyncState b"feddelivered:" Raw;
+    DEFERRED_PARENT: SyncState b"dp:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A row one federation pact's import brings, recorded before the import lands it, so the
     /// write that lands it after a crash (forward rematerialization) records it in
     /// `FEDERATION_DELIVERED_RECORD` (FIX 3498). It goes when its row lands or other bytes land
     /// there, and never expires. Local to this vault: never replicated or exported. Value: the
     /// pact id, its epoch and when it was recorded (u64 big-endian seconds each), then the blake3
     /// digest of the row's bytes. Key: hex32 (record id) ":" hex64 (pact id).
-    FEDERATION_DELIVERY_INTENT: SyncState b"fedintent:" Raw;
-    /// A federated `FacetOf` stamp sent ahead of its source row, held out of the window document
-    /// until the same sender's birth of the row has applied here. Local to this vault: never
-    /// replicated or exported. Value: when it was held (u64 big-endian), the grant it was held
-    /// under (a flag byte, then its 16 raw bytes when set), then the stamp's edge value.
-    /// Key: hex32 (source) hex32 (facet) then the sender's lane.
-    FEDERATION_PARKED_FACET_STAMP: SyncState b"fedpark:" Raw;
-    /// What one sender's lane holds in `FEDERATION_PARKED_FACET_STAMP`: its rows, then their
-    /// bytes (u64 big-endian each), so the per-sender caps read one row. Key: the sender's lane.
-    FEDERATION_PARKED_FACET_LANE: SyncState b"fedparklane:" Raw;
-    /// The content-free receipt of a held `FacetOf` stamp that retired (FIX 8890): why (1 past its
-    /// wait, 2 its grant or staged receipt ended), when it was held and when it retired (u64
-    /// big-endian each), then the grant it was held under (a flag byte, then its 16 raw bytes when
-    /// set). Key: as `FEDERATION_PARKED_FACET_STAMP`.
-    FEDERATION_PARKED_FACET_RECEIPT: SyncState b"fedparkreceipt:" Raw;
-    /// First-wins stamp recording that a foreign world's federated content stopped refreshing after a
-    /// terminal pact transition. Key: hex32 (world id).
-    FEDERATION_STALE: SyncState b"fedstale:" Raw;
-    /// The scope a deleted record held, bound to its delete request, so a narrower grant's export
-    /// carries its tombstone only where the grant reads that scope (FIX 10161). Ids and levels
-    /// only, never content. Local to this vault: never replicated or exported. Key: hex32 (entity
-    /// id).
-    FEDERATION_TOMBSTONE_SCOPE: SyncState b"fedtombscope:" Named;
-    /// Registers a foreign world as content delivered by one federation pact, scanned when the pact
-    /// goes terminal. Key: hex64 (pact id) ":" hex32 (world id).
-    FEDERATION_WORLD_REGISTRATION: SyncState b"fedworld:" Raw;
+    FEDERATION_DELIVERY_INTENT: SyncState b"fedintent:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A sync window needs a full resync. Key: yyyy-mm.
-    WINDOW_FULL_RESYNC_MARKER: SyncState b"fr:w:" Raw;
+    WINDOW_FULL_RESYNC_MARKER: SyncState b"fr:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Durable pin forcing a window to export as a history-free snapshot instead of ordinary Loro
     /// history. Key: yyyy-mm.
-    SYNC_HISTORY_FREE_WINDOW: SyncState b"hfs:w:" Raw;
-    /// Cached HTTP response (status, headers, body) for one Idempotency-Key replay within its 24h
-    /// TTL, keyed by principal and header value. Key: hex ":" hex (principal, idempotency key).
-    HTTP_IDEMPOTENCY_REPLY: SyncState b"http:idempotency:" LegacyCompact;
-    /// Durable client-named invocation intent or settled JSON outcome, including the caller's
-    /// stamps and committed-write count. Key: hex32 (invocation id).
-    INVOCATION_CLAIM: SyncState b"http:invocation:" Named;
-    /// An identity-topology author carrier this vault wrote itself: a blake3 digest of the
-    /// carrier row's body (32 bytes). Local truth that never replicates. Key: hex32 (carrier
-    /// entity id).
-    IDENTITY_TOPOLOGY_AUTHORED_HERE: SyncState b"it:authored:" Raw;
-    /// Local evidence that a soft delete was applied; outlives the `pt:` propagation intent so an
-    /// out-of-order proposal cancellation never settles against a live entity. Presence-only,
-    /// empty value. Key: hex32 (entity id).
-    DELETION_IDENTITY_SOFT_DELETE_MARKER: SyncState b"it:deleted:" Raw;
-    /// Digest of which install keys counted as mine-machine signers when an authority write last
-    /// reconciled the identity-topology shell edges (32 bytes). Local only. Key: ().
-    IDENTITY_TOPOLOGY_MINE_SIGNERS: SyncState b"it:mine_signers" Raw;
-    /// One proposing actor's opaque ramp-scope handle on this vault (FIX 9870): 32 random bytes.
-    /// Local and erasable; never replicates, never restored from an image. Key: hex32 (actor
-    /// entity id).
-    IDENTITY_TOPOLOGY_PROPOSER_SCOPE: SyncState b"it:proposer-scope:" Raw;
-    /// An identity-topology admission seal this vault wrote itself: the signer key and signature (96
-    /// bytes) of the fact row. Local truth that never replicates. Key: hex32 (fact entity id).
-    IDENTITY_TOPOLOGY_SEALED_HERE: SyncState b"it:sealed:" Raw;
-    /// Durable provenance row (source/tier/thread/message/surface-event) for one ingested LinkedIn
-    /// message. Key: hex16 (same hash as the seen marker).
-    LINKEDIN_INBOX_SYNC_PROVENANCE: SyncState b"linkedin:inbox_sync:provenance:v1:" LegacyJson;
-    /// Claim-then-finalize dedupe marker for one polled LinkedIn inbox message, or a seat's poll
-    /// cursor. Message key: hex16 (truncated blake3 of receiving address/session/thread/message).
-    /// Cursor key: `cursor:` + hex16 (truncated blake3 of receiving address/session).
-    LINKEDIN_INBOX_SYNC_SEEN: SyncState b"linkedin:inbox_sync:seen:v1:" Raw;
+    SYNC_HISTORY_FREE_WINDOW: SyncState b"hfs:w:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Durable pending-mirror marker a local write leaves in its own transaction (FIX 7957, FIX
     /// 9599): the window owes the row's carrier, or the removal of the edge's key, until that
     /// change is durable there. Value: u64be stamp of the write. Key: window key ":" (hex32
     /// (entity id) | hex32 ":" kk ":" hex32 (edges-map key)).
-    SYNC_PENDING_MIRROR: SyncState b"lm:w:" Raw;
+    SYNC_PENDING_MIRROR: SyncState b"lm:w:" Raw
+        [restore: content] [family: structure] [tier: canonical];
     /// Local mirror of one device's REDACTION_AUDIT-stream lease-registry entry from the root doc's
     /// leases map. Key: hex16 (vault_id) ":" hex16 (client_id).
-    SYNC_LEASE: SyncState b"ls:" Raw;
-    /// This device's stable client id (u64 LE, nonzero), minted once per install and reused as the
-    /// sync client's peer id. Key: ().
-    IDENTITY_CLIENT_ID: SyncState b"m:client_id" Raw;
-    /// Cached 32-byte Ed25519 verifying key of this device's receipt key, whose seed is in the
-    /// install's keystore slot; a stored value that disagrees with the derived key is corruption.
-    /// Dropped wherever the machine id is. Key: ().
-    IDENTITY_DEVICE_PK: SyncState b"m:device_pk" Raw;
-    /// The world-month window label a deleted world claim was addressed under, kept past its purge
-    /// so every reader still finds its tombstone. Key: hex32 (entity id).
-    DELETION_WINDOW_LABEL: SyncState b"m:dw:" Raw;
-    /// Client-only: last Unix-seconds timestamp this device reached fully-synced status. Key: ().
-    SYNC_M_LAST_SYNC: SyncState b"m:last_sync" Raw;
-    /// The MACHINE row this install is (16 B entity id), which names its keystore slots; never
-    /// synced and never restored from another install. Key: ().
-    IDENTITY_MACHINE_ID: SyncState b"m:machine_id" Raw;
-    /// Cached 32-byte Ed25519 verifying key of this install's machine key, whose seed is in the
-    /// install's keystore slot, so a restore with no keys loaded still names its serving machine
-    /// (FIX 5472); a stored value that disagrees with the derived key is corruption, never written
-    /// over. Dropped wherever the machine id is. Key: ().
-    IDENTITY_MACHINE_PK: SyncState b"m:machine_pk" Raw;
-    /// The owner recovery root this install pins (its id and anchor key), and the admitter
-    /// its machine was mine under before the pin last changed. Local like the machine id:
-    /// never synced, and dropped wherever the machine id is. Key: ().
-    IDENTITY_PINNED_ROOT: SyncState b"m:pinned_root" Raw;
+    SYNC_LEASE: SyncState b"ls:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Sweep refs a hard delete captured from a provenance Claim before its SoftErase emptied the
-    /// body, held until a purge queues its sweep. Key: hex32 (entity id).
-    DELETION_PENDING_SWEEP_REFS: SyncState b"m:sr:" Raw;
-    /// Monotonic counter allocating the next u:e: sequence number for one entity's text document.
-    /// Key: hex32 (entity id).
-    SYNC_M_U_SEQ_E: SyncState b"m:u_seq:e:" Raw;
-    /// Crash-safe monotonic counter allocating the next u:w: sequence number for one window. Key:
-    /// yyyy-mm.
-    SYNC_M_U_SEQ_W: SyncState b"m:u_seq:w:" Raw;
-    /// Host config row: the node account-key verdict lease in seconds (u64 big-endian). Absent
-    /// means the 60-second default. Key: ().
-    MANAGED_ACCOUNT_KEY_LEASE: SyncState b"managed:account-key-lease:v1" Raw;
-    /// Marker row admitting a vault as a synthetic canary, the only substitute managed-mode accepts
-    /// for the real-tenant isolation preconditions. Key: ().
-    MANAGED_CANARY_MARKER: SyncState b"managed:canary:v1" Raw;
-    /// Keyed MAC (32 bytes) of the vault's identity metadata under the managed-mode delivered DEK,
-    /// sealed on first open and checked on every reopen. Key: ().
-    MANAGED_DEK_MAC: SyncState b"managed:dek_mac:v1" Raw;
-    /// The generated managed-mode lease scope id (u64 big-endian) for this vault, stable across
-    /// reopen. Key: ().
-    MANAGED_LEASE_SCOPE: SyncState b"managed:lease_scope:v1" Raw;
-    /// The last-persisted revision counter (u64 little-endian) for the managed-mode wake-ledger push
-    /// to the supervisor. Key: ().
-    MANAGED_LEDGER_REV: SyncState b"managed:ledger_rev:v1" Raw;
-    /// Marks a policy-manifest contribution as quarantined by an explicit owner action. Key: hex32.
-    GATE_MANIFEST_QUARANTINED: SyncState b"manifest:quarantined:" Raw;
+    /// body, and the ids of the rows an erase retired with the entity (FIX 7494), held until a
+    /// purge queues its sweep; and the relayed ask intents a legal hold kept from the entity's
+    /// erase, held until a due legal-hold pass retires them (FIX 20468). Key: hex32 (entity id).
+    DELETION_PENDING_SWEEP_REFS: SyncState b"m:sr:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Configured thresholds for the wire call-volume observation counters. Key: ().
-    RC42_WIRE_MANIFEST: SyncState b"manifest:rc42:wire-observation:v1" Named;
-    /// Maps a legacy policy-manifest id forward to its re-authored replacement id. Key: hex32.
-    GATE_MANIFEST_REKEY: SyncState b"manifest:rekey:" Raw;
-    /// Body hash (blake3, 32 bytes) proving an authenticated vault owner authored a retention
-    /// override manifest; any generic write of the manifest clears it. Key: hex32.
-    GATE_MANIFEST_RETENTION_HOLDER: SyncState b"manifest:retention-holder:" Raw;
-    /// Body hash (blake3, 32 bytes) of an engine-seeded default policy manifest; an owner write
-    /// clears it. Key: hex32.
-    GATE_MANIFEST_SEEDED_CONFIDENCE: SyncState b"manifest:seeded_confidence:" Raw;
-    /// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
-    /// Key: hex32.
-    GATE_MANIFEST_TRUSTED_ORIGIN: SyncState b"manifest:trusted:" Raw;
+    RC42_WIRE_MANIFEST: SyncState b"manifest:rc42:wire-observation:v1" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// A target whose machine-claim history this machine is owed (FIX 3820): the windows its rows
     /// came in by, where the home's paging stopped and what the last try found. Key: hex32.
-    SYNC_MACHINE_HISTORY_OWED: SyncState b"mh:owed:v1:" Named;
-    /// One submitted `ai.video` job (FIX-LIST 465): its rung, provider handle and call, and its end
-    /// once a poll saw it, so a restart takes it up again and an ended job answers every poll until
-    /// its caller deletes it. Its clips' bytes sit beside it. Key: ticket (`job_` hex24), or ticket
-    /// ":part:" index for a clip's bytes.
-    MODEL_MEDIA_JOB: SyncState b"models:media-job:v1:" Named;
+    SYNC_MACHINE_HISTORY_OWED: SyncState b"mh:owed:v1:" Named
+        // Restore class: Owed history pairs with the `rm:w:` markers of the rows it holds.
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A model offer a provider refused for a quota or a limit, out of rotation until its reset
     /// (OF-305): this deployment's routing state, never replicated, and runtime to a checkpoint,
     /// which keeps none. Key: hex64 (blake3 of the offer's adapter, origin, key binding and wire
     /// model).
-    MODEL_OFFER_COOLDOWN: SyncState b"models:offer-cooldown:v1:" Named;
+    MODEL_OFFER_COOLDOWN: SyncState b"models:offer-cooldown:v1:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// The last response a provider kept (`store`, OF-602) for one conversation, and when it was
     /// written, so a reconnected Responses socket resumes the chain: this deployment's routing
     /// state, never replicated, and runtime to a checkpoint. Key: hex16 (blake3 of the provider's
     /// socket URL and key binding) ":" hex64 (blake3 of the conversation's item digests).
-    MODEL_RESPONSES_CHAIN: SyncState b"models:responses-chain:v1:" Named;
+    MODEL_RESPONSES_CHAIN: SyncState b"models:responses-chain:v1:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// One paired-machine mesh connection's path receipt (OF-535): direct or relayed, admitted,
     /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
-    SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named;
-    /// Which machine wrote the MESSAGE row this install stores (FIX 12113): the row's BLAKE3
-    /// (32 bytes) when this install's local put wrote it, or the writer's whole proof (the row's
-    /// BLAKE3, the writer machine and its Ed25519 signature, 112 bytes) when the own-device lane
-    /// admitted it. The reverse scan vouches for a row beside it only while its bytes are the
-    /// ones named here. Runtime: never imaged, a restore drops it. Key: hex32 (MESSAGE id).
-    SYNC_MESSAGE_WRITER: SyncState b"mw:" Raw;
-    /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
-    /// Key: hex32 (entity id) ":" hex32 (request id).
-    SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
-    /// Marks a window whose peer-authored NOTE inbox residue was staged, consulted by the note
-    /// module's erasure sweep. Key: yyyy-mm (window key).
-    SYNC_NOTE_INBOX: SyncState b"note_inbox:v1:" Raw;
-    /// Loro snapshot bytes of a proposal (non-live) NOTE document head. Key: hex32(note) ":"
-    /// hex32(head).
-    NOTE_PROPOSAL_DOC: SyncState b"note_proposal_doc:v1:" Raw;
-    /// Idempotent operation receipt for one authenticated NOTE command. Key: hex32(note) ":"
-    /// hex32(request id).
-    NOTE_RECEIPT_BY_REQUEST: SyncState b"nr:e:" LegacyJson
-        => crate::Vault::erase_note_request_receipt_actor_in_txn;
-    /// Entity waiting for an embedding. Key: hex32.
-    PENDING_EMBEDDING_MARKER: SyncState b"pe:" Raw;
-    /// One admitted peer AUTHORITY_LOG entry's canonical bytes, used to refold that peer's roster
-    /// locally. Key: hex64 (peer vault id) ":" hex64 (entry hash).
-    PEER_AUTHORITY_ENTRY: SyncState b"peerauth:" Raw;
-    /// Lease fencing one pending-embedding job against a route/token pair. Key: hex32.
-    PENDING_EMBEDDING_LEASE: SyncState b"pelease:" Raw;
-    /// Deduplicated marker (single byte) recording which sync window a promoted turn's replayed
-    /// closure spans, picked up by later sync replay. Key: yyyy-mm ":" hex32.
-    OFF_RECORD_PROMOTE_PICKUP_MARKER: SyncState b"pm:" Raw;
-    /// Latest peer carrier's wire digest (32 bytes), plus an ASSET logical body digest (32).
-    /// A distinct still-canonical peer ASSET entry (wire + logical, 64 bytes) precedes it:
-    /// pending replacement never erases the stored row's origin. Logical identity survives
-    /// native inline/file/reference echoes; each wire digest binds exact carrier cleanup.
-    /// Local to this vault, never replicated. Key: hex32 (entity id) ":" window key.
-    SYNC_PEER_ORIGIN: SyncState b"po:" Raw;
+    SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Digest of the project-depth birth contribution this vault minted locally. Key: hex32
     /// (contribution id).
-    PROJECT_DEPTH_LOCAL_BIRTH: SyncState b"project:birth:local:" Raw;
+    PROJECT_DEPTH_LOCAL_BIRTH: SyncState b"project:birth:local:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Source index for a deferred Parent candidate. Key: hex32 ":" full dp:w: key.
-    DEFERRED_PARENT_SOURCE: SyncState b"ps:" Raw;
-    /// Pending tombstone propagation marker. Key: yyyy-mm ":" hex32.
-    DELETION_PENDING_TOMBSTONE: SyncState b"pt:" Raw;
+    DEFERRED_PARENT_SOURCE: SyncState b"ps:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Durable unacknowledged local text-document edit frame, cleared once the peer's VV proves
     /// receipt. Key: hex32 (entity id) ":" hex8 (sequence).
-    SYNC_QD_E: SyncState b"qd:e:" Raw;
+    SYNC_QD_E: SyncState b"qd:e:" Raw
+        [restore: content] [family: mixed PendingEdit] [tier: canonical];
     /// Durable pending semantic NOTE-operation request, replayed until its receipt lands. Key: hex32
     /// (entity id) ":" hex32 (request id).
-    SYNC_QN_E: SyncState b"qn:e:" Raw;
-    /// Queued tombstone re-assertion for an entity whose local hard-delete residue reappeared in a
-    /// window doc. Key: yyyy-mm ":" hex32 (entity id).
-    SYNC_REASSERT_MARKER: SyncState b"ra:w:" Raw;
+    SYNC_QN_E: SyncState b"qn:e:" Raw
+        [restore: content] [family: mixed PendingNoteOperation] [tier: canonical];
     /// Late-joiner access to kept pad objects (FIX 4271): "q:" hex32 (machine) ":" hex64 (digest
     /// of its encryption key), an admission this vault queued for the home, no secret (0 queued,
     /// 1 acknowledged); and "g:" hex48 (generation) ":" hex32 ":" hex64, the home's custody of
     /// one grant of that generation's pad object outer key to that machine: 0 pending, or 1 ‖ the
     /// sealed grant. Key: string.
-    SYNC_RESIDENCE_BUNDLE_ACCESS: SyncState b"rb:a:" Raw;
-    /// One generation of the vault's sealed cloud bundle the home keeps (FIX 922): u64be commit
-    /// order (FIX 8885) ‖ u64be bundle length ‖ bundle digest (32) ‖ u64be pad object length ‖ pad
-    /// object digest (32), then, when its publisher named a recovery root, the root id (32) ‖ its
-    /// anchor key (32). Key: hex48 (the generation).
-    SYNC_RESIDENCE_BUNDLE_GENERATION: SyncState b"rb:g:" Raw;
+    SYNC_RESIDENCE_BUNDLE_ACCESS: SyncState b"rb:a:" Raw
+        // Restore class: The sealed bundle's custody and cursors follow the live vault. So do the
+        // late joiners' pad grants the home keeps with its generations, and the admissions queued
+        // for it (FIX 4271). Request-bound publication pairs in the same table also stay LIVE,
+        // sealed and generation-bound.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// A nonce the home's kit door took from a signed bundle fetch (FIX 922), kept a day past
     /// its signed time (empty marker). Key: u64hex16 (the signed time) ":" hex64 (the nonce).
-    SYNC_RESIDENCE_BUNDLE_FETCH_NONCE: SyncState b"rb:n:" Raw;
-    /// One stored part of a kept generation's bundle ("b") or pad object ("k"). Key: hex48 (the
-    /// generation) ":" b|k ":" hex16 (offset).
-    SYNC_RESIDENCE_BUNDLE_PART: SyncState b"rb:p:" Raw;
+    SYNC_RESIDENCE_BUNDLE_FETCH_NONCE: SyncState b"rb:n:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// The commit the home recorded for one owner's bundle publication request (FIX 4787), in the
     /// commit's own transaction, once the request counted here naming this home and the committing
     /// machine as its executor, or, while this home's fold had not seen the request, the commit's
@@ -384,135 +133,143 @@ side_tables! {
     /// "stage-identity:" hex32 stores one zero byte until ordinary deletion
     /// or the work's whole cleanup finishes; an empty partial-cleanup prefix
     /// is not a reusable identity.
-    SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT: SyncState b"rb:r:" Raw;
+    SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT: SyncState b"rb:r:" Raw
+        // Restore class: So do the home's record of each asked commit and this machine's unresolved
+        // publication attempts (FIX 4787).
+        [restore: live] [family: unclassified] [tier: canonical];
     /// An upload of a bundle ("b") or pad object ("k") the home stages from parts until its
     /// commit: u64be vault second of its latest part ‖ generation (24) ‖ u64be total ‖ digest
     /// (32) ‖ u64be bytes staged ‖ immutable part identity (16),96 bytes total.
     /// Key: hex32 (the uploading machine) ":" b|k.
-    SYNC_RESIDENCE_BUNDLE_STAGE: SyncState b"rb:s:" Raw;
+    SYNC_RESIDENCE_BUNDLE_STAGE: SyncState b"rb:s:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// The publisher turn of the vault's sealed bundle on the home (FIX 3351): u64be vault second
     /// the holder's turn runs from ‖ u64be count of machines whose turn lapsed ‖ each (FIX 4405):
     /// u64be slot it holds first ‖ that machine (16) ‖ each machine that asked for it (16), the
     /// holder first. Key: ().
-    SYNC_RESIDENCE_BUNDLE_TURN: SyncState b"rb:t" Raw;
+    SYNC_RESIDENCE_BUNDLE_TURN: SyncState b"rb:t" Raw
+        // Restore class: The publisher turn's queue is the home's record of whose turn is next
+        // across slots, so it follows the live vault too (FIX 3351).
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One immutable upload part. Key: hex32 (the header's part identity) ":" hex16
     /// (offset). Detached work retains its parts independently of active handles.
-    SYNC_RESIDENCE_BUNDLE_STAGE_PART: SyncState b"rb:u:" Raw;
+    SYNC_RESIDENCE_BUNDLE_STAGE_PART: SyncState b"rb:u:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// The exact attempt this machine made to publish the vault's sealed bundle for one owner's
     /// request (FIX 4787), persisted before its commit: the home (16) ‖ this machine, the
     /// executor (16) ‖ the generation (24) ‖ the bundle's digest (32), a ciphertext digest. It
     /// stays, with no expiry and no count bound, until the request has its result here. Key:
     /// hex64 (the request's entry hash).
-    SYNC_RESIDENCE_BUNDLE_ATTEMPT: SyncState b"rbc:" Raw;
-    /// One erase subject this machine sweeps from every pad object the home keeps (FIX 922, 7294,
-    /// 8868): empty while only owed (a hard erase of one key's pad row stages it), else its proof:
-    /// the home (16) ‖ the revision of the home's list it was made against (32) ‖ 1 and the u64be
-    /// slot a pad object that did not open here held it back in, or 0 and eight zero bytes ‖
-    /// u32be count ‖ each kept pad object swept, its generation (24) ‖ its digest (32). Key: "w:"
-    /// hex32 (a world whose keys were destroyed here) or "k:" hex80 (one key's full id).
-    SYNC_RESIDENCE_BUNDLE_SWEPT: SyncState b"rbe:" Raw;
+    SYNC_RESIDENCE_BUNDLE_ATTEMPT: SyncState b"rbc:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// This machine's sealed bundle cursor (FIX 922): the u64be UTC slot it last finished ‖ the
     /// generation (24) it last took in, when it took one. Key: ().
-    SYNC_RESIDENCE_BUNDLE_CURSOR: SyncState b"rbt" Raw;
+    SYNC_RESIDENCE_BUNDLE_CURSOR: SyncState b"rbt" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// A stored window's ready generation (fix list row 19634): u64 little-endian, one higher
+    /// each time a policy wake persists the window again; an absent row is 0. Each live
+    /// connection asks its peer to exchange the window once per generation it has not asked
+    /// for; no send, export or receipt consumes it. Local to this vault. Key: window key.
+    WINDOW_READY_GENERATION: SyncState b"ready:w:" Raw
+        // Restore class: A window's ready generation is this vault's own record of the exchanges
+        // its live connections owe, so it follows the live vault: a restore neither drops one owed
+        // nor brings back an image's (FIX 19634).
+        [restore: live] [family: unregistered] [tier: canonical];
     /// A retained federation or maintenance item that carries an entity's bytes, so the entity's
     /// erase scrubs it (FIX 7998). Empty value. Key: hex32 (entity id) then the item's reference.
-    SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw;
+    SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The caller one retained-work queue served last, so its next pass starts after it (FIX
     /// 7997). Value: the caller's fair key. Key: string (the queue's code).
-    SYNC_RETAINED_WORK_CURSOR: SyncState b"retained:cursor:" Raw;
+    SYNC_RETAINED_WORK_CURSOR: SyncState b"retained:cursor:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A signed maintenance operation kept for its turn instead of refused (FIX 8565, 8858): its
     /// arrival, deadline, window, lease vault and exact bytes, then a content-free receipt once it
     /// expires, is refused or is erased. Key: hex64 (signer key) then hex32 (entity id).
-    SYNC_MAINTENANCE_RETAINED_WORK: SyncState b"retained:maintenance:" Named;
+    SYNC_MAINTENANCE_RETAINED_WORK: SyncState b"retained:maintenance:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The owner's wait for one retained-work queue (u64 big-endian seconds). Key: string (the
     /// queue's code).
-    SYNC_RETAINED_WORK_WAIT: SyncState b"retained:wait:" Raw;
+    SYNC_RETAINED_WORK_WAIT: SyncState b"retained:wait:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A room's host pin or platform handle this device changed while no open window carried the
     /// room, or a join or offer card it changed that its window does not hold yet (FIX 1794),
     /// mirrored as that window opens. Key: string (the row's `room_facts` map key).
-    SYNC_ROOM_FACT_DIRTY: SyncState b"rfd:" Raw;
+    SYNC_ROOM_FACT_DIRTY: SyncState b"rfd:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A thin-residence item's opened entity blob. Key: hex32 (entity id).
-    SYNC_RESIDENCE_ITEM_BLOB: SyncState b"ri:b:" Raw;
+    SYNC_RESIDENCE_ITEM_BLOB: SyncState b"ri:b:" Raw
+        [restore: content] [family: mixed ResidenceItem] [tier: canonical];
     /// Where a thin-residence item's row sits, as the home witnessed it with the item's blob
     /// (FIX 14534): `ContentWorld`'s tag, then a world id for one in a single world. Key: hex32
     /// (entity id).
-    SYNC_RESIDENCE_ITEM_CONTENT_WORLD: SyncState b"ri:c:" Raw;
+    SYNC_RESIDENCE_ITEM_CONTENT_WORLD: SyncState b"ri:c:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A thin-residence item's opened document state. Key: hex32 (entity id).
-    SYNC_RESIDENCE_ITEM_DOCUMENT: SyncState b"ri:d:" Raw;
+    SYNC_RESIDENCE_ITEM_DOCUMENT: SyncState b"ri:d:" Raw
+        [restore: content] [family: mixed ResidenceItem] [tier: canonical];
+    /// A thin item's source worlds and hashes of its exact cached blob and document, encoded
+    /// as CachedItemWorlds. Provenance only, never read authority. Key: hex32 (entity id).
+    SYNC_RESIDENCE_ITEM_SOURCES: SyncState b"ri:s:" Raw
+        [restore: content] [family: mixed ResidenceItem] [tier: canonical];
     /// The thin-residence index rows fetched for one window. Key: window key ":" item tag.
-    SYNC_RESIDENCE_INDEX: SyncState b"ri:w:" Raw;
-    /// Entity-scoped needs-rematerialization retry flag, set when a CRDT-tombstone purge or a
-    /// materialization batch fails. Key: yyyy-mm ":" hex32 (entity id).
-    SYNC_REMAT_MARKER: SyncState b"rm:w:" Raw;
-    /// Sidecar on a rm:w: marker proving it originated from replay/quarantine (not a delete-safety
-    /// purge failure), so terminal quarantine may discharge it. Key: yyyy-mm ":" hex32 (entity id).
-    SYNC_REPLAY_REMAT_MARKER_PROVENANCE: SyncState b"rmp:w:" Raw;
+    SYNC_RESIDENCE_INDEX: SyncState b"ri:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The window an opened thin-residence item came from. Key: hex32 (entity id).
-    SYNC_RESIDENCE_OPENED_ITEM: SyncState b"ro:e:" Raw;
+    SYNC_RESIDENCE_OPENED_ITEM: SyncState b"ro:e:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A window promoted from thin to canonical residence; reconnect replays it. Key: window key.
-    SYNC_RESIDENCE_PROMOTED_WINDOW: SyncState b"rp:w:" Raw;
-    /// This machine's residence choice (sync all or sync what it opened) and when it was made;
-    /// node-local, never synced. Key: ().
-    SYNC_RESIDENCE_DEVICE_MODE: SyncState b"rs:mode" Raw;
+    SYNC_RESIDENCE_PROMOTED_WINDOW: SyncState b"rp:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
     /// cache for pruning. Key: hex32 (entity id).
-    SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw;
+    SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Deferred SpawnedBy anchor, keyed by window, session and turn. Key: yyyy-mm ":" hex32 ":" hex32.
-    DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw;
+    DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Endpoint index for a deferred SpawnedBy anchor. Key: hex32 ":" full sa:w: key.
-    DEFERRED_SPAWNED_BY_ENDPOINT: SyncState b"se:" Raw;
-    /// The serve skill judge (OF-495): its typed-decision journal, and person-time on receipts.
-    /// Key: "decision:" hex32 (row id) | "minutes:" string (receipt id) "|" hex32 (row id).
-    SKILL_JUDGE: SyncState b"skill:judge:v1:" Named;
-    /// The Coach's tradeoff router (FIX-LIST 817): each route call it handed a project's leader.
-    /// Key: string (proposal hex32 ":" project hex32 ":" question digest).
-    SKILL_TRADEOFF_ROUTE: SyncState b"skill:tradeoff:route:v1:" Named;
+    DEFERRED_SPAWNED_BY_ENDPOINT: SyncState b"se:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A left shared vault's owed orphan body collection (FIX 2413): when its env's purge finished
     /// and when the collection is due (unix seconds); local only, never synced. Key: ().
-    SYNC_LEFT_ENV_BODY_COLLECT: SyncState b"sl-body-collect" Named;
-    /// This device's record that it left the shared vault its env holds (OF-158): the notice it
-    /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
-    /// notice's receipt id).
-    SYNC_SHARED_LEAVE_RECEIPT: SyncState b"sl:" Named;
-    /// An entity document's shallow-since version vector (document family). Key: hex32 (NOTE head
-    /// id).
-    DOCUMENT_SHALLOW_SINCE: SyncState b"ssv:e:" Raw;
-    /// An entity document's state vector (document family). Key: hex32.
-    DOCUMENT_STATE_VECTOR: SyncState b"sv:e:" Raw;
+    SYNC_LEFT_ENV_BODY_COLLECT: SyncState b"sl-body-collect" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The home's version vector of a world window, as this device last
     /// exchanged it (FIX 14534): what a world eviction waits to see cover the
     /// window. Local only, never imaged; the next exchange writes it again.
     /// Key: window key.
-    SYNC_HOME_WINDOW_VV: SyncState b"sv:hw:" Raw;
-    /// ARCH-0023b document family: the root document's state vector, paired with d:root. Key: ().
-    SYNC_SV_ROOT: SyncState b"sv:root" Raw;
-    /// A sync window's state vector (document family). Key: yyyy-mm.
-    WINDOW_STATE_VECTOR: SyncState b"sv:w:" Raw;
-    /// ARCH-0023b document family: freshness flag for the root document's persisted state vector.
-    /// Key: ().
-    SYNC_SVF_ROOT: SyncState b"svf:root" Raw;
-    /// Whether a sync window's state vector is fresh (document family). Key: yyyy-mm.
-    WINDOW_SHALLOW_FENCE: SyncState b"svf:w:" Raw;
+    SYNC_HOME_WINDOW_VV: SyncState b"sv:hw:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// This machine's place in its home's queue of sealed world updates (DEC-0005 fix 8, FIX
     /// 12586): the queue epoch (16) ‖ u64be the last number it took. Key: ().
-    SYNC_SEALED_UPDATE_CURSOR: SyncState b"swu:c" Raw;
+    SYNC_SEALED_UPDATE_CURSOR: SyncState b"swu:c" Raw
+        // Restore class: The home's queue of sealed world updates and this machine's place in it
+        // and its outbox follow the live vault, as the sealed bundle's custody and cursor do
+        // (DEC-0005 fix 8, FIX 12586).
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One sealed world update the home keeps for the vault's machines (DEC-0005 fix 8, FIX
     /// 12586): u64be vault second it was stored ‖ its id (16) ‖ the sealed bytes, which the home
     /// cannot read. Kept 90 days. Key: u64hex16 (its number in the queue's epoch).
-    SYNC_SEALED_UPDATE_ENTRY: SyncState b"swu:e:" Raw;
+    SYNC_SEALED_UPDATE_ENTRY: SyncState b"swu:e:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The number the home gave one sealed world update's id, so one id is stored once: u64be.
     /// Key: hex32 (the id).
-    SYNC_SEALED_UPDATE_ID: SyncState b"swu:i:" Raw;
+    SYNC_SEALED_UPDATE_ID: SyncState b"swu:i:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The home's queue of sealed world updates: its epoch (16), minted on first use ‖ u64be the
     /// last number it gave. Key: ().
-    SYNC_SEALED_UPDATE_QUEUE: SyncState b"swu:m" Raw;
+    SYNC_SEALED_UPDATE_QUEUE: SyncState b"swu:m" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One world update this machine sealed for its home, until the home says it is stored: its
     /// id (16) ‖ the world (16) ‖ u64be vault second it was sealed ‖ the sealed bytes. Key:
     /// u64hex16 (its place in the order the updates were made).
-    SYNC_SEALED_UPDATE_OUTBOX: SyncState b"swu:o:" Raw;
+    SYNC_SEALED_UPDATE_OUTBOX: SyncState b"swu:o:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The place of one outbox update by its id, so one id is kept once: u64be. Key: hex32 (the
     /// id).
-    SYNC_SEALED_UPDATE_OUTBOX_ID: SyncState b"swu:p:" Raw;
+    SYNC_SEALED_UPDATE_OUTBOX_ID: SyncState b"swu:p:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Test-fixture row, never read or written by production code: a cached
     /// minted capability slip for one request-credential recipe id
     /// (`crates/oneiron-server/src/test_credentials.rs`, mounted only as
@@ -520,84 +277,48 @@ side_tables! {
     /// door's declared-table check (`side_table::host_declared_sync_state`)
     /// does not refuse this well-known test fixture prefix. Key: hex64
     /// (blake3 of the fixture's request-recipe id).
-    TEST_API_SLIP_CACHE: SyncState b"test:api:slip:" Raw;
+    TEST_API_SLIP_CACHE: SyncState b"test:api:slip:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Test-fixture row, never read or written by production code: a cached
     /// minted MCP-paired capability-slip token for one pairing label
     /// (`crates/oneiron-server/src/api/tests/support_mcp_credentials.rs`,
     /// reached only from `#[cfg(test)]` code under `api/tests/`). Same
     /// rationale as `TEST_API_SLIP_CACHE`. Key: hex64 (blake3 of the label).
-    TEST_MCP_PAIRED_CACHE: SyncState b"test:mcp:paired:" Raw;
-    /// Request-bound reservation fencing topology writes on an entity between tombstone
-    /// publication and purge (34 bytes: phase, request id, reason, deleted_at LE, window_ts LE).
-    /// Key: hex32 (entity id).
-    DELETION_TOPOLOGY_DELETE_INTENT: SyncState b"topology-delete-intent:" Raw;
-    /// One pending update of an entity document (document family). Key: hex32 (entity id) ":" hex8
-    /// (sequence).
-    DOCUMENT_UPDATE: SyncState b"u:e:" Raw;
-    /// ARCH-0023b document family: pending root-document CRDT updates applied on top of d:root at
-    /// startup; read-only in this crate (written server-side). Key: hex8 (sequence).
-    SYNC_U_ROOT: SyncState b"u:root:" Raw;
+    TEST_MCP_PAIRED_CACHE: SyncState b"test:mcp:paired:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// ARCH-0023b document family: one durable pending CRDT update for a window, applied on top of
     /// d:w:. Key: yyyy-mm ":" hex8 (sequence).
-    SYNC_U_W: SyncState b"u:w:" Raw;
-    /// One idempotently recorded usage-metering event for an owner/vault, keyed by its caller-
-    /// supplied idempotency key. Key: hex ":" hex ":" hex (owner, vault, idempotency-key).
-    USAGE_EVENT: SyncState b"usage:event:" Named
-        => crate::store::erase_usage_source_in_txn;
+    SYNC_U_W: SyncState b"u:w:" Raw
+        [restore: content] [family: mixed WindowUpdate] [tier: canonical];
     /// One owner/vault/metric/day operational meter rollup, moved in each meter row's own write
     /// (ARCH-0011 `#meters`, FIX 7764). Key: hex ":" hex ":" metric ":" 20-digit period start.
-    USAGE_METER_ROLLUP: SyncState b"usage:meter-rollup:" Named;
+    USAGE_METER_ROLLUP: SyncState b"usage:meter-rollup:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One operational meter row for an owner/vault, kept once under its idempotency key
     /// (ARCH-0011 `#meters`, FIX 7764). Key: hex ":" hex ":" metric ":" hex (owner, vault,
     /// metric, idempotency key).
-    USAGE_METER: SyncState b"usage:meter:" Named;
+    USAGE_METER: SyncState b"usage:meter:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The receipt of one owner repair that removed a stored usage event that no longer decoded
     /// (FIX 6476): the scope, the row's ref, hash and length, and who removed it, when and where.
     /// Key: hex32 (receipt id).
-    USAGE_REPAIR_RECEIPT: SyncState b"usage:repair:receipt:" Named;
-    /// One frozen automatic settlement awaiting its final ledger write (FIX 737).
-    /// Same named envelope as USAGE_EVENT. Key: hex ":" hex ":" hex
-    /// (vault, billing owner, idempotency-key); vault-first covers room-paid owners.
-    USAGE_SETTLEMENT_PENDING: SyncState b"usage:retry:" Named
-        => crate::store::erase_pending_usage_source_in_txn;
+    USAGE_REPAIR_RECEIPT: SyncState b"usage:repair:receipt:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Aggregated usage-metering rollup totals (cost/units) for one owner/vault pair. Key: hex ":"
     /// hex (owner, vault).
-    USAGE_VAULT_ROLLUP: SyncState b"usage:rollup:vault:" Named;
-    /// Admitted foreign-import payload retained only while its receipt is Pending, so recovery
-    /// survives losing the in-memory stage. Key: hex64.
-    VAULT_IMPORT_CONTENT: SyncState b"vault_import_content:v1:" Raw;
-    /// Terminal/pending status receipt (hand-rolled MessagePack map) for one foreign vault-import
-    /// artifact, keyed by its content-derived receipt id. Key: hex64.
-    VAULT_IMPORT_RECEIPT: SyncState b"vault_import_receipt:v1:" Raw;
-    /// The facet stamps a foreign artifact staged ahead of their rows, kept with its receipt while
-    /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
-    /// of them again. Key: hex64.
-    VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
-    /// A BASE row the owner's discard of a world copy took as that world's alone (FIX 14534):
-    /// the world's id (16 bytes), the ingest ladder's cue to judge the row's body again before
-    /// its window brings it back. Key: hex32 (entity id).
-    SYNC_DISCARDED_WORLD_ROW: SyncState b"wd:e:" Raw;
+    USAGE_VAULT_ROLLUP: SyncState b"usage:rollup:vault:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// The newest withdrawn generation of a derived artifact whose historical sweep finished,
     /// and what stands in for it (FIX 931): nine bytes, the `learned_at` u64be, then the
     /// replacement's tag byte (1 an epoch keyframe, 2 a Shell, the header alone). Sync ingest
     /// refuses a body of that generation or older that is not that content-free form, and every
     /// sweep keeps rewriting such a carrier. Outlives the `hw:` row it replaces. Key: hex32
     /// (entity id).
-    DELETION_WITHDRAWN_GENERATION_FENCE: SyncState b"wg:" Raw;
+    DELETION_WITHDRAWN_GENERATION_FENCE: SyncState b"wg:" Raw
+        [restore: content] [family: structure] [tier: canonical];
     /// The serve health check past a threshold (OF-520): one check per crossing subject, and
     /// how far the check has read each kind of kept crossing. Key: "check:" string (the
     /// subject) | "cursor:" string (the crossing kind, and a limits row's key).
-    WIRE_HEALTH_CHECK: SyncState b"wire:health:v1:" Named;
-    /// A crossed `[limits]` row's question (OF-520) for one minute: the row's bound, the most it
-    /// saw, and how many times it was crossed. Key: string (the row's key) ":" u64 (decimal,
-    /// zero-padded to 20 digits; window start).
-    WIRE_LIMIT_QUESTION: SyncState b"wire:limit-question:v1:" Named;
-    /// A raised question recording that a wire call-volume window crossed its per-verb or per-actor
-    /// threshold, kept once each time another verb or actor crossed (FIX 9531). Key: "seq:" u64
-    /// (decimal, zero-padded to 20 digits; the order questions were kept in) | "window:" u64 ":"
-    /// u64 ":" u64 (each zero-padded to 20 digits; window start:end, then the question's seq).
-    RC42_WIRE_QUESTION: SyncState b"wire:question:v2:" Named;
-    /// Persisted per-window wire call-volume counters (by verb and by actor) for one observation
-    /// window. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).
-    RC42_WIRE_RECEIPT: SyncState b"wire:window:v2:" Named;
+    WIRE_HEALTH_CHECK: SyncState b"wire:health:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
 }

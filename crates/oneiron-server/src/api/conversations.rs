@@ -3,7 +3,7 @@
 //! `crate::api::conversations` defines these DTOs; the engine owns the turn rows.
 mod turn_reads;
 
-use self::turn_reads::{core_list_conversation_turns, core_turn_for_read};
+use self::turn_reads::{core_list_conversation_turns, core_turn_for_read, require_core_turn_type};
 use super::CoreCreateEntityRequest;
 use super::CoreEntityWriteResponse;
 use super::CoreListQuery;
@@ -423,14 +423,15 @@ pub(crate) async fn list_core_conversation_turns(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
-    require_entity_type(
-        &server,
+    let read = super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth)?;
+    require_core_turn_type(
+        &server.vault,
+        &read,
         &conversation,
         ENTITY_TYPE_CONVERSATION,
         "conversation",
     )?;
     let params = query_params(query)?;
-    let read = super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth)?;
     core_list_conversation_turns(
         &server.vault,
         &read,
@@ -549,12 +550,12 @@ pub(crate) async fn get_core_turn(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let id = parse_entity_id_param(&turn_id, "turn_id")?;
-    require_entity_type(&server, &id, ENTITY_TYPE_TURN, "turn")?;
     // A turn of a private thread the caller does not read, the opener
     // included, answers as one that is not here, before any view of it
     // (FIX 5652); below the owner, so does one its lane does not read (FIX
     // 5938). Its reply strip holds the turn it answers so too.
     let read = super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth)?;
+    require_core_turn_type(&server.vault, &read, &id, ENTITY_TYPE_TURN, "turn")?;
     // Its query's refusal comes after the turn's admission and before its
     // words are read (FIX 5870).
     let (params, (entity_type, learned_at, body)) =

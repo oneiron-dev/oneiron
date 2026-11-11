@@ -11,6 +11,11 @@
 //! [`GraphAskOutcome`]: a failed unit never hides the answers the units
 //! before it already committed.
 
+mod standing_admit;
+pub use standing_admit::{
+    QuestionAdmitRequest, QuestionPrepareRequest, QuestionPrepared, QuestionPreparedSource,
+};
+
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};

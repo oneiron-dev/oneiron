@@ -364,6 +364,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         row_births: Vec::new(),
         withdrawn_cutoffs: Vec::new(),
         asset_body_refs: Vec::new(),
+        source_audiences: Vec::new(),
     };
     for (key, bytes) in super::canonical::binary_rows(doc, "documents")? {
         let value: CanonicalDocument =
@@ -486,6 +487,9 @@ impl CanonicalSnapshot {
         // of a session it removed, go as the window's own carriers do.
         snapshot.settle_row_births_here(vault, &txn)?;
         snapshot.settle_cutoffs_here(vault, &txn)?;
+        // Engine A: this vault's current policies stand in for the
+        // artifact's, and none names an actor it erased.
+        snapshot.settle_source_audiences_here(vault, &txn)?;
         Ok(snapshot)
     }
 }

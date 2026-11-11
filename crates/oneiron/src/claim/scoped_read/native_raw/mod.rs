@@ -40,7 +40,7 @@ impl<'a> NativeRawRead<'a> {
                     let body = if self.lane.actor_key.secret_sight()
                         == crate::secret_custody::SecretSight::Masked
                     {
-                        crate::memory::repo_secret_reads::repo_asset_body_in_txn(
+                        crate::memory::repo_secret_reads::repo_asset_body_known_in_txn(
                             self.lane.vault,
                             txn,
                             id,
@@ -95,6 +95,7 @@ impl<'a> NativeRawRead<'a> {
             None => self.lane.vault.scoped_read(self.lane.actor_key.clone()),
         };
         lane.with_claim_status(ClaimReadStatus::Surfaceable)
+            .with_read_filter(self.lane.read_filter.as_ref())
     }
 
     fn retrieval<T>(

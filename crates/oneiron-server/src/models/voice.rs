@@ -93,11 +93,13 @@ impl ModelRuntime {
                 response_format: ResponseFormat::Text,
                 locality: backend.locality,
                 host_keyless: false,
+                host_paid: false,
                 seat_effort: None,
             },
             operation,
             parts: Vec::new(),
             references: Vec::new(),
+            mask: None,
             params: BTreeMap::new(),
             voice: None,
         };
@@ -124,5 +126,47 @@ impl ModelRuntime {
             target,
             envelope,
         })
+    }
+}
+
+impl ModelRuntime {
+    /// Selects a voice route from the receiving agent's actual frozen list.
+    pub(crate) fn voice_route_for_models(
+        &self,
+        vault: &Vault,
+        lane: VoiceLane,
+        explicit: Option<&PurposeDefault>,
+        listed: &[oneiron::agent_def::AgentModel],
+    ) -> oneiron::Result<MediaVoiceRoute> {
+        let operation = match lane {
+            VoiceLane::AsrLive | VoiceLane::AsrBatch => AiOperation::Transcribe,
+            VoiceLane::TtsLive | VoiceLane::TtsBatch => AiOperation::Speech,
+        };
+        let backends: Vec<_> = self
+            .media
+            .voice_backends(operation)
+            .into_iter()
+            .filter(|backend| {
+                oneiron::agent_def::ensure_inherited_model_list(listed, &backend.model).is_ok()
+            })
+            .collect();
+        let backend = vault.select_voice_backend(lane, explicit, &backends)?;
+        self.route_for(vault, lane, operation, backend)
+    }
+
+    /// Keeps the original fallback order while conjoining the frozen list.
+    pub(crate) fn voice_fallback_routes_for_models(
+        &self,
+        vault: &Vault,
+        lane: VoiceLane,
+        primary: &MediaVoiceRoute,
+        listed: &[oneiron::agent_def::AgentModel],
+    ) -> Vec<MediaVoiceRoute> {
+        self.voice_fallback_routes(vault, lane, primary)
+            .into_iter()
+            .filter(|route| {
+                oneiron::agent_def::ensure_inherited_model_list(listed, &route.model).is_ok()
+            })
+            .collect()
     }
 }

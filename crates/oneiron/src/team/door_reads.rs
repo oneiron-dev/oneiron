@@ -197,6 +197,7 @@ fn launched_member(
         state: record.state.as_str().to_owned(),
         type_ref: TypeStamp::from(&input.type_ref),
         team_ref: input.team.as_ref().map(|team| team.team_ref.clone()),
+        caller_origin: input.caller_origin,
     }
 }
 

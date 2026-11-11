@@ -32,11 +32,16 @@ impl SyncQueue {
     ///
     /// Returns the assigned sequence number.
     pub fn push(&self, window_key: &str, update_bytes: &[u8]) -> Result<u64> {
+        Self::push_for(&self.vault, window_key, update_bytes)
+    }
+
+    /// The same ordinary queue write for an already-borrowed vault.
+    pub(crate) fn push_for(vault: &Vault, window_key: &str, update_bytes: &[u8]) -> Result<u64> {
         let value = encode_update_value(window_key, update_bytes)?;
-        let mut wtxn = self.vault.store.env.write_txn()?;
-        let seq = self.allocate_next_update_seq(&mut wtxn)?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        let seq = allocate_next_update_seq_in_txn(vault, &mut wtxn)?;
         let key = encode_update_key(seq);
-        self.vault.store.sync_queue.put(&mut wtxn, &key, &value)?;
+        vault.store.sync_queue.put(&mut wtxn, &key, &value)?;
         wtxn.commit()?;
 
         Ok(seq)
@@ -369,10 +374,6 @@ impl SyncQueue {
             }
         }
         Ok(count)
-    }
-
-    fn allocate_next_update_seq(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
-        allocate_next_update_seq_in_txn(&self.vault, wtxn)
     }
 
     /// Ensures queue sequence metadata exists and matches the persisted queue.

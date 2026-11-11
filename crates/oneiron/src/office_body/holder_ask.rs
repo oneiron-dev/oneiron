@@ -27,12 +27,12 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::task_verb::{
     AskAuthorityScope, ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason,
-    TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
+    TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason,
+    TaskAskSource, TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
 };
 use crate::write_envelope::WriteActor;
 
-use super::consent::{PROPOSALS, let_go_in_txn, office_scope, settle_in_txn};
+use super::consent::{PROPOSALS, let_go_in_txn, lineage, office_scope, settle_in_txn};
 
 mod live_edit;
 use super::support::{loro_kind, open_fork};
@@ -134,36 +134,60 @@ impl Memory<'_> {
         for asked in &record.asks {
             if asked.artifact == *artifact
                 && asked.forks == forks
-                && self.owns_task_ask_intent(
+                && (self.owns_task_ask_intent(
                     crate::task_verb::TaskAskHandle {
                         group_ref: asked.ask,
                     },
                     &intent_key,
-                )?
+                )? || self.owns_held_task_ask_intent(
+                    crate::task_verb::TaskAskHandle {
+                        group_ref: asked.ask,
+                    },
+                    &intent_key,
+                )?)
             {
                 return Ok(vault.record_office_proposal_ask(proposal, asked.clone())?);
             }
         }
         let (class, envelope) = office_scope(artifact)?;
+        // FIX 3108: whoever's answer would be the opener's own (the
+        // settlement's `lineage`) is never asked: it could not settle.
+        let excluded: BTreeSet<EntityId> = record
+            .members
+            .iter()
+            .filter(|member| {
+                member.artifact == *artifact && member.verdict == MemberVerdict::Waiting
+            })
+            .flat_map(|member| lineage(&record.header, member))
+            .collect();
         let who = {
             let txn = vault
                 .store
                 .env
                 .read_txn()
                 .map_err(crate::error::Error::from)?;
-            if vault
-                .ask_authority_holders_in_txn(&txn, &class, &envelope)?
-                .is_empty()
-            {
-                let owners = crate::policy_model::owners_in_txn(vault, &txn)?;
+            let holders = vault.ask_authority_holders_in_txn(&txn, &class, &envelope)?;
+            let independent: BTreeSet<EntityId> = holders
+                .iter()
+                .copied()
+                .filter(|holder| !excluded.contains(holder))
+                .collect();
+            if !holders.is_empty() && independent.len() == holders.len() {
+                TaskAskTarget::Authority(AskAuthorityScope { class, envelope })
+            } else if !independent.is_empty() {
+                TaskAskTarget::People(independent)
+            } else {
+                let owners: BTreeSet<EntityId> = crate::policy_model::owners_in_txn(vault, &txn)?
+                    .into_iter()
+                    .filter(|owner| !excluded.contains(owner))
+                    .collect();
                 if owners.is_empty() {
                     return Err(MemoryError::bad_request(
-                        "an office proposal ask has no holder and no vault owner",
+                        "an office proposal ask has no holder and no vault owner outside its \
+                         opener's lineage",
                     ));
                 }
-                TaskAskTarget::People(owners.into_iter().collect())
-            } else {
-                TaskAskTarget::Authority(AskAuthorityScope { class, envelope })
+                TaskAskTarget::People(owners)
             }
         };
         let version = vault
@@ -174,11 +198,11 @@ impl Memory<'_> {
         question.options = BTreeMap::from([
             (
                 TaskAskOptionId::new(ACCEPT)?,
-                "Accept: land these forks as you".to_owned(),
+                TaskAskOption::new("Accept: land these forks as you".to_owned()),
             ),
             (
                 TaskAskOptionId::new(REJECT)?,
-                "Reject: discard these forks as you".to_owned(),
+                TaskAskOption::new("Reject: discard these forks as you".to_owned()),
             ),
         ]);
         question.label = Some(format!(

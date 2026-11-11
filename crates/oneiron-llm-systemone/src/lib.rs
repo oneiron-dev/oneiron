@@ -5,10 +5,11 @@
 //! HTTPS client with a bearer key, or a host's (the credential broker, which
 //! adds the key from the vault for one call at a time).
 
+use oneiron::code_run::model_call::native_seat_read_digests;
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionRung, ImageBox, ProviderPin,
-    RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRequest,
+    RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRead, SeatReadFuture, SeatRequest,
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, LlmUsage, RetryableLlmError};
 use serde::Deserialize;
@@ -17,6 +18,11 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
+
+mod pack;
+pub use pack::{
+    SystemOnePackAnswer, SystemOnePackPrediction, SystemOnePackQuestion, SystemOnePackRequest,
+};
 
 /// The largest reply body the seat reads.
 pub const MAX_RESPONSE_BYTES: usize = 65_536;
@@ -155,36 +161,21 @@ impl SystemOneSeat {
         request: &SeatRequest,
         time_left: Duration,
     ) -> LlmResult<SystemOneHttpRequest> {
+        self.build_questions(
+            request,
+            json!({"decision": build_question(request)}),
+            time_left,
+        )
+        .await
+    }
+
+    async fn build_questions(
+        &self,
+        request: &SeatRequest,
+        questions: Value,
+        time_left: Duration,
+    ) -> LlmResult<SystemOneHttpRequest> {
         let model = format!("{}-{}", self.pin.model, self.pin.version);
-        let (kind, criteria) = match &request.question.contract {
-            // The question's criteria triple, as what a yes and a no mean.
-            AnswerContract::Noul => (
-                "noul",
-                QuestionCriteria::from_state(&request.state).map(
-                    |criteria| json!({"true": criteria.yes_means(), "false": criteria.no_means()}),
-                ),
-            ),
-            AnswerContract::Choice { options } => {
-                let map: BTreeMap<&str, Value> =
-                    options.iter().map(|s| (s.as_str(), Value::Null)).collect();
-                ("choice", Some(json!(map)))
-            }
-            AnswerContract::Score { .. } => ("score", Some(json!(request.score_levels))),
-            // The wire has no point: a Point asks for a box, read as its centre.
-            AnswerContract::Box | AnswerContract::Point => ("box", None),
-        };
-        // A question that is no yes/no reads its criteria as the rubric of its
-        // own form after its instructions (FIX 2181).
-        let rubric = QuestionCriteria::rubric_in(&request.state, &request.question.contract)
-            .filter(|_| request.question.contract != AnswerContract::Noul);
-        let instructions = match rubric {
-            Some(rubric) => format!("{}\n\n{rubric}", request.question.text),
-            None => request.question.text.clone(),
-        };
-        let mut question = json!({"type":kind,"instructions":instructions});
-        if let Some(criteria) = criteria {
-            question["criteria"] = criteria;
-        }
         // Each image is an asset; its state field holds the asset's reference, which
         // the question names in backticks.
         let mut state = request.state.clone();
@@ -202,8 +193,11 @@ impl SystemOneSeat {
                 }),
             );
         }
-        let images = !assets.is_empty() || kind == "box";
-        let mut body = json!({"model":model,"state":state,"questions":{"decision":question}});
+        let images = !assets.is_empty()
+            || questions.as_object().is_some_and(|questions| {
+                questions.values().any(|question| question["type"] == "box")
+            });
+        let mut body = json!({"model":model,"state":state,"questions":questions});
         if !assets.is_empty() {
             body["assets"] = Value::Object(assets);
         }
@@ -219,26 +213,25 @@ impl SystemOneSeat {
             time_left,
         })
     }
-}
 
-impl RemoteDecisionSeat for SystemOneSeat {
-    fn pin(&self) -> ProviderPin {
-        self.pin.clone()
-    }
-
-    fn image_edge(&self) -> Option<u32> {
-        Some(MAX_IMAGE_EDGE)
-    }
-
-    fn ask<'a>(
-        &'a self,
+    async fn ask_inner(
+        &self,
         request: SeatRequest,
-        lease: &'a BudgetLease,
-        time_left: std::time::Duration,
-    ) -> SeatFuture<'a> {
-        Box::pin(async move {
+        lease: &BudgetLease,
+        time_left: Duration,
+        capture: bool,
+    ) -> SeatRead {
+        let mut digests = None;
+        let result = async {
             request.validate_remote()?;
             let sent = self.build(&request, time_left).await?;
+            if capture {
+                // Fingerprint the built JSON tree, not the pre-transform request
+                // or its wire encoding. The host warns/skips missing evidence.
+                digests = serde_json::from_slice::<Value>(&sent.body)
+                    .ok()
+                    .and_then(|body| native_seat_read_digests(&body).ok());
+            }
             let model = sent.model.clone();
             let response = self.transport.send(sent, lease).await?;
             if !(200..300).contains(&response.status) {
@@ -268,7 +261,44 @@ impl RemoteDecisionSeat for SystemOneSeat {
                 "output_tokens": wire.usage.output_tokens,
             });
             Ok(parsed)
+        }
+        .await;
+        SeatRead {
+            request: digests,
+            result,
+        }
+    }
+}
+
+impl RemoteDecisionSeat for SystemOneSeat {
+    fn pin(&self) -> ProviderPin {
+        self.pin.clone()
+    }
+
+    fn image_edge(&self) -> Option<u32> {
+        Some(MAX_IMAGE_EDGE)
+    }
+
+    fn ask<'a>(
+        &'a self,
+        request: SeatRequest,
+        lease: &'a BudgetLease,
+        time_left: std::time::Duration,
+    ) -> SeatFuture<'a> {
+        Box::pin(async move {
+            self.ask_inner(request, lease, time_left, false)
+                .await
+                .result
         })
+    }
+
+    fn ask_recorded<'a>(
+        &'a self,
+        request: SeatRequest,
+        lease: &'a BudgetLease,
+        time_left: Duration,
+    ) -> SeatReadFuture<'a> {
+        Box::pin(self.ask_inner(request, lease, time_left, true))
     }
 }
 
@@ -340,7 +370,52 @@ struct WireUsage {
     output_tokens: u64,
 }
 
+fn build_question(request: &SeatRequest) -> Value {
+    let (kind, criteria) = match &request.question.contract {
+        // The question's criteria triple, as what a yes and a no mean.
+        AnswerContract::Noul => (
+            "noul",
+            QuestionCriteria::from_state(&request.state).map(
+                |criteria| json!({"true": criteria.yes_means(), "false": criteria.no_means()}),
+            ),
+        ),
+        AnswerContract::Choice { options } => {
+            let map: BTreeMap<&str, Value> =
+                options.iter().map(|s| (s.as_str(), Value::Null)).collect();
+            ("choice", Some(json!(map)))
+        }
+        AnswerContract::Score { .. } => ("score", Some(json!(request.score_levels))),
+        // The wire has no point: a Point asks for a box, read as its centre.
+        AnswerContract::Box | AnswerContract::Point => ("box", None),
+    };
+    // A question that is no yes/no reads its criteria as the rubric of its
+    // own form after its instructions (FIX 2181).
+    let rubric = QuestionCriteria::rubric_in(&request.state, &request.question.contract)
+        .filter(|_| request.question.contract != AnswerContract::Noul);
+    let instructions = match rubric {
+        Some(rubric) => format!("{}\n\n{rubric}", request.question.text),
+        None => request.question.text.clone(),
+    };
+    let mut question = json!({"type":kind,"instructions":instructions});
+    if let Some(criteria) = criteria {
+        question["criteria"] = criteria;
+    }
+    question
+}
+
 fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<SeatAnswer> {
+    let (answer, probability) = parse_prediction(value, request)?;
+    Ok(SeatAnswer {
+        answer,
+        probability,
+        usage: LlmUsage::zero(),
+    })
+}
+
+fn parse_prediction(
+    value: &Value,
+    request: &SeatRequest,
+) -> oneiron::LlmResult<(DecisionAnswer, f64)> {
     let invalid = || oneiron::LlmError::from(FatalLlmError::InvalidRequest);
     let kind = value
         .get("type")
@@ -454,11 +529,7 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
     if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
         return Err(invalid());
     }
-    Ok(SeatAnswer {
-        answer,
-        probability,
-        usage: LlmUsage::zero(),
-    })
+    Ok((answer, probability))
 }
 
 fn valid_probabilities(probabilities: &serde_json::Map<String, Value>) -> bool {
@@ -475,6 +546,5 @@ fn transport_error(error: reqwest::Error) -> oneiron::LlmError {
         RetryableLlmError::ServerError.into()
     }
 }
-
 #[cfg(test)]
 mod tests;

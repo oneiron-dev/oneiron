@@ -208,13 +208,14 @@ impl Memory<'_> {
             TaskReportBody::Done {
                 result_ref,
                 confession,
+                confession_structured,
             } => self.report_done(
                 rt,
                 via,
                 task_ref,
                 key,
                 attempt,
-                (result_ref, confession),
+                (result_ref, confession, confession_structured),
                 &current,
                 decisions,
                 lifecycle,

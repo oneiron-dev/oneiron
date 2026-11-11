@@ -29,6 +29,7 @@ impl LadderRung {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: prompt.clone(),
+                        signature: None,
                     }],
                 },
             );

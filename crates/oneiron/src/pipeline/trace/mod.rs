@@ -10,7 +10,7 @@ mod trace_fork_hash;
 mod trace_records;
 
 pub(super) use self::replay_identity::{RetrievalReplayIdentity, capture_replay_identity_in_txn};
-pub(super) use self::replay_inputs::capture_replay_inputs;
+pub(super) use self::replay_inputs::{ReplayInputsMemory, capture_replay_inputs};
 pub(super) use self::trace_fork_hash::{RetrievalTraceForkEvidence, retrieval_trace_fork_hash};
 pub(super) use self::trace_records::{
     add_signal_score_components, filter_retrieval_trace_scores, merge_retrieval_diagnostics,

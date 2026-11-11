@@ -201,7 +201,51 @@ pub(crate) fn take_as(
 ) -> anyhow::Result<BackupOutcome> {
     let produced =
         finalize::produce(vault, plan, owner).map_err(finalize::Unproduced::into_error)?;
-    finish_take(vault, plan, produced)
+    finish_take(vault, plan, produced, false)
+}
+
+/// [`take`] for the host operator (FIX 11432): never of a shared vault its
+/// Owners deleted, whose backups stay as they were until their retention
+/// ends. The caller holds the backup lock. A deletion read before the
+/// snapshot refuses it; one that landed while the image was taken lets the
+/// image and its body holder go and refuses it; and its prune reads the
+/// deletion in the writer transaction that holds its unlinks, so none of
+/// the backups a deletion keeps is unlinked. `None`: refused, for a
+/// deletion.
+pub(crate) fn take_unless_deleted(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+) -> anyhow::Result<Option<BackupOutcome>> {
+    if vault.shared_vault_deletion()?.is_some() {
+        return Ok(None);
+    }
+    let produced =
+        finalize::produce(vault, plan, None).map_err(finalize::Unproduced::into_error)?;
+    if vault.shared_vault_deletion()?.is_some() {
+        // The image goes, and with it the body holder its snapshot
+        // registered, once its unlink is synced, as a prune releases one;
+        // a failed unlink or sync keeps both. Orphaned facts and inventories
+        // go with the next prune's sweeps.
+        match std::fs::remove_file(&produced.path)
+            .map_err(anyhow::Error::from)
+            .and_then(|()| sync_dir(&plan.dir))
+        {
+            Ok(()) => {
+                if let Err(error) = vault.release_backup_copy(&produced.path) {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "a let-go backup's body holder was not released; its bodies stay kept"
+                    );
+                }
+            }
+            Err(error) => tracing::warn!(
+                error = %error,
+                "a backup taken beside a vault deletion was not let go; it stays as a kept copy"
+            ),
+        }
+        return Ok(None);
+    }
+    finish_take(vault, plan, produced, true).map(Some)
 }
 
 /// Takes the scheduled automatic selection, never an explicit whole-vault request.
@@ -211,13 +255,18 @@ pub(crate) fn take_automatic(
 ) -> anyhow::Result<BackupOutcome> {
     let produced =
         finalize::produce_automatic(vault, plan).map_err(finalize::Unproduced::into_error)?;
-    finish_take(vault, plan, produced)
+    finish_take(vault, plan, produced, false)
 }
 
+/// Lands `produced` and prunes beyond `plan.keep`; with `spare_on_deletion`,
+/// unlinks nothing once the vault's Owners have deleted it, read where the
+/// unlinks are held ([`prune_with`]; the operator's take,
+/// [`take_unless_deleted`]). The schedule's takes prune as before.
 fn finish_take(
     vault: &oneiron::Vault,
     plan: &BackupPlan,
     produced: finalize::Produced,
+    spare_on_deletion: bool,
 ) -> anyhow::Result<BackupOutcome> {
     // What it covered, beside it now that it landed. A marker that fails
     // leaves the one before, which only reads as changed.
@@ -232,7 +281,7 @@ fn finish_take(
     // background publisher does the anchor reads and advances.
     custody::publish_after_take(vault, plan);
     let bytes = std::fs::metadata(&produced.path)?.len();
-    let pruned = prune(vault, plan, Some(&produced.file))?;
+    let pruned = prune_with(vault, plan, Some(&produced.file), spare_on_deletion)?;
     Ok(produced.into_outcome(bytes, pruned))
 }
 
@@ -320,6 +369,19 @@ pub(crate) fn prune(
     plan: &BackupPlan,
     spared: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
+    prune_with(vault, plan, spared, false)
+}
+
+/// [`prune`]; with `spare_on_deletion`, nothing is unlinked once the vault's
+/// Owners deleted it, read in the writer transaction that holds the unlinks
+/// ([`oneiron::recovery::checkpoint::BackupHolds::vault_deleted`]), so no
+/// deletion commits between that read and an unlink (FIX 11432).
+fn prune_with(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+    spared: Option<&str>,
+    spare_on_deletion: bool,
+) -> anyhow::Result<Vec<String>> {
     // A standing hold keeps them all; the exclusion below reads it again. So
     // does a held prune (FIX 6705).
     if plan.prune_held || vault.legal_hold_keeps_backups()? {
@@ -345,7 +407,7 @@ pub(crate) fn prune(
     let Some(handoff) = handoff::pinned(&plan.dir, &plan.label) else {
         let gone = vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
             let mut pruned = Vec::new();
-            if holds.keeps_backups() {
+            if holds.keeps_backups() || (spare_on_deletion && holds.vault_deleted()) {
                 return Ok(pruned);
             }
             for record in excess {
@@ -380,7 +442,7 @@ pub(crate) fn prune(
     };
     let (released, mut pending) = handoff::released(&handoff, &plan.label, excess);
     let pruned = vault.with_backup_hold_exclusion(|holds| {
-        if holds.keeps_backups() {
+        if holds.keeps_backups() || (spare_on_deletion && holds.vault_deleted()) {
             return None;
         }
         let mut pruned = Vec::new();

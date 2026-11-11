@@ -59,6 +59,10 @@ pub enum TeamPattern {
     Market,
     /// Roles rotate by turn inside the leader's patch. Optional; starts untested.
     Rotation,
+    /// One agent alone: the no-team control arm. Never started
+    /// (`team_stamp` maps it to `None`); its receipts come from the
+    /// solo close writer, never from `self.team.record`.
+    Solo,
 }
 
 impl TeamPattern {
@@ -71,6 +75,7 @@ impl TeamPattern {
             Self::Vote => "vote",
             Self::Market => "market",
             Self::Rotation => "rotation",
+            Self::Solo => "solo",
         }
     }
 
@@ -78,7 +83,7 @@ impl TeamPattern {
     #[must_use]
     pub const fn decider_kind(self) -> &'static str {
         match self {
-            Self::CeoDecides | Self::Rotation => "leader",
+            Self::CeoDecides | Self::Rotation | Self::Solo => "leader",
             Self::Committee => "chair",
             Self::Vote => "vote",
             Self::Market => "referee",

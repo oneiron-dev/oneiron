@@ -225,6 +225,20 @@ impl WindowManager {
                 &key,
                 rows,
             );
+            // FIX 2691: and a proposal that waited for its artifact's row.
+            crate::sync::office_proposals::merge_committed_office_proposals(
+                &self.vault,
+                &window.doc,
+                &key,
+                rows,
+            );
+            // FIX 12470: and a typed body receipt that waited for its body.
+            crate::sync::typed_body_rows::merge_committed_typed_body_rows(
+                &self.vault,
+                &window.doc,
+                &key,
+                rows,
+            );
             // FIX 6870: a CODE row that lands after its manifest's head
             // finds the head here.
             crate::sync::repo_manifests::merge_committed_repo_manifests(
@@ -482,6 +496,9 @@ fn mirror_loop(mirror: &LiveMirror, manager: &Weak<WindowManager>) {
         if pending.setup_retry {
             manager.retry_setup_rows();
         }
+        // Each pass, woken or timed out: the windows a changed source
+        // audience rides take its change (fix list row 17203).
+        manager.drive_policy_wakes();
     }
 }
 

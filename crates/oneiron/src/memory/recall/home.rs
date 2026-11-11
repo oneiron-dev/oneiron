@@ -287,6 +287,9 @@ pub struct HomeRecallAsk {
     limit: usize,
     /// Whether the home can take the request (`home_answers`).
     answerable: bool,
+    /// The caller's own retrieval filter (FIX 3977): the home's reader
+    /// meets it before its candidate cut.
+    filter: Option<crate::memory::ReadFilterInput>,
 }
 
 #[cfg(feature = "sync")]
@@ -299,8 +302,9 @@ impl HomeRecallAsk {
             as_of: request.as_of,
             limit: request
                 .limit
-                .unwrap_or(crate::task_verb::sdk::VAULT_RECALL_LIMIT_DEFAULT),
+                .unwrap_or(crate::verb_names::VAULT_RECALL_LIMIT_DEFAULT),
             answerable: home_answers(request, room_turn),
+            filter: request.filter.clone(),
         }
     }
 
@@ -382,7 +386,14 @@ async fn ask_home(
         std::time::Instant::now() + std::time::Duration::from_millis(budgets.rpc_timeout_ms);
     let bound = due.map_or(bound, |due| due.min(bound));
     let forwarded = forwarded.map(|proof| (proof, caller.locality));
-    let asked = search.search_recall(&ask.query, limit, selection, ask.as_of, forwarded);
+    let asked = search.search_recall(
+        &ask.query,
+        limit,
+        selection,
+        ask.as_of,
+        ask.filter.as_ref(),
+        forwarded,
+    );
     let found = tokio::time::timeout_at(bound.into(), asked)
         .await
         .ok()?

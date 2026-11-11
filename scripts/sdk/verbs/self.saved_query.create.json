@@ -1,0 +1,13 @@
+{
+  "name": "self.saved_query.create",
+  "description": "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller.",
+  "input": "crate::campaign::surface::SavedQueryCreateRequest",
+  "output": "crate::campaign::surface::SavedQueryRecordView",
+  "call": "memory.create_saved_query(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

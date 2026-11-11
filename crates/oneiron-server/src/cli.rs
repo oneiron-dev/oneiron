@@ -21,6 +21,8 @@ mod hosted_args;
 pub use graph_fs_args::GraphFsCommand;
 pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs};
 mod learning_setting_args;
+mod model_workers_args;
+pub use model_workers_args::ModelWorkersArgs;
 mod owner_args;
 mod recovery_kit_args;
 mod reminder_route_args;
@@ -115,6 +117,8 @@ pub enum Command {
     /// flags ride [`ServeArgs`] so both the bare and the explicit `serve`
     /// forms accept them; the mode is selected in `commands::serve`.
     Serve(Box<ServeArgs>),
+    /// Supervise configured model workers without opening a vault.
+    ModelWorkers(ModelWorkersArgs),
     /// Revoke an existing device lease binding.
     Revoke(Box<RevokeArgs>),
     /// Print or locate the agentskills-compatible skill pack.
@@ -262,6 +266,9 @@ pub enum Command {
     /// you run to sign one in. Never takes or shows a vendor token.
     #[command(subcommand)]
     Seat(SeatCommand),
+    /// Produce a native meeting transcript from a recording on a stopped vault;
+    /// no import or voice enrollment is performed.
+    MeetingTranscript(Box<commands::MeetingTranscriptArgs>),
     /// Print the engine-owned kind/family/zone registry as JSON (no vault required).
     Registry,
 }
@@ -1029,6 +1036,7 @@ pub async fn run() -> anyhow::Result<()> {
 pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
     match cli.into_command() {
         Command::Serve(args) => commands::serve(*args).await,
+        Command::ModelWorkers(args) => commands::model_workers(args).await,
         Command::Revoke(args) => commands::revoke(*args).await,
         Command::SkillsPack(args) => commands::skills_pack(args),
         Command::Init(args) => {
@@ -1107,6 +1115,12 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Seat(SeatCommand::LoginPlan(args)) => commands::seat_login_plan(*args),
         Command::Seat(SeatCommand::Runners) => commands::seat_runners(),
         Command::Seat(SeatCommand::RunnerPolicy(args)) => commands::seat_runner_policy(*args),
+        Command::MeetingTranscript(args) => {
+            crate::logging::off_runtime("meeting-transcript", move || {
+                commands::meeting_transcript(*args)
+            })
+            .await?
+        }
         Command::Registry => commands::registry(),
     }
 }

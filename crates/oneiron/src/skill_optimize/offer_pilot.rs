@@ -500,21 +500,22 @@ pub fn model_offer_pin(row: &ModelRegistryRow) -> Option<(OfferModelPin, String)
         })
 }
 
-/// A recipe's base: the starting checkpoint at its source revision and the
-/// content hash of its first file.
+/// A recipe's base: its first source revision and a hash of the complete
+/// pinned load set, including every file's source, kind, content hash and size.
 pub fn training_base_pin(run: &TrainingRun) -> Option<OfferModelPin> {
     let checkpoint = &run.plan.starting_checkpoint;
     let file = checkpoint.files.first()?;
     let model = checkpoint.model.as_str();
-    (named(model) && named(&file.source.revision)).then(|| OfferModelPin {
+    if !named(model) || !named(&file.source.revision) {
+        return None;
+    }
+    Some(OfferModelPin {
         model: model.to_owned(),
         revision: file.source.revision.clone(),
         content_hash: Some(
-            file.content
-                .blake3
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect(),
+            blake3::Hash::from(checkpoint.content_hash().ok()?)
+                .to_hex()
+                .to_string(),
         ),
     })
 }

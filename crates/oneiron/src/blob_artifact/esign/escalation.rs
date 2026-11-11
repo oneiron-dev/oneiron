@@ -17,6 +17,7 @@
 //! law keeps with a natural person is never automated, so it never reaches
 //! this path.
 use super::ceremony::{sign, signed_event};
+use super::field_admission::{EventFields, InspectedPages, inspect_event_pages};
 use super::ledger::state_in;
 use super::model::*;
 use crate::llm::decision::DecisionAsk;
@@ -379,6 +380,19 @@ impl Vault {
         answer: HeldSigningAnswer,
     ) -> Result<HeldSigning> {
         let now = self.now_recorded_at();
+        // FIX 9609: an allowed hold's signer's PDFs are inspected here,
+        // before its writer, which lays the signer's fields out on them.
+        let inspected = match &answer {
+            HeldSigningAnswer::Allow { .. } => inspect_event_pages(self, |txn| {
+                open_hold(self, txn, document, recipient, held_at)?;
+                let state = state_in(self, txn, EntityId::from_hex(document)?)?;
+                let lands = state.status == DocumentStatus::Pending
+                    && state.rejection.is_none()
+                    && now < state.document.expires_at;
+                Ok(lands.then(|| (state, EventFields::Signer(recipient.to_owned()))))
+            }),
+            HeldSigningAnswer::Decline => InspectedPages::default(),
+        };
         self.with_write_txn_grouped(|txn| {
             let mut held = open_hold(self, txn, document, recipient, held_at)?;
             held.state = match answer {
@@ -411,6 +425,7 @@ impl Vault {
                         };
                         sign(
                             self, txn, id, &state, recipient, &held.next, evidence, actor, now,
+                            &inspected,
                         )?;
                         HeldSigningState::Allowed { at: now }
                     } else {

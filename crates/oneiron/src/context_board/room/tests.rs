@@ -7,6 +7,7 @@ use crate::memory::{ClaimInput, ClaimListFilter, WitnessAuthor, WitnessMessage, 
 use crate::pipeline::{PREDICATE_WORLD_ACCESS_ALLOWED_SET, world_access_claim_body};
 use crate::workspace_roster::ProjectRecord;
 use crate::{TimeRange, Vault, VaultConfig};
+use std::collections::BTreeSet;
 
 fn id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).unwrap()
@@ -80,6 +81,7 @@ fn note(subject: EntityId, value: &str, world: Option<EntityId>) -> ClaimInput {
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     }
 }
 
@@ -87,16 +89,20 @@ fn spoken(room: EntityId, turn: EntityId, at: u64) -> WitnessTurn {
     WitnessTurn {
         conversation_ref: room.to_hex(),
         turn_ref: Some(turn.to_hex()),
+        thread_audience: None,
         messages: vec![WitnessMessage {
             id: Some(EntityId::now().to_hex()),
             author: WitnessAuthor::User,
             message_type: "text".into(),
             content: "lantern check".into(),
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
+            quote: None,
         }],
         occurred_at: at,
+        assertions: Default::default(),
     }
 }
 
@@ -170,6 +176,7 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
         predicate: Some("note.topic".into()),
         lifecycle: None,
         limit: 10,
+        filter: None,
     };
     let refs = |listed: crate::memory::MemoryResult<
         crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>,
@@ -221,6 +228,7 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
                 world_ref: Some(fiction.to_hex()),
                 facet: None,
                 kinds: None,
+                ..Default::default()
             },
             10,
             None,
@@ -236,6 +244,7 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
     );
     let page = turn
         .invoke(
+            &crate::verbs::VERB_TABLE,
             "rooms.messages",
             serde_json::json!({"room_ref": room.to_hex()}),
         )
@@ -245,12 +254,14 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
     assert_eq!(applied, expected, "the history read ran inside room_scope");
     let other = serde_json::json!({"room_ref": elsewhere.to_hex()});
     assert!(
-        turn.invoke("rooms.messages", other).is_err(),
+        turn.invoke(&crate::verbs::VERB_TABLE, "rooms.messages", other)
+            .is_err(),
         "a turn in one room reads no other room"
     );
     for verb in ["export", "key_value_get", "receipts", "describe"] {
         assert!(
-            turn.invoke(verb, serde_json::json!({})).is_err(),
+            turn.invoke(&crate::verbs::VERB_TABLE, verb, serde_json::json!({}))
+                .is_err(),
             "{verb} reads around the room, so a turn refuses it"
         );
     }
@@ -608,10 +619,8 @@ fn the_roster_is_the_channels_own_membership() -> Result<()> {
             ..ConversationBody::default()
         };
         if let Some(extra) = extra {
-            body.extra.insert(
-                "memberIds".into(),
-                crate::companion::companion_value_from_json(&extra)?,
-            );
+            body.extra
+                .insert("memberIds".into(), crate::msgpack_value_from_json(&extra)?);
         }
         vault.create_conversation(id, &body, actor, 2)?;
         Ok(id)
@@ -742,6 +751,7 @@ fn a_guests_clearance_bounds_every_read_a_room_turn_makes() -> Result<()> {
         predicate: Some("note.topic".into()),
         lifecycle: None,
         limit: 10,
+        filter: None,
     };
     // What one room turn reads: the room's notes, each note by id, and the
     // room's own history.
@@ -1004,16 +1014,19 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
             conversation: room,
             parent: Some(copy),
             reply_to: None,
+            quote: None,
             address: crate::conversation_dag::AddressMode::Broadcast,
             recipients: vec![],
             advance: true,
             kind: ENTITY_TYPE_TURN,
+            containing_turn: None,
             occurred: TimeRange { start: 3, end: 3 },
             learned_at: 3,
             body: crate::conversation_dag::fixtures::body("later"),
             text: vec![],
             session: None,
             actor: crate::WriteActor::new(owner, EdgeActorClass::Human),
+            thread_audience: None,
         })?
         .id;
     recover(vec![later], 4)?;
@@ -1208,6 +1221,7 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
             predicate: Some(predicate.into()),
             lifecycle: None,
             limit: 10,
+            filter: None,
         };
         turn.claim_list(&filter)
             .expect("claim list")

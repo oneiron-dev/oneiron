@@ -411,7 +411,9 @@ fn edge_landed(vault: &crate::Vault, edge: &super::CanonicalBaseEdge) -> Result<
 /// `actual`, a recapture of a recovered window, with each pad row naming the
 /// same header, key and pad as `wanted`'s taken as `wanted`'s: a carrier an
 /// artifact kept where custody could not take its pad reads back as its
-/// reference once the recovery published that pad (KS-5).
+/// reference once the recovery published that pad (KS-5). An entity
+/// document that holds `wanted`'s value takes its origin: an origin names
+/// where a value was captured, never the value (FIX 3553).
 #[cfg(feature = "sync")]
 pub(super) fn pad_equivalent(
     vault: &crate::Vault,
@@ -425,6 +427,18 @@ pub(super) fn pad_equivalent(
             && crate::world_keys::pad_echo_equal(&vault.store, &entity.blob, &want.blob)
         {
             entity.blob.clone_from(&want.blob);
+        }
+    }
+    for (document, want) in actual
+        .entity_documents
+        .iter_mut()
+        .zip(&wanted.entity_documents)
+    {
+        if document.origin != want.origin {
+            let origin = std::mem::replace(&mut document.origin, want.origin.clone());
+            if *document != *want {
+                document.origin = origin;
+            }
         }
     }
     actual

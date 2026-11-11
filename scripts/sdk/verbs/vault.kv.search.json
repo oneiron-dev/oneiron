@@ -1,0 +1,32 @@
+{
+  "name": "vault.kv.search",
+  "description": "Exact prefix and equality search over the caller's keys, ordered by namespace then key.",
+  "input": "crate::memory::KeyValueSearch",
+  "output": "Vec<crate::memory::KeyValueItem>",
+  "call": "memory.key_value_search(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "input_fields": {
+      "namespacePrefix": "namespace_prefix"
+    },
+    "input_defaults": {
+      "namespacePrefix": []
+    },
+    "docs": {
+      "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+      "ts": "/** Exact prefix search, ordered lexically and paginated after filtering. */",
+      "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+    }
+  }
+}

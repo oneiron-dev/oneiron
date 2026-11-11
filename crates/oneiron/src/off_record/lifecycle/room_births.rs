@@ -34,7 +34,7 @@ use crate::write_envelope::{WriteActor, WriteEnvelope};
 const STAGED_CLAIM_DOOR: &str = "off_record.claims.stage";
 
 /// The door identity of a claim a room derives from its sources
-/// (`OffRecordSession::stage_session_derived_claim`).
+/// (`OffRecordSession::prepare_session_derived_claim`).
 const DERIVED_CLAIM_DOOR: &str = "off_record.claims.derive";
 
 /// What a room write stages beside its row: who wrote it, its class, the

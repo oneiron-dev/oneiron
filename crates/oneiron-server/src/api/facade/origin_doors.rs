@@ -80,6 +80,48 @@ pub(crate) async fn vault_code_origin_publications(
     .await
 }
 
+pub(crate) async fn vault_code_secrets_purge_request(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RepoSecretPurgeRequest,
+) -> Listed<RepoSecretPurgePlan> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.secrets.purge.request",
+        move |memory, owner| memory.code_secrets_purge_request_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_secrets_purge_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RepoSecretPurgeIdRequest,
+) -> Listed<RepoSecretPurgeView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.secrets.purge.get",
+        move |memory, owner| memory.code_secrets_purge_get_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_secrets_purge_execute(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RepoSecretPurgeIdRequest,
+) -> Listed<RepoSecretPurgeReceipt> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.secrets.purge.execute",
+        move |memory, owner| memory.code_secrets_purge_execute_as(owner, input),
+    )
+    .await
+}
+
 pub(crate) async fn vault_code_checkout_bind(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -326,6 +368,58 @@ pub(crate) async fn vault_code_export_preview_read(
         "vault.code.export.preview.read",
         invocation,
         move |memory, proof| memory.code_export_preview_read_as(proof, input),
+    )
+    .await
+}
+
+/// The holder door binds its actual credential, never an owner or a run.
+pub(super) fn checkout_holder_admits(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<()> {
+    checkout_holder_caller(server, auth).map(drop)
+}
+
+fn checkout_holder_caller(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    auth.require_lane_record_scope().map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "a channel-bound credential reaches no checkout holder door",
+            &[],
+        )
+    })?;
+    super::owner_binding::facade_caller_or(server, auth, || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "checkout materialization needs the lease holder's own credential",
+            &[],
+        )
+    })
+}
+
+pub(crate) async fn vault_code_checkout_holder_bind(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: oneiron::memory::repo_doors::RepoCheckoutBindInput,
+) -> Listed<oneiron::memory::repo_doors::RepoCheckoutBindOutput> {
+    let caller = match checkout_holder_caller(server, auth) {
+        Ok(caller) => caller,
+        Err(refusal) => return (Err(refusal), Vec::new()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.code.checkout.holder.bind",
+        move |_, _, memory| {
+            let memory = match invocation {
+                Some(invocation) => memory.with_invocation(invocation),
+                None => memory,
+            };
+            memory.repo_checkout_bind_for_holder(input)
+        },
     )
     .await
 }

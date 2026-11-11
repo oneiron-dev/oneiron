@@ -31,6 +31,7 @@ mod attempt;
 mod entries;
 mod pad_sweep;
 mod publication;
+mod publication_access;
 mod refill;
 mod relay_observation;
 mod report;
@@ -238,7 +239,7 @@ impl SyncClient {
             // With nothing due whatever the home lists, a home out of reach
             // is no failure.
             _ if !due => return Ok(relay),
-            Ok(None) => return Err(TransportError::Storage("home node offline".into())),
+            Ok(None) => return Err(TransportError::home_offline()),
             Err(error) => return Err(error),
         };
         relay.reached = true;
@@ -258,7 +259,7 @@ impl SyncClient {
     ) -> Result<Option<(SealedVaultBundle, SealedKeyPads)>, TransportError> {
         let budgets = residence_budgets(&self.vault)?;
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::home_offline());
         };
         fetch_generation(&mut PartSource::Machine(&mut rpc), generation).await
     }
@@ -299,10 +300,14 @@ pub(crate) async fn relay_sealed_bundle(
         // With no erase or slot due, a home out of reach is no failure: the
         // next tick serves the admissions.
         _ if !erase_due && !slot_due => return Ok(relay),
-        Ok(None) => return Err(TransportError::Storage("home node offline".into())),
+        Ok(None) => return Err(TransportError::home_offline()),
         Err(error) => return Err(error),
     };
     relay.reached = true;
+    // A missing publication grant must not stop the existing admission/erase work.
+    if let Err(error) = publication_access::serve(vault, &mut rpc).await {
+        tracing::warn!(%error, "publication grants remain pending");
+    }
     // The admissions first: an old reader with no erase or slot work still
     // grants (FIX 4271). A home that refuses them still takes the rest.
     match access::serve_admissions(vault, &mut rpc).await {

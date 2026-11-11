@@ -28,6 +28,14 @@ pub(super) async fn handle_selector_fetch(
     state: &mut ConnState,
     session_gone: &(dyn Fn() -> bool + Sync),
 ) -> Result<ControlFlow<()>, ProtocolError> {
+    // FIX 4748: a selector fetch answers with the window's history from an
+    // empty vector, and a socket served as a peer is sent state-only copies:
+    // the federation lane is the home's.
+    if state.peer_served {
+        return Err(ProtocolError::InvalidPayload(
+            "a peer serves no selector fetch: only state-only window copies",
+        ));
+    }
     state.bind_window_sync_mode(WindowSyncMode::Selector)?;
     // Owner/shared-secret upgrade is NOT a stable peer identity. The MACed,
     // live app-tier credential must name the actual granted principal.

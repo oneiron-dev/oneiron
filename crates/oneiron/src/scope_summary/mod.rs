@@ -20,6 +20,7 @@ mod purpose;
 pub use public_types::*;
 mod request;
 mod scrub;
+mod self_model;
 mod session;
 mod status;
 pub(crate) use arc_gate::{ArcPendingCause, next_arc_due_in_txn, sweep_due_arcs_in_txn};
@@ -53,8 +54,10 @@ pub(crate) use doors::{
 pub(crate) use request::{ComposedSummary, ScopeSummaryPlan, decode_target};
 pub use request::{ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget};
 pub(crate) use scrub::scrub_withdrawn_copy_in_txn;
+pub(crate) use self_model::SelfModelRead;
 pub(crate) use session::{enqueue_session_summary_in_txn, session_summary_excluded};
 pub(crate) use word_sources::{WordSources, word_sources_in, word_sources_through_in};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

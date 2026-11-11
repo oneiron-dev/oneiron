@@ -7,13 +7,20 @@ Execution is Linux-only. **Do not run Bun, Node, Python, a server, or a test on 
 coordinator Mac.** Build/package preparation belongs to the fleet lane.
 
 The public binding snapshot is main `c716fa9921692224fe46114b283993d5d81f6c8c`.
-The pinned plan has 29 files, 242 IDs, 443 public registry rows, and three explicit
-excluded rows. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
+The pinned plan has 29 files, 251 IDs, 443 public registry rows, and three explicit
+excluded rows. The owner plan's 242 IDs plus MUSE-RECALL-01..08 in `retrieval.test.ts`
+(Engine order, 10 Nov 12:54 JST) and MUSE-RECALL-09 (Engine ruling E2E4-RECALL-CONTRACT,
+11 Nov 05:37 JST) cite their drivable PROMISE-REGISTER ids in
+`promises`; each `source` lists those promises' canon anchors. The retrieval file
+has 21 cases and an estimated 300 seconds. The plan pin's `expectedFacts` counts
+are derived from the plan, not maintained independently, and the `support/run.ts`
+preflight reads its file and ID counts from that pin. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
 The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while
 `vault.claims.upsert` and paged `vault.receipts` use the generated snake_case
 DTOs. Bind each method's declared type rather than applying a casing rule to
 all SDK methods.
 Runtime OpenAPI is a binding diagnostic, never an expected-behavior oracle.
+Schema artifacts retain only SHA-256, byte length and path count, not the full body.
 
 ## Files and ownership
 
@@ -40,8 +47,10 @@ native addon. No lockfile was generated on the Mac.
 
 Use `defineFile` once at module scope. Import Bun's `test` and `afterAll` in the
 **test file**, not in a process launcher. Use `suite.test` for every planned ID;
-use `suite.todo` for unavailable typed doors. Do not use `.skip`, `.only`,
-`.failing`, native unregistered tests, or concurrent tests.
+use `suite.todo` for unavailable typed doors unless the owner explicitly defers the
+case. Owner-deferred cases use `suite.skip` with the missing-door reason and FIX id;
+keep their complete journey plans. Do not use native `.skip`, `.only`, `.failing`,
+unregistered tests, or concurrent tests.
 
 ```ts
 import { afterAll, expect, test } from "bun:test";
@@ -52,7 +61,7 @@ import { loadFixtures } from "./support/fixtures.ts";
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
 const suite = defineFile(import.meta, { profile, slots: 1 });
-afterAll(suite.flush); // Required even when every ID is a TODO.
+afterAll(suite.flush); // Required even when every ID is a TODO or SKIPPED.
 
 // Registration form (put only the IDs assigned to this file here):
 // suite.test(test, "BOOT-01", "model-free restart", async () => { ... });
@@ -72,7 +81,13 @@ request/result shape in the design notes beside that TODO. Do not cast the name
 to `FacadeVerb`, route it through a generic endpoint, execute code instead, or
 use internal state as a substitute. For G09's additional hook families, use
 `"waits on owner question G09"`. A TODO is a BLOCKED report row and makes a
-required run non-green. It is not passing coverage.
+required run non-green. It is not passing coverage. The owner ruling of 7 Nov 10:33,
+relayed by the Engine at 10:35, instead defers BOOT-06, MEMORY-04, MEMORY-06,
+PRIVACY-03, PRIVACY-06 and PRIVACY-07 as SKIPPED until their doors exist.
+RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). MEMORY-03 is also SKIPPED while its complete journey still needs
+the Observed producer (FIX 21842). These cases remain registered with their reasons
+and FIX ids, are not failures, and never hold a run or a runtime grant. They are not
+passing feature coverage.
 
 ## EngineFixture
 
@@ -100,6 +115,7 @@ const engine = await EngineFixture.start({
 | `restart()` | Stop and re-serve only this fixture's vault, using the same credential. |
 | `kill()` | SIGKILL the owned server group. First observe a public receipt/ACK/provider barrier. |
 | `close({retainVault?})` | Close peers/server and remove the private root unless explicit local retention. |
+| `serverOutputHas(values)` | After `close()`: `{found, truncated}` for the raw stdout/stderr of every server launch, restarts included. In memory only; never persisted or returned. A leak case asserts `{found:false,truncated:false}`. |
 | `artifacts` | Redacting JSON writer; never uploads anything. |
 
 The fixture defaults to authenticated, model-free `init --embedder none
@@ -135,13 +151,31 @@ For the public embedding/tagger adapters, use typed options:
 - `capabilities`: required host capabilities from the prepared inventory.
 - `ready(client)`: optional predicate of **public reads**, observed within 10s
   after health/pairing. Use it for the requested provider/organ readiness.
-- `requireHttpDoor(path, method)`: checks an existing typed route's binding in
-  authenticated OpenAPI. It does not turn a missing designed door into a call.
+- `requireHttpDoor(path, method)`: checks non-facade endpoint bindings against
+  the startup OpenAPI snapshot, refreshed only after a fixture restart. OpenAPI
+  is a partial facade projection, not the facade contract. Generated facade SDK
+  types and actual typed calls establish facade availability.
 
 Readiness observations may repeat. Mutations and failed public calls are never
 silently retried. A bind collision is an explicit failure, not a hidden retry.
 Fresh ephemeral reservations reduce collisions; pairing proves the answering
 server owns this fixture's bootstrap link.
+
+## Request and startup diagnostics
+
+HTTP, CLI and SDK calls persist redacted request-start records before the call,
+with a step id, operation, path and start time. Completion/error records carry
+that id. If the flow expires while its start diagnostic is being written, a
+same-id cancellation record says that the operation was not launched. Each case
+keeps its own deadline and abort state, so a late continuation cannot start calls
+under the next case's lifecycle. SDK batches also write per-operation markers
+inside the native process.
+Fixture startup emits stage-start markers before init, bootstrap, launch, pairing
+and schema discovery, including before a second vault has a launch artifact.
+An unmatched request-start identifies a call that has no captured completion;
+it is not a causal diagnosis. No credential, request body or SDK value is logged.
+Unexpected deterministic embedding inputs are recorded with a digest and redacted
+text; they still fail the strict vector fixture until explicitly authored.
 
 ## Public clients
 
@@ -159,7 +193,9 @@ server owns this fixture's bootstrap link.
   union; `McpRpcError.response` preserves the full refusal. Tool `isError`
   results remain their actual protocol bodies. No tool-mode auto-switch occurs.
 - `await engine.websocket(actor?)` opens the real `/ws`, sends binary hello
-  `[3,8]`, and uses MessagePack tags 30/31. `call(verb, input)` is sequential RPC
+  `[3,8]`, then binds the connection in band (`auth.bind` as request id 0, with
+  a fresh holder proof) and waits for its null reply, so app-tier calls are
+  admitted. It uses MessagePack tags 30/31. `call(verb, input)` is sequential RPC
   and returns both the decoded value and original chunk frames, including
   receipts. For subscription/multiplexing checks use `send(tag, envelope)` and
   `next(timeoutMs)`, assemble chunks before ACK, and retain binary cursors.
@@ -172,6 +208,10 @@ server owns this fixture's bootstrap link.
   installed wheel. Targets are `{mode:"remote",url,credential}` or
   `{mode:"embedded",path,dimensions?}`. Operations are typed `witness`,
   `claimUpsert`, `recall`, `receipts`; Python inputs are native snake_case.
+  The Node driver also takes `{verb:"facade", path, input}`: any generated
+  facade method by its dotted SDK path as the package spells it, no casing conversion.
+  Each Node result row also carries `receiptRef`: the handle's `lastReceiptRef()` right
+  after that operation, refusals included.
   Per-operation `{ok:false,error}` retains SDK errors; assert them explicitly.
   Broader SDK journeys may use an owned real process and the public package,
   never a private binding or Rust helper. `sdk.pair(link)` redeems through the
@@ -199,8 +239,9 @@ they do not estimate tokens or derive answers from requests.
 A step or stream part may name a barrier. `awaitBarrier(name)` waits until the
 external adapter reaches it; `releaseBarrier(name)` releases that boundary.
 It does **not** claim an internal transaction committed. Early release works.
-`seenFixtureCalls` is an in-memory snapshot of sequence, body, fixture ID, role
-and purpose. Unexpected, extra or unconsumed calls fail `close` and the flow.
+`seenFixtureCalls` is an in-memory snapshot of sequence, body, fixture ID, role,
+purpose and HTTP request headers (lower-case names). The provider artifact keeps
+only content-type-like header values; every other header value is persisted as `[REDACTED]`. Unexpected, extra or unconsumed calls fail `close` and the flow.
 There is no catch-all fallback. Exact JSON/bytes fixtures cover HTTP
 Oneironer/media/connectors. Optional `sockets` scripts declare `id`, `origin`,
 `path`, `role`, `purpose`, and ordered `exchanges` of `{request,replies}`. Each
@@ -290,6 +331,11 @@ placeholder executable digests that could accidentally pass.
   `sampling`, and explicit role-to-`real`/`stub` `bindings`. It must have a real
   binding; missing weights/config/tokenizer blocks rather than changing models.
 
+The immutable build inventory is verified once per suite-file process in a
+file-level hook, outside the flow timer. Cached verification is keyed by manifest
+path, digest and profile; every distinct key keeps the full asset/provenance checks.
+Assets must remain immutable for that frozen run.
+
 The package pins Bun 1.3.4, Node 22.16.0 and Python 3.12.11 as reference runtime
 revisions in the inventory requirements. Other dependency pins are in
 `package.json`. Preparation and any typecheck/install happen on Linux, never
@@ -316,26 +362,30 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 2 \
 ```
 
 The report records the selected files and `scope.completePlan`. A partial run
-never claims completion of the 242-ID plan. The prepared manifest must identify
+never claims completion of the 251-ID plan. The prepared manifest must identify
 the booked fleet job; never run the suite outside that job or on the Mac.
 
 ## Reports, cleanup and redaction
 
-Every selected planned ID gets PASS, FAIL or BLOCKED, duration and a reason
-where needed. Coverage includes the pinned row map and explicit exclusions. A
-run succeeds only if all selected IDs pass, file declarations/IDs match the
-plan, each PASS agrees with Bun's JUnit, and the whole run (including preflight
-and cleanup) stays within 600 seconds. A TODO or failing test keeps that run
-non-green but does not turn an independently passing sibling into FAIL. Full
-plan completion additionally requires all 242 IDs. Partial and optional-profile
+Every selected planned ID gets PASS, FAIL, BLOCKED or owner-deferred SKIPPED,
+duration and a reason where needed. Coverage includes the pinned row map and
+explicit exclusions. A run succeeds only if every selected ID is PASS or SKIPPED,
+file declarations/IDs match the plan, each PASS agrees with Bun's JUnit, each
+SKIPPED agrees with a raw JUnit skip, and the whole run (including preflight and
+cleanup) stays within 600 seconds. A TODO or failing test keeps that run non-green
+but does not turn an independently passing sibling into FAIL. Owner-deferred
+SKIPPED cases do not hold a run or grant and are never counted as PASS. Full feature
+coverage still requires passing evidence for all 251 IDs. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
-Bun 1.3.4's JUnit is sent to `/dev/stdout` (a pipe), parsed in memory, and checked
-against registered IDs. The owned file process artifact retains redacted stdout/stderr,
-including the JUnit, up to the process reader's existing bounds. `fileDiagnostics` in the
-aggregate records JUnit presence, case/match/unknown/duplicate counts, file exit/signal,
-and registration errors. A harness error remains a FAIL but does not replace an existing
+Bun 1.3.4 writes JUnit to a real per-file `.junit.xml` outfile under the protected
+report directory. The runner reads that file and checks it against registered IDs;
+subprocess stdout is not a JUnit outfile. A separate `.junit.json` artifact carries a
+redacted XML copy for export. The original XML stays local to the fleet job. Owned file
+process artifacts retain bounded, redacted stdout/stderr separately. `fileDiagnostics`
+in the aggregate records JUnit presence, case/match/unknown/duplicate counts, file
+exit/signal, and registration errors. A harness error remains a FAIL but does not replace an existing
 per-file reason; it is recorded separately as `harnessError`. Wrapper cleanup errors are
 recorded separately as `cleanupError`, preserving an earlier reason.
 
@@ -354,7 +404,9 @@ operation carrying a generated secret-test value. Never log credentials, raw
 SDK process output, pairing links, or recognisable secret sentinels. Use
 `artifacts.json(name, value)` rather than direct log files. HTTP automatic logs
 contain routing/status metadata only; explicitly save sanitized bodies and
-public receipt IDs when they matter to a failure.
+public receipt IDs when they matter to a failure. Holder-proof exact redaction is
+scoped to its request; credential, binding-header/key and private-output rules
+remain active without retaining every new proof globally.
 
 Providers, sockets and engines register end-of-flow cleanup automatically.
 `ownResource(close)` covers additional fixture services; `ManagedProcess` and
@@ -362,7 +414,9 @@ Providers, sockets and engines register end-of-flow cleanup automatically.
 On failure/deadline/interruption the runner kills owned groups, including groups
 left by an exited file process. Temp vaults are removed unless a test explicitly
 calls `engine.close({retainVault:true})`; retained private roots stay local,
-are listed in a redacted retention artifact, and are never uploaded.
+are listed in a redacted retention artifact, and are never uploaded. For the
+MEMORY project-question diagnostic only, `E2E_MEMORY_RETAIN_VAULT=1` makes those
+five cases retain their vaults, including a setup barrier failure.
 
 No engine constants changed. Harness constants are 10s health/readiness and
 normal request bounds, 30s normal flow budget, 2s stop grace, 25ms bounded

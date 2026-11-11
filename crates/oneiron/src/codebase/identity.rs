@@ -39,7 +39,9 @@ impl RepoIdentity {
     #[must_use]
     pub fn from_location(repo: &RepoRef) -> Self {
         Self(match repo {
-            RepoRef::LocalFolder { path, .. } => format!("{LOCAL_PREFIX}{path}"),
+            RepoRef::LocalFolder { path, .. } | RepoRef::LocalCapture { path } => {
+                format!("{LOCAL_PREFIX}{path}")
+            }
             RepoRef::GitHubAtCommit { owner, repo, .. } => {
                 format!("{GITHUB_PREFIX}{owner}/{repo}")
             }

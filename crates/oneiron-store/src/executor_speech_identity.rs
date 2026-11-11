@@ -2,41 +2,17 @@
 //! compaction session, and the domain-tagged derivation they share. The code
 //! run layer (`code_run`) derives its conversation, turn and message ids with
 //! it; the store's compaction packet source finds a run's session and turn.
-use sha2::{Digest, Sha256};
-
-use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::entity_id::derived_domains::{
+    EXECUTOR_COMPACTION_SESSION, EXECUTOR_SPEECH_TURN,
+};
 
-const EXECUTOR_SPEECH_TURN_DOMAIN: &[u8] = b"oneiron:executor-speech-turn:v1";
-
-/// Domain tag for a run's compaction session.
-const EXECUTOR_COMPACTION_SESSION_DOMAIN: &[u8] = b"oneiron:executor-compaction-session:v1";
-
-/// Derives one deterministic entity id from a domain tag and length-prefixed
-/// material, re-salting past a reserved sentinel rather than truncating into
-/// one.
+/// Derives one deterministic entity id from a registered domain and its
+/// parts by the one derived-id rule, [`EntityId::derive`] (FIX 9711): a
+/// result in the reserved range is refused, never re-salted.
 pub fn derived_executor_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
-    for salt in 0..=u8::MAX {
-        let mut hasher = Sha256::new();
-        hasher.update(domain);
-        hasher.update([salt]);
-        for part in parts {
-            let len = u64::try_from(part.len())
-                .map_err(|_| Error::ArithmeticOverflow("executor speech id material"))?;
-            hasher.update(len.to_le_bytes());
-            hasher.update(part);
-        }
-        let digest = hasher.finalize();
-        let mut bytes = [0_u8; 16];
-        bytes.copy_from_slice(&digest[..16]);
-        if let Ok(id) = EntityId::from_bytes(bytes) {
-            return Ok(id);
-        }
-    }
-    Err(Error::InvariantViolation(
-        "executor speech id derivation failed",
-    ))
+    EntityId::derive(domain, parts)
 }
 
 /// The turn one run's speech appends to.
@@ -47,10 +23,10 @@ pub fn derived_executor_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
 pub fn executor_speech_turn_id(run_ref: &str, run_id: Option<EntityId>) -> Result<EntityId> {
     match run_id {
         Some(run_id) => derived_executor_id(
-            EXECUTOR_SPEECH_TURN_DOMAIN,
+            EXECUTOR_SPEECH_TURN,
             &[run_ref.as_bytes(), run_id.as_bytes()],
         ),
-        None => derived_executor_id(EXECUTOR_SPEECH_TURN_DOMAIN, &[run_ref.as_bytes()]),
+        None => derived_executor_id(EXECUTOR_SPEECH_TURN, &[run_ref.as_bytes()]),
     }
 }
 
@@ -62,7 +38,7 @@ pub fn executor_speech_turn_id(run_ref: &str, run_id: Option<EntityId>) -> Resul
 /// run can address it.
 pub fn executor_compaction_session_id(run_ref: &str, run_id: EntityId) -> Result<EntityId> {
     derived_executor_id(
-        EXECUTOR_COMPACTION_SESSION_DOMAIN,
+        EXECUTOR_COMPACTION_SESSION,
         &[run_ref.as_bytes(), run_id.as_bytes()],
     )
 }

@@ -28,13 +28,15 @@ pub use lifecycle::MessageStreamPump;
 pub use refused::StreamRecoveryRefusal;
 pub(in crate::memory::witness) use session::SessionStreamTerminal;
 pub use session::{
-    SessionMessageStream, SessionStreamEnd, SessionStreamOutcome, SessionStreamPartial,
+    SessionMessageStream, SessionStreamEnd, SessionStreamFinished, SessionStreamOutcome,
+    SessionStreamPartial,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use storage::Seed;
 pub(crate) use storage::{
-    erase_stream_seeds_in_txn, message_stream_finality_in_txn, redact_receipt_assertions_in_txn,
+    erase_stream_seeds_in_txn, message_stream_finality_in_txn,
+    message_stream_held_generations_in_txn, redact_receipt_assertions_in_txn,
     scrub_stream_seed_actor_in_txn,
 };
 pub(in crate::memory::witness) use storage::{

@@ -63,6 +63,10 @@ impl Memory<'_> {
                 )?,
             }
             planned.body = planned.envelope.encode_body()?;
+            // A source-bound row is stored as the same parts, stamped.
+            if planned.stamped.is_some() {
+                planned.stamped = Some(planned.envelope.encode_source_bound_body()?);
+            }
         }
         Ok(plan)
     }

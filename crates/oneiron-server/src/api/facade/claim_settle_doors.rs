@@ -3,8 +3,9 @@
 //! them, so the generated HTTP facade handler and the MCP dispatcher call
 //! them by the name every host door has, and a tool call, a code-mode call
 //! and an SDK call meet one admission: the vault owner's proof, as
-//! `/v1/owner` takes it (`owner_routes::owner`). The engine checks that
-//! proof again in the writer that settles.
+//! `/v1/owner` takes it (`owner_routes::owner`), or an explicitly granted
+//! holder on their own credential. The engine checks that proof and Grant
+//! again in the writer that settles.
 //!
 //! Each acts on the caller's own credential handle, at its locality, so the
 //! claim is read under the caller's own read scope, and lists the rows its
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
     ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleRequest, ClaimSettlement,
-    MemoryResult,
+    MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
@@ -28,6 +29,22 @@ fn owner(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<Authe
     super::owner_binding::facade_owner(server, auth, verb)
 }
 
+/// Principal-only precheck. The target and named Grant are checked by the
+/// native door, not inferred from this admission or caller JSON.
+pub(super) fn settler_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
+    if owner(server, auth, verb).is_ok() {
+        return Ok(());
+    }
+    super::owner_binding::facade_caller_or(server, auth, || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} needs the owner's proof or the granted holder's own credential"),
+            &["Present your own credential and the explicit native claim-review Grant."],
+        )
+    })
+    .map(drop)
+}
+
 /// `vault.claims.review`: one proposed claim and the handle that settles it.
 pub(crate) async fn vault_claims_review(
     server: &Arc<SyncServer>,
@@ -37,6 +54,15 @@ pub(crate) async fn vault_claims_review(
     input: ClaimProposalReviewRequest,
 ) -> Listed<ClaimProposalReview> {
     const VERB: &str = "vault.claims.review";
+    if input.grant_ref.is_some() {
+        if let Err(refusal) = settler_admits(server, auth, VERB) {
+            return refused(refusal);
+        }
+        return credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+            memory.claim_review_as_grant_holder(&input)
+        })
+        .await;
+    }
     let proof = match owner(server, auth, VERB) {
         Ok(proof) => proof,
         Err(refusal) => return refused(refusal),
@@ -57,6 +83,15 @@ pub(crate) async fn vault_claims_settle(
     input: ClaimSettleRequest,
 ) -> Listed<ClaimSettlement> {
     const VERB: &str = "vault.claims.settle";
+    if input.grant_ref.is_some() {
+        if let Err(refusal) = settler_admits(server, auth, VERB) {
+            return refused(refusal);
+        }
+        return credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+            memory.claim_settle_as_grant_holder(&input)
+        })
+        .await;
+    }
     let proof = match owner(server, auth, VERB) {
         Ok(proof) => proof,
         Err(refusal) => return refused(refusal),

@@ -69,7 +69,7 @@ pub(super) struct LeaseRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LeaseState {
     Open,
-    Settled { absolute_used_units: u64 },
+    Settled { charged_units: u64 },
     Aborted,
 }
 

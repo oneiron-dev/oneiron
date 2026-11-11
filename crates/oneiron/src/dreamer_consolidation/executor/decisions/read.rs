@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use super::{VERDICT_CEILING, holds, went_up};
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelledRungs};
 use crate::dreamer_consolidation::executor::{ConsolidationDecisions, ConsolidationExecutor};
-use crate::dreamer_consolidation::provenance::{KeptAsk, KeptDecision};
+use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::dreamer_consolidation::roles::RoleCall;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_wake::WakePassDeadline;
@@ -22,7 +22,7 @@ use crate::llm::decision::{
 use crate::model_decision::{
     DecisionQuestion, DecisionRung, EvidenceVersion, HumanAskReason, ProviderPin, Reversibility,
 };
-use crate::model_step_context::DurableStepContext;
+use crate::model_step_context::{DurableStepContext, StepEffectBinding};
 use crate::model_step_error::DurableStepResult;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::WriteActor;
@@ -79,7 +79,7 @@ impl Decider<'_> {
     /// `questions` over `read`'s state through the host's ladder, `read`'s role generation
     /// the dial's first read, on the time the pass has left, any ask going to `read.to` for
     /// the work `read.correlation` names. Each generation that finished is pushed onto
-    /// `spent` (its request hash, usage and memoized flag) as it finishes, whatever the pack's outcome. None
+    /// `spent` (its request hash, usage and optional durable binding and memoized flag) as it finishes, whatever the pack's outcome. None
     /// when the step trapped: the attempt is parked.
     ///
     /// Every read shows the pack through `labels` (FIX 7506): the generation's questions by
@@ -94,7 +94,7 @@ impl Decider<'_> {
         read: ScopedRead<'_>,
         questions: &[DecisionQuestion],
         labels: &CallLabelMap,
-        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = read.step.vault;
         let principal = self.actor.entity_ref();
@@ -143,6 +143,7 @@ impl Decider<'_> {
         // Each rung past the generated read shows the pack's choices alike.
         let rungs = LabelledRungs::of(&held, wire);
         let ladder = rungs.ladder(&held);
+        let _ = vault.measure_decision_pack(&self.decisions.bands, pack.len());
         let decided = ladder
             .run_pack_generated_spent(
                 &rung,
@@ -208,11 +209,13 @@ impl Decider<'_> {
             // The receipt names the role the ask went to and who answered it,
             // actor-free (FIX 2225); the kept ask beside it stays as it was.
             if let Some(ask) = &ask {
-                decision.receipt.bind_ask(ask);
+                crate::llm::decision::decision_receipt_bind_ask(&mut decision.receipt, ask);
             }
             kept.push(KeptDecision {
                 decision,
-                ask: ask.as_ref().map(KeptAsk::of),
+                ask: ask
+                    .as_ref()
+                    .map(crate::dreamer_consolidation::kept_ask::kept_ask_of),
             });
         }
         Ok(Some(kept))

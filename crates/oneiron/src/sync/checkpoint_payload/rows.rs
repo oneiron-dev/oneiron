@@ -14,6 +14,7 @@ use crate::error::Result;
 use crate::note::{NoteChange, NoteOperation, PendingNoteRequest};
 use crate::side_table::{
     SYNC_QD_E, SYNC_QN_E, SYNC_RESIDENCE_ITEM_BLOB, SYNC_RESIDENCE_ITEM_DOCUMENT,
+    SYNC_RESIDENCE_ITEM_SOURCES,
 };
 use crate::store::checkpoint_payload::rows::{OwnerRef, RowDb, RowLocator, bad_part};
 use crate::sync::transport::{DocumentFrame, TAG_DOCUMENT, decode_document, document_sub_tags};
@@ -66,6 +67,14 @@ pub(super) fn place(row: &CapturedSyncRow<'_>, owners: &dyn SyncPayloadOwners) -
 fn residence_item(key: &[u8], value: &[u8], owners: &dyn SyncPayloadOwners) -> Placement {
     if let Some(id) = id_after(key, SYNC_RESIDENCE_ITEM_BLOB.prefix) {
         return super::owners::entity_row(owners.owner_entity(id), value, owners);
+    }
+    if let Some(id) = id_after(key, SYNC_RESIDENCE_ITEM_SOURCES.prefix) {
+        return match crate::sync::residence::CachedItemWorlds::decode(value) {
+            Some(worlds) if worlds.names(id) => Placement::owned(OwnerRef::entity(&id), Vec::new()),
+            _ => {
+                Placement::unclassified(Some(OwnerRef::entity(&id)), SyncUnclassified::Undecodable)
+            }
+        };
     }
     let Some(id) = id_after(key, SYNC_RESIDENCE_ITEM_DOCUMENT.prefix) else {
         return Placement::unclassified(None, SyncUnclassified::Undecodable);
@@ -122,8 +131,17 @@ fn pending_note(key: &[u8], value: &[u8]) -> Placement {
 /// admitted (FIX 2375).
 fn note_request(note: EntityId, request: &str, value: &[u8]) -> Option<Vec<OwnerRef>> {
     let queued = PendingNoteRequest::decode(value)?.frame;
-    let frame = frame(queued)
-        .filter(|frame| frame.entity == note && frame.kind == document_sub_tags::NOTE_OPS)?;
+    let frame = frame(queued).filter(|frame| frame.entity == note)?;
+    if frame.kind == document_sub_tags::NOTE_FORK_UPLOAD {
+        // A fork upload's marker names its fork and holds no text; the fork
+        // stays in its own rows (FIX 12789).
+        let (upload, _, operations) =
+            crate::note::NoteForkUpload::decode_payload(frame.payload).ok()?;
+        return (upload.fork.to_hex() == request && operations.is_empty()).then(Vec::new);
+    }
+    if frame.kind != document_sub_tags::NOTE_OPS {
+        return None;
+    }
     let operation = NoteOperation::decode(frame.payload).ok()?;
     if operation.request_id.to_hex() != request {
         return None;
@@ -144,11 +162,17 @@ pub(super) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
         id_after(&at.key, SYNC_RESIDENCE_ITEM_BLOB.prefix).is_some()
             && EntityMetadataHeader::parse(value).is_some()
     };
+    let sources = || {
+        id_after(&at.key, SYNC_RESIDENCE_ITEM_SOURCES.prefix).is_some_and(|id| {
+            crate::sync::residence::CachedItemWorlds::decode(value)
+                .is_some_and(|worlds| worlds.names(id))
+        })
+    };
     let request = || {
         pair_after(&at.key, SYNC_QN_E.prefix)
             .is_some_and(|(note, request)| note_request(note, request, value).is_some())
     };
-    if at.db == RowDb::SyncState && at.path.is_empty() && (blob() || request()) {
+    if at.db == RowDb::SyncState && at.path.is_empty() && (blob() || sources() || request()) {
         Ok(())
     } else {
         Err(bad_part())

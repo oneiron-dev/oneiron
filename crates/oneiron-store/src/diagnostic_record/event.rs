@@ -102,6 +102,8 @@ pub enum DiagnosticEventClass {
     /// report is the agent's own word: it feeds the Coach's Issues job and
     /// never a tripwire.
     AgentBlocked,
+    /// Rows whose durable write failed to commit after its existing retries.
+    DurableWriteFailure,
 }
 
 impl DiagnosticEventClass {
@@ -124,6 +126,7 @@ impl DiagnosticEventClass {
             Self::SilentConversationDegradation => "silent_conversation_degradation",
             Self::AgentHealth => "agent_health",
             Self::AgentBlocked => "agent_blocked",
+            Self::DurableWriteFailure => "durable_write_failure",
         }
     }
 
@@ -146,6 +149,7 @@ impl DiagnosticEventClass {
             "silent_conversation_degradation" => Self::SilentConversationDegradation,
             "agent_health" => Self::AgentHealth,
             "agent_blocked" => Self::AgentBlocked,
+            "durable_write_failure" => Self::DurableWriteFailure,
             _ => return None,
         };
         Some(parsed)
@@ -154,7 +158,7 @@ impl DiagnosticEventClass {
     /// Every class, in declaration order. Census helper for tests and callers
     /// that need to iterate the closed vocabulary.
     #[must_use]
-    pub const fn all() -> [Self; 15] {
+    pub const fn all() -> [Self; 16] {
         [
             Self::TestFailure,
             Self::BeamEvalRegression,
@@ -171,6 +175,7 @@ impl DiagnosticEventClass {
             Self::SilentConversationDegradation,
             Self::AgentHealth,
             Self::AgentBlocked,
+            Self::DurableWriteFailure,
         ]
     }
 }

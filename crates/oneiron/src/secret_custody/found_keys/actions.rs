@@ -83,7 +83,7 @@ impl Vault {
                 by: Some(actor),
                 at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
                 receipt: gate_ref(receipt.decision_id()),
-                grant_ref: receipt.grant_ref(),
+                grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
             };
             found.settle(&self.store, txn, settled.clone())?;
             Ok(settled)
@@ -431,7 +431,9 @@ pub(super) fn card_in_txn(
 ) -> Result<FoundKeyCard> {
     let rec = read_secret_custody_admission_in_txn(&vault.store, txn, &key.custody)?;
     let mut actions = Vec::new();
-    if !key.kept_by_owner() {
+    if key.kept_by_owner() {
+        actions.push(FoundKeyAction::ReEnter);
+    } else {
         let status = rec.as_ref().map(|rec| rec.status);
         if status == Some(SecretCustodyStatus::Active) {
             actions.extend([FoundKeyAction::Rotate, FoundKeyAction::Grant]);

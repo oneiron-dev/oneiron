@@ -207,6 +207,7 @@ fn text_turns_in_txn(
 // `settlement` is impl-only: it re-opens `impl DreamerWakeDriver` and owns no
 // name the rest of the crate reaches for, so it needs no re-export.
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

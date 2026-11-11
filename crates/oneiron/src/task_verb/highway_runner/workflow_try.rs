@@ -448,6 +448,7 @@ fn report_in(
         TaskReportBody::Done {
             result_ref: note,
             confession: None,
+            confession_structured: None,
         }
     } else {
         TaskReportBody::Failed {
@@ -625,7 +626,12 @@ fn land_report_note(
     if end.settles_on_bind {
         batch().apply(&mut txn)?;
     } else {
-        let mut content = ActorContentTxn::new(vault, &mut txn, end.bound_by)?;
+        let mut content = ActorContentTxn::new(
+            vault,
+            &mut txn,
+            end.bound_by,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )?;
         content.apply_batch(batch())?;
         content.finish()?;
     }

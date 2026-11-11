@@ -19,6 +19,14 @@
 //! `comments_extended` record. `CommentResolve` touches only the
 //! `comments_extended` sidecar (a flat typed list).
 //!
+//! `EditCommentRuns` is the paragraph-scoped comment-body edit: it reuses the
+//! shared segment builder plus the shared exact-marks post-pass over one
+//! story-local paragraph, then settles the fresh pair to Normal annotation
+//! text in both outer modes (never `w:ins`/`w:del` in comments.xml), preserving
+//! author/date/tracking status/`para_id`, every other block, the
+//! `commentsExtended` sidecar, and all body anchors. The shared builder and
+//! the create/reply/delete paths above are unchanged.
+//!
 //! ## Reply threading (MS-DOCX §2.5.1 commentsExtended + own anchor markers)
 //!
 //! A reply is NOT anchor-free. Real Word gives every reply its own
@@ -83,7 +91,8 @@
 //! the comment is retained, never orphaned.
 //!
 //! v1 scope (fail loud beyond it, per CLAUDE.md "start narrow"):
-//! - `CommentCreate` targets top-level body paragraphs only;
+//! - `CommentCreate` targets a top-level paragraph or direct cell paragraph in
+//!   the named native story; body targets keep the original top-level lookup;
 //! - the body must be non-empty (an empty comment is refused, not defaulted);
 //! - `CommentDelete` deletes the whole discussion rooted at the target: the
 //!   comment PLUS every reply that threads under it, transitively. For each
@@ -93,7 +102,12 @@
 //!   thread) and keeps `commentsExtended` coherent — deleting a leaf reply
 //!   removes only that reply.
 
-use super::super::{EditError, EditNote, find_block_index};
+use super::super::{
+    EditError, EditNote, MaterializationMode, ParagraphContent, apply_segment_replace_paragraph,
+    collect_anchor_inventory, extract_text_sections, find_block_index, has_structural_markers,
+    normalize_expect_punctuation, paragraph_visible_text, reposition_segment_replacement_markers,
+    set_exact_replacement_marks, validate_block_is_editable, validate_preserved_inlines,
+};
 use crate::domain::{
     BlockNode, CanonDoc, CommentExtended, CommentStory, InlineNode, NodeId, OpaqueKind,
     ParagraphNode, RevisionInfo, TrackedBlock, TrackedSegment, TrackingStatus,
@@ -164,6 +178,7 @@ fn fresh_para_id(doc: &CanonDoc, comment_id: &str) -> String {
 pub(crate) fn apply_create(
     doc: &mut CanonDoc,
     block_id: &NodeId,
+    story: Option<&super::story_cells::StoryCellAddress>,
     expect: &str,
     occurrence: Option<usize>,
     semantic_hash: Option<&str>,
@@ -177,17 +192,16 @@ pub(crate) fn apply_create(
         return Err(EditError::CommentEmptyBody { step_index });
     }
 
-    // v1: top-level body paragraphs only. A nested paragraph surfaces as
-    // BlockNotFound here, matching the other anchor-splice verbs.
-    let idx = find_block_index(&doc.blocks, block_id).ok_or_else(|| EditError::BlockNotFound {
-        block_id: block_id.clone(),
-        step_index,
-    })?;
+    // Identity stays document-global, even when the anchor is in a note.
+    let comment_id = fresh_comment_id(doc);
+    let para_id = fresh_para_id(doc, &comment_id);
+    let (blocks, content_hash) = comment_blocks_mut(doc, story, step_index)?;
+    let (block, status) = comment_target_mut(blocks, block_id, story.is_some(), step_index)?;
 
     // Block-level tracked status still refuses (a whole inserted/deleted block's
     // existence is contested), but tracked SEGMENTS do NOT — a comment legally
     // anchors on a redlined clause. The refusal names the escape hatch.
-    let block_status = match &doc.blocks[idx].status {
+    let block_status = match status {
         TrackingStatus::Normal => None,
         TrackingStatus::Inserted(_) => Some("inserted"),
         TrackingStatus::Deleted(_) => Some("deleted"),
@@ -201,7 +215,7 @@ pub(crate) fn apply_create(
         });
     }
 
-    match &doc.blocks[idx].block {
+    match &*block {
         BlockNode::Paragraph(_) => {}
         BlockNode::Table(_) => {
             return Err(EditError::NotAParagraph {
@@ -220,7 +234,7 @@ pub(crate) fn apply_create(
     }
 
     if let Some(expected) = semantic_hash
-        && let Err(actual) = check_block_guard(&doc.blocks[idx].block, expected)
+        && let Err(actual) = check_block_guard(block, expected)
     {
         return Err(EditError::BlockSemanticHashMismatch {
             block_id: block_id.clone(),
@@ -230,11 +244,7 @@ pub(crate) fn apply_create(
         });
     }
 
-    // Allocate identity before borrowing the paragraph mutably.
-    let comment_id = fresh_comment_id(doc);
-    let para_id = fresh_para_id(doc, &comment_id);
-
-    let BlockNode::Paragraph(para) = &mut doc.blocks[idx].block else {
+    let BlockNode::Paragraph(para) = block else {
         unreachable!("checked paragraph above");
     };
 
@@ -313,6 +323,10 @@ pub(crate) fn apply_create(
     }
     para.block_text_hash = None;
     para.rendered_text = None;
+    if let Some(content_hash) = content_hash {
+        let nodes: Vec<_> = blocks.iter().map(|block| block.block.clone()).collect();
+        *content_hash = crate::import::compute_story_content_hash(&nodes);
+    }
 
     // Build the comment story body. Its first paragraph carries the w14:paraId
     // that commentsExtended references (and resolve/reply key on).
@@ -341,6 +355,144 @@ pub(crate) fn apply_create(
         copies: copies.count,
         anchored,
     }))
+}
+
+/// Keep the body's original top-level lookup; named stories also address
+/// cell paragraphs by their imported native paragraph id.
+fn comment_target_mut<'a>(
+    blocks: &'a mut [TrackedBlock],
+    block_id: &NodeId,
+    cells: bool,
+    step_index: usize,
+) -> Result<(&'a mut BlockNode, &'a TrackingStatus), EditError> {
+    if let Some(index) = find_block_index(blocks, block_id) {
+        let tracked = &mut blocks[index];
+        return Ok((&mut tracked.block, &tracked.status));
+    }
+    if cells {
+        // Existing direct matches take priority over newly addressable descendants.
+        let has_direct_target = blocks.iter().any(|tracked| {
+            let BlockNode::Table(table) = &tracked.block else {
+                return false;
+            };
+            table
+                .rows
+                .iter()
+                .flat_map(|row| &row.cells)
+                .filter(|cell| cell.v_merge != crate::domain::VerticalMerge::Continue)
+                .flat_map(|cell| &cell.blocks)
+                .any(|block| super::super::block_id_of(block) == block_id)
+        });
+        for tracked in blocks {
+            let BlockNode::Table(table) = &mut tracked.block else {
+                continue;
+            };
+            if let Some(target) =
+                comment_table_target_mut(table, block_id, &tracked.status, !has_direct_target)
+            {
+                return Ok(target);
+            }
+        }
+    }
+    Err(EditError::BlockNotFound {
+        block_id: block_id.clone(),
+        step_index,
+    })
+}
+
+fn comment_table_target_mut<'a>(
+    table: &'a mut crate::domain::TableNode,
+    block_id: &NodeId,
+    inherited: &'a TrackingStatus,
+    descend: bool,
+) -> Option<(&'a mut BlockNode, &'a TrackingStatus)> {
+    for row in &mut table.rows {
+        for cell in &mut row.cells {
+            if cell.v_merge == crate::domain::VerticalMerge::Continue {
+                continue;
+            }
+            let status = [
+                inherited,
+                row.tracking_status.as_ref().unwrap_or(inherited),
+                cell.tracking_status.as_ref().unwrap_or(inherited),
+            ]
+            .into_iter()
+            .find(|status| !matches!(status, TrackingStatus::Normal))
+            .unwrap_or(inherited);
+            for block in &mut cell.blocks {
+                if super::super::block_id_of(block) == block_id {
+                    return Some((block, status));
+                }
+                if descend {
+                    if let BlockNode::Table(nested) = block {
+                        if let Some(target) =
+                            comment_table_target_mut(nested, block_id, status, true)
+                        {
+                            return Some(target);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve only the addressed native story. A local paragraph id never falls
+/// back to the body or another story with the same id.
+fn comment_blocks_mut<'a>(
+    doc: &'a mut CanonDoc,
+    story: Option<&super::story_cells::StoryCellAddress>,
+    step_index: usize,
+) -> Result<(&'a mut Vec<TrackedBlock>, Option<&'a mut String>), EditError> {
+    use super::super::story_addr::StoryRef;
+    use super::footnotes::NoteKind;
+    use super::story_cells::StoryCellAddress;
+
+    match story {
+        None => Ok((&mut doc.blocks, None)),
+        Some(StoryCellAddress::HeaderFooter { story, band }) => {
+            let blocks = match story {
+                StoryRef::Header(part) => doc.headers.iter_mut().find_map(|header| {
+                    (&header.part_name == part && &header.kind == band && !header.synthesized)
+                        .then_some(&mut header.blocks)
+                }),
+                StoryRef::Footer(part) => doc.footers.iter_mut().find_map(|footer| {
+                    (&footer.part_name == part && &footer.kind == band && !footer.synthesized)
+                        .then_some(&mut footer.blocks)
+                }),
+                StoryRef::Body => None,
+            };
+            blocks
+                .map(|blocks| (blocks, None))
+                .ok_or_else(|| EditError::StoryNotFound {
+                    story: story.clone(),
+                    step_index,
+                })
+        }
+        Some(StoryCellAddress::Note { kind, id }) => {
+            let blocks = match kind {
+                NoteKind::Footnote => doc.footnotes.iter_mut().find_map(|note| {
+                    (note.id == *id).then_some((&mut note.blocks, Some(&mut note.content_hash)))
+                }),
+                NoteKind::Endnote => doc.endnotes.iter_mut().find_map(|note| {
+                    (note.id == *id).then_some((&mut note.blocks, Some(&mut note.content_hash)))
+                }),
+            };
+            blocks.ok_or_else(|| EditError::NoteNotFound {
+                note_id: id.clone(),
+                note_kind: match kind {
+                    NoteKind::Footnote => "footnote",
+                    NoteKind::Endnote => "endnote",
+                },
+                step_index,
+            })
+        }
+        Some(StoryCellAddress::Comment { id }) => Err(EditError::CommentAnchorInCommentStory {
+            comment_id: id.clone(),
+            step_index,
+        }),
+    }
 }
 
 pub(crate) fn apply_reply(
@@ -688,6 +840,217 @@ pub(crate) fn apply_delete(
     doc.comments.retain(|c| !delete_ids.contains(&c.id));
     doc.comments_extended
         .retain(|r| !subtree_para_ids.contains(&r.para_id));
+    Ok(())
+}
+
+/// Edit ONE paragraph within a comment story as marked runs.
+///
+/// Paragraph-scoped comment-body edit: the target is the story-local `block_id`
+/// (resolved within the actual `comment_id` story only — never a body id, never
+/// another comment), including later paragraphs of a multi-paragraph comment.
+/// There is deliberately NO multi-paragraph refusal: the op is paragraph-scoped,
+/// so a multi-paragraph body is an ordinary multi-target shape, not an
+/// out-of-scope one.
+///
+/// Validation mirrors the header/footer story edit over the resolved comment
+/// paragraph: tracked block/segment editability, the optional semantic-hash
+/// guard, `expect` within one text section, and opaque/hardbreak preservation
+/// on the ACTUAL target paragraph. The replacement always materializes through
+/// the untouched shared segment builder (even all-plain, empty, or same-text
+/// content — empty runs validly empty the paragraph), then the shared
+/// exact-marks post-pass stamps the new `Inserted` runs. No inherited identity
+/// shortcut applies.
+///
+/// Annotation landing: comments are annotations, never redlines, so the fresh
+/// tracked pair settles to Normal text here in BOTH outer modes — no `w:ins` /
+/// `w:del` is authored into comments.xml. The settle is text-only (the fresh
+/// `Inserted` segment flips to Normal, the `Deleted` tombstone drops), leaving
+/// `formatting_change` (`pPrChange`), section-property changes, paragraph-mark
+/// status, `para_id`, and numbering verbatim. Fresh text nodes follow the shared
+/// builder's formatting-history law; preserved inline atoms retain their history.
+/// Structural markers (bookmark/custom-XML/foreign decorations, comment ranges)
+/// are cloned from the original into the new `Inserted` segment at original text
+/// offsets via the shared offset law before the settle. Opaque
+/// `CommentReference` atoms are excluded from that clone: they ride
+/// `PreservedInlineRef` and the segment builder already cloned them. An empty
+/// replacement has no `Inserted` segment: its markers stay tombstone-only and
+/// drop with it, the same full-deletion law the word-diff path applies when
+/// every token deletes. The story's `content_hash` is recomputed over the ENTIRE
+/// comment afterwards; author/date/tracking status, every other comment block,
+/// the `commentsExtended` sidecar, all body anchors, and the document body are
+/// untouched.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_edit_runs(
+    doc: &mut CanonDoc,
+    comment_id: &str,
+    block_id: &NodeId,
+    expect: &str,
+    semantic_hash: Option<&str>,
+    content: &ParagraphContent,
+    revision: &RevisionInfo,
+    mode: MaterializationMode,
+    rev_counter: &mut u32,
+    step_index: usize,
+) -> Result<(), EditError> {
+    let story = doc
+        .comments
+        .iter_mut()
+        .find(|story| story.id == comment_id)
+        .ok_or_else(|| EditError::CommentTargetNotFound {
+            comment_id: comment_id.to_string(),
+            step_index,
+        })?;
+
+    // Story-local id lookup over the ACTUAL comment blocks. This deliberately
+    // does not call the body `find_block_index`: a colliding body id must
+    // never resolve here, and a comment-local id must never reach the body.
+    let idx = story
+        .blocks
+        .iter()
+        .position(|tb| match &tb.block {
+            BlockNode::Paragraph(p) => &p.id == block_id,
+            BlockNode::Table(t) => &t.id == block_id,
+            BlockNode::OpaqueBlock(o) => &o.id == block_id,
+        })
+        .ok_or_else(|| EditError::BlockNotFound {
+            block_id: block_id.clone(),
+            step_index,
+        })?;
+
+    // Same tracked block/segment editability gate the body and header/footer
+    // edits enforce: no stacking onto a pending tracked change. A comment
+    // paragraph carrying imported redlines refuses here, never stacks.
+    validate_block_is_editable(&story.blocks[idx], step_index)?;
+
+    match &story.blocks[idx].block {
+        BlockNode::Paragraph(_) => {}
+        BlockNode::Table(_) => {
+            return Err(EditError::NotAParagraph {
+                block_id: block_id.clone(),
+                actual_kind: "table",
+                step_index,
+            });
+        }
+        BlockNode::OpaqueBlock(_) => {
+            return Err(EditError::NotAParagraph {
+                block_id: block_id.clone(),
+                actual_kind: "opaque_block",
+                step_index,
+            });
+        }
+    }
+
+    let BlockNode::Paragraph(para) = &story.blocks[idx].block else {
+        unreachable!("checked paragraph above");
+    };
+
+    // Optional semantic-hash precondition (stale-snapshot detection).
+    if let Some(expected) = semantic_hash
+        && let Err(actual) = check_block_guard(&story.blocks[idx].block, expected)
+    {
+        return Err(EditError::BlockSemanticHashMismatch {
+            block_id: block_id.clone(),
+            expected: expected.to_string(),
+            actual,
+            step_index,
+        });
+    }
+
+    // `expect` must appear within a single text section (same contract as the
+    // header/footer story edit). Punctuation-normalized on both sides.
+    let text_sections = extract_text_sections(para);
+    let expect_norm = normalize_expect_punctuation(expect);
+    let expect_found = text_sections
+        .iter()
+        .any(|section| normalize_expect_punctuation(section).contains(&expect_norm));
+    if !expect_found {
+        return Err(EditError::ExpectMismatch {
+            block_id: block_id.clone(),
+            expected: expect.to_string(),
+            actual_text: paragraph_visible_text(para),
+            step_index,
+        });
+    }
+
+    // Opaque-preservation + preserved-inline-order validation on the ACTUAL
+    // target paragraph (never a blanket scan of an unrelated one).
+    let anchors = collect_anchor_inventory(para);
+    validate_preserved_inlines(para, block_id, content, &anchors, step_index)?;
+
+    let BlockNode::Paragraph(para_mut) = &mut story.blocks[idx].block else {
+        unreachable!("checked paragraph above");
+    };
+
+    // Marker source for the accepted reading: the original, minus opaque
+    // CommentReference atoms (those ride PreservedInlineRef, already cloned
+    // into the replacement by the segment builder — re-injecting them would
+    // duplicate their ids). The exclusion shifts no offsets: a CommentReference
+    // atom is zero-width in the offset law. Comments carry no auto-number glyph
+    // to pop (unlike notes), so the source is the paragraph as validated.
+    let marker_source: Vec<TrackedSegment> = para_mut
+        .segments
+        .iter()
+        .map(|seg| TrackedSegment {
+            status: seg.status.clone(),
+            inlines: seg
+                .inlines
+                .iter()
+                .filter(|inline| {
+                    !matches!(
+                        inline,
+                        InlineNode::OpaqueInline(opaque)
+                            if matches!(opaque.kind, OpaqueKind::CommentReference(_))
+                    )
+                })
+                .cloned()
+                .collect(),
+        })
+        .collect();
+    let carry_markers = has_structural_markers(&marker_source);
+
+    // No enclosing block insertion: `validate_block_is_editable` above refuses
+    // a pending-inserted (or otherwise tracked) comment block, so this paragraph
+    // is never itself part of a block insertion.
+    apply_segment_replace_paragraph(para_mut, content, revision, None, rev_counter);
+    set_exact_replacement_marks(para_mut, content);
+    if carry_markers {
+        reposition_segment_replacement_markers(para_mut, &marker_source);
+    }
+
+    // Unconditional Normal settle in BOTH outer modes (see the landing note
+    // above). The gate guaranteed all-Normal input and the builder with
+    // `enclosing_insertion=None` emits fresh Deleted/Inserted text alongside
+    // the retained Normal structural markers. Settle only the text changes;
+    // paragraph formatting/change metadata stays verbatim.
+    // `project_block_for_accept_reject` (preserve_formatting_change=false) would
+    // silently accept unrelated `pPrChange`/run-level formatting; even the
+    // preserve-true text-edit prep still clears paragraph-mark status, so the
+    // minimal text-only settle is the preserving shape here.
+    let _ = mode;
+    {
+        let mut settled: Vec<TrackedSegment> = Vec::with_capacity(para_mut.segments.len());
+        for mut segment in para_mut.segments.drain(..) {
+            match segment.status {
+                TrackingStatus::Inserted(_) => {
+                    segment.status = TrackingStatus::Normal;
+                    settled.push(segment);
+                }
+                TrackingStatus::Deleted(_) => {
+                    // Drop the pre-edit text and preserved-inline tombstone.
+                }
+                _ => settled.push(segment),
+            }
+        }
+        para_mut.segments = settled;
+        para_mut.block_text_hash = None;
+        para_mut.rendered_text = None;
+    }
+
+    // Recompute the ENTIRE chosen comment story's content hash: every block's
+    // text, not just the edited paragraph's. Author/date/tracking status, all
+    // other blocks, the `commentsExtended` sidecar, and body anchors are untouched.
+    let story_nodes: Vec<BlockNode> = story.blocks.iter().map(|tb| tb.block.clone()).collect();
+    story.content_hash = crate::import::compute_story_content_hash(&story_nodes);
     Ok(())
 }
 

@@ -1,11 +1,12 @@
 //! Typed hook regeneration doors (DOOR-077): `vault.hooks.regen.due` lists
 //! the vault's own hook bindings whose contract moved under them,
 //! `vault.hooks.regen.get` reads one binding's regen record, and
-//! `vault.hooks.regen.adopt` enacts the candidate pending on it. Each one
-//! projects the engine's own operation: `Vault::hooks_due_for_regen`,
-//! `Vault::hook_regen_record` and `Vault::adopt_hook_regen`, which installs
-//! through the owner's own pack put. No door runs a hook's intent again:
-//! no production regenerator exists to run it.
+//! `vault.hooks.regen.adopt` enacts the candidate pending on it.
+//! `vault.hooks.regen.cancel` sets a waiting decision aside,
+//! `vault.hooks.regen.revert` puts back the body an adoption replaced, and
+//! `vault.hooks.regen.history` reads the hook's regen receipts (FIX 4690,
+//! 4691). Each one projects the engine's own operation on `Vault`; adopt
+//! and revert install through the owner's own pack put.
 //!
 //! Authority is the owner's live proof (`Memory::hook_regen_owner`), from
 //! any surface the owner is authenticated on, checked before any binding
@@ -15,10 +16,17 @@ mod types;
 
 pub use types::*;
 
-use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
+use super::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory,
+    MemoryError, MemoryResult,
+};
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
-use crate::skill_hub::pack_catalog::PackHookBinding;
+use crate::runtime_hooks::{
+    HookBodyRuntime, HookRegenActor, HookRegenCancel, HookRegenReceipt, HookRegenerator,
+    MAX_HOOK_REGEN_HISTORY,
+};
+use crate::skill_hub::pack_catalog::{HookAuthor, PackHookBinding};
 use crate::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallReceipt};
 use serde::{Deserialize, Serialize};
 
@@ -176,7 +184,186 @@ impl Memory<'_> {
                 )
                 .map_err(adopt_refusal)?,
         );
-        // The source the put staged, which its receipt names.
+        self.produced_from_put(&put);
+        Ok(put)
+    }
+
+    /// `vault.hooks.regen.cancel`: the owner sets aside the decision waiting
+    /// on one binding, named as `vault.hooks.regen.get` showed it, through
+    /// `Vault::cancel_hook_regen`. The hook keeps its body, and the contract
+    /// the decision targeted is declined until it moves again.
+    pub fn hooks_regen_cancel_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: HookRegenCancelRequest,
+    ) -> MemoryResult<HookRegenCancel> {
+        self.hook_regen_owner(owner)?;
+        if input
+            .candidate_hash
+            .as_deref()
+            .is_some_and(|hash| !is_body_hash(hash))
+        {
+            return Err(MemoryError::bad_request(
+                "candidate_hash is the pending candidate body's BLAKE3, 64 lowercase hex",
+            ));
+        }
+        self.hook_regen_binding(input.binding)?;
+        self.vault
+            .cancel_hook_regen(owner, input.binding, input.candidate_hash.as_deref())
+            .map_err(adopt_refusal)
+    }
+
+    /// `vault.hooks.regen.revert`: the owner puts back the body the last
+    /// adoption on one binding replaced, through `Vault::revert_hook_regen`
+    /// and the owner's own pack put. The answer is that put's own receipt:
+    /// a Candidate or Blocked put installs nothing, and the record stays.
+    pub fn hooks_regen_revert_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: HookRegenRevertRequest,
+    ) -> MemoryResult<PackPutReceipt> {
+        self.hook_regen_owner(owner)?;
+        if !is_body_hash(&input.adopted_hash) {
+            return Err(MemoryError::bad_request(
+                "adopted_hash is the adopted body's BLAKE3, 64 lowercase hex",
+            ));
+        }
+        self.hook_regen_binding(input.binding)?;
+        let put = PackPutReceipt::from(
+            self.vault
+                .revert_hook_regen(owner, input.binding, &input.adopted_hash)
+                .map_err(adopt_refusal)?,
+        );
+        self.produced_from_put(&put);
+        Ok(put)
+    }
+
+    /// `vault.hooks.regen.history`: one page of a binding's regen receipts,
+    /// newest first, across the hook's rebinds. It changes nothing.
+    pub fn hooks_regen_history_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: HookRegenHistoryRequest,
+    ) -> MemoryResult<Vec<HookRegenReceipt>> {
+        self.hook_regen_owner(owner)?;
+        self.hook_regen_binding(input.binding)?;
+        let limit = input
+            .limit
+            .map_or(MAX_HOOK_REGEN_HISTORY, |limit| limit as usize);
+        Ok(self
+            .vault
+            .hook_regen_history(input.binding, input.before, limit)?)
+    }
+
+    /// `vault.hooks.regen.run`, on a serving host: the owner runs one
+    /// binding's intent again against this engine's contract, on the host's
+    /// hook sandbox and model seat (`runtime`, `regenerator`). The decision
+    /// lands on the record and in its history and enacts nothing; the
+    /// answer is the record as it now stands.
+    pub fn hooks_regen_run_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: HookRegenBindingRequest,
+        runtime: &dyn HookBodyRuntime,
+        regenerator: &dyn HookRegenerator,
+    ) -> MemoryResult<Option<HookRegenView>> {
+        self.hook_regen_owner(owner)?;
+        self.hook_regen_binding(input.binding)?;
+        self.vault.regenerate_hook_as(
+            runtime,
+            regenerator,
+            input.binding,
+            // `hook_regen_owner` proved the owner is this door's actor.
+            &HookRegenActor::Owner { actor: self.actor },
+        )?;
+        Ok(self
+            .vault
+            .hook_regen_record(input.binding)?
+            .map(HookRegenView::from))
+    }
+
+    /// `vault.hooks.regen.run` on a handle with no serving host: a regen
+    /// writes its body on the host's model seat, which an embedded vault
+    /// does not hold.
+    pub fn hooks_regen_run_unhosted(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: HookRegenBindingRequest,
+    ) -> MemoryResult<Option<HookRegenView>> {
+        self.hook_regen_owner(owner)?;
+        self.hook_regen_binding(input.binding)?;
+        Err(MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            "hook_regen_host_unavailable: a regen writes its body on the serving host's model seat",
+            &["Call vault.hooks.regen.run through the server's facade, SDK or MCP door."],
+        ))
+    }
+
+    /// The CALL behind the agent's own regen doors (FIX 4692): this handle is
+    /// an agent's, and `binding` is a hook it authored. Any other binding is
+    /// refused as unknown, never told apart.
+    fn own_hook_regen_binding(&self, binding: EntityId) -> MemoryResult<()> {
+        if self.actor_class != crate::EdgeActorClass::Agent {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "an agent reads and adopts the regen of its own hooks",
+                &["Use vault.hooks.regen.get and vault.hooks.regen.adopt as the owner."],
+            ));
+        }
+        let rows = self
+            .vault
+            .pack_hook_bindings()?
+            .into_iter()
+            .find(|(id, row)| {
+                *id == binding
+                    && matches!(&row.author, HookAuthor::Agent { agent } if *agent == self.actor)
+            })
+            .map(|(id, row)| binding_rows(id, &row))
+            .ok_or_else(binding_unavailable)?;
+        self.produced_from(rows);
+        Ok(())
+    }
+
+    /// `self.hooks.regen.get`: the regen record of a hook this agent
+    /// authored, with the candidate_hash its adopt names. It changes nothing.
+    pub fn own_hook_regen_record(
+        &self,
+        input: HookRegenBindingRequest,
+    ) -> MemoryResult<Option<HookRegenView>> {
+        self.own_hook_regen_binding(input.binding)?;
+        Ok(self
+            .vault
+            .hook_regen_record(input.binding)?
+            .map(HookRegenView::from))
+    }
+
+    /// `self.hooks.regen.adopt`: this agent adopts the AutoAdopt regen
+    /// pending on a hook it authored, named by its candidate_hash, through
+    /// its own put of the `local` pack (`Vault::adopt_hook_regen_as_agent`):
+    /// the hook stays its own, at its ceiling, its grant carried. A candidate
+    /// whose golden replay differs waits for the owner's stamp.
+    pub fn own_hook_regen_adopt(
+        &self,
+        input: HookRegenAdoptRequest,
+    ) -> MemoryResult<PackPutReceipt> {
+        if !is_body_hash(&input.candidate_hash) {
+            return Err(MemoryError::bad_request(
+                "candidate_hash is the pending candidate body's BLAKE3, 64 lowercase hex",
+            ));
+        }
+        self.own_hook_regen_binding(input.binding)?;
+        let agent = self.write_actor();
+        let put = PackPutReceipt::from(
+            self.vault
+                .adopt_hook_regen_as_agent(&agent, input.binding, &input.candidate_hash)
+                .map_err(adopt_refusal)?,
+        );
+        self.produced_from_put(&put);
+        Ok(put)
+    }
+
+    /// The source a pack put staged, which its receipt names.
+    fn produced_from_put(&self, put: &PackPutReceipt) {
         if let Some(source) = put
             .receipt
             .as_deref()
@@ -184,7 +371,6 @@ impl Memory<'_> {
         {
             self.produced_from([source]);
         }
-        Ok(put)
     }
 }
 

@@ -49,7 +49,6 @@ pub fn pick_response_pair(
     preferred: PreferredResponse,
     at: u64,
 ) -> Result<ResponsePairPick> {
-    let by = owner.revalidate_person(vault)?;
     let well_formed = pair_ref.len() <= MAX_PAIR_REF_BYTES
         && !pair_ref.contains('\0')
         && pair_ref.split_once('|').is_some_and(|(first, second)| {
@@ -62,6 +61,7 @@ pub fn pick_response_pair(
     }
     let key = pair_ref.to_owned();
     vault.with_write_txn_grouped(|txn| {
+        let by = owner.revalidate_person_in_txn(vault, &*txn)?;
         if let Some(previous) = RESPONSE_PAIR.get(&vault.store, &*txn, &key)? {
             if previous.preferred != preferred {
                 return Err(Error::InvalidClaimBody(

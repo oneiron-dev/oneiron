@@ -596,8 +596,15 @@ impl Memory<'_> {
         };
         // An as_of recall judges each claim's decay and staleness at its
         // as_of, never at the wall clock (FIX 12226).
-        let census = census.with_judged_at(execution.as_of);
-        let lane = lane.with_judged_at(execution.as_of);
+        let census = census
+            .with_judged_at(execution.as_of)
+            .with_read_filter(self.read_filter.as_ref());
+        // The caller's own filter rides every lane the recall reads (FIX
+        // 3977): a session lane is built afresh from the key, so it binds
+        // the handle's filter again; a rebind only meets it.
+        let lane = lane
+            .with_judged_at(execution.as_of)
+            .with_read_filter(self.read_filter.as_ref());
         // The receipt of a search: the candidates it ranks, the key's own
         // rows and those its own live Grants read (FIX 7528). A key that
         // reads nothing by itself still recalls what a Grant of its own reads.
@@ -866,7 +873,14 @@ impl Memory<'_> {
             }
             let mut pack = scoped.value;
             let mut counted = Vec::new();
-            lane.attach_reactions_quoting(&mut pack, &status.cited_messages, None, &mut counted)?;
+            let reactions = lane.attach_reactions_quoting(
+                &mut pack,
+                &status.cited_messages,
+                None,
+                &mut counted,
+            )?;
+            // The lines' read narrows the recall as its pack's did (FIX 8669).
+            receipt.restrict_with(&reactions);
             // Each reaction claim a line counts is a producer of the pack.
             self.produced_from(counted);
 
@@ -1063,4 +1077,8 @@ pub struct RecallRequest {
     /// the request can add stage detail and the host's exact turn identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telemetry: Option<RecallTelemetry>,
+    /// The caller's retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor, and every stage of the recall meets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }

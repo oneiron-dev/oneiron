@@ -28,6 +28,109 @@ struct NoteProse<'a> {
 const NOTE_PROSE_ROW: &str = "memory.author_note";
 const NOTE_PROSE_FIELD: &str = "/markdown";
 
+/// The confidence of an authored link's `edge.provenance` Claim (FIX 3959):
+/// the author states their own authorship and their own target, so the
+/// assertion is theirs outright, not an inference.
+const AUTHORED_LINK_CONFIDENCE: f32 = 1.0;
+
+/// The source document revision a take was read from (FIX 3959): resolved
+/// and read under its writer before the content writer opens, proved again
+/// inside it, and cited by each link's `edge.provenance` Claim.
+struct TakeSourcePin<'l> {
+    /// The writer's own Recorded read lane, which judges the pin.
+    lane: crate::claim::ScopedRead<'l>,
+    /// The document ref the caller named, without its revision.
+    reference: String,
+    revision: crate::vault::RevisionRef,
+    source: crate::EntityId,
+}
+
+impl Memory<'_> {
+    /// Resolves `<document-ref>@<revision>` under this writer in one snapshot
+    /// of its Recorded lane ([`admitted_take_source_in`]). A source that does
+    /// not resolve and one this writer may not read get the same refusal and
+    /// the same receipt ([`take_source_refusal`]).
+    fn take_source_pin(&self, source_ref: &str) -> MemoryResult<TakeSourcePin<'_>> {
+        let Some((reference, revision)) = source_ref.trim().rsplit_once('@') else {
+            return Err(MemoryError::bad_request_with(
+                "a take's source_ref names a document revision",
+                &["Use <document-ref>@<revision>, the revision as its 32-hex ref."],
+            ));
+        };
+        let revision = crate::vault::RevisionRef::from_hex(revision)?;
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let admitted = lane.with_grant_read_snapshot(|txn| {
+            admitted_take_source_in(self.vault, &lane, txn, reference, revision)
+        })?;
+        let Some(source) = admitted else {
+            return Err(take_source_refusal(reference, lane.read_receipt(None, 0)?));
+        };
+        Ok(TakeSourcePin {
+            lane,
+            reference: reference.to_owned(),
+            revision,
+            source,
+        })
+    }
+}
+
+impl TakeSourcePin<'_> {
+    /// Proves the pin again in the content writer's own snapshot: the ref
+    /// still names the same record at that revision, and the writer still
+    /// reads it there. A failed proof is the same refusal as a failed pin.
+    fn prove_in_txn(&self, vault: &crate::Vault, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        if admitted_take_source_in(vault, &self.lane, txn, &self.reference, self.revision)?
+            == Some(self.source)
+        {
+            return Ok(());
+        }
+        Err(take_source_refusal(
+            &self.reference,
+            self.lane.read_receipt_in(txn, None, 0)?,
+        ))
+    }
+}
+
+/// The record `reference` names at `revision` when `lane` may read it there,
+/// in `txn`: the ref resolves at that retained revision, the revision alone
+/// names the same record (so a provenance audit can find and admit it again,
+/// [`crate::Vault::revision_record_in`]), and the lane reads the record at
+/// it. `None` for every other case alike.
+fn admitted_take_source_in(
+    vault: &crate::Vault,
+    lane: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    reference: &str,
+    revision: crate::vault::RevisionRef,
+) -> crate::error::Result<Option<crate::EntityId>> {
+    let Some(source) = vault.resolve_pinned_entity_reference_in(txn, reference, revision)? else {
+        return Ok(None);
+    };
+    if vault.revision_record_in(txn, revision)? != Some(source) {
+        return Ok(None);
+    }
+    let readable = lane
+        .get_entities_parts_with_mode_in_txn(
+            txn,
+            &[source],
+            crate::vault::ReadMode::Pinned(revision),
+        )?
+        .into_iter()
+        .next()
+        .flatten()
+        .is_some();
+    Ok(readable.then_some(source))
+}
+
+/// The one refusal a take's unresolved or unreadable source gets: the same
+/// `NOT_FOUND` and an unnarrowed lane receipt, whichever case it was.
+fn take_source_refusal(reference: &str, receipt: crate::claim::ScopedReadReceipt) -> MemoryError {
+    MemoryError::not_found(format!(
+        "take source {reference:?} does not resolve at its revision for this writer"
+    ))
+    .with_read_receipt(receipt)
+}
+
 /// The `unlinked` facts a NOTE's `markdown` earns for `memory`'s writer, the
 /// read [`Memory::author_note`] runs, for a bound raw put of a NOTE body
 /// (FIX 3734).
@@ -79,6 +182,25 @@ impl Memory<'_> {
         self.author_take_in_world(target, markdown, None)
     }
 
+    /// [`Self::author_take`] citing the source document revision the take
+    /// was read from (FIX 3959): `source_ref` is `<document-ref>@<revision>`,
+    /// resolved and read under this writer before the write and proved again
+    /// inside its content transaction. Each link the take stages gets an
+    /// `edge.provenance` Claim whose `source_revision_ref` is that revision;
+    /// `None` cites no source, as canon allows when no source document
+    /// exists. The NOTE's own `source_revision_ref` is never cited for it.
+    pub fn author_take_with_source(
+        &self,
+        target: TakeTarget,
+        markdown: impl Into<String>,
+        source_ref: Option<&str>,
+    ) -> MemoryResult<EntityRefReceipt> {
+        let source = source_ref
+            .map(|source_ref| self.take_source_pin(source_ref))
+            .transpose()?;
+        self.author_take_in_world_with_time(target, markdown, None, None, source.as_ref())
+    }
+
     /// [`Self::author_take`] born in `world`, as
     /// [`Self::author_note_in_world`] places it: a writer that knows its
     /// source's world passes it, and `None` is base reality.
@@ -88,7 +210,7 @@ impl Memory<'_> {
         markdown: impl Into<String>,
         world: Option<crate::EntityId>,
     ) -> MemoryResult<EntityRefReceipt> {
-        self.author_take_in_world_with_time(target, markdown, world, None)
+        self.author_take_in_world_with_time(target, markdown, world, None, None)
     }
 
     /// An imported take stamped at its source's arrival, through the same
@@ -100,7 +222,7 @@ impl Memory<'_> {
         world: Option<crate::EntityId>,
         at: u64,
     ) -> MemoryResult<EntityRefReceipt> {
-        self.author_take_in_world_with_time(target, markdown, world, Some(at))
+        self.author_take_in_world_with_time(target, markdown, world, Some(at), None)
     }
 
     fn author_take_in_world_with_time(
@@ -109,6 +231,7 @@ impl Memory<'_> {
         markdown: impl Into<String>,
         world: Option<crate::EntityId>,
         at: Option<u64>,
+        source: Option<&TakeSourcePin<'_>>,
     ) -> MemoryResult<EntityRefReceipt> {
         self.author_note_in_world_with_time(
             &NoteWriteEnvelope {
@@ -120,6 +243,7 @@ impl Memory<'_> {
             },
             world,
             at,
+            source,
         )
     }
 
@@ -156,14 +280,26 @@ impl Memory<'_> {
         envelope: &NoteWriteEnvelope,
         world: Option<crate::EntityId>,
     ) -> MemoryResult<EntityRefReceipt> {
-        self.author_note_in_world_with_time(envelope, world, None)
+        self.author_note_in_world_with_time(envelope, world, None, None)
     }
 
+    /// Every base-reality opinion and dissent this writer lands attributes
+    /// the links it stages (FIX 3959): `NOTE -AuthoredBy-> actor` and the
+    /// NOTE's link to its target each get an `edge.provenance` Claim naming
+    /// the bound actor and its class, in the NOTE's own content transaction.
+    /// That Claim is the engine's audit record of the link, written through
+    /// the structural provenance path: it runs no claim write gate beyond the
+    /// birth's own, and each link keeps its stored value, with no flags.
+    /// `source` cites the revision the take was read from; without one the
+    /// Claims cite no source. A diary entry's private links get none, nor do
+    /// the links of a NOTE born in a world: a wrapper names no world yet, and
+    /// base reality would show a world's NOTE to readers outside it.
     fn author_note_in_world_with_time(
         &self,
         envelope: &NoteWriteEnvelope,
         world: Option<crate::EntityId>,
         at: Option<u64>,
+        source: Option<&TakeSourcePin<'_>>,
     ) -> MemoryResult<EntityRefReceipt> {
         // OF-063 prose links (FIX 1228): the one engine write every take,
         // dissent and diary entry passes through reads its markdown for links
@@ -216,8 +352,23 @@ impl Memory<'_> {
         let note_id = self.vault.store.clock.entity_id()?;
         let at = at.unwrap_or_else(|| self.vault.store.clock.now_recorded_at());
         let occurred = TimeRange { start: at, end: at };
+        let attributed_links = if matches!(envelope.scope, NoteScope::About(_)) && world.is_none() {
+            vec![
+                (
+                    self.vault.store.clock.entity_id()?,
+                    EdgeKind::AuthoredBy,
+                    self.actor,
+                ),
+                (self.vault.store.clock.entity_id()?, link, target_id),
+            ]
+        } else {
+            Vec::new()
+        };
 
         self.with_actor_content_write_txn(|content| {
+            if let Some(source) = source {
+                source.prove_in_txn(self.vault, content.read())?;
+            }
             let Some(stored_type) = self
                 .vault
                 .get_entity_type_in_txn(content.read(), &target_id)?
@@ -261,6 +412,25 @@ impl Memory<'_> {
                 );
             }
             content.apply_batch(birth)?;
+            for (claim_id, kind, target) in &attributed_links {
+                let mut record = crate::provenance::EdgeProvenanceClaimBody::new(
+                    self.actor,
+                    AUTHORED_LINK_CONFIDENCE,
+                    crate::provenance::SupersessionStatus::Confirmed,
+                );
+                record.source_revision_ref = source.map(|source| source.revision.0);
+                content.put_authored_link_provenance(crate::provenance::EdgeProvenanceWrite {
+                    claim_id,
+                    subject: &crate::provenance::EdgeRef::new(note_id, *kind, *target),
+                    body: &record,
+                    actor_class: self.actor_class,
+                    learned_at: at,
+                    explicit_prior: None,
+                    scope_project: None,
+                    imported_evidence: None,
+                    generated_evidence: None,
+                })?;
+            }
             Ok(())
         })?;
         receipt_landed_prose(self, &unlinked_prose);
@@ -307,6 +477,7 @@ impl Memory<'_> {
         } else {
             config.default_admission
         };
+        let lane = self.core_write_lane()?;
         let admit = |approval: ClaimApprovalStatus| {
             let admission = ImportedEvidenceAdmission::proposed(
                 input.source_id.clone(),
@@ -317,7 +488,12 @@ impl Memory<'_> {
                 learned_at,
             )
             .with_approval(approval);
-            crate::ingest::admit_imported_evidence_claim_for_memory(self.vault, &claim, admission)
+            crate::ingest::admit_imported_evidence_claim_for_memory(
+                self.vault,
+                &claim,
+                admission,
+                lane.as_ref(),
+            )
         };
         match admit(approval) {
             Ok(()) => {}
@@ -389,7 +565,12 @@ pub(crate) fn append_dissent_in_txn(
     let note_id = vault.store.clock.entity_id()?;
     let at = vault.store.clock.now_recorded_at();
     let occurred = TimeRange { start: at, end: at };
-    let mut content = crate::federation::ActorContentTxn::new(vault, txn, actor)?;
+    let mut content = crate::federation::ActorContentTxn::new(
+        vault,
+        txn,
+        actor,
+        crate::core_write::CoreWriteLaneRef::Unbound,
+    )?;
     content.apply_batch(
         vault
             .batch_in()
@@ -461,7 +642,12 @@ pub(crate) fn append_agent_diary_in_txn(
     })?;
     let note_id = vault.store.clock.entity_id()?;
     let occurred = TimeRange { start: at, end: at };
-    let mut content = crate::federation::ActorContentTxn::new(vault, txn, agent)?;
+    let mut content = crate::federation::ActorContentTxn::new(
+        vault,
+        txn,
+        agent,
+        crate::core_write::CoreWriteLaneRef::Unbound,
+    )?;
     content.apply_batch(
         vault
             .batch_in()

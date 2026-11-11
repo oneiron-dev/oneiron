@@ -149,8 +149,10 @@ impl Vault {
         {
             return Err(Error::Record(RecordError::ConnectorCharterApprovalMismatch));
         }
+        let approval_id = self.store.clock.entity_id()?;
         let stamped = ConnectorKeyRecord {
             charter: Some(ConnectorCharterBlock {
+                approval_id,
                 stamped_aggregate: charter_stamped_aggregate(
                     &pending.text_hash,
                     &pending.compiled_hash,

@@ -593,12 +593,19 @@ impl Memory<'_> {
 /// is parked on, or one not yet terminal, delivers nothing, so a commit
 /// that puts any TASK may pass it here, and so may a run's park. A consult's
 /// ConsultAssignee fact passes here too, and wakes the runs parked on it.
+///
+/// The reply is derived from the TASK row alone: it settles with the TASK as
+/// its source row and with the origins of the row as this writer reads it
+/// (FIX 7083), or unknown origins when that read proves none. A missing
+/// proof never holds the delivery back.
 pub(crate) fn deliver_task_result_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     task: EntityId,
 ) -> crate::Result<()> {
     super::consult_assignee_wait::wake_assignee_wait_in_txn(vault, txn, task)?;
+    // FIX 7494: a relayed ask intent, or its result, landing here.
+    super::ask_forward::note_put_in_txn(vault, txn, task)?;
     if !crate::code_run::has_parked_run_in_txn(vault, txn, task)? {
         return Ok(());
     }
@@ -614,8 +621,41 @@ pub(crate) fn deliver_task_result_in_txn(
         "result_ref": terminal.result_ref,
         "finished_at": terminal.finished_at,
     });
+    let origins = task_reply_origins(vault, txn, task);
     let now_ms = vault.store.clock.now_recorded_at().saturating_mul(1000);
-    crate::code_run::deliver_wait_in_txn(vault, txn, task, &reply, now_ms).map(drop)
+    crate::code_run::deliver_wait_listing_in_txn(
+        vault,
+        txn,
+        task,
+        &reply,
+        Some(std::slice::from_ref(&task)),
+        origins.as_ref(),
+        now_ms,
+    )
+    .map(drop)
+}
+
+/// The origins of the terminal reply the TASK row `task` delivers (FIX
+/// 7083): the worlds the row is served in and its scope, as `txn` holds the
+/// bytes the reply was read from. `None` when the row proves no world, or a
+/// read of its proof fails. A scope the row does not prove is left out.
+fn task_reply_origins(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Option<crate::code_run::ResultOrigins> {
+    use crate::federation::record_scope::{note_world::served_worlds_in, scope_for_parts};
+    let raw = vault.get_raw_in(txn, &task).ok()??;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)?;
+    let data = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)?;
+    let kind = header.entity_type;
+    let worlds = served_worlds_in(&vault.store, txn, task, kind, data).ok()??;
+    let scope = scope_for_parts(&vault.store, txn, task, kind, data).ok()?;
+    Some(crate::code_run::ResultOrigins {
+        worlds,
+        row_scopes: scope.into_iter().map(|scope| (task, scope)).collect(),
+        conflicted_rows: std::collections::BTreeSet::new(),
+    })
 }
 
 impl Vault {

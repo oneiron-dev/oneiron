@@ -15,6 +15,7 @@ use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
 
+mod asset_file_bodies;
 mod edge;
 mod indexes;
 mod ops_claim;
@@ -30,6 +31,30 @@ mod validation;
 
 use self::replay::{ReplayIter, ReplayOps};
 use self::validation::mark_unapplied_preflight_decisions;
+
+/// Birth selection for the local agent-setup adapter after its real earlier
+/// Puts. Its batches use no mask, replay or ASSET_TEXT source binding.
+pub(crate) fn setup_birth_stamp_target(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    mut preceding: impl Iterator<Item = EntityId>,
+) -> Result<Option<EntityId>> {
+    if preceding.any(|prior| prior == id) {
+        return Ok(None);
+    }
+    validation::birth_stamp_target(
+        store,
+        txn,
+        id,
+        entity_type,
+        false,
+        (None, None, false),
+        data,
+    )
+}
 
 /// Check the decode point while this replay op still owns its buffers. On
 /// pre-match errors no match arm takes ownership, so scrub here before return.
@@ -169,8 +194,13 @@ struct BatchApplyState {
     refinement_admission: Option<crate::skill_hub::RefinementAdmissionProof>,
     birth_mask: Option<EntityId>,
     text_births: HashMap<EntityId, Vec<EntityId>>,
+    /// The ids this batch writes a `DerivedFrom` edge from (FIX 8741).
+    derived_from_edge_sources: BTreeSet<EntityId>,
     births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
+    /// The bytes each interpreted or carrier body file holds, which its
+    /// put's adapter checks read (FIX 22091).
+    asset_file_bodies: HashMap<EntityId, zeroize::Zeroizing<Vec<u8>>>,
     replicated_puts: BTreeSet<EntityId>,
     mutation_recorded_at: u64,
     authority_generation: u64,
@@ -266,6 +296,9 @@ pub(super) fn apply_ops_with_authority_beside(
 ) -> Result<()> {
     // FIX 9398: the batch's deletes drop the rooms' media copies once, as it ends.
     let _room_media_drops = crate::embed::RoomMediaDrops::open(store, wtxn);
+    // A nested apply of this store in this writer is part of its outer batch:
+    // only the outermost seals HOST prospective messages' edges.
+    let prospective = crate::deletion::ProspectiveBatch::open(store);
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
     let run_derivations = crate::skill_attribution::run_derivations(&ops.ops, replay);
@@ -275,6 +308,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let text_births = std::mem::take(&mut gate_mode.text_births);
     let births = std::mem::take(&mut gate_mode.births);
     let mut asset_files = std::mem::take(&mut gate_mode.asset_files);
+    let asset_file_bodies = std::mem::take(&mut gate_mode.asset_file_bodies);
     let replicated_puts = std::mem::take(&mut gate_mode.replicated_puts);
     let marked_carriers = std::mem::take(&mut gate_mode.marked_carriers);
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
@@ -297,8 +331,12 @@ pub(super) fn apply_ops_with_authority_beside(
     // its bytes and is marked. A batch of nothing but a marked carrier's own
     // bytes, scanned whole by its writer, is stored as it is: a detection on
     // them is the carrier's mark (FIX 9034).
-    let (masked_files, masked_claim_pre) = if marked_carriers_only(&marked_carriers, &ops.ops) {
-        (secret_scan::MaskedFiles::default(), Vec::new())
+    // An interpreted body file is read by the scan and the mask as the bytes
+    // it holds, never as its manifest, and its put keeps the manifest after
+    // (FIX 22075).
+    let manifests = asset_file_bodies::read_file_bodies(&mut ops.ops, asset_file_bodies);
+    let masked = if marked_carriers_only(&marked_carriers, &ops.ops) {
+        Ok((secret_scan::MaskedFiles::default(), Vec::new()))
     } else {
         secret_scan::mask_batch_ops(
             store,
@@ -311,8 +349,10 @@ pub(super) fn apply_ops_with_authority_beside(
                 || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
                     if grant.selected_saver().is_some()),
             mutation_recorded_at,
-        )?
+        )
     };
+    let asset_file_bodies = asset_file_bodies::restore_manifests(&mut ops.ops, manifests);
+    let (masked_files, masked_claim_pre) = masked?;
     // The pre-mask body of each MACHINE candidate the mask rewrote in this
     // transaction (FIX 11356), in op order per id: the candidate apply
     // renews a proof only over its verified pre-mask body. A replayed batch
@@ -348,6 +388,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let mut project_edge_endpoints = BTreeSet::new();
     let mut touched_projects = BTreeSet::new();
     let local_chat_turns = super::leader_chat_admission::local_turns(&ops);
+    let derived_from_edge_sources = self::validation::derived_from_edge_sources(&ops);
     // ONE-1604-D1: shell-edge sources orphaned by a dominance eviction. Their
     // inducing type-76 rows are gone, so the full reconciler's
     // surviving-events derivation can no longer reach them. Non-empty here
@@ -386,8 +427,10 @@ pub(super) fn apply_ops_with_authority_beside(
         refinement_admission,
         birth_mask,
         text_births,
+        derived_from_edge_sources,
         births,
         asset_files,
+        asset_file_bodies,
         replicated_puts,
         mutation_recorded_at,
         authority_generation,
@@ -456,7 +499,7 @@ pub(super) fn apply_ops_with_authority_beside(
                     analyzer,
                     &mut *wtxn,
                     &mut state,
-                    &gate_mode,
+                    &mut gate_mode,
                     id,
                     entity_type,
                     occurred,
@@ -608,5 +651,8 @@ pub(super) fn apply_ops_with_authority_beside(
         op_index += 1;
     }
 
+    // A new message a HOST prospective order sealed in this batch takes its
+    // outgoing edge rows, as the batch wrote them, in this writer.
+    prospective.seal_edges_in_txn(wtxn)?;
     tail::apply_tail(store, config, analyzer, wtxn, state, text_index_trusted)
 }

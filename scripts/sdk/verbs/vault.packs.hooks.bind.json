@@ -1,0 +1,16 @@
+{
+  "name": "vault.packs.hooks.bind",
+  "description": "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign.",
+  "input": "HubHookBindRequest",
+  "output": "Vec<crate::EntityId>",
+  "call": "crate::task_verb::sdk::hub_hooks_bind_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.hooks.bind\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

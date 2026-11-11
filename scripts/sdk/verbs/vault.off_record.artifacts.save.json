@@ -1,0 +1,17 @@
+{
+  "name": "vault.off_record.artifacts.save",
+  "description": "A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver.",
+  "input": "crate::task_verb::sdk::OffRecordArtifactSaveRequest",
+  "output": "crate::task_verb::sdk::OffRecordArtifactSaved",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.artifacts.save\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "no_record": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record"
+}

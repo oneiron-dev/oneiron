@@ -1,57 +1,41 @@
 //! Code mode's verb-table calls: the run's write origin and the receipt a write keeps.
 
+mod connector_wait;
+mod consent;
+mod receipts;
 mod scoped_port;
 mod session_write;
+mod stored_answer;
 
 use serde_json::Value;
 
+use self::connector_wait::connector_call_answer;
 use crate::EntityId;
-use crate::code_run::ConnectorCallReply;
-use crate::code_run::consent_wait::{self, CodeConsentCallSite};
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
+    self_call_request_value,
 };
-use crate::code_run::replay::{
-    CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayGeneration, CodeRunReplayRecord,
-};
-use crate::code_run::storage::{ExecutorStorage, derived_executor_id};
+use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
+use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
-    AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
-    SelfDurableWait, SelfDurableWaitReason, SelfEffect,
+    AgentVerbRefusal, SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
+    SelfEffect,
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
 use crate::memory::read_capture::ReadCapture;
 use crate::runtime_hooks::VerbHookStop;
-use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
 use crate::task_verb::sdk::AgentVerb;
 use serde::{Deserialize, Serialize};
 
-use super::{ExecutorCallSite, HostSelfDispatcher};
+use super::{ExecutorCallSite, ExecutorReply, HostSelfDispatcher};
 
-const AGENT_VERB_RECEIPT_DOMAIN: &[u8] = b"oneiron:executor-agent-verb-receipt:v1";
-
-/// The reason a receipt's refusal row carries, so that no row read back from
-/// the receipt's answer, a refusal or not, is ever taken for one.
-const KEPT_ANSWER_REFUSED: &str = "kept_answer_refused";
-
-/// The mark a receipt keeps when a verb hook stopped its write before the
-/// write ran (ARCH-0080 §3): nothing was written, so a replay of the step
-/// asks the door again.
-const VERB_HOOK_STOPPED: &str = "verb_hook_stopped";
-
-/// The answer a write's receipt keeps when a verb hook hid its result after
-/// the write ran: kept, so a replay never writes again.
-const VERB_HOOK_HIDDEN: &str = "verb_hook_hidden";
-
-/// The mark a receipt keeps when no provider answered the write's model call
-/// (FIX 3194): nothing was written, so the run parks, and a replay of the
-/// step asks the door again.
-const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
-
-/// A media call's admission trapped before its physical effect ran.
-const MEDIA_STEP_TRAPPED: &str = "media_step_trapped";
+use self::receipts::{
+    KEPT_ANSWER_REFUSED, KeptWrite, MEDIA_STEP_TRAPPED, PROVIDER_UNAVAILABLE, VERB_HOOK_HIDDEN,
+    VERB_HOOK_STOPPED, is_write, meets, never_ran_mark, row_identity, standing_refusal,
+};
+pub(crate) use self::receipts::{recorded_call, write_receipt_may_have_run};
 
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
@@ -91,11 +75,12 @@ impl HostSelfDispatcher<'_> {
             return self.dispatch_scoped_port(call, site);
         }
         if matches!(self.storage, ExecutorStorage::Session(_)) {
-            if let Some(read) = super::session_verbs::session_read(call.verb) {
+            if let Some(read) = call.verb.session_read() {
                 return self.dispatch_session_read(read, &call, site);
             }
-            if !crate::off_record::OffRecordSession::writes_verb(call.verb) {
+            if !call.verb.overlay_write() {
                 return Ok(answered(Err(AgentVerbRefusal {
+                    hook_notice: None,
                     code: AGENT_VERB_SESSION_BOUND.to_owned(),
                 })));
             }
@@ -103,6 +88,7 @@ impl HostSelfDispatcher<'_> {
         }
         let Some(door) = &self.agent_verbs else {
             return Ok(answered(Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
             })));
         };
@@ -146,6 +132,10 @@ impl HostSelfDispatcher<'_> {
             Some(capture) => origin.with_read_capture(capture.clone()),
             None => origin,
         };
+        // A skill-library answer's producer witnesses the skill bodies it
+        // carries, which the run's host keeps once its guest reads them (FIX
+        // 3608).
+        let origin = self.with_skill_body_capture(origin, call.verb, site);
         let read_site = site;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             let answer = self.program_door_call(&**door, &call, &origin, invocation);
@@ -178,12 +168,26 @@ impl HostSelfDispatcher<'_> {
                 {
                     self.note_program_write_uncertain(write);
                 }
-                return self.kept_write_answer(Some(&**door), *receipt, call);
+                return self.kept_write_answer(Some(&**door), *receipt, call, site);
             }
             KeptWrite::Fresh(stopped) => stopped,
         };
+        // The action's own call, when its host holds its input's base64
+        // member as a file (FIX 22096): the door takes the file, and every
+        // row of the receipt keeps the whole input's digests.
+        let held = self
+            .action_blob
+            .clone()
+            .filter(|held| held.holds(call.verb, &call.input));
+        let row = |call: SelfAgentVerbCall, outcome: &SelfDispatchOutcome| {
+            let mut row = CodeRunBridgeCall::record(0, &SelfCall::AgentVerb(call), outcome, 0, 0)?;
+            if let Some(held) = &held {
+                row.request = held.request_value();
+            }
+            Ok::<_, Error>(row)
+        };
         let mut receipt = CodeRunReplayRecord::new(receipt_id, CodeRunDeterminism::new(0, [0; 32]));
-        let generation =
+        let mut generation =
             self.put_write_receipt(&receipt, stopped, program.as_ref(), false, site.run_id)?;
         // A call a code consent wait may bind carries its place in the run
         // (DOOR-079 1a), so a hold for consent alone binds the wait to it.
@@ -192,112 +196,124 @@ impl HostSelfDispatcher<'_> {
             Some(consent_site) => origin.with_code_consent(consent_site.clone()),
             None => origin,
         };
-        let outcome = match self.program_door_call(&**door, &call, &origin, invocation) {
-            // A held connector call parks before its receipt keeps it, so a
-            // resumed step parks on the same call again: on its code consent
-            // wait when one was bound to it, else on the call itself.
-            Ok(answer) => self.code_consent_answer(
-                consent_site.as_ref(),
-                call.verb,
-                worded(answered(answer), &**door),
-            )?,
-            Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
-                answered(Err(AgentVerbRefusal {
-                    code: VERB_HOOK_HIDDEN.to_owned(),
-                }))
+        let mut outcome =
+            match self.program_door_call_held(&**door, &call, &origin, invocation, held.as_ref()) {
+                // A held connector call parks before its receipt keeps it, so a
+                // resumed step parks on the same call again: on its code consent
+                // wait when one was bound to it, else on the call itself.
+                Ok(answer) => self.code_consent_answer(
+                    consent_site.as_ref(),
+                    call.verb,
+                    worded(answered(answer), &**door),
+                )?,
+                Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
+                    answered(Err(AgentVerbRefusal {
+                        hook_notice: None,
+                        code: VERB_HOOK_HIDDEN.to_owned(),
+                    }))
+                }
+                // A skip or an ask stopped the write before it ran: the receipt
+                // keeps the stop's mark, and the stop goes to the dispatcher.
+                Err(Error::VerbHook(stop)) => {
+                    receipt
+                        .bridge_calls
+                        .push(row(call, &never_ran_mark(VERB_HOOK_STOPPED))?);
+                    self.storage
+                        .put_code_run_replay_record_if_generation_with_heal(
+                            &receipt,
+                            Some(generation),
+                            None,
+                        )?;
+                    return Err(Error::VerbHook(stop));
+                }
+                // No provider answered: the receipt keeps the outage's mark, and
+                // the outage goes to the dispatcher, which parks the run on it.
+                Err(error @ Error::ProviderUnavailable { .. }) => {
+                    receipt
+                        .bridge_calls
+                        .push(row(call, &never_ran_mark(PROVIDER_UNAVAILABLE))?);
+                    self.storage
+                        .put_code_run_replay_record_if_generation_with_heal(
+                            &receipt,
+                            Some(generation),
+                            None,
+                        )?;
+                    return Err(error);
+                }
+                Err(error @ Error::DurableStepTrapped) => {
+                    receipt
+                        .bridge_calls
+                        .push(row(call, &never_ran_mark(MEDIA_STEP_TRAPPED))?);
+                    self.storage
+                        .put_code_run_replay_record_if_generation_with_heal(
+                            &receipt,
+                            Some(generation),
+                            None,
+                        )?;
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
+        // Only a delivered connector reply spills here. Holds already parked;
+        // questions and self.use's outer envelope keep their existing paths.
+        let published = match (&mut outcome, site.reply_publisher) {
+            (SelfDispatchOutcome::AgentVerb(answer), Some(publisher))
+                if call.verb == AgentVerb::ConnectorCall
+                    && answer.output.get("outcome").and_then(Value::as_str)
+                        == Some("delivered") =>
+            {
+                // Every field of the answer but its output, which the
+                // publisher replaces with the stored body's card: the large
+                // reply is never cloned.
+                let output = std::mem::take(&mut answer.output);
+                let template = AgentVerbAnswer {
+                    stored_output: None,
+                    ..answer.clone()
+                };
+                answer.output = output;
+                publisher.publish(&mut answer.output, &mut |wtxn, card, reply| {
+                    let answer = SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
+                        output: card.clone(),
+                        ..template.clone()
+                    });
+                    let mut row = row(call.clone(), &answer)?;
+                    reply.keep(&mut row.outcome)?;
+                    receipt.bridge_calls.push(row);
+                    self.put_write_receipt_in_txn(wtxn, &receipt, generation, program.as_ref())?;
+                    Ok(())
+                })?
             }
-            // A skip or an ask stopped the write before it ran: the receipt
-            // keeps the stop's mark, and the stop goes to the dispatcher.
-            Err(Error::VerbHook(stop)) => {
-                receipt.bridge_calls.push(CodeRunBridgeCall::record(
-                    0,
-                    &SelfCall::AgentVerb(call),
-                    &never_ran_mark(VERB_HOOK_STOPPED),
-                    0,
-                    0,
-                )?);
-                self.storage
-                    .put_code_run_replay_record_if_generation_with_heal(
-                        &receipt,
-                        Some(generation),
-                        None,
-                    )?;
-                return Err(Error::VerbHook(stop));
-            }
-            // No provider answered: the receipt keeps the outage's mark, and
-            // the outage goes to the dispatcher, which parks the run on it.
-            Err(error @ Error::ProviderUnavailable { .. }) => {
-                receipt.bridge_calls.push(CodeRunBridgeCall::record(
-                    0,
-                    &SelfCall::AgentVerb(call),
-                    &never_ran_mark(PROVIDER_UNAVAILABLE),
-                    0,
-                    0,
-                )?);
-                self.storage
-                    .put_code_run_replay_record_if_generation_with_heal(
-                        &receipt,
-                        Some(generation),
-                        None,
-                    )?;
-                return Err(error);
-            }
-            Err(error @ Error::DurableStepTrapped) => {
-                receipt.bridge_calls.push(CodeRunBridgeCall::record(
-                    0,
-                    &SelfCall::AgentVerb(call),
-                    &never_ran_mark(MEDIA_STEP_TRAPPED),
-                    0,
-                    0,
-                )?);
-                self.storage
-                    .put_code_run_replay_record_if_generation_with_heal(
-                        &receipt,
-                        Some(generation),
-                        None,
-                    )?;
-                return Err(error);
-            }
-            Err(error) => return Err(error),
+            _ => None,
         };
-        // A receipt keeps its call's answer as its record's first row.
-        receipt.bridge_calls.push(CodeRunBridgeCall::record(
-            0,
-            &SelfCall::AgentVerb(call),
-            &outcome,
-            0,
-            0,
-        )?);
-        self.put_write_receipt(
-            &receipt,
-            Some(generation),
-            program.as_ref(),
-            true,
-            site.run_id,
-        )?;
+        // A placed body already committed its receipt in the publishing writer.
+        // Inline and unplaceable answers keep their original receipt path; a
+        // large answer of any other write is stored before its receipt (#5996).
+        if published.is_none() {
+            stored_answer::store(
+                &self.storage,
+                site.run_id,
+                &mut receipt,
+                &mut generation,
+                &mut outcome,
+            )?;
+            // A receipt keeps its call's answer as its record's first row.
+            receipt.bridge_calls.push(row(call, &outcome)?);
+            self.put_write_receipt(
+                &receipt,
+                Some(generation),
+                program.as_ref(),
+                true,
+                site.run_id,
+            )?;
+        }
         // The replay row is persisted; the door releases what the answer held (FIX 10633).
         door.answer_recorded();
+        if let (Some(reply), Some(publisher), SelfDispatchOutcome::AgentVerb(answer)) =
+            (published, site.reply_publisher, &outcome)
+        {
+            publisher.adopt(reply, &answer.output)?;
+        }
         Ok(outcome)
-    }
-
-    /// The receipt of the step's write at `site`, keyed by the write's place
-    /// in its step (the step's first position and how many writes the step
-    /// made before it; reads do not count), and how it stands: the write's
-    /// ordinal, the receipt's id, and what the receipt kept.
-    fn write_receipt(&self, site: ExecutorCallSite<'_>) -> Result<(u64, EntityId, KeptWrite)> {
-        let ordinal = site.earlier.iter().filter(is_write).count() as u64;
-        let receipt_id = self.write_receipt_id(site.run_id, site.step_start, ordinal)?;
-        let kept = match self.storage.get_code_run_replay_record(&receipt_id)? {
-            // A hook stopped this write before it ran, or no provider
-            // answered it, so nothing was written: the write is made again,
-            // under a fresh reservation.
-            Some(receipt) if receipt.bridge_calls.first().is_some_and(never_ran) => {
-                KeptWrite::Fresh(Some(receipt.generation()?))
-            }
-            Some(receipt) => KeptWrite::Ran(Box::new(receipt)),
-            None => KeptWrite::Fresh(None),
-        };
-        Ok((ordinal, receipt_id, kept))
     }
 
     /// The answer `receipt` kept for `call`, a write the step already made,
@@ -315,15 +331,17 @@ impl HostSelfDispatcher<'_> {
         door: Option<&dyn AgentVerbDoor>,
         receipt: CodeRunReplayRecord,
         call: SelfAgentVerbCall,
+        site: ExecutorCallSite<'_>,
     ) -> Result<SelfDispatchOutcome> {
         let Some(row) = receipt.bridge_calls.first() else {
             return Err(Error::ConcurrentWrite(
                 "agent verb write is in flight or needs reconciliation",
             ));
         };
-        if let Some(Err(refusal)) = door.map(|door| door.admit_run_call(RunCall::RecordedOutput)) {
+        if let Err(refusal) = super::admit_recorded_answer(door) {
             let rejected = super::gate_rejection(&refusal.code);
             let ruling = SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code.clone(),
                 reason_codes: vec![KEPT_ANSWER_REFUSED.to_owned()],
@@ -335,7 +353,17 @@ impl HostSelfDispatcher<'_> {
             }
             return Ok(answered(Err(refusal)));
         }
-        if row_identity(row) != Some(call_identity(call.verb.as_str(), &call.input)) {
+        // A receipt an erase took the request words of meets the write by
+        // that request's identity alone, and answers with what it kept
+        // (FIX 6534): `response_erased` for an erased answer.
+        let recorded = if row.request_erased() {
+            row.request_identity_is(&self_call_request_value(&SelfCall::AgentVerb(
+                call.clone(),
+            ))?)?
+        } else {
+            row_identity(row) == Some(call_identity(call.verb.as_str(), &call.input))
+        };
+        if !recorded {
             return Err(Error::InvariantViolation(
                 "a resumed step changed a write it already made",
             ));
@@ -343,7 +371,15 @@ impl HostSelfDispatcher<'_> {
         if standing_refusal(&receipt).is_some() {
             self.append_ruling(&receipt, row.clone())?;
         }
-        decode_self_dispatch_outcome(&row.outcome)
+        let mut outcome = decode_self_dispatch_outcome(&row.outcome)?;
+        stored_answer::restore(&receipt, &mut outcome);
+        if let (Some(publisher), SelfDispatchOutcome::AgentVerb(answer)) =
+            (site.reply_publisher, &outcome)
+            && let Some(reply) = ExecutorReply::kept(&row.outcome, site.run_id)?
+        {
+            publisher.adopt(reply, &answer.output)?;
+        }
+        Ok(outcome)
     }
 
     /// A `reveal.wait` answer carries a secret's value (OF-560): the guest
@@ -474,180 +510,6 @@ impl HostSelfDispatcher<'_> {
             )?;
         Ok(())
     }
-
-    /// Refuses to close a step that left out a write an earlier attempt of it
-    /// made. A resumed step makes the step's writes again in order, each
-    /// answered from its receipt: the step's writes, in order, must be the
-    /// receipts' calls with the receipts' answers. A receipt the step did not
-    /// meet so (a write left out, one the bridge recorded after halting and
-    /// never dispatched, or one whose kept answer stands refused) means the
-    /// step would checkpoint without that write, and a later step could make
-    /// it again under a fresh receipt.
-    pub(crate) fn refuse_a_step_that_dropped_a_write(
-        &self,
-        run_id: EntityId,
-        step_start: u64,
-        calls: &[CodeRunBridgeCall],
-    ) -> Result<()> {
-        let mut made = calls.iter().filter(is_write);
-        let mut ordinal = 0;
-        while let Some(receipt) = self
-            .storage
-            .get_code_run_replay_record(&self.write_receipt_id(run_id, step_start, ordinal)?)?
-        {
-            if !made.next().is_some_and(|made| meets(&receipt, made)) {
-                return Err(Error::InvariantViolation(
-                    "a resumed step left out a write it already made",
-                ));
-            }
-            ordinal += 1;
-        }
-        Ok(())
-    }
-
-    /// Where a write a code consent wait may bind sits in the run (DOOR-079
-    /// 1a): the wait id its write receipt and call identity fix, and the
-    /// step, bridge position and write ordinal, all from the executor's own
-    /// call site. `None` for a verb no code consent wait binds.
-    fn code_consent_site(
-        &self,
-        call: &SelfAgentVerbCall,
-        site: ExecutorCallSite<'_>,
-        ordinal: u64,
-        receipt_id: EntityId,
-    ) -> Result<Option<CodeConsentCallSite>> {
-        if !consent_wait::code_consent_binds(call.verb) {
-            return Ok(None);
-        }
-        let request_digest =
-            *blake3::hash(&call_identity(call.verb.as_str(), &call.input)).as_bytes();
-        Ok(Some(CodeConsentCallSite {
-            wait_id: consent_wait::code_consent_wait_id(receipt_id, &request_digest)?,
-            run_id: site.run_id,
-            run_ref: self.run_ref.clone(),
-            step_start: site.step_start,
-            bridge_seq: site.seq,
-            write_ordinal: ordinal,
-            write_receipt_id: receipt_id,
-            request_digest,
-        }))
-    }
-
-    /// A verb's answer as the run takes it, when a code consent wait may
-    /// bind it: a held call its wait was bound to parks the run on that
-    /// wait, which only its owner's answer and the effect's own gate settle.
-    /// A browser call whose press held an act its host bound to the wait at
-    /// this call's own site parks the same way (FIX 10423), whatever its
-    /// answer said. Every other answer is [`connector_call_answer`]'s.
-    fn code_consent_answer(
-        &self,
-        consent_site: Option<&CodeConsentCallSite>,
-        verb: AgentVerb,
-        outcome: SelfDispatchOutcome,
-    ) -> Result<SelfDispatchOutcome> {
-        if let Some(consent_site) = consent_site
-            && verb.is_browser()
-            && let ExecutorStorage::Canonical(vault) = &self.storage
-            && consent_wait::code_consent_binds_held_browser(vault, consent_site.wait_id)?
-        {
-            return Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {
-                wait_id: consent_site.wait_id,
-                effect: SelfEffect::AgentVerb,
-                reason: SelfDurableWaitReason::OutboundEffect,
-                prompt: Some(format!("code_consent:{}", consent_site.wait_id.to_hex())),
-            }));
-        }
-        if let (Some(consent_site), SelfDispatchOutcome::AgentVerb(answer)) =
-            (consent_site, &outcome)
-            && let Some(call_ref) = held_call_ref(verb, &answer.output)
-            && let ExecutorStorage::Canonical(vault) = &self.storage
-            && consent_wait::code_consent_binds_held_call(vault, consent_site.wait_id, call_ref)?
-        {
-            return Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {
-                wait_id: consent_site.wait_id,
-                effect: SelfEffect::AgentVerb,
-                reason: SelfDurableWaitReason::OutboundEffect,
-                prompt: Some(format!("code_consent:{}", consent_site.wait_id.to_hex())),
-            }));
-        }
-        Ok(connector_call_answer(verb, outcome))
-    }
-
-    /// The receipt of the step's write at `ordinal`: the run, the step's first
-    /// bridge position, and how many verb writes the step made before it.
-    fn write_receipt_id(
-        &self,
-        run_id: EntityId,
-        step_start: u64,
-        ordinal: u64,
-    ) -> Result<EntityId> {
-        derived_executor_id(
-            AGENT_VERB_RECEIPT_DOMAIN,
-            &[
-                self.run_ref.as_bytes(),
-                run_id.as_bytes(),
-                &step_start.to_le_bytes(),
-                &ordinal.to_le_bytes(),
-            ],
-        )
-    }
-}
-
-/// How a write's receipt stands when the step makes the write.
-enum KeptWrite {
-    /// The write ran: its receipt answers it (`kept_write_answer`).
-    Ran(Box<CodeRunReplayRecord>),
-    /// No receipt, or one whose write never ran (a hook stopped it, or no
-    /// provider answered it), under that receipt's generation: the write is
-    /// made now.
-    Fresh(Option<CodeRunReplayGeneration>),
-}
-
-/// The refusal a write's kept answer stands under, if any. A receipt's first
-/// row is its call's answer; the rows after it are the rulings on reading that
-/// answer back, each a refusal or the admitted read that reconciled one, so
-/// the answer stands refused while the last of them is a refusal.
-fn standing_refusal(receipt: &CodeRunReplayRecord) -> Option<&CodeRunBridgeCall> {
-    let ruling = receipt.bridge_calls.get(1..)?.last()?;
-    let Ok(SelfDispatchOutcome::Denied(refused)) = decode_self_dispatch_outcome(&ruling.outcome)
-    else {
-        return None;
-    };
-    (refused.reason_codes == [KEPT_ANSWER_REFUSED]).then_some(ruling)
-}
-
-/// Whether a write row met its receipt: it is the receipt's call with the
-/// answer the receipt kept, and no refusal of that answer stands. A write a
-/// hook stopped before it ran, or no provider answered, meets its mark
-/// whatever the run made of it.
-fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
-    standing_refusal(receipt).is_none()
-        && receipt.bridge_calls.first().is_some_and(|kept| {
-            row_identity(kept) == row_identity(made)
-                && (never_ran(kept) || answered_as_kept(kept, made))
-        })
-}
-
-/// The mark a write's receipt keeps when it never ran: a verb hook stopped it
-/// ([`VERB_HOOK_STOPPED`]), no provider answered it ([`PROVIDER_UNAVAILABLE`]),
-/// or its media admission trapped ([`MEDIA_STEP_TRAPPED`]).
-fn never_ran_mark(why: &str) -> SelfDispatchOutcome {
-    SelfDispatchOutcome::Denied(SelfDeniedResult {
-        effect: SelfEffect::AgentVerb,
-        outcome: why.to_owned(),
-        reason_codes: vec![why.to_owned()],
-    })
-}
-
-/// Whether a receipt's row is a [`never_ran_mark`]: the write never ran.
-fn never_ran(row: &CodeRunBridgeCall) -> bool {
-    matches!(
-        decode_self_dispatch_outcome(&row.outcome),
-        Ok(SelfDispatchOutcome::Denied(refused))
-            if refused.reason_codes == [VERB_HOOK_STOPPED]
-                || refused.reason_codes == [PROVIDER_UNAVAILABLE]
-                || refused.reason_codes == [MEDIA_STEP_TRAPPED]
-    )
 }
 
 /// The refusal a receipt keeps beside its answer, as the run takes it: one
@@ -674,6 +536,7 @@ fn answered(
     outcome.map_or_else(
         |refusal| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: refusal.hook_notice,
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code,
                 reason_codes: Vec::new(),
@@ -705,122 +568,6 @@ fn worded(outcome: SelfDispatchOutcome, door: &dyn AgentVerbDoor) -> SelfDispatc
         }
         outcome => outcome,
     }
-}
-
-/// `connector.call`'s answer as the run takes it (ONE-2510): a call held for
-/// consent or governance, or a delivery the same send retries, parks the run
-/// on the call's ref as an outbound-effect wait, which the connector settler
-/// answers with the call's settled reply. `self.use`'s `connector.call`
-/// parks the same way on the call its answer holds (OF-560). Any other
-/// answer, and any other verb's, stands.
-fn connector_call_answer(verb: AgentVerb, outcome: SelfDispatchOutcome) -> SelfDispatchOutcome {
-    let wait_id = match &outcome {
-        SelfDispatchOutcome::AgentVerb(answer) => held_call_ref(verb, &answer.output),
-        _ => None,
-    };
-    let Some(wait_id) = wait_id else {
-        return outcome;
-    };
-    SelfDispatchOutcome::DurableWait(SelfDurableWait {
-        wait_id,
-        effect: SelfEffect::AgentVerb,
-        reason: SelfDurableWaitReason::OutboundEffect,
-        prompt: Some(format!("connector_call:{}", wait_id.to_hex())),
-    })
-}
-
-/// The ref of the connector call a verb's answer holds or retries: a
-/// `connector.call` reply's, or the one inside a `self.use` answer whose
-/// operation was `connector.call`.
-fn held_call_ref(verb: AgentVerb, output: &Value) -> Option<EntityId> {
-    let reply = match verb {
-        AgentVerb::ConnectorCall => output.clone(),
-        AgentVerb::SelfUse => {
-            let answer = serde_json::from_value::<SecretUseAnswer>(output.clone()).ok()?;
-            if answer.receipt.operation != SECRET_USE_CONNECTOR_CALL {
-                return None;
-            }
-            answer.result?
-        }
-        _ => return None,
-    };
-    serde_json::from_value::<ConnectorCallReply>(reply)
-        .ok()?
-        .wait_ref()
-}
-
-/// The identity of the verb call a receipt row recorded, if the row is one.
-fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
-    let (verb, input) = recorded_call(row)?;
-    if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
-        if !input.is_empty() {
-            return None;
-        }
-        let rmpv::Value::Map(fields) = &row.request else {
-            return None;
-        };
-        let (_, rmpv::Value::Binary(digest)) = fields
-            .iter()
-            .find(|(key, _)| key.as_str() == Some("input_identity"))?
-        else {
-            return None;
-        };
-        if digest.len() != 32 {
-            return None;
-        }
-        let mut identity = verb.as_bytes().to_vec();
-        identity.push(0);
-        identity.extend_from_slice(digest);
-        return Some(identity);
-    }
-    Some(call_identity(verb, &serde_json::from_str(input).ok()?))
-}
-
-/// Whether a write row carries the answer its receipt kept: a verb's answer,
-/// which only this door gives a write (fresh, or read back from the
-/// receipt), or the same refusal. A row the bridge recorded without
-/// dispatching it carries neither. A verb's answer is matched by kind: its
-/// JSON text need not survive a decode exactly, as a float may move by one
-/// unit in the last place.
-fn answered_as_kept(kept: &CodeRunBridgeCall, made: &CodeRunBridgeCall) -> bool {
-    match (
-        decode_self_dispatch_outcome(&kept.outcome),
-        decode_self_dispatch_outcome(&made.outcome),
-    ) {
-        (Ok(SelfDispatchOutcome::AgentVerb(_)), Ok(SelfDispatchOutcome::AgentVerb(_))) => true,
-        (Ok(SelfDispatchOutcome::Denied(kept)), Ok(SelfDispatchOutcome::Denied(made))) => {
-            kept == made
-        }
-        // A held connector call's park (ONE-2510).
-        (
-            Ok(SelfDispatchOutcome::DurableWait(kept)),
-            Ok(SelfDispatchOutcome::DurableWait(made)),
-        ) => kept == made,
-        _ => false,
-    }
-}
-
-/// Whether a recorded call is a verb write.
-fn is_write(row: &&CodeRunBridgeCall) -> bool {
-    recorded_call(row)
-        .is_some_and(|(verb, _)| AgentVerb::from_name(verb).is_some_and(AgentVerb::writes))
-}
-
-/// The verb name and JSON input of a recorded verb call, if the row is one.
-pub(crate) fn recorded_call(row: &CodeRunBridgeCall) -> Option<(&str, &str)> {
-    if row.effect != SelfEffect::AgentVerb {
-        return None;
-    }
-    let rmpv::Value::Map(fields) = &row.request else {
-        return None;
-    };
-    let field = |name: &str| {
-        fields
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .and_then(|(_, value)| value.as_str())
-    };
-    Some((field("verb")?, field("input")?))
 }
 
 /// How an operation's send went.

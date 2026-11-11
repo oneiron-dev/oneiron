@@ -334,9 +334,11 @@ impl AgentDispatcher<'_> {
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &artifact)
             .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        let occurrence = EntityId::derive(BODY, &[result.as_bytes().as_slice()])?;
         let held = OwnedBody {
             owner: result,
-            occurrence: EntityId::derive(BODY, &[result.as_bytes().as_slice()])?,
+            occurrence,
+            mark_occurrence: occurrence,
             state: BodyState::Complete {
                 body: BodyRef {
                     blake3: output.hash,
@@ -345,6 +347,7 @@ impl AgentDispatcher<'_> {
                 },
             },
             result: None,
+            code_run_output: None,
         };
         Ok(WorkflowOutput {
             id: result,

@@ -20,7 +20,7 @@ use oneiron::memory::extraction::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill::{LoadedSkillPack, MeasuredSkillPack};
 use oneiron::skill_optimize::{
-    EvalArmPin, EvalMeasurement, EvalSeat, EvalTaskInput, HeldOutReplayNotes,
+    EvalArmPin, EvalMeasurement, EvalSeat, EvalServingOffer, EvalTaskInput, HeldOutReplayNotes,
     MeasurementUnavailable, seat_model_role,
 };
 use oneiron::{
@@ -74,6 +74,7 @@ pub(super) enum Generated {
         text: String,
         /// The provider that answered, as the ladder stamped it.
         served: Option<String>,
+        serving_offer: Option<EvalServingOffer>,
     },
     Unavailable(MeasurementUnavailable),
 }
@@ -224,7 +225,7 @@ fn answer_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -236,6 +237,7 @@ fn text_message(role: LlmMessageRole, text: &str) -> LlmMessage {
         role,
         content: vec![ContentPart::Text {
             text: text.to_owned(),
+            signature: None,
         }],
     }
 }
@@ -262,6 +264,7 @@ fn request(arm: &ServedArm, task: &str) -> LlmRequest {
             response_format: ResponseFormat::Text,
             locality: arm.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages,
         tools: Vec::new(),
@@ -287,6 +290,7 @@ impl Arms {
         arm: &ServedArm,
         task: &str,
         clock: &RetrievalDeadline,
+        principal: oneiron::EntityId,
     ) -> Generated {
         let runtime = server.ai.model_runtime();
         let Ok(call) = runtime.admit_seat_bound(vault, self.role, request(arm, task)) else {
@@ -295,23 +299,44 @@ impl Arms {
         if call.ladder.exact_prompt() != Some(self.prompt.as_deref()) {
             return Generated::Unavailable(MeasurementUnavailable::InstructionDiffers);
         }
+        let serving_offer = call
+            .ladder
+            .exact_offer_binding()
+            .map(EvalServingOffer::from_binding);
         let may_send = || !clock.decision_time_left().is_zero();
         if !may_send() {
             return Generated::Unavailable(MeasurementUnavailable::ClockExhausted);
         }
+        let record_request = call.request.clone();
+        let no_record_at_arrival = vault.model_call_keeps_no_record_for(None, Some(principal));
         let answered =
-            tokio::runtime::Handle::current().block_on(call.ladder.generate_exact_within(
+            tokio::runtime::Handle::current().block_on(call.ladder.generate_exact_recorded_by(
                 run,
                 call.request,
                 None,
                 &may_send,
-                clock.decision_time_left(),
+                crate::models::CallDeadline::waits_within(clock.decision_time_left()),
             ));
         match answered {
-            Ok(response) => Generated::Answer {
-                text: answer_text(&response),
-                served: response.usage.served_provider().map(str::to_owned),
-            },
+            Ok((response, binding)) => {
+                let no_record = no_record_at_arrival
+                    || vault.model_call_keeps_no_record_for(None, Some(principal));
+                let evidence_run = run.initiated_by(Some(principal));
+                crate::api::record_raw_response(
+                    vault,
+                    &call.ladder,
+                    &evidence_run,
+                    &record_request,
+                    &response,
+                    Some(&binding),
+                    no_record,
+                );
+                Generated::Answer {
+                    text: answer_text(&response),
+                    served: response.usage.served_provider().map(str::to_owned),
+                    serving_offer,
+                }
+            }
             Err(LlmError::BudgetDenied(_)) => {
                 Generated::Unavailable(MeasurementUnavailable::BudgetExhausted)
             }
@@ -337,6 +362,7 @@ pub(super) struct NativeArms {
 pub(super) struct NativeArm {
     model: ModelId,
     skill: Option<String>,
+    trained: Option<std::sync::Arc<crate::server::TrainedEmbedding>>,
 }
 
 /// Whether a non-generative measurement's arms can run here.
@@ -384,6 +410,15 @@ fn native_served(
             MeasurementUnavailable::NoExactModelRoute,
         ));
     };
+    if *seat == EvalSeat::Embedder
+        && let Some(trained) = server.training_embedder_exact(&model, &pin.revision)?
+    {
+        return Ok(NativeServed::Exact(NativeArm {
+            model,
+            skill: None,
+            trained: Some(trained),
+        }));
+    }
     let revision = vault
         .model_registry_row(&model)?
         .and_then(|row| row.backends().ok()?.into_iter().next())
@@ -402,7 +437,11 @@ fn native_served(
         _ => return Ok(NativeServed::Refused(MeasurementUnavailable::NoModelRole)),
     };
     Ok(if served {
-        NativeServed::Exact(NativeArm { model, skill: None })
+        NativeServed::Exact(NativeArm {
+            model,
+            skill: None,
+            trained: None,
+        })
     } else {
         NativeServed::Unserved
     })
@@ -491,10 +530,20 @@ impl NativeArms {
                 if arm.skill.is_some() {
                     return SeatGenerated::Unavailable(MeasurementUnavailable::NoScorer);
                 }
-                let Some(slot) = server.embedder_slot() else {
-                    return SeatGenerated::Unavailable(MeasurementUnavailable::NoExactModelRoute);
+                let slot = server.embedder_slot();
+                let embed = |text: &str| {
+                    if let Some(trained) = &arm.trained {
+                        trained.query(server.vault(), text).map_err(|error| {
+                            tracing::debug!(%error, "a trained eval measurement leg failed");
+                            EmbedQueryRefusal::Failed
+                        })
+                    } else if let Some(slot) = &slot {
+                        slot.embed_query_exact(&arm.model, text, run)
+                    } else {
+                        Err(EmbedQueryRefusal::NotConfigured)
+                    }
                 };
-                let task_vector = match slot.embed_query_exact(&arm.model, &prompt, run) {
+                let task_vector = match embed(&prompt) {
                     Ok(vector) => vector,
                     Err(reason) => {
                         return SeatGenerated::Unavailable(embed_failure(reason, clock));
@@ -505,7 +554,7 @@ impl NativeArms {
                     if clock.decision_time_left().is_zero() {
                         return SeatGenerated::Unavailable(MeasurementUnavailable::ClockExhausted);
                     }
-                    match slot.embed_query_exact(&arm.model, &label.value, run) {
+                    match embed(&label.value) {
                         Ok(vector) => anchors.push(vector),
                         Err(reason) => {
                             return SeatGenerated::Unavailable(embed_failure(reason, clock));
@@ -614,16 +663,22 @@ impl NativeArms {
                         );
                     }
                 };
-                let decision = match ladder.ladder().run_with_run(
-                    &question,
+                let decision = match crate::decision_verdict::with_model_call_context(
                     decisions.principal,
-                    &[],
-                    &state,
-                    MODEL_DIAL,
-                    &decisions.bands,
-                    Reversibility::ReversibleRead,
-                    clock,
-                    run,
+                    None,
+                    || {
+                        ladder.ladder().run_with_run(
+                            &question,
+                            decisions.principal,
+                            &[],
+                            &state,
+                            MODEL_DIAL,
+                            &decisions.bands,
+                            Reversibility::ReversibleRead,
+                            clock,
+                            run,
+                        )
+                    },
                 ) {
                     Ok(decision) => decision,
                     Err(error) => {

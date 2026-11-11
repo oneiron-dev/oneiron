@@ -1,0 +1,16 @@
+{
+  "name": "vault.coach.training_offers.pilots.get",
+  "description": "Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card.",
+  "input": "crate::skill_optimize::offer_pilot::OfferPilotRef",
+  "output": "Option<crate::skill_optimize::offer_pilot::OfferPilot>",
+  "call": "crate::skill_optimize::offer_pilot::pilot(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.pilots.get\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

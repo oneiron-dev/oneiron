@@ -84,12 +84,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     Ok(true) => {
                         return Ok(DreamerAttemptExecution::Completed {
                             completed_units: charges.units,
-                            step_hashes: charges.step_hashes.clone(),
+                            step_bindings: charges.step_bindings.clone(),
                         });
                     }
                     Ok(false) => {}
                     Err(error) if waits_on_residency(&error) => {
-                        return Ok(residency_deferral(ctx.now_ms, charges.units, charges.step_hashes.clone()));
+                        return Ok(residency_deferral(ctx.now_ms, charges.units, charges.step_bindings.clone()));
                     }
                     Err(error) => return Err(error),
                 }
@@ -168,10 +168,10 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         call_as_step_checked(&step_ctx, self.backend, self.guard, request, &check).await;
                     let response = match outcome {
                         Ok(StepOutcome::Finished {
-                            response, memoized, ..
+                            response, memoized, binding, ..
                         }) => {
                             if let Err(error) =
-                                charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
+                                charges.record_terminal(ctx.vault, binding.attempt_id, binding.step_hash, &response.usage)
                             {
                                 if !memoized {
                                     charges.record_usage(&response.usage);
@@ -214,7 +214,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                                 continue 'layouts;
                             }
                             return Ok(
-                                charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other))
+                                charges.park_for(&other.to_string(), crate::dreamer_runner::dreamer_park_cause_of_step(&other))
                             );
                         }
                     };
@@ -259,20 +259,20 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 {
                     Ok(_) => Ok(DreamerAttemptExecution::Completed {
                         completed_units: charges.units,
-                        step_hashes: charges.step_hashes.clone(),
+                        step_bindings: charges.step_bindings.clone(),
                     }),
                     Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
                     Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
                         ctx.now_ms,
                         charges.units,
-                        charges.step_hashes.clone(),
+                        charges.step_bindings.clone(),
                     )),
                     Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
                 };
             }
         }.await;
         if result.is_err() {
-            ctx.note_spend_before_error(charges.units, &charges.step_hashes);
+            ctx.note_spend_before_error(charges.units, &charges.step_bindings);
         }
         result
     }

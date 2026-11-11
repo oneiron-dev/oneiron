@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.sources.connect",
+  "description": "Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members.",
+  "input": "crate::mail_pack::MailSourceConnectRequest",
+  "output": "crate::mail_pack::MailSourceConnectReceipt",
+  "call": "memory.mail_sources_connect(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

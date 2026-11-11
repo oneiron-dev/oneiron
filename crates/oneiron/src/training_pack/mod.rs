@@ -8,8 +8,10 @@ mod authorize;
 mod connector;
 mod custody;
 mod detector_corpus;
+mod embedder_runtime;
 mod export;
 mod promotion;
+pub(crate) mod tables;
 mod target;
 mod types;
 
@@ -27,6 +29,7 @@ pub(crate) use authorize::training_run_job_input;
 pub use connector::{PollFuture, TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
 pub use custody::stream::{CheckpointFileStream, CheckpointStream};
 pub use detector_corpus::DetectorCorpusRef;
+pub use embedder_runtime::TrainingEmbedderSource;
 pub use promotion::{RoleSwapOutcome, SwapExpectation, TrainingEvalInput, ViewedSwap};
 pub(crate) use promotion::{
     bind_staged_role_swap_in_txn, role_swap_receipt_in, training_run_in, training_runs_in,

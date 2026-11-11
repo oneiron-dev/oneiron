@@ -199,6 +199,8 @@ pub struct CodeSymbolManifest {
     pub commit_hash: Option<String>,
     pub chunks: Vec<CodeChunk>,
     pub symbols: Vec<CodeSymbolRevision>,
+    /// Typed relations recorded in this exact artifact, never reconstructed from global edges.
+    pub relations: Vec<super::relations::CodeSymbolRelation>,
 }
 
 impl CodeSymbolManifest {
@@ -233,6 +235,7 @@ impl CodeSymbolManifest {
             commit_hash: commit_hash.map(normalize_commit_hash).transpose()?,
             chunks,
             symbols,
+            relations: Vec::new(),
         };
         validate_code_symbol_manifest(&manifest)?;
         Ok(manifest)

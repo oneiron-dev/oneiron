@@ -146,7 +146,12 @@ fn append_diary_entry_in_txn(
         for part in continuations {
             batch = batch.edge(part, EdgeKind::Mentions, &first, 1.0);
         }
-        let mut content = crate::federation::ActorContentTxn::new(vault, txn, resident)?;
+        let mut content = crate::federation::ActorContentTxn::new(
+            vault,
+            txn,
+            resident,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )?;
         content.apply_batch(batch)?;
         content.finish()?;
     }

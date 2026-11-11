@@ -14,28 +14,9 @@ pub(crate) fn cores() -> usize {
 
 pub(crate) use oneiron::host_memory::{MachineMemory, MemoryLease, MemoryRefusal, memory_bytes};
 
-/// Descriptors this process may hold open at once, when the platform says.
-pub(crate) fn open_file_limit() -> Option<u64> {
-    #[cfg(unix)]
-    {
-        let mut limit = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        // SAFETY: `getrlimit` writes the struct on the stack and nothing else.
-        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) } != 0 {
-            return None;
-        }
-        if limit.rlim_cur == libc::RLIM_INFINITY {
-            return Some(u64::MAX);
-        }
-        Some(limit.rlim_cur)
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
-}
+// Descriptors this process may hold open at once, which the process's one
+// descriptor floor is sized from (FIX 6299).
+pub(crate) use oneiron::host_descriptors::open_file_limit;
 
 /// The most descriptors serving raises its soft open-file limit to: hard
 /// limits are often far higher (524,288 on many Linux hosts; unlimited, as
@@ -189,6 +170,46 @@ impl DiskFloor {
             claimed: Arc::default(),
             #[cfg(test)]
             shown_free: Arc::clone(&self.shown_free),
+        }
+    }
+
+    /// A dedicated scratch filesystem's floor, sharing pending claims across
+    /// servers that select the same actual filesystem. Each keeps its own
+    /// configured reserve; existing vault floors are not replaced.
+    pub(crate) fn on_shared_disk_of(&self, dir: PathBuf) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            use std::sync::{OnceLock, Weak};
+
+            type Claims = Mutex<u64>;
+            static FLOORS: OnceLock<Mutex<std::collections::BTreeMap<u64, Weak<Claims>>>> =
+                OnceLock::new();
+            let device = std::fs::metadata(&dir)?.dev();
+            let vault_device = std::fs::metadata(&self.dir)?.dev();
+            if device == vault_device {
+                return Err(std::io::Error::other(
+                    "configured renderer scratch must be a separate filesystem from the vault",
+                ));
+            }
+            let mut floors = lock(FLOORS.get_or_init(Mutex::default));
+            floors.retain(|_, claims| claims.strong_count() > 0);
+            let claimed = match floors.get(&device).and_then(Weak::upgrade) {
+                Some(claimed) => claimed,
+                None => {
+                    let claimed = Arc::new(Mutex::new(0));
+                    floors.insert(device, Arc::downgrade(&claimed));
+                    claimed
+                }
+            };
+            let mut floor = self.on_disk_of(dir);
+            floor.claimed = claimed;
+            Ok(floor)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = dir;
+            Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
         }
     }
 

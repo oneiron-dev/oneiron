@@ -17,8 +17,8 @@ type Result<T> = std::result::Result<T, ContentTemplateError>;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ContentTemplateError {
-    /// Past a structural or codec bound: markup nested deeper than the
-    /// renderer's recursion takes, or a PDF past the writer's offset width.
+    /// Past a codec representation bound, such as a PDF beyond the writer's
+    /// offset width.
     #[error("template nesting or codec limit")]
     Limit,
     #[error("missing or invalid repo merge field")]

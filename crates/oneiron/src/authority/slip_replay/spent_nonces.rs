@@ -1116,6 +1116,17 @@ impl SpentNonces {
     }
 }
 
+/// Notes a spend [`SpentNonces::admit`] took as queued when it drops
+/// ([`SpentNonces::note_queued`]), on the spend's path and on a panic
+/// between its admission and its queue alike (FIX 12351).
+struct QueuedNote<'a>(&'a SpentNonces);
+
+impl Drop for QueuedNote<'_> {
+    fn drop(&mut self) {
+        self.0.note_queued();
+    }
+}
+
 /// What an in-memory admission spends through (FIX 12023 W0): the handle this
 /// process serves, which the spend's rows are written on, and the authority
 /// second it opened at.
@@ -1187,6 +1198,11 @@ impl SpendDoor {
         if !admitted {
             return false;
         }
+        // Queued is noted when this guard drops: after the queue below, or
+        // as a panic in it unwinds, so no restore swap waits out its drain
+        // on a spend that will never queue (FIX 12351). The swap's fence
+        // still refuses a spent nonce whose row has not landed.
+        let queued = QueuedNote(&served.spent_nonces);
         NonceSpend {
             vault: Arc::downgrade(served),
             holds: served.store.leader_holds(),
@@ -1196,7 +1212,7 @@ impl SpendDoor {
             failures: 0,
         }
         .queue(served);
-        served.spent_nonces.note_queued();
+        drop(queued);
         // The reply goes out here. The spend is durable already: journaled
         // and fdatasynced inside `admit` (P1-a=B), its rows on their way
         // through the detached door. A crash before they land replays the
@@ -1344,7 +1360,7 @@ impl NonceSpend {
         let failures = u64::from(self.failures);
         let event = DiagnosticEvent {
             detector_id: NONCE_SPEND_DETECTOR.to_owned(),
-            event_class: DiagnosticEventClass::ChainVerifyFailure,
+            event_class: DiagnosticEventClass::DurableWriteFailure,
             signal: None,
             actor_class: "system".to_owned(),
             actor_ref: None,
