@@ -135,15 +135,19 @@ fn refuse(
 }
 
 /// The body of the claim `id` as `read` serves it in `txn`; `None` for a row
-/// that is not a claim, is gone, or lies outside that read.
+/// that is not a claim, is gone, or lies outside that read. A read whose
+/// credential no longer stands serves no row.
 fn claim_body_in(
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<ClaimBody>> {
-    let Some((ENTITY_TYPE_CLAIM, _, body)) =
-        read.get_entities_parts_in_txn(txn, &[id])?.pop().flatten()
-    else {
+    let row = match read.get_entities_parts_in_txn(txn, &[id]) {
+        Ok(mut rows) => rows.pop().flatten(),
+        Err(Error::InvalidClaimBody(_)) => None,
+        Err(error) => return Err(error),
+    };
+    let Some((ENTITY_TYPE_CLAIM, _, body)) = row else {
         return Ok(None);
     };
     Ok(crate::claim::decode_claim_body(&body, true).ok())
