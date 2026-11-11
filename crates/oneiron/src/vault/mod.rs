@@ -69,7 +69,9 @@ pub(crate) use self::entities::{
 };
 pub(crate) use self::identity::VaultId;
 pub use self::identity::{OpenOptions, VaultStorageId};
-pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
+pub(crate) use self::open::{
+    EngineSeedIdentities, embedded_owner_actor_id, encode_embedded_owner_actor_body,
+};
 pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
