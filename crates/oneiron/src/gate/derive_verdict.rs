@@ -167,7 +167,7 @@ pub(crate) fn derive_verdict_in_txn(
 /// Whether the grant scope `grant` admits `verb` over the record `target`
 /// as it stands in `txn`: a row with no record position, or one gone,
 /// admits nothing.
-fn reaches_target(
+pub(crate) fn reaches_target(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     grant: &Scope,
