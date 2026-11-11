@@ -12,6 +12,7 @@ pub mod code_run_answer;
 pub mod consolidation;
 pub mod dag_append;
 pub mod feeds;
+pub mod inquiry;
 pub mod label_writers;
 pub mod lifted_text;
 pub mod live_run_claim_put;

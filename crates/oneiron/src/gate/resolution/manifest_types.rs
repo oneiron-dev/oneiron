@@ -345,6 +345,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) shared_act_policies:
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
     pub(crate) owner_change_wait_secs: Option<u64>,
+    pub(super) inquiry_policy: Option<crate::inquiry::InquiryPolicy>,
     pub(super) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
     pub(crate) code_consent_settlement:
         Option<crate::gate::code_consent_settlement::ResolvedCodeConsentSettlement>,
