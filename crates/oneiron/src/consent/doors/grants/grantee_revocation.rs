@@ -93,5 +93,7 @@ fn grantee_admits(row: Option<&ConsentGrantRow>, caller: &str, caller_class: &st
     if grantee.actor_ref() != caller {
         return false;
     }
-    grantee.actor_class().is_none_or(|class| class == caller_class)
+    grantee
+        .actor_class()
+        .is_none_or(|class| class == caller_class)
 }
