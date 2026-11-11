@@ -508,9 +508,17 @@ impl Vault {
                 "schedule": &schedule,
             }))?,
             |txn| {
-                let grant = self.engine_controls_grant_in(txn, holder)?.ok_or_else(|| {
-                    Error::InvalidConfig("this holder holds no live engine.controls".into())
-                })?;
+                let grant = self
+                    .engine_controls_grant_in(
+                        txn,
+                        holder,
+                        crate::federation::EngineControlClass::WakeCadence,
+                    )?
+                    .ok_or_else(|| {
+                        Error::InvalidConfig(
+                            "this holder holds no live engine.controls.wake_cadence".into(),
+                        )
+                    })?;
                 self.read_agent_definition_in_txn(txn, &agent)?;
                 let record = current_revision_in_txn(self, txn, agent, expected_revision)?;
                 let Some(prior) = record.as_ref().and_then(|record| record.policy.clone()) else {

@@ -40,8 +40,10 @@ fn a_hard_erase_takes_the_actor_out_of_the_engine_control_receipts() {
             b"human",
         )
         .expect("a live person");
+    // Every class: this layer splits the grant into four class verbs.
+    let classes: BTreeSet<EngineControlClass> = EngineControlClass::ALL.into_iter().collect();
     vault
-        .grant_engine_controls(&owner, holder)
+        .grant_engine_controls(&owner, holder, &classes)
         .expect("the owner's grant");
 
     // One change by the holder, one by the owner whose value names the
@@ -141,8 +143,10 @@ fn a_hard_erase_leaves_no_holder_id_in_the_learning_put_witnesses() {
             b"human",
         )
         .expect("a live person");
+    // Every class: this layer splits the grant into four class verbs.
+    let classes: BTreeSet<EngineControlClass> = EngineControlClass::ALL.into_iter().collect();
     vault
-        .grant_engine_controls(&owner_proof, holder)
+        .grant_engine_controls(&owner_proof, holder, &classes)
         .expect("the owner's grant");
     let before = learning_put_witnesses(&vault, owner_id).len();
 

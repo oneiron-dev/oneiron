@@ -343,6 +343,32 @@ fn hex32(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
+/// `vault.engine.defaults`'s answer row: one grant the engine stood by
+/// default, by its grant id, with its receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineDefaultGrantEntry {
+    /// The grant (32 hex).
+    pub grant: EntityId,
+    pub receipt: crate::federation::EngineDefaultGrant,
+}
+
+/// `vault.engine.defaults`: every grant the engine stood by default, oldest
+/// first, for the owner to read on first open (lead 10 Nov 06:5x). Each is
+/// the engine's act, never the owner's; the owner narrows or revokes it at
+/// `vault.agents.grants.narrow`.
+pub fn engine_default_grants_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    _input: super::EmptyRequest,
+) -> MemoryResult<Vec<EngineDefaultGrantEntry>> {
+    Ok(vault
+        .engine_default_grants(owner)?
+        .into_iter()
+        .map(|(grant, receipt)| EngineDefaultGrantEntry { grant, receipt })
+        .collect())
+}
+
 /// `vault.engine.controls.changes`'s answer row: one change made through
 /// the engine-control door, by its receipt id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,7 +380,7 @@ pub struct EngineControlChangeEntry {
 }
 
 /// `vault.engine.controls.changes`: every change the owner or a holder of
-/// `engine.controls` made to the engine's stored knobs, oldest first, for
+/// an `engine.controls` class made to the engine's stored knobs, oldest first, for
 /// the owner to read (untangle 6.6).
 pub fn engine_control_changes_as(
     vault: &Vault,

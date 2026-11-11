@@ -1,10 +1,12 @@
 //! The Coach's default grant (untangle 6.6a; S66-MAP ruled A, A, A, A):
-//! `read` and `engine.controls`. Through it the Coach tunes every class of
-//! the engine's stored knobs, each change writing a receipt that names it,
-//! and reads a project goal through its own read row (GOAL-PRIVACY). A
-//! Steward grant on the default four verbs holds no `engine.controls`; a
-//! Coach grant without `read` reads no goal, while the owner's read stands.
-//! On the base there is no `engine.controls` check.
+//! `read` and the four `engine.controls` classes (one verb per class, lead
+//! 10 Nov 06:5x). Through it the Coach tunes every class of the engine's
+//! stored knobs, each change writing a receipt that names it, and reads a
+//! project goal through its own read row (GOAL-PRIVACY). A Steward grant on
+//! the default four verbs holds no `engine.controls` class, and a grant
+//! that names one class tunes that class only; a Coach grant without `read`
+//! reads no goal, while the owner's read stands. On the base there is no
+//! `engine.controls` check.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -17,7 +19,10 @@ use oneiron::dreamer_runner::authority::coach_reader;
 use oneiron::federation::{
     EngineControlActor, EngineControlClass, SystemAgentGrantNarrowing, SystemFunction,
 };
-use oneiron::test_doors::coach::{ENGINE_CONTROLS_VERB, coach, write_root_goal};
+use oneiron::test_doors::coach::{
+    ENGINE_CONTROLS_VERBS, ENGINE_CONTROLS_WORK_BUDGET_VERB, coach, read_and_engine_controls,
+    write_root_goal,
+};
 use oneiron::test_doors::steward::{
     GrantMark, STEWARD_READ_VERB, STEWARD_VERBS, grant_mark, open_owner_carrier_vault, owner,
     stand_steward_grant,
@@ -82,7 +87,7 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
 
     // With its default grant: every class, a receipt naming it, the goal
     // read through its own read row, and its offer row kept.
-    stand_steward_grant(&vault, coach, &[STEWARD_READ_VERB, ENGINE_CONTROLS_VERB])
+    stand_steward_grant(&vault, coach, &read_and_engine_controls())
         .expect("the Coach's default grant");
     for class in CLASSES {
         assert!(
@@ -124,7 +129,7 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
 
     // Without `read`, the Coach reads no goal, while the owner's read of the
     // same goal stands (GOAL-PRIVACY).
-    stand_steward_grant(&vault, coach, &[ENGINE_CONTROLS_VERB]).expect("controls only");
+    stand_steward_grant(&vault, coach, &ENGINE_CONTROLS_VERBS).expect("controls only");
     assert_eq!(
         vault
             .project_intake_goal_as(coach_reader, project)
@@ -142,7 +147,7 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
 }
 
 #[test]
-fn only_a_grant_that_names_engine_controls_gives_it() {
+fn only_a_grant_that_names_an_engine_controls_class_gives_it() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open(&dir);
     let agent = EntityId::now();
@@ -155,19 +160,40 @@ fn only_a_grant_that_names_engine_controls_gives_it() {
         EngineControlClass::WorkBudget
     ));
 
-    // One that names it does.
-    stand_steward_grant(&vault, agent, &[ENGINE_CONTROLS_VERB]).expect("engine.controls grant");
-    assert!(allowed(
-        &vault,
-        EngineControlActor::Holder(agent),
-        EngineControlClass::WorkBudget
-    ));
+    // One that names a class gives that class, and no other (lead 10 Nov
+    // 06:5x: the grant is scoped by the four classes).
+    stand_steward_grant(&vault, agent, &[ENGINE_CONTROLS_WORK_BUDGET_VERB])
+        .expect("a work-budget grant");
+    for class in CLASSES {
+        assert_eq!(
+            allowed(&vault, EngineControlActor::Holder(agent), class),
+            class == EngineControlClass::WorkBudget,
+            "{class:?}: a work-budget grant tunes work budgets only"
+        );
+    }
+    assert!(
+        vault
+            .apply_engine_control(
+                EngineControlActor::Holder(agent),
+                EngineControlClass::WakeCadence,
+                "DREAMER_PROACTIVITY_CADENCE",
+                "{\"period_secs\":43200}",
+                |_| Ok(()),
+            )
+            .is_err(),
+        "the door refuses a class the grant does not name"
+    );
+
+    // One that names all four gives every class.
+    stand_steward_grant(&vault, agent, &ENGINE_CONTROLS_VERBS).expect("every class");
+    for class in CLASSES {
+        assert!(allowed(&vault, EngineControlActor::Holder(agent), class));
+    }
 }
 
-/// The host's first mint gives the Coach its default grant, {read,
-/// engine.controls}, as the owner's signed act and marked system-critical:
-/// narrowing it off engine.controls warns first, and once confirmed the
-/// Coach tunes nothing.
+/// The host's first mint gives the Coach its default grant, `read` and the
+/// four engine.controls classes, marked system-critical: narrowing it off
+/// engine.controls warns first, and once confirmed the Coach tunes nothing.
 #[test]
 fn the_coachs_first_mint_holds_engine_controls_and_narrowing_it_warns() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -186,7 +212,7 @@ fn the_coachs_first_mint_holds_engine_controls_and_narrowing_it_warns() {
     };
     let read = BTreeSet::from([STEWARD_READ_VERB.to_owned()]);
     let mut default = read.clone();
-    default.insert(ENGINE_CONTROLS_VERB.to_owned());
+    default.extend(ENGINE_CONTROLS_VERBS.map(str::to_owned));
     assert_eq!(verbs, default, "the Coach's default grant");
     for class in CLASSES {
         assert!(

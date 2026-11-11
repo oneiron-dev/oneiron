@@ -7,7 +7,9 @@
 //! (26 Oct decree). The narrowing signs the owner's revoke and mint, so its
 //! fixture must carry an owner act (an install machine profile), as 6.3c's.
 use super::*;
-use crate::federation::grant_scope::{ENGINE_CONTROLS_VERB, STEWARD_READ_VERB, STEWARD_VERBS};
+use crate::federation::grant_scope::{
+    ENGINE_CONTROLS_VERBS, ENGINE_CONTROLS_WORK_BUDGET_VERB, STEWARD_READ_VERB, STEWARD_VERBS,
+};
 use crate::federation::{SystemAgentGrantNarrowing, SystemFunction};
 use crate::workspace_roster::{GoalAxis, GoalExplorationBudget, GoalPreference, GoalRecord};
 use std::collections::BTreeSet;
@@ -100,7 +102,16 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
     // With its default grant: every class, a receipt naming it, the goal
     // read through its own read row, and its offer row kept.
     vault
-        .stand_steward_grant_for_test(coach, &[STEWARD_READ_VERB, ENGINE_CONTROLS_VERB])
+        .stand_steward_grant_for_test(
+            coach,
+            &[
+                STEWARD_READ_VERB,
+                ENGINE_CONTROLS_VERBS[0],
+                ENGINE_CONTROLS_VERBS[1],
+                ENGINE_CONTROLS_VERBS[2],
+                ENGINE_CONTROLS_VERBS[3],
+            ],
+        )
         .expect("coach grant");
     for class in CLASSES {
         assert!(allowed(&vault, EngineControlActor::Holder(coach), class));
@@ -187,7 +198,7 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
     // Without `read`, the Coach's goal read is absent, while the owner's
     // read of the same goal stands (GOAL-PRIVACY).
     vault
-        .stand_steward_grant_for_test(coach, &[ENGINE_CONTROLS_VERB])
+        .stand_steward_grant_for_test(coach, &ENGINE_CONTROLS_VERBS)
         .expect("controls only");
     assert_eq!(
         vault
@@ -221,7 +232,7 @@ fn only_an_owners_grant_gives_engine_controls() {
 
     // One that names it does.
     vault
-        .stand_steward_grant_for_test(agent, &[ENGINE_CONTROLS_VERB])
+        .stand_steward_grant_for_test(agent, &[ENGINE_CONTROLS_WORK_BUDGET_VERB])
         .expect("engine.controls grant");
     assert!(allowed(
         &vault,

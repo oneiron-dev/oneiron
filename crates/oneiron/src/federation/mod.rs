@@ -210,8 +210,8 @@ pub(crate) use system_agent_grant::SystemAgentGrantState;
 pub(crate) use system_agent_grant::erase_narrowing_actor_in_txn;
 pub(crate) use system_agent_grant::is_system_agent_steward_grant;
 pub use system_agent_grant::{
-    SYSTEM_AGENT_GRANT_NARROWING_WARNING, SystemAgentGrantNarrowing, SystemAgentNarrowing,
-    SystemFunction,
+    EngineDefaultGrant, EngineDefaultOrigin, SYSTEM_AGENT_GRANT_NARROWING_WARNING,
+    SystemAgentGrantNarrowing, SystemAgentNarrowing, SystemFunction,
 };
 pub(crate) use system_agent_grant::{
     StewardRows, SystemAgent, holds_system_agent_grant, standing_steward_grant_in,
@@ -220,11 +220,11 @@ pub(crate) use system_agent_grant::{
 mod engine_controls;
 mod substrate_reads;
 pub(crate) use engine_controls::erase_engine_control_actor_in_txn;
-pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
 pub(crate) use engine_controls::rendered_change;
 pub use engine_controls::{
     ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
 };
+pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
 #[cfg(test)]
 mod shared_creation_tests;
 #[cfg(test)]

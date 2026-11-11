@@ -1,7 +1,7 @@
 //! The Coach reads through its grant (untangle 6.6c): the agent health,
 //! failure-evidence and retrieval-run reads answer the vault owner or a
 //! holder of a Steward grant naming `read`, and the learning dials read a
-//! holder of `engine.controls`, each checked at the call. They are general
+//! holder of any `engine.controls` class, each checked at the call. They are general
 //! verbs: any agent the owner grants reads them, the Coach by default. An
 //! agent without the grant is refused, and a narrowed grant reads nothing
 //! from its next call on.
@@ -19,7 +19,10 @@
 use oneiron::attempt_queue::AttemptId;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::coach::{ENGINE_CONTROLS_VERB, coach, define_agent};
+use oneiron::test_doors::coach::{
+    ENGINE_CONTROLS_VERBS, ENGINE_CONTROLS_WORK_BUDGET_VERB, coach, define_agent,
+    read_and_engine_controls,
+};
 use oneiron::test_doors::steward::{STEWARD_READ_VERB, stand_steward_grant};
 use oneiron::test_doors::substrate_reads::stand_project_steward_grant;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -34,7 +37,10 @@ fn open(dir: &tempfile::TempDir) -> Vault {
 /// Each evidence read, by verb and input.
 fn evidence_reads(agent: EntityId) -> Vec<(&'static str, Value)> {
     vec![
-        ("vault.agent_health.cards", json!({ "from": 0, "to": u64::MAX })),
+        (
+            "vault.agent_health.cards",
+            json!({ "from": 0, "to": u64::MAX }),
+        ),
         (
             "vault.agent_health.calls",
             json!({ "agent_ref": agent.to_hex(), "since": 0 }),
@@ -69,7 +75,10 @@ fn a_steward_reader_reads_agent_health_and_an_ungranted_agent_is_refused() {
     let agent = define_agent(&vault).expect("an agent");
 
     for (verb, input) in evidence_reads(agent) {
-        assert_refused(read(&vault, agent, EdgeActorClass::Agent, verb, input), verb);
+        assert_refused(
+            read(&vault, agent, EdgeActorClass::Agent, verb, input),
+            verb,
+        );
     }
 
     stand_steward_grant(&vault, agent, &[STEWARD_READ_VERB]).expect("a read grant");
@@ -81,7 +90,7 @@ fn a_steward_reader_reads_agent_health_and_an_ungranted_agent_is_refused() {
     // The verb is the grant's own: an agent holding only `engine.controls`
     // reads no evidence.
     let controls_only = define_agent(&vault).expect("a second agent");
-    stand_steward_grant(&vault, controls_only, &[ENGINE_CONTROLS_VERB]).expect("a controls grant");
+    stand_steward_grant(&vault, controls_only, &ENGINE_CONTROLS_VERBS).expect("a controls grant");
     for (verb, input) in evidence_reads(agent) {
         assert_refused(
             read(&vault, controls_only, EdgeActorClass::Agent, verb, input),
@@ -97,15 +106,22 @@ fn the_dials_read_needs_engine_controls() {
     let agent = define_agent(&vault).expect("an agent");
     let dials = |actor, class| read(&vault, actor, class, "vault.settings.learning", json!({}));
 
-    assert_refused(dials(agent, EdgeActorClass::Agent), "vault.settings.learning");
+    assert_refused(
+        dials(agent, EdgeActorClass::Agent),
+        "vault.settings.learning",
+    );
     stand_steward_grant(&vault, agent, &[STEWARD_READ_VERB]).expect("a read grant");
-    assert_refused(dials(agent, EdgeActorClass::Agent), "vault.settings.learning");
-    stand_steward_grant(&vault, agent, &[ENGINE_CONTROLS_VERB]).expect("a controls grant");
-    dials(agent, EdgeActorClass::Agent).expect("an engine.controls holder reads the dials");
+    assert_refused(
+        dials(agent, EdgeActorClass::Agent),
+        "vault.settings.learning",
+    );
+    stand_steward_grant(&vault, agent, &[ENGINE_CONTROLS_WORK_BUDGET_VERB])
+        .expect("a one-class controls grant");
+    dials(agent, EdgeActorClass::Agent).expect("any engine.controls class reads the dials");
 
     // The Coach with its default grant reads the dials and agent health.
     let coach = coach(&vault).expect("the Coach");
-    stand_steward_grant(&vault, coach, &[STEWARD_READ_VERB, ENGINE_CONTROLS_VERB])
+    stand_steward_grant(&vault, coach, &read_and_engine_controls())
         .expect("the Coach's default grant");
     dials(coach, EdgeActorClass::System).expect("the Coach reads the dials");
     for (verb, input) in evidence_reads(agent) {
@@ -115,9 +131,12 @@ fn the_dials_read_needs_engine_controls() {
 
     // The grant is checked at each call: the Coach narrowed off `read` reads
     // no evidence from its next call on, and still reads the dials.
-    stand_steward_grant(&vault, coach, &[ENGINE_CONTROLS_VERB]).expect("the Coach narrowed");
+    stand_steward_grant(&vault, coach, &ENGINE_CONTROLS_VERBS).expect("the Coach narrowed");
     for (verb, input) in evidence_reads(agent) {
-        assert_refused(read(&vault, coach, EdgeActorClass::System, verb, input), verb);
+        assert_refused(
+            read(&vault, coach, EdgeActorClass::System, verb, input),
+            verb,
+        );
     }
     dials(coach, EdgeActorClass::System).expect("the narrowed Coach still reads the dials");
 }
@@ -156,13 +175,8 @@ fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
         )
     };
 
-    stand_project_steward_grant(
-        &vault,
-        agent,
-        &[STEWARD_READ_VERB, ENGINE_CONTROLS_VERB],
-        own_project,
-    )
-    .expect("a grant narrowed to one project");
+    stand_project_steward_grant(&vault, agent, &read_and_engine_controls(), own_project)
+        .expect("a grant narrowed to one project");
     for (verb, input) in evidence_reads(agent) {
         assert_refused(
             read(&vault, agent, EdgeActorClass::Agent, verb, input),
@@ -172,7 +186,7 @@ fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
     assert_refused(learning(), "vault.learning.read");
     assert_refused(dials(), "vault.settings.learning");
 
-    stand_steward_grant(&vault, agent, &[STEWARD_READ_VERB, ENGINE_CONTROLS_VERB])
+    stand_steward_grant(&vault, agent, &read_and_engine_controls())
         .expect("a grant across the whole vault");
     for (verb, input) in evidence_reads(agent) {
         read(&vault, agent, EdgeActorClass::Agent, verb, input)
@@ -198,6 +212,12 @@ fn the_owner_reads_without_a_grant() {
         read(&vault, owner, EdgeActorClass::Human, verb, input)
             .unwrap_or_else(|error| panic!("{verb}: the owner reads: {error:?}"));
     }
-    read(&vault, owner, EdgeActorClass::Human, "vault.settings.learning", json!({}))
-        .expect("the owner reads the dials");
+    read(
+        &vault,
+        owner,
+        EdgeActorClass::Human,
+        "vault.settings.learning",
+        json!({}),
+    )
+    .expect("the owner reads the dials");
 }
