@@ -217,16 +217,23 @@ fn tied_bindings_resolve_to_nothing() {
 
 #[test]
 fn retained_proposal_codec_pins_schema_attribution_and_rejects_malformed_bytes() {
-    let fixture: &[u8] = b"\x88\xa1v\x01\xa8artifact\xc4\x10abcdefghijklmnop\xacproposed_ref\xc4\x01\x01\xa9final_ref\xc4\x01\x02\xadproposed_text\xa1a\xaafinal_text\xa1e\xabsource_turn\xc4\x10qrstuvwxyzABCDEF\xa5spans\x94\x8a\xa4peer\x09\xa3ctr\x03\xa3len\x02\xa7lamport\x0b\xa2ts\x01\xa6before\xa1a\xa5after\xa1b\xa5trust\xa7stamped\xa5actor\xc4\x10ABCDEFGHIJKLMNOP\xa5class\xa5human\x8a\xa4peer\x0a\xa3ctr\x00\xa3len\x01\xa7lamport\x0c\xa2ts\x02\xa6before\xa1b\xa5after\xa1c\xa5trust\xaaregistered\xa5actor\xc4\x10ABCDEFGHIJKLMNOP\xa5class\xa5agent\x8a\xa4peer\x0b\xa3ctr\x00\xa3len\x01\xa7lamport\x0d\xa2ts\x03\xa6before\xa1c\xa5after\xa1d\xa5trust\xaaregistered\xa5actor\xc4\x10ABCDEFGHIJKLMNOP\xa5class\xa6system\x8a\xa4peer\x0c\xa3ctr\x00\xa3len\x01\xa7lamport\x0e\xa2ts\x04\xa6before\xa1d\xa5after\xa1e\xa5trust\xabdevice_peer\xa5actor\xc0\xa5class\xc0";
-    let record = decode_finalized_proposal_text(fixture).expect("fixed v1 schema");
+    // Schema v5 keeps endpoint text by reference, with wall-admitted lifted text.
+    let fixture: &[u8] = b"\x8a\xa1\x76\x05\xa8\x61\x72\x74\x69\x66\x61\x63\x74\xc4\x10\x61\x62\x63\x64\x65\x66\x67\x68\x69\x6a\x6b\x6c\x6d\x6e\x6f\x70\xac\x70\x72\x6f\x70\x6f\x73\x65\x64\x5f\x72\x65\x66\xc4\x01\x01\xa9\x66\x69\x6e\x61\x6c\x5f\x72\x65\x66\xc4\x01\x02\xa4\x68\x65\x61\x64\xc0\xab\x73\x6f\x75\x72\x63\x65\x5f\x74\x75\x72\x6e\xc4\x10\x71\x72\x73\x74\x75\x76\x77\x78\x79\x7a\x41\x42\x43\x44\x45\x46\xa5\x73\x70\x61\x6e\x73\x94\x8a\xa4\x70\x65\x65\x72\x09\xa3\x63\x74\x72\x03\xa3\x6c\x65\x6e\x02\xa7\x6c\x61\x6d\x70\x6f\x72\x74\x0b\xa2\x74\x73\x01\xa6\x62\x65\x66\x6f\x72\x65\xc4\x01\x01\xa5\x61\x66\x74\x65\x72\xc4\x01\x03\xa5\x74\x72\x75\x73\x74\xa7\x73\x74\x61\x6d\x70\x65\x64\xa5\x61\x63\x74\x6f\x72\xc4\x10\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4a\x4b\x4c\x4d\x4e\x4f\x50\xa5\x63\x6c\x61\x73\x73\xa5\x68\x75\x6d\x61\x6e\x8a\xa4\x70\x65\x65\x72\x0a\xa3\x63\x74\x72\x00\xa3\x6c\x65\x6e\x01\xa7\x6c\x61\x6d\x70\x6f\x72\x74\x0c\xa2\x74\x73\x02\xa6\x62\x65\x66\x6f\x72\x65\xc4\x01\x03\xa5\x61\x66\x74\x65\x72\xc4\x01\x04\xa5\x74\x72\x75\x73\x74\xaa\x72\x65\x67\x69\x73\x74\x65\x72\x65\x64\xa5\x61\x63\x74\x6f\x72\xc4\x10\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4a\x4b\x4c\x4d\x4e\x4f\x50\xa5\x63\x6c\x61\x73\x73\xa5\x61\x67\x65\x6e\x74\x8a\xa4\x70\x65\x65\x72\x0b\xa3\x63\x74\x72\x00\xa3\x6c\x65\x6e\x01\xa7\x6c\x61\x6d\x70\x6f\x72\x74\x0d\xa2\x74\x73\x03\xa6\x62\x65\x66\x6f\x72\x65\xc4\x01\x04\xa5\x61\x66\x74\x65\x72\xc4\x01\x05\xa5\x74\x72\x75\x73\x74\xaa\x72\x65\x67\x69\x73\x74\x65\x72\x65\x64\xa5\x61\x63\x74\x6f\x72\xc4\x10\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4a\x4b\x4c\x4d\x4e\x4f\x50\xa5\x63\x6c\x61\x73\x73\xa6\x73\x79\x73\x74\x65\x6d\x8a\xa4\x70\x65\x65\x72\x0c\xa3\x63\x74\x72\x00\xa3\x6c\x65\x6e\x01\xa7\x6c\x61\x6d\x70\x6f\x72\x74\x0e\xa2\x74\x73\x04\xa6\x62\x65\x66\x6f\x72\x65\xc4\x01\x05\xa5\x61\x66\x74\x65\x72\xc4\x01\x02\xa5\x74\x72\x75\x73\x74\xab\x64\x65\x76\x69\x63\x65\x5f\x70\x65\x65\x72\xa5\x61\x63\x74\x6f\x72\xc0\xa5\x63\x6c\x61\x73\x73\xc0\xa6\x6c\x69\x66\x74\x65\x64\x83\xa8\x70\x72\x6f\x70\x6f\x73\x65\x64\xa1\x61\xa5\x66\x69\x6e\x61\x6c\xa1\x65\xa7\x63\x68\x61\x6e\x67\x65\x73\x94\x92\xa1\x61\xa1\x62\x92\xa1\x62\xa1\x63\x92\xa1\x63\xa1\x64\x92\xa1\x64\xa1\x65\xae\x6d\x61\x64\x65\x5f\x62\x79\x5f\x69\x6e\x70\x75\x74\x73\x90\xad\x62\x69\x72\x74\x68\x5f\x61\x74\x74\x65\x6d\x70\x74\xc0";
+    let stored = decode_stored_proposal(fixture).expect("fixed v5 schema");
+    let record = &stored.record;
+    let (_tmp, vault) = temp_vault();
+    let reader = {
+        let txn = vault.store.env.read_txn().unwrap();
+        RetainedProposal::open(text_ref::joined_in_txn(&vault.store, &txn, stored.clone()).unwrap())
+    };
     assert_eq!(
         record.artifact_ref.entity_id().as_bytes(),
         b"abcdefghijklmnop"
     );
     assert_eq!(record.proposed_ref.as_bytes(), &[1]);
     assert_eq!(record.final_ref.as_bytes(), &[2]);
-    assert_eq!(record.proposed_text, "a");
-    assert_eq!(record.final_text, "e");
+    assert_eq!(reader.proposed_text().into_text().as_deref(), Some("a"));
+    assert_eq!(reader.final_text().into_text().as_deref(), Some("e"));
     assert_eq!(
         record.source_turn_ref.unwrap().as_bytes(),
         b"qrstuvwxyzABCDEF"
@@ -257,21 +264,30 @@ fn retained_proposal_codec_pins_schema_attribution_and_rejects_malformed_bytes()
         ),
         (9, 3, 2, 11, 1)
     );
+    let (before, after) = reader.change_texts(first);
     assert_eq!(
-        (first.before_text.as_str(), first.after_text.as_str()),
-        ("a", "b")
+        (before.into_text().as_deref(), after.into_text().as_deref()),
+        (Some("a"), Some("b"))
     );
-    assert_eq!(encode_finalized_proposal_text(&record).unwrap(), fixture);
-    let (_tmp, vault) = temp_vault();
-    put_finalized_proposal_text(&vault, &record).unwrap();
-    let retained = finalized_proposal_text(&vault, record.artifact_ref)
+    assert_eq!(encode_stored_proposal(&stored).unwrap(), fixture);
+    vault
+        .with_write_txn(|txn| {
+            PROPOSAL_ARTIFACT.put(&vault.store, txn, &record.artifact_ref.entity_id(), &stored)
+        })
+        .unwrap();
+    let retained = retained_proposal(&vault, record.artifact_ref)
         .unwrap()
         .unwrap();
-    assert_eq!(retained.final_text, "e");
-    assert_eq!(encode_finalized_proposal_text(&retained).unwrap(), fixture);
+    assert_eq!(retained.final_text().into_text().as_deref(), Some("e"));
+    let txn = vault.store.env.read_txn().unwrap();
+    let stored_again = PROPOSAL_ARTIFACT
+        .get(&vault.store, &txn, &record.artifact_ref.entity_id())
+        .unwrap()
+        .unwrap();
+    assert_eq!(encode_stored_proposal(&stored_again).unwrap(), fixture);
 
     let mut wrong_version = fixture.to_vec();
-    wrong_version[3] = 2;
+    wrong_version[3] = 6;
     let mut unknown_trust = fixture.to_vec();
     let trust = unknown_trust
         .windows(7)
@@ -302,7 +318,7 @@ fn retained_proposal_codec_pins_schema_attribution_and_rejects_malformed_bytes()
         b"\x80".as_slice(),
     ] {
         assert!(matches!(
-            decode_finalized_proposal_text(bytes),
+            decode_stored_proposal(bytes),
             Err(Error::CorruptedIndex(_))
         ));
     }
@@ -318,24 +334,55 @@ fn retained_proposal_codec_pins_schema_attribution_and_rejects_malformed_bytes()
 fn a_divergent_finalize_cannot_overwrite_the_stored_record() {
     let (_tmp, vault) = temp_vault();
     let artifact_ref = ProposalArtifactRef::mint();
+    let actor = put_actor(&vault, EdgeActorClass::Human);
+    let stamp = crate::provenance::actor_stamp(&vault, actor).expect("actor stamp");
+    let document = crate::entity_doc::EntityDoc::open_initialized(
+        loro::LoroDoc::new(),
+        artifact_ref.entity_id(),
+        "draft",
+        (actor, stamp),
+        1,
+        |_| Ok(()),
+        "proposal codec fixture birth",
+    )
+    .expect("proposal document");
+    let proposed_ref = LoroOpRef::from_bytes(document.frontier());
+    document
+        .doc
+        .get_text("body")
+        .insert(5, " left")
+        .expect("first endpoint");
+    document
+        .doc
+        .commit_with(loro::CommitOptions::new().commit_msg("first endpoint"));
     let record = FinalizedProposalText {
         artifact_ref,
-        proposed_ref: LoroOpRef::from_bytes(vec![1]),
-        final_ref: LoroOpRef::from_bytes(vec![2]),
+        proposed_ref,
+        final_ref: LoroOpRef::from_bytes(document.frontier()),
         ops_by_actor: Vec::new(),
-        proposed_text: "draft".to_owned(),
-        final_text: "draft left".to_owned(),
         source_turn_ref: None,
+        birth_attempt: None,
+        made_by_inputs: Vec::new(),
     };
 
-    put_finalized_proposal_text(&vault, &record).expect("first finalize");
-    put_finalized_proposal_text(&vault, &record).expect("re-finalizing the same bytes is a no-op");
+    put_finalized_proposal_text(&vault, &record, &document).expect("first finalize");
+    put_finalized_proposal_text(&vault, &record, &document)
+        .expect("re-finalizing the same bytes is a no-op");
 
+    let divergent_document =
+        crate::entity_doc::EntityDoc::from_snapshot(&document.export_snapshot().unwrap()).unwrap();
+    let text = divergent_document.doc.get_text("body");
+    text.delete(0, text.len_unicode())
+        .expect("replace first endpoint");
+    text.insert(0, "draft right").expect("divergent endpoint");
+    divergent_document
+        .doc
+        .commit_with(loro::CommitOptions::new().commit_msg("divergent endpoint"));
     let divergent = FinalizedProposalText {
-        final_text: "draft right".to_owned(),
+        final_ref: LoroOpRef::from_bytes(divergent_document.frontier()),
         ..record.clone()
     };
-    let err = put_finalized_proposal_text(&vault, &divergent)
+    let err = put_finalized_proposal_text(&vault, &divergent, &divergent_document)
         .expect_err("a divergent record must not overwrite");
     assert!(matches!(err, Error::InvariantViolation(_)), "{err:?}");
     assert_eq!(

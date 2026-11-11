@@ -39,7 +39,8 @@ mod guarded {
     async fn unlisted_origin_denied_before_any_network() {
         // Default policy: no origins configured — everything denied without
         // touching DNS or sockets.
-        let f = SsrfGuardedHttpFetcher::new(FetchPolicy::default());
+        let f = SsrfGuardedHttpFetcher::new(FetchPolicy::default(), support::grant_all_memory())
+            .unwrap();
         let err = f
             .fetch(FetchRequest {
                 purpose: FetchPurpose::Ocsp,
@@ -55,7 +56,8 @@ mod guarded {
 
     #[tokio::test]
     async fn query_strings_never_appear_in_errors() {
-        let f = SsrfGuardedHttpFetcher::new(FetchPolicy::default());
+        let f = SsrfGuardedHttpFetcher::new(FetchPolicy::default(), support::grant_all_memory())
+            .unwrap();
         let err = f
             .fetch(FetchRequest {
                 purpose: FetchPurpose::AuthorityInformationAccess,
@@ -149,7 +151,9 @@ mod guarded_live {
             }
             socket.write_all(format!("HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).unwrap();
         });
-        let fetcher = SsrfGuardedHttpFetcher::new(loopback_policy(port, 1024));
+        let fetcher =
+            SsrfGuardedHttpFetcher::new(loopback_policy(port, 1024), support::grant_all_memory())
+                .unwrap();
         let result = fetcher
             .fetch(FetchRequest {
                 purpose: FetchPurpose::Ocsp,
@@ -166,7 +170,9 @@ mod guarded_live {
 
         // An admitted redirect and a cache hit remain live positive controls.
         let (port, hops) = serve(64);
-        let fetcher = SsrfGuardedHttpFetcher::new(loopback_policy(port, 1024));
+        let fetcher =
+            SsrfGuardedHttpFetcher::new(loopback_policy(port, 1024), support::grant_all_memory())
+                .unwrap();
         for _ in 0..2 {
             let response = fetcher
                 .fetch(FetchRequest {
@@ -178,7 +184,7 @@ mod guarded_live {
                 })
                 .await
                 .unwrap();
-            assert_eq!(response.body, vec![b'x'; 64]);
+            assert_eq!(&response.body[..], vec![b'x'; 64].as_slice());
             assert_eq!(hops.load(std::sync::atomic::Ordering::SeqCst), 2);
         }
     }
@@ -194,11 +200,12 @@ mod engine_entry {
 
     use oneiron_seal::{
         FetchPolicy, NativeSealEngine, PadesProfile, PdfSealEngine, ProfileDegradeReason,
-        SealConfig, SealRequest, SealResourceLimits, SealWarning, TsaEndpoint,
+        SealConfig, SealRequest, SealWarning, TsaEndpoint,
     };
 
     use super::support::{
-        FixedClock, FixtureBackend, TEST_TIME_MS, TestIdentity, p256_identity, tsa_response,
+        FixedClock, FixtureBackend, TEST_TIME_MS, TestIdentity, grant_all_limits, p256_identity,
+        tsa_response,
     };
 
     /// Serve one functional-TSA response on a loopback listener: reads one
@@ -265,7 +272,7 @@ mod engine_entry {
                 allowed_cidrs,
                 ..FetchPolicy::default()
             },
-            resource_limits: SealResourceLimits::default(),
+            resource_limits: grant_all_limits(),
         };
         NativeSealEngine::with_guarded_fetcher(
             config,

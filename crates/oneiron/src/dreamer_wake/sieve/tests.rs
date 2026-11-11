@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use super::*;
 use crate::edge::EdgeActorClass;
-use crate::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder, NerSpan};
+use crate::memory::extraction::{
+    EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
+};
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::ports::ManualClock;
 use crate::registry::ENTITY_TYPE_PERSON;
@@ -38,9 +40,11 @@ fn witness_with(
         author: WitnessAuthor::User,
         message_type: "text".into(),
         content: text.into(),
+        parts: None,
         metadata,
         is_visible: true,
         order: 0,
+        quote: None,
     };
     witness_messages(vault, turn_ref, occurred_at, vec![message])
 }
@@ -57,9 +61,11 @@ fn message(
         author: WitnessAuthor::User,
         message_type: "text".into(),
         content: text.into(),
+        parts: None,
         metadata,
         is_visible: true,
         order,
+        quote: None,
     }
 }
 
@@ -84,8 +90,10 @@ fn witness_messages(
     let turn = WitnessTurn {
         conversation_ref: ROOM.into(),
         turn_ref: Some(turn_ref.to_owned()),
+        thread_audience: None,
         occurred_at,
         messages,
+        assertions: Default::default(),
     };
     vault
         .memory(speaker, EdgeActorClass::Human)
@@ -113,6 +121,7 @@ fn grant_messages_read(vault: &Vault, id: u8, space: EntityId) {
                 revoked_at: None,
                 expires_at: Some(u64::MAX),
                 authority_scope: crate::federation::scope_codec::read_preset(),
+                companion_bounds: None,
             },
         )
         .expect("grant");
@@ -143,7 +152,7 @@ impl ExtractionEncoder for Names {
     fn locality(&self) -> crate::embed::EmbedderLocality {
         crate::embed::EmbedderLocality::OnDevice
     }
-    fn infer(&self, input: &EncoderInput) -> crate::Result<EncoderOutput> {
+    fn infer(&self, input: &EncoderInput, _work: ExtractionWork) -> EncoderAttempt {
         let mut spans = Vec::new();
         for (message, each) in input.messages.iter().enumerate() {
             for name in &self.known {
@@ -158,14 +167,19 @@ impl ExtractionEncoder for Names {
                 }
             }
         }
-        Ok(EncoderOutput {
-            spans,
-            links: Vec::new(),
-            vad: None,
-            context_links: Vec::new(),
-            speaker_links: Vec::new(),
-            stack_sha16: self.stack.map(str::to_owned),
-        })
+        EncoderAttempt {
+            execution: None,
+            panicked: false,
+            result: Ok(EncoderOutput {
+                spans,
+                links: Vec::new(),
+                vad: None,
+                context_links: Vec::new(),
+                speaker_links: Vec::new(),
+                mood_parts: Vec::new(),
+                stack_sha16: self.stack.map(str::to_owned),
+            }),
+        }
     }
 }
 
