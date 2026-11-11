@@ -17,8 +17,9 @@
 //! holding the phrase (LABEL-04, `split_phrase`).
 //!
 //! In a body or a claim, the smallest value that reads as such a phrase (an
-//! array whose items are its words, or the part whose MessagePack encoding
-//! holds them) takes its handle whole, as a credential field's value does.
+//! array whose items are its words, the part whose texts hold them at any
+//! depth, or the part whose MessagePack encoding holds them) takes its
+//! handle whole, as a credential field's value does.
 //!
 //! What the door finds but cannot place still refuses the whole write: a
 //! key split over members, an entity the engine itself authors or a peer
@@ -667,20 +668,27 @@ impl Masker {
         Ok(true)
     }
 
-    /// Each recovery phrase a MessagePack body's encoding still holds in its
-    /// lossy text once its parts are masked, as the text rules read its raw
-    /// bytes (one word per 64-bit number, or between nested arrays'
-    /// headers): the smallest part whose encoding holds it takes the handle
-    /// whole (LABEL-04). A clean scan read the raw bytes too (speed).
-    fn mask_encoded_phrases(&mut self, tree: &mut Value) -> Result<bool> {
+    /// Each recovery phrase a body still holds spread over its parts once
+    /// they are masked, as the door reads it: in its texts one per line at
+    /// any depth (one word per nested item), and for a MessagePack body
+    /// (`encoded`) in its encoding's lossy text (one word per 64-bit number,
+    /// or between nested arrays' headers). The smallest part that holds it
+    /// takes the handle whole (LABEL-04). A clean scan read the body whole
+    /// too (speed).
+    fn mask_spread_phrases(&mut self, tree: &mut Value, encoded: bool) -> Result<bool> {
         if self.shapes_read {
             return Ok(false);
         }
         let mut changed = false;
         // Each phrase found is one part replaced by a handle, which holds no
         // phrase; a body past this many stays refused.
-        for _ in 0..MAX_ENCODED_PHRASES {
-            let Some((path, phrase)) = split_phrase::encoded_phrase_part(tree) else {
+        for _ in 0..MAX_SPREAD_PHRASES {
+            let found = split_phrase::leaves_phrase_part(tree).or_else(|| {
+                encoded
+                    .then(|| split_phrase::encoded_phrase_part(tree))
+                    .flatten()
+            });
+            let Some((path, phrase)) = found else {
                 break;
             };
             let Some(part) = part_at(tree, &path) else {
@@ -807,9 +815,9 @@ impl Masker {
     }
 }
 
-/// The most recovery phrases one body's encoding is read for once its parts
-/// are masked ([`Masker::mask_encoded_phrases`]).
-const MAX_ENCODED_PHRASES: usize = 64;
+/// The most recovery phrases one body is read for once its parts are masked
+/// ([`Masker::mask_spread_phrases`]).
+const MAX_SPREAD_PHRASES: usize = 64;
 
 /// The part of `value` at `path`: an array item by its index, a map's key at
 /// `2i` and its member at `2i + 1`.
