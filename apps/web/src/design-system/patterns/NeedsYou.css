@@ -1,5 +1,6 @@
-/* The needs-you block: a sunk well in a room, bare on a popover or a desk.
-   One item open, the rest one line each. */
+/* The needs-you block: a raised card in a room (the sunk tone and the card
+   ring), bare on a popover or a desk. One item open, the rest one line
+   each. */
 .sl-needs-you {
   display: flex;
   flex-direction: column;
@@ -10,6 +11,7 @@
   padding: 4px 14px;
   border-radius: var(--sl-radius);
   background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
 }
 
 .sl-needs-you[data-ground="bare"] {

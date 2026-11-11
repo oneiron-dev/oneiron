@@ -54,7 +54,8 @@
   color: var(--sl-ink-3);
 }
 
-/* Attachments: a file per card, on a sunk tone. */
+/* Attachments: a file per card, raised (the sunk tone and the card ring);
+   hover lifts it one tone step. */
 .sl-message-attachments {
   display: flex;
   flex-wrap: wrap;
@@ -71,12 +72,13 @@
   padding: 8px 14px 8px 12px;
   border-radius: var(--sl-radius);
   background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
   color: var(--sl-ink-2);
   text-align: left;
 }
 
 .sl-message-attachment:hover {
-  background: var(--sl-island);
+  background: var(--sl-pop);
 }
 
 .sl-message-attachment-name {
