@@ -2,6 +2,9 @@
 //! `scripts/sdk/port_harness.py record` wrote while `outputs()` ran, on the Rust `Inventory`, and writes the same
 //! dump as the Python half: each inventory's state, its source index, its census, its TypeScript and Python
 //! declarations, and every logged call's result. `diff -r` of the two directories proves the inventory port.
+//!
+//! The log's emitter markers (`enter` and `leave` lines, DESIGN 9.3) are no Inventory call: this replay passes over
+//! them, and `--until <name>[#<n>]` replays to them and runs the Rust port there (`emitters.rs`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,12 +17,12 @@ use crate::harness::flag;
 use crate::py::json::{DumpOptions, dumps, loads};
 use crate::py::value::{Dict, Value};
 
-const USAGE: &str = "usage: oneiron-sdk-generator port-harness replay <log> --root <dir> --out-dir <dir> [--until-marker]";
+const USAGE: &str = "usage: oneiron-sdk-generator port-harness replay <log> --root <dir> --out-dir <dir> [--until-marker | --until <name>[#<n>] [--out-files <dir>]]";
 
 /// One replayed inventory and the rows it was built over.
-struct Replayed {
-    inventory: Inventory,
-    rows: Vec<Dict>,
+pub(super) struct Replayed {
+    pub(super) inventory: Inventory,
+    pub(super) rows: Vec<Dict>,
 }
 
 /// `port-harness replay`.
@@ -34,6 +37,19 @@ pub(crate) fn run(args: &[String]) -> Result<(), GenerateError> {
     // Python's ROOT is `Path(__file__).resolve().parents[2]`: absolute, its symlinks resolved.
     let root =
         fs::canonicalize(root).map_err(|error| GenerateError::os(&error, Path::new(root)))?;
+    if let Some(at) = args.iter().position(|arg| arg == "--until") {
+        let target = args.get(at + 1).ok_or_else(|| GenerateError::exit(USAGE))?;
+        let out_files = args
+            .iter()
+            .position(|arg| arg == "--out-files")
+            .map(|at| {
+                args.get(at + 1)
+                    .map(PathBuf::from)
+                    .ok_or_else(|| GenerateError::exit(USAGE))
+            })
+            .transpose()?;
+        return super::emitters::until(log, &root, &out, target, out_files.as_deref());
+    }
     let text = crate::py::read_text(Path::new(log))?;
     let mut replayed: Vec<Replayed> = Vec::new();
     let mut calls = Vec::new();
@@ -41,6 +57,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), GenerateError> {
         let entry = loads(line).map_err(|error| error.into_error(log))?;
         let (method, call) = match entry.as_list() {
             Some([Value::Str(method), call]) => (method.as_str(), call),
+            Some([Value::Str(method), ..]) if method == "enter" || method == "leave" => continue,
             _ => return Err(malformed(line)),
         };
         if method == "marker" {
@@ -66,35 +83,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), GenerateError> {
                 .get_mut(id.wrapping_sub(1))
                 .map(|r| &mut r.inventory)
                 .ok_or_else(|| malformed(line))?;
-            match method {
-                "names.update" => {
-                    // catalog_fragment's `names.update(TAKEN)`: strings only; anything else is no log the
-                    // recorder writes.
-                    for name in argument(1)?.as_list().ok_or_else(|| malformed(line))? {
-                        inventory.names.insert(text_of(name, line)?.to_owned());
-                    }
-                    Value::None
-                }
-                "root_ir" => inventory.root_ir_value(argument(1)?)?.to_value(),
-                "ts_type" => {
-                    let text = crate::facade_types::inventory::type_text(argument(1)?)?.to_owned();
-                    Value::Str(inventory.ts_type(&text, text_of(argument(2)?, line)?)?)
-                }
-                "py_type" => {
-                    let text = crate::facade_types::inventory::type_text(argument(1)?)?.to_owned();
-                    Value::Str(inventory.py_type(&text, text_of(argument(2)?, line)?)?)
-                }
-                "census" => {
-                    let rows = rows(argument(1)?, line)?;
-                    let refs: Vec<&Dict> = rows.iter().collect();
-                    strings_value(&inventory.census(&refs)?)
-                }
-                "typescript" => Value::Str(inventory.typescript(&lines(argument(1)?, line)?)?),
-                "python" => Value::Str(inventory.python(&lines(argument(1)?, line)?)?),
-                // The UniFFI projection reads the inventory without changing it; G3 replays it.
-                "UniffiTypes" => Value::None,
-                _ => return Err(malformed(line)),
-            }
+            apply(inventory, method, call, line)?
         };
         calls.push(Value::List(vec![
             Value::Str(method.to_owned()),
@@ -105,7 +94,47 @@ pub(crate) fn run(args: &[String]) -> Result<(), GenerateError> {
     dump(&out, &mut replayed, &calls)
 }
 
-fn malformed(line: &str) -> GenerateError {
+/// Replays one logged call (`[method, [inventory, args...]]`) other than `Inventory` on its inventory, and returns
+/// its result as the dump's `calls.jsonl` logs it.
+pub(super) fn apply(
+    inventory: &mut Inventory,
+    method: &str,
+    call: &[Value],
+    line: &str,
+) -> Result<Value, GenerateError> {
+    let argument = |n: usize| call.get(n).ok_or_else(|| malformed(line));
+    Ok(match method {
+        "names.update" => {
+            // catalog_fragment's `names.update(TAKEN)`: strings only; anything else is no log the
+            // recorder writes.
+            for name in argument(1)?.as_list().ok_or_else(|| malformed(line))? {
+                inventory.names.insert(text_of(name, line)?.to_owned());
+            }
+            Value::None
+        }
+        "root_ir" => inventory.root_ir_value(argument(1)?)?.to_value(),
+        "ts_type" => {
+            let text = crate::facade_types::inventory::type_text(argument(1)?)?.to_owned();
+            Value::Str(inventory.ts_type(&text, text_of(argument(2)?, line)?)?)
+        }
+        "py_type" => {
+            let text = crate::facade_types::inventory::type_text(argument(1)?)?.to_owned();
+            Value::Str(inventory.py_type(&text, text_of(argument(2)?, line)?)?)
+        }
+        "census" => {
+            let rows = rows(argument(1)?, line)?;
+            let refs: Vec<&Dict> = rows.iter().collect();
+            strings_value(&inventory.census(&refs)?)
+        }
+        "typescript" => Value::Str(inventory.typescript(&lines(argument(1)?, line)?)?),
+        "python" => Value::Str(inventory.python(&lines(argument(1)?, line)?)?),
+        // The UniFFI projection reads the inventory without changing it; G3 replays it.
+        "UniffiTypes" => Value::None,
+        _ => return Err(malformed(line)),
+    })
+}
+
+pub(super) fn malformed(line: &str) -> GenerateError {
     GenerateError::exit(format!(
         "port-harness replay: a log line it cannot read: {line}"
     ))
@@ -117,7 +146,7 @@ fn text_of<'v>(value: &'v Value, line: &str) -> Result<&'v str, GenerateError> {
 
 /// The logged rows: each row's `input` and `output`, a key absent where the row has none (Python's `row['output']`
 /// on such a row is its `KeyError`, which a `None` would hide).
-fn rows(value: &Value, line: &str) -> Result<Vec<Dict>, GenerateError> {
+pub(super) fn rows(value: &Value, line: &str) -> Result<Vec<Dict>, GenerateError> {
     let rows = value.as_list().ok_or_else(|| malformed(line))?;
     rows.iter()
         .map(|row| match row {
@@ -158,7 +187,11 @@ fn canonical(value: &Value) -> String {
     ) + "\n"
 }
 
-fn dump(out: &Path, replayed: &mut [Replayed], calls: &[Value]) -> Result<(), GenerateError> {
+pub(super) fn dump(
+    out: &Path,
+    replayed: &mut [Replayed],
+    calls: &[Value],
+) -> Result<(), GenerateError> {
     fs::create_dir_all(out).map_err(|error| GenerateError::os(&error, out))?;
     for (n, entry) in replayed.iter_mut().enumerate() {
         let place = out.join(format!("inventory-{}", n + 1));

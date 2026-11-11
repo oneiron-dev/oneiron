@@ -4,8 +4,9 @@
 //! `Generator::new` (rows.rs) keeps that order; the emitters of later PRs read and mutate the one `Generator` in
 //! `outputs()`'s call order.
 
+pub(crate) mod common;
 mod docs;
-mod emit_core;
+pub(crate) mod emit_core;
 mod emit_http;
 mod emit_mcp;
 mod emit_native;
@@ -14,8 +15,9 @@ mod emit_remote;
 mod emit_server;
 mod emit_ts;
 mod outputs;
+mod row_access;
 mod rows;
-mod uniffi;
+pub(crate) mod uniffi;
 
 use std::ops::Index;
 use std::path::PathBuf;
@@ -110,6 +112,8 @@ impl Index<RowId> for RowStore {
 pub(crate) struct Generator {
     /// `ROOT`: the repository root, resolved.
     pub(crate) root: PathBuf,
+    /// `hand_declared`'s `functools.cache` (generate.py:456), by language.
+    pub(crate) hand_declared_cache: common::HandDeclaredCache,
     /// Every row object the sets below share.
     pub(crate) rows: RowStore,
     /// `MANIFEST['verbs']`.
