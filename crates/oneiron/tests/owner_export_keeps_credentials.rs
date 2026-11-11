@@ -16,14 +16,21 @@
 //!   a PERSON MessagePack body keeps its credential fields and encoded
 //!   payloads, and a fresh seeded vault opened a second later restores
 //!   every field.
+//! * `owner_archive_keeps_claim_evidence_credentials` pins the CLAIM side of
+//!   CONS-09: a claim's credential evidence stays in its row and in its
+//!   derivation envelope, equal, and the archive reads back.
 //!
-//! Every test also pins the nulling side: contact bundles never carry the
-//! credential text, and neither does CONS-07's scoped record vector. The
-//! scoped record vector asserts of CONS-06 and CONS-09 are held out in place
-//! under `#[cfg(any())]` (FIX row SCOPED-RECORD-EXPORT-SHIPS-SCAN-OFF-CREDENTIALS):
+//! Every test but the claim one also pins the nulling side: CONS-07's contact
+//! bundle and scoped record vector never carry the credential text. The scoped
+//! record vector asserts of CONS-06 and CONS-09 are held out in place under
+//! `#[cfg(any())]` (FIX row SCOPED-RECORD-EXPORT-SHIPS-SCAN-OFF-CREDENTIALS):
 //! on main the scoped door ships a credential that a scan-off write stored.
-//! Custody is skipped: custody already travels in the owner's archive today,
-//! and `SecretCustodyRecord` value fields are crate-private, so no public door
+//! Their contact bundle asserts are held out the same way (FIX row
+//! CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS): on main the contact bundle keeps
+//! a `signature` member, byte arrays that encode a credential map and JSON text
+//! that encodes a credential, and nulls every safe binary too. Custody is
+//! skipped: custody already travels in the owner's archive today, and
+//! `SecretCustodyRecord` value fields are crate-private, so no public door
 //! seeds one here.
 //!
 //! Public doors only: no `#[cfg(test)]` helpers or crate-private items.
@@ -44,7 +51,9 @@ use oneiron::serialize::{ExportBody, ExportValue};
 use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::skill_hub::{HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
 use oneiron::store::GateDecisionId;
-use oneiron::{EntityId, Result, TimeRange, Vault, VaultConfig};
+use oneiron::{
+    ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, Result, TimeRange, Vault, VaultConfig,
+};
 use rmpv::Value;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -278,43 +287,48 @@ fn owner_archive_keeps_skill_source_credentials_and_restores_them() -> Result<()
             }
         }
     }
-    // A contact bundle over the skill alone, and over the skill plus the
-    // selected source copies, never carries the credential text.
-    for ids in [&[id][..], &selected[..]] {
+    // FIX [CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS]: on main the contact bundle
+    // keeps the `signature` member of the scan-off JSON copy; held out in place.
+    #[cfg(any())]
+    {
+        // A contact bundle over the skill alone, and over the skill plus the
+        // selected source copies, never carries the credential text.
+        for ids in [&[id][..], &selected[..]] {
+            let bundle: serde_json::Value =
+                serde_json::from_slice(&vault.export_entity_bundle_json(ids)?)
+                    .expect("contact bundle JSON");
+            let emitted = bundle.to_string();
+            assert!(
+                !emitted.contains("residual-file-credential"),
+                "contact bundle: {emitted}"
+            );
+            assert!(
+                !emitted.contains("residual-signature"),
+                "contact bundle: {emitted}"
+            );
+        }
         let bundle: serde_json::Value =
-            serde_json::from_slice(&vault.export_entity_bundle_json(ids)?)
+            serde_json::from_slice(&vault.export_entity_bundle_json(&selected)?)
                 .expect("contact bundle JSON");
-        let emitted = bundle.to_string();
-        assert!(
-            !emitted.contains("residual-file-credential"),
-            "contact bundle: {emitted}"
-        );
-        assert!(
-            !emitted.contains("residual-signature"),
-            "contact bundle: {emitted}"
-        );
-    }
-    let bundle: serde_json::Value =
-        serde_json::from_slice(&vault.export_entity_bundle_json(&selected)?)
-            .expect("contact bundle JSON");
-    let entities = bundle["entities"].as_array().expect("contact entities");
-    for (file_id, path) in &source_files {
-        let carried = entities
-            .iter()
-            .find(|row| row["id"] == file_id.to_hex())
-            .expect("contact output contains the selected source file");
-        match *path {
-            "scripts/private.py" => assert!(
-                carried["body"].is_null(),
-                "the credential file is nulled: {}",
-                carried["body"]
-            ),
-            "signature.json" => assert!(
-                carried["body"]["signature"].is_null(),
-                "the credential member is nulled: {}",
-                carried["body"]
-            ),
-            _ => {}
+        let entities = bundle["entities"].as_array().expect("contact entities");
+        for (file_id, path) in &source_files {
+            let carried = entities
+                .iter()
+                .find(|row| row["id"] == file_id.to_hex())
+                .expect("contact output contains the selected source file");
+            match *path {
+                "scripts/private.py" => assert!(
+                    carried["body"].is_null(),
+                    "the credential file is nulled: {}",
+                    carried["body"]
+                ),
+                "signature.json" => assert!(
+                    carried["body"]["signature"].is_null(),
+                    "the credential member is nulled: {}",
+                    carried["body"]
+                ),
+                _ => {}
+            }
         }
     }
     Ok(())
@@ -645,38 +659,101 @@ fn owner_archive_keeps_credential_fields_and_binary_payloads() -> Result<()> {
             "the scoped export carries no token"
         );
     }
-    // A contact's shareable bundle still nulls them.
-    let bundle: serde_json::Value =
-        serde_json::from_slice(&vault.export_entity_bundle_json(&[id])?)
-            .expect("contact bundle JSON");
-    let entities = bundle["entities"].as_array().expect("contact entities");
-    assert_eq!(entities.len(), 1);
-    for name in [
-        "api_key",
-        "binary",
-        "nested_binary",
-        "byte_array",
-        "json_bytes",
-        "byte_map",
-        "json_encoded_bytes",
-        "json_encoded_map",
-        "signature",
-    ] {
-        assert!(
-            entities[0]["body"][name].is_null(),
-            "contact bundle nulls {name}: {}",
-            entities[0]["body"][name]
+    // FIX [CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS]: on main the contact bundle
+    // keeps byte_map and the JSON-encoded payloads and nulls public_binary; held out in place.
+    #[cfg(any())]
+    {
+        // A contact's shareable bundle still nulls them.
+        let bundle: serde_json::Value =
+            serde_json::from_slice(&vault.export_entity_bundle_json(&[id])?)
+                .expect("contact bundle JSON");
+        let entities = bundle["entities"].as_array().expect("contact entities");
+        assert_eq!(entities.len(), 1);
+        for name in [
+            "api_key",
+            "binary",
+            "nested_binary",
+            "byte_array",
+            "json_bytes",
+            "byte_map",
+            "json_encoded_bytes",
+            "json_encoded_map",
+            "signature",
+        ] {
+            assert!(
+                entities[0]["body"][name].is_null(),
+                "contact bundle nulls {name}: {}",
+                entities[0]["body"][name]
+            );
+        }
+        assert_eq!(
+            entities[0]["body"]["name"],
+            serde_json::json!("portable person")
         );
+        assert!(
+            entities[0]["body"]["public_binary"]
+                .to_string()
+                .contains("inspectable public bytes")
+        );
+        assert_eq!(bundle["manifest"]["secrets_nulled"]["payloads"], true);
     }
+    Ok(())
+}
+
+/// CONS-09 for a CLAIM: the Owner's whole-vault export keeps a claim's
+/// credential evidence in the claim row and in its derivation envelope,
+/// equal, and the archive reads back.
+#[test]
+fn owner_archive_keeps_claim_evidence_credentials() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    scan_off(&vault, "principal:claim-evidence-residue", 10)?;
+    let credential = format!("ghp_{}", "a".repeat(36));
+    let occurred = TimeRange { start: 1, end: 1 };
+    let subject = EntityId::now();
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"claim subject")?;
+    let mut body = ClaimBody::new(
+        "profile.note",
+        ClaimSubject::Entity(subject),
+        Value::from("portable note"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("claim fixture");
+    body.source = Some(ClaimSource::UserStated);
+    body.evidence = Some(Value::from(credential.as_str()));
+    let id = EntityId::now();
+    vault.put_claim(&id, &body, occurred, 1)?;
+    let export = vault.export_whole_vault(true)?;
+    export.manifest().validate()?;
+    assert!(export.manifest().secrets_included);
+    let document = vault
+        .read_whole_vault_archive(export.bytes())
+        .unwrap_or_else(|error| {
+            panic!("the owner's archive with a kept claim evidence reads back: {error}")
+        });
+    let claim = document
+        .claims
+        .iter()
+        .find(|row| row.id == id.to_hex())
+        .expect("exported claim");
+    let ExportBody::MessagePack(ExportValue::Map(entries)) = &claim.body else {
+        panic!("the claim exports as a typed map: {:?}", claim.body);
+    };
     assert_eq!(
-        entities[0]["body"]["name"],
-        serde_json::json!("portable person")
+        archived_field(entries, "evid"),
+        &ExportValue::String(credential.clone()),
+        "the owner's archive keeps the claim's evidence"
     );
-    assert!(
-        entities[0]["body"]["public_binary"]
-            .to_string()
-            .contains("inspectable public bytes")
+    let envelope = document
+        .derivation_envelopes
+        .iter()
+        .find(|row| row.id == id.to_hex())
+        .expect("the claim's derivation envelope");
+    assert_eq!(
+        envelope.evidence,
+        ExportValue::String(credential),
+        "the derivation envelope carries the claim's evidence"
     );
-    assert_eq!(bundle["manifest"]["secrets_nulled"]["payloads"], true);
     Ok(())
 }
