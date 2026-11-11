@@ -50505,19 +50505,21 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ModelStepReceipt",
-      "ModelStepReceiptRequest"
+      "ModelStepReceiptRequest",
+      "ModelStepSubmitRequest",
+      "RunStepCaller"
      ],
      "path": "src/llm/step/public.rs",
-     "purpose": "Owner-submitted durable model steps over the engine's existing step executor",
+     "purpose": "Durable model steps a caller submits over the engine's existing step executor: the vault owner on their…",
      "surface": {
       "crate-vis": 4,
-      "fn": 4,
+      "fn": 8,
       "re-export": 4,
-      "struct": 2
+      "struct": 4
      }
     },
     {
@@ -98417,6 +98419,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/claim_declared_cardinality.rs",
+     "purpose": "E2E MUSE-RECALL-03: a declared multi-cardinality predicate keeps each distinct value standing",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -99214,6 +99224,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/origin_register_host_git.rs",
+     "purpose": "Origin registration on the host's Git (E2E CODE-CUSTODY-06, `origin.register`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/owner_reason.rs",
      "purpose": "Public confirm → unsure re-ask → reconfirm → undo contract",
      "surface": {}
@@ -99256,6 +99274,22 @@
      "notable": [],
      "path": "tests/raw_replay_compilefail/a_put_replicated_private_with_sync.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recall_light_render_text.rs",
+     "purpose": "E2E MUSE-RECALL-08: light recall must return witnessed message text in both structured items and every…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recall_zero_match_returns_no_memory.rs",
+     "purpose": "E2E MUSE-RECALL-04: recall without query evidence returns no memory and records an empty serving run…",
      "surface": {}
     },
     {
@@ -99362,6 +99396,14 @@
      "notable": [],
      "path": "tests/run_state.rs",
      "purpose": "The run state (untangle slice 5.0c): [`RunState::of`] derives the state a run reports from its attempt row…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_steps.rs",
+     "purpose": "Primitive D, slice 6.5c: a live agent run submits model steps under its own lease (`ai.steps.submit`…",
      "surface": {}
     },
     {
@@ -101189,10 +101231,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 241,
+   "over_bar": 242,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7255,
-   "test_files": 932
+   "test_files": 937
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -125336,13 +125378,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/model_step_doors.rs",
-     "purpose": "Owner-proof model steps; HTTP, SDK and MCP reach the same typed door",
+     "purpose": "Model steps on the owner's proof, or on a live run's own actor (slice 6.5c); HTTP, SDK and MCP reach the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -126476,7 +126518,7 @@
      "path": "src/api/llm.rs",
      "purpose": "Owner-authenticated raw inference",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -137330,7 +137372,7 @@
      "path": "src/models/ladder/step_attempt.rs",
      "purpose": "The durable step executor owns retries; this door sends one gated attempt",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -140113,7 +140155,7 @@
      "path": "src/server/live_runs/model_request.rs",
      "purpose": "Real model requests served on one held credential attachment (FIX 7176)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
