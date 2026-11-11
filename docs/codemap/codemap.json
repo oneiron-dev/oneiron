@@ -113530,7 +113530,7 @@
      "path": "src/session/pending.rs",
      "purpose": "Caller-retained session opens and causal queues for their actor/machine key",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -113632,7 +113632,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/supervisor/factory_tests.rs",
