@@ -19,7 +19,9 @@
 //! In a body or a claim, the smallest value that reads as such a phrase (an
 //! array whose items are its words, the part whose texts hold them at any
 //! depth, or the part whose MessagePack encoding holds them) takes its
-//! handle whole, as a credential field's value does.
+//! handle whole, as a credential field's value does; in a value that reads
+//! as more than that phrase, the items that read as it take the handle, and
+//! the rest stay as written (REVIEW-7060 P1).
 //!
 //! What the door finds but cannot place still refuses the whole write: a
 //! key split over members, an entity the engine itself authors or a peer
@@ -83,6 +85,7 @@ use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
+use split_phrase::Spread;
 use text_spans::{file_spans, merged, occurrences, secret_spans};
 use wipe::{PlanOps, PlanValues, replace_wiped};
 
@@ -246,6 +249,12 @@ fn scan_screened(
     for op in &mut *copy {
         match op {
             BatchOp::Put { id, data, .. } => {
+                // A recovery phrase the owner kept, split over the body's
+                // parts, is screened word by word where the door reads it
+                // (REVIEW-7060 P1).
+                if let Some(filled) = kept_split_phrases_screened(kept, id, data) {
+                    replace_wiped(data, filled);
+                }
                 if let Some(filled) = kept.screened(id, data) {
                     replace_wiped(data, filled);
                 }
@@ -263,6 +272,40 @@ fn scan_screened(
         }
     }
     scan_batch_ops(store, wtxn, &copy)
+}
+
+/// `data` of `record` with the words of each recovery phrase the owner kept
+/// there, split over its parts, filled where the door's decoder still reads
+/// `data` as it read it (`split_phrase::filled_in_place`), or in place when
+/// it reads `data` as text alone; `None` when none sits there. The text
+/// rules read no contiguous spelling of such a phrase, so
+/// [`KeptValues::screened`] finds none (REVIEW-7060 P1).
+fn kept_split_phrases_screened(
+    kept: &KeptValues,
+    record: &EntityId,
+    data: &[u8],
+) -> Option<Vec<u8>> {
+    if !kept.holds_record(record) {
+        return None;
+    }
+    let marks: Vec<Range<usize>> = split_phrase::split_phrases(data)
+        .into_iter()
+        .filter(|phrase| kept.holds(record, &phrase.value))
+        .flat_map(|phrase| phrase.words)
+        .collect();
+    if marks.is_empty() {
+        return None;
+    }
+    if let Some(mut filled) = split_phrase::filled_in_place(data, &marks) {
+        return Some(std::mem::take(&mut *filled));
+    }
+    let mut copy = data.to_vec();
+    for mark in marks {
+        if let Some(bytes) = copy.get_mut(mark) {
+            bytes.fill(b'*');
+        }
+    }
+    Some(copy)
 }
 
 /// The files a batch stored with keys in them. Once the batch has stamped
@@ -593,19 +636,11 @@ impl Masker {
                 for item in items.iter_mut() {
                     changed |= self.mask_value(item)?;
                 }
-                // A recovery phrase split over the items (one word per item,
-                // or the array's byte values) is the array whole: it takes
-                // the handle, as a credential field's value does (LABEL-04).
                 // A clean scan read the array too: none is sought (speed).
-                let phrase = if self.shapes_read {
-                    None
-                } else {
-                    split_phrase::array_phrase(items)
-                };
-                match phrase {
-                    Some(phrase) => Ok(self.mask_whole(value, &phrase)? || changed),
-                    None => Ok(changed),
+                if self.shapes_read {
+                    return Ok(changed);
                 }
+                Ok(self.mask_array_phrases(value)? || changed)
             }
             Value::Map(fields) => {
                 let mut changed = false;
@@ -656,55 +691,132 @@ impl Masker {
         Ok(true)
     }
 
-    /// `value`, which holds the recovery phrase `phrase` split over its
-    /// parts, replaced whole by the phrase's handle. `false` when it stays as
-    /// written: the owner kept the phrase, or the switch is off and no record
-    /// holds it (FIX 8644).
-    fn mask_whole(&mut self, value: &mut Value, phrase: &[u8]) -> Result<bool> {
-        if self.is_kept(phrase) {
-            return Ok(false);
-        }
-        let handle = match self.known_whole(phrase) {
+    /// Whether the plan places the recovery phrase `phrase` where it is split
+    /// over a value's parts: not when the owner kept it, nor with the switch
+    /// off when no record holds it (FIX 8644).
+    fn places_phrase(&self, phrase: &[u8]) -> bool {
+        !self.is_kept(phrase) && (!self.known_only || self.known_whole(phrase).is_some())
+    }
+
+    /// The handle the recovery phrase `phrase`, which the plan places, takes:
+    /// that of the record that holds it, or a new one's.
+    fn place_phrase(&mut self, phrase: &[u8]) -> Result<String> {
+        match self.known_whole(phrase) {
             Some(handle) => {
                 self.placed_known = true;
-                handle
+                Ok(handle)
             }
-            None if self.known_only => return Ok(false),
-            None => self.handle(phrase, super::REASON_MNEMONIC)?,
+            None => self.handle(phrase, super::REASON_MNEMONIC),
+        }
+    }
+
+    /// `part` replaced whole by the handle of `phrase`, which the plan places.
+    fn place_whole(&mut self, part: &mut Value, phrase: &[u8]) -> Result<()> {
+        let handle = self.place_phrase(phrase)?;
+        wipe::wipe_value(part);
+        *part = Value::from(handle);
+        Ok(())
+    }
+
+    /// The array `value` with each recovery phrase split over its items (one
+    /// word per item, or its byte values) that the plan places taking its
+    /// handle (LABEL-04): the array whole when it reads as that one phrase
+    /// alone, as a credential field's value does; else the items, or bytes,
+    /// that read as each phrase, the rest kept as written. A phrase the plan
+    /// leaves (kept, or held by no record with the switch off) stays as
+    /// written and does not stop the others (REVIEW-7060 P1). `false` when
+    /// the array stays as written: the door's second read refuses what it
+    /// still holds.
+    fn mask_array_phrases(&mut self, value: &mut Value) -> Result<bool> {
+        let Value::Array(items) = &*value else {
+            return Ok(false);
         };
+        let Some(text) = split_phrase::ArrayText::of(items) else {
+            return Ok(false);
+        };
+        let phrases: Vec<(Zeroizing<Vec<u8>>, Range<usize>)> = text
+            .phrases()
+            .into_iter()
+            .filter(|(phrase, _)| self.places_phrase(phrase))
+            .collect();
+        let spans: Vec<Range<usize>> = phrases.iter().map(|(_, span)| span.clone()).collect();
+        let Some(placement) = text.placement(&spans) else {
+            return Ok(false);
+        };
+        let mut handles = Vec::with_capacity(phrases.len());
+        for (phrase, _) in &phrases {
+            handles.push(self.place_phrase(phrase)?);
+        }
+        let written = text.written(items, &placement, &handles);
         wipe::wipe_value(value);
-        *value = Value::from(handle);
+        *value = written;
         Ok(true)
     }
 
     /// Each recovery phrase a body still holds spread over its parts once
-    /// they are masked, as the door reads it: in its texts one per line at
-    /// any depth (one word per nested item), and for a MessagePack body
-    /// (`encoded`) in its encoding's lossy text (one word per 64-bit number,
-    /// or between nested arrays' headers). The smallest part that holds it
-    /// takes the handle whole (LABEL-04). A clean scan read the body whole
-    /// too (speed).
+    /// they are masked, as the door reads it, that the plan places
+    /// (LABEL-04): in its texts one per line at any depth (one word per
+    /// nested item), and for a MessagePack body (`encoded`) in its encoding's
+    /// lossy text (one word per 64-bit number, or between nested arrays'
+    /// headers). The smallest part that holds it takes the handle, whole when
+    /// it holds that phrase alone, else the smallest run of its items that
+    /// holds it alone. A phrase no part or run holds alone, or one the plan
+    /// leaves, stays as written and does not stop the others (REVIEW-7060
+    /// P1). A clean scan read the body whole too (speed).
     fn mask_spread_phrases(&mut self, tree: &mut Value, encoded: bool) -> Result<bool> {
         if self.shapes_read {
             return Ok(false);
         }
+        let readings: &[Spread] = if encoded {
+            &[Spread::Leaves, Spread::Encoded]
+        } else {
+            &[Spread::Leaves]
+        };
         let mut changed = false;
-        // Each phrase found is one part replaced by a handle, which holds no
-        // phrase; a body past this many stays refused.
+        let mut left: Vec<Zeroizing<Vec<u8>>> = Vec::new();
+        // Each phrase found is placed, and its handle holds no phrase, or
+        // left; a body past this many stays refused.
         for _ in 0..MAX_SPREAD_PHRASES {
-            let found = split_phrase::leaves_phrase_part(tree).or_else(|| {
-                encoded
-                    .then(|| split_phrase::encoded_phrase_part(tree))
-                    .flatten()
-            });
-            let Some((path, phrase)) = found else {
+            let found = {
+                let places = |phrase: &[u8]| {
+                    !left.iter().any(|held| held.as_slice() == phrase) && self.places_phrase(phrase)
+                };
+                readings.iter().find_map(|reading| {
+                    let (path, phrase) = reading.smallest_part(&*tree, &places)?;
+                    Some((*reading, path, phrase))
+                })
+            };
+            let Some((reading, path, phrase)) = found else {
                 break;
             };
             let Some(part) = part_at(tree, &path) else {
                 break;
             };
-            if !self.mask_whole(part, &phrase)? {
-                break;
+            let run = match &*part {
+                Value::Array(items) => reading
+                    .run(items, &phrase)
+                    .map(|run| (run.len() < items.len()).then_some(run)),
+                _ => None,
+            };
+            match run {
+                // A run of the part's items holds it alone: the run takes
+                // the handle, the other items stay as written.
+                Some(Some(run)) => {
+                    let handle = self.place_phrase(&phrase)?;
+                    if let Value::Array(items) = part {
+                        for mut taken in items.splice(run, [Value::from(handle)]) {
+                            wipe::wipe_value(&mut taken);
+                        }
+                    }
+                }
+                Some(None) => self.place_whole(part, &phrase)?,
+                None if reading.holds_alone(std::slice::from_ref(part), &phrase) => {
+                    self.place_whole(part, &phrase)?;
+                }
+                None => {
+                    left.push(phrase);
+                    continue;
+                }
             }
             changed = true;
         }
