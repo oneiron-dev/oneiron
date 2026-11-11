@@ -343,12 +343,11 @@ mod masked {
         )?
         .value;
         assert!(narrowed.rows.iter().all(|row| row.version.entity != turn));
-        assert!(
-            !narrowed
-                .rows
-                .iter()
-                .any(|row| row.text.as_deref().is_some_and(|text| text.contains(secret)))
-        );
+        assert!(!narrowed.rows.iter().any(|row| {
+            row.text
+                .as_deref()
+                .is_some_and(|text| text.contains(secret))
+        }));
         let withheld = spans(&theirs.with_read_filter(Some(&turns_only)), turn, None, &[])?;
         assert_eq!(withheld.status, EvidenceSourceStatus::Withheld);
         assert!(withheld.spans.is_empty());
