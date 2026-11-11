@@ -4,6 +4,7 @@
 use super::CoreBatchEntityInput;
 use super::CoreBatchEntityResult;
 use super::CoreHydrateDeletionMetadata;
+use super::DagWriteError;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_hydrate_deletion_metadata;
@@ -19,7 +20,6 @@ use crate::auth::CoreScope;
 use crate::error::ApiError;
 use crate::error::ApiErrorDetails;
 use crate::error::ApiErrorEnvelope;
-use crate::error::EnvelopedApiError;
 use crate::projection;
 use crate::projection::View;
 use crate::server::SyncServer;
@@ -269,9 +269,10 @@ pub(super) use self::watch::{
         (status = 200, description = "Named verb resolved and executed as a typed operation.", body = CoreMemoryVerbResponse, content_type = "application/json"),
         (status = 400, description = "Malformed verb request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Referenced entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 422, description = "remember: a ref the entity names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body (as `/v1/core/batch`).", body = super::facade::MemoryErrorEnvelopeSchema, content_type = "application/json"),
         (status = 500, description = "Memory verb failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -280,7 +281,7 @@ pub(crate) async fn core_memory_verb(
     State(server): State<Arc<SyncServer>>,
     Path(verb_name): Path<String>,
     payload: Result<Json<CoreMemoryVerbRequest>, JsonRejection>,
-) -> Result<Json<CoreMemoryVerbResponse>, EnvelopedApiError> {
+) -> Result<Json<CoreMemoryVerbResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     // Every named verb writes or erases vault content: an owner act, so a
     // hosted operator's root is refused before any of them (FIX 2222).
@@ -314,9 +315,9 @@ pub(crate) async fn core_memory_verb(
             let input = oneiron::core_write::CoreBatchWriteInput {
                 entities: vec![entity.into_row()],
             };
-            let receipt = facade::host_doors::write_core_batch(&server, &auth, input)
-                .await
-                .map_err(core_memory_remember_error)?;
+            // The door's refusal rides whole, as `/v1/core/batch` forwards it: the engine's code
+            // picks the status (an invented reference is a 422), in the facade's MemoryError body.
+            let receipt = facade::host_doors::write_core_batch(&server, &auth, input).await?;
             let written =
                 receipt.entities.into_iter().next().ok_or_else(|| {
                     ApiError::internal_server_error("core memory remember failed")
@@ -647,39 +648,6 @@ fn memory_verb_refusal(refusal: oneiron::NamedMemoryVerbRefusal) -> ApiError {
             "verb must be one of remember (put), supersede (replace/revise), retract (withdraw), delete (forget), hard_delete",
             Some("verb"),
         ),
-    }
-}
-
-/// The guarded batch door's refusal as this route's error: the engine's code picks the status,
-/// and the engine's words ride whole.
-fn core_memory_remember_error(error: oneiron::memory::MemoryError) -> ApiError {
-    match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BAD_REQUEST => ApiError::new(
-            error.message,
-            ApiErrorDetails::BadRequest { field: None },
-            error.suggestions,
-        ),
-        oneiron::memory::MEMORY_CODE_NOT_FOUND => ApiError::not_found("entity", None),
-        oneiron::memory::MEMORY_CODE_FORBIDDEN => ApiError::new(
-            error.message,
-            ApiErrorDetails::Forbidden {
-                required_scope: None,
-            },
-            error.suggestions,
-        ),
-        // The authority log's refusal keeps its own code (FIX 6032).
-        oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
-            ApiError::owner_binding_required(error.message, None, error.suggestions)
-        }
-        oneiron::memory::MEMORY_CODE_INVALID_STATE => ApiError::new(
-            error.message,
-            ApiErrorDetails::InvalidState { state: None },
-            error.suggestions,
-        ),
-        _ => {
-            tracing::error!(code = %error.code, "core memory remember failed");
-            ApiError::internal_server_error("core memory remember failed")
-        }
     }
 }
 
