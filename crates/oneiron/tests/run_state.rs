@@ -1,9 +1,8 @@
 //! The run state (untangle slice 5.0c): [`RunState::of`] derives the state a
 //! run reports from its attempt row, and the run tree's status token follows
-//! from it. Public paths only:
+//! from it. Public paths only, on the testkit: a copy of the empty fixture
+//! vault and the fake clock, so every run sees the same times:
 //! `cargo test --locked -p oneiron --all-features --test run_state`.
-
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::attempt_queue::run_tree_view::RunTreeStatus;
 use oneiron::attempt_queue::{
@@ -11,17 +10,10 @@ use oneiron::attempt_queue::{
     ClaimOutcome, EnqueueAttempt, EnqueueOutcome, HoldAttemptForBudget, InterveneAttempt,
     PauseKind, RetryAttempt, RetryOutcome, RunState,
 };
-use oneiron::{Vault, VaultConfig};
+use oneiron_testkit::{FixtureVault, fixture_cache};
 
 const KIND: &str = "test.run_state";
 const WORKER: &str = "worker:run-state";
-
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after 1970")
-        .as_secs()
-}
 
 fn claim(queue: &AttemptQueue<'_>, now: u64) -> AttemptRecord {
     let outcome = queue
@@ -59,10 +51,13 @@ fn intervene(
 
 #[test]
 fn a_run_reports_the_state_its_row_holds() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault opens");
+    let copy = FixtureVault::empty(&fixture_cache!())
+        .expect("the empty fixture")
+        .copy()
+        .expect("a private copy");
+    let vault = copy.open().expect("vault opens");
     let queue = AttemptQueue::new(&vault);
-    let now = unix_now();
+    let now = copy.clock().now();
     let EnqueueOutcome::Enqueued(row) = queue
         .enqueue(EnqueueAttempt {
             kind: KIND.to_owned(),

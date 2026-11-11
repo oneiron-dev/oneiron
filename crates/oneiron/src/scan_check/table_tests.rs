@@ -195,10 +195,12 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
                 2,
                 Box::new(move || {
                     let txn = vault.store.env.read_txn()?;
-                    Ok(crate::ppr::specificity_seed_weights(
+                    Ok(crate::ppr::seed_weights_with_deadline(
                         &vault.store,
                         &txn,
                         &[seed, seed],
+                        crate::ppr::SeedWeighting::Specificity,
+                        None,
                         None,
                     )?
                     .len())
@@ -243,13 +245,24 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
             ))
         }
         EngineScan::LexicalHintRows => {
-            // Hint-prefix CLAIM ids whose bodies are gone: read, never served.
+            // Derived hint CLAIM ids of a stored CLAIM whose bodies are gone:
+            // read, never served.
+            let target = id(0x64, PAST);
             vault
                 .with_write_txn(|wtxn| {
+                    let record = crate::test_util::entity_record(
+                        crate::registry::ENTITY_TYPE_CLAIM,
+                        crate::temporal::TimeRange { start: 1, end: 1 },
+                        1,
+                        1,
+                        b"target",
+                    );
+                    vault.store.entities.put(wtxn, target.as_bytes(), &record)?;
                     for index in 0..PAST {
-                        let mut bytes = *id(0x64, index).as_bytes();
-                        bytes[..2].copy_from_slice(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX);
-                        let hint = EntityId::from_bytes(bytes).expect("hint id");
+                        let hint = crate::claim::lexical_query_hint_claim_id(
+                            &target,
+                            &format!("gone {index}"),
+                        )?;
                         let key = Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, &hint);
                         vault.store.type_index.put(wtxn, &key, &[])?;
                     }
@@ -260,14 +273,12 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
                 0,
                 Box::new(move || {
                     vault.with_write_txn(|wtxn| {
-                        Ok(
-                            crate::batch::legacy_lexical_query_hint_claim_ids_for_target(
-                                &vault.store,
-                                wtxn,
-                                &id(0x64, PAST),
-                            )?
-                            .len(),
-                        )
+                        Ok(crate::batch::lexical_query_hint_claim_ids_for_target(
+                            &vault.store,
+                            wtxn,
+                            &target,
+                        )?
+                        .len())
                     })
                 }),
             ))

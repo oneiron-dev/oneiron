@@ -381,6 +381,12 @@ pub(super) fn collect_receipt_records(
     if query.includes_kind(ReceiptKind::TaskLifecycle) {
         records.extend(crate::task_verb::task_lifecycle_receipts(vault, query)?);
     }
+    // Engine call S65-B-R3: each override of an engine hold, kept in the
+    // override's own transaction. Its own kind and store; its own read txn,
+    // so it runs before the shared `rtxn` below.
+    if query.includes_kind(ReceiptKind::RunHoldOverride) {
+        records.extend(crate::attempt_queue::hold_override_receipts(vault, query)?);
+    }
 
     // The settle projection opens its own read txn, so it runs before the shared
     // `rtxn` below to avoid a nested read transaction on this thread. It applies

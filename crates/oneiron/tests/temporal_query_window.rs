@@ -1,14 +1,18 @@
 //! Query-derived occurred windows must not lose their eligible hit to learned-time candidates.
+//!
+//! On the testkit: each case opens its own copy of the empty fixture vault,
+//! and "now" is the fake clock the copy's store reads (a query resolves "last
+//! week" against the store clock), so the window is the same on every run.
 
 use oneiron::memory::Effort;
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EntityId, TimeRange};
+use oneiron_testkit::{FixtureVault, fixture_cache};
 
 #[test]
 fn query_range_keeps_occurred_hit_ahead_of_recently_learned_old_rows()
 -> Result<(), Box<dyn std::error::Error>> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs();
+    let fixture = FixtureVault::empty(&fixture_cache!())?;
+    let now = fixture.ended_at();
     // "Last week" starts at midnight UTC seven days before today, not
     // seven days before the current time of day.
     let range_start = now - now % 86_400 - 7 * 86_400;
@@ -17,8 +21,8 @@ fn query_range_keeps_occurred_hit_ahead_of_recently_learned_old_rows()
         (range_start - 86_400 - 60, "eight-day boundary"),
         (range_start - 60, "seven-day boundary"),
     ] {
-        let dir = tempfile::tempdir()?;
-        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let copy = fixture.copy()?;
+        let vault = copy.open()?;
         assert!(occurred < range_start, "{label}");
         let eligible = EntityId::from_bytes([240; 16])?;
         vault.put_entity(

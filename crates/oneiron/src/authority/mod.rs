@@ -38,6 +38,8 @@ mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
 mod agent_grant_act;
+mod agent_grant_bound;
+mod agent_principal;
 mod agent_tier;
 mod agent_world_undo;
 mod ai_grant;

@@ -17,7 +17,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/buffers.rs` | src | m | 2 struct · 6 fn · 2 type · 12 crate-vis | AdmittedBytes, AdmittedStr | Shared output buffers; native accounting constructors are feature-gated |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
 | `src/lib.rs` | src | s | 2 mod · 7 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
-| `src/memory.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 24 crate-vis | SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
+| `src/memory.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 31 crate-vis | SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
 | `src/native/cms/assemble.rs` | src | s | 9 crate-vis | — | Signed-attribute builders and detached SignedData assembly |
 | `src/native/cms/der.rs` | src | s | 11 crate-vis | — | Strict-DER TLV writer/reader plus the shared sha256 helper |
 | `src/native/cms/mod.rs` | src | s | 7 crate-vis | — | CMS/CAdES SignedData assembly and parsing with exact byte control (§7.3) |
@@ -67,7 +67,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_revocation.rs` | src | m | 8 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
 | `src/native/verify/verify_sig_pipeline.rs` | src | m | 17 crate-vis | — | Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and… |
 | `src/native/verify/verify_tests_dss_b.rs` | src | m | 2 crate-vis | — | Verifier tests B: remaining DSS coverage and binding tests, KU gates, OCSP delegate and TSP token tests |
-| `src/native/verify/verify_tests_fixtures_dss_a.rs` | src | m | 23 crate-vis | — | Verifier tests A: rcgen fixtures, CRL/OCSP builders, DSS harness and first DSS revocation tests |
+| `src/native/verify/verify_tests_fixtures_dss_a.rs` | src | m | 24 crate-vis | — | Verifier tests A: rcgen fixtures, CRL/OCSP builders, DSS harness and first DSS revocation tests |
 | `src/native/verify/verify_tests_lta_probes.rs` | src | m | 5 crate-vis | — | Verifier tests D: span-craft and probe archival tests, flate CRL, object limit, typeless and orphan… |
 | `src/native/verify/verify_tests_review.rs` | src | m | — | — | Regression probes for per-signature report and revision admission |
 | `src/native/verify/verify_tests_sig_shapes.rs` | src | m | — | — | Verifier tests E: ByteRange and Contents shapes, field-tree reachability and cycles, SubFilter dispatch… |
@@ -81,5 +81,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/seal_vectors.rs` | test | m | — | — | Seal-path vectors: B-B/B-T/B-LT/B-LTA assembly, degradation warnings, evidence digests, and backend seam… |
 | `tests/it/verify_vectors.rs` | test | s | — | — | Verify-path vectors: mutation matrix, prepared-input rejection codes, and structural failure classification… |
 | `tests/oracle.rs` | test | s | — | — | CI differential oracle (§9, amendment A6) |
-| `tests/support/mod.rs` | test | m | 39 crate-vis | — | Shared test support: ephemeral identities, fixture backend/fetcher/clock, and a functional fixture TSA |
+| `tests/support/mod.rs` | test | m | 45 crate-vis | — | Shared test support: ephemeral identities, fixture backend/fetcher/clock, and a functional fixture TSA |
 | `tests/support/rogue_seal_organ.rs` | test | L | 4 crate-vis | — | A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped) |
