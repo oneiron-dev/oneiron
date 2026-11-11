@@ -77,6 +77,8 @@ fn facets() -> Facets {
             member_ids: roster.roster.clone(),
             claims_scope_ref: roster.claims_scope_ref.clone(),
             origin: None,
+            pins: Vec::new(),
+            pin_policy: Default::default(),
         };
         server
             .vault

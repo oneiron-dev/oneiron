@@ -440,6 +440,15 @@ impl ScopedRead<'_> {
             raw.truncate(ENTITY_METADATA_HEADER_LEN);
             raw.extend_from_slice(&body);
         }
+        // A room's shared pins never leave in its served body: a reader gets
+        // them only through the room's admitted projection (ROOM-SCOPED-PINS).
+        if raw.first() == Some(&crate::registry::ENTITY_TYPE_CONVERSATION)
+            && let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..)
+            && let Some(served) = crate::conversation::served_room_body(body)?
+        {
+            raw.truncate(ENTITY_METADATA_HEADER_LEN);
+            raw.extend_from_slice(&served);
+        }
         Ok(Some(AdmittedRevision { raw, content_hash }))
     }
 
