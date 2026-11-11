@@ -3,7 +3,9 @@ import { Tooltip } from '../overlays/Tooltip'
 import { Figure } from '../primitives/Figure'
 import { Icon } from '../primitives/Icon'
 import { IconAction } from '../primitives/IconAction'
+import { Verb } from '../primitives/Verb'
 import { cx, mergeSlotProps, useControllableState, useSafeId } from '../lib/react-utils'
+import { splitChildRows } from './sidebar-tree'
 import { useReorder } from './use-reorder'
 
 /* ── the root ───────────────────────────────────────────────────────────── */
@@ -13,6 +15,9 @@ interface SidebarContextValue {
   collapsed: boolean
   announce: (message: string) => void
 }
+
+/* True inside a row's child rows: the tree has two levels, never more. */
+const ChildRowContext = React.createContext(false)
 
 const SidebarContext = React.createContext<SidebarContextValue | null>(null)
 
@@ -28,16 +33,24 @@ export interface SidebarProps extends React.ComponentPropsWithRef<'nav'> {
   ground?: 'field' | 'paper'
   /* Symbols only; names show in a tooltip. */
   collapsed?: boolean
+  /* `icon`: a child row sits one icon step in, its symbol under the
+     parent's label. `none`: child rows sit flush with their parent, each
+     keeping its own symbol. */
+  childIndent?: 'icon' | 'none'
   /* The groups below the head were reordered (drag a group by its label, or
      Alt+ArrowUp / Alt+ArrowDown on the label). Each group needs an `id`.
      The caller renders the new order. */
   onGroupReorder?: (ids: string[]) => void
 }
 
-/* The list of places at the left. Children: one Sidebar.Head, then Sidebar.Groups. */
+/* The list of places at the left. Children: one Sidebar.Head, then
+   Sidebar.Groups. The tree has two levels: a group's rows, and under a row
+   its child rows (`childRows`). A group label is quiet; the rows carry a
+   symbol each. */
 function SidebarRoot({
   ground = 'field',
   collapsed = false,
+  childIndent = 'icon',
   onGroupReorder,
   className,
   children,
@@ -63,6 +76,7 @@ function SidebarRoot({
         className={cx('sl-sidebar', className)}
         data-ground={ground}
         data-collapsed={collapsed ? '' : undefined}
+        data-child-indent={childIndent}
         {...props}
       >
         {heads}
@@ -182,8 +196,14 @@ export interface SidebarRowProps extends Omit<React.ComponentPropsWithRef<'butto
   count?: number | string
   /* The place on screen now. */
   current?: boolean
-  /* Nesting under the row above: 0 to 2. */
-  depth?: 0 | 1 | 2
+  /* The rows under this one (Sidebar.Row elements), one level only: a
+     child row takes no child rows. A child row keeps its own symbol (`#`
+     for a room). Past five, the rest fold behind `show more`. */
+  childRows?: React.ReactNode
+  /* The folded child rows show. */
+  showAll?: boolean
+  defaultShowAll?: boolean
+  onShowAllChange?: (showAll: boolean) => void
   /* Shared with another vault: the aperture diamond after the label. */
   shared?: boolean
   /* Render the single child element (a router link) as the row. */
@@ -201,6 +221,16 @@ function SharedMark() {
   )
 }
 
+/* The Sidebar.Row elements of a node, through fragments, in order. */
+function rowElements(node: React.ReactNode, out: React.ReactElement<SidebarRowProps>[] = []) {
+  React.Children.forEach(node, (child) => {
+    if (!React.isValidElement(child)) return
+    if (child.type === React.Fragment) rowElements((child.props as { children?: React.ReactNode }).children, out)
+    else out.push(child as React.ReactElement<SidebarRowProps>)
+  })
+  return out
+}
+
 function SidebarRow({
   id,
   icon,
@@ -209,7 +239,10 @@ function SidebarRow({
   caption,
   count,
   current = false,
-  depth = 0,
+  childRows,
+  showAll: showAllProp,
+  defaultShowAll,
+  onShowAllChange,
   shared = false,
   asChild = false,
   pinned = false,
@@ -220,6 +253,14 @@ function SidebarRow({
   ...props
 }: SidebarRowProps) {
   const sidebar = useSidebar('Sidebar.Row')
+  const isChild = React.useContext(ChildRowContext)
+  const kids = childRows === undefined ? [] : rowElements(childRows)
+  if (isChild && kids.length) throw new Error('A child Sidebar.Row takes no child rows: the sidebar tree has two levels')
+  const split = splitChildRows(kids.length)
+  /* A folded child that is the current place starts unfolded. */
+  const currentFolded = kids.slice(split.shown).some((kid) => kid.props.current)
+  const [showAll, setShowAll] = useControllableState(showAllProp, defaultShowAll ?? currentFolded, onShowAllChange)
+  const restId = useSafeId('sl-sidebar-rest')
   const content = (
     <>
       <span className="sl-sidebar-row-mark" data-slot={glyph ? 'glyph' : 'icon'} aria-hidden="true">
@@ -271,22 +312,46 @@ function SidebarRow({
       className="sl-sidebar-item"
       data-sidebar-row-id={id}
       data-reorder-label={typeof label === 'string' ? label : undefined}
-      data-depth={depth}
+      data-level={isChild ? 1 : 0}
       data-pinnable={onPinChange ? '' : undefined}
     >
-      {control}
-      {onPinChange ? (
-        <IconAction
-          label="Pin"
-          size="sm"
-          tooltipSide="right"
-          className="sl-sidebar-row-pin"
-          aria-pressed={pinned}
-          data-reorder-ignore=""
-          onClick={() => onPinChange(!pinned)}
-        >
-          <Icon name="pin" />
-        </IconAction>
+      <div className="sl-sidebar-line">
+        {control}
+        {onPinChange ? (
+          <IconAction
+            label="Pin"
+            size="sm"
+            tooltipSide="right"
+            className="sl-sidebar-row-pin"
+            aria-pressed={pinned}
+            data-reorder-ignore=""
+            onClick={() => onPinChange(!pinned)}
+          >
+            <Icon name="pin" />
+          </IconAction>
+        ) : null}
+      </div>
+      {kids.length ? (
+        <ChildRowContext.Provider value={true}>
+          <div role="list" aria-label={typeof label === 'string' ? label : undefined} className="sl-sidebar-children">
+            {kids.slice(0, split.shown)}
+            {split.folded ? (
+              <>
+                <div role="none" className="sl-sidebar-rest" data-state={showAll ? 'open' : 'closed'}>
+                  <div role="none" id={restId} className="sl-sidebar-rest-rows" inert={!showAll}>
+                    {kids.slice(split.shown)}
+                  </div>
+                </div>
+                <div role="listitem" className="sl-sidebar-more">
+                  <Verb aria-expanded={showAll} aria-controls={restId} onClick={() => setShowAll(!showAll)}>
+                    {showAll ? 'show fewer' : 'show more'}
+                  </Verb>
+                  {showAll ? null : <Figure>{split.folded}</Figure>}
+                </div>
+              </>
+            ) : null}
+          </div>
+        </ChildRowContext.Provider>
       ) : null}
     </div>
   )
