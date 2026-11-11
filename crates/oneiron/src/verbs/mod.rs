@@ -372,6 +372,30 @@ pub fn task_create_spec(
         )),
     }
 }
+
+/// `tasks.create.from_message`: the project-room MESSAGE or TURN a TASK is
+/// made from, and the create as `tasks.create` names it. The TASK binds to
+/// the root of the thread the source stands in, in the create's write. A
+/// create that routes through approval (a typed brief, an intent key, or a
+/// ceiling short of Auto) is refused.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCreateFromMessageRequest {
+    /// The MESSAGE or TURN, by short-id ref or 32-hex id.
+    pub source_ref: String,
+    pub create: TaskCreateRequest,
+}
+
+/// `tasks.create.from_message` for the surface's actor: the source by its
+/// id, and the create spec [`task_create_spec`] builds.
+pub fn task_create_from_message(
+    memory: &Memory<'_>,
+    input: TaskCreateFromMessageRequest,
+) -> MemoryResult<crate::task_verb::TaskCreateReceipt> {
+    let source_ref = crate::memory::resolve_entity_ref(memory.vault(), &input.source_ref)?;
+    let spec = task_create_spec(memory, input.create)?;
+    memory.tasks_create_from_message(source_ref, &spec)
+}
 /// `tasks.wave` (OF-427, ARCH-0068 RC5): an epic TASK cut into a wave of
 /// TASKs by a planner agent, queued as one planning attempt. Who asks, and
 /// the lease the wave runs under, are the host's, never request text.
