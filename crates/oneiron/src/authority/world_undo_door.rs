@@ -91,6 +91,94 @@ pub(crate) fn concurrent_agent_world_edits_read(refused: &[usize]) -> String {
     format!("{:?}", fold.world_privacy(world).read)
 }
 
+/// Folds two agent edits of one world in sequence under one Grant, the second
+/// on the first, then projects the requested Grant refusals.
+pub(crate) fn sequential_agent_world_edits_read(refused: &[usize]) -> String {
+    let owner_key = ed_key(114);
+    let genesis = genesis_entry(114, 1);
+    let vault_id = genesis_vault_id(&genesis).expect("the signed fixture genesis has a vault id");
+    // A stable machine id makes the OneMachine Debug text reproducible.
+    let machine =
+        EntityId::from_bytes([1; 16]).expect("fixture machine ids are not reserved sentinels");
+    let key = ed_key(116);
+    let profile = mark(&genesis, &owner_key, 1, machine, &key, vault_id);
+    let owner = EntityId::now();
+    let world = EntityId::now();
+    let by = ActBy::Agent {
+        agent: EntityId::now(),
+        grant: EntityId::now(),
+    };
+    let edit = |seq, parents, seen, read, ts| {
+        sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                seq,
+                parents,
+                AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                    world,
+                    act: OwnerAct {
+                        by,
+                        seen,
+                        ..owner_act(owner, world)
+                    },
+                    machine,
+                    settings: settings(read),
+                }),
+                authority_key_from_ed(&key),
+                ts,
+            ),
+            &key,
+        )
+    };
+    let first = edit(
+        1,
+        vec![entry_hash(&profile)],
+        [0; 32],
+        ReadLocation::MyMachines,
+        2,
+    );
+    let first_hash = entry_hash(&first);
+    let mut entries = vec![genesis, profile, first];
+    // The second edit names the world's revision after the first, as an
+    // agent's surface shows it.
+    let seen = fold_authority_log(&entries).world_policy_revision(world).0;
+    let second = edit(
+        2,
+        vec![first_hash],
+        seen,
+        ReadLocation::OneMachine(machine),
+        3,
+    );
+    let hashes = [first_hash, entry_hash(&second)];
+    entries.push(second);
+    let mut fold = fold_authority_log(&entries);
+    let Some(folded) = fold.worlds.get(&world) else {
+        return "fixture error: the world did not fold".to_owned();
+    };
+    if folded.live.len() != 1
+        || !folded.live.contains_key(&hashes[1])
+        || fold.agent_carried_acts.len() != 2
+        || hashes.iter().any(|hash| {
+            !fold.valid_entries.contains(hash)
+                || !fold.agent_carried_acts.contains_key(hash)
+                || fold.install.held_back.contains(hash)
+                || fold.refused_world_edits.contains(hash)
+        })
+    {
+        return "fixture error: both agent edits must be valid and counted, the second live"
+            .to_owned();
+    }
+    let Some(refused_hashes) = refused
+        .iter()
+        .map(|&index| hashes.get(index).copied())
+        .collect::<Option<Vec<_>>>()
+    else {
+        return "fixture error: refused index is outside the two edits".to_owned();
+    };
+    super::carried_act::hold_back_agent_acts(&mut fold, &refused_hashes);
+    format!("{:?}", fold.world_privacy(world).read)
+}
+
 // Copied from authority/tests/support.rs: the minimal Ed25519 entry and owner-act helpers.
 fn ed_key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
