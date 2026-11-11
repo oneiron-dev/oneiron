@@ -505,6 +505,36 @@ impl Memory<'_> {
         self.read_views_after(lane, targets, || {})
     }
 
+    /// The live views of `ids` on `lane` in the caller's snapshot `txn`, as
+    /// [`Self::read_views`] reads them, so a snapshot page versions each row
+    /// it serves in the same transaction (primitive A,
+    /// `crate::snapshot_read`). The caller prepared the lane's grant clock and
+    /// body pins before opening `txn`.
+    pub(crate) fn read_views_in_txn(
+        &self,
+        lane: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        ids: &[EntityId],
+    ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
+        let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+        lane.read_projected_in_txn(txn, &reads, None, |txn, rows| {
+            rows.into_iter()
+                .map(|row| match row {
+                    Some(row) => self.slot_view_in(lane, txn, row, ReadMode::Live, false),
+                    None => Ok(None),
+                })
+                .collect::<MemoryResult<Vec<_>>>()
+        })
+    }
+
+    /// When the read credential this handle is bound to ends, on the vault's
+    /// clock; `None` for a handle bound to none.
+    pub(crate) fn read_proof_expires_at(&self) -> Option<u64> {
+        self.read_proof
+            .as_ref()
+            .map(|proof| proof.claims().expires_at)
+    }
+
     /// [`Self::read_views`] for a door whose output no read can follow
     /// exactly (a pack writer lays a body's fields out in its own rows): a
     /// body the write door refuses, stored while the owner's scan was off, is

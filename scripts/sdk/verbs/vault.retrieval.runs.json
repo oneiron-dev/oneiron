@@ -1,9 +1,9 @@
 {
   "name": "vault.retrieval.runs",
-  "description": "The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first.",
+  "description": "The owner, or a holder of a Steward grant naming read, reads finalized local retrieval runs and their independent outcome sidecars, newest first.",
   "input": "crate::task_verb::sdk::RetrievalRunsRequest",
   "output": "Vec<crate::task_verb::sdk::RetrievalRunEvidence>",
-  "call": "crate::task_verb::sdk::retrieval_runs_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.runs\")?, input)?",
+  "call": "crate::task_verb::sdk::retrieval_runs_embedded(memory, input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
@@ -12,5 +12,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "substrate_reader"
 }

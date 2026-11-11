@@ -22,7 +22,8 @@ use oneiron::test_doors::derive::{
     define_auto_agent, grant_derive_rows, open_conflict, refusal_receipt,
 };
 use oneiron::test_doors::steward::{
-    STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, dreamer, stand_steward_grant,
+    STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, dreamer, receive_steward_grant_row,
+    stand_steward_grant, steward_grant_rows,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault};
 use serde_json::json;
@@ -533,6 +534,59 @@ fn a_settlement_needs_the_derive_grant() {
         panic!("one item: {:?}", committed.items);
     };
     assert!(!settled.landed);
+    assert_eq!(settled.reasons, vec![LACKS_DERIVE.to_owned()]);
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, first).expect("read"),
+        Some("active".to_owned())
+    );
+}
+
+/// Every standing Steward grant row decides, never the newest alone: a row
+/// another of the owner's machines stood can only narrow the reach.
+#[test]
+fn a_settlement_needs_derive_in_every_standing_steward_row() {
+    let fixture = fixture();
+    let first = landed_claim(&fixture, "an oat milk flat white");
+    let second = landed_claim(&fixture, "a cortado");
+    let marker = open_conflict(&fixture.vault, second, first).expect("an open conflict");
+    // The older row gives no `derive`. A newer row gives every verb, as
+    // another machine's default arrives here. Both stand.
+    let older = stand_steward_grant(
+        &fixture.vault,
+        fixture.dreamer,
+        &[STEWARD_READ_VERB, STEWARD_ARCHIVE_VERB],
+    )
+    .expect("a grant without derive");
+    let newer = receive_steward_grant_row(&fixture.vault, fixture.dreamer, &STEWARD_VERBS)
+        .expect("a newer row with every verb");
+    assert!(older < newer, "the row with every verb is the newest");
+    assert_eq!(
+        steward_grant_rows(&fixture.vault, fixture.dreamer)
+            .expect("rows")
+            .len(),
+        2,
+        "both rows stand"
+    );
+
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-settle-two-rows",
+        &[Derived::Settle(Settle {
+            local: "keep_second",
+            marker: Named::Stored(marker),
+            settlement: Settlement::Keep(Named::Stored(second)),
+        })],
+    )
+    .expect("commit");
+    let [settled] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(
+        !settled.landed,
+        "the older row without derive still narrows: {settled:?}"
+    );
     assert_eq!(settled.reasons, vec![LACKS_DERIVE.to_owned()]);
     assert_eq!(
         claim_lifecycle(&fixture.vault, first).expect("read"),

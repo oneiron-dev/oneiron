@@ -375,6 +375,53 @@ pub fn learning_settings_as_owner(
     input: &LearningSettingsRequest,
 ) -> Result<LearningSettingsView> {
     owner.revalidate(vault)?;
+    learning_settings(vault, input)
+}
+
+/// [`learning_settings_as_owner`] for a holder of `engine.controls` (untangle
+/// 6.6c, the read side of the dials it may tune), checked at this read.
+///
+/// # Errors
+///
+/// A caller who holds no such grant; storage errors.
+pub fn learning_settings_as_holder(
+    vault: &Vault,
+    reader: WriteActor,
+    input: &LearningSettingsRequest,
+) -> crate::memory::MemoryResult<LearningSettingsView> {
+    crate::federation::admit_substrate_read_by(
+        vault,
+        reader,
+        "vault.settings.learning",
+        crate::federation::SubstrateRead::Dials,
+    )?;
+    Ok(learning_settings(vault, input)?)
+}
+
+/// `vault.settings.learning` on a bound handle: the embedded owner reads
+/// under its own proof, any other caller as an `engine.controls` holder.
+///
+/// # Errors
+///
+/// As [`learning_settings_as_owner`] and [`learning_settings_as_holder`].
+pub fn learning_settings_embedded(
+    memory: &crate::memory::Memory<'_>,
+    input: &LearningSettingsRequest,
+) -> crate::memory::MemoryResult<LearningSettingsView> {
+    match memory.embedded_owner("vault.settings.learning") {
+        Ok(owner) => Ok(learning_settings_as_owner(memory.vault(), &owner, input)?),
+        Err(_) => learning_settings_as_holder(
+            memory.vault(),
+            WriteActor::new(memory.actor(), memory.actor_class()),
+            input,
+        ),
+    }
+}
+
+fn learning_settings(
+    vault: &Vault,
+    input: &LearningSettingsRequest,
+) -> Result<LearningSettingsView> {
     let wanted = |key: &str| input.key.as_deref().is_none_or(|wanted| wanted == key);
     let mut catalog = Vec::new();
     for spec in SETTING_CATALOG.iter().filter(|spec| wanted(spec.key)) {
@@ -515,4 +562,125 @@ pub fn clear_learning_setting_as_owner(
             key: Some(input.key),
         },
     )
+}
+
+/// [`put_learning_setting_as_owner`] for a holder of `engine.controls`
+/// (untangle 6.6d; owner 9 Nov 22:47, every substrate control is a public
+/// verb behind a grant): one seed or pin on a learning dial a holder may
+/// tune ([`crate::learning_setting::ENGINE_CONTROL_SETTINGS`]). The writer
+/// checks the grant, keeps the owner's pins and work-budget caps, and writes
+/// the engine-control receipt. A spawn choice stays the owner's to set.
+/// Answers with the key's catalog and rows, read under the same grant.
+///
+/// # Errors
+///
+/// A bad scope; a spawn choice, or a row with no value; the holder door's
+/// refusals (no live `engine.controls`, a key the owner keeps, a value
+/// outside its bounds, a row the owner's rows stand over); storage errors.
+pub fn put_learning_setting_as_holder(
+    vault: &Vault,
+    holder: WriteActor,
+    input: LearningSettingPut,
+) -> crate::memory::MemoryResult<LearningSettingsView> {
+    let scope = scope_of(
+        input.goal.as_deref(),
+        input.project.as_deref(),
+        input.task_type.as_deref(),
+    )?;
+    if SpawnChoice::from_key(&input.key).is_some() {
+        return Err(bad("a spawn choice is the owner's to set").into());
+    }
+    let (Some(value), None) = (input.value, input.choice) else {
+        return Err(bad("a catalog knob's row carries a value, not a choice").into());
+    };
+    let key = input.key.clone();
+    vault.put_setting_row_as_holder(
+        holder.entity_ref(),
+        &scope,
+        &SettingRow {
+            key: input.key,
+            mode: input.mode.into(),
+            value,
+            weight_runs: input.weight_runs,
+            at: crate::unix_seconds_now(),
+            why: input.why,
+        },
+    )?;
+    learning_settings_as_holder(vault, holder, &LearningSettingsRequest { key: Some(key) })
+}
+
+/// [`clear_learning_setting_as_owner`] for a holder of `engine.controls`
+/// (untangle 6.6d): withdraws one seed or pin on a learning dial a holder
+/// may tune; the owner's pins and work-budget rows stand.
+///
+/// # Errors
+///
+/// As [`put_learning_setting_as_holder`].
+pub fn clear_learning_setting_as_holder(
+    vault: &Vault,
+    holder: WriteActor,
+    input: LearningSettingClear,
+) -> crate::memory::MemoryResult<LearningSettingsView> {
+    let scope = scope_of(
+        input.goal.as_deref(),
+        input.project.as_deref(),
+        input.task_type.as_deref(),
+    )?;
+    if SpawnChoice::from_key(&input.key).is_some() {
+        return Err(bad("a spawn choice is the owner's to set").into());
+    }
+    vault.clear_setting_row_as_holder(
+        holder.entity_ref(),
+        &scope,
+        &input.key,
+        input.mode.into(),
+    )?;
+    learning_settings_as_holder(
+        vault,
+        holder,
+        &LearningSettingsRequest {
+            key: Some(input.key),
+        },
+    )
+}
+
+/// `vault.settings.learning.put` on a bound handle: the embedded owner under
+/// its own proof, any other caller as a holder of `engine.controls`.
+///
+/// # Errors
+///
+/// As [`put_learning_setting_as_owner`] and [`put_learning_setting_as_holder`].
+pub fn put_learning_setting_embedded(
+    memory: &crate::memory::Memory<'_>,
+    input: LearningSettingPut,
+) -> crate::memory::MemoryResult<LearningSettingsView> {
+    match memory.embedded_owner("vault.settings.learning.put") {
+        Ok(owner) => Ok(put_learning_setting_as_owner(memory.vault(), &owner, input)?),
+        Err(_) => put_learning_setting_as_holder(
+            memory.vault(),
+            WriteActor::new(memory.actor(), memory.actor_class()),
+            input,
+        ),
+    }
+}
+
+/// `vault.settings.learning.clear` on a bound handle: the embedded owner
+/// under its own proof, any other caller as a holder of `engine.controls`.
+///
+/// # Errors
+///
+/// As [`clear_learning_setting_as_owner`] and
+/// [`clear_learning_setting_as_holder`].
+pub fn clear_learning_setting_embedded(
+    memory: &crate::memory::Memory<'_>,
+    input: LearningSettingClear,
+) -> crate::memory::MemoryResult<LearningSettingsView> {
+    match memory.embedded_owner("vault.settings.learning.clear") {
+        Ok(owner) => Ok(clear_learning_setting_as_owner(memory.vault(), &owner, input)?),
+        Err(_) => clear_learning_setting_as_holder(
+            memory.vault(),
+            WriteActor::new(memory.actor(), memory.actor_class()),
+            input,
+        ),
+    }
 }
