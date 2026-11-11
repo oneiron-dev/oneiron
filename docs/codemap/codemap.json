@@ -20621,7 +20621,7 @@
      "purpose": "Guest-authored calls accepted by a first-party code runtime",
      "surface": {
       "enum": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -90941,9 +90941,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/test_doors/callable_skill.rs",
-     "purpose": "Doors for `tests/skill_call_caller_sandbox.rs`: exact source persistence and callable outcome evidence under…",
+     "purpose": "Doors for the callable-skill integration tests",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -103059,6 +103059,32 @@
       "crate-vis": 1,
       "mod": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/callable_wait_park.rs",
+     "purpose": "ENGINE CALL SANDBOX-WAIT-PARK-SEMANTICS: a callable whose body finishes after its `wait` was answered with…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/code_mode_wait_park.rs",
+     "purpose": "ENGINE CALL CODE-SANDBOX-WAIT-RESPONSE-FIELD: a code-mode call whose row output holds a park, answered with…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/wait_park/fixture.rs",
+     "purpose": "The shared fixture of `code_mode_wait_park.rs` and `callable_wait_park.rs` (ENGINE CALL…",
+     "surface": {
+      "crate-vis": 4
+     }
     }
    ],
    "modules": {
@@ -103073,7 +103099,7 @@
    "over_bar": 1,
    "purpose": "`oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1)",
    "source_files": 22,
-   "test_files": 6
+   "test_files": 9
   },
   "oneiron-android": {
    "files": [

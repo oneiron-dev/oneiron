@@ -114,13 +114,13 @@ fn a_continuation_behind_a_later_consumed_turn_is_selected_again() -> Result<()>
         .expect("a later turn");
     assert_eq!(dirty(&vault)?, vec![turn, later], "both turns are dirty");
     let consumed = consume(&vault)?;
-    end_stream(&vault, writer, &input, " Oleksii", "finalize");
+    end_stream(&vault, writer, &input, " Owen", "finalize");
     assert_eq!(dirty(&vault)?, vec![turn], "the continued turn comes back");
     let again = queue_micro(&vault)?;
     assert_ne!(again, consumed, "the new words get a new attempt");
     assert_eq!(
         transcript(&vault, conversation, turn, again)?,
-        format!("[{} user] call me Oleksii\n", turn.to_hex())
+        format!("[{} user] call me Owen\n", turn.to_hex())
     );
     Ok(())
 }
@@ -140,7 +140,7 @@ fn a_continuation_in_an_adopted_dag_conversation_is_selected_again() -> Result<(
         &vault,
         EntityId::from_bytes([0x93; 16])?,
         &input,
-        " Oleksii",
+        " Owen",
         "finalize",
     );
     assert_eq!(vault.get_raw(&turn)?, row, "the TURN row is append-only");
@@ -149,7 +149,7 @@ fn a_continuation_in_an_adopted_dag_conversation_is_selected_again() -> Result<(
     assert_ne!(again, consumed, "the new words get a new attempt");
     assert_eq!(
         transcript(&vault, conversation, turn, again)?,
-        format!("[{} user] call me Oleksii\n", turn.to_hex())
+        format!("[{} user] call me Owen\n", turn.to_hex())
     );
     Ok(())
 }
@@ -181,7 +181,7 @@ fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() 
         occurred_at: now,
     };
     end_stream(&vault, writer, &input, "call me", "finalize");
-    for (round, words) in [(1, " Oleksii"), (2, " please"), (3, "")] {
+    for (round, words) in [(1, " Owen"), (2, " please"), (3, "")] {
         session = close_session(&vault, session, now)?;
         assert_eq!(
             meso_rounds_of(&vault, turn)?,
@@ -220,7 +220,7 @@ fn a_re_put_after_a_consumed_continuation_is_selected_again() -> Result<()> {
     let (turn, _, _, input) = stream_turn(&vault, 0x97, "call me", "finalize")?;
     let writer = EntityId::from_bytes([0x97; 16])?;
     consume(&vault)?;
-    end_stream(&vault, writer, &input, " Oleksii", "finalize");
+    end_stream(&vault, writer, &input, " Owen", "finalize");
     assert_eq!(dirty(&vault)?, vec![turn], "the continued turn comes back");
     consume(&vault)?;
     let row = vault.get_raw(&turn)?.expect("the turn row");
@@ -244,7 +244,7 @@ fn a_consumed_continuation_comes_back_on_a_full_rescan_and_settles_by_second() -
     let (turn, _, _, input) = stream_turn(&vault, 0x99, "call me", "finalize")?;
     let writer = EntityId::from_bytes([0x99; 16])?;
     consume(&vault)?;
-    end_stream(&vault, writer, &input, " Oleksii", "finalize");
+    end_stream(&vault, writer, &input, " Owen", "finalize");
     consume(&vault)?;
     let scope = DreamerConsolidationScope::Micro;
     crate::dreamer_prefilter::reopen_prefilter_rescan(&vault, scope, 0)?;
@@ -271,7 +271,7 @@ fn a_public_settlement_leaves_a_later_re_put_dirty() -> Result<()> {
     let (turn, _, _, input) = stream_turn(&vault, 0x9B, "call me", "finalize")?;
     let writer = EntityId::from_bytes([0x9B; 16])?;
     consume(&vault)?;
-    end_stream(&vault, writer, &input, " Oleksii", "finalize");
+    end_stream(&vault, writer, &input, " Owen", "finalize");
     let queued = round(&vault)?;
     queue_micro(&vault)?;
     clock.set(60);
@@ -304,7 +304,7 @@ fn a_public_settlement_leaves_a_same_second_replacement_pending() -> Result<()> 
     let (turn, _, _, input) = stream_turn(&vault, 0x9D, "call me", "finalize")?;
     let writer = EntityId::from_bytes([0x9D; 16])?;
     consume(&vault)?;
-    end_stream(&vault, writer, &input, " Oleksii", "finalize");
+    end_stream(&vault, writer, &input, " Owen", "finalize");
     let queued = round(&vault)?;
     let attempt = queue_micro(&vault)?;
     end_stream(&vault, writer, &input, " please", "finalize");
