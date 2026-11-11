@@ -43,6 +43,12 @@ impl EngineNativeExecutor<'_> {
     /// Their implicit selection and terminal recovery are skipped; explicit
     /// speech still goes through the child's read-only door.
     ///
+    /// A canonical run whose actor the witness gate would not allow a
+    /// companion MESSAGE (a read-only or propose-only agent, FIX 23049)
+    /// selects `ImplicitSpeechIntent::ResultOnly`: the run completes, its
+    /// answer stays in the run's result, and no witness is attempted, now or
+    /// on recovery.
+    ///
     /// # How much is said
     ///
     /// An answer has no size limit, and a bubble is no place for a large one:
@@ -59,6 +65,37 @@ impl EngineNativeExecutor<'_> {
         if self.gated_write.reader_child().is_some() {
             return Ok(None);
         }
+        let Some(intent) =
+            self.select_trailing_speak_intent(record, observation, trailing_speak)?
+        else {
+            return Ok(None);
+        };
+        // Only own-run output is optional: an actor whose companion MESSAGE
+        // the witness gate would not allow keeps its answer in the run's
+        // result. Room speech and every explicit speech or memory effect keep
+        // their ordinary write doors.
+        if let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            if !crate::gate::code_run_answer_may_witness(
+                &vault.store,
+                &txn,
+                self.gated_write.actor(),
+            )? {
+                return Ok(Some(ImplicitSpeechIntent::ResultOnly));
+            }
+        }
+        Ok(Some(intent))
+    }
+
+    /// The words, or the typed result, a terminal checkpoint would say for
+    /// the run, before the witness question: `None` when there is nothing
+    /// to say or the run already said it.
+    fn select_trailing_speak_intent(
+        &self,
+        record: &CodeRunReplayRecord,
+        observation: &CodeRunRawOutput,
+        trailing_speak: Option<&str>,
+    ) -> EngineExecutorResult<Option<ImplicitSpeechIntent>> {
         let answer;
         let text = match trailing_speak {
             Some(text) => text,
@@ -149,6 +186,11 @@ impl EngineNativeExecutor<'_> {
         intent: &ImplicitSpeechIntent,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<()> {
+        // This terminal choice was committed with the result, so a retry
+        // neither re-evaluates it nor attempts a MESSAGE witness.
+        if matches!(intent, ImplicitSpeechIntent::ResultOnly) {
+            return Ok(());
+        }
         let order = u32::try_from(record.bridge_calls.len()).unwrap_or(u32::MAX);
         let (marker, marker_bytes) = fallback_speech_marker(config.run_id, step_seq, order)?;
         if self.storage.get_code_run_raw_output(&marker)?.is_some() {
@@ -181,6 +223,7 @@ impl EngineNativeExecutor<'_> {
             .into());
         }
         match intent {
+            ImplicitSpeechIntent::ResultOnly => None,
             ImplicitSpeechIntent::Text { text } => self.witness_turn_for_run_at(
                 Some(config.run_id),
                 ExecutorUtterance::Speak,

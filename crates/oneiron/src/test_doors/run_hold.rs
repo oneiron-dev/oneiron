@@ -4,7 +4,8 @@
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptResumePoint, HoldAttemptForHook,
+    AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptResumePoint,
+    HoldAttemptForHook, InterveneAttempt, InterveneOutcome,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -34,6 +35,36 @@ pub fn hold_for_hook(
     )?;
     wtxn.commit()?;
     Ok(record)
+}
+
+/// A `kind` intervention on `id` by `actor`, a caller other than the vault
+/// owner, as run control runs one for a TASK's owner or the host (Fable 5.2
+/// item 2): `Ok(Err(code))` when a hold refuses it, the reason code of the
+/// signal the row waits on; nothing is written then.
+pub fn intervene_as_caller(
+    vault: &Vault,
+    id: AttemptId,
+    kind: AttemptInterventionKind,
+    actor: &str,
+    now: u64,
+) -> Result<std::result::Result<InterveneOutcome, &'static str>> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    match AttemptQueue::new(vault).intervene_as_caller_in_txn(
+        &mut wtxn,
+        InterveneAttempt {
+            id,
+            kind,
+            actor: actor.to_owned(),
+            note: None,
+            now,
+        },
+    )? {
+        Ok(outcome) => {
+            wtxn.commit()?;
+            Ok(Ok(outcome))
+        }
+        Err(signal) => Ok(Err(signal.reason_code())),
+    }
 }
 
 /// The actor of `id`'s hold override record; `None` when it has none.

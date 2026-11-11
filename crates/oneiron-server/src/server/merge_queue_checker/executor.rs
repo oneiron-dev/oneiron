@@ -22,8 +22,8 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::Duration;
 
 use oneiron::code_sandbox::SandboxGuestTier;
-use oneiron::code_sandbox::egress::ProcessDescriptorFloor;
-use oneiron::code_sandbox::microvm::{MicroVmBackend, select_backend_for_session};
+use oneiron::code_sandbox::microvm::{MicroVmBackend, SandboxBackends, select_backend_for_session};
+use oneiron::host_net_floor::ProcessDescriptorFloor;
 use oneiron::merge_queue::{
     QueueCheckEnvironment, QueueCheckExecution, QueueCheckHold, QueueCheckHoldReason,
     QueueCheckHost, QueueCheckInputs, QueueCheckInvocation, QueueCheckNeed, QueueCheckRun,
@@ -53,15 +53,19 @@ const STOP_POLL: Duration = Duration::from_millis(500);
 /// One check's executor, chosen by the operator's setting.
 pub(super) struct QueueCheckExecutor {
     config: MergeQueueCheckerConfig,
+    /// The isolating backends the checked vault carries (F1-6), which the
+    /// isolated executor selects its backend from.
+    backends: Arc<dyn SandboxBackends>,
     backend: Option<Box<dyn MicroVmBackend>>,
     /// Where each started guest is recorded until it ends (FIX 7233).
     guests: Option<PathBuf>,
 }
 
 impl QueueCheckExecutor {
-    pub(super) fn new(config: MergeQueueCheckerConfig) -> Self {
+    pub(super) fn new(config: MergeQueueCheckerConfig, backends: Arc<dyn SandboxBackends>) -> Self {
         Self {
             config,
+            backends,
             backend: None,
             guests: None,
         }
@@ -95,7 +99,7 @@ impl QueueCheckExecutor {
             ));
         }
         let backend = select_backend_for_session(
-            &oneiron_agent_runtime::code_sandbox::SANDBOX_BACKENDS,
+            &*self.backends,
             SandboxGuestTier::Untrusted,
             runtime.clone(),
             image,

@@ -634,6 +634,8 @@ fn world_access_world_array(worlds: &[EntityId]) -> rmpv::Value {
 /// that does not decode can never be read as a WIDER authority than it holds.
 #[test]
 fn world_access_claim_value_decoding_is_strict() -> Result<()> {
+    // The world-access member cap, removed by fb1bccf79e2 (search-loop-readsets: uncapped world sets).
+    const MAX_WORLD_ACCESS_MEMBERS: usize = 256;
     let agent = entity_id(0xA0);
     let first = entity_id(0x31);
     let second = entity_id(0x32);

@@ -1,6 +1,7 @@
 //! Real binary have/want exchanges between independent vaults.
 
 use super::*;
+use crate::origin::lfs::LfsManifest;
 use crate::test_util::{embedding_test_config, open_test_vault_with};
 use std::collections::BTreeSet;
 
@@ -27,8 +28,12 @@ fn transfer(source: &Vault, target: &Vault, oid: LfsOid) -> (usize, usize) {
             }
         }
         let reply = serve_owner_chunk_request(source, &request).unwrap();
-        if let ChunkSyncResponse::Chunks(chunks) = decode(&reply).unwrap() {
-            transferred += chunks.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
+        if let ChunkSyncResponse::Chunks(page) = decode(&reply).unwrap() {
+            transferred += page
+                .chunks
+                .iter()
+                .map(|(_, bytes)| bytes.len())
+                .sum::<usize>();
         }
         match download.accept(target, &reply, time().start).unwrap() {
             Some(next) => request = next,
@@ -48,10 +53,13 @@ fn chunks_outside_the_manifest_and_unbound_selectors_are_refused() {
         .put_lfs_object(oid, body, time(), time().start)
         .unwrap();
     let request = ChunkSyncRequest {
+        request: 0,
         oid: *oid.as_bytes(),
         selector: Vec::new(),
         have: vec![],
         want: Some(vec![[42; 32]]),
+        cursor: None,
+        read: None,
     };
     assert!(serve_owner_chunk_request(&vault, &encode_chunk_request(&request).unwrap()).is_err());
     let principal = EntityId::now();
@@ -81,10 +89,10 @@ fn reply_corruption_and_replay_after_delete_never_publish() {
         .unwrap();
     let mut reply: ChunkSyncResponse =
         decode(&serve_owner_chunk_request(&a, &want).unwrap()).unwrap();
-    let ChunkSyncResponse::Chunks(chunks) = &mut reply else {
+    let ChunkSyncResponse::Chunks(page) = &mut reply else {
         panic!("chunks")
     };
-    chunks[0].1[0] ^= 1;
+    page.chunks[0].1[0] ^= 1;
     assert!(
         download
             .accept(&b, &encode(&reply).unwrap(), time().start)
@@ -137,6 +145,7 @@ fn manifest_and_want_requests_enforce_grant_scope_and_asset_family() -> Result<(
             ENTITY_TYPE_FEDERATION_GRANT,
             time(),
             time().start,
+            None,
             &encode_federation_grant_body(&grant)?,
         )
         .commit()?;
@@ -151,19 +160,22 @@ fn manifest_and_want_requests_enforce_grant_scope_and_asset_family() -> Result<(
         selector.bands =
             crate::sync::RequestedAxis::Named(vec![SelectorRange::Family(TypeByteFamily::Content)]);
         let mut request = ChunkSyncRequest {
+            request: 0,
             oid: *oid.as_bytes(),
             selector: encode_sync_selector(&selector)?,
             have: vec![],
             want,
+            cursor: None,
+            read: None,
         };
         let allowed =
             serve_chunk_request(&vault, principal, scope, &encode_chunk_request(&request)?)?;
         match decode::<ChunkSyncResponse>(&allowed)? {
-            ChunkSyncResponse::Manifest(bytes) => {
+            ChunkSyncResponse::Manifest(ManifestPage { bytes, .. }) => {
                 assert!(request.want.is_none());
                 assert_eq!(bytes, manifest.encode()?);
             }
-            ChunkSyncResponse::Chunks(chunks) => {
+            ChunkSyncResponse::Chunks(ChunkPage { chunks, .. }) => {
                 assert!(request.want.is_some());
                 assert_eq!(chunks, vec![(manifest.chunks[0].hash, body.to_vec())]);
             }
@@ -229,6 +241,7 @@ fn chunk_grant_fixture(
             crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
             time(),
             time().start,
+            None,
             &encode_federation_grant_body(&grant)?,
         )
         .commit()?;
@@ -237,10 +250,13 @@ fn chunk_grant_fixture(
 
 fn manifest_request(oid: LfsOid, selector: &SyncSelector) -> Result<Vec<u8>> {
     encode_chunk_request(&ChunkSyncRequest {
+        request: 0,
         oid: *oid.as_bytes(),
         selector: encode_sync_selector(selector)?,
         have: vec![],
         want: None,
+        cursor: None,
+        read: None,
     })
 }
 
@@ -310,10 +326,13 @@ fn an_object_only_a_device_only_world_owns_leaves_by_no_chunk_door() -> Result<(
     for want in [None, Some(vec![manifest.chunks[0].hash])] {
         for selector in [Vec::new(), selector.clone()] {
             requests.push(encode_chunk_request(&ChunkSyncRequest {
+                request: 0,
                 oid: *oid.as_bytes(),
                 selector,
                 have: vec![],
                 want: want.clone(),
+                cursor: None,
+                read: None,
             })?);
         }
     }
@@ -373,10 +392,13 @@ fn a_want_never_reads_a_manifest_no_frame_carries() -> Result<()> {
         )],
     );
     let want = encode_chunk_request(&ChunkSyncRequest {
+        request: 0,
         oid: *oid.as_bytes(),
         selector: encode_sync_selector(&selector)?,
         have: vec![],
         want: Some(vec![manifest.chunks[0].hash]),
+        cursor: None,
+        read: None,
     })?;
     crate::ports::row_copies::watch(needle);
     let served = serve_chunk_request(&vault, principal, FederationGrantScope::vault(7), &want);
