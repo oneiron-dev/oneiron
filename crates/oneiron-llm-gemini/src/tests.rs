@@ -128,11 +128,14 @@ fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
                 locality: ModelLocality::ThirdParty,
+                host_keyless: false,
+                host_paid: false,
             },
             messages: vec![LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
                     text: "label this pair".to_owned(),
+                    signature: None,
                 }],
             }],
             tools: Vec::new(),

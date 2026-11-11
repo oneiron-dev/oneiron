@@ -959,3 +959,105 @@ fn an_edge_between_diaries_is_shown_once_they_consent_and_wakes_the_program() {
         "the newly shown, already scanned edge wakes its program once: {woken:?}"
     );
 }
+
+/// `count` edges from one new PERSON to as many new PERSONs: edge feed rows a NOTE selector
+/// does not take.
+fn put_person_edges(vault: &Vault, count: usize) {
+    let hub = EntityId::now();
+    let targets: Vec<EntityId> = (0..count).map(|_| EntityId::now()).collect();
+    let mut people = vault.batch().put(
+        &hub,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"hub",
+    );
+    for target in &targets {
+        people = people.put(
+            target,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        );
+    }
+    people.commit().expect("put the edge ends");
+    let mut edges = vault.batch();
+    for target in &targets {
+        edges = edges.edge(&hub, oneiron::EdgeKind::Mentions, target, 0.5);
+    }
+    edges.commit().expect("put the person edges");
+}
+
+/// Review #6981 round 2: a recheck judges the rows from the cursor through where the scan stood
+/// when the recheck began, so rows written at every release never keep it from ending. A diary
+/// edge scanned while hidden, then shown by both consents, wakes its program once while 256
+/// edges it is not shown arrive before each release.
+#[test]
+fn a_shown_edge_wakes_its_program_while_new_edges_keep_arriving() {
+    use oneiron::registry::ENTITY_TYPE_NOTE;
+
+    let (_dir, vault) = open();
+    let fixture = Fixture::new(&vault);
+    let (other_author, note_a, note_b) = readable_diary_pair(&vault, &fixture);
+    let owner = vault.memory(fixture.owner, EdgeActorClass::Human);
+    let other = vault.memory(other_author, EdgeActorClass::Human);
+    let lane = vault.scoped_read(owner.read_key().expect("the owner's read key"));
+    let subscription = vault
+        .feed_subscribe(
+            &lane,
+            &FeedSubscribeRequest {
+                selector: FeedSelector {
+                    sources: vec![FeedSource::Edges],
+                    kinds: Vec::new(),
+                    entity_types: vec![ENTITY_TYPE_NOTE],
+                    predicates: Vec::new(),
+                },
+                start: FeedStart::Head,
+            },
+        )
+        .expect("subscribe to diary edges")
+        .subscription;
+    fixture.arm(&vault, ProgramTrigger::Feed { subscription });
+    vault.release_feed_program_wakes(T0).expect("settle arming");
+    drain(&vault, T0);
+
+    owner
+        .link_diary_coreference(note_a, note_b)
+        .expect("link the diary pair before its consent");
+    put_person_edges(&vault, 511);
+    assert_eq!(
+        vault
+            .release_feed_program_wakes(T0)
+            .expect("scan the hidden edge and the run after it"),
+        0,
+        "the program scans past the hidden edge without a wake"
+    );
+
+    owner
+        .grant_diary_coreference(note_a, note_b)
+        .expect("the owner's consent for this exact pair");
+    other
+        .grant_diary_coreference(note_b, note_a)
+        .expect("the other author's consent for this exact pair");
+    let shown = read_feed_page(&vault, &lane, subscription);
+    assert!(
+        feed_has_diary_pair(&shown, note_a, note_b),
+        "both consents reveal the scanned edge: {shown:?}"
+    );
+
+    let mut woken = Vec::new();
+    for _ in 0..8 {
+        put_person_edges(&vault, 256);
+        woken.push(
+            vault
+                .release_feed_program_wakes(T0)
+                .expect("release while new edges arrive"),
+        );
+    }
+    assert_eq!(
+        woken.iter().sum::<usize>(),
+        1,
+        "the shown, already scanned edge wakes its program once while new edges arrive: {woken:?}"
+    );
+}
