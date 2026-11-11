@@ -45,7 +45,8 @@ use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::{
-    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, RepoAccessBounds, Scope, WalletRef,
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, EngineControlChange, RepoAccessBounds, Scope,
+    SystemAgentGrantNarrowing, SystemFunction, WalletRef,
 };
 use crate::memory::MemoryResult;
 
@@ -254,4 +255,141 @@ fn agent_grant_view(standing: &AgentGrantStanding, confers: bool) -> AgentGrantV
         confers,
         revoke_command: AGENT_GRANT_REVOKE_COMMAND.to_owned(),
     }
+}
+
+/// `vault.agents.grants.narrow`'s input: a base agent (the Dreamer or the
+/// Coach) and the Steward verbs its grant keeps.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SystemAgentGrantNarrowRequest {
+    /// The base agent's principal (32 hex), as `vault.agents.base` names it.
+    pub agent: EntityId,
+    /// The verbs the grant keeps; an empty list revokes it whole.
+    pub keep: BTreeSet<String>,
+    /// The confirm token an earlier answer gave for this same narrowing (64
+    /// hex); omitted, nothing changes and the answer says what breaks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
+}
+
+/// What a narrowing did (untangle 6.3c; S6-4 amended).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum SystemAgentGrantNarrowed {
+    /// Nothing to narrow: the grant already holds no more than asked, or no
+    /// grant stands.
+    Unchanged,
+    /// Nothing changed: the narrowing breaks `breaks`. Ask again with
+    /// `confirm` to apply it.
+    ConfirmRequired {
+        warning: String,
+        breaks: Vec<SystemFunction>,
+        /// 64 hex.
+        confirm: String,
+    },
+    /// Applied: `grant` is the narrower grant (32 hex), none when the grant
+    /// was revoked whole; `breaks` is what the owner confirmed.
+    Narrowed {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        grant: Option<EntityId>,
+        breaks: Vec<SystemFunction>,
+    },
+}
+
+/// `vault.agents.grants.narrow`: the owner narrows or revokes a base agent's
+/// Steward grant. A narrowing that breaks a vault function answers with the
+/// list and a confirm token and changes nothing until the owner sends that
+/// token back; the record keeps that the owner chose it. It never widens.
+pub fn narrow_system_agent_grant_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: SystemAgentGrantNarrowRequest,
+) -> MemoryResult<SystemAgentGrantNarrowed> {
+    let confirm = input
+        .confirm
+        .as_deref()
+        .map(|hex| {
+            hex32(hex).ok_or_else(|| crate::memory::MemoryError::bad_request("confirm is 64 hex"))
+        })
+        .transpose()?;
+    Ok(
+        match vault.narrow_system_agent_grant(owner, input.agent, &input.keep, confirm)? {
+            SystemAgentGrantNarrowing::Unchanged => SystemAgentGrantNarrowed::Unchanged,
+            SystemAgentGrantNarrowing::ConfirmRequired {
+                warning,
+                breaks,
+                confirm,
+            } => SystemAgentGrantNarrowed::ConfirmRequired {
+                warning: warning.to_owned(),
+                breaks,
+                confirm: crate::entity_id::bytes_to_hex_lower(&confirm),
+            },
+            SystemAgentGrantNarrowing::Narrowed { grant, breaks } => {
+                SystemAgentGrantNarrowed::Narrowed { grant, breaks }
+            }
+        },
+    )
+}
+
+/// 32 bytes from 64 ASCII hex digits of either case.
+fn hex32(text: &str) -> Option<[u8; 32]> {
+    if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut out = [0; 32];
+    for (byte, pair) in out.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// `vault.engine.defaults`'s answer row: one grant the engine stood by
+/// default, by its grant id, with its receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineDefaultGrantEntry {
+    /// The grant (32 hex).
+    pub grant: EntityId,
+    pub receipt: crate::federation::EngineDefaultGrant,
+}
+
+/// `vault.engine.defaults`: every grant the engine stood by default, oldest
+/// first, for the owner to read on first open (lead 10 Nov 06:5x). Each is
+/// the engine's act, never the owner's; the owner narrows or revokes it at
+/// `vault.agents.grants.narrow`.
+pub fn engine_default_grants_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    _input: super::EmptyRequest,
+) -> MemoryResult<Vec<EngineDefaultGrantEntry>> {
+    Ok(vault
+        .engine_default_grants(owner)?
+        .into_iter()
+        .map(|(grant, receipt)| EngineDefaultGrantEntry { grant, receipt })
+        .collect())
+}
+
+/// `vault.engine.controls.changes`'s answer row: one change made through
+/// the engine-control door, by its receipt id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineControlChangeEntry {
+    /// The receipt (32 hex).
+    pub id: EntityId,
+    pub change: EngineControlChange,
+}
+
+/// `vault.engine.controls.changes`: every change the owner or a holder of
+/// an `engine.controls` class made to the engine's stored knobs, oldest first, for
+/// the owner to read (untangle 6.6).
+pub fn engine_control_changes_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    _input: super::EmptyRequest,
+) -> MemoryResult<Vec<EngineControlChangeEntry>> {
+    Ok(vault
+        .engine_control_changes(owner)?
+        .into_iter()
+        .map(|(id, change)| EngineControlChangeEntry { id, change })
+        .collect())
 }

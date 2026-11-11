@@ -24,7 +24,7 @@ Schema artifacts retain only SHA-256, byte length and path count, not the full b
 
 ## Files and ownership
 
-Under `/Users/olety/.claude/worktrees/solq-e2e-support/tests/e2e/`:
+Under `tests/e2e/`:
 
 - `support/engine.ts`: real init/bootstrap/pair/serve, fresh roots, peers, restarts.
 - `support/clients.ts`: signed HTTP, MCP JSON-RPC, WS app protocol, CLI, SDK processes.

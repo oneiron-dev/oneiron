@@ -38,8 +38,8 @@ type Claim = {
 }
 
 const ACTORS: Record<ActorKey, { mark: string; name: string; cls: string; title: string }> = {
-  o: { mark: 'o', name: 'oleksii', cls: 'seal-human', title: 'o · oleksii · owner' },
-  y: { mark: 'y', name: 'yurii', cls: 'seal-human', title: 'y · yurii' },
+  o: { mark: 'o', name: 'owen', cls: 'seal-human', title: 'o · owen · owner' },
+  y: { mark: 'y', name: 'yuki', cls: 'seal-human', title: 'y · yuki' },
   m: { mark: 'm', name: 'Mika Tanaka', cls: 'seal-human', title: 'm · Mika Tanaka · contact' },
   e: { mark: 'e', name: 'eiri', cls: 'seal-agent', title: 'e · eiri · agent · via kimi-k2.6' },
   t: { mark: 't', name: 'tory', cls: 'seal-agent', title: 't · tory · agent · research' },
@@ -64,7 +64,7 @@ const CLAIMS: Claim[] = [
     note: { text: 'likely permanent; she signed a year lease.', by: 'eiri', when: '06-24' },
   },
   {
-    id: 'cl_a41b02', entity: 'Yurii', text: 'Yurii prefers async reviews over live calls', pred: 'person.preference',
+    id: 'cl_a41b02', entity: 'Yuki', text: 'Yuki prefers async reviews over live calls', pred: 'person.preference',
     occurred: '2026-06-18', learned: '2026-06-18', by: 'e', conf: 0.94, status: 'auto', state: 'active',
     world: 'work', source: 'slack',
     quote: 'can we do this one async? a doc + comments beats a call for me.',
@@ -78,14 +78,14 @@ const CLAIMS: Claim[] = [
     meta: 'email 2026-07-03 · Mika Tanaka · first-party',
   },
   {
-    id: 'cl_c1e845', entity: 'Oleksii', text: 'Prefers briefing digests merged, not one ping per item', pred: 'person.preference',
+    id: 'cl_c1e845', entity: 'Owen', text: 'Prefers briefing digests merged, not one ping per item', pred: 'person.preference',
     occurred: '2026-06-29', learned: '2026-06-29', by: 'cc', conf: 0.79, status: 'approved', state: 'active',
     world: 'base', source: 'slack',
     quote: 'batch these. one digest in the morning, not eleven pings.',
     meta: 'session 2026-06-29 · slack · first-party',
   },
   {
-    id: 'cl_e90f4a', entity: 'Oleksii', text: 'May be allergic to shellfish', pred: 'health.allergy',
+    id: 'cl_e90f4a', entity: 'Owen', text: 'May be allergic to shellfish', pred: 'health.allergy',
     occurred: '2026-04-11', learned: '2026-04-11', by: 'e', conf: 0.52, status: 'proposed', state: 'active',
     world: 'health', source: 'LINE', critical: true,
     quote: 'skipped the prawns again, felt off last time.',
@@ -106,14 +106,14 @@ const CLAIMS: Claim[] = [
     meta: 'email 2026-02-10 · landlord · second-party',
   },
   {
-    id: 'cl_f61a3b', entity: 'Oleksii', text: 'Flight back on the 12th', pred: 'travel.flight',
+    id: 'cl_f61a3b', entity: 'Owen', text: 'Flight back on the 12th', pred: 'travel.flight',
     occurred: '2026-06-12', learned: '2026-05-28', by: 's', conf: 0.44, status: 'rejected', state: 'retracted',
     world: 'base', source: 'email',
     quote: 'Booking confirmation · NRT · 12 Jun · 1 adult',
     meta: 'calendar import 2026-05-28 · email · connector',
   },
   {
-    id: 'cl_7b8e50', entity: 'Oleksii', text: 'Runs the weather book on Polymarket with a hard daily loss cap', pred: 'project.constraint',
+    id: 'cl_7b8e50', entity: 'Owen', text: 'Runs the weather book on Polymarket with a hard daily loss cap', pred: 'project.constraint',
     occurred: '2026-06-05', learned: '2026-06-05', by: 'o', conf: 0.92, status: 'approved', state: 'active',
     world: 'base', source: 'slack',
     quote: 'daily loss cap stays. no exceptions, no override flag.',
@@ -138,7 +138,7 @@ const CLAIMS: Claim[] = [
     occurred: '2026-08-11', learned: '2026-08-12', by: 't', conf: 0.61, status: 'proposed', state: 'active',
     world: 'work', source: 'email',
     quote: 'the COO mentioned fewer vendors next year, cost reasons.',
-    meta: 'email 2026-08-12 · Yurii · second-hand',
+    meta: 'email 2026-08-12 · Yuki · second-hand',
     note: { text: 'contradicts the May claim; accept and the older one supersedes.', by: 'tory', when: '08-12' },
   },
   {
@@ -146,7 +146,7 @@ const CLAIMS: Claim[] = [
     occurred: '2026-05-20', learned: '2026-05-22', by: 'e', conf: 0.77, status: 'auto', state: 'superseded',
     world: 'work', source: 'meeting', successor: 'cl_13f7aa',
     quote: 'they are adding two regional suppliers this spring.',
-    meta: 'meeting 2026-05-22 · Yurii · second-hand',
+    meta: 'meeting 2026-05-22 · Yuki · second-hand',
   },
   {
     id: 'cl_15d8e0', entity: 'Hokuei Foods', text: 'Hokuei pilot call set for Thursday 10:00', pred: 'commitment.meeting',
@@ -195,7 +195,7 @@ const CLAIMS: Claim[] = [
     occurred: '2026-08-06', learned: '2026-08-06', by: 'e', conf: 0.74, status: 'auto', state: 'active',
     world: 'work', source: 'slack',
     quote: 'their buyer said weekly is noise, monthly is what they plan on.',
-    meta: 'message 2026-08-06 · slack · Yurii · second-hand',
+    meta: 'message 2026-08-06 · slack · Yuki · second-hand',
   },
   {
     id: 'cl_21d5c2', entity: 'Kanto Logistics', text: 'Kanto Logistics changed its registered address', pred: 'org.location',
@@ -216,7 +216,7 @@ const CLAIMS: Claim[] = [
     occurred: '2026-08-10', learned: '2026-08-10', by: 'e', conf: 0.55, status: 'proposed', state: 'active',
     world: 'work', source: 'slack',
     quote: 'their ops lead hinted at revisiting in October.',
-    meta: 'message 2026-08-10 · slack · Yurii · second-hand',
+    meta: 'message 2026-08-10 · slack · Yuki · second-hand',
   },
   {
     id: 'cl_24c8d0', entity: 'Sakura Retail', text: 'Sakura Retail signed with a competitor', pred: 'deal.outcome',
@@ -226,21 +226,21 @@ const CLAIMS: Claim[] = [
     meta: 'message 2026-08-05 · slack · third-hand',
   },
   {
-    id: 'cl_25f3e4', entity: 'Yurii', text: 'Yurii is out the week of August 24', pred: 'person.availability',
+    id: 'cl_25f3e4', entity: 'Yuki', text: 'Yuki is out the week of August 24', pred: 'person.availability',
     occurred: '2026-08-24', learned: '2026-08-14', by: 'y', conf: 0.97, status: 'approved', state: 'active',
     world: 'work', source: 'slack',
     quote: 'off the week of the 24th, back on the 31st.',
     meta: 'message 2026-08-14 · slack · first-party',
   },
   {
-    id: 'cl_26a0b1', entity: 'Oleksii', text: 'Takes no calls before 10:00', pred: 'person.preference',
+    id: 'cl_26a0b1', entity: 'Owen', text: 'Takes no calls before 10:00', pred: 'person.preference',
     occurred: '2026-03-02', learned: '2026-03-02', by: 'o', conf: 0.89, status: 'approved', state: 'active',
     world: 'base', source: 'meeting',
     quote: 'nothing before ten. mornings are for deep work.',
     meta: 'note 2026-03-02 · first-party',
   },
   {
-    id: 'cl_27b4c5', entity: 'Oleksii', text: 'Sleeps badly after late calls', pred: 'health.pattern',
+    id: 'cl_27b4c5', entity: 'Owen', text: 'Sleeps badly after late calls', pred: 'health.pattern',
     occurred: '2026-07-20', learned: '2026-07-21', by: 'e', conf: 0.38, status: 'proposed', state: 'active',
     world: 'health', source: 'LINE',
     quote: 'that 23:00 call wrecked the night again.',
