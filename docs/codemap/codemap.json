@@ -5320,7 +5320,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -15897,7 +15897,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 28,
       "fn": 1
      }
     },
@@ -15910,7 +15910,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 57,
+      "crate-vis": 59,
       "fn": 10,
       "re-export": 1,
       "struct": 1
@@ -15985,7 +15985,7 @@
      "path": "src/claim/scoped_read/claim_admission.rs",
      "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -16028,7 +16028,7 @@
      "path": "src/claim/scoped_read/edge_admission.rs",
      "purpose": "The one scoped graph projection: exact relation + both endpoints, then limits",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -18475,7 +18475,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 11
+      "fn": 13
      }
     },
     {
@@ -18556,7 +18556,7 @@
      "path": "src/code_run/dispatcher/read_worlds.rs",
      "purpose": "A run's read-world capture as its host serves it (FIX 6130)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -18684,26 +18684,6 @@
      "purpose": "`self.team.submit` (OF-540): a team's leader submits one pinned output of its team for the owner's…",
      "surface": {
       "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_run/dispatcher/team_submit_entity.rs",
-     "purpose": "FIX 2783 (OF-540): a `self.team.submit` output that is one exact revision of a CLAIM…",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/code_run/dispatcher/team_submit_output.rs",
-     "purpose": "The output a `self.team.submit` names (OF-540), as one snapshot reads it: proven to exist as pinned, and the…",
-     "surface": {
-      "crate-vis": 10
      }
     },
     {
@@ -20564,7 +20544,7 @@
      "path": "src/code_run/team_submit.rs",
      "purpose": "`self.team.submit` (OF-540): what a team's leader submits for the owner's review, and what the host answers",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 1,
       "struct": 2
      }
     },
@@ -28720,6 +28700,224 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/derive/archive.rs",
+     "purpose": "The archive item (kind 6): an agent archives its own weak claim, reversibly, under its live `archive` grant…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PersonAboutFacts"
+     ],
+     "path": "src/derive/artifact.rs",
+     "purpose": "Typed derived artifacts (kind 5): a person's `about` lines and a PsychProfile snapshot, each through its…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DerivationBatch",
+      "DerivationItem",
+      "DerivationStamp",
+      "DerivedAboutLine",
+      "DerivedArchive",
+      "DerivedClaim",
+      "DerivedEvidence",
+      "DerivedPersonAbout",
+      "DerivedPsychProfile",
+      "DerivedSameAs",
+      "DerivedSettle",
+      "DerivedSettlement",
+      "DerivedSupersede",
+      "DerivedTopology",
+      "ItemRef"
+     ],
+     "path": "src/derive/batch.rs",
+     "purpose": "What a derivation batch holds, and who commits it",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 3,
+      "fn": 2,
+      "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/derive/claim.rs",
+     "purpose": "The claim item (kind 1): a derived claim through the shared claim gate as the committing actor, held to the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DerivationReceipt",
+      "ItemOutcome",
+      "ItemReceipt"
+     ],
+     "path": "src/derive/commit.rs",
+     "purpose": "One derivation commit: every item staged in a savepoint of one write, and the batch recorded beside them",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/derive/evidence.rs",
+     "purpose": "The evidence item (kind 2): rows an agent reads support a stored claim it reads",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/derive/link.rs",
+     "purpose": "Identity links (kind 4, decision C-4): they land as proposals",
+     "surface": {
+      "const": 4,
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/derive/mod.rs",
+     "purpose": "The derivation transaction (untangle slice 6.7, primitive C): an agent lands what it derived as ONE batch…",
+     "surface": {
+      "const": 4,
+      "crate-vis": 1,
+      "re-export": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DerivationBatchRecord",
+      "ItemRecord"
+     ],
+     "path": "src/derive/record.rs",
+     "purpose": "The batch record: what one derivation commit did, item by item",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeriveRevertReceipt"
+     ],
+     "path": "src/derive/revert.rs",
+     "purpose": "Reverting a derivation batch (untangle 6.7c): each landed item is undone only while every row it landed…",
+     "surface": {
+      "const": 5,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/derive/settle.rs",
+     "purpose": "The settlement item (kind 3): an agent answers one open conflict its live `derive` grant reaches, through…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/derive/sources.rs",
+     "purpose": "The commit's recheck of every source its items cite (untangle 6.7a, from 6.4a's primitive A): each version…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/derive/supersede.rs",
+     "purpose": "The supersession item (kind 3): a claim an agent derived replaces one its live `derive` grant reaches…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/derive/tables.rs",
+     "purpose": "The side tables `derive` keeps (untangle 6.7a): each row declares one, and the crate's build script places…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeriveArchiveInput",
+      "DeriveClaimInput",
+      "DeriveCommitInput",
+      "DeriveCommitView",
+      "DeriveEvidenceInput",
+      "DeriveItemInput",
+      "DeriveItemView",
+      "DeriveLeftItemView",
+      "DeriveRef",
+      "DeriveRevertInput",
+      "DeriveRevertView",
+      "DeriveSameAsInput",
+      "DeriveSettleInput",
+      "DeriveSettlementInput",
+      "DeriveStrengthSignals",
+      "DeriveSupersedeInput",
+      "DeriveTopologyInput"
+     ],
+     "path": "src/derive/wire.rs",
+     "purpose": "The wire form of the derivation verbs (untangle 6.7d): what a caller of `vault.derive.commit` and…",
+     "surface": {
+      "enum": 3,
+      "fn": 2,
+      "struct": 14
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -29777,7 +29975,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -30080,7 +30278,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "mod": 5,
       "re-export": 25
      }
@@ -30308,7 +30506,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "PersonAboutExecutor"
@@ -30317,7 +30515,7 @@
      "purpose": "PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 10,
       "fn": 2,
       "struct": 1
      }
@@ -31136,7 +31334,7 @@
      "path": "src/dreamer_consolidation/strength.rs",
      "purpose": "Consolidation strength observations and an archive-only lifecycle (OF-216)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 8,
       "fn": 3,
       "struct": 2
      }
@@ -31690,7 +31888,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 4,
       "re-export": 5,
       "struct": 3
@@ -31761,7 +31959,7 @@
      "path": "src/dreamer_promotion/scoped.rs",
      "purpose": "Persisted-head convergence through the existing promotion, claim Gate, semantic-edge and provenance doors",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -39844,7 +40042,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -40238,7 +40436,7 @@
      "path": "src/federation/grant_scope.rs",
      "purpose": "Scope authority shared by the purpose-specific stored grant envelopes",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 7
      }
     },
     {
@@ -40296,7 +40494,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 45,
+      "crate-vis": 49,
       "mod": 2,
       "re-export": 20
      }
@@ -40820,7 +41018,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "InitialSharedMember",
@@ -40887,6 +41085,17 @@
      "path": "src/federation/steward_tests.rs",
      "purpose": "The Steward role (ARCH-0043's seventh role, owner 9 Nov 2026): it reads and organises its own vault root…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/system_agent_grant.rs",
+     "purpose": "The Steward grant a base agent holds by default (untangle 6.3; ARCH-0043's Steward role, owner 9 Nov 2026…",
+     "surface": {
+      "crate-vis": 16,
+      "fn": 1
+     }
     },
     {
      "bucket": "s",
@@ -42213,6 +42422,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/gate/derive_verdict.rs",
+     "purpose": "The one judge of a derivation that is not a claim (untangle 6.7a): may an actor settle, link, publish an…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ComplianceAmendmentClass",
       "ComplianceAmendmentOutcome"
@@ -42442,7 +42661,7 @@
      "path": "src/gate/doors/dreamer_run.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -42494,7 +42713,7 @@
      "path": "src/gate/dreamer_grant.rs",
      "purpose": "The Dreamer's weave rows, the owner's grant that adds them to a vault seeded without them, and the read-only…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 8,
       "fn": 3,
       "struct": 1
      }
@@ -42845,7 +43064,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 93,
+      "crate-vis": 97,
       "mod": 2,
       "re-export": 8
      }
@@ -43212,7 +43431,7 @@
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -45532,7 +45751,7 @@
      "path": "src/identity_topology/reassignment_map.rs",
      "purpose": "The ONE-1745 reassignment projection end to end: the typed map model, its canonical wire codec, and the…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -47872,7 +48091,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 215,
+      "mod": 216,
       "re-export": 105
      }
     },
@@ -52888,6 +53107,7 @@
      "path": "src/memory/conflict_settle.rs",
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
+      "crate-vis": 1,
       "fn": 8,
       "re-export": 1
      }
@@ -53869,7 +54089,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "mod": 41,
       "re-export": 72
      }
@@ -66007,7 +66227,7 @@
      "path": "src/psych_profile/store.rs",
      "purpose": "Vault put/get/state maintenance-gated persistence for profiles",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5
      }
     },
@@ -77790,7 +78010,7 @@
      "path": "src/snapshot_read/mod.rs",
      "purpose": "Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 7
      }
     },
@@ -89309,7 +89529,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 69,
+      "crate-vis": 71,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -89668,6 +89888,96 @@
       "enum": 3,
       "fn": 5,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/consult_result.rs",
+     "purpose": "Reference admission for the existing `tasks.consult.result` run row",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/mod.rs",
+     "purpose": "Native scoped-read implementations of existing run rows",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/search.rs",
+     "purpose": "Canonical search for the existing `vault.search` run row",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/task_refusal.rs",
+     "purpose": "Released-reason projection for the existing `tasks.refuse` run row",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/team_submit/entity.rs",
+     "purpose": "FIX 2783 (OF-540): a `self.team.submit` output that is one exact revision of a CLAIM…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/team_submit/mod.rs",
+     "purpose": "Exact-revision output admission for the existing `self.team.submit` run row",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/team_submit/output.rs",
+     "purpose": "The output a `self.team.submit` names (OF-540), as one snapshot reads it: proven to exist as pinned, and the…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/team_submit/revision.rs",
+     "purpose": "One pinned output a submit names",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/run_rows/workflow_dispatch.rs",
+     "purpose": "Reference preflight for the existing `self.workflows.dispatch_bound` run row",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -90540,6 +90850,7 @@
      "path": "src/test_doors/consolidation.rs",
      "purpose": "One Dreamer consolidation pass, for integration tests (S63E live leak 1): a witnessed TURN whose words are a…",
      "surface": {
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -90558,6 +90869,58 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/derivation_floor.rs",
+     "purpose": "Doors to the derivation floor (untangle 6.7a, decision C-3): write a claim an agent stamped `surface =…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "About",
+      "Archive",
+      "Claim",
+      "Committed",
+      "Derived",
+      "Distinct",
+      "Evidence",
+      "Item",
+      "Named",
+      "Profile",
+      "SameAs",
+      "Settle",
+      "Settlement",
+      "Supersede"
+     ],
+     "path": "src/test_doors/derive.rs",
+     "purpose": "Doors to the derivation transaction (untangle 6.7a): commit a batch of items as an actor, read its batch…",
+     "surface": {
+      "enum": 3,
+      "fn": 37,
+      "struct": 11,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LiveRun"
+     ],
+     "path": "src/test_doors/derive_verbs.rs",
+     "purpose": "Doors to the derivation verbs' typed host entries (untangle 6.7d): an agent's live run, leased as a host…",
+     "surface": {
+      "fn": 5,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/esign_seal_verify_reasons.rs",
      "purpose": "Door for `tests/esign_seal_verify_reasons.rs`, declared inside e-sign so it can reach the ledger writer…",
      "surface": {
@@ -90570,6 +90933,16 @@
      "notable": [],
      "path": "src/test_doors/feeds.rs",
      "purpose": "Doors for `tests/feed_erase_doors.rs`: the change feed rows that name an entity, which an erase leaves at…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/graph_ask_centre.rs",
+     "purpose": "Exact graph-neighbourhood controls for the standing graph owner read regression",
      "surface": {
       "fn": 1
      }
@@ -90621,7 +90994,8 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 22
+      "fn": 1,
+      "mod": 27
      }
     },
     {
@@ -90706,6 +91080,23 @@
      "purpose": "Spend scopes for integration tests (primitive D, slice 6.5a: the run's own actor reads its own scope tree…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GrantMark",
+      "StrengthArchiveReceipt",
+      "WeaveReach"
+     ],
+     "path": "src/test_doors/steward.rs",
+     "purpose": "The Dreamer's Steward grant and the strength archive, for integration tests (untangle 6.3; X02's test…",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 21,
+      "struct": 2
      }
     },
     {
@@ -93860,6 +94251,7 @@
      "path": "src/verbs/identity_topology.rs",
      "purpose": "Typed identity-topology calls over the engine's append-only op family",
      "surface": {
+      "crate-vis": 1,
       "enum": 10,
       "fn": 5,
       "re-export": 1,
@@ -98897,6 +99289,86 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/derivation_floor.rs",
+     "purpose": "The derivation floor (untangle 6.7a, decision C-3): GATE-12 holds every derivation-class claim, not only a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/derive_archive.rs",
+     "purpose": "Archive items of a derivation batch (untangle 6.7a): an agent archives its own weak claim, reversibly, under…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/derive_artifact.rs",
+     "purpose": "Artifact items of a derivation batch (untangle 6.7a, X03): a person's `about` lines and a PsychProfile…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/derive_batch.rs",
+     "purpose": "The derivation batch (untangle 6.7a, primitive C): one commit lands every claim the gate admits, each in its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/derive_evidence.rs",
+     "purpose": "Evidence items of a derivation batch (untangle 6.7a): a TURN or an admissible claim the actor reads supports…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/derive_links.rs",
+     "purpose": "Identity-link items of a derivation batch (untangle 6.7b, decision C-4): a SameAs lands as its proposed…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/derive_revert.rs",
+     "purpose": "Reverting a derivation batch (untangle 6.7c, decision C-2): the committing actor reverts its own batch and…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/derive_settlement.rs",
+     "purpose": "Supersession and settlement items of a derivation batch (untangle 6.7a): a claim an agent derived replaces…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/derive_sources.rs",
+     "purpose": "The derivation commit's source recheck (untangle 6.7a, from 6.4a's primitive A): every stored source an item…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/derive_verbs.rs",
+     "purpose": "The derivation verbs (untangle 6.7d): `vault.derive.commit` lands a batch as the caller's attached live run…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -98958,6 +99430,14 @@
      "notable": [],
      "path": "tests/git_smart_http.rs",
      "purpose": "Stock-git end-to-end coverage for the vault-as-origin serve wire (ARCH-0068 Phase A, ONE-1908)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/graph_ask_centre_owner_read.rs",
+     "purpose": "STANDING-GRAPH-OWNER-CENTRE-READ: a manual refresh admits its centre and peers under the same request as its…",
      "surface": {}
     },
     {
@@ -99878,6 +100358,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/run_row_scoped_read_ownership.rs",
+     "purpose": "Keeps scoped-read implementation ownership out of the run adapters",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/run_state.rs",
      "purpose": "The run state (untangle slice 5.0c): [`RunState::of`] derives the state a run reports from its attempt row…",
      "surface": {}
@@ -99966,8 +100454,80 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/split_assignments_after_merge_undo.rs",
+     "purpose": "Undoing a merge leaves a split of the survivor the assignments a replica derives from the same history…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/split_reads_through_merges.rs",
+     "purpose": "A split reads its entity's claims through the merges into it (ARCH-0055 §3 and §4; E2E MEMORY-07): a claim a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/step_claim_audience.rs",
      "purpose": "A `dreamer.step` claim holds its call's raw response, so it carries the call's exposure (S63E-RULED, live…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/steward_binding_fence.rs",
+     "purpose": "A read key that names the Dreamer is held to its Steward grant and its live MACHINE binding whichever…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/steward_first_mint.rs",
+     "purpose": "The host's first mint of the Dreamer's Steward grant (untangle 6.3b, S63-2 = A)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/steward_grant_is_no_membership.rs",
+     "purpose": "A base agent's Steward grant is no membership (untangle 6.3b; review of #6913, #6914 and #6915)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/steward_grant_policy_rewrite.rs",
+     "purpose": "The Steward grant's rewrite of the Dreamer's policy rows holds on every pack the policy decode accepts…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/steward_narrowed_strength_archive.rs",
+     "purpose": "X02's test pointed at a narrowed Steward grant (untangle 6.3; the X02 verdict, Engine and lead 9 Nov 16:5x…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/steward_read_data_axes.rs",
+     "purpose": "The Dreamer reads inside the data axes of its Steward grant (S67-READ-AXES = C, Engine 10 Nov; untangle 6.3b)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/steward_role.rs",
+     "purpose": "The Steward role (untangle 6.3a; ARCH-0043's seventh role, owner 9 Nov): it never widens a grant, and a…",
      "surface": {}
     },
     {
@@ -100384,7 +100944,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 268,
+     "files": 266,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100600,6 +101160,13 @@
      "layout": "dir",
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
+    "derive": {
+     "files": 15,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The derivation transaction (untangle slice 6.7, primitive C): an agent lands what it derived as ONE batch…"
+    },
     "disclosure": {
      "files": 15,
      "impl_vault": true,
@@ -100755,7 +101322,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 90,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100783,7 +101350,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 209,
+     "files": 210,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -101567,7 +102134,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 171,
+     "files": 180,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101595,9 +102162,9 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 24,
+     "files": 29,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)"
     },
@@ -101770,10 +102337,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 244,
+   "over_bar": 246,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7287,
-   "test_files": 959
+   "source_files": 7316,
+   "test_files": 980
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -126288,7 +126855,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {

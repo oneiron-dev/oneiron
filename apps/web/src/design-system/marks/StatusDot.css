@@ -1,0 +1,27 @@
+.sl-status-dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.sl-status-dot[data-state="live"] {
+  background: var(--sl-safelight);
+}
+
+.sl-status-dot[data-state="approved"] {
+  background: var(--sl-healthy);
+}
+
+.sl-status-dot[data-state="proposed"] {
+  box-shadow: inset 0 0 0 1.5px var(--sl-near-limit);
+}
+
+.sl-status-dot[data-state="idle"] {
+  background: var(--sl-ink-4);
+}
+
+.sl-status-dot[data-state="waiting"] {
+  box-shadow: inset 0 0 0 1.5px var(--sl-ink-1);
+}

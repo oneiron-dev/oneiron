@@ -902,7 +902,7 @@ fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
-    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let question = crate::task_verb::tests::support::consult_turn(&vault, 0x81);
     let memory = vault.memory(actor, crate::EdgeActorClass::Human);
     let short = serde_json::json!({
         "who": {"responder": {"human": {"actor_ref": actor}}},
@@ -1030,8 +1030,8 @@ fn short_ask_retry_identity_includes_recipient_deadline_and_branch() {
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     let other = crate::EntityId::from_bytes([0xE2; 16]).unwrap();
-    super::tests::support::put_person(&vault, other);
-    let question = super::tests::support::consult_turn(&vault, 0x81);
+    crate::task_verb::tests::support::put_person(&vault, other);
+    let question = crate::task_verb::tests::support::consult_turn(&vault, 0x81);
     let memory = vault.memory(actor, crate::EdgeActorClass::Human);
     let base = serde_json::json!({
         "who": {"people": [actor]},
