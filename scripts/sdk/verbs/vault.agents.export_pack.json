@@ -5,6 +5,7 @@
   "output": "crate::share_travel::AgentPackExport",
   "call": "memory.export_agent_pack(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

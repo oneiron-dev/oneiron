@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BrowserBatchOutput",
   "call": "oneiron_browser::BrowserAnswer::of(driver.batch(input)?)",
   "scope": "Write",
+  "act_class": "unstated",
   "context": "browser",
   "mcp": "none",
   "section": false,

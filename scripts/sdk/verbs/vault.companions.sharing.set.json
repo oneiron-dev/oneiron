@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::CompanionSharingView",
   "call": "memory.companion_sharing_set(&input.target()?, &input.proposal_ref, &input.delta()?)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

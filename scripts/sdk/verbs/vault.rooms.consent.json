@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::JoinOutcome",
   "call": "memory.rooms_consent(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "mcp_fields": {
     "spec": "$"
   },

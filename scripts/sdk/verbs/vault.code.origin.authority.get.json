@@ -5,6 +5,7 @@
   "output": "crate::memory::origin_doors::OriginAuthorityView",
   "call": "memory.origin_authority_get_as(&memory.embedded_owner(\"vault.code.origin.authority.get\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

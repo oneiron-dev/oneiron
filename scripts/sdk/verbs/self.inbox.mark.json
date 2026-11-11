@@ -5,6 +5,7 @@
   "output": "crate::inbox::NotificationRow",
   "call": "memory.inbox_mark(&input.notification_ref, input.mark)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

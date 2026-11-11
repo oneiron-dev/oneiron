@@ -8,6 +8,7 @@
   "output": "crate::task_verb::sdk::SteerReceipt",
   "call": "crate::task_verb::sdk::steer_child(memory, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

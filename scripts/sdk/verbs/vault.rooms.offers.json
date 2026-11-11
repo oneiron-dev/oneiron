@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::OffersPage",
   "call": "memory.rooms_offers(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

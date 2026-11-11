@@ -8,6 +8,7 @@
   "output": "crate::blob_artifact::UndoneKeep",
   "call": "memory.artifacts_undo(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {},
   "section": false,
   "binding": {

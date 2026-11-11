@@ -14,6 +14,8 @@
 //!   mode per role and act class;
 //! * [`check_in`], which resolves power, mode and rung 0, then runs the
 //!   unsure test (rung 1) the caller injects.
+//! * [`verb_act_class()`], the act class each verb row states (PR 2, P2.1);
+//!   nothing reads it to decide an act yet.
 //!
 //! Fan-out admission is the first caller, through [`check_in_with_mode`],
 //! because its mode comes from its own manifest rows. The ladder above rung 1,
@@ -24,6 +26,7 @@ mod act_class;
 mod mode;
 mod resolve;
 mod role_preset;
+mod verb_act_class;
 
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
 pub use mode::CheckInMode;
@@ -32,3 +35,4 @@ pub use resolve::{
     check_in, check_in_with_mode, resolve_mode,
 };
 pub use role_preset::{ROLE_PRESET, RoleDefault, RolePreset, RolePresetRow};
+pub use verb_act_class::{VerbActClass, verb_act_class};

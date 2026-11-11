@@ -5,6 +5,7 @@
   "output": "Vec<crate::consent::lifecycle::ConsentActReceipt>",
   "call": "crate::consent::bypass_lifecycle::create_bypass_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_bypass_grant\")?, input)?",
   "scope": "Write",
+  "act_class": "security_control_disable",
   "admission": {
     "unrestricted_record_scope": true
   },

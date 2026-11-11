@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::ThreadAudienceReceipt",
   "call": "memory.rooms_thread_audience_remove(&input)?",
   "scope": "Write",
+  "act_class": "member_remove",
   "lands_turn": true,
   "mcp_fields": {
     "spec": "$"
