@@ -290,7 +290,7 @@ function MessagesDemo() {
     <div className="lib-messages" data-specimen="messages">
       <DayDivider>Yesterday</DayDivider>
       <MessageRow
-        author={<Glyph glyph="ruler" label="Metryon" size={32} />}
+        author={<Glyph glyph="ruler" label="Metryon" size={24} />}
         name="Metryon"
         time="Yesterday at 16:40"
       >
@@ -302,7 +302,7 @@ function MessagesDemo() {
         <MessageActions saved={saved.includes('m1')} onSave={save('m1')} />
       </MessageRow>
       <DayDivider>Today</DayDivider>
-      <MessageRow author={<Glyph initial="o" label="Owen" size={32} />} name="Owen" time="46 min ago" data-specimen="message-reactions">
+      <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="46 min ago" data-specimen="message-reactions">
         <MessageRow.Text>Eiri, do my notes say anything about Acme’s promo calendar?</MessageRow.Text>
         <MessageRow.Reactions onAdd={() => toggle('👀')}>
           {reactions.map((r) => (
@@ -311,7 +311,7 @@ function MessagesDemo() {
         </MessageRow.Reactions>
         <MessageActions saved={saved.includes('m2')} onSave={save('m2')} />
       </MessageRow>
-      <MessageRow author={<Glyph glyph="wing" label="Eiri" size={32} guest />} name="Eiri" time="44 min ago" provisional>
+      <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} guest />} name="Eiri" time="44 min ago" provisional>
         <MessageRow.Fold summary="from Owen’s vault">
           <span>Answered from Owen’s personal vault.</span>
           <span>Nothing was copied into this vault.</span>
@@ -320,7 +320,7 @@ function MessagesDemo() {
         <MessageRow.Text>Your notes from the August call say the promo runs in weeks 44 to 46.</MessageRow.Text>
         <MessageActions saved={saved.includes('m3')} onSave={save('m3')} />
       </MessageRow>
-      <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={32} />} name="Metryon" time="31 min ago" data-specimen="message-thread">
+      <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={24} />} name="Metryon" time="31 min ago" data-specimen="message-thread">
         <MessageRow.Text>Starting on the Q4 view Yuki asked for.</MessageRow.Text>
         <MessageRow.ThreadLine
           replies={3}
@@ -591,7 +591,7 @@ function ComposerDemo() {
   return (
     <div className="lib-stack" data-specimen="composer">
       {sent.map((m, i) => (
-        <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={32} />} name="Owen" time="just now">
+        <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="just now">
           <MessageRow.Text>{m.text}</MessageRow.Text>
         </MessageRow>
       ))}
