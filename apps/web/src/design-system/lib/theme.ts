@@ -21,6 +21,10 @@ export const THEMES = [
 
 export const DEFAULT_THEME: Theme = THEMES[0]
 
+/* The colour that stands in for a scene until its pictures are read: the
+   default theme's, so a scene's first paint is a flat ground. */
+export const SCENE_STAND_IN_COLOUR: string = THEMES[0].colour
+
 /* ── conversions ──────────────────────────────────────────────────────── */
 
 /* Lightness 0 to 1, chroma from 0, hue in degrees from 0 up to 360. */
