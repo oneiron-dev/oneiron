@@ -97,6 +97,7 @@ impl DreamerAttemptExecutor for TestExec {
         assert!(!self.panic_now, "scripted executor panic");
         Ok(DreamerAttemptExecution::Completed {
             completed_units: self.completed_units,
+            step_bindings: Vec::new(),
         })
     }
 }
@@ -284,6 +285,7 @@ fn local_factory_requires_persisted_model_binding() {
         output_per_million: "0".into(),
         cache_read_per_million: None,
         cache_write_per_million: None,
+        currency: None,
     });
     vault
         .put_model_registry_row(&ModelRegistryRow {
@@ -292,6 +294,9 @@ fn local_factory_requires_persisted_model_binding() {
             catalog,
             scores: Default::default(),
             fetched_at: Default::default(),
+            tokens_per_o200k: None,
+            stale_since: None,
+            source_rows: None,
         })
         .unwrap();
     let mut factory = make().unwrap();

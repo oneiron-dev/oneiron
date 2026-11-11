@@ -111,7 +111,11 @@ pub fn policy_preflight(
     let points: Vec<PointRead<'_>> = input.refs.iter().copied().map(PointRead::id).collect();
     let vault = memory.vault();
     // The viewers the read's own source-audience judgment asks of.
-    let viewers: Vec<EntityId> = read.actor_key().authenticated_person().into_iter().collect();
+    let viewers: Vec<EntityId> = read
+        .actor_key()
+        .authenticated_person()
+        .into_iter()
+        .collect();
     let dbs = read.store_read();
     read.read_projected(
         &points,
