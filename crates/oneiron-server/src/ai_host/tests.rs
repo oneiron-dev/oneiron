@@ -507,7 +507,10 @@ async fn a_failing_steps_retries_share_the_policy_rows_cap() {
         .unwrap();
     // 1820c118b76a (OF-541): exhaustion holds a Paused leaf under an open workflow.
     assert!(
-        eventually(Duration::from_secs(20), || workflow_is_held_for_budget(&vault)).await,
+        eventually(Duration::from_secs(20), || workflow_is_held_for_budget(
+            &vault
+        ))
+        .await,
         "the workflow never held at its policy cap; status {:?}",
         host.handle().status().workflows
     );
@@ -611,18 +614,22 @@ fn workflow_is_held_for_budget(vault: &Vault) -> bool {
     use oneiron::attempt_queue::{AttemptQueue, AttemptState};
     let dispatcher = AgentDispatcher::new(vault);
     let queue = AttemptQueue::new(vault);
-    dispatcher.open_workflow_roots().unwrap().iter().any(|root| {
-        dispatcher.plan_hold(*root).unwrap().is_some_and(|hold| {
-            hold.state == BudgetHoldState::Held
-                && !hold.held.is_empty()
-                && hold.held.iter().all(|held| {
-                    queue
-                        .get(held.attempt)
-                        .unwrap()
-                        .is_some_and(|row| row.state == AttemptState::Paused)
-                })
+    dispatcher
+        .open_workflow_roots()
+        .unwrap()
+        .iter()
+        .any(|root| {
+            dispatcher.plan_hold(*root).unwrap().is_some_and(|hold| {
+                hold.state == BudgetHoldState::Held
+                    && !hold.held.is_empty()
+                    && hold.held.iter().all(|held| {
+                        queue
+                            .get(held.attempt)
+                            .unwrap()
+                            .is_some_and(|row| row.state == AttemptState::Paused)
+                    })
+            })
         })
-    })
 }
 
 fn first_generative_offer_is_resting(host: &AiHost) -> bool {
@@ -780,9 +787,11 @@ async fn step_once(vault: &Arc<Vault>, workflow: EntityId, key: &str) -> bool {
             now: 10,
         })
         .unwrap();
-    eventually(Duration::from_secs(20), || dispatcher
-        .open_workflow_roots()
-        .is_ok_and(|roots| roots.is_empty()))
+    eventually(Duration::from_secs(20), || {
+        dispatcher
+            .open_workflow_roots()
+            .is_ok_and(|roots| roots.is_empty())
+    })
     .await
 }
 
