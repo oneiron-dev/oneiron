@@ -564,7 +564,13 @@ impl Vault {
             )?;
         }
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
-        let owners = live_owners(&self.live_act_holders(&txn, vault_id, now)?, None);
+        let holders = self.live_act_holders(&txn, vault_id, now)?;
+        // An ask stands while its Steward does: judged in this writer,
+        // before the change.
+        if let Some(ask) = ask {
+            self.member_ask_steward_stands_in_txn(&txn, ask, vault_id, &holders)?;
+        }
+        let owners = live_owners(&holders, None);
         let id = self.store.clock.entity_id()?.to_hex();
         let (effect, unsigned) = apply(&mut txn, actor_id, now, &id)?;
         let record = match unsigned {
