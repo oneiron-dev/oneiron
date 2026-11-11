@@ -11,12 +11,13 @@ import {
   SPLIT_EDGE_PX,
   THING_PANE_MAX_PX,
   THING_PANE_MIN_PX,
-  THING_OVER_GUTTER_PX,
+  PANE_OVER_GUTTER_PX,
   paneBounds,
+  paneFloor,
+  paneLiesOver,
+  paneOverWidth,
   paneTrack,
   paneWidth,
-  thingLiesOver,
-  thingOverWidth,
   thingPlaceholder,
 } from '../src/design-system/patterns/pane-width'
 
@@ -143,29 +144,52 @@ describe('SplitPane.Thing', () => {
   })
 })
 
-describe('a thing opened beside a narrow room', () => {
-  test('the pane lies over the room once the work area cannot hold the column, its gutter and the 380 px floor', () => {
-    assert.equal(THING_OVER_GUTTER_PX, 56)
+describe('a pane opened beside a narrow room', () => {
+  test('each pane has a floor: a list 340 px, one thing 380 px', () => {
+    assert.equal(paneFloor('list'), 340)
+    assert.equal(paneFloor('thing'), 380)
+  })
+
+  test('the pane for one thing lies over the room once the work area cannot hold the column, its gutter and the 380 px floor', () => {
+    assert.equal(PANE_OVER_GUTTER_PX, 56)
     /* 620 + 92 + 1 + 380 = 1093 px: the floor still fits beside the column. */
-    assert.equal(thingLiesOver(1093), false)
-    assert.equal(thingLiesOver(1092), true)
-    assert.equal(thingLiesOver(1440), false)
+    assert.equal(paneLiesOver('thing', 1093), false)
+    assert.equal(paneLiesOver('thing', 1092), true)
+    assert.equal(paneLiesOver('thing', 1440), false)
     /* A sidebar inside the split is left out of the work area. */
-    assert.equal(thingLiesOver(1093 + 248, 248), false)
-    assert.equal(thingLiesOver(1092 + 248, 248), true)
+    assert.equal(paneLiesOver('thing', 1093 + 248, 248), false)
+    assert.equal(paneLiesOver('thing', 1092 + 248, 248), true)
   })
 
-  test('over the room: 680 px at most, never wider than the work area less 56 px', () => {
-    assert.equal(thingOverWidth(1000), 680)
-    assert.equal(thingOverWidth(700), 644)
-    assert.equal(thingOverWidth(785), 680)
-    assert.equal(thingOverWidth(736), 680)
-    assert.equal(thingOverWidth(735), 679)
-    assert.equal(thingOverWidth(1040, 248), 680)
-    assert.equal(thingOverWidth(900, 248), 900 - 248 - 56)
+  test('a list pane lies over the room once the work area cannot hold the column, its gutter and 340 px', () => {
+    /* 620 + 92 + 1 + 340 = 1053 px. */
+    assert.equal(paneLiesOver('list', 1053), false)
+    assert.equal(paneLiesOver('list', 1052), true)
+    /* The work area of a 1100 px window: 1100 less the 56 px strip, the
+       10 px inset and a 220 px sidebar. */
+    assert.equal(paneLiesOver('list', 814), true)
+    assert.equal(paneLiesOver('list', 1053 + 248, 248), false)
+    assert.equal(paneLiesOver('list', 1052 + 248, 248), true)
   })
 
-  test('at wider sizes nothing changes: the split draws the pane beside the room before measuring', () => {
+  test('over the room, one thing: 680 px at most, never wider than the work area less 56 px', () => {
+    assert.equal(paneOverWidth('thing', 1000), 680)
+    assert.equal(paneOverWidth('thing', 700), 644)
+    assert.equal(paneOverWidth('thing', 736), 680)
+    assert.equal(paneOverWidth('thing', 735), 679)
+    assert.equal(paneOverWidth('thing', 1040, 248), 680)
+    assert.equal(paneOverWidth('thing', 900, 248), 900 - 248 - 56)
+  })
+
+  test('over the room, a list: 340 px, never wider than the work area less 56 px', () => {
+    assert.equal(paneOverWidth('list', 814), 340)
+    assert.equal(paneOverWidth('list', 396), 340)
+    assert.equal(paneOverWidth('list', 395), 339)
+    assert.equal(paneOverWidth('list', 300), 244)
+    assert.equal(paneOverWidth('list', 20), 0)
+  })
+
+  test('at wider sizes nothing changes: the split draws either pane beside the room before measuring', () => {
     const html = renderToStaticMarkup(
       <SplitPane pane="thing">
         <SplitPane.Pane>room</SplitPane.Pane>
@@ -178,5 +202,17 @@ describe('a thing opened beside a narrow room', () => {
     const root = tagWith(html, 'class="sl-split-pane"')
     assert.doesNotMatch(root, /data-over/)
     assert.match(root, /grid-template-columns:minmax\(0, 1fr\) 1px clamp/)
+    const list = tagWith(
+      renderToStaticMarkup(
+        <SplitPane pane="list">
+          <SplitPane.Pane>room</SplitPane.Pane>
+          <SplitPane.Handle />
+          <SplitPane.Pane>outline</SplitPane.Pane>
+        </SplitPane>,
+      ),
+      'class="sl-split-pane"',
+    )
+    assert.doesNotMatch(list, /data-over/)
+    assert.match(list, /grid-template-columns:minmax\(0, 1fr\) 1px 340px/)
   })
 })

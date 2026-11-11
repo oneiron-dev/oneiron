@@ -188,27 +188,27 @@
 }
 
 /* A work area too narrow for the column and the pane side by side: the
-   pane for one thing lies over the room. It comes from the right edge at
-   the work area's full height, in the island tone with the popover
-   shadow; the room under it keeps its column. */
+   pane (one thing, or a list) lies over the room. It comes from the right
+   edge at the work area's full height, in the island tone with the
+   popover shadow; the room under it keeps its column. */
 .sl-split-pane[data-over] > .sl-split-handle {
   display: none;
 }
 
-.sl-split-pane[data-over] > .sl-split-thing {
+.sl-split-pane[data-over] > .sl-split-pane-pane ~ .sl-split-pane-pane {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   z-index: var(--sl-z-sheet);
-  width: var(--sl-thing-over-width, 680px);
+  width: var(--sl-pane-over-width, 340px);
   border-radius: var(--sl-radius);
   background: var(--sl-island);
   box-shadow: var(--sl-pop-shadow);
-  animation: sl-thing-over-in 240ms var(--sl-ease-out) both;
+  animation: sl-pane-over-in 240ms var(--sl-ease-out) both;
 }
 
-@keyframes sl-thing-over-in {
+@keyframes sl-pane-over-in {
   from {
     opacity: 0;
     transform: translateX(24px);
@@ -216,12 +216,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sl-split-pane[data-over] > .sl-split-thing {
-    animation-name: sl-thing-over-fade;
+  .sl-split-pane[data-over] > .sl-split-pane-pane ~ .sl-split-pane-pane {
+    animation-name: sl-pane-over-fade;
   }
 }
 
-@keyframes sl-thing-over-fade {
+@keyframes sl-pane-over-fade {
   from {
     opacity: 0;
   }

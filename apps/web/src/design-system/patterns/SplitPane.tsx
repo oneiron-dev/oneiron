@@ -3,7 +3,7 @@ import { Icon } from '../primitives/Icon'
 import { IconAction } from '../primitives/IconAction'
 import { cx, mergeRefs, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { Composer, type ComposerTools } from './Composer'
-import { paneBounds, paneTrack, paneWidth, thingLiesOver, thingOverWidth, thingPlaceholder, type PaneKind } from './pane-width'
+import { paneBounds, paneLiesOver, paneOverWidth, paneTrack, paneWidth, thingPlaceholder, type PaneKind } from './pane-width'
 import { SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, snapToMagnet } from './snap-to-magnet'
 
 /* Keyboard steps in CSS pixels; Shift takes the long step. */
@@ -26,8 +26,8 @@ interface SplitContextValue {
   reset: () => void
   setDragging: (dragging: boolean) => void
   rootRef: React.RefObject<HTMLDivElement | null>
-  /* The pane for one thing lies over the room (the work area is too
-     narrow for the column and the pane side by side). */
+  /* The pane lies over the room (the work area is too narrow for the
+     column and the pane side by side). */
   over: boolean
 }
 
@@ -76,7 +76,9 @@ export interface SplitPaneProps extends Omit<React.ComponentPropsWithRef<'div'>,
   magnetPull?: number
   /* A pane beside the room: the second pane is sized in pixels by the
      width rule (`list` 340 px; `thing` what the messages column leaves,
-     380 to 680 px), and the edge drags inside those bounds. */
+     380 to 680 px), and the edge drags inside those bounds. In a work area
+     too narrow for the column and the pane's floor, either pane lies over
+     the room from the right edge instead. */
   pane?: PaneKind
   /* The second pane's width once dragged, in pixels; null keeps the rule. */
   paneWidth?: number | null
@@ -94,8 +96,8 @@ export interface SplitPaneProps extends Omit<React.ComponentPropsWithRef<'div'>,
    the width: the edge drags free inside min and max, leans softly toward
    the magnets and shows the magnet's percentage while it is on one. A
    pane beside the room (`pane`): the room keeps the rest, the pane keeps
-   its width rule until dragged. Double-click resets; arrow keys move the
-   focused edge. */
+   its width rule until dragged, and in a narrow work area it lies over the
+   room. Double-click resets; arrow keys move the focused edge. */
 function SplitPaneRoot({
   ref,
   value: valueProp,
@@ -126,9 +128,9 @@ function SplitPaneRoot({
   const current = React.useRef({ value, dragged })
   current.current = { value, dragged }
 
-  /* Too narrow for the column beside a pane for one thing: the pane lies
-     over the room, from the right edge, and the edge does not drag. */
-  const over = pane === 'thing' && rootWidth > 0 && thingLiesOver(rootWidth, sidebarWidth)
+  /* Too narrow for the column beside the pane: the pane lies over the
+     room, from the right edge, and the edge does not drag. */
+  const over = !!pane && rootWidth > 0 && paneLiesOver(pane, rootWidth, sidebarWidth)
 
   /* The pane's width now: the dragged width, else the rule on the
      measured width (the CSS track draws the same rule before measuring). */
@@ -246,7 +248,7 @@ function SplitPaneRoot({
     : pane
       ? `minmax(0, 1fr) 1px ${dragged === null ? paneTrack(pane, sidebarWidth) : `${width}px`}`
       : `minmax(0, ${value}fr) 1px minmax(0, ${1 - value}fr)`
-  const overStyle = over ? ({ '--sl-thing-over-width': `${thingOverWidth(rootWidth, sidebarWidth)}px` } as React.CSSProperties) : undefined
+  const overStyle = over && pane ? ({ '--sl-pane-over-width': `${paneOverWidth(pane, rootWidth, sidebarWidth)}px` } as React.CSSProperties) : undefined
 
   return (
     <SplitContext.Provider value={ctx}>
