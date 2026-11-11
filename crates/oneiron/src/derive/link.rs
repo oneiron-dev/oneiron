@@ -14,7 +14,7 @@ use crate::authority::{ActAuthority, OwnerActKind};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, Result};
-use crate::gate::{DeriveAllowance, DeriveCapability, derive_verdict_in_txn};
+use crate::gate::{DeriveCapability, derive_verdict_in_txn};
 use crate::identity_topology::{IdentityOpOutcome, IdentityOpWrite, TopologySeal};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{ClaimCandidate, EntityId, Vault};
@@ -37,35 +37,12 @@ pub const TOPOLOGY_REJECTED: &str = "gate.deny.derive.topology_rejected";
 /// The reason a landed topology judgment's receipt names.
 const TOPOLOGY_ALLOWED: &str = "gate.allow.derive.topology";
 
-/// The derive verdict over every row of `targets`: the first refusal's
-/// token, or the allowance of the last.
-fn verdict_over(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    context: &ItemContext<'_>,
-    targets: &[EntityId],
-) -> Result<std::result::Result<Option<DeriveAllowance>, &'static str>> {
-    let mut allowed = None;
-    for target in targets {
-        match derive_verdict_in_txn(
-            &vault.store,
-            txn,
-            context.stamp.actor,
-            DeriveCapability::Derive,
-            Some(*target),
-        )? {
-            Ok(allowance) => allowed = Some(allowance),
-            Err(refusal) => return Ok(Err(refusal.token())),
-        }
-    }
-    Ok(Ok(allowed))
-}
-
-/// Stages a SameAs: the derive verdict over both claims, both read by the
-/// actor, then the proposed coreference status claim through the claim gate
-/// as the caller. When the owner's standing nightly-link grant names this
-/// actor, the SameAs edge is applied in a savepoint of its own; an edge the
-/// writer refuses leaves the link proposed.
+/// Stages a SameAs: the verdict is asked with no target because a proposal
+/// changes neither claim. The actor's own read decides both ends, then the
+/// proposed coreference status claim goes through the claim gate as the
+/// caller. When the owner's standing nightly-link grant names this actor,
+/// the SameAs edge is applied in a savepoint of its own; an edge the writer
+/// refuses leaves the link proposed.
 ///
 /// # Errors
 ///
@@ -78,8 +55,14 @@ pub(super) fn stage_same_as_in_txn(
 ) -> Result<ItemOutcome> {
     let source = context.resolve(&item.source)?;
     let target = context.resolve(&item.target)?;
-    if let Err(token) = verdict_over(vault, txn, context, &[source, target])? {
-        return refuse(vault, txn, context, source, token);
+    if let Err(refusal) = derive_verdict_in_txn(
+        &vault.store,
+        txn,
+        context.stamp.actor,
+        DeriveCapability::Derive,
+        None,
+    )? {
+        return refuse(vault, txn, context, source, refusal.token());
     }
     let read = super::actor_read(vault, context.stamp.actor)?;
     let rows = read.get_entities_parts_in_txn(txn, &[source, target])?;

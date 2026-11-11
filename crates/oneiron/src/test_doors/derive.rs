@@ -354,6 +354,51 @@ pub fn grant_derive_rows(vault: &Vault, agents: &[EntityId]) -> Result<()> {
     )
 }
 
+/// Holds the Steward grant `grant` to `project`, leaving its verbs and
+/// every other data axis unchanged.
+///
+/// # Errors
+///
+/// The vault's, or a missing or malformed grant row.
+pub fn narrow_steward_grant_to_project(
+    vault: &Vault,
+    grant: EntityId,
+    project: EntityId,
+) -> Result<()> {
+    use crate::federation::{ScopeId, decode_federation_grant_body, encode_federation_grant_body};
+    let raw = vault.get(&grant)?.ok_or(crate::Error::EntityNotFound)?;
+    let mut body = decode_federation_grant_body(&raw)?;
+    body.authority_scope.audience = std::iter::once(ScopeId(project)).collect();
+    let now = vault.now_recorded_at();
+    vault.with_write_txn_grouped(|txn| {
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id: grant,
+                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                occurred: crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                row_version: None,
+                data: encode_federation_grant_body(&body)?,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })
+}
+
 /// Writes a user's TURN stamped as imported words (ARCH-0027), as an import
 /// lands one; its id.
 ///
