@@ -49,7 +49,7 @@ pub enum SystemFunction {
     RecallUpkeep,
     /// The Coach checks how the vault's agents are doing.
     CoachChecks,
-    /// The Coach runs the jobs the engine.controls grant tunes.
+    /// The Coach runs the jobs the engine.controls classes tune.
     EngineControlsJobs,
 }
 
@@ -71,7 +71,7 @@ impl SystemFunction {
                 grant_scope::STEWARD_ARCHIVE_VERB,
             ],
             Self::CoachChecks => &[grant_scope::STEWARD_READ_VERB],
-            Self::EngineControlsJobs => &[grant_scope::ENGINE_CONTROLS_VERB],
+            Self::EngineControlsJobs => &grant_scope::ENGINE_CONTROLS_VERBS,
         }
     }
 
@@ -242,7 +242,7 @@ impl Vault {
             .any(|verb| !grant_scope::STEWARD_CEILING_VERBS.contains(&verb.as_str()))
         {
             return Err(Error::InvalidConfig(
-                "a Steward grant holds read, derive, archive, delete and engine.controls only"
+                "a Steward grant holds read, derive, archive, delete and the engine.controls classes only"
                     .into(),
             ));
         }

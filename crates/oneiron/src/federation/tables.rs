@@ -54,11 +54,19 @@ crate::side_table::side_tables! {
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::federation::erase_connect_proposer_in_txn;
     /// One engine-control change (untangle 6.6, S66-3): who changed which knob, of which class,
-    /// to what, and when; the receipt that names a holder of `engine.controls`. Key: id16 (the
-    /// change). A hard erase of an actor takes out the receipts that name it.
+    /// to what, and when; the receipt that names a holder of an `engine.controls` class. Key:
+    /// id16 (the change). A hard erase of an actor takes out the receipts that name it.
     FEDERATION_ENGINE_CONTROL_CHANGE: VaultMeta b"federation:engine_control_change:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::federation::erase_engine_control_actor_in_txn;
+    /// One grant the engine stood by default (lead 10 Nov 06:5x): a base agent's Steward grant
+    /// stood when a host first opened the vault, the engine's act and never the owner's. The
+    /// receipt the owner reads on first open: the agent, the verbs, the origin ("engine default
+    /// at vault creation") and when. Key: id16 (the grant).
+    FEDERATION_ENGINE_DEFAULT_GRANT: VaultMeta b"federation:engine_default_grant:v1:" Named
+        // Restore class: a receipt names a Steward grant row the engine stood, and those rows
+        // stay as the live vault holds them: the receipts stay with them.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// An administrative ruling's admission, kept before the grant row that admitted it was
     /// rewritten or deleted (FIX 8740): the grant and the hash of that row. Immutable. Key: id16
     /// (the ruling).

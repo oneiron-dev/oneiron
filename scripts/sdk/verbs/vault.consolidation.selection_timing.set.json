@@ -1,6 +1,6 @@
 {
   "name": "vault.consolidation.selection_timing.set",
-  "description": "The owner, or a holder of engine.controls, sets how long a claim soaks before consolidation selects it and the recency window; the change writes an engine-control receipt.",
+  "description": "The owner, or a holder of engine.controls.maintenance_cadence, sets how long a claim soaks before consolidation selects it and the recency window; the change writes an engine-control receipt.",
   "input": "crate::task_verb::sdk::ConsolidationSelectionTimingSetRequest",
   "output": "crate::task_verb::sdk::EngineControlChangeEntry",
   "call": "crate::task_verb::sdk::set_consolidation_selection_timing_embedded(memory, input)?",

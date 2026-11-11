@@ -1,9 +1,10 @@
-//! The `engine.controls` grant (untangle 6.6; S66-MAP ruled A, Engine 9 Nov
-//! 18:5x): one Steward verb bounds the engine's tunable knobs. Its holder
-//! may change a stored vault knob of four classes: maintenance cadence,
+//! The `engine.controls` grants (untangle 6.6; S66-MAP ruled A, Engine 9 Nov
+//! 18:5x; one verb per class, lead 10 Nov 06:5x): four Steward verbs bound
+//! the engine's tunable knobs, one per class of knob: maintenance cadence,
 //! work budgets inside the owner's caps, system-agent wake cadence, and
-//! which recipe a knowledge job runs. The Coach holds it by default, as
-//! Steward; the owner can give it to any agent
+//! which recipe a knowledge job runs. A holder changes a stored vault knob
+//! of a class its grant names. The Coach holds all four by default, as
+//! Steward; the owner can give any of them to any agent
 //! ([`Vault::grant_engine_controls`]).
 //!
 //! Owner acts stay outside it: grant changes and widening, model swaps,
@@ -12,7 +13,7 @@
 //! excluded conversations, proactivity presentation, failure rules).
 //! Host-config knobs stay host-owned.
 //!
-//! One check admits the owner or a live holder
+//! One check admits the owner or a live holder of the knob's class
 //! ([`Vault::engine_control_allowed`]); every change through the door
 //! ([`Vault::apply_engine_control`]) writes a receipt naming who made it.
 //! The knob doors join one family at a time (6.6b); the verbs come after
@@ -37,8 +38,8 @@ use crate::side_table::{self, Named, SideTable};
 const ENGINE_CONTROL_CHANGE: SideTable<EntityId, EngineControlChange, Named> =
     SideTable::new(&side_table::FEDERATION_ENGINE_CONTROL_CHANGE);
 
-/// The class of knob a change touches. One grant covers all four; the class
-/// names the change in its receipt.
+/// The class of knob a change touches. Each class has its own grant verb
+/// ([`Self::grant_verb`]); the class names the change in its receipt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineControlClass {
@@ -53,8 +54,30 @@ pub enum EngineControlClass {
     KnowledgeRecipe,
 }
 
+impl EngineControlClass {
+    /// Every class, in the order the grants list them.
+    pub const ALL: [Self; 4] = [
+        Self::MaintenanceCadence,
+        Self::WorkBudget,
+        Self::WakeCadence,
+        Self::KnowledgeRecipe,
+    ];
+
+    /// The Steward verb a holder's grant names to change a knob of this
+    /// class.
+    #[must_use]
+    pub const fn grant_verb(self) -> &'static str {
+        match self {
+            Self::MaintenanceCadence => grant_scope::ENGINE_CONTROLS_MAINTENANCE_CADENCE_VERB,
+            Self::WorkBudget => grant_scope::ENGINE_CONTROLS_WORK_BUDGET_VERB,
+            Self::WakeCadence => grant_scope::ENGINE_CONTROLS_WAKE_CADENCE_VERB,
+            Self::KnowledgeRecipe => grant_scope::ENGINE_CONTROLS_KNOWLEDGE_RECIPE_VERB,
+        }
+    }
+}
+
 /// Who asks to change a knob: the owner, by proof, or an actor that may
-/// hold `engine.controls`.
+/// hold an `engine.controls` class.
 #[derive(Debug, Clone, Copy)]
 pub enum EngineControlActor<'a> {
     Owner(&'a AuthenticatedOwner),
@@ -80,7 +103,7 @@ pub struct EngineControlChange {
 
 impl Vault {
     /// Whether `actor` may change a knob of `class` now: the owner by a
-    /// proof that still holds, or a live holder of `engine.controls`.
+    /// proof that still holds, or a live holder of that class's grant verb.
     ///
     /// # Errors
     ///
@@ -97,19 +120,19 @@ impl Vault {
     }
 
     /// The actor [`Self::engine_control_allowed`] admits in `txn`, with
-    /// whether it acts as the owner. Every class rides the one grant.
+    /// whether it acts as the owner. Each class rides its own grant verb.
     /// - A base agent holds it through the grant its marker names, while
-    ///   that grant stands with `engine.controls` and its MACHINE binding
-    ///   is live.
+    ///   that grant stands with the class's verb and its MACHINE binding is
+    ///   live.
     /// - Any other actor holds it through a live Steward grant on this
-    ///   vault's root that names `engine.controls` itself: a grant whose
+    ///   vault's root that names the class's verb itself: a grant whose
     ///   verbs are left open (an Owner's or an Admin's) does not count, so
     ///   only an owner's grant gives it.
     pub(crate) fn engine_control_actor_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         actor: EngineControlActor<'_>,
-        _class: EngineControlClass,
+        class: EngineControlClass,
     ) -> Result<Option<(EntityId, bool)>> {
         let holder = match actor {
             EngineControlActor::Owner(owner) => {
@@ -121,18 +144,20 @@ impl Vault {
             EngineControlActor::Holder(holder) => holder,
         };
         Ok(self
-            .engine_controls_grant_in(txn, holder)?
+            .engine_controls_grant_in(txn, holder, class)?
             .map(|_| (holder, false)))
     }
 
-    /// The grant through which `holder` holds `engine.controls` now, if any
-    /// ([`Self::steward_grant_with_verb_in`] for that verb).
+    /// The grant through which `holder` holds the `engine.controls` class
+    /// `class` now, if any ([`Self::steward_grant_with_verb_in`] for its
+    /// verb).
     pub(crate) fn engine_controls_grant_in(
         &self,
         txn: &heed::RoTxn<'_>,
         holder: EntityId,
+        class: EngineControlClass,
     ) -> Result<Option<EntityId>> {
-        self.steward_grant_with_verb_in(txn, holder, grant_scope::ENGINE_CONTROLS_VERB)
+        self.steward_grant_with_verb_in(txn, holder, class.grant_verb())
     }
 
     /// The grant through which `holder` may use the Steward verb `verb` now,
@@ -261,7 +286,7 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             let Some((by, owner)) = self.engine_control_actor_in_txn(&*txn, actor, class)? else {
                 return Err(Error::InvalidConfig(
-                    "changing this knob needs the owner or the engine.controls grant".into(),
+                    "changing this knob needs the owner or its engine.controls class grant".into(),
                 ));
             };
             write(txn)?;
