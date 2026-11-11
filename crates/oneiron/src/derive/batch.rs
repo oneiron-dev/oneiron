@@ -56,6 +56,18 @@ pub struct DerivedClaim {
     pub evidence: Vec<ItemRef>,
 }
 
+/// Evidence an agent derived (kind 2): rows it reads that support a stored
+/// claim it reads.
+#[derive(Debug, Clone)]
+pub struct DerivedEvidence {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The claim the evidence supports.
+    pub head: ItemRef,
+    /// The supporting rows: TURNs, cited whole, or admissible claims.
+    pub sources: Vec<ItemRef>,
+}
+
 /// A supersession an agent derived: the claim `new` replaces the claim
 /// `old`, which the agent's grant reaches.
 #[derive(Debug, Clone)]
@@ -104,15 +116,63 @@ pub struct DerivedArchive {
     pub score: f64,
 }
 
+/// One `about` line of a person: the sensitivity band it is written for and
+/// its one plain line of text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedAboutLine {
+    /// The band, 0 (public) to 3 (restricted). The line stands on the facts
+    /// at or below it.
+    pub band: u8,
+    /// The line.
+    pub text: String,
+}
+
+/// A person's `about` lines an agent derived (kind 5): one line for each
+/// band that has facts at or below it, written from the facts whose digest
+/// `written_from` names.
+#[derive(Debug, Clone)]
+pub struct DerivedPersonAbout {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The PERSON.
+    pub person: ItemRef,
+    /// The digest of the facts the lines were written from, as the agent's
+    /// read reads them ([`crate::Vault::person_about_facts`]).
+    pub written_from: [u8; 32],
+    /// The lines, lowest band first.
+    pub lines: Vec<DerivedAboutLine>,
+}
+
+/// A PsychProfile snapshot an agent derived (kind 5), stored at the profile
+/// address of its subject, `facet` and `world`.
+#[derive(Debug, Clone)]
+pub struct DerivedPsychProfile {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The facet of the profile's address.
+    pub facet: Option<EntityId>,
+    /// The world of the profile's address.
+    pub world: Option<EntityId>,
+    /// The snapshot: every source revision with the exact words it was read
+    /// from, each from a record the agent reads.
+    pub profile: crate::psych_profile::PsychProfile,
+}
+
 /// One derived item. Each kind is one arm with a stager of its own.
 #[derive(Debug, Clone)]
 pub enum DerivationItem {
     /// A `Generated` claim (kind 1).
     Claim(DerivedClaim),
+    /// Evidence for a stored claim (kind 2).
+    Evidence(DerivedEvidence),
     /// A supersession (kind 3).
     Supersede(DerivedSupersede),
     /// A conflict settlement (kind 3).
     Settle(DerivedSettle),
+    /// A person's `about` lines (kind 5).
+    PersonAbout(DerivedPersonAbout),
+    /// A PsychProfile snapshot (kind 5).
+    PsychProfile(DerivedPsychProfile),
     /// A reversible archive (kind 6).
     Archive(DerivedArchive),
 }
@@ -122,8 +182,11 @@ impl DerivationItem {
     pub fn local(&self) -> &str {
         match self {
             Self::Claim(claim) => &claim.local,
+            Self::Evidence(evidence) => &evidence.local,
             Self::Supersede(supersede) => &supersede.local,
             Self::Settle(settle) => &settle.local,
+            Self::PersonAbout(about) => &about.local,
+            Self::PsychProfile(profile) => &profile.local,
             Self::Archive(archive) => &archive.local,
         }
     }
@@ -132,8 +195,11 @@ impl DerivationItem {
     pub const fn kind(&self) -> &'static str {
         match self {
             Self::Claim(_) => "claim",
+            Self::Evidence(_) => "evidence",
             Self::Supersede(_) => "supersede",
             Self::Settle(_) => "settle",
+            Self::PersonAbout(_) => "person_about",
+            Self::PsychProfile(_) => "psych_profile",
             Self::Archive(_) => "archive",
         }
     }
@@ -144,11 +210,16 @@ impl DerivationItem {
             Self::Claim(claim) => std::iter::once(&claim.subject)
                 .chain(claim.evidence.iter())
                 .collect(),
+            Self::Evidence(evidence) => std::iter::once(&evidence.head)
+                .chain(evidence.sources.iter())
+                .collect(),
             Self::Supersede(supersede) => vec![&supersede.new, &supersede.old],
             Self::Settle(settle) => match &settle.settlement {
                 DerivedSettlement::Keep(kept) => vec![&settle.marker, kept],
                 DerivedSettlement::HoldBoth | DerivedSettlement::Dismiss => vec![&settle.marker],
             },
+            Self::PersonAbout(about) => vec![&about.person],
+            Self::PsychProfile(_) => Vec::new(),
             Self::Archive(archive) => vec![&archive.claim],
         }
     }

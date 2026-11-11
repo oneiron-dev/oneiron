@@ -1,11 +1,12 @@
 //! Doors to the derivation transaction (untangle 6.7a): commit a batch of
-//! claims as an actor, read its batch record back, and ask the derive
+//! items as an actor, read its batch record back, and ask the derive
 //! verdict.
 
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimSource;
 use crate::derive::{
-    DerivationBatch, DerivationItem, DerivationStamp, DerivedArchive, DerivedClaim, DerivedSettle,
+    DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
+    DerivedClaim, DerivedEvidence, DerivedPersonAbout, DerivedPsychProfile, DerivedSettle,
     DerivedSettlement, DerivedSupersede, ItemOutcome, ItemRef,
 };
 use crate::error::Result;
@@ -30,6 +31,14 @@ pub struct Claim {
     pub subject: Named,
     pub value: serde_json::Value,
     pub evidence: Vec<Named>,
+}
+
+/// Evidence for a door batch: `sources` support the claim `head`.
+#[derive(Debug, Clone)]
+pub struct Evidence {
+    pub local: &'static str,
+    pub head: Named,
+    pub sources: Vec<Named>,
 }
 
 /// A supersession for a door batch: `new` replaces `old`.
@@ -67,12 +76,35 @@ pub struct Archive {
     pub score: f64,
 }
 
+/// A person's `about` lines for a door batch, written from the facts whose
+/// digest `written_from` names.
+#[derive(Debug, Clone)]
+pub struct About {
+    pub local: &'static str,
+    pub person: Named,
+    pub written_from: [u8; 32],
+    /// Each line's band and text, lowest band first.
+    pub lines: Vec<(u8, &'static str)>,
+}
+
+/// A PsychProfile for a door batch: about `subject`, built from the whole
+/// record `document`.
+#[derive(Debug, Clone)]
+pub struct Profile {
+    pub local: &'static str,
+    pub subject: EntityId,
+    pub document: EntityId,
+}
+
 /// One item of a door batch.
 #[derive(Debug, Clone)]
 pub enum Derived {
     Claim(Claim),
+    Evidence(Evidence),
     Supersede(Supersede),
     Settle(Settle),
+    About(About),
+    Profile(Profile),
     Archive(Archive),
 }
 
@@ -311,42 +343,70 @@ pub fn commit_in_attempt(
     let batch = DerivationBatch {
         items: items
             .iter()
-            .map(|item| match item {
-                Derived::Claim(claim) => DerivationItem::Claim(DerivedClaim {
-                    local: claim.local.to_owned(),
-                    predicate: claim.predicate.to_owned(),
-                    subject: named(&claim.subject),
-                    value: claim.value.clone(),
-                    confidence: 0.9,
-                    evidence: claim.evidence.iter().map(named).collect(),
-                }),
-                Derived::Supersede(supersede) => DerivationItem::Supersede(DerivedSupersede {
-                    local: supersede.local.to_owned(),
-                    new: named(&supersede.new),
-                    old: named(&supersede.old),
-                }),
-                Derived::Archive(archive) => DerivationItem::Archive(DerivedArchive {
-                    local: archive.local.to_owned(),
-                    claim: named(&archive.claim),
-                    signals: crate::dreamer_consolidation::selection::StrengthSignals {
-                        type_prior: 0.1,
-                        frequency: 0.1,
-                        recency: 0.1,
-                        diversity: 0.1,
-                    },
-                    score: archive.score,
-                }),
-                Derived::Settle(settle) => DerivationItem::Settle(DerivedSettle {
-                    local: settle.local.to_owned(),
-                    marker: named(&settle.marker),
-                    settlement: match &settle.settlement {
-                        Settlement::Keep(kept) => DerivedSettlement::Keep(named(kept)),
-                        Settlement::HoldBoth => DerivedSettlement::HoldBoth,
-                        Settlement::Dismiss => DerivedSettlement::Dismiss,
-                    },
-                }),
+            .map(|item| -> Result<DerivationItem> {
+                Ok(match item {
+                    Derived::Claim(claim) => DerivationItem::Claim(DerivedClaim {
+                        local: claim.local.to_owned(),
+                        predicate: claim.predicate.to_owned(),
+                        subject: named(&claim.subject),
+                        value: claim.value.clone(),
+                        confidence: 0.9,
+                        evidence: claim.evidence.iter().map(named).collect(),
+                    }),
+                    Derived::Evidence(evidence) => DerivationItem::Evidence(DerivedEvidence {
+                        local: evidence.local.to_owned(),
+                        head: named(&evidence.head),
+                        sources: evidence.sources.iter().map(named).collect(),
+                    }),
+                    Derived::Supersede(supersede) => DerivationItem::Supersede(DerivedSupersede {
+                        local: supersede.local.to_owned(),
+                        new: named(&supersede.new),
+                        old: named(&supersede.old),
+                    }),
+                    Derived::Archive(archive) => DerivationItem::Archive(DerivedArchive {
+                        local: archive.local.to_owned(),
+                        claim: named(&archive.claim),
+                        signals: crate::dreamer_consolidation::selection::StrengthSignals {
+                            type_prior: 0.1,
+                            frequency: 0.1,
+                            recency: 0.1,
+                            diversity: 0.1,
+                        },
+                        score: archive.score,
+                    }),
+                    Derived::Settle(settle) => DerivationItem::Settle(DerivedSettle {
+                        local: settle.local.to_owned(),
+                        marker: named(&settle.marker),
+                        settlement: match &settle.settlement {
+                            Settlement::Keep(kept) => DerivedSettlement::Keep(named(kept)),
+                            Settlement::HoldBoth => DerivedSettlement::HoldBoth,
+                            Settlement::Dismiss => DerivedSettlement::Dismiss,
+                        },
+                    }),
+                    Derived::About(about) => DerivationItem::PersonAbout(DerivedPersonAbout {
+                        local: about.local.to_owned(),
+                        person: named(&about.person),
+                        written_from: about.written_from,
+                        lines: about
+                            .lines
+                            .iter()
+                            .map(|(band, text)| DerivedAboutLine {
+                                band: *band,
+                                text: (*text).to_owned(),
+                            })
+                            .collect(),
+                    }),
+                    Derived::Profile(profile) => {
+                        DerivationItem::PsychProfile(DerivedPsychProfile {
+                            local: profile.local.to_owned(),
+                            facet: None,
+                            world: None,
+                            profile: whole_record_profile(profile.subject, profile.document)?,
+                        })
+                    }
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>>>()?,
     };
     let receipt = vault.derive_commit(&stamp, &batch)?;
     Ok(Committed {
@@ -374,6 +434,147 @@ pub fn commit_in_attempt(
             })
             .collect(),
     })
+}
+
+/// A PsychProfile about `subject` built from the whole record `document`.
+fn whole_record_profile(
+    subject: EntityId,
+    document: EntityId,
+) -> Result<crate::psych_profile::PsychProfile> {
+    use crate::psych_profile::{
+        PsychProfile, PsychProfileConfidence, PsychProfileSource, PsychProfileSourceWords,
+    };
+    PsychProfile::new(
+        subject,
+        "steady and curious",
+        "A steady, curious person.",
+        "They meet new things steadily and with curiosity.",
+        vec![document],
+        PsychProfileConfidence::new(0.8, 0.7, 0.6)?,
+    )?
+    .with_sources(vec![PsychProfileSource {
+        revision_ref: document,
+        document_ref: document,
+        world_ref: None,
+        document_revision: crate::vault::RevisionRef([0; 16]),
+        words: PsychProfileSourceWords::Record { content: [0; 32] },
+    }])
+}
+
+/// The digest of the facts about `person` that `actor` of `class` reads,
+/// and the bands that take a line: what an `about` item is written from.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn about_facts(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    person: EntityId,
+) -> Result<([u8; 32], Vec<u8>)> {
+    let facts = vault.person_about_facts(WriteActor::new(actor, class), person)?;
+    Ok((facts.digest, facts.bands))
+}
+
+/// The PEOPLE `about` step at the start of a Dreamer wake pass: it reads
+/// every person's facts and records the facts each person's lines are now
+/// asked from. A reader sees a person's lines only while they are written
+/// from the facts a wake pass last read.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn wake_reads_about_facts(vault: &Vault) -> Result<()> {
+    crate::dreamer_consolidation::enqueue_person_about_on_wake(vault, vault.now_recorded_at())
+}
+
+/// The subject of the stored claim `id`, when it is a stored claim about a
+/// row.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn claim_subject(vault: &Vault, id: EntityId) -> Result<Option<EntityId>> {
+    let Some(raw) = vault.get(&id)? else {
+        return Ok(None);
+    };
+    Ok(crate::claim::decode_claim_body(&raw, true)
+        .ok()
+        .and_then(|body| match body.subject {
+            crate::claim::ClaimSubject::Entity(subject) => Some(subject),
+            _ => None,
+        }))
+}
+
+/// Whether a PsychProfile about `subject` is stored at the address with no
+/// facet and no world.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn profile_stored(vault: &Vault, subject: EntityId) -> Result<bool> {
+    use crate::psych_profile::{PsychProfileKey, psych_profile_entity_id};
+    let id = psych_profile_entity_id(&PsychProfileKey {
+        person: subject,
+        facet: None,
+        world: None,
+    });
+    Ok(vault.get_psych_profile(&id)?.is_some())
+}
+
+/// Witnesses one user TURN saying `words`, as a new speaker; its id.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn witness_turn(vault: &Vault, words: &str) -> Result<EntityId> {
+    use crate::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
+    let speaker = EntityId::now();
+    vault.put_entity(
+        &speaker,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"witness",
+    )?;
+    let turn = EntityId::now();
+    vault
+        .memory(speaker, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            messages: vec![WitnessMessage {
+                id: Some(EntityId::now().to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: words.to_owned(),
+                parts: None,
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: 10,
+            assertions: WitnessAssertions::default(),
+        })
+        .map_err(|error| crate::error::Error::InvalidConfig(format!("witness: {error:?}")))?;
+    Ok(turn)
+}
+
+/// Whether `source` holds a `supports` edge to `head`.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn supports(vault: &Vault, source: EntityId, head: EntityId) -> Result<bool> {
+    use crate::ports::EdgeStoreRead;
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .port_edge_get(&txn, &source, crate::edge::EdgeKind::Supports, &head)?
+        .is_some())
 }
 
 /// The lifecycle status of the claim `id` (`active`, `superseded`, ...),
