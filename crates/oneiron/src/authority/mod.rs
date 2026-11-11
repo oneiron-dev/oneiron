@@ -175,6 +175,8 @@ mod world_privacy;
 mod world_privacy_door;
 mod world_refold;
 mod world_strength;
+#[cfg(oneiron_test_support)]
+pub(crate) mod world_undo_door;
 mod write_authorization;
 
 #[cfg(test)]
@@ -472,6 +474,8 @@ pub(crate) use log_budget::{
 };
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
+#[cfg(oneiron_test_support)]
+pub(crate) use past_grant_standing::past_standing_history_loads_for_test;
 pub(crate) use past_grant_standing::preserved_topology_act_in_txn;
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{
