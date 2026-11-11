@@ -294,8 +294,9 @@ pub(crate) async fn vault_tasks_cancel_force(
 
 /// A branch read names the TASK whose branches it read. The owner reads
 /// every branch on its proof; a person or agent on a verified slip of its own
-/// reads the branches it runs, or every branch as a Steward, through its own
-/// read lane (slice 6.5a).
+/// reads the branches it runs, or every branch as a Steward (slice 6.5a).
+/// A run's rows are read by no read lane, so the row refuses a slip narrowed
+/// to records, worlds or facets (`unrestricted_record_scope`, FACET-READ).
 pub(crate) async fn vault_runs_branches_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

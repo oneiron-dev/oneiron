@@ -9,7 +9,7 @@
   "host_door_caller": true,
   "scope": "Read",
   "admission": {
-    "lane_record_scope": true
+    "unrestricted_record_scope": true
   },
   "section": false,
   "openapi": true,

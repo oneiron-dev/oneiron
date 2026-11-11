@@ -37,7 +37,9 @@ pub(crate) async fn vault_budgets_lease_open(
 
 /// The owner reads any lease on its proof; a person or agent on a verified
 /// slip of its own reads a lease its own run spends under or reserved
-/// (slice 6.5a, S65-BUDGET = A).
+/// (slice 6.5a, S65-BUDGET = A). Spend rows are read by no read lane, so the
+/// row refuses a slip narrowed to records, worlds or facets
+/// (`unrestricted_record_scope`, FACET-READ).
 pub(crate) async fn vault_budgets_lease(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
