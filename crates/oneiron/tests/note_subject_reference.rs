@@ -1,6 +1,6 @@
 use oneiron::claim::{base_world_id, default_project_id, substrate_facet_id};
 use oneiron::memory::{ClaimListFilter, Memory};
-use oneiron::{EdgeActorClass, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
 
 fn fresh_vault() -> (tempfile::TempDir, Vault) {
@@ -106,16 +106,17 @@ fn a_claim_naming_an_unknown_id_is_still_refused_as_invented() {
         .ensure_embedded_owner_actor()
         .expect("ensure the vault owner");
     let memory = vault.memory(owner, EdgeActorClass::Human);
-    let unknown_id = "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5";
+    // A fresh id: [0xA1; 16]..[0xA6; 16] hold the seeded system agents.
+    let unknown_id = EntityId::now().to_hex();
     assert_eq!(
         memory
-            .get_entity(unknown_id)
+            .get_entity(&unknown_id)
             .expect("a well-formed unknown id must read as absent")
             .value
             .map(|entity| entity.kind),
         None
     );
-    assert_invented_subject(&memory, unknown_id);
+    assert_invented_subject(&memory, &unknown_id);
 }
 
 #[test]
