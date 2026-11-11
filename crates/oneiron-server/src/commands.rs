@@ -332,11 +332,24 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
                 )
             })?;
     let principal = principal.to_hex();
+    // An agent's link is the owner's, so a named agent's pairing mints its
+    // default read Grant under the owner's proof (PAIR-GRANT-DESIGN Q3/Q4);
+    // any other class pairs on the host's link alone, as before.
+    let link_owner = if args.actor_class == "agent" {
+        Some(crate::owner::local_owner(&vault)?)
+    } else {
+        None
+    };
     vault.ensure_host_root_slip(&issuer)?;
+    if link_owner.is_some() {
+        // The default Grant is an owner act, carried by this install's machine
+        // profile as `serve` ensures it (FIX 4648).
+        vault.ensure_serving_install_profile_at_start(Some(&issuer), "token read");
+    }
     let credential = mint_paired_credential(
         &vault,
         &issuer,
-        None,
+        link_owner.as_ref(),
         &principal,
         &args.actor_class,
         [CoreScope::Read.as_str().to_owned()].into_iter().collect(),
@@ -490,6 +503,9 @@ fn mint_agent_credential(
         )
     })?;
     vault.ensure_host_root_slip(&issuer)?;
+    // The agent's default Grant, minted with its link, is an owner act carried
+    // by this install's machine profile, as `serve` ensures it (FIX 4648).
+    vault.ensure_serving_install_profile_at_start(Some(&issuer), "token agent");
     let (verbs, ceiling) = agent_tier_authority(args.tier);
     // The slip, its delivery, the revocation of the agent's earlier slips,
     // then the grant: the latest mint is the agent's one credential, so no
