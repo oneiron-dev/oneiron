@@ -20,12 +20,12 @@ its public path. No generated output is in git (untangle slice 4.3):
 - The whole-file Rust projections and the code-mode declaration catalog
   (`BUILD_TIME_OUTPUTS` in `generate.py`) are made at build time. Each crate that
   includes one calls `crates/oneiron-sdk-build` from its build script, which runs
-  `generate.py --out-dir` once per input digest and copies the crate's own outputs
-  into its `OUT_DIR`, where `include!` reads them. Python 3 is therefore a build
-  requirement (README.md, "Building from source") until the generator is ported to
-  Rust.
+  the generator's Rust port (`crates/oneiron-sdk-generator`, the same `--out-dir`
+  outputs) in-process once per input digest and copies the crate's own outputs
+  into its `OUT_DIR`, where `include!` reads them. No Python runs for this
+  (README.md, "Building from source").
 - The package outputs (`PACKAGE_OUTPUTS`) are made by each package's build:
-  `oneiron` and `@oneiron/client` run `generate.py --package` from their npm
+  `oneiron` and `@oneiron/client` run the Rust port's `--package` from their npm
   scripts, and `oneiron-py`'s build script places its Python files in
   `python/oneiron/`. The generated code is whole files the hand-written code
   imports: `facade-verbs.ts` and `native-verbs.ts` for `oneiron`, the mixin

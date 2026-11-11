@@ -2,42 +2,28 @@
 //!
 //! The verb table (`scripts/sdk/verbs/`) and the Rust types its rows name are the source; the generated files are
 //! not committed. A crate that compiles one calls [`generate`] from its build script with the outputs it includes.
-//! The first build script to run for an input digest runs `scripts/sdk/generate.py` once, into a directory shared
-//! by every crate of the target dir, and each crate copies its own outputs into its `OUT_DIR`, where its `include!`
-//! reads them. A crate that ships generated sources in a package of its own (`oneiron-py`'s Python files) places
-//! them with [`place`].
+//! The first build script to run for an input digest runs the SDK generator (`oneiron-sdk-generator`, in this
+//! process) once, into a directory shared by every crate of the target dir, and each crate copies its own outputs
+//! into its `OUT_DIR`, where its `include!` reads them. A crate that ships generated sources in a package of its own
+//! (`oneiron-py`'s Python files) places them with [`place`].
+//!
+//! The digest covers every file the generator reads and the generator's identity: its source
+//! ([`GENERATOR_SOURCE_DIGEST`]), the lock file and manifests that decide its build, and the compiler. A change to
+//! any of them makes a new run. The run key covers the generator's source, `Cargo.lock`, the manifests and the
+//! compiler. It does not see a local override of the generator's dependencies (`[patch]` to a path, `paths` in
+//! `.cargo/config`, or `--config`). After changing one, delete `<target dir>/<profile>/sdk-generated`.
 //!
 //! Each run also leaves the agent-SDK reference (`types.md`, `facade-types.md`, `verbs.md`) in
 //! `<target dir>/<profile>/sdk-generated/agent-sdk/`, the local copy of what CI publishes.
-//!
-//! Python 3 is a build requirement until the generator is ported to Rust (FIX-LIST SDK-GENERATOR-RUST, the first
-//! row after the untangle). A build that cannot run it fails with the README section to read.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::{env, fs};
 
-/// Where a build that cannot run the generator is pointed.
-pub const README_SECTION: &str =
-    "README.md, section \"Building from source\" (Python 3 runs the SDK generator)";
+use oneiron_sdk_generator::{CRATES, GENERATOR_SOURCE_DIGEST, INPUTS, write_out_dir};
 
-/// The inputs the generator reads beside the Rust crates its type inventory parses (`CRATES` in
-/// `scripts/sdk/facade_types.py`, read from that file): the verb table and the generator, and the hand-written
-/// files whose names it reads.
-const INPUTS: &[&str] = &[
-    "scripts/sdk",
-    "packages/oneiron/src",
-    "packages/oneiron/scripts",
-    "packages/oneiron/README.md",
-    "crates/oneiron-py/python/oneiron",
-    "crates/oneiron-py/src",
-    "crates/oneiron-uniffi/src",
-    "crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs",
-];
-
-/// Generated files the package builds write into the input directories above (`PACKAGE_OUTPUTS` in
+/// Generated files the package builds write beside the generator's inputs (`PACKAGE_OUTPUTS` in
 /// `scripts/sdk/generate.py`). They are outputs, never inputs: the digest and the rerun list leave them out, so a
 /// package build that writes them does not make the next cargo build run the generator again.
 const PACKAGE_OUTPUTS: &[&str] = &[
@@ -58,8 +44,8 @@ const DOCS: &[&str] = &["types.md", "facade-types.md", "verbs.md"];
 ///
 /// # Panics
 ///
-/// When the workspace, `OUT_DIR` or an output cannot be found, or the generator cannot run or fails: a build
-/// script reports by panicking.
+/// When the workspace, `OUT_DIR` or an output cannot be found, or the generator fails (with the generator's
+/// message): a build script reports by panicking.
 pub fn generate(outputs: &[&str]) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("cargo sets OUT_DIR"));
     let placed: Vec<(&str, PathBuf)> = outputs
@@ -84,22 +70,24 @@ pub fn generate(outputs: &[&str]) {
 pub fn place(outputs: &[(&str, PathBuf)]) {
     let manifest =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"));
+    // The generator binary's rule for the repository root, from this crate's directory.
     let root = manifest
         .ancestors()
-        .find(|dir| dir.join("scripts/sdk/generate.py").is_file())
-        .unwrap_or_else(|| panic!("no scripts/sdk/generate.py above {}", manifest.display()))
+        .find(|dir| dir.join("scripts/sdk/verbs").is_dir())
+        .unwrap_or_else(|| panic!("no scripts/sdk/verbs above {}", manifest.display()))
         .to_path_buf();
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("cargo sets OUT_DIR"));
-    let files = input_files(&root);
+    let roots = input_roots(&root);
+    let files = input_files(&root, &roots);
     for file in &files {
         println!("cargo:rerun-if-changed={}", file.display());
     }
-    // A new verb is a new file: the directory itself is watched too.
-    println!(
-        "cargo:rerun-if-changed={}",
-        root.join("scripts/sdk/verbs").display()
-    );
-    println!("cargo:rerun-if-env-changed=ONEIRON_PYTHON");
+    // A new file (a verb, or a Rust file the type inventory reads) is in no list above, so every input directory is
+    // watched too: cargo scans a watched directory for any file added, removed or changed under it. Only directories
+    // that exist are named, because a missing path would rerun this on every build.
+    for dir in roots.iter().filter(|path| path.is_dir()) {
+        println!("cargo:rerun-if-changed={}", dir.display());
+    }
     let digest = digest(&root, &files);
     // OUT_DIR is <target dir>/[<triple>/]<profile>/build/<package>/out: the run is shared at the profile.
     let shared = out_dir
@@ -112,9 +100,8 @@ pub fn place(outputs: &[(&str, PathBuf)]) {
         run_generator(&root, &shared, &run);
     }
     for (output, to) in outputs {
-        let text = fs::read(run.join(output)).unwrap_or_else(|error| {
-            panic!("the SDK generator wrote no {output} ({error}); see {README_SECTION}")
-        });
+        let text = fs::read(run.join(output))
+            .unwrap_or_else(|error| panic!("the SDK generator wrote no {output} ({error})"));
         write_if_changed(to, &text);
     }
     for name in DOCS {
@@ -135,27 +122,22 @@ fn write_if_changed(to: &Path, text: &[u8]) {
     fs::write(to, text).unwrap_or_else(|error| panic!("write {} ({error})", to.display()));
 }
 
-/// Every input file: under the fixed inputs and each crate source directory `facade_types.py` lists, generated
-/// outputs excluded.
-fn input_files(root: &Path) -> Vec<PathBuf> {
-    let facade_types = fs::read_to_string(root.join("scripts/sdk/facade_types.py"))
-        .expect("read scripts/sdk/facade_types.py");
-    let mut paths: Vec<PathBuf> = INPUTS.iter().map(|input| root.join(input)).collect();
-    let crates = facade_types
-        .split_once("CRATES = {")
-        .and_then(|(_, rest)| rest.split_once('}'))
-        .expect("facade_types.py declares CRATES")
-        .0;
-    for line in crates.lines() {
-        if let Some((_, rest)) = line.split_once(": '")
-            && let Some((dir, _)) = rest.split_once('\'')
-        {
-            paths.push(root.join(dir));
-        }
-    }
+/// What the generator reads: its fixed inputs (`INPUTS`, files and the verb directory) and the crate source
+/// directories its type inventory reads (`CRATES`).
+fn input_roots(root: &Path) -> Vec<PathBuf> {
+    INPUTS
+        .iter()
+        .copied()
+        .chain(CRATES.iter().map(|(_, dir)| *dir))
+        .map(|path| root.join(path))
+        .collect()
+}
+
+/// Every input file under `roots`, generated outputs excluded.
+fn input_files(root: &Path, roots: &[PathBuf]) -> Vec<PathBuf> {
     let generated: Vec<PathBuf> = PACKAGE_OUTPUTS.iter().map(|path| root.join(path)).collect();
     let mut files = Vec::new();
-    for path in &paths {
+    for path in roots {
         collect(path, &generated, &mut files);
     }
     files.sort();
@@ -163,14 +145,62 @@ fn input_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// A digest of every input file's path and bytes.
+/// The files that decide how the generator was built, beside its source: the lock file (the resolved versions of its
+/// dependencies), the workspace manifest (their declared features, the profiles) and its own manifest. They are read
+/// here, not watched: a change to them that changes the generator rebuilds it, which rebuilds and reruns every build
+/// script that calls this crate, and the digest then names a new run. A change that rebuilds nothing changes no
+/// generator.
+const GENERATOR_BUILD_FILES: &[&str] = &[
+    "Cargo.lock",
+    "Cargo.toml",
+    "crates/oneiron-sdk-generator/Cargo.toml",
+];
+
+/// A digest of the generator's identity and every input file's path and bytes, so a run directory an older generator
+/// wrote is not reused. The identity is the generator's own source (`GENERATOR_SOURCE_DIGEST`), the files that decide
+/// its build (`GENERATOR_BUILD_FILES`) and the compiler that built it (the local overrides the module doc names
+/// excepted).
 fn digest(root: &Path, files: &[PathBuf]) -> u64 {
     let mut hasher = DefaultHasher::new();
+    GENERATOR_SOURCE_DIGEST.hash(&mut hasher);
+    for file in GENERATOR_BUILD_FILES {
+        file.hash(&mut hasher);
+        fs::read(root.join(file))
+            .unwrap_or_default()
+            .hash(&mut hasher);
+    }
+    compiler_version().hash(&mut hasher);
     for file in files {
         file.strip_prefix(root).unwrap_or(file).hash(&mut hasher);
         fs::read(file).unwrap_or_default().hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// `$RUSTC -vV`: the release, commit and host of the compiler cargo builds with (and so built the generator). A new
+/// compiler rebuilds every build script, so this is asked again then.
+///
+/// # Panics
+///
+/// When the compiler cannot be asked: an unknown compiler cannot name a run, and an empty answer would match the
+/// run another compiler's generator wrote.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a build script asks the compiler cargo names for its version; oneiron_spawn is the engine's spawn path"
+)]
+fn compiler_version() -> Vec<u8> {
+    let rustc = env::var_os("RUSTC").expect("cargo sets RUSTC");
+    let output = std::process::Command::new(&rustc)
+        .arg("-vV")
+        .output()
+        .unwrap_or_else(|error| panic!("run `{} -vV` ({error})", rustc.display()));
+    assert!(
+        output.status.success(),
+        "`{} -vV` failed ({})",
+        rustc.display(),
+        output.status
+    );
+    output.stdout
 }
 
 fn collect(path: &Path, generated: &[PathBuf], files: &mut Vec<PathBuf>) {
@@ -198,7 +228,8 @@ fn collect(path: &Path, generated: &[PathBuf], files: &mut Vec<PathBuf>) {
 }
 
 /// Runs the generator into a private directory and publishes it as `run`. Two builds that race publish the same
-/// bytes; the loser's directory is dropped.
+/// bytes; the loser's directory is dropped. The generator runs in this process (`write_out_dir`, on a thread of its
+/// own with a 256 MiB stack); a failure panics with its message.
 fn run_generator(root: &Path, shared: &Path, run: &Path) {
     fs::create_dir_all(shared).expect("create the shared SDK output directory");
     let staging = shared.join(format!(
@@ -209,22 +240,7 @@ fn run_generator(root: &Path, shared: &Path, run: &Path) {
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&staging);
-    let python = env::var("ONEIRON_PYTHON")
-        .unwrap_or_else(|_| if cfg!(windows) { "python" } else { "python3" }.to_owned());
-    let status = Command::new(&python)
-        .arg(root.join("scripts/sdk/generate.py"))
-        .arg("--out-dir")
-        .arg(&staging)
-        .current_dir(root)
-        .status()
-        .unwrap_or_else(|error| {
-            panic!("could not run `{python}` for the SDK generator ({error}); see {README_SECTION}")
-        });
-    assert!(
-        status.success(),
-        "the SDK generator failed ({status}); run `{python} scripts/sdk/generate.py --out-dir <dir>` to see why; \
-         see {README_SECTION}"
-    );
+    write_out_dir(root, &staging).unwrap_or_else(|error| panic!("{error}"));
     fs::write(staging.join(".complete"), b"").expect("mark the SDK run complete");
     if fs::rename(&staging, run).is_err() {
         let _ = fs::remove_dir_all(&staging);

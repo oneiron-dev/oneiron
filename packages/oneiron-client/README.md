@@ -54,7 +54,9 @@ bun add @oneiron/client
 `main`, `types`, and the `.` export resolve to `./src/index.ts`; `./facade`
 and `./facade-types` resolve to the generated tree and declarations alone.
 The published package includes those generated files. A source checkout runs
-`bun run prepare` once before importing it.
+`bun run prepare` once before importing it. That script writes them with
+`cargo run -p oneiron-sdk-generator -- --package oneiron-client`, so it needs
+Rust's `cargo` on `PATH`.
 
 ## Use
 

@@ -8818,6 +8818,9 @@ version = "0.1.0"
 [[package]]
 name = "oneiron-sdk-build"
 version = "0.1.0"
+dependencies = [
+ "oneiron-sdk-generator",
+]
 
 [[package]]
 name = "oneiron-sdk-generator"
