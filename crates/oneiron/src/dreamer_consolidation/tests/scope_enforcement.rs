@@ -2,6 +2,36 @@ use super::super::resources::BranchResources;
 use super::*;
 use crate::llm::{Scope, ScopeResource};
 
+/// The partition key of a queued one-part branch. `decode_partition_payload`
+/// returns the whole branch plan since FIX 7524 (d967859a39c).
+fn queued_partition(input: &rmpv::Value) -> Result<ConsolidationPartitionKey> {
+    let queued = decode_partition_payload(input)?;
+    let [part] = queued.parts.as_slice() else {
+        return Err(Error::InvalidConfig("a one-part branch".into()));
+    };
+    Ok(queued.part_key(part.conversation_ref))
+}
+
+/// The one-part branch `BranchResources::open` reads `turns` of `partition`
+/// as. Its output, signals and gap keys replaced the free projection
+/// functions of `resources` (FIX 7524, d967859a39c), byte for byte.
+fn one_part_branch(
+    partition: &ConsolidationPartitionKey,
+    turns: &[EntityId],
+) -> ConsolidationBranchPlan<EntityId> {
+    ConsolidationBranchPlan {
+        world_ref: partition.world_ref,
+        facet_ref: partition.facet_ref,
+        thing: None,
+        parts: vec![ConversationPart {
+            conversation_ref: partition.conversation_ref,
+            turns: turns.to_vec(),
+            watermark_last_learned_at: 0,
+            line: 0,
+        }],
+    }
+}
+
 #[test]
 fn branch_resources_enforce_exact_reads_writes_and_revisions() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -12,7 +42,7 @@ fn branch_resources_enforce_exact_reads_writes_and_revisions() -> Result<()> {
         0x42,
         &[("user", "a source in this partition")],
     )?;
-    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let partition = queued_partition(&attempt.status.payload.input)?;
     let branch = BranchResources::open(
         &vault,
         vault.dreamer_authority()?,
@@ -134,7 +164,7 @@ fn assembly_preserves_stricter_internal_taint_after_parent_reread() -> Result<()
     let store = DreamerRunnerStore::new(&vault);
     let (attempt, turns, conversation) =
         admitted_attempt_fixture(&vault, &store, 0x41, &[("user", "one cited statement")])?;
-    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let partition = queued_partition(&attempt.status.payload.input)?;
     let snapshot = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
     let branch = BranchResources::open_at_pin(
         &vault,
@@ -205,6 +235,8 @@ fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<
                                 ModelId::new(format!("local/{role:?}@local-r1")).unwrap(),
                             )])
                         },
+                        disposition: None,
+                        reads_audio: false,
                     },
                 )
             })
@@ -237,10 +269,13 @@ fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
     let mut executor = ConsolidationExecutor {
         roles: Default::default(),
@@ -252,6 +287,7 @@ fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx)),
@@ -290,10 +326,13 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
     let mut executor = ConsolidationExecutor {
         roles: Default::default(),
@@ -305,6 +344,7 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx))?,
@@ -338,12 +378,10 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
 
     // Missing output permission refuses before a model call or sink write.
     let mut no_signals = scope.clone();
-    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let partition = queued_partition(&attempt.status.payload.input)?;
     no_signals
         .readable
-        .remove(&super::super::resources::signals_projection(
-            &partition, &turns,
-        ));
+        .remove(&one_part_branch(&partition, &turns).signals_resource());
     let mut no_output = scope;
     no_output.writable.clear();
     let backend = ScriptedBackend::new(Vec::new());
@@ -357,6 +395,7 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         sink: &mut sink,
         inference: test_inference_host(),
         scope: Some(no_output),
+        decisions: ConsolidationDecisions::shipped()?,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx)),
@@ -400,7 +439,7 @@ fn scoped_signals_preserve_ranking_and_filter_foreign_and_private_refs() -> Resu
     let store = DreamerRunnerStore::new(&vault);
     let (attempt, turns, conversation) =
         admitted_attempt_fixture(&vault, &store, 0x44, &[("user", "an admitted source")])?;
-    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let partition = queued_partition(&attempt.status.payload.input)?;
     let mut candidates = Vec::new();
     for _ in 0..2 {
         let subject = EntityId::now();
@@ -500,9 +539,7 @@ fn scoped_signals_preserve_ranking_and_filter_foreign_and_private_refs() -> Resu
     // Resource loss is a refusal, not a successful neutral-scoring run.
     scope
         .readable
-        .remove(&super::super::resources::signals_projection(
-            &partition, &turns,
-        ));
+        .remove(&one_part_branch(&partition, &turns).signals_resource());
     assert!(matches!(
         branch.candidate_signals(&scope, winner),
         Err(Error::InvalidClaimBody(_))
@@ -591,14 +628,18 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             sink: &mut sink,
             inference: test_inference_host(),
             scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         };
         let result = block_on_ready(executor.execute(&attempt, &mut ctx));
         if resolution == "missing" {
@@ -691,12 +732,15 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     scope
         .writable
         .remove(&super::super::gap::branch_gap_projection(
-            &partition,
+            &one_part_branch(&partition, &turns),
             initial.scope(),
         ));
     scope
         .writable
-        .insert(super::super::gap::branch_gap_projection(&partition, &scope));
+        .insert(super::super::gap::branch_gap_projection(
+            &one_part_branch(&partition, &turns),
+            &scope,
+        ));
     let plan = ConsolidationPartitionPlan {
         key: partition,
         turns: vec![WorkingSetTurn {
@@ -710,11 +754,11 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     };
     assert_eq!(
         plan.output_resource(),
-        super::super::resources::output_projection(&partition, &turns)
+        one_part_branch(&partition, &turns).output_resource()
     );
     assert_eq!(
         plan.signals_resource(),
-        super::super::resources::signals_projection(&partition, &turns)
+        one_part_branch(&partition, &turns).signals_resource()
     );
     store.enqueue_consolidation(crate::dreamer_runner::EnqueueDreamerConsolidationAttempt {
         scope: DreamerConsolidationScope::Micro,
@@ -806,7 +850,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     };
     assert_eq!(child_plan.scope(), Some(&scope));
 
-    let (decoded_key, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let decoded_key = queued_partition(&attempt.status.payload.input)?;
     assert_eq!(decoded_key, partition);
     let branch = BranchResources::open(
         &vault,
@@ -868,14 +912,18 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx))?,
@@ -918,7 +966,7 @@ fn graph_signals_enforce_relationship_and_exact_project_slice() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let (attempt, turns, _) = admitted_attempt_fixture(&vault, &store, 0x48, &[("user", "slice")])?;
-    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let partition = queued_partition(&attempt.status.payload.input)?;
     let relationship = EntityId::now();
     let other_relationship = EntityId::now();
     for id in [relationship, other_relationship] {
@@ -1031,7 +1079,7 @@ fn production_epoch_timestamps_hold_then_release_and_rank_source_diversity() -> 
             &bytes,
         )?;
     }
-    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let partition = queued_partition(&attempt.status.payload.input)?;
     let branch = BranchResources::open(
         &vault,
         vault.dreamer_authority()?,
@@ -1164,7 +1212,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             ..Default::default()
         })?;
         let caller_scope = if caller_bounded {
-            let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+            let partition = queued_partition(&attempt.status.payload.input)?;
             Some(
                 BranchResources::open(
                     &vault,
@@ -1202,10 +1250,13 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
         let mut ctx = WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         };
         let result = {
             let mut executor = ConsolidationExecutor {
@@ -1218,6 +1269,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
                 sink: &mut sink,
                 inference: test_inference_host(),
                 scope: caller_scope,
+                decisions: ConsolidationDecisions::shipped()?,
             };
             block_on_ready(executor.execute(&attempt, &mut ctx))?
         };
@@ -1280,6 +1332,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             sink: &mut sink,
             inference: test_inference_host(),
             scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
         };
         let outcome = block_on_ready(executor.execute(&next, &mut ctx));
         drop(executor);
@@ -1312,7 +1365,7 @@ fn admitted_branch_does_not_infer_read_authority_from_its_queue() -> Result<()> 
     let store = DreamerRunnerStore::new(&vault);
     let (attempt, turns, _) =
         admitted_attempt_fixture(&vault, &store, 0x49, &[("user", "read grant required")])?;
-    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let partition = queued_partition(&attempt.status.payload.input)?;
     assert!(matches!(
         BranchResources::open(
             &vault,
@@ -1363,7 +1416,7 @@ fn dreamer_consolidation_reads_keep_their_receipts() -> Result<()> {
     let store = DreamerRunnerStore::new(&vault);
     let (attempt, turns, _) =
         admitted_attempt_fixture(&vault, &store, 0x4D, &[("user", "a receipted source")])?;
-    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let partition = queued_partition(&attempt.status.payload.input)?;
     let subject = EntityId::now();
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"subject")?;
     // A private diary about the subject: stored, never the Dreamer's to read.
@@ -1473,10 +1526,13 @@ fn two_projects_in_one_partition_never_merge_and_keep_their_source_project() -> 
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
     let mut executor = ConsolidationExecutor {
         roles: Default::default(),
@@ -1488,6 +1544,7 @@ fn two_projects_in_one_partition_never_merge_and_keep_their_source_project() -> 
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx))?,

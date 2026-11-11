@@ -5,8 +5,13 @@
 //! build reaches them. Hidden; never API.
 
 pub mod coach;
+pub mod code_reply_healer;
+pub mod code_run_answer;
 pub mod consolidation;
+pub mod dag_append;
+pub mod label_writers;
 pub mod live_run_claim_put;
+pub mod retrieval_policy_default_floor;
 pub mod run_hold;
 pub mod steward;
 pub mod substrate_reads;

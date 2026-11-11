@@ -11,8 +11,18 @@ pub use crate::write_envelope::voice_segment::{
 mod tests {
     use super::*;
 
-    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+    use rmpv::Value;
+
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     use crate::test_util::entity;
+
+    // The value keys by their place in the public key list: the store keeps
+    // its own names for them private (write_envelope/voice_segment.rs).
+    const KEY_SPAN_START: &str = VOICE_SEGMENT_VALUE_KEYS[0];
+    const KEY_SPAN_END: &str = VOICE_SEGMENT_VALUE_KEYS[1];
+    const KEY_CHANNELS: &str = VOICE_SEGMENT_VALUE_KEYS[2];
+    const KEY_AEC_MODE: &str = VOICE_SEGMENT_VALUE_KEYS[3];
+    const KEY_DEVICE: &str = VOICE_SEGMENT_VALUE_KEYS[4];
 
     /// A well-formed value, then mutated per case — every rejection test
     /// differs from the accepted body in exactly one way.

@@ -143,16 +143,16 @@ fn fold_rejects_re_root_reusing_existing_key() {
 #[test]
 fn dangling_sibling_does_not_block_valid_ancestor() {
     let owner = ed_key(50);
-    let genesis = genesis_entry(50, 86_400, 1);
+    let genesis = genesis_entry(50, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
-    let ready = set_tier_floor_entry(vault_id, &genesis, &owner, 1, AuthorityTier::Hardware);
+    let ready = enroll_entry(vault_id, &genesis, &owner, 51, 1, 888);
     let dangling = sign_ed(
         unsigned_entry(
             Some(vault_id),
             1,
             vec![[0xDA; 32]],
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::CloudCustodial,
+            AuthorityOp::SlipRevoke {
+                slip_id: [0xDA; 32],
             },
             authority_key_from_ed(&owner),
             3,
@@ -165,7 +165,6 @@ fn dangling_sibling_does_not_block_valid_ancestor() {
     let fold = fold_legacy_authority_log(&[dangling, ready, genesis]);
     assert!(fold.valid_entries.contains(&ready_hash));
     assert!(!fold.valid_entries.contains(&dangling_hash));
-    assert_eq!(fold.tier_floor, Some(AuthorityTier::Hardware));
     assert!(fold.issues.iter().any(|issue| matches!(
         issue,
         AuthorityFoldIssue::InvalidAncestry(hash) if *hash == dangling_hash
@@ -176,7 +175,7 @@ fn dangling_sibling_does_not_block_valid_ancestor() {
 fn fold_rejects_revoke_without_surviving_quorum() {
     let owner = ed_key(14);
     let revoked_signer = ed_key(15);
-    let genesis = genesis_entry(14, 86_400, 1);
+    let genesis = genesis_entry(14, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enroll = enroll_entry(vault_id, &genesis, &owner, 15, 1, 2);
     let revoke = revoke_entry(
@@ -198,7 +197,7 @@ fn fold_rejects_revoke_without_surviving_quorum() {
 #[test]
 fn same_signer_same_sequence_siblings_fold_by_ancestry_without_quarantine() {
     let owner = ed_key(16);
-    let genesis = genesis_entry(16, 86_400, 1);
+    let genesis = genesis_entry(16, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let left = enroll_entry(vault_id, &genesis, &owner, 17, 1, 2);
     let right = enroll_entry(vault_id, &genesis, &owner, 18, 1, 3);
@@ -222,8 +221,8 @@ fn same_signer_same_sequence_siblings_fold_by_ancestry_without_quarantine() {
 
 #[test]
 fn fold_rejects_cross_vault_root_contamination() {
-    let local = genesis_entry(26, 86_400, 1);
-    let foreign = genesis_entry(27, 86_400, 1);
+    let local = genesis_entry(26, 1);
+    let foreign = genesis_entry(27, 1);
 
     let fold = fold_authority_log(&[local, foreign]);
     assert_eq!(fold.vault_id, None);
