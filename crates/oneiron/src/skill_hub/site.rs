@@ -206,11 +206,23 @@ impl Vault {
 
     /// `id`'s record and stored files while it is a live, shared, loadable
     /// skill with a runtime package, read on `txn`; `None` otherwise.
-    fn loadable_skill_files_in_txn(
+    pub(crate) fn loadable_skill_files_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<(SkillRecord, Vec<HubFile>)>> {
+        Ok(self
+            .loadable_skill_package_in_txn(txn, id)?
+            .map(|(record, package)| (record, package.files)))
+    }
+
+    /// `id`'s record and runtime package while it is a live, shared,
+    /// loadable skill with one, read on `txn`; `None` otherwise.
+    pub(crate) fn loadable_skill_package_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<(SkillRecord, super::HubPackage)>> {
         if crate::vault::live_entity_row_in_txn(&self.store, txn, id)?.live_type()
             != Some(ENTITY_TYPE_SKILL)
         {
@@ -224,7 +236,7 @@ impl Vault {
         }
         Ok(self
             .runtime_skill_package_in_txn(txn, id, &record)?
-            .map(|package| (record, package.files)))
+            .map(|package| (record, package)))
     }
 
     /// Where `skill`'s files came from, as its import recorded them, as the

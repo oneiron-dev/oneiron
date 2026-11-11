@@ -187,10 +187,23 @@ pub(super) fn world_meet(
     world: EntityId,
     view: StandingView,
 ) -> PrivacyMeet {
+    match standing.state().worlds.get(&world) {
+        Some(frontier) => frontier_meet(frontier, |hash, edit| {
+            full_strength(standing, hash, edit, view)
+        }),
+        None => PrivacyMeet::of(&WorldPrivacy::default()),
+    }
+}
+
+/// [`world_meet`] over `frontier`, where `strong` says whether an edit
+/// counts at full strength: the fold asks its standing
+/// ([`full_strength`]); a view that holds agent edits refused asks the
+/// verdicts the fold kept for them ([`super::agent_world_undo`], FIX 22381).
+pub(super) fn frontier_meet(
+    frontier: &WorldFrontier,
+    mut strong: impl FnMut(&AuthorityEntryHash, &FrontierEdit) -> bool,
+) -> PrivacyMeet {
     let default = || PrivacyMeet::of(&WorldPrivacy::default());
-    let Some(frontier) = standing.state().worlds.get(&world) else {
-        return default();
-    };
     let Some(first) = frontier.live.values().next() else {
         return default();
     };
@@ -201,7 +214,7 @@ pub(super) fn world_meet(
         #[cfg(test)]
         WORLD_MEET_VISITS.with(|visits| visits.set(visits.get() + 1));
         meet.meet_with(&PrivacyMeet::of(&edit.settings));
-        if visited.insert(*hash) && !full_strength(standing, hash, edit, view) {
+        if visited.insert(*hash) && !strong(hash, edit) {
             pending.push(edit.as_ref());
         }
     }
@@ -223,7 +236,7 @@ pub(super) fn world_meet(
             #[cfg(test)]
             WORLD_MEET_VISITS.with(|visits| visits.set(visits.get() + 1));
             meet.meet_with(&PrivacyMeet::of(&prior.settings));
-            if !full_strength(standing, replaced, prior, view) {
+            if !strong(replaced, prior) {
                 pending.push(prior.as_ref());
             }
         }
@@ -241,19 +254,28 @@ pub(super) fn read_under(
     world: EntityId,
     admitter: MachineAdmitter,
 ) -> EffectiveRead {
-    let disputed = standing.state().worlds.get(&world).is_some_and(|frontier| {
-        frontier
-            .live
-            .values()
-            .chain(frontier.superseded.values())
-            .any(|edit| edit.disputed)
-    });
+    let empty = WorldFrontier::default();
+    let frontier = standing.state().worlds.get(&world).unwrap_or(&empty);
+    frontier_read(frontier, |hash, edit| {
+        full_strength(standing, hash, edit, StandingView::Under(admitter))
+    })
+}
+
+/// [`read_under`] over `frontier`, `strong` judging each edit as in
+/// [`frontier_meet`].
+pub(super) fn frontier_read(
+    frontier: &WorldFrontier,
+    strong: impl FnMut(&AuthorityEntryHash, &FrontierEdit) -> bool,
+) -> EffectiveRead {
+    let disputed = frontier
+        .live
+        .values()
+        .chain(frontier.superseded.values())
+        .any(|edit| edit.disputed);
     if disputed {
         return EffectiveWorldPrivacy::unknowable().read;
     }
-    world_meet(standing, world, StandingView::Under(admitter))
-        .effective()
-        .read
+    frontier_meet(frontier, strong).effective().read
 }
 
 /// The `WorldPrivacy` transition, after the shape, signature, retired,
