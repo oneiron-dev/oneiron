@@ -151,7 +151,11 @@ pub fn diagnostic_evidence(
     memory: &Memory<'_>,
     input: &DiagnosticEvidenceRequest,
 ) -> MemoryResult<DiagnosticEvidence> {
-    admit_substrate_read(memory, "vault.diagnostics.evidence", SubstrateRead::Evidence)?;
+    admit_substrate_read(
+        memory,
+        "vault.diagnostics.evidence",
+        SubstrateRead::Evidence,
+    )?;
     let run = input
         .run_ref
         .as_deref()

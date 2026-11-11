@@ -655,7 +655,11 @@ pub fn put_learning_setting_embedded(
     input: LearningSettingPut,
 ) -> crate::memory::MemoryResult<LearningSettingsView> {
     match memory.embedded_owner("vault.settings.learning.put") {
-        Ok(owner) => Ok(put_learning_setting_as_owner(memory.vault(), &owner, input)?),
+        Ok(owner) => Ok(put_learning_setting_as_owner(
+            memory.vault(),
+            &owner,
+            input,
+        )?),
         Err(_) => put_learning_setting_as_holder(
             memory.vault(),
             WriteActor::new(memory.actor(), memory.actor_class()),
@@ -676,7 +680,11 @@ pub fn clear_learning_setting_embedded(
     input: LearningSettingClear,
 ) -> crate::memory::MemoryResult<LearningSettingsView> {
     match memory.embedded_owner("vault.settings.learning.clear") {
-        Ok(owner) => Ok(clear_learning_setting_as_owner(memory.vault(), &owner, input)?),
+        Ok(owner) => Ok(clear_learning_setting_as_owner(
+            memory.vault(),
+            &owner,
+            input,
+        )?),
         Err(_) => clear_learning_setting_as_holder(
             memory.vault(),
             WriteActor::new(memory.actor(), memory.actor_class()),
