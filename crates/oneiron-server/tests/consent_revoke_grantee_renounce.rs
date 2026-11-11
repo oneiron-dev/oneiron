@@ -19,8 +19,12 @@
 //! Deterministic: in-process vault and router (`oneshot`, no TCP ports, no
 //! sleeps, no models). Each case owns its vault.
 //!
-//! Fleet command: `cargo test --locked -p oneiron-server --test
-//! consent_revoke_grantee_renounce` (no test doors, no extra cfg).
+//! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test
+//! --locked -p oneiron-server --all-features --features oneiron/test-support
+//! --test consent_revoke_grantee_renounce`. The test calls no test door.
+//! It needs `oneiron/test-support` for `MemoryKeystore` (the feature turns
+//! on `oneiron-keystore/test-keystore`), and the cfg compiles the lib's
+//! test doors, which need the same feature.
 use axum::{
     Router,
     body::{Body, to_bytes},
