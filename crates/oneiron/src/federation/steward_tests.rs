@@ -126,8 +126,10 @@ fn a_steward_cannot_widen_a_grant() {
             .is_err()
     );
 
-    // No policy row raises it: a role default and a holder row naming every
-    // verb still meet the Steward's structural ceiling.
+    // No policy row raises it past its structural ceiling: a role default
+    // and a holder row naming every verb meet it at the four verbs and
+    // engine.controls (6.6), an owner's row to give. Still no admin power,
+    // no `write`.
     let rows = [
         grant_policy::GrantPolicyRow::PrecedenceNestedNarrowing,
         grant_policy::GrantPolicyRow::RoleDefault {
@@ -143,7 +145,15 @@ fn a_steward_cannot_widen_a_grant() {
     ];
     let resolved =
         grant_policy::resolved_scope(&rows, FederationGrantRole::Steward, SHARED, steward).unwrap();
-    assert_eq!(resolved.verbs, steward_verbs());
+    assert_eq!(
+        resolved.verbs,
+        ScopeAxis::Some(
+            grant_scope::STEWARD_CEILING_VERBS
+                .iter()
+                .map(|verb| (*verb).to_owned())
+                .collect()
+        )
+    );
     for power in ["admin", "write", "org:add-member", "org:assign-role"] {
         assert!(!resolved.verbs.contains(&power.to_owned()));
     }
