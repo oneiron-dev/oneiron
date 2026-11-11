@@ -9,3 +9,11 @@
 pub fn concurrent_agent_world_edits_read(refused: &[usize]) -> String {
     crate::authority::world_undo_door::concurrent_agent_world_edits_read(refused)
 }
+
+/// FIX 22381 (review P1-1 of #7075): one world that one agent edited twice under one Grant, each edit carried by
+/// the same machine: `MyMachines`, then `OneMachine(m)` on it, which replaced the first. Folds the log, holds back
+/// the edits at `refused` (indices into that order) as a view whose rows hold their Grants refused does, and answers
+/// the world's read as its `Debug` text.
+pub fn sequential_agent_world_edits_read(refused: &[usize]) -> String {
+    crate::authority::world_undo_door::sequential_agent_world_edits_read(refused)
+}
