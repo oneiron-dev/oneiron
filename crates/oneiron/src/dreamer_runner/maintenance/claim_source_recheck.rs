@@ -14,8 +14,11 @@
 //! is judged once, by its ref, revision and subject, with every record it and
 //! its live support assertions cite as they stand now, the provider's hold on
 //! each, and the words of each TURN the Dreamer may read. The judge answers
-//! `supported`, `weakened` or `unsupported`. A claim not yet approved, or one
-//! the Dreamer's read withholds, stays owed: the job waits and reads again.
+//! `supported`, `weakened` or `unsupported`, as a registered question on the
+//! host's decision ladder (ARCH-0076 #decide-required, DECIDE-BYPASS-1): the
+//! judge's generated read is the ladder's one rung, and only the typed answer
+//! is the verdict. A claim not yet approved, or one the Dreamer's read
+//! withholds, stays owed: the job waits and reads again.
 //!
 //! A verdict changes belief only through the curator's own doors: a weaker
 //! support moves the claim one rung down its demotion ladder, none left
@@ -32,6 +35,7 @@
 //! ids, hashes and the verdict, never the judge's words or the message's.
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -45,15 +49,21 @@ use crate::dreamer_wake::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::inference_context::HostInferenceContext;
-use crate::llm::call_as_step;
+use crate::llm::decision::{DecisionLadder, GeneratedDecisions, GeneratedRung, GeneratedStep};
 use crate::model_binding::ModelRole;
-use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
+use crate::model_decision::catalogue::CLAIM_SOURCE_SUPPORT;
+use crate::model_decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
+    DecisionQuestion, DecisionRung, ProviderPin, Reversibility,
+};
+use crate::model_step_context::{DurableStepContext, StepEffectBinding};
 use crate::model_step_error::DurableStepError;
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ModelId, ModelLocality, ModelTierRef,
-    ResponseFormat, TierPrecedence,
+    LlmMessageRole, LlmRequest, LlmUsage, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence,
 };
 
 mod landing;
@@ -76,6 +86,9 @@ const UNLENT_REASON: &str = "no host lends this pass a claim re-check";
 
 /// Why a re-check parks when its durable step suspended it.
 const TRAPPED_REASON: &str = "durable step trapped for resume";
+
+/// Why a re-check waits when the judge's read came back with no reply.
+const UNREAD_REASON: &str = "the claim re-check judge's read came back unread";
 
 /// Why a re-check waits with a claim it found still owed: one not yet
 /// approved, or one the Dreamer's read withholds.
@@ -176,7 +189,7 @@ pub(crate) fn queue_claim_source_recheck_in_txn(
 }
 
 /// What the host lends one re-check: the judging model on its own route and
-/// meter, and the rubric it judges by.
+/// meter, the rubric it judges by, and the decision ladder that asks it.
 pub struct ClaimSourceRecheckModel<'a> {
     pub backend: &'a dyn LlmBackend,
     pub guard: &'a BudgetGuard,
@@ -186,6 +199,35 @@ pub struct ClaimSourceRecheckModel<'a> {
     pub role: ModelRole,
     /// The host's rubric: prompt data, never engine prose.
     pub rubric: &'a str,
+    /// The host's decision path for each claim's verdict.
+    pub decisions: ClaimSourceRecheckDecisions<'a>,
+}
+
+/// The host's decision path for a claim's verdict (ARCH-0076
+/// #decide-required): its shared ladder, the bands an answer is read under,
+/// and its wording of the question. A host with no ladder to lend lends no
+/// re-check: it waits ([`unlent`]), never judged outside the ladder.
+pub struct ClaimSourceRecheckDecisions<'a> {
+    /// The host's shared decision ladder.
+    pub ladder: DecisionLadder<'a>,
+    /// The bands an answer is read under.
+    pub bands: DecisionBandPolicy,
+    /// The host's wording of the support question: prompt data, never
+    /// engine prose.
+    pub wording: String,
+}
+
+/// The dial a claim's question climbs: the judge's generated read at the Big
+/// rung, with no stronger rung and no person above it. The read quotes the
+/// kept mail's words in an uncaptured step of this attempt (fix list row
+/// 20501); a stronger seat or a person's ask would hold them outside it. One
+/// read also keeps the spend at one booked generation per claim, as before.
+fn dial() -> DecisionDial {
+    DecisionDial {
+        first: DecisionRung::Big,
+        ceiling: DecisionRung::Big,
+        band: DecisionBand::default(),
+    }
 }
 
 /// A re-check whose host lends no judge stays queued, never judged as
@@ -256,22 +298,35 @@ pub async fn run_claim_source_recheck(
     let keyless = model.inference.selected_keyless();
     let mut spend = Spend::default();
     let mut moot = false;
+    // Keyed by the rubric the judge reads by: a new rubric is a new question
+    // with its own bands.
+    let rubric = blake3::hash(model.rubric.as_bytes());
+    let question = CLAIM_SOURCE_SUPPORT.question(
+        &[rubric.as_bytes().as_slice()],
+        model.decisions.wording.clone(),
+        AnswerContract::Choice {
+            options: [Verdict::Supported, Verdict::Weakened, Verdict::Unsupported]
+                .map(|verdict| verdict.as_str().to_owned())
+                .to_vec(),
+        },
+    )?;
     for ask in &read.asks {
-        let request = noted(
-            judge_request(&model, &ask.input, locality, keyless),
-            &spend,
+        let asked = ask_judge(
+            attempt,
             ctx,
-        )?;
-        let judging = match noted(
-            ask_judge(attempt, ctx, &model, request, ask.head).await,
-            &spend,
-            ctx,
-        )? {
+            &model,
+            &question,
+            ask,
+            (locality, keyless),
+            &mut spend,
+        )
+        .await;
+        let judging = match noted(asked, &spend, ctx)? {
             Asked::Answered(judging) => judging,
             Asked::Trapped => return Ok(spend.park(TRAPPED_REASON, DreamerParkCause::Signal)),
+            Asked::Unread => return Ok(spend.park(UNREAD_REASON, DreamerParkCause::Retry)),
             Asked::Failed(error) => return spend.parked_on(error, ctx),
         };
-        spend.add(&judging);
         let judge = judging.judge(&model);
         let landed = noted(
             landing::land(
@@ -279,7 +334,7 @@ pub async fn run_claim_source_recheck(
                 attempt_id,
                 &declaration,
                 ask,
-                verdict_of(&judging.response),
+                judging.verdict,
                 &judge,
                 &read.rubric,
                 now,
@@ -322,32 +377,20 @@ fn settle(vault: &Vault, declaration: &ClaimSourceRecheckDeclaration, now: u64) 
     })
 }
 
-/// The judge's reply shape: a verdict alone. The durable step keeps its
-/// reply under the claim, not under the mail it read, so a reply with free
-/// text could keep the kept mail's words past their erase (fix list row
-/// 20501): the reply has no field for words.
-fn reply_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object", "additionalProperties": false,
-        "required": ["verdict"],
-        "properties": {
-            "verdict": {"type": "string", "enum": ["supported", "weakened", "unsupported"]}
-        }
-    })
-}
-
-/// The judge's call: the host's rubric, then the claim and its supports.
-/// The message's retained words leave the vault as an extraction's do, so
-/// they pass the same egress gate.
-fn judge_request(
+/// The judge's request before the ladder's turn: the host's rubric alone.
+/// The ladder adds the question and the claim with its supports as the
+/// call's state, and sets the reply's shape, a weight per verdict and no
+/// field for words: the durable step keeps its reply under the claim, not
+/// under the mail it read, so a reply with free text could keep the kept
+/// mail's words past their erase (fix list row 20501). The message's
+/// retained words leave the vault as an extraction's do, so they pass the
+/// same egress gate.
+fn judge_shell(
     model: &ClaimSourceRecheckModel<'_>,
-    input: &serde_json::Value,
     locality: ModelLocality,
     keyless: bool,
-) -> Result<LlmRequest> {
-    let input = serde_json::to_string(input)
-        .map_err(|_| Error::InvariantViolation("the re-check input did not encode"))?;
-    Ok(LlmRequest {
+) -> LlmRequest {
+    LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
@@ -359,135 +402,167 @@ fn judge_request(
                 ModelTierRef("consolidation".into()),
             ),
             response_format: ResponseFormat::Json {
-                schema: reply_schema(),
+                schema: serde_json::json!({}),
             },
             locality,
             host_keyless: keyless,
             host_paid: false,
         }
         .with_purpose_defaults(),
-        messages: vec![
-            LlmMessage {
-                role: LlmMessageRole::System,
-                content: vec![ContentPart::Text {
-                    text: model.rubric.to_owned(),
-                    signature: None,
-                }],
-            },
-            LlmMessage {
-                role: LlmMessageRole::User,
-                content: vec![ContentPart::Text {
-                    text: input,
-                    signature: None,
-                }],
-            },
-        ],
+        messages: vec![LlmMessage {
+            role: LlmMessageRole::System,
+            content: vec![ContentPart::Text {
+                text: model.rubric.to_owned(),
+                signature: None,
+            }],
+        }],
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
         host_segments: None,
-    })
+    }
 }
 
-/// One judge call's answer, as a durable step of its attempt.
+/// One claim's answer from the ladder: the verdict, the typed decision
+/// behind it, and the judge's step.
 struct Judging {
-    response: LlmResponse,
-    memoized: bool,
+    /// `None` for an abstention or an answer off the contract: no verdict.
+    verdict: Option<Verdict>,
+    /// The ladder's decision with its receipt: ids, pins, bands and
+    /// readings, never the judge's words or the message's.
+    decision: Option<serde_json::Value>,
     step_hash: [u8; 32],
-    /// The step's paid identity, booked once when it is not memoized.
-    binding: StepEffectBinding,
-    /// What it spent: nothing when memoized, paid for by the pass that
-    /// asked it.
-    units: u64,
+    usage: LlmUsage,
 }
 
 impl Judging {
-    /// The judge's model, step and usage, as a finding records them.
+    /// The judge's model, step, usage and decision, as a finding records
+    /// them.
     fn judge(&self, model: &ClaimSourceRecheckModel<'_>) -> serde_json::Value {
         serde_json::json!({
             "model": model.model.as_str(),
             "step_hash": bytes_to_hex_lower(&self.step_hash),
-            "usage_in": self.response.usage.input.total,
-            "usage_out": self.response.usage.output.total,
+            "usage_in": self.usage.input.total,
+            "usage_out": self.usage.output.total,
+            "decision": self.decision,
         })
     }
 }
 
-/// How one judge call ended.
+/// How one claim's question ended.
 enum Asked {
     Answered(Judging),
     /// The durable step suspended the attempt, to resume.
     Trapped,
+    /// The read came back with no reply; nothing was decided.
+    Unread,
     Failed(DurableStepError),
 }
 
-/// Asks the judge `request` about `subject`, as a durable step of
-/// `attempt`, admitted on the host's role.
+/// Asks the ladder `question` about `ask`'s claim, the judge's read a
+/// durable step of `attempt` admitted on the host's role, its words
+/// uncaptured. Each generation that finished is booked on `spend`, whatever
+/// the outcome.
 async fn ask_judge(
     attempt: &DreamerAdmittedAttempt,
     ctx: &WakeAttemptContext<'_>,
     model: &ClaimSourceRecheckModel<'_>,
-    request: LlmRequest,
-    subject: EntityId,
+    question: &DecisionQuestion,
+    ask: &read::Ask,
+    (locality, keyless): (ModelLocality, bool),
+    spend: &mut Spend,
 ) -> Result<Asked> {
     let attempt_id = attempt.status.attempt.id;
-    let request = ctx
-        .vault
-        .authorize_model_role(model.role, request, &model.inference)?
-        .into_request();
-    let step_hash = request
-        .canonical_hash()
-        .map_err(|_| Error::InvalidConfig("the re-check request did not hash".into()))?;
-    let step_ctx = DurableStepContext {
+    let actor = ctx.vault.dreamer_actor_for_attempt(attempt_id)?;
+    let step = DurableStepContext {
         vault: ctx.vault,
         attempt_id,
         run_id: attempt.status.attempt.run_id.clone(),
-        envelope_actor: ctx.vault.dreamer_actor_for_attempt(attempt_id)?,
-        subject,
+        envelope_actor: actor,
+        subject: ask.head,
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
     };
-    // The judge request quotes the kept mail's words, which the replay
+    let (vault, role, inference) = (ctx.vault, model.role, &model.inference);
+    let seal = move |request: LlmRequest| -> Result<LlmRequest> {
+        Ok(vault
+            .authorize_model_role(role, request, inference)?
+            .into_request())
+    };
+    let dial = dial();
+    let rung = GeneratedRung {
+        pin: ProviderPin {
+            rung: dial.first,
+            model: model.model.as_str().to_owned(),
+            version: model.model.as_str().to_owned(),
+        },
+        backend: model.backend,
+        step: GeneratedStep::Durable {
+            step: &step,
+            guard: model.guard,
+        },
+        request: judge_shell(model, locality, keyless),
+        seal: &seal,
+    };
+    let deadline = RetrievalDeadline::hard(
+        Instant::now(),
+        Duration::from_millis(ctx.deadline.remaining_ms()),
+    );
+    // The judge's request quotes the kept mail's words, which the replay
     // capture's owners would not retire when that mail is erased: this
     // attempt's steps keep no capture (fix list row 20501).
     let _uncaptured =
         crate::self_heal::blocked_reports::UncapturedSteps::hold(ctx.vault, attempt_id);
-    Ok(
-        match call_as_step(&step_ctx, model.backend, model.guard, request).await {
-            Ok(StepOutcome::Finished {
-                response,
-                memoized,
-                binding,
-                ..
-            }) => {
-                let units = if memoized { 0 } else { units(&response.usage) };
-                Asked::Answered(Judging {
-                    response,
-                    memoized,
-                    step_hash,
-                    binding,
-                    units,
-                })
-            }
-            Ok(StepOutcome::Trapped { .. }) => Asked::Trapped,
-            Err(error) => Asked::Failed(error),
-        },
-    )
-}
-
-/// The judge's verdict, or `None` for a reply that is not one.
-fn verdict_of(response: &LlmResponse) -> Option<Verdict> {
-    let text: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text, .. } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    let reply: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
-    Verdict::parse(reply.get("verdict")?.as_str()?)
+    let mut spent = Vec::new();
+    let decided = model
+        .decisions
+        .ladder
+        .run_pack_generated_spent(
+            &rung,
+            &[question],
+            actor.entity_ref(),
+            std::slice::from_ref(&ask.head),
+            &ask.input,
+            dial,
+            &model.decisions.bands,
+            Reversibility::ReversibleRead,
+            &deadline,
+            &mut spent,
+            None,
+        )
+        .await;
+    spend.book(&spent);
+    Ok(match decided {
+        Ok(GeneratedDecisions::Decided { decisions, .. }) => {
+            // A read the work time could not start sent nothing: the
+            // attempt waits for the next pass, as a hard cut does.
+            let Some((step_hash, usage, ..)) = spent.last() else {
+                return Ok(Asked::Failed(DurableStepError::DeadlineHardCut));
+            };
+            let decision = decisions.into_iter().next();
+            let verdict = decision
+                .as_ref()
+                .and_then(|decision| match &decision.answer {
+                    DecisionAnswer::Choice(choice) => Verdict::parse(choice),
+                    _ => None,
+                });
+            let decision = decision
+                .map(|decision| serde_json::to_value(&decision))
+                .transpose()
+                .map_err(|_| {
+                    Error::InvariantViolation("a claim re-check decision did not encode")
+                })?;
+            Asked::Answered(Judging {
+                verdict,
+                decision,
+                step_hash: *step_hash,
+                usage: usage.clone(),
+            })
+        }
+        Ok(GeneratedDecisions::Trapped) => Asked::Trapped,
+        Ok(GeneratedDecisions::Unread(_)) => Asked::Unread,
+        Err(error) => Asked::Failed(error),
+    })
 }
 
 /// What a re-check's steps spent, each step that finished booked once.
@@ -498,12 +573,20 @@ struct Spend {
 }
 
 impl Spend {
-    /// Books one judge call: nothing when memoized, which the pass that
-    /// asked it paid for.
-    fn add(&mut self, judging: &Judging) {
-        if !judging.memoized {
-            self.units = self.units.saturating_add(judging.units);
-            self.step_bindings.push(judging.binding);
+    /// Books each generation in `spent` once: nothing for a memoized one,
+    /// which the pass that asked it paid for.
+    fn book(&mut self, spent: &[([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)]) {
+        for (_, usage, binding, memoized) in spent {
+            if *memoized {
+                continue;
+            }
+            if let Some(binding) = binding {
+                if self.step_bindings.contains(binding) {
+                    continue;
+                }
+                self.step_bindings.push(*binding);
+            }
+            self.units = self.units.saturating_add(units(usage));
         }
     }
 
