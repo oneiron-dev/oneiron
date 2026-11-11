@@ -95,6 +95,11 @@ pub(in crate::api::facade) fn door_admits(
                 })
         }
         Proof::Owner => owner_proof(auth, server, verb).map(drop),
+        // The step rows (slice 6.5c): the owner, or an agent on its own
+        // verified credential; the door holds the live run the agent names.
+        Proof::ModelStepCaller => {
+            crate::api::facade::model_step_doors::step_caller_admits(server, auth, verb)
+        }
         Proof::ClaimSettler => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
         }

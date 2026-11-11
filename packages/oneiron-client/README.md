@@ -43,86 +43,75 @@ every unread shape by name, each time it runs, and the header of
 
 ## Install
 
+**Bun 1.3 or newer is required. Plain Node.js is not supported.** This
+source-direct package publishes TypeScript, not a compiled JavaScript entry
+point. Run the example with `bun`, not `node`.
+
 ```bash
-npm install @oneiron/client   # or: bun add @oneiron/client
+bun add @oneiron/client
 ```
 
-Source-direct and dependency-free: `main`, `types`, and the `.` export resolve
-to `./src/index.ts`; `./facade` and `./facade-types` resolve to the generated
-tree and declarations alone, with no fetch client. Users need no build step: the
-published package carries the generated `facade.ts` and `facade-types.ts`. They
-are not in git; the package's `prepare` and `prepublishOnly` scripts write them
-from the verb table (`generate.py --package oneiron-client`), so a checkout runs
-`bun run prepare` once before it imports them.
-
-That shape has a requirement attached, and `engines` declares it: the consuming
-runtime must load TypeScript itself. **Bun 1.3 or newer is the supported
-runtime**, and it is the one the tests run on. Plain `node` is NOT supported:
-without a TypeScript loader, importing `@oneiron/client` fails at resolution,
-and this package publishes no compiled JavaScript entry point to fall back to.
-A bundler or a Node with its own TS loader may work, but it is your
-arrangement rather than a contract this package keeps. An agent or app that
-cannot run TypeScript should take the curl lane (`oneiron api …` or plain
-`curl`) against the same routes instead.
+`main`, `types`, and the `.` export resolve to `./src/index.ts`; `./facade`
+and `./facade-types` resolve to the generated tree and declarations alone.
+The published package includes those generated files. A source checkout runs
+`bun run prepare` once before importing it.
 
 ## Use
 
+Set `ONEIRON_URL` to your running server's origin, `ONEIRON_SECRET` to the
+bearer slip (`v2.slip.*`), and `ONEIRON_BINDING_KEY` to its holder seed (64 hex).
+These are the names `oneiron api` and `oneiron mcp` read by default. If you
+have a paired `v2.cred.<slip hex>.<seed hex>` credential from `Oneiron.pair()`
+or `oneiron token agent --out`, its two components supply those variables.
+The server's issuer secret is not a request credential.
+
 ```ts
-import { HttpBaseClient } from "@oneiron/client";
+import { HttpBaseClient, createSignedFetch } from "@oneiron/client";
 
-const client = new HttpBaseClient({
-  baseUrl: "http://127.0.0.1:9090",
-  secret: process.env.ONEIRON_TOKEN, // a logged `v2.slip.*` capability slip
-});
-
-// `holderProof` is a placeholder for your own signer; this package makes no proofs.
-const response = await client.discover({
-  headers: { "x-oneiron-binding": await holderProof("GET", "/api/core/discover") },
-});
-if (!response.ok) {
-  // The server's own error envelope, verbatim: status, headers, and body.
-  console.error(response.status, await response.text());
+const url = process.env.ONEIRON_URL;
+const secret = process.env.ONEIRON_SECRET;
+const bindingKey = process.env.ONEIRON_BINDING_KEY;
+if (!url || !secret || !bindingKey) {
+  throw new Error("Set ONEIRON_URL, ONEIRON_SECRET and ONEIRON_BINDING_KEY");
 }
+const credential = `v2.cred.${secret.slice("v2.slip.".length)}.${bindingKey}`;
+const client = new HttpBaseClient({
+  baseUrl: url,
+  fetch: createSignedFetch(credential),
+});
+
+const response = await client.facade.vault.recall({
+  query: "where did we leave the launch plan?", effort: "light", limit: 5,
+});
+if (!(response instanceof Response)) {
+  throw new Error(`Call paused on ask ${response.ask}`);
+}
+if (!response.ok) {
+  throw new Error(`${response.status}: ${await response.text()}`);
+}
+console.log(await response.json());
 ```
 
-`secret` is sent as `Authorization: Bearer` on every request. It must be a
-logged `v2.slip.*` capability slip; the server's issuer secret is not a
-credential. Each protected request also needs a fresh `x-oneiron-binding`
-holder proof, signed with the slip's holder key, and a proof cannot be replayed.
-Pass it in that call's `init.headers`, as above. `/api/core/discover` needs an
-owner-grade slip. See the
-[authentication reference](../../oneiron.skills.md#authentication). Against a
-loopback server started with `--insecure-allow-unauthenticated` and no auth
-secret, omit both.
+Save this as `index.ts` and run `bun index.ts`. `createSignedFetch` accepts
+one paired credential and attaches its bearer plus a fresh `x-oneiron-binding`
+proof on every request, including retries and redirect hops. Wire it once
+through `fetch`; individual calls need no signer, verb string or proof header.
+The existing client still pins requests and redirect hops to `baseUrl`'s origin.
+Do not use the signing transport alone as a general-purpose fetch.
+Against a loopback server started with `--insecure-allow-unauthenticated` and
+no auth secret, omit the signer and `secret` instead. See the
+[authentication reference](../../oneiron.skills.md#authentication).
 
 Every facade verb is `client.facade.<path>(input, init?)`, a
-`POST /v1/core/facade/<verb>` whose body is the typed input:
+`POST /v1/core/facade/<verb>` whose body is the typed input. The input is
+checked at compile time; the `Response` is the original one. `FacadeResult<V>`
+types its JSON body. `request`, `discover`, `searchText`, `getEntity`, and
+`callVerb` also return `Promise<Response>`.
 
-```ts
-import type { FacadeResult } from "@oneiron/client";
-
-const response = await client.facade.vault.recall(
-  { query: "where did we leave the launch plan?", effort: "medium" },
-  { headers: { "x-oneiron-binding": await holderProof("POST", "/v1/core/facade/vault.recall") } },
-);
-if (response.ok) {
-  const pack = (await response.json()) as FacadeResult<"vault.recall">;
-  console.log(pack.items.length, pack.narrowing.narrowed_axes);
-}
-```
-
-The input is checked at compile time; the `Response` is the original one, so
-reading and trusting its body stays the caller's decision. `request`,
-`discover`, `searchText`, `getEntity`, and `callVerb` also return
-`Promise<Response>`. Any route the convenience methods do not cover is one
-`client.request(path, init)` away.
-
-Each facade call goes out under a fresh `x-oneiron-invocation` (32 lowercase hex
-from `crypto.getRandomValues`), and a call a verb hook stopped on an ask, `202
-PENDING_ASK`, resolves to a `FacadePending` carrying that id, the ask and the
-envelope instead of a `Response`. `client.retry(pending, init?)` resends the same
-verb and input under the same id: the same pending while the ask is open, the
-saved call run once after it is answered.
+Each facade call carries a fresh `x-oneiron-invocation`. A verb hook that
+stops it on a `202 PENDING_ASK` returns a `FacadePending`, not a `Response`.
+`client.retry(pending, init?)` resends the same verb and input under that id;
+the signing transport makes a new holder proof automatically.
 
 A lens card that `vault.lenses.default` rendered takes its events at routes
 outside the facade (OF-181). `client.lensFrameEvent(cardId, request, init?)`
@@ -151,8 +140,8 @@ trip.
 * It does not add an endpoint, a second authority model, or a second request
   envelope. Caller headers merge additively, and swapping the configured
   `Authorization` header for a different credential is refused loudly.
-* It never logs the credential. The secret becomes one default header and is
-  stored nowhere else.
+* It never logs the credential. The optional signing transport retains its
+  holder key to sign requests; do not log or share the paired credential.
 * It does not let the runtime chase redirects. Each hop is taken by hand and
   re-checked against the configured origin, so a `Location` pointing at another
   host throws instead of being followed with your credential attached;
@@ -172,7 +161,7 @@ result itself). Each kind may answer a `FacadePending` instead, for a call a
 verb hook stopped on an ask; `facadeRetry` resends it under its invocation,
 naming that ask.
 
-1. **npm-capable external agent (BYOA)** — `npm i @oneiron/client`, then
+1. **Bun-capable external agent (BYOA)** — `bun add @oneiron/client`, then
    `new HttpBaseClient(...)`: its `facade` is
    `facadeTree<"response", RequestInit>` over the fetch transport above.
 2. **Native app** — imports `facadeTree` from `@oneiron/client/facade` and

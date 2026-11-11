@@ -4,8 +4,8 @@
 
 use lopdf::{Dictionary, Document, Object};
 
-use crate::api::SealResourceLimits;
-use crate::error::{FatalCode, InputInvalidCode, SealError};
+use crate::error::{FatalCode, InputInvalidCode, SealError, SealStage};
+use crate::memory::testing::operation_limits;
 
 use sha2::Digest;
 
@@ -28,13 +28,14 @@ fn stream_pdf() -> Vec<u8> {
 }
 
 fn prepared(bytes: &[u8]) -> PreparedInput {
-    validate_prepared(bytes, &SealResourceLimits::default()).expect("prepared")
+    validate_prepared(bytes, &operation_limits()).expect("prepared")
 }
 
 fn sign_revision(p: &PreparedInput, capacity: usize) -> DraftRevision {
+    let limits = operation_limits();
     let kind = RevisionKind::Signature {
-        field_name: field_name_for("unit-op"),
-        date_str: pdf_date(1_785_398_400_000),
+        field_name: field_name_for("unit-op", &limits).expect("field name"),
+        date_str: pdf_date(1_785_398_400_000, &limits).expect("pdf date"),
     };
     append_revision(&p.bytes, &p.state, &kind, capacity).expect("revision")
 }
@@ -83,7 +84,7 @@ fn patch_contents_overflow_reports_capacity_not_truncation() {
     let p = prepared(&classic_pdf());
     let mut draft = sign_revision(&p, 64);
     let der = vec![0xABu8; 65];
-    let err = patch_contents(&mut draft, &der).unwrap_err();
+    let err = patch_contents(&mut draft, &der, &operation_limits()).unwrap_err();
     assert!(matches!(
         err,
         SealError::Fatal {
@@ -93,7 +94,7 @@ fn patch_contents_overflow_reports_capacity_not_truncation() {
     ));
     // Fitting DER lands at the start with zero padding after.
     let der = vec![0xCDu8; 40];
-    patch_contents(&mut draft, &der).expect("patch");
+    patch_contents(&mut draft, &der, &operation_limits()).expect("patch");
     let (lt, _gt) = draft.contents_gap.expect("gap");
     assert_eq!(draft.bytes[lt + 1], b'C');
     assert_eq!(draft.bytes[lt + 2], b'D');
@@ -163,10 +164,11 @@ fn max_obj_respects_trailer_size_beyond_referenced_objects() {
     let referenced_max = doc.objects.keys().map(|(n, _)| *n).max().unwrap_or(0);
     let size = i64::from(referenced_max) + 11;
     doc.trailer.set("Size", Object::Integer(size));
-    let state = revision_state(&doc, &bytes).expect("state");
+    let limits = operation_limits();
+    let state = revision_state(&doc, &bytes, &limits, SealStage::InputValidation).expect("state");
     let kind = RevisionKind::Signature {
-        field_name: field_name_for("unit-op"),
-        date_str: pdf_date(1_785_398_400_000),
+        field_name: field_name_for("unit-op", &limits).expect("field name"),
+        date_str: pdf_date(1_785_398_400_000, &limits).expect("pdf date"),
     };
     let draft = append_revision(&bytes, &state, &kind, 1024).expect("revision");
     let out = Document::load_mem(&draft.bytes).expect("reload");
@@ -191,7 +193,7 @@ fn xref_helpers_never_overflow_on_extreme_offsets() {
         let mut bytes = input[..marker].to_vec();
         bytes.extend_from_slice(format!("startxref\n{offset}\n%%EOF").as_bytes());
         assert!(matches!(
-            validate_prepared(&bytes, &SealResourceLimits::default()),
+            validate_prepared(&bytes, &operation_limits()),
             Err(SealError::InputInvalid {
                 code: InputInvalidCode::MalformedXref,
             })
@@ -218,8 +220,7 @@ fn bare_eof_input_gets_exactly_one_eol_boundary() {
         assert!(parts[0].parse::<u32>().expect("object number") > 0);
         parts[1].parse::<u16>().expect("generation");
         assert_eq!(parts[2], "obj");
-        reparse_revision(&draft.bytes, &SealResourceLimits::default())
-            .expect("revision must reparse");
+        reparse_revision(&draft.bytes, &operation_limits()).expect("revision must reparse");
         let doc = Document::load_mem(&draft.bytes).expect("reload");
         let (_, af) = doc
             .dereference(
@@ -332,7 +333,8 @@ fn security_scan_resolves_multi_hop_names_and_rejects_broken_links() {
         .unwrap()
         .set("Names", Object::Reference(middle));
     for gate in [true, false] {
-        let err = analyze_security(&doc, gate).unwrap_err();
+        let err = analyze_security(&doc, gate, &operation_limits(), SealStage::InputValidation)
+            .unwrap_err();
         assert!(matches!(
             err,
             SealError::InputInvalid {
@@ -342,7 +344,7 @@ fn security_scan_resolves_multi_hop_names_and_rejects_broken_links() {
     }
     doc.objects.insert(middle, Object::Reference((900_000, 0)));
     assert!(matches!(
-        analyze_security(&doc, true),
+        analyze_security(&doc, true, &operation_limits(), SealStage::InputValidation),
         Err(SealError::InputInvalid {
             code: InputInvalidCode::ActiveContentPresent
         })
@@ -353,8 +355,7 @@ fn security_scan_resolves_multi_hop_names_and_rejects_broken_links() {
 fn dts_revision_registers_a_signature_field_in_acroform() {
     let p = prepared(&classic_pdf());
     let signed = sign_revision(&p, 1024);
-    let state =
-        reparse_revision(&signed.bytes, &SealResourceLimits::default()).expect("reparse signed");
+    let state = reparse_revision(&signed.bytes, &operation_limits()).expect("reparse signed");
     let dts = append_revision(
         &signed.bytes,
         &state,
@@ -432,8 +433,7 @@ fn revisions_keep_the_numbers_of_the_catalog_they_re_emit() {
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes).expect("save");
     let signed = sign_revision(&prepared(&bytes), 1024);
-    let state =
-        reparse_revision(&signed.bytes, &SealResourceLimits::default()).expect("reparse signed");
+    let state = reparse_revision(&signed.bytes, &operation_limits()).expect("reparse signed");
     let dss_obj = state.max_obj + 1;
     let kind = RevisionKind::Dss {
         material_objects: vec![(dss_obj, b"<< /Type /DSS >>".to_vec())],
@@ -504,8 +504,7 @@ fn a_dss_revision_re_emits_the_catalog_as_it_was() {
         "<< /Fields [] >>",
     ]);
     let signed = sign_revision(&prepared(&pdf), 1024);
-    let state =
-        reparse_revision(&signed.bytes, &SealResourceLimits::default()).expect("reparse signed");
+    let state = reparse_revision(&signed.bytes, &operation_limits()).expect("reparse signed");
     let dss_obj = state.max_obj + 1;
     let kind = RevisionKind::Dss {
         material_objects: vec![(dss_obj, b"<< /Type /DSS >>".to_vec())],
@@ -696,7 +695,7 @@ fn unresolvable_acroform_fields_fail_closed() {
         doc.trailer.set("Root", Object::Reference(catalog_id));
         let mut bytes = Vec::new();
         doc.save_to(&mut bytes).expect("save");
-        let err = validate_prepared(&bytes, &SealResourceLimits::default()).unwrap_err();
+        let err = validate_prepared(&bytes, &operation_limits()).unwrap_err();
         assert!(matches!(
             err,
             SealError::InputInvalid {
@@ -712,7 +711,13 @@ fn crafted_huge_trailer_size_fails_closed_without_overflow() {
     // A size beyond the object-number space must fail during extraction.
     let mut doc = Document::load_mem(&bytes).expect("load");
     doc.trailer.set("Size", Object::Integer(1i64 << 40));
-    let err = revision_state(&doc, &bytes).unwrap_err();
+    let err = revision_state(
+        &doc,
+        &bytes,
+        &operation_limits(),
+        SealStage::InputValidation,
+    )
+    .unwrap_err();
     assert!(matches!(
         err,
         SealError::InputInvalid {
@@ -723,10 +728,11 @@ fn crafted_huge_trailer_size_fails_closed_without_overflow() {
     let mut doc = Document::load_mem(&bytes).expect("load");
     doc.trailer
         .set("Size", Object::Integer(i64::from(u32::MAX) + 1));
-    let state = revision_state(&doc, &bytes).expect("state");
+    let limits = operation_limits();
+    let state = revision_state(&doc, &bytes, &limits, SealStage::InputValidation).expect("state");
     let kind = RevisionKind::Signature {
-        field_name: field_name_for("unit-op"),
-        date_str: pdf_date(1_785_398_400_000),
+        field_name: field_name_for("unit-op", &limits).expect("field name"),
+        date_str: pdf_date(1_785_398_400_000, &limits).expect("pdf date"),
     };
     let err = append_revision(&bytes, &state, &kind, 64).unwrap_err();
     assert!(matches!(
