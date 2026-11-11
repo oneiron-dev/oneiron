@@ -1197,10 +1197,7 @@ fn only_finalized_stream_text_reaches_the_branch() -> Result<()> {
         }]);
         if ending == "finalize" {
             assert_eq!(transcript, format!("[{} user] {SAID}\n", turn.to_hex()));
-            assert_eq!(
-                cited?[0].content_hash,
-                swarm_evidence_content_hash(b"Owen")
-            );
+            assert_eq!(cited?[0].content_hash, swarm_evidence_content_hash(b"Owen"));
         } else {
             assert_eq!(
                 transcript,
