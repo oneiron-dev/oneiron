@@ -412,6 +412,11 @@
   display: inline-grid;
 }
 
+/* Bare cards one under the other. */
+.lib-cards-bare {
+  gap: 28px;
+}
+
 /* A block with an information mark: a raised card, the column's width. */
 .lib-info-block {
   display: flex;
@@ -759,6 +764,27 @@
   padding-top: 12px;
   font-size: var(--sl-t-say);
   color: var(--sl-ink-2);
+}
+
+/* A room at a set width (given inline): its head line, then the view its
+   tab selects, on the island tone. */
+.lib-room-root {
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  box-shadow: 0 0 0 1px var(--sl-rule);
+}
+
+.lib-room-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 150px;
+  padding: 22px 28px 20px;
+  background: var(--sl-island);
+}
+
+.lib-room-caption {
+  max-width: 640px;
 }
 
 /* The companion's room: the head, the messages ending at the bottom, the
