@@ -52,6 +52,14 @@
 //! it parked. It does not opt into the Coach's host jobs (`coach.host`):
 //! a Timer wake leaves them queued for a host consumer.
 //!
+//! The pass lends the driver a Coach skill optimizer whose author declines
+//! every skill edit with no model call ([`DECLINED_SKILL_EDIT_RATIONALE`]),
+//! so a Timer wake's skill optimization attempt completes with no proposal.
+//! A host that lends none leaves that attempt parked for one. A declined
+//! edit is never scored, so the optimizer's held-out judge is never asked;
+//! a vault that already holds an unscored skill edit needs a scripted judge,
+//! which the kit does not have yet.
+//!
 //! The wake driver takes no async runtime (it yields by waking itself), and a
 //! durable step's retry delay wakes its waker from a timer thread, so the
 //! pass runs on the calling thread under a waker that unparks it.
@@ -67,9 +75,15 @@ use oneiron::attempt_queue::{AttemptQueue, AttemptState};
 use oneiron::authority::{HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
 use oneiron::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
 use oneiron::dreamer_runner::DreamerAttemptPayload;
+use oneiron::dreamer_runner::maintenance::CoachSkillOptimizer;
 use oneiron::dreamer_wake::{WakeTurnSubject, request_wake};
+use oneiron::llm::decision::{DecisionQuestion, TypedDecision};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::serialize::msgpack_value_from_json;
+use oneiron::skill_optimize::{
+    HeldOutReplayCase, HeldOutReplayNotes, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
+    SkillOptimizeDecisions, SkillReplayResponses,
+};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, CallPurpose, ConsolidationDecisions,
     ConsolidationExecutor, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DreamerAdmittedAttempt,
@@ -83,11 +97,19 @@ use serde_json::{Value, json};
 
 use crate::clock::FakeClock;
 use crate::door;
-use crate::provider::ScriptedBackend;
+use crate::provider::{PromptDigest, ScriptedBackend, SeenCall, Step};
 
 /// The model id the scripted backend serves the Dreamer as: a
 /// `provider/name@revision` id no real provider uses.
 pub const SCRIPTED_MODEL: &str = "oneiron-testkit/scripted@1";
+
+/// Why the pass's Coach declines a skill edit: its rationale on every
+/// skill optimization attempt.
+pub const DECLINED_SKILL_EDIT_RATIONALE: &str =
+    "the oneiron-testkit Coach drafts no skill edit: it declines every brief";
+
+/// The revision the pass's Coach judge names.
+const DECLINING_COACH_JUDGE_REVISION: &str = "oneiron-testkit/declining-coach@1";
 
 /// The domain the kit's test host issuer seed is hashed from.
 const HOST_ISSUER_DOMAIN: &[u8] = b"oneiron-testkit/host-issuer/v1\0";
@@ -498,7 +520,12 @@ impl<'b> DreamerPass<'b> {
             Arc::new(move || elapsed.now_ms().saturating_sub(started_ms)),
         );
         let mut driver = DreamerWakeDriver::new(vault, self.budget.budget_id.clone(), deadline)
-            .with_budget_guard(guard.clone());
+            .with_budget_guard(guard.clone())
+            .with_skill_optimizer(CoachSkillOptimizer {
+                author: &DecliningCoach,
+                scorer: &DecliningCoach,
+                live: None,
+            });
         let model = ModelId::new(SCRIPTED_MODEL)
             .map_err(|error| DreamerPassError::Refused(format!("{SCRIPTED_MODEL}: {error}")))?;
         let mut executor = PassExecutor {
@@ -613,6 +640,94 @@ fn scripted_inference(model: &ModelId) -> HostInferenceContext<'static> {
 /// process, so every extraction request may go to it.
 fn permit_scripted_extraction(_request: &LlmRequest) -> bool {
     true
+}
+
+/// The pass's Coach skill optimizer: an author that declines every skill
+/// edit without a model call, and a held-out judge that is never asked,
+/// since a declined edit is never scored (see the module docs).
+struct DecliningCoach;
+
+impl SkillOptimizeAuthor for DecliningCoach {
+    fn draft(&self, _brief: &SkillOptimizeBrief) -> oneiron::Result<SkillEditDraft> {
+        Ok(SkillEditDraft::Decline {
+            rationale: DECLINED_SKILL_EDIT_RATIONALE.to_owned(),
+        })
+    }
+}
+
+impl HeldOutReplayNotes for DecliningCoach {
+    fn judge_revision(&self) -> &str {
+        DECLINING_COACH_JUDGE_REVISION
+    }
+
+    /// # Panics
+    /// Always: the judge is asked only for an unscored skill edit, which this
+    /// Coach never drafts. A vault seeded with one needs a scripted judge.
+    fn decisions(&self) -> SkillOptimizeDecisions<'_> {
+        panic!("{}", unscored_skill_edit())
+    }
+
+    fn replay_state(&self, _case: &HeldOutReplayCase<'_>) -> oneiron::Result<Value> {
+        Err(unscored_skill_edit())
+    }
+
+    fn replay_responses(&self, _receipts: &[String]) -> oneiron::Result<SkillReplayResponses> {
+        Err(unscored_skill_edit())
+    }
+
+    fn record_decision(
+        &self,
+        _question: &DecisionQuestion,
+        _decision: &TypedDecision,
+        _state: &Value,
+    ) -> oneiron::Result<()> {
+        Err(unscored_skill_edit())
+    }
+}
+
+/// The error the declining Coach's judge answers with.
+fn unscored_skill_edit() -> oneiron::Error {
+    oneiron::Error::InvalidConfig(
+        "the oneiron-testkit Coach scores no skill edit: the vault holds an unscored edit it did not draft, which needs a scripted judge".into(),
+    )
+}
+
+/// A backend answering each `(prompt digest, reply)` of `calls` once, step
+/// ids `<name>-<index>`. Start a table empty: the first run's miss report
+/// (and [`print_seen`]) names each call's digest.
+///
+/// # Panics
+/// A digest that is not 64 hex.
+#[must_use]
+pub fn scripted_backend(name: &str, calls: &[(&str, &str)]) -> ScriptedBackend {
+    let steps = calls
+        .iter()
+        .enumerate()
+        .map(|(index, (digest, reply))| {
+            let digest = PromptDigest::from_hex(digest).unwrap_or_else(|| {
+                panic!("{name}-{index}: {digest} is not a 64-hex prompt digest")
+            });
+            Step::text(format!("{name}-{index}"), digest, *reply)
+        })
+        .collect();
+    ScriptedBackend::new(steps).unwrap_or_else(|error| panic!("the {name} script: {error}"))
+}
+
+/// Prints each of `calls` on one line, `## SEEN <index> <step> <digest>
+/// <request JSON>`, the request in full: a miss report shortens a long
+/// prompt, and a fleet log keeps only marked lines.
+pub fn print_seen(calls: &[SeenCall]) {
+    for (index, call) in calls.iter().enumerate() {
+        let digest = call
+            .digest
+            .as_ref()
+            .map_or_else(|| "-".to_owned(), ToString::to_string);
+        println!(
+            "## SEEN {index} {} {digest} {}",
+            call.step.as_deref().unwrap_or("unscripted"),
+            call.body
+        );
+    }
 }
 
 /// Every working-set attempt, in creation order, with its park reason.

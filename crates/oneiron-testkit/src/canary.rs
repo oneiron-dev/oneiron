@@ -38,9 +38,10 @@
 //! a fixed test host issuer and profiles this install, as a self-hosted
 //! server's first start does.
 //!
-//! Step 2, not here: a full Dreamer and Coach pass over the seeded vault with
-//! the scripted backend, then the same scans and [`CanaryVault::scan_prompts`]
-//! over every prompt it saw.
+//! Step 2 (tests/canary.rs): a Dreamer turn wake and Timer wake over the
+//! seeded vault on the scripted backend ([`crate::dreamer::DreamerPass`]),
+//! then [`CanaryVault::scan_prompts`] over every prompt the passes sent, as
+//! the owner the Dreamer's model speaks for, and every actor's scan again.
 
 use std::collections::BTreeSet;
 use std::fmt;

@@ -6,6 +6,10 @@ use oneiron_testkit::TestVault;
 use oneiron_testkit::canary::{
     CanaryActor, CanaryClass, CanaryScan, CanaryVault, ClaimBand, NEUTRAL_PHRASE, PENDING,
 };
+use oneiron_testkit::dreamer::{
+    DreamerPass, allow_scripted_extraction, attach_test_host, grant_dreamer_read, print_seen,
+    read_everything_scope, scripted_backend,
+};
 use oneiron_testkit::provider::SeenCall;
 use serde_json::json;
 
@@ -170,12 +174,53 @@ fn the_detector_names_each_canary_that_reaches_a_reader_outside_its_audience() {
     );
 }
 
-// Step 2, not written here: an in-process Dreamer pass over this vault.
-// `DreamerWakeDriver::run_wake_pass` is async and this crate has no executor
-// dependency; the host `DreamerAttemptExecutor` adapter must build a
-// per-attempt `PromotionWriterSink` and forward to a `ConsolidationExecutor`
-// over the scripted backend with a `HostInferenceContext` and a
-// `BudgetGuard`; and the scripted extraction reply needs the prompt digest a
-// first run prints. Then rerun every no-leak test above after the pass, and
-// `CanaryVault::scan_prompts` over `ScriptedBackend::seen()` with the
-// actors each prompt's destination speaks for.
+/// The turn wake's model calls over the canary vault, as `(prompt digest,
+/// reply)` (see tests/dreamer.rs for how a table is filled).
+const DREAMER_TURN_WAKE_CALLS: &[(&str, &str)] = &[];
+
+/// The Timer wake's model calls over the canary vault, after the turn wake.
+const DREAMER_TIMER_WAKE_CALLS: &[(&str, &str)] = &[];
+
+#[test]
+fn a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary() {
+    let (test_vault, canaries) = seeded();
+    let vault = test_vault.open_owned().expect("open the seeded vault");
+    attach_test_host(&vault).expect("the test host attaches after the open");
+    allow_scripted_extraction(&vault).expect("the owner lets extraction run on the scripted model");
+    grant_dreamer_read(&vault, read_everything_scope())
+        .expect("the owner grants the Dreamer its reads");
+
+    let turn = scripted_backend("canary-turn-wake", DREAMER_TURN_WAKE_CALLS);
+    let turn_pass = DreamerPass::new(&turn)
+        .with_run_id("canary-turn-wake")
+        .run_turn_wake(&vault, test_vault.clock());
+    print_seen(&turn.seen());
+    let timer = scripted_backend("canary-timer-wake", DREAMER_TIMER_WAKE_CALLS);
+    let timer_pass = DreamerPass::new(&timer)
+        .with_run_id("canary-timer-wake")
+        .run_timer_wake(&vault, test_vault.clock());
+    print_seen(&timer.seen());
+    // Both wakes run before either script is checked, so one run names every
+    // call a table misses.
+    let mut prompts = turn.finish();
+    prompts.extend(timer.finish());
+    for pass in [turn_pass, timer_pass] {
+        let report = pass.unwrap_or_else(|error| panic!("{error}"));
+        println!(
+            "{:?} wake: {} claim(s) landed; queue after it: {:?}",
+            report.wake,
+            report.landed().len(),
+            report.queue
+        );
+    }
+
+    // The Dreamer's model speaks for the owner, so a prompt may carry what
+    // the owner may read and never an agent's diary.
+    let prompt_leaks = canaries.scan_prompts(&prompts, &[CanaryActor::Owner]);
+    assert!(prompt_leaks.is_empty(), "{}", prompt_leaks.join("\n"));
+    // What the pass derived reaches no reader outside its source's audience.
+    for actor in CanaryActor::ALL {
+        let scan = canaries.assert_no_canary_leak(&vault, actor);
+        assert!(scan.incomplete.is_empty(), "{actor}: {:?}", scan.incomplete);
+    }
+}
