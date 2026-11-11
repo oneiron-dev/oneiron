@@ -271,6 +271,9 @@ pub(super) struct StillWait {
     pub(super) waited_ms: f64,
     /// The status read last, when that read answered.
     pub(super) status: Option<DreamerStatus>,
+    /// The bound had already run out when the wait began (FIX 21929): the
+    /// cycle hit it, and no still arm can follow inside it.
+    pub(super) post_bound: bool,
 }
 
 /// Waits until `deadline` for the Dreamer to stay still for `QUIET`. The
@@ -289,6 +292,7 @@ pub(super) fn await_still(
     deadline: Instant,
 ) -> StillWait {
     let started = Instant::now();
+    let post_bound = started >= deadline;
     let mut seen_lines = scan.stages.len() + scan.passes.len();
     let mut now_status = status_before(agent, http, base, deadline).ok();
     // The quiet starts after the first read: a slow read must not count
@@ -300,6 +304,7 @@ pub(super) fn await_still(
             reached,
             waited_ms: ms_between(started, Instant::now()),
             status,
+            post_bound,
         };
         if Instant::now() >= deadline {
             return done(false, now_status);

@@ -1,0 +1,18 @@
+/* Fixed behind the work; the canvas reads its ink from `color`. */
+.sl-field {
+  position: fixed;
+  inset: 0;
+  z-index: var(--sl-z-field);
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  color: var(--sl-field-ink);
+}
+
+/* The night field is drawn one canvas pixel per CSS pixel and scaled up by
+   the device ratio: keep its dots square. The day canvas is drawn at device
+   resolution and needs no scaling hint. */
+.sl-field[data-scheme="dark"] {
+  image-rendering: pixelated;
+}

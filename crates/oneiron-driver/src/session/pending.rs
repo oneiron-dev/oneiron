@@ -40,6 +40,22 @@ pub(super) async fn sleep_until_lifecycle_due(clock: &NowMillis, due: Option<u64
 }
 
 impl<T: TickSource> SessionTicks<'_, T> {
+    /// A hint retained in the retry slot, as a failed apply leaves it
+    /// (fire-and-forget: no completion waits on it). Lives beside
+    /// [`HintWork`], whose constructor is this module's.
+    #[cfg(test)]
+    pub(super) fn with_retry_hint(
+        mut self,
+        key: SessionKey,
+        hint: SessionHint,
+        arrival_ms: u64,
+    ) -> Self {
+        self.retry_hint = Some(HintWork::new(QueuedSessionHint::untracked(
+            SessionHintCarrier::point(key, hint, None, arrival_ms),
+        )));
+        self
+    }
+
     pub(super) fn apply_guarded_hint(&mut self, envelope: QueuedSessionHint) -> bool {
         let mut work = HintWork::new(envelope);
         if let Some(queue) = self.parked_hints.get_mut(&work.envelope.carrier.key) {

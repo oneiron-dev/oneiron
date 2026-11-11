@@ -368,7 +368,7 @@ pub(super) fn retarget(
         .iter_mut()
         .flat_map(|sheet| sheet.cells.values_mut())
     {
-        if let Some(formula) = cell.formula.as_deref().and_then(&rewrite) {
+        if let Some(formula) = cell.formula.as_deref().and_then(rewrite) {
             cell.formula = Some(formula);
             cell.value = XlsxValue::Blank;
         }

@@ -37,23 +37,42 @@ pub(crate) async fn vault_projects_goal_intake_complete(
     .await
 }
 
+/// `vault.projects.goal.get`: the owner under its proof, or a holder of a
+/// Steward grant naming `read` (untangle 6.6d, F4), which the engine checks
+/// at the read. It lists the project and the goal claim it read.
 pub(crate) async fn vault_projects_goal_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ProjectRefRequest,
 ) -> Listed<oneiron::task_verb::sdk::ProjectGoalView> {
-    owner_call(
+    const VERB: &str = "vault.projects.goal.get";
+    let admitted = || -> oneiron::memory::MemoryResult<_> {
+        let project = EntityId::from_hex(&input.project_ref)?;
+        let reader = super::substrate_read_doors::substrate_reader(server, auth, VERB)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(super::FacadeApiError::into_memory_error)?;
+        Ok((project, reader, caller))
+    };
+    let (project, reader, caller) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    let (answer, mut rows) = super::host_doors::support::credential_listing(
         server,
         auth,
-        "vault.projects.goal.get",
-        move |server, owner| {
-            let project = EntityId::from_hex(&input.project_ref)?;
-            let answer = sdk::project_goal_get_as_owner(server.vault(), owner, project)?;
-            let rows = std::iter::once(project).chain(answer.goal_claim).collect();
-            Ok((answer, rows))
+        caller,
+        VERB,
+        move |server, _, memory| match &reader {
+            Some(owner) => sdk::project_goal_get_as_owner(server.vault(), owner, project),
+            None => sdk::project_goal_get_as_reader(&memory, project),
         },
     )
-    .await
+    .await;
+    if let Ok(view) = &answer {
+        rows.push(project);
+        rows.extend(view.goal_claim);
+    }
+    (answer, rows)
 }
 
 pub(crate) async fn vault_skills_optimize_propose(
