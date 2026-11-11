@@ -133,6 +133,7 @@ fn input(value: BookingPagePublication) -> ClaimInput {
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     }
 }
 
@@ -420,8 +421,6 @@ fn public_booking_publication_requires_current_rooted_owner_authority() {
             },
             genesis_nonce: [0x31; 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
         signer: signature(),
         cosigns: Vec::new(),

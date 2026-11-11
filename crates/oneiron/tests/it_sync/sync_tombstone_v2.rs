@@ -17,7 +17,9 @@
 
 use std::sync::Arc;
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
 use crate::sync_harness::make_entity_blob;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::affect::Vad;
 use oneiron::edge::EdgeKind;
@@ -48,7 +50,7 @@ fn test_config() -> VaultConfig {
 
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), test_config()));
     (dir, vault)
 }
 
@@ -80,7 +82,8 @@ fn load_window(vault: &Vault, window: &str) -> LoroDoc {
 
 fn receipt_request_id_hex(vault: &Vault, receipt_id: &EntityId) -> String {
     let raw = vault.get_raw(receipt_id).unwrap().expect("receipt raw");
-    let body: serde_json::Value = rmp_serde::from_slice(&raw[25..]).expect("receipt body");
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("receipt body");
     body["request_id"]
         .as_str()
         .expect("request_id string")
@@ -196,7 +199,8 @@ fn hard_delete_removes_live_entity_and_edges_from_window_doc() {
     assert_eq!(value[0], 2, "user_hard_delete wire byte");
     let deleted_at = u64::from_le_bytes(value[1..9].try_into().unwrap());
     let raw = vault.get_raw(&receipt_id).unwrap().expect("receipt raw");
-    let body: serde_json::Value = rmp_serde::from_slice(&raw[25..]).expect("receipt body");
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("receipt body");
     assert_eq!(
         deleted_at,
         body["requested_at"].as_u64().expect("requested_at"),
@@ -363,7 +367,8 @@ fn delete_without_header_mints_tombstone_under_now_window() {
 
     // The window is addressed by the request time recorded in the receipt.
     let raw = vault.get_raw(&receipt_id).unwrap().expect("receipt raw");
-    let body: serde_json::Value = rmp_serde::from_slice(&raw[25..]).expect("receipt body");
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("receipt body");
     let requested_at = body["requested_at"].as_u64().expect("requested_at");
     let window_key = WindowKey::from_timestamp(requested_at);
 
