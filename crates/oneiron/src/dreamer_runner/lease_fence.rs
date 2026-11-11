@@ -24,7 +24,7 @@ impl DreamerTryLease<'_> {
     /// claim takes back (it parks as it always did). A row queued again,
     /// paused, or leased to another owner or generation is no longer this
     /// lease's to park.
-    fn still_holds(self, record: &AttemptRecord) -> bool {
+    pub(super) fn still_holds(self, record: &AttemptRecord) -> bool {
         record.state.is_terminal()
             || (record.state.is_running()
                 && record.lease_owner.as_deref() == Some(self.owner)

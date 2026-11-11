@@ -12,6 +12,8 @@ pub enum DreamerParkWaitClass {
     Peer,
     /// A person's answer delivered on the wait.
     Human,
+    /// A spent model seat's availability: the seat's own available write wakes the park.
+    Seat,
 }
 
 impl DreamerParkWaitClass {
@@ -23,6 +25,7 @@ impl DreamerParkWaitClass {
             Self::Consent => "consent",
             Self::Peer => "peer",
             Self::Human => "human",
+            Self::Seat => "seat",
         }
     }
 
@@ -33,6 +36,7 @@ impl DreamerParkWaitClass {
             "consent" => Some(Self::Consent),
             "peer" => Some(Self::Peer),
             "human" => Some(Self::Human),
+            "seat" => Some(Self::Seat),
             _ => None,
         }
     }
