@@ -274,6 +274,49 @@ function ActivityDemo({ specimen, head = true }: { specimen: string; head?: bool
   )
 }
 
+/* The activity list in compact form, for a sidebar: two lines a row, the
+   selected row lit; a needs-you row opens in the work area instead of
+   unfolding its picks. */
+function ActivityCompactDemo({ specimen, readout = true }: { specimen: string; readout?: boolean }) {
+  const [selected, setSelected] = React.useState('promo')
+  const rows: React.ReactNode[] = []
+  let day: ActivityAge | null = null
+  for (const a of sortActivity(ACTIVITY, 'newest')) {
+    if (a.age !== day) {
+      day = a.age
+      rows.push(<ActivityDay key={`day-${day}`}>{DAY_WORD[day]}</ActivityDay>)
+    }
+    rows.push(
+      <ActivityRow
+        key={a.id}
+        id={a.id}
+        kind={a.kind}
+        glyph={whoGlyph(a.who)}
+        name={a.who.name}
+        where={a.where}
+        sentence={a.sentence}
+        when={a.when}
+        age={a.age}
+        open={a.kind === 'needs-you'}
+        selected={a.id === selected}
+        onOpen={() => setSelected(a.id)}
+      />,
+    )
+  }
+  return (
+    <div className="lib-activity-compact" data-specimen={specimen}>
+      <ActivityList density="compact" aria-label="activity">
+        {rows}
+      </ActivityList>
+      {readout ? (
+        <span className="lib-readout" data-specimen={`${specimen}-open`}>
+          {selected} is open in the work area
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
 /* ── people and roles ─────────────────────────────────────────────────── */
 
 const ROLES: RoleOption[] = [
@@ -606,16 +649,10 @@ function sidebarFor(id: string, ground: 'field' | 'paper', specimen: string): Re
       )
     case 'activity':
       return (
-        <ListSidebar
-          title="Activity"
-          ground={ground}
-          rows={[
-            { id: 'needs-you', label: 'needs you', icon: 'activity', count: 2 },
-            { id: 'mentions', label: 'mentions', icon: 'at' },
-            { id: 'reactions', label: 'reactions', icon: 'smile' },
-            { id: 'done', label: 'done', icon: 'check' },
-          ]}
-        />
+        <Sidebar ground={ground} aria-label="Activity">
+          <FrameSidebarHead title="Activity" />
+          <ActivityCompactDemo specimen={`${specimen}-activity-compact`} readout={false} />
+        </Sidebar>
       )
     case 'vault':
       return (
@@ -800,8 +837,11 @@ export function FrameSections() {
       </Section>
 
       <Section title="ActivityList, ActivityRow, ActivityDay">
-        <Specimen name="five slots; the open needs-you row takes the picks; older rows print fainter" full>
+        <Specimen name="five slots; the open needs-you row takes the picks; older rows print fainter; a click selects a row" full>
           <ActivityDemo specimen="activity" />
+        </Specimen>
+        <Specimen name="compact, 230 px: two lines a row, the selected row lit; a needs-you row opens elsewhere" wide={1}>
+          <ActivityCompactDemo specimen="activity-compact" />
         </Specimen>
       </Section>
 

@@ -504,6 +504,17 @@
   color: var(--sl-ink-2);
 }
 
+.lib-activity-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 230px;
+}
+
+.sl-sidebar .lib-activity-compact {
+  width: auto;
+}
+
 .lib-people {
   max-width: 640px;
 }

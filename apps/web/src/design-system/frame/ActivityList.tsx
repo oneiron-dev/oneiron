@@ -10,12 +10,32 @@ export type ActivityAge = 'today' | 'yesterday' | 'older'
 
 /* ── the list ───────────────────────────────────────────────────────────── */
 
-export interface ActivityListProps extends React.ComponentPropsWithRef<'section'> {}
+export type ActivityDensity = 'full' | 'compact'
+
+/* The list's density, read by its rows. */
+const ActivityDensityContext = React.createContext<ActivityDensity>('full')
+
+export interface ActivityListProps extends React.ComponentPropsWithRef<'section'> {
+  /* `full`: one line per row in five slots. `compact`: for a sidebar about
+     230 px wide, two lines per row (the mark, who and the time; under them
+     the sentence, truncated). A needs-you row in compact form opens
+     elsewhere (onOpen) and never unfolds its picks in the list. */
+  density?: ActivityDensity
+}
 
 /* The threads that are live for the person, one row each, under day heads.
    The who and where columns line up down the list. */
-export function ActivityList({ className, 'aria-label': ariaLabel = 'activity', ...props }: ActivityListProps) {
-  return <section aria-label={ariaLabel} className={cx('sl-activity-list', className)} {...props} />
+export function ActivityList({
+  density = 'full',
+  className,
+  'aria-label': ariaLabel = 'activity',
+  ...props
+}: ActivityListProps) {
+  return (
+    <ActivityDensityContext.Provider value={density}>
+      <section aria-label={ariaLabel} className={cx('sl-activity-list', className)} data-density={density} {...props} />
+    </ActivityDensityContext.Provider>
+  )
 }
 
 export interface ActivityDayProps extends React.ComponentPropsWithRef<'h3'> {}
@@ -55,7 +75,8 @@ export interface ActivityRowProps extends Omit<React.ComponentPropsWithRef<'div'
 }
 
 /* One thread in five fixed slots: what happened, who, where, one sentence,
-   when. */
+   when. In a compact list: the mark, who and when on one line, the
+   sentence under them. */
 export function ActivityRow({
   id,
   kind,
@@ -65,6 +86,8 @@ export function ActivityRow({
   children,
   ...props
 }: ActivityRowProps) {
+  const density = React.useContext(ActivityDensityContext)
+  if (density === 'compact') return <ActivityRowCompact id={id} kind={kind} {...props} />
   const second = kind === 'needs-you' && open && children !== undefined
   if (!second) return <ActivityRowBody id={id} kind={kind} {...props} />
   return (
@@ -133,6 +156,53 @@ function ActivityRowBody({
         </button>
         {open && children !== undefined ? <div className="sl-activity-row-line">{children}</div> : null}
       </div>
+    </div>
+  )
+}
+
+type ActivityRowCompactProps = Omit<ActivityRowProps, 'open' | 'onSettle' | 'onLater' | 'children'>
+
+/* A row of a compact list: the same button and state as a full row, in two
+   lines. Where the thread lives is said to a screen reader only. */
+function ActivityRowCompact({
+  id,
+  kind,
+  glyph,
+  name,
+  where,
+  sentence,
+  when,
+  age = 'today',
+  selected = false,
+  onOpen,
+  className,
+  ...props
+}: ActivityRowCompactProps) {
+  return (
+    <div
+      className={cx('sl-activity-row', className)}
+      data-activity-id={id}
+      data-kind={kind}
+      data-age={age}
+      data-selected={selected ? '' : undefined}
+      {...props}
+    >
+      <button type="button" className="sl-activity-row-main" aria-current={selected ? 'true' : undefined} onClick={onOpen}>
+        <span className="sl-activity-slot" data-slot="what">
+          <ActivityMark kind={kind} />
+        </span>
+        <span className="sl-activity-slot" data-slot="who">
+          <span className="sl-activity-glyph">{glyph}</span>
+          <span className="sl-activity-name">{name}</span>
+          {where !== undefined ? <span className="sl-activity-where-said"> in {where}</span> : null}
+        </span>
+        <span className="sl-activity-slot" data-slot="when">
+          <Figure>{when}</Figure>
+        </span>
+        <span className="sl-activity-slot" data-slot="say">
+          {sentence}
+        </span>
+      </button>
     </div>
   )
 }
