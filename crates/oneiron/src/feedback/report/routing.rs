@@ -108,15 +108,21 @@ impl Vault {
         let subject = subject.strip_prefix("skill:").unwrap_or(subject);
         let mut publishers = std::collections::BTreeSet::new();
         let mut artifacts = std::collections::BTreeSet::new();
-        let txn = self.store.env.read_txn()?;
-        for row in IMPORTS.iter_from(&self.store, &txn, &[])? {
-            let (_, receipt) = row?;
-            if receipt.entity == subject
-                || receipt.content_hash == subject
-                || receipt.ref_string == subject
-            {
-                publishers.extend(receipt.publisher);
-                artifacts.extend(EntityId::from_hex(&receipt.entity).ok());
+        // The imports read ends before `installed_packs` and
+        // `report_has_publisher_actor` open their own: the env keeps one
+        // reader slot per thread, so a second read txn opened while this one
+        // lives fails with MDB_BAD_RSLOT.
+        {
+            let txn = self.store.env.read_txn()?;
+            for row in IMPORTS.iter_from(&self.store, &txn, &[])? {
+                let (_, receipt) = row?;
+                if receipt.entity == subject
+                    || receipt.content_hash == subject
+                    || receipt.ref_string == subject
+                {
+                    publishers.extend(receipt.publisher);
+                    artifacts.extend(EntityId::from_hex(&receipt.entity).ok());
+                }
             }
         }
         for pack in self.installed_packs()? {
