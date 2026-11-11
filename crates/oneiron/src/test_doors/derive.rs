@@ -684,6 +684,55 @@ pub fn grant_topology_seal(vault: &Vault, agent: EntityId) -> Result<EntityId> {
     Ok(minted.standing.id)
 }
 
+/// What a door revert did: the items undone and the items left, each with
+/// why; or the refusal's reason tokens.
+pub type Reverted = std::result::Result<(Vec<String>, Vec<(String, String)>), Vec<String>>;
+
+fn reverted(answer: Result<crate::derive::DeriveRevertReceipt>) -> Result<Reverted> {
+    match answer {
+        Ok(receipt) => Ok(Ok((receipt.reverted, receipt.left))),
+        Err(crate::error::Error::Gate(crate::error::GateError::GateWriteRejected {
+            reason_codes,
+            ..
+        })) => Ok(Err(reason_codes
+            .iter()
+            .map(|code| (*code).to_owned())
+            .collect())),
+        Err(error) => Err(error),
+    }
+}
+
+/// Reverts the batch `batch` as `actor` of `class`.
+///
+/// # Errors
+///
+/// The vault's, other than the gate's refusal.
+pub fn revert(
+    vault: &Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    batch: EntityId,
+) -> Result<Reverted> {
+    reverted(vault.derive_revert(WriteActor::new(actor, class), None, batch))
+}
+
+/// Reverts the batch `batch` as the vault's embedded owner.
+///
+/// # Errors
+///
+/// The vault's, other than the gate's refusal.
+pub fn revert_as_owner(vault: &Vault, batch: EntityId) -> Result<Reverted> {
+    let owner = super::steward::owner(vault)?;
+    let id = vault.ensure_embedded_owner_actor().map_err(|error| {
+        crate::error::Error::InvalidConfig(format!("embedded owner: {error:?}"))
+    })?;
+    reverted(vault.derive_revert(
+        WriteActor::new(id, EdgeActorClass::Human),
+        Some(&owner),
+        batch,
+    ))
+}
+
 /// The lifecycle status of the claim `id` (`active`, `superseded`, ...),
 /// when it is a stored claim.
 ///
@@ -747,6 +796,130 @@ pub fn open_conflict(vault: &Vault, new: EntityId, old: EntityId) -> Result<Enti
             .apply_recording_gate_decisions(txn)
     })?;
     Ok(marker.id)
+}
+
+/// Opens a conflict over `member` with one retained alternative whose value
+/// is `value`. Returns the marker and the alternative's selector.
+///
+/// # Errors
+///
+/// The vault's, a member that is no claim, or inadmissible evidence.
+pub fn open_conflict_with_alternative(
+    vault: &Vault,
+    member: EntityId,
+    value: &str,
+) -> Result<(EntityId, EntityId)> {
+    use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
+    use crate::dreamer_consolidation::{PromotionCandidate, retained_alternatives_entry_for_test};
+    use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
+    use rmpv::Value;
+
+    let body = vault
+        .get_claim(&member)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    let actor = vault.dreamer_authority()?;
+    let key = crate::claim::ScopedReadActorKey::for_engine_actor(actor).ok_or(
+        crate::error::Error::InvalidClaimBody("an actor with no read"),
+    )?;
+    let evidence = {
+        let read = vault.scoped_read(key);
+        let txn = vault.store.env.read_txn()?;
+        VerifiedEvidenceSet::verify_whole_in_txn(
+            vault,
+            &read,
+            &txn,
+            &[member],
+            ClaimSource::Generated,
+        )?
+    };
+    let alternative = EntityId::now();
+    let now = vault.now_recorded_at();
+    let occurred = crate::TimeRange {
+        start: now,
+        end: now,
+    };
+    let retained = VerifiedCandidate {
+        proposal: PromotionCandidate {
+            claim_id: alternative,
+            candidate: ClaimCandidate::new(
+                body.predicate.clone(),
+                body.subject,
+                Value::from(value),
+                0.9,
+            ),
+            evidence_turn_refs: evidence.refs(),
+            provenance_chain: Vec::new(),
+            supersedes: None,
+            evidence_meet: evidence.meet(),
+            occurred,
+            learned_at: now,
+            decisions: Vec::new(),
+        },
+        evidence,
+        answers: Vec::new(),
+        sources: None,
+        contested: true,
+    };
+    let alternatives = retained_alternatives_entry_for_test(&[&retained], AttemptId::now())?;
+    let candidate = ClaimCandidate::new(
+        crate::claim::PREDICATE_CONFLICT_OPEN,
+        body.subject,
+        Value::Map(vec![
+            (Value::from("predicate"), Value::from(body.predicate)),
+            (
+                Value::from("prior_head"),
+                Value::Binary(member.as_bytes().to_vec()),
+            ),
+            (
+                Value::from("candidates"),
+                Value::Array(vec![Value::Binary(alternative.as_bytes().to_vec())]),
+            ),
+            alternatives,
+        ]),
+        1.0,
+    )
+    .with_evidence(retained.evidence.envelope(Vec::new()));
+    let marker = EntityId::now();
+    let envelope = WriteEnvelope::new(
+        actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![(
+            Value::from("surface"),
+            Value::from("test.open_conflict_with_alternative"),
+        )]))?,
+        crate::claim::ClaimApprovalStatus::Proposed,
+    );
+    vault.with_write_txn_grouped(|txn| {
+        let mut envelope = envelope.clone();
+        vault.sign_retained_machine_claim_in_txn(txn, &marker, &candidate, &mut envelope)?;
+        vault
+            .batch_in()
+            .claim_candidate(&marker, candidate, &envelope, occurred, now)
+            .apply_recording_gate_decisions(txn)
+    })?;
+    Ok((marker, alternative))
+}
+
+/// The kept claim of the standing settlement `resolved` on `subject`.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn settlement_kept_claim(
+    vault: &Vault,
+    subject: EntityId,
+    resolved: EntityId,
+) -> Result<Option<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::dreamer_consolidation::settled_answers_in_txn(
+        vault,
+        &txn,
+        Some(subject),
+        usize::MAX,
+    )?
+    .into_iter()
+    .find(|answer| answer.resolved == resolved)
+    .and_then(|answer| answer.kept))
 }
 
 /// Sets the owner's strength policy: a claim archives only with a score

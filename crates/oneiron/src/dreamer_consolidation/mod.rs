@@ -111,7 +111,7 @@ pub(crate) use persistence::conflict_close_candidate;
 pub(crate) use persistence::on_axes_of;
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub(crate) use person_about::{
-    about_facts_in, enqueue_person_about_on_wake, erase_person_about_in_txn,
+    about_facts_in, about_revision_in, enqueue_person_about_on_wake, erase_person_about_in_txn,
     mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn, person_of_about_input,
     publish_person_about_in_txn,
 };
@@ -253,4 +253,13 @@ pub(crate) fn side_door_recheck_for_test(
     let read = turn_text::dreamer_read(vault)?;
     let txn = turn_text::snapshot(vault)?;
     record.check_live_in(&read, &txn, turn)
+}
+
+/// Encodes the candidates retained on a conflict marker.
+#[cfg(oneiron_test_support)]
+pub(crate) fn retained_alternatives_entry_for_test(
+    members: &[&evidence::VerifiedCandidate],
+    attempt: crate::attempt_queue::AttemptId,
+) -> crate::Result<(rmpv::Value, rmpv::Value)> {
+    retained_conflict::alternatives_entry(members, attempt)
 }

@@ -139,12 +139,15 @@ pub struct OpenConflict {
     pub reverted: bool,
 }
 
-/// What a settlement wrote: the answering `conflict.resolved` and each member
-/// the kept one superseded.
+/// What a settlement wrote: the answering `conflict.resolved`, each member
+/// the kept one superseded, and any retained alternative it landed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettledConflict {
     pub resolved: EntityId,
     pub superseded: Vec<EntityId>,
+    /// The id a kept retained alternative landed at; `None` when the kept
+    /// claim stood before, or the settlement keeps none.
+    pub materialized: Option<EntityId>,
 }
 
 /// A settlement's durable outcome, with the Gate receipt that recorded who
@@ -642,6 +645,7 @@ pub(crate) fn apply_settlement_in_txn(
     Ok(SettlementApplied::Settled(SettledConflict {
         resolved,
         superseded,
+        materialized: materialized.map(|(_, born)| born),
     }))
 }
 

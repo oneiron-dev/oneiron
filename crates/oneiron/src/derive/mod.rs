@@ -28,6 +28,7 @@ mod commit;
 mod evidence;
 mod link;
 mod record;
+mod revert;
 mod settle;
 mod supersede;
 pub(crate) mod tables;
@@ -45,6 +46,10 @@ pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
 pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_UNVERIFIED};
 pub use link::{SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_UNREAD};
 pub use record::{DerivationBatchRecord, ItemRecord};
+pub use revert::{
+    DERIVE_REVERT_CONTENT_KIND, DeriveRevertReceipt, REVERT_CHANGED_SINCE, REVERT_INVERSE_REFUSED,
+    REVERT_NO_INVERSE, REVERT_NOT_YOURS,
+};
 pub use settle::{SETTLE_IMPORT_REVIEW, SETTLE_OWNER_HOLD, SETTLE_REFUSED};
 pub use supersede::{
     SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE, SUPERSEDE_REPLACEMENT_UNSETTLED,
