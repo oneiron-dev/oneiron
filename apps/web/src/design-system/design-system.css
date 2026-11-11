@@ -49,6 +49,7 @@
 @import './patterns/Composer.css';
 @import './patterns/OutsideLine.css';
 @import './patterns/ConnectionRow.css';
+@import './patterns/VaultRow.css';
 @import './patterns/FileRow.css';
 @import './patterns/PinnedList.css';
 @import './patterns/RoomOutline.css';

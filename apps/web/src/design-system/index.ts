@@ -202,6 +202,7 @@ export {
 export { composerKeySends, composerSendText, type ComposerKeyState } from './patterns/composer-keys'
 export { OutsideLine, type OutsideLineProps, type OutsideLineGroupProps, type OutsideLineGuestProps } from './patterns/OutsideLine'
 export { ConnectionRow, type ConnectionRowProps } from './patterns/ConnectionRow'
+export { VaultRow, type VaultRowProps } from './patterns/VaultRow'
 export { FileRow, type FileRowProps, type FileRowListProps } from './patterns/FileRow'
 export { PinnedList, PINNED_LIST_NOTE, type PinnedListProps } from './patterns/PinnedList'
 export {
