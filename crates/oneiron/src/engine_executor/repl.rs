@@ -252,6 +252,7 @@ impl EngineNativeExecutor<'_> {
                 guest_abi: guest_abi_digest(&boundary),
                 trailing_speak: trailing_speak.as_deref(),
                 repairs,
+                answered_by: correction.answering_model().cloned(),
                 prior: pending.as_ref(),
                 ran: step_outcome.is_ok(),
                 cancelled: cancel.is_cancelled(),
