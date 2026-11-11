@@ -3,7 +3,6 @@
 
 mod dns;
 mod fixture;
-mod floor;
 mod http;
 mod name_gate;
 mod quic;
@@ -13,7 +12,6 @@ use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyV
 use crate::{EntityId, Vault};
 pub use dns::{UnusableResolver, exchange_dns_query};
 pub use fixture::{FixtureForward, FixtureForwardError};
-pub use floor::{ProcessDescriptorFloor, VaultHostFloor, guest_network_permits};
 pub use name_gate::EgressNameRefusal;
 use oneiron_container::{EgressRelay, HostNetFloor, HttpRequest, HttpResponse};
 use oneiron_sandbox_contract::network::global_address;
@@ -431,8 +429,9 @@ impl OpenEgressProxy {
     }
 }
 impl EgressRelay for OpenEgressProxy {
-    /// The vault's host floor ([`VaultHostFloor`]), looked up at each
-    /// charge: the process's descriptor line until a host attaches its own.
+    /// The vault's host floor ([`crate::host_net_floor::VaultHostFloor`]),
+    /// looked up at each charge: the process's descriptor line until a host
+    /// attaches its own.
     fn host_net_floor(&self) -> &dyn HostNetFloor {
         &**self.vault.runtime().host_net_floor()
     }

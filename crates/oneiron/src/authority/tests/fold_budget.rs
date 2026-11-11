@@ -71,7 +71,7 @@ fn assert_folds_closed(fold: &AuthorityFold) {
 #[test]
 fn a_self_signed_chain_folds_until_its_memory_floor() {
     const LEN: usize = 64;
-    let genesis = genesis_entry(60, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(60, 1);
     let mut entries = vec![genesis.clone()];
     entries.extend(confirm_chain(&genesis, 201, LEN, |_| vec![]));
     let fold = fold_authority_log(&entries);
@@ -116,7 +116,7 @@ fn a_self_signed_chain_folds_until_its_memory_floor() {
 #[test]
 fn a_chain_naming_missing_parents_folds_closed_at_the_memory_floor() {
     const LEN: usize = 64;
-    let genesis = genesis_entry(63, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(63, 1);
     let missing = |n: usize| {
         (0..MAX_PARENTS - 1)
             .map(|k| {
@@ -142,7 +142,7 @@ fn a_chain_naming_missing_parents_folds_closed_at_the_memory_floor() {
 /// shape every local writer produces, still folds with every row valid.
 #[test]
 fn a_signers_full_bound_still_folds() {
-    let genesis = genesis_entry(61, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(61, 1);
     let mut entries = vec![genesis.clone()];
     entries.extend(confirm_chain(
         &genesis,
@@ -302,10 +302,11 @@ fn a_signer_past_its_bound_waits_but_live_restrictions_and_owner_rows_land() {
     let request = request_for(host.vault_id, EntityId::now(), &ed_key(66));
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     let at = TimeRange { start: 1, end: 1 };
@@ -456,10 +457,11 @@ fn oauth_exchanges_past_every_bound_still_mint_and_the_machines_stay_mine() {
     let machine = request_for(host.vault_id, EntityId::now(), &ed_key(71));
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &machine,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     with_rows_per_signer_for_test(BOUND, || {
@@ -518,6 +520,8 @@ fn issuer_slip_chain(
                     vec![parent],
                     AuthorityOp::SlipMint(SlipMintAction {
                         claims: claims_numbered(&root.claims, n),
+                        renews: None,
+                        minting_member: None,
                     }),
                     root.claims.issued_at,
                 )
@@ -636,10 +640,11 @@ fn agent_and_machine_keys_rows_land_only_with_the_owner_or_under_their_bound() {
         let witness = request_for(host.vault_id, EntityId::now(), &ed_key(71));
         host.vault
             .enroll_machine(
-                &host.issuer,
                 &host.owner,
+                ActSurface::ThisInstall,
                 &witness,
                 MachineRole::Owned(MachineOwnership::Yours),
+                None,
             )
             .unwrap();
         let signing = ed_key(72);
@@ -650,10 +655,11 @@ fn agent_and_machine_keys_rows_land_only_with_the_owner_or_under_their_bound() {
             let request = request_for(host.vault_id, own_machine, &signing);
             host.vault
                 .enroll_machine(
-                    &host.issuer,
                     &host.owner,
+                    ActSurface::ThisInstall,
                     &request,
                     MachineRole::Owned(MachineOwnership::Yours),
+                    None,
                 )
                 .unwrap();
         } else {
@@ -716,6 +722,8 @@ fn agent_and_machine_keys_rows_land_only_with_the_owner_or_under_their_bound() {
                 let op = match n % 3 {
                     0 => AuthorityOp::SlipMint(SlipMintAction {
                         claims: claims_numbered(&root.claims, n),
+                        renews: None,
+                        minting_member: None,
                     }),
                     1 => AuthorityOp::SlipRevoke {
                         slip_id: claims_numbered(&root.claims, n - 1).slip_id,
@@ -818,6 +826,7 @@ fn put_replicated_row(vault: &crate::Vault, entry: &AuthorityLogEntry) -> crate:
             ENTITY_TYPE_AUTHORITY_LOG,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_authority_log_entry_body(entry)?,
         )
         .commit()
@@ -835,7 +844,7 @@ fn a_handoff_signed_by_a_rotated_owner_key_lands_through_sync() {
     let old = ed_key(115);
     let next = ed_key(116);
     let host = HostSlipIssuer::from_secret(b"rotated handoff placeholder words").unwrap();
-    let genesis = genesis_entry(115, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(115, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let rotation = rotate_entry(id, &genesis, &old, authority_key_from_ed(&old), 116, 1);
     let handoff = sign_ed(
@@ -880,7 +889,7 @@ fn a_handoff_signed_by_a_rotated_owner_key_lands_through_sync() {
 #[test]
 fn the_root_keys_second_genesis_waits_and_its_first_again_changes_nothing() {
     let at = TimeRange { start: 1, end: 1 };
-    let genesis = genesis_entry(132, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(132, 1);
     let mut second = genesis.clone();
     if let AuthorityOp::Genesis { genesis_nonce, .. } = &mut second.op {
         *genesis_nonce = [0x5A; 32];
@@ -936,7 +945,7 @@ fn the_root_keys_second_genesis_waits_and_its_first_again_changes_nothing() {
 fn a_host_an_admin_admitted_line_hands_off_to_is_a_slip_issuer() {
     let [owner, admin, agent, second] = [120, 121, 122, 123].map(ed_key);
     let host = HostSlipIssuer::from_secret(b"admin line host placeholder words").unwrap();
-    let genesis = genesis_entry(120, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(120, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let row = |parent: &AuthorityLogEntry,
                seq,
@@ -1025,7 +1034,7 @@ fn a_host_an_admin_admitted_line_hands_off_to_is_a_slip_issuer() {
 fn an_admin_genesis_line_imports_with_its_host_a_slip_issuer() {
     let [admin, owner] = [124, 125].map(ed_key);
     let host = HostSlipIssuer::from_secret(b"admin genesis host placeholder words").unwrap();
-    let mut genesis = genesis_entry(124, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let mut genesis = genesis_entry(124, 1);
     if let AuthorityOp::Genesis { device, .. } = &mut genesis.op {
         device.roles = ROLE_ADMIN;
     }
@@ -1122,7 +1131,7 @@ fn a_complete_history_imports_past_the_bound_in_any_order() {
 fn a_history_whose_issuer_admission_is_a_sibling_imports_in_any_order() {
     const BOUND: usize = 4;
     let [owner, next] = [126, 127].map(ed_key);
-    let genesis = genesis_entry(126, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(126, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let root = authority_entry_hash(&genesis).unwrap();
     let handoff = sign_ed(
@@ -1185,7 +1194,7 @@ fn imported(history: &[Vec<u8>]) -> AuthorityFold {
 #[test]
 fn a_revision_whose_signers_admission_is_a_sibling_imports_in_any_order() {
     let [owner, next] = [128, 129].map(ed_key);
-    let genesis = genesis_entry(128, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(128, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let root = authority_entry_hash(&genesis).unwrap();
     let handoff = sign_ed(
@@ -1216,11 +1225,14 @@ fn a_revision_whose_signers_admission_is_a_sibling_imports_in_any_order() {
                 machine,
                 owner: EntityId::now(),
                 machine_key: request.machine_key,
+                device_class: request.device_class,
                 encryption_key: request.encryption_key,
                 role: MachineRole::Owned(MachineOwnership::Yours),
                 revision: 1,
                 machine_proof: request.machine_proof,
                 seen_world_edits: BTreeSet::new(),
+                carrier: None,
+                act: None,
             }),
             authority_key_from_ed(&next),
             3,
@@ -1460,7 +1472,7 @@ fn a_binding_beside_a_misordered_sibling_imports_in_any_order() {
 fn a_binding_held_by_both_edges_imports_before_its_signers_later_rows() {
     let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
     let [owner, first, second, admin] = [150, 151, 152, 153].map(ed_key);
-    let genesis = genesis_entry(150, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(150, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let signed = |signer: &SigningKey, seq, parent, op, cosigner: Option<&SigningKey>| {
         let entry = unsigned_entry(
@@ -1556,7 +1568,7 @@ fn a_binding_held_by_both_edges_imports_before_its_signers_later_rows() {
 #[test]
 fn a_batch_given_children_first_lands_whole() {
     let [owner, admin] = [134, 135].map(ed_key);
-    let genesis = genesis_entry(134, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(134, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let admission = sign_ed(
         unsigned_entry(
@@ -1616,7 +1628,7 @@ fn a_batch_given_children_first_lands_whole() {
 #[test]
 fn a_cosigned_handoff_imports_after_its_signers_admission() {
     let [owner, candidate, successor] = [131, 132, 133].map(ed_key);
-    let genesis = genesis_entry(131, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(131, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let root = authority_entry_hash(&genesis).unwrap();
     let admission = sign_ed(
@@ -1689,10 +1701,11 @@ fn the_owners_rows_past_the_signer_bound_land_and_import_in_any_order() {
     let request = request_for(host.vault_id, EntityId::now(), &ed_key(76));
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     let at = TimeRange { start: 1, end: 1 };
@@ -1781,10 +1794,11 @@ fn concurrent_demotions_of_one_machine_land_past_the_signer_bound() {
     let request = request_for(host.vault_id, EntityId::now(), &ed_key(74));
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     let at = TimeRange { start: 1, end: 1 };
@@ -1825,10 +1839,11 @@ fn concurrent_demotions_of_one_machine_land_past_the_signer_bound() {
         host.vault.put_authority_log_entry(&first, at, 1).unwrap();
         host.vault
             .set_machine_role(
-                &host.issuer,
                 &host.owner,
+                ActSurface::ThisInstall,
                 request.machine,
                 MachineRole::Removed,
+                None,
             )
             .unwrap();
         host.vault.put_authority_log_entry(&second, at, 1).unwrap();
@@ -1906,10 +1921,11 @@ fn a_world_edit_lands_only_from_its_own_machines_install_key() {
         let request = request_for(host.vault_id, EntityId::now(), &ed_key(seed));
         host.vault
             .enroll_machine(
-                &host.issuer,
                 &host.owner,
+                ActSurface::ThisInstall,
                 &request,
                 MachineRole::Owned(MachineOwnership::Yours),
+                None,
             )
             .unwrap();
         request.machine
@@ -1973,7 +1989,7 @@ fn the_log_raises_one_headroom_check_per_policy_row() {
     let at = TimeRange { start: 1, end: 1 };
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    let genesis = genesis_entry(68, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(68, 1);
     let mut rows = vec![(genesis.clone(), at, 1)];
     rows.extend(
         confirm_chain(&genesis, 68, BOUND - 1, |_| vec![])
@@ -1993,7 +2009,7 @@ fn the_log_raises_one_headroom_check_per_policy_row() {
 
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    let genesis = genesis_entry(69, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(69, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     vault.put_authority_log_entry(&genesis, at, 1).unwrap();
     let (mut signer, mut parent) = (ed_key(69), authority_entry_hash(&genesis).unwrap());

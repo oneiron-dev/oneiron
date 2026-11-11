@@ -164,7 +164,10 @@ class Fragment:
     @staticmethod
     def doc(node, indent):
         row = node['row']
-        return f'{indent}/** {row["description"]} */\n' if JSDOC and row and row.get('description') else ''
+        if not (JSDOC and row): return ''
+        # A run row has no description; one that names its grant class shows it.
+        text = row.get('description') or (f'Grant class: {row["grant_class"]}.' if row.get('grant_class') else '')
+        return f'{indent}/** {text} */\n' if text else ''
 
     def kind(self, node, depth):
         'A path segment\'s type: its call signature, the members it holds, or both at once.'
