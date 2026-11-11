@@ -49,8 +49,77 @@ export {
 export { Glyph, type GlyphProps, type GlyphState, type GlyphShape } from './marks/Glyph'
 export { Portrait, type PortraitProps } from './marks/Portrait'
 
+export {
+  NeedsYou,
+  NEEDS_YOU_UNDO_MS,
+  type NeedsYouProps,
+  type NeedsYouItemProps,
+  type NeedsYouUrgency,
+  type NeedsYouPicksProps,
+  type NeedsYouPickProps,
+  type NeedsYouOwnAnswerProps,
+  type NeedsYouLaterProps,
+  type NeedsYouCommandProps,
+  type NeedsYouPlanProps,
+  type NeedsYouStepProps,
+  type NeedsYouContextProps,
+} from './patterns/NeedsYou'
+export {
+  settleReducer,
+  SETTLE_OPEN,
+  type SettleState,
+  type SettleAction,
+  type SettleKind,
+} from './patterns/settle-reducer'
+export {
+  MessageRow,
+  type MessageRowProps,
+  type MessageRowTextProps,
+  type MessageRowAttachmentsProps,
+  type MessageRowAttachmentProps,
+  type MessageRowFoldProps,
+  type MessageRowThreadLineProps,
+  type MessageRowReactionsProps,
+  type MessageRowReactionProps,
+} from './patterns/MessageRow'
+export { HoverBar, type HoverBarProps } from './patterns/HoverBar'
+export { DayDivider, type DayDividerProps } from './patterns/DayDivider'
+export { RunFoot, type RunFootProps, type RunFootCallProps, type RunSubState } from './patterns/RunFoot'
+export { formatElapsed } from './patterns/run-elapsed'
+export {
+  CrewStack,
+  type CrewStackProps,
+  type CrewStackMemberProps,
+  type CrewStackListProps,
+  type CrewStackListRowProps,
+} from './patterns/CrewStack'
+export { SplitPane, type SplitPaneProps, type SplitPanePaneProps, type SplitPaneHandleProps } from './patterns/SplitPane'
+export { snapToMagnet, SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, type MagnetSnap } from './patterns/snap-to-magnet'
+export {
+  Composer,
+  type ComposerProps,
+  type ComposerCarryProps,
+  type ComposerPointerProps,
+  type ComposerChipProps,
+  type ComposerPersonaProps,
+  type ComposerPersonaKind,
+} from './patterns/Composer'
+export { OutsideLine, type OutsideLineProps, type OutsideLineGroupProps, type OutsideLineGuestProps } from './patterns/OutsideLine'
+export { ConnectionRow, type ConnectionRowProps } from './patterns/ConnectionRow'
+export { FileRow, type FileRowProps } from './patterns/FileRow'
+export { FileGroup, type FileGroupProps } from './patterns/FileGroup'
+export {
+  LedgerTable,
+  type LedgerTableProps,
+  type LedgerTableHeadProps,
+  type LedgerTableRowProps,
+  type LedgerTableCellProps,
+} from './patterns/LedgerTable'
+export { ClaimText, type ClaimTextProps } from './patterns/ClaimText'
+export { claimInk, type ClaimInk } from './patterns/claim-ink'
+
 export { GLYPH_NAMES, type GlyphName } from './lib/seal-art'
-export { placeFloating, type Side, type Align, type Placement, type PlacementOptions } from './lib/placement'
+export { placeFloating, anchorInViewport, type Side, type Align, type Placement, type PlacementOptions } from './lib/placement'
 export { bayerThreshold, easeOutQuart, develop, BAYER_8X8 } from './lib/dither'
 export { useResolvedScheme, resolveScheme, type Scheme } from './lib/scheme'
 export { useControllableState, Slot, cx } from './lib/react-utils'
