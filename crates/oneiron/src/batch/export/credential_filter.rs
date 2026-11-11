@@ -210,6 +210,22 @@ fn native_body_refused(entity_type: u8, body: &[u8]) -> bool {
     }
 }
 
+/// Whether a file leaves whole under the Nulled rule (SCOPED-EXPORT-RULE = A,
+/// ARCH-0027 :382): only when the typed rule, reading it as an ASSET body,
+/// and the raw release check both leave its bytes unchanged. A file is never
+/// rewritten: the caller withholds it, or the whole that binds it.
+///
+/// # Errors
+/// A failed raw release check.
+pub(crate) fn export_file_body_admitted(bytes: &[u8]) -> Result<bool> {
+    use crate::serialize::{ExportBody, ExportSecrets};
+
+    let asset = crate::registry::ENTITY_TYPE_ASSET;
+    Ok(ExportBody::from_bytes(bytes, asset)
+        == ExportBody::from_bytes_with(bytes, asset, ExportSecrets::Included)
+        && redacted_memory_payload(bytes.to_vec())? == bytes)
+}
+
 fn proof_bound_body(entity_type: u8, body: &[u8]) -> bool {
     use crate::registry::{
         ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR,
