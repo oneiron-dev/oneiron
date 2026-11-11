@@ -33,6 +33,8 @@ fn witness_turn(
                 .map(|(order, text)| witness_message(order, WitnessAuthor::User, text))
                 .collect(),
             occurred_at,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witness a turn");
     EntityId::from_hex(
@@ -322,6 +324,8 @@ fn a_turn_the_reader_may_not_retrieve_leaves_room_for_one_it_may() {
                 witness_message(1, WitnessAuthor::User, "harbor locker code is 4471"),
             ],
             occurred_at,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witness the partly withheld turn");
     owner_facade
@@ -330,6 +334,8 @@ fn a_turn_the_reader_may_not_retrieve_leaves_room_for_one_it_may() {
             turn_ref: None,
             messages: vec![in_space(0, ALLOWED)],
             occurred_at,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witness the readable turn");
 

@@ -302,3 +302,6 @@ pub enum DictLoadError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
+
+#[cfg(test)]
+mod tests;

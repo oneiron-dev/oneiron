@@ -279,7 +279,8 @@ fn test_publisher(vault: &Vault) -> Result<WriteActor> {
 fn grant_artifact_publish(vault: &Vault, actor: WriteActor, artifact: &str) -> Result<EntityId> {
     let id = EntityId::from_bytes([0x32; 16])?;
     vault.mint_standing_outbound_grant(
-        &id,
+        &crate::test_util::embedded_owner_proof(&vault),
+        id,
         &crate::genui::GrantMintIntent {
             principal_ref: actor.entity_ref().to_hex(),
             origin_component_id: "artifact.publish".to_owned(),
@@ -289,7 +290,6 @@ fn grant_artifact_publish(vault: &Vault, actor: WriteActor, artifact: &str) -> R
                 artifact: artifact.to_owned(),
             },
         },
-        11,
     )?;
     Ok(id)
 }
