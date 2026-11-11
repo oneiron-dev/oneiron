@@ -28,6 +28,7 @@ import {
   type Step,
 } from '~/design-system'
 import { Section, Specimen } from './-gallery-frame'
+import { RESIDENTS } from './-identity'
 import { PatternSections } from './-patterns'
 import galleryCss from './-gallery.css?url'
 
@@ -580,6 +581,46 @@ function LibraryPage() {
             <span className="lib-inline lib-inline-wide">
               <Glyph glyph="wing" label="Eiri" guest />
               <Glyph initial="y" label="Yurii" guest state="working" />
+            </span>
+          </Specimen>
+          <Specimen name="line, in each resident's ink">
+            <span className="lib-inline lib-inline-wide">
+              {RESIDENTS.map((r) => (
+                <Glyph key={r.name} glyph={r.glyph} label={r.name} form="line" ink={r.ink} size={32} />
+              ))}
+              <Glyph initial="o" label="Oleksii" form="line" size={32} />
+            </span>
+          </Specimen>
+          <Specimen name="line, no ink">
+            <span className="lib-inline lib-inline-wide">
+              <Glyph glyph="moon" label="moon" form="line" size={32} />
+              <Glyph glyph="laurel" label="laurel" form="line" size={32} />
+            </span>
+          </Specimen>
+          <Specimen name="line at 18, 24, 32">
+            <span className="lib-inline">
+              {([18, 24, 32] as const).map((size) => (
+                <Glyph key={size} glyph="wing" label="Eiri" form="line" ink={RESIDENTS[0].ink} size={size} />
+              ))}
+              {([18, 24, 32] as const).map((size) => (
+                <Glyph key={`o${size}`} glyph="owl" label="Tory" form="line" ink={RESIDENTS[1].ink} size={size} />
+              ))}
+            </span>
+          </Specimen>
+          <Specimen name="line, states and guest">
+            <span className="lib-inline lib-inline-wide">
+              <Glyph glyph="laurel" label="Antevon" form="line" ink={RESIDENTS[2].ink} state="idle" />
+              <Glyph glyph="ruler" label="Metryon" form="line" ink={RESIDENTS[3].ink} state="working" />
+              <Glyph glyph="wing" label="Eiri" form="line" ink={RESIDENTS[0].ink} state="waiting" />
+              <Glyph glyph="owl" label="Tory" form="line" ink={RESIDENTS[1].ink} state="done" />
+              <Glyph glyph="wing" label="Eiri" form="line" ink={RESIDENTS[0].ink} guest />
+            </span>
+          </Specimen>
+          <Specimen name="seal in a resident's ink">
+            <span className="lib-inline lib-inline-wide">
+              {RESIDENTS.map((r) => (
+                <Glyph key={r.name} glyph={r.glyph} label={r.name} ink={r.ink} size={32} />
+              ))}
             </span>
           </Specimen>
         </Section>

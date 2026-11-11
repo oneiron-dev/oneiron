@@ -24,6 +24,11 @@
   border: 1px solid var(--sl-ink-3);
 }
 
+/* A line glyph stands bare: no frame. */
+.sl-glyph[data-form="line"] {
+  border: 0;
+}
+
 .sl-glyph[data-kind="person"] {
   background: var(--sl-disc);
   color: var(--sl-ink-1);
@@ -43,7 +48,12 @@
 .sl-glyph-print {
   display: block;
   image-rendering: pixelated;
-  color: var(--sl-ink-1);
+  color: var(--sl-glyph-ink, var(--sl-ink-1));
+}
+
+.sl-glyph-line {
+  display: block;
+  color: var(--sl-glyph-ink, var(--sl-ink-2));
 }
 
 .sl-glyph-initial {
