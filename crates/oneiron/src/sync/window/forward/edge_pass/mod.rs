@@ -56,7 +56,12 @@ pub(super) fn run_page(
     // retracted (value[24] == 3) lose to a stale local Active stamp, and the
     // PPR retracted gate would keep propagating withdrawn provenance.
     let count = ledger.count;
-    let mut pass = Pass { ctx, ledger, count };
+    let mut pass = Pass {
+        ctx,
+        ledger,
+        count,
+        landing_deferred: Vec::new(),
+    };
     let mut pending: Vec<PendingEdge<'_>> = Vec::new();
     for key in keys {
         let buf = map_get_bytes(&ctx.edges_map, key);
@@ -91,6 +96,45 @@ pub(super) fn run_page(
         }
     }
     pass.flush(&mut pending)?;
+    // Same page, any order: a landing reply whose ClaimOf landed later in
+    // this page than its ChildOf/RepliesTo deferred above with its replay
+    // marker. Replay exactly those keys once more through the same gate +
+    // queue + flush path, so the outcome does not depend on the map's key
+    // order inside one page. An edge that still waits stays Deferred with
+    // its marker; no third pass.
+    let retry = std::mem::take(&mut pass.landing_deferred);
+    if !retry.is_empty() {
+        let mut second: Vec<PendingEdge<'_>> = Vec::new();
+        for key in &retry {
+            let buf = map_get_bytes(&ctx.edges_map, key);
+            match gate(ctx, key.as_str(), buf.as_deref()) {
+                Err(err) => {
+                    pass.flush(&mut second)?;
+                    return Err(err);
+                }
+                Ok(Gate::Skip) => {}
+                Ok(Gate::Parent {
+                    src,
+                    tgt,
+                    tombstoned,
+                }) => {
+                    pass.flush(&mut second)?;
+                    pass.replay_parent(src, tgt, buf.as_deref().unwrap_or_default(), tombstoned)?;
+                }
+                Ok(Gate::Queued(queued)) => {
+                    second.push(PendingEdge {
+                        key: key.as_str(),
+                        buf: buf.unwrap_or_default(),
+                        queued,
+                    });
+                    if second.len() >= FORWARD_EDGE_CHUNK {
+                        pass.flush(&mut second)?;
+                    }
+                }
+            }
+        }
+        pass.flush(&mut second)?;
+    }
     pass.ledger.count = pass.count;
     Ok(())
 }
@@ -101,6 +145,7 @@ struct Pass<'a> {
     ctx: &'a RematCtx<'a>,
     ledger: &'a mut RematLedger,
     count: u32,
+    landing_deferred: Vec<String>,
 }
 
 /// What the pre-gate decided for one edge, before any write.
@@ -166,6 +211,9 @@ enum Staged {
     Written(EntityId),
     /// A deferral: the pending index, for the after-commit debug log.
     Deferred(usize),
+    /// A landing-wait deferral: the pending index, queued for the page's
+    /// single same-order retry.
+    LandingDeferred(usize),
 }
 
 /// Why a chunk's door transaction did not commit its staged edges: an
@@ -267,6 +315,13 @@ impl Pass<'_> {
                         "forward remat: edge deferred — endpoint absent"
                     );
                 }
+                Staged::LandingDeferred(index) => {
+                    tracing::debug!(
+                        edge = %pending[index].key,
+                        "forward remat: edge deferred — landing reply waits for its signed landing"
+                    );
+                    self.landing_deferred.push(pending[index].key.to_owned());
+                }
             }
         }
         Ok(done)
@@ -323,6 +378,20 @@ impl Pass<'_> {
                             edge = %edge.key,
                             "forward remat: edge deferred — endpoint absent"
                         );
+                        if matches!(
+                            work.kind,
+                            crate::edge::EdgeKind::ChildOf | crate::edge::EdgeKind::RepliesTo
+                        ) {
+                            let rtxn = vault.store.env.read_txn()?;
+                            if crate::conversation_dag::landing_reply_waits_in(
+                                &vault.store,
+                                &vault.store,
+                                &rtxn,
+                                &work.src,
+                            )? {
+                                self.landing_deferred.push(edge.key.to_owned());
+                            }
+                        }
                     }
                     // Its wait moved into the ledger, so a replay-origin marker
                     // its source holds clears as a terminal quarantine's does:
@@ -580,7 +649,20 @@ fn stage(
                 }
                 Ok(EdgeRematOutcome::Unchanged) => Ok(()),
                 Ok(EdgeRematOutcome::Deferred) => {
-                    staged.push(Staged::Deferred(index));
+                    let landing = matches!(
+                        work.kind,
+                        crate::edge::EdgeKind::ChildOf | crate::edge::EdgeKind::RepliesTo
+                    ) && crate::conversation_dag::landing_reply_waits_in(
+                        &vault.store,
+                        &vault.store,
+                        &*parent,
+                        &work.src,
+                    )?;
+                    if landing {
+                        staged.push(Staged::LandingDeferred(index));
+                    } else {
+                        staged.push(Staged::Deferred(index));
+                    }
                     Ok(())
                 }
                 // Its wait moved into the ledger, so a replay-origin marker
