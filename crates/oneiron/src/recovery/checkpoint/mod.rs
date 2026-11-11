@@ -559,6 +559,7 @@ impl Vault {
             &erased,
             budget,
             None,
+            None,
         )?;
         // A pack source it erased halts the copy's routes too (FIX 6086).
         response_rows::removals::halt_erased_pack_routes(&vault, &erased)?;
@@ -748,7 +749,9 @@ impl Vault {
     /// vault's, or when a family entangled with content (a grant, policy
     /// manifest, custody, machine identity, room role or membership, e-sign
     /// ceremony) moved since the checkpoint, rather than roll it back
-    /// (ARCH-0038, RD-20). Floors scoped to restored entities are checked
+    /// (ARCH-0038, RD-20). Whole families and projected authority compare the
+    /// pre-merge image once its compartments open, before destination creation.
+    /// Floors scoped to restored entities are checked
     /// after compartments land; a refusal removes `destination`, as when
     /// the result would make someone an owner or member who is not one of `current` now,
     /// or when a decision the engine makes from restored rows would permit
@@ -825,7 +828,7 @@ impl Vault {
         // The carried rows hold `current`'s custody binding and retirements,
         // and its pad objects are captured in the read that carried them.
         let classes = restore_class::Classes::new(current, &image.databases)?;
-        let (home_table_notes, current_pads, image_floors) =
+        let (home_table_notes, current_pads, image_floors, refused) =
             authority_plane::carry_current_authority(&mut image.databases, current, &classes)?;
         // Each kept removal archive's file and descriptor follow its Live
         // row (FIX 3679).
@@ -851,6 +854,7 @@ impl Vault {
             &erased,
             &write_budget::Unfloored,
             Some(archives),
+            Some(refused),
         )?;
         // A home table whose live rows did not read came from the image.
         report.home_table_notes = home_table_notes;
