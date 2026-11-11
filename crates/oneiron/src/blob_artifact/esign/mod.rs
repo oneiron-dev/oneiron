@@ -20,6 +20,7 @@ pub(crate) use notice_send_act::erase_notice_send_act_actor_in_txn;
 pub use notice_unattended::{EsignNoticeGroup, EsignUnattendedNotices};
 #[cfg(test)]
 mod tests;
+pub(crate) use lane_scope::bounded_by_whole_vault;
 pub use ledger::PROJECT_MEMBERS_ONLY;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use ledger::mark_sent_for_test;
@@ -32,6 +33,8 @@ pub use model::{
 
 mod capability;
 mod ceremony;
+mod claim_dependencies;
+pub(crate) use claim_dependencies::{EsignClaimDependencies, esign_claim_dependencies_in};
 mod delivery_capability;
 pub use delivery_capability::{EsignDeliveryLink, EsignDeliveryMint, EsignDeliveryWait};
 mod delivery_settlement;
