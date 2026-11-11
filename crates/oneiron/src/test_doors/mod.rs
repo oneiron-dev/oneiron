@@ -4,7 +4,5 @@
 //! ... --test <stem>`); never behind a cargo feature, so no `--all-features`
 //! build reaches them. Hidden; never API.
 
-pub use crate::blob_artifact::esign::esign_seal_verify_reasons;
-
 pub mod live_run_claim_put;
 pub mod run_hold;

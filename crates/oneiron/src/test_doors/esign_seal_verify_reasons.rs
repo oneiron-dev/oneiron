@@ -1,6 +1,7 @@
 //! Door for `tests/esign_seal_verify_reasons.rs`, declared inside e-sign so
 //! it can reach the ledger writer without changing that writer's visibility.
-//! Re-exported by `test_doors`; compiled only under `oneiron_test_support`.
+//! Reached as `oneiron::blob_artifact::esign::esign_seal_verify_reasons`, not
+//! re-exported by `test_doors`; compiled only under `oneiron_test_support`.
 
 use crate::blob_artifact::esign::{EsignAuditActor, EsignEvent, EsignState};
 use crate::{EntityId, Result, Vault};
