@@ -391,7 +391,6 @@ const fn catalogue_rank(db: SideDb) -> u8 {
 /// rows a declared door already wrote, so either direction is a read over
 /// declared territory; only the exact-key doors ([`declared_for`]) and the
 /// write doors need the one-directional check.
-#[cfg(feature = "sync")]
 pub(crate) fn declared_overlaps(db: SideDb, prefix: &[u8]) -> bool {
     declared().any(|decl| {
         decl.db == db && (prefix.starts_with(decl.prefix) || decl.prefix.starts_with(prefix))
