@@ -33,7 +33,8 @@ impl Vault {
     /// open seeds. Seeds whose ids are minted at import (skill provenance
     /// and scan claims, the root project and its home room) are recognized
     /// by subject and predicate or by the root pointer, never by stamp: the
-    /// pack seeds stamp wall-clock. Deleted shells are not live rows.
+    /// pack seeds stamp wall-clock. The home room counts only while it holds
+    /// its exact seeded body. Deleted shells are not live rows.
     pub fn first_non_bootstrap_row(&self) -> Result<Option<(u8, EntityId)>> {
         let txn = self.store.env.read_txn()?;
         self.first_non_bootstrap_row_in_txn(&txn)
@@ -51,10 +52,13 @@ impl Vault {
         let root_row = root
             .zip(self.project_type_byte().ok())
             .map(|(id, byte)| (byte, id));
-        let home_row = root
-            .map(crate::workspace_roster::home_room_id)
+        // Root seeding projects one home room. Only its exact seeded body is
+        // bootstrap: a room whose roster, scope or origin changed is real
+        // content, and a join must not set that vault aside.
+        let home_room = root
+            .map(crate::workspace_roster::seeded_root_home_room)
             .transpose()?
-            .map(|id| (ENTITY_TYPE_CONVERSATION, id));
+            .flatten();
         const PAGE: usize = 1024;
         for byte in 0..=u8::MAX {
             let mut after: Option<EntityId> = None;
@@ -71,8 +75,14 @@ impl Vault {
                     let seeded = census.contains(entity_type, &id)
                         && (entity_type != ENTITY_TYPE_AGENT_DEF
                             || crate::agent_def::seeded_row_matches_manifest(&id, &body));
-                    let row = Some((entity_type, id));
-                    if seeded || row == root_row || row == home_row {
+                    if seeded || Some((entity_type, id)) == root_row {
+                        continue;
+                    }
+                    if entity_type == ENTITY_TYPE_CONVERSATION
+                        && home_room
+                            .as_ref()
+                            .is_some_and(|(room, seeded_body)| id == *room && body == *seeded_body)
+                    {
                         continue;
                     }
                     if entity_type == ENTITY_TYPE_CLAIM
