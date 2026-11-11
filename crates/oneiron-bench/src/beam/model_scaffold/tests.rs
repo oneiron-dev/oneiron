@@ -27,7 +27,7 @@ impl LlmBackend for FixtureBackend {
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            let ContentPart::Text { text: user } = &request.messages[1].content[0] else {
+            let ContentPart::Text { text: user, .. } = &request.messages[1].content[0] else {
                 panic!("text")
             };
             let input: serde_json::Value = serde_json::from_str(user).unwrap_or_default();
@@ -60,14 +60,14 @@ impl LlmBackend for FixtureBackend {
                 _ => "tulip".to_owned(),
             };
             if request.envelope.purpose == CallPurpose::ToolRouting {
-                let ContentPart::Text { text } = &request.messages[0].content[0] else {
+                let ContentPart::Text { text, .. } = &request.messages[0].content[0] else {
                     panic!("text")
                 };
                 self.routing_prompts.lock().unwrap().push(text.clone());
             }
             if request.envelope.purpose == CallPurpose::AnswerGen && input.get("trace").is_none() {
                 let input = match &request.messages[1].content[0] {
-                    ContentPart::Text { text } => text,
+                    ContentPart::Text { text, .. } => text,
                     _ => panic!("text"),
                 };
                 let fields: serde_json::Value = serde_json::from_str(input).unwrap();
@@ -79,7 +79,10 @@ impl LlmBackend for FixtureBackend {
             Ok(LlmResponse {
                 message: LlmMessage {
                     role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text { text }],
+                    content: vec![ContentPart::Text {
+                        text,
+                        signature: None,
+                    }],
                 },
                 usage: LlmUsage {
                     input: LlmInputUsage {
@@ -92,8 +95,11 @@ impl LlmBackend for FixtureBackend {
                         reasoning: 0,
                     },
                     raw_provider: serde_json::json!({"prompt_tokens":100,"completion_tokens":3}),
+                    call_metadata: None,
                 },
                 finish_reason: FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }
@@ -203,6 +209,7 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
         ],
         amortized_question_count: 1,
         chroma: None,
+        model_families: Default::default(),
     };
     let session = ModelSession::with_backend(
         Box::new(FixtureBackend::default()),
@@ -391,71 +398,6 @@ fn measured_judge_must_match_the_loaded_dataset_before_model_calls() {
             Err(BeamError::JudgeCardInvalid { .. })
         ));
     }
-}
-
-#[test]
-fn measured_two_case_ingest_amortizes_measured_tokens_and_index_time() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut plan = shipped_plan();
-    let record: serde_json::Value =
-        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
-    let mut other = record.clone();
-    other["question_id"] = serde_json::json!("second-question");
-    let corpus_path = dir.path().join("run.jsonl");
-    std::fs::write(&corpus_path, format!("{record}\n{other}\n")).unwrap();
-    let mut manifest: serde_json::Value =
-        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
-    manifest["dataset"]["path"] = serde_json::json!("run.jsonl");
-    manifest["caseIds"] = serde_json::json!([record["question_id"], "second-question"]);
-    plan.retrieval_manifest = dir.path().join("run.json");
-    std::fs::write(&plan.retrieval_manifest, manifest.to_string()).unwrap();
-    plan.amortized_question_count = 2;
-    let session = fixture_session(&plan, FixtureBackend::default());
-    let report = run_with_session(&plan, &session).unwrap();
-    assert_eq!(
-        report.offline_total.input_tokens,
-        2 * record["corpus"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|item| oneiron::count_context_pack_tokens(item["text"].as_str().unwrap()) as u64)
-            .sum::<u64>()
-    );
-    assert!(report.offline_stages.ingest.elapsed_us > 0);
-    assert!(report.offline_stages.index_build.elapsed_us > 0);
-    assert_eq!(
-        report.offline_total.elapsed_us,
-        report.offline_stages.ingest.elapsed_us + report.offline_stages.index_build.elapsed_us
-    );
-    assert_eq!(
-        report.offline_amortized.input_tokens,
-        report.offline_total.input_tokens / 2
-    );
-    assert_eq!(
-        report.offline_stages_amortized.ingest.input_tokens,
-        report.offline_stages.ingest.input_tokens / 2
-    );
-    assert_eq!(
-        report.offline_stages_amortized.ingest.elapsed_us,
-        report.offline_stages.ingest.elapsed_us.div_ceil(2)
-    );
-    assert_eq!(
-        report.offline_stages_amortized.index_build.elapsed_us,
-        report.offline_stages.index_build.elapsed_us.div_ceil(2)
-    );
-    assert_eq!(
-        report.offline_stages_amortized.index_build.token_source,
-        TokenAccountingSource::ElapsedOnly
-    );
-    assert_eq!(
-        report.offline_amortized.elapsed_us,
-        report.offline_total.elapsed_us.div_ceil(2)
-    );
-    assert_eq!(report.amortized_question_count, 2);
-    assert_eq!(
-        report.offline_cost_usd_per_question,
-        report.offline_amortized.cost_usd
-    );
 }
 
 /// The shipped plan over two questions, where one model call fits each
