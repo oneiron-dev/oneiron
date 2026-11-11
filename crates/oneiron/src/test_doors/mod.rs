@@ -8,6 +8,7 @@ pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod consolidation;
 pub mod dag_append;
+pub mod graph_ask_centre;
 pub mod label_writers;
 pub mod live_run_claim_put;
 pub mod retrieval_policy_default_floor;
