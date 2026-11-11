@@ -41,7 +41,7 @@ mod apple_enclave;
 mod file;
 #[cfg(target_os = "linux")]
 mod linux_tpm;
-#[cfg(any(test, feature = "test-keystore"))]
+#[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 mod memory;
 #[cfg(windows)]
 mod windows;
@@ -54,7 +54,7 @@ pub use apple_enclave::SecureEnclaveKeychain;
 pub use file::LocalFileKeystore;
 #[cfg(target_os = "linux")]
 pub use linux_tpm::LinuxTpmKeystore;
-#[cfg(any(test, feature = "test-keystore"))]
+#[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 pub use memory::MemoryKeystore;
 #[cfg(windows)]
 pub use windows::WindowsDpapiKeystore;
