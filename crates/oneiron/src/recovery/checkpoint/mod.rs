@@ -81,6 +81,8 @@ use image::{CheckpointImage, read_image, read_image_required};
 pub use pad_custody::PadRestoreNote;
 pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
+#[cfg(oneiron_test_support)]
+pub(crate) use payload::side_table_registry_gaps;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};

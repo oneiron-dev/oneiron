@@ -79,6 +79,14 @@ pub(super) const NOT_COMPARTMENTED: &str =
 /// The family a receipt names a row by when no declaration covers its key.
 const UNDECLARED: &str = "undeclared rows";
 
+/// The payload registry's gaps that hold a side table out of the
+/// compartments, as a capture receipt names each
+/// (`tests/checkpoint_registry_rows.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn side_table_registry_gaps() -> Vec<String> {
+    preflight::preflight().side_table_gaps()
+}
+
 pub(in crate::recovery::checkpoint) use crate::store::checkpoint_payload::rows::{Carrier, Getter};
 
 /// Each owner getter's store module, beside its own codecs (KS7-2a): it reads the getter's
