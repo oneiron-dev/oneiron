@@ -54,3 +54,66 @@
 .sl-tab-panel:focus-visible {
   outline-offset: 4px;
 }
+
+/* A tab's symbol: quiet at rest, in the first ink when hovered or chosen. */
+.sl-tab > .sl-icon {
+  align-self: center;
+  color: var(--sl-ink-3);
+}
+
+.sl-tab:hover > .sl-icon,
+.sl-tab[aria-selected="true"] > .sl-icon {
+  color: var(--sl-ink-1);
+}
+
+/* A pin: its symbol or portrait, then its name cut at 17 characters. */
+.sl-tab-pin {
+  align-items: center;
+  gap: 6px;
+}
+
+.sl-tab-pin-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.sl-tab-pin-name {
+  max-width: 17ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The hairline between the fixed tabs and the pins. */
+.sl-tabs-divider {
+  align-self: center;
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 -4px;
+  background: var(--sl-rule);
+}
+
+.sl-tabs-add {
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  margin-left: -10px;
+  color: var(--sl-ink-3);
+}
+
+.sl-tabs-add:hover,
+.sl-tabs-add:focus-visible {
+  background: var(--sl-lit);
+}
+
+/* Folded: the pins, the divider and the add action give way to one tab. */
+.sl-tab-fold {
+  align-items: center;
+  gap: 6px;
+}
+
+.sl-tabs-list[data-folded] > [data-pin-part],
+.sl-tabs-list:not([data-folded]) > .sl-tab-fold {
+  display: none;
+}

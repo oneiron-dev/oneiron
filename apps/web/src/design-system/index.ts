@@ -14,7 +14,19 @@ export { IconAction, type IconActionProps } from './primitives/IconAction'
 export { InfoMark, type InfoMarkProps } from './primitives/InfoMark'
 export { PrimaryButton, type PrimaryButtonProps } from './primitives/PrimaryButton'
 export { Figure, type FigureProps } from './primitives/Figure'
-export { Tabs, type TabsProps, type TabsListProps, type TabsTabProps, type TabsPanelProps } from './primitives/Tabs'
+export {
+  Tabs,
+  PIN_NOTE,
+  pinsFold,
+  pinPress,
+  type TabsProps,
+  type TabsListProps,
+  type TabsTabProps,
+  type TabsPinProps,
+  type TabsDividerProps,
+  type TabsAddProps,
+  type TabsPanelProps,
+} from './primitives/Tabs'
 export { Unfold, type UnfoldProps, type UnfoldTriggerProps, type UnfoldContentProps } from './primitives/Unfold'
 export { Icon, ICON_NAMES, type IconName, type IconProps } from './primitives/Icon'
 
