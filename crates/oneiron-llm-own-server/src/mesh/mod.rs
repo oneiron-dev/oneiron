@@ -226,6 +226,95 @@ async fn exchange(conn: &CountedConnection, request: &Request) -> Result<Reply, 
     unseal(&stream.recv().await?, &conn.bytes, Reply::mesh_tag)
 }
 
+enum DispatchError {
+    Transport(MeshError),
+    Release(oneiron::LlmError),
+}
+
+async fn exchange_released(
+    conn: &CountedConnection,
+    request: &Request,
+    lease: &oneiron::BudgetLease,
+) -> Result<Reply, DispatchError> {
+    if !lease.has_dispatch_release() {
+        return exchange(conn, request)
+            .await
+            .map_err(DispatchError::Transport);
+    }
+    let mut stream = conn
+        .inner
+        .open_stream()
+        .await
+        .map_err(DispatchError::Transport)?;
+    let bytes = seal(request, request.mesh_tag(), &conn.bytes).map_err(DispatchError::Transport)?;
+    lease
+        .check_dispatch_release()
+        .map_err(DispatchError::Release)?;
+    if matches!(request, Request::Generate { .. } | Request::Stream { .. }) {
+        lease.begin_physical_attempt();
+    }
+    stream
+        .send(&bytes)
+        .await
+        .map_err(DispatchError::Transport)?;
+    let bytes = stream.recv().await.map_err(DispatchError::Transport)?;
+    unseal(&bytes, &conn.bytes, Reply::mesh_tag).map_err(DispatchError::Transport)
+}
+
+async fn put_released(
+    conn: &CountedConnection,
+    bytes: Vec<u8>,
+    lease: &oneiron::BudgetLease,
+) -> Result<Carried, DispatchError> {
+    if !lease.has_dispatch_release() {
+        return put(conn, bytes).await.map_err(DispatchError::Transport);
+    }
+    if bytes.len() <= INLINE {
+        return Ok(Carried::Inline(bytes));
+    }
+    let named = hash(&bytes);
+    let total = bytes.len() as u64;
+    for (n, piece) in bytes.chunks(PIECE).enumerate() {
+        let request = Request::Put {
+            hash: named,
+            total,
+            offset: (n * PIECE) as u64,
+            bytes: piece.to_vec(),
+        };
+        match exchange_released(conn, &request, lease).await? {
+            Reply::Put => {}
+            other => return Err(DispatchError::Transport(unexpected(&other))),
+        }
+    }
+    Ok(Carried::Staged {
+        hash: named,
+        len: total,
+    })
+}
+
+async fn dispatch_inference(
+    conn: &CountedConnection,
+    bytes: Vec<u8>,
+    lease: Option<&oneiron::BudgetLease>,
+    stream: bool,
+) -> Result<Reply, DispatchError> {
+    let request = match lease {
+        Some(lease) => put_released(conn, bytes, lease).await?,
+        None => put(conn, bytes).await.map_err(DispatchError::Transport)?,
+    };
+    let request = if stream {
+        Request::Stream { request }
+    } else {
+        Request::Generate { request }
+    };
+    match lease {
+        Some(lease) => exchange_released(conn, &request, lease).await,
+        None => exchange(conn, &request)
+            .await
+            .map_err(DispatchError::Transport),
+    }
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }

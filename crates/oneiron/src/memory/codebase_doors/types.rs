@@ -21,14 +21,32 @@ pub struct CodeRepoPointer {
 }
 
 /// Imports one committed tree as a custody-filtered snapshot. It registers no
-/// repository, takes no editable whitelist and grants no membership.
+/// repository, takes no editable whitelist and grants no membership: a
+/// registered repository's whitelist is its own (FIX 4299).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeSnapshotIngestRequest {
-    /// The explicit project key the snapshot is indexed under. It names no
-    /// PROJECT or WORLD record.
+    /// The explicit project key the snapshot is indexed under. Beside a
+    /// `repository`, it is that repository's PROJECT (32 hex); without one,
+    /// it names no PROJECT or WORLD record.
     pub project_id: String,
     pub pointer: CodeRepoPointer,
+    /// The registered repository this capture belongs to (FIX 4299): its
+    /// stable CODE anchor (32 hex), as `vault.repo.anchor.bind` returned
+    /// it. The import must read that repository's own folder, and the
+    /// capture's scope derives from the anchor. Omitted: an unregistered
+    /// capture, read-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<EntityId>,
+}
+
+/// Captures current folder bytes on the serving host, without a Git commit.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSnapshotCaptureRequest {
+    pub project_id: String,
+    /// Absolute host folder. It grants no repository membership or edit rights.
+    pub local_folder: String,
 }
 
 /// One code snapshot, pinned by its artifact and its fork hash.
@@ -88,8 +106,8 @@ pub struct CodeSnapshotFile {
 }
 
 /// One imported snapshot manifest. `repo` is the artifact of this one
-/// snapshot, not a registered repository; `scope_key` is an index key, not a
-/// grant.
+/// snapshot, not a registered repository; `repository` is that (FIX 4299);
+/// `scope_key` is an index key, not a grant.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CodeSnapshotView {
     /// The imported CODE_ARTIFACT id.
@@ -97,13 +115,22 @@ pub struct CodeSnapshotView {
     /// The canonical repository pointer the import recorded.
     pub repo_ref: String,
     pub project_id: String,
-    /// The Git commit, 40 lower-hex characters.
+    /// The Git commit, 40 lower-hex characters; absent for a current-folder capture.
     pub commit: Option<String>,
     /// The fork hash, 64 lower-hex characters.
     pub snapshot: String,
-    /// The codebase index key, 64 lower-hex characters.
+    /// The codebase index key, 64 lower-hex characters: the project and
+    /// the repository, never the commit (FIX 4299).
     pub scope_key: String,
     pub files: Vec<CodeSnapshotFile>,
+    /// The registered repository the capture belongs to, its stable CODE
+    /// anchor; absent for an unregistered capture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<EntityId>,
+    /// The committed capture's receipt, returned by ingest. Manifest reads
+    /// omit it; retained captures remain available through `vault.receipts`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_receipt: Option<String>,
 }
 
 /// One frozen file of a pinned snapshot, read from its stored blob and never

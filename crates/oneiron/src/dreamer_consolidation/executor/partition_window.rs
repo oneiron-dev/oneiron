@@ -413,7 +413,6 @@ impl ConsolidationExecutor<'_> {
                             stages.close_model_run(run_started);
                             match super::super::step_charge::tally_extracted_outcomes(
                                 ctx.vault,
-                                attempt.status.attempt.id,
                                 *extracted,
                                 &mut charges,
                             ) {
@@ -474,7 +473,6 @@ impl ConsolidationExecutor<'_> {
                                     } else {
                                         match super::super::step_charge::tally_extracted_outcomes(
                                             ctx.vault,
-                                            attempt.status.attempt.id,
                                             *extracted,
                                             &mut charges,
                                         ) {
@@ -525,7 +523,6 @@ impl ConsolidationExecutor<'_> {
                                     let trapped =
                                         super::super::step_charge::tally_extracted_outcomes(
                                             ctx.vault,
-                                            attempt.status.attempt.id,
                                             *extracted,
                                             &mut charges,
                                         )?;

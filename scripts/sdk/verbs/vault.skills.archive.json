@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.archive",
+  "description": "The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled.",
+  "input": "HubSkillRequest",
+  "output": "crate::task_verb::sdk::SkillLibraryView",
+  "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_archive_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.archive\")?, &input))?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -28,8 +28,9 @@ pub(super) use derived::{
     put_pending_in_txn, put_ready_in_txn,
 };
 pub(crate) use derived::{
-    finalize_repo_derived_index_copies_in_txn, repo_derived_batch, repo_derived_fields,
-    repo_derived_index_text_in, retire_repo_derived_index_copies_in_txn,
+    discard_repo_derived_index_copy_in_txn, finalize_repo_derived_index_copies_in_txn,
+    repo_derived_batch, repo_derived_fields, repo_derived_index_text_in,
+    retire_repo_derived_index_copies_in_txn,
 };
 pub(crate) use session::apply_ops_session_projected;
 

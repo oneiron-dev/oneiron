@@ -13,12 +13,14 @@ use std::collections::{BTreeSet, VecDeque};
 use reqwest::Url;
 
 use super::render::{
-    is_web_url, normalize_link_list, normalize_url, renderer_canonical_url, renderer_final_url,
+    is_web_url, normalize_link_list, normalize_url, redact_url_credentials, renderer_canonical_url,
+    renderer_final_url,
 };
 use super::{
     ALL_RENDERERS_FAILED_REASON_PREFIX, CROSS_SITE_REDIRECT_REASON, CrawlCompletion,
-    CrawlPageFailure, CrawlResult, CrawlScope, FetchResult, Renderer, RendererAttemptFailure,
-    RendererError, RendererKind, WebFetchError, WebFetchResult, WebFetcher, content_hash,
+    CrawlPageFailure, CrawlResult, CrawlScope, FetchResult, PinnedOrigin, RenderContext, Renderer,
+    RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind, WebFetchError,
+    WebFetchResult, WebFetcher, content_hash,
 };
 
 /// Whether an absent ladder slot is an ordinary trace record or a fail-closed
@@ -42,14 +44,15 @@ pub(super) fn require_renderer_slot(
 }
 
 impl WebFetcher {
-    /// Runs one rung. `Err` is the attempt record, not a terminal failure.
+    /// Runs one rung in `context`. `Err` is the attempt record, not a
+    /// terminal failure.
     pub(super) fn try_rung(
         &self,
         kind: RendererKind,
         renderer: &dyn Renderer,
         url: &str,
         fetched_at: u64,
-        require_witnessed_final_url: bool,
+        context: &RenderContext,
     ) -> std::result::Result<(FetchResult, Vec<String>, Url), RendererAttemptFailure> {
         // The one spelling of "this rung failed" used by every check below, so
         // no boundary check can accidentally become a terminal failure.
@@ -57,9 +60,12 @@ impl WebFetcher {
             renderer: kind,
             error,
         };
-        // On a managed node the rung renders with the egress guard and its
-        // landing is checked too (FIX 6101); a self-hosted one renders as is.
-        let page = self.render_rung(renderer, url).map_err(as_attempt)?;
+        // The rung renders in the page's context: a same-site crawl's pin
+        // (FIX 4734) and, on a managed node, the egress guard, its landing
+        // checked too (FIX 6101).
+        let page = self
+            .render_rung(renderer, url, context)
+            .map_err(as_attempt)?;
 
         // `str::len` is a byte count: the threshold compares trimmed Markdown
         // bytes, never characters, and never the untrimmed bytes that are
@@ -80,7 +86,7 @@ impl WebFetcher {
             .map(renderer_final_url)
             .transpose()
             .map_err(as_attempt)?;
-        if require_witnessed_final_url && final_url.is_none() {
+        if context.requires_witnessed_final_url() && final_url.is_none() {
             return Err(as_attempt(RendererError::invalid_response(format!(
                 "{} renderer supplied no independently witnessed navigation-final URL",
                 kind.as_str()
@@ -112,27 +118,42 @@ impl WebFetcher {
         Ok((result, discovered_links, traversal_identity))
     }
 
-    /// The fixed ladder. Sequential, never speculative, never parallel; a rung
-    /// advances only on a typed renderer error, an absent *optional* rung, or a
-    /// below-threshold extraction. Once a rung succeeds, lower rungs never run.
+    /// The fixed ladder, every rung run in `context`, the page's render
+    /// context with this fetcher's guard added. Sequential, never
+    /// speculative, never parallel; a rung advances only on a typed renderer
+    /// error, an absent or unsupported *optional* rung, or a below-threshold
+    /// extraction. Once a rung succeeds, lower rungs never run.
     ///
     /// # Errors
     /// Returns [`WebFetchError::MissingRequiredRenderer`] when a required rung
     /// has no renderer, [`WebFetchError::HostedInfrastructure`] or
     /// [`WebFetchError::HostedPrivateNetwork`] when a managed node's guard
-    /// refused the page or anything a rung reached, and
-    /// [`WebFetchError::AllRenderersFailed`] with the ordered trace when every
-    /// rung was tried and none produced content.
+    /// refused the page or anything a rung reached,
+    /// [`WebFetchError::CrossSiteRedirect`] when the page or a hop or a
+    /// navigation a rung refused is outside a same-site crawl's pinned
+    /// origin, [`WebFetchError::UnsafeRedirect`] when a rung refused a
+    /// redirect hop that is not credential-free http(s), and
+    /// [`WebFetchError::AllRenderersFailed`] with the ordered
+    /// trace when every rung was tried and none produced content.
     pub(super) fn fetch_page(
         &self,
         url: &Url,
         fetched_at: u64,
-        require_witnessed_final_url: bool,
+        context: RenderContext,
     ) -> WebFetchResult<(FetchResult, Vec<String>, Url)> {
-        // A managed node refuses hosted infrastructure and private networks
-        // before any rung runs (SCAN C447, FIX 7657); a self-hosted one
-        // carries no guard.
-        self.admit_destination(url)?;
+        let context = self.render_context(context);
+        // A same-site crawl's page is held to the walk's pinned origin before
+        // anything resolves it (FIX 4734); then a managed node refuses hosted
+        // infrastructure and private networks before any rung runs (SCAN
+        // C447, FIX 7657). A self-hosted node carries no guard.
+        if context.admit_hop(url).is_err() {
+            return Err(WebFetchError::CrossSiteRedirect {
+                url: redact_url_credentials(url.as_str()),
+            });
+        }
+        if let Some(guard) = context.hosted_guard() {
+            guard.admit(url)?;
+        }
         let requested = url.to_string();
         let mut attempts = Vec::new();
         for (kind, requirement, slot) in [
@@ -164,23 +185,20 @@ impl WebFetcher {
                 attempts.push(RendererAttemptFailure::Unavailable { renderer: kind });
                 continue;
             };
-            match self.try_rung(
-                kind,
-                renderer.as_ref(),
-                &requested,
-                fetched_at,
-                require_witnessed_final_url,
-            ) {
+            // A rung whose redirects run on a remote service cannot hold them
+            // to a same-site crawl's pin, so no page of that crawl, its seed
+            // included, is sent to it (FIX 4734).
+            if context.is_same_site_crawl() && kind.follows_redirects_remotely() {
+                attempts.push(RendererAttemptFailure::ScopeUnsupported { renderer: kind });
+                continue;
+            }
+            match self.try_rung(kind, renderer.as_ref(), &requested, fetched_at, &context) {
                 Ok(success) => return Ok(success),
                 Err(failure) => {
-                    // A managed node's guard refused a hop, an address or a
-                    // landing this rung reached (FIX 6101, FIX 7657): the
-                    // ladder ends typed, and no lower rung is sent after the
-                    // same destination.
                     if let RendererAttemptFailure::Error { error, .. } = &failure
-                        && let Some(refused) = error.kind.hosted_refusal()
+                        && let Some(ended) = ladder_end(error, &requested)
                     {
-                        return Err(refused.fetch_error(&requested));
+                        return Err(ended);
                     }
                     attempts.push(failure);
                 }
@@ -190,6 +208,31 @@ impl WebFetcher {
             url: requested,
             attempts,
         })
+    }
+}
+
+/// The typed failure a rung's `error` ends the ladder of `requested` with,
+/// so that no lower rung is sent after the same destination: a managed
+/// node's guard refused a hop, an address or a landing the rung reached
+/// (FIX 6101, FIX 7657); or the rung refused a hop or a navigation outside
+/// a same-site crawl's pinned origin, or a redirect hop that is not
+/// credential-free http(s) (FIX 4734).
+fn ladder_end(error: &RendererError, requested: &str) -> Option<WebFetchError> {
+    if let Some(refused) = error.kind.hosted_refusal() {
+        return Some(refused.fetch_error(requested));
+    }
+    match error.kind {
+        RendererErrorKind::CrossSiteRedirect => Some(WebFetchError::CrossSiteRedirect {
+            url: redact_url_credentials(requested),
+        }),
+        RendererErrorKind::UnsafeRedirect => Some(WebFetchError::UnsafeRedirect {
+            url: redact_url_credentials(requested),
+        }),
+        RendererErrorKind::Transport
+        | RendererErrorKind::Extraction
+        | RendererErrorKind::InvalidResponse
+        | RendererErrorKind::HostedInfrastructure
+        | RendererErrorKind::HostedPrivateNetwork => None,
     }
 }
 
@@ -210,8 +253,9 @@ pub(super) struct CrawlWalk {
     completed_finals: BTreeSet<String>,
     pub(super) pages: Vec<FetchResult>,
     pub(super) failed: Vec<CrawlPageFailure>,
-    /// Origin of the seed page's response-final URL, pinned after the seed succeeds.
-    pub(super) pinned_origin: Option<String>,
+    /// Origin of the seed page's response-final URL, pinned after the seed
+    /// succeeds. Every later page of a same-site walk renders held to it.
+    pub(super) pinned_origin: Option<PinnedOrigin>,
     pub(super) remaining_budget: usize,
 }
 
@@ -255,17 +299,20 @@ impl CrawlWalk {
         final_url: &Url,
         scope: CrawlScope,
     ) {
-        let final_origin = final_url.origin().ascii_serialization();
         // Seed success pins containment to the navigation-final origin, never
         // to a page's metadata canonical URL.
         let is_seed = self.pinned_origin.is_none();
-        let pinned_origin = self.pinned_origin.as_ref().unwrap_or(&final_origin).clone();
+        let pinned_origin = self
+            .pinned_origin
+            .clone()
+            .unwrap_or_else(|| PinnedOrigin::of(final_url));
 
         if !is_seed {
-            if scope == CrawlScope::SameSite && final_origin != pinned_origin {
-                // A same-origin link that redirected onto a foreign origin. The
-                // attempt is already counted; the page and every link it
-                // carries are not admitted.
+            if scope == CrawlScope::SameSite && !pinned_origin.admits(final_url) {
+                // A landing outside the pin, which the rungs' own checks
+                // before contact (FIX 4734) leave only to a custom rung that
+                // did not hold its hops. The attempt is already counted; the
+                // page and every link it carries are not admitted.
                 self.failed.push(CrawlPageFailure {
                     url: requested,
                     reason: CROSS_SITE_REDIRECT_REASON.to_string(),
@@ -289,14 +336,19 @@ impl CrawlWalk {
         let fresh = self.fresh_links(links, scope, &pinned_origin);
 
         if is_seed {
-            self.pinned_origin = Some(final_origin);
+            self.pinned_origin = Some(pinned_origin);
         }
         self.admit_page(page, fresh, final_url);
     }
 
     /// This page's links that admission newly adds to the frontier: in link
     /// order, deduplicated, and filtered exactly as admission filters.
-    fn fresh_links(&self, links: &[String], scope: CrawlScope, pinned_origin: &str) -> Vec<Url> {
+    fn fresh_links(
+        &self,
+        links: &[String],
+        scope: CrawlScope,
+        pinned_origin: &PinnedOrigin,
+    ) -> Vec<Url> {
         let mut seen = BTreeSet::new();
         let mut fresh = Vec::new();
         for raw in links {
@@ -308,9 +360,7 @@ impl CrawlWalk {
                 continue;
             }
             // The same fence applies to discovered links and final redirects.
-            if scope == CrawlScope::SameSite
-                && normalized.origin().ascii_serialization() != pinned_origin
-            {
+            if scope == CrawlScope::SameSite && !pinned_origin.admits(&normalized) {
                 continue;
             }
             let identity = normalized.to_string();
@@ -366,6 +416,7 @@ pub(super) fn crawl_failure_reason(error: &WebFetchError) -> String {
                 rendered.join("; ")
             )
         }
+        WebFetchError::CrossSiteRedirect { .. } => CROSS_SITE_REDIRECT_REASON.to_string(),
         other => other.to_string(),
     }
 }

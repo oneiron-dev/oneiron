@@ -212,6 +212,29 @@ impl Vault {
         )))
     }
 
+    /// The frozen branch of this store's exact registered queue source.
+    /// Native roots and imports outside `refs/heads/` name no logical branch.
+    ///
+    /// # Errors
+    /// A source binding, object-store or filesystem read failure.
+    pub(crate) fn queue_source_branch_at_root(&self, root: &Path) -> Result<Option<String>> {
+        let store = GitWire::new(self)?.repository_identity(root)?.as_hex();
+        let Some(bound) = self.store_queue_source(&store)? else {
+            return Ok(None);
+        };
+        if bound.store != store || root.canonicalize()? != bound.root {
+            return Ok(None);
+        }
+        self.open_bound_queue_source(&bound)?
+            .map_err(Error::Refused)?;
+        Ok(bound
+            .manifest
+            .anchor
+            .source_ref
+            .strip_prefix("refs/heads/")
+            .map(str::to_owned))
+    }
+
     /// The bound source's root opened as it stands (see
     /// [`Self::open_queue_source_root`]).
     ///

@@ -1,11 +1,15 @@
 //! Linear lexical framing; the PDF parser validates the single bounded operand.
 use super::*;
 
-pub(super) fn leading_dictionary(bytes: &[u8]) -> Result<(Dictionary, usize)> {
+pub(super) fn leading_dictionary(
+    bytes: &[u8],
+    stage: &super::Stage,
+) -> Result<(Dictionary, usize)> {
     let end = bytes.len().min(64 * 1024);
     let mut cursor = 0;
     let mut nesting = Vec::new();
     let mut started = false;
+    let mut dictionary_start = 0;
     while cursor < end {
         match bytes[cursor] {
             b'%' => {
@@ -16,6 +20,9 @@ pub(super) fn leading_dictionary(bytes: &[u8]) -> Result<(Dictionary, usize)> {
             }
             byte if byte.is_ascii_whitespace() || byte == 0 => {}
             b'<' if bytes.get(cursor + 1) == Some(&b'<') => {
+                if !started {
+                    dictionary_start = cursor;
+                }
                 nesting.push(b'>');
                 started = true;
                 cursor += 1;
@@ -62,8 +69,12 @@ pub(super) fn leading_dictionary(bytes: &[u8]) -> Result<(Dictionary, usize)> {
                 }
                 cursor += 1;
                 if nesting.is_empty() {
-                    let object = super::operand(&bytes[..=cursor])?;
-                    return Ok((object.as_dict()?.clone(), cursor + 1));
+                    let mut object = super::operand_in(&bytes[dictionary_start..=cursor], stage)?;
+                    let dictionary = match &mut object {
+                        super::Object::Dictionary(dictionary) => std::mem::take(dictionary),
+                        _ => return Err(PdfPreparationError::MalformedPdf),
+                    };
+                    return Ok((dictionary, cursor + 1));
                 }
             }
             _ => {}

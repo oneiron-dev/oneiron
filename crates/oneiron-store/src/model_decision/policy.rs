@@ -106,7 +106,7 @@ pub struct DecisionBandPolicy {
 }
 
 /// The questions-per-call row's value until the vault sets one.
-pub const DEFAULT_QUESTIONS_PER_CALL: usize = 16;
+pub use oneiron_contracts::limit_ask::DEFAULT_DECISION_QUESTIONS_PER_CALL as DEFAULT_QUESTIONS_PER_CALL;
 
 impl DecisionBandPolicy {
     /// The questions-per-call row (Rule 5): a pack larger than it goes as several requests

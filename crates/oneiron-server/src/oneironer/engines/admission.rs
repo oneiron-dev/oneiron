@@ -131,9 +131,8 @@ impl Admission {
     /// Starts it on its own thread, which ends once each worker is added to
     /// the dispatcher or found absent.
     pub(crate) fn start(self) {
-        let spawned = std::thread::Builder::new()
-            .name("oneironer admission".to_owned())
-            .spawn(move || self.run());
+        let spawned =
+            crate::engine_thread("oneironer admission".to_owned()).spawn(move || self.run());
         if let Err(error) = spawned {
             tracing::warn!(%error, "oneironer platform admission did not start; Candle serves");
         }

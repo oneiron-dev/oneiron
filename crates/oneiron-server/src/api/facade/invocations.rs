@@ -36,17 +36,31 @@ pub(super) async fn facade_invocation_claim(
     // A custody value's body arrives redacted from the outer layer; its claim
     // states the arrival's own digest (FIX 11442).
     let verb = parts.uri.path().trim_start_matches('/').to_owned();
-    let (bytes, redacted) =
-        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
-    let digest = match parts
+    let cached_digest = parts
         .extensions
         .get::<super::secret_body::FacadeOriginalDigest>()
-    {
-        Some(stored) => stored.digest().to_owned(),
-        None => match redacted {
-            Some(value) => oneiron::receipt::call_json_digest(&value),
-            None => oneiron::receipt::call_bytes_digest(&bytes),
-        },
+        .map(|stored| stored.digest().to_owned());
+    let (body, digest) = if let Some(digest) = cached_digest {
+        (body, digest)
+    } else {
+        let (bytes, redacted) = super::secret_body::read_middleware_body(
+            body,
+            &verb,
+            &mut parts.extensions,
+            crate::api::request_floor::request_floor(&server),
+        )
+        .await;
+        let digest = match parts
+            .extensions
+            .get::<super::secret_body::FacadeOriginalDigest>()
+        {
+            Some(stored) => stored.digest().to_owned(),
+            None => match redacted {
+                Some(value) => oneiron::receipt::call_json_digest(&value),
+                None => oneiron::receipt::call_bytes_digest(&bytes),
+            },
+        };
+        (Body::from(bytes), digest)
     };
     let header = |name: &str| {
         parts
@@ -68,7 +82,7 @@ pub(super) async fn facade_invocation_claim(
     match claim_door_invocation(&server, invocation, call, auth.principal_entity()).await {
         DoorClaim::Run(claim) => {
             let response = claim
-                .run(next.run(Request::from_parts(parts, Body::from(bytes))))
+                .run(next.run(Request::from_parts(parts, body)))
                 .await;
             finish_door_claim(claim, response).await
         }
@@ -97,7 +111,18 @@ pub(super) async fn facade_invocation_claim(
                     .into_response();
             }
             let verb = parts.uri.path().trim_start_matches('/');
-            facade_replay(server.vault(), &auth, verb, outcome)
+            // The owner's own whole-vault export is released again as its
+            // owner's, once the waiter's fresh proof admits him as that
+            // owner now (owner ruling 1-EXPORT = B).
+            let owner_whole_vault_export =
+                super::export_transfer::owner_whole_vault_export_admitted(&server, &auth, verb);
+            facade_replay(
+                server.vault(),
+                &auth,
+                verb,
+                outcome,
+                owner_whole_vault_export,
+            )
         }
         DoorClaim::InFlight => FacadeApiError::new(
             StatusCode::CONFLICT,
@@ -168,20 +193,24 @@ impl ResolvedCaller {
 
 /// The caller the receipt layer resolved for this same request, its path
 /// and headers unchanged, for the route's own `CoreAuth` extractor (FIX
-/// 12323). Only a caller whose standing the server reads again here, a
-/// slip, a token id or an attested owner, is taken, and only while it is
-/// still live ([`CoreAuth::credential_is_live`]). `None` for any other: the
-/// extractor resolves it as before, so a revoked or expired credential is
-/// refused there exactly as before, and an account key meets its own
-/// verifier again.
+/// 12323). A slip, token id or attested owner stands as before. An account
+/// key also stands when its verifier's live verdict lease still names the
+/// exact key, scopes and principal (FIX 12332); a no-jti owner bearer or dev
+/// hatch re-reads its admitting config, and an attested person matches this
+/// request's holder. Every caller must still be live
+/// ([`CoreAuth::credential_is_live`]). `None` for any other or any
+/// uncertainty: the extractor resolves it as before, so a revoked, punched
+/// or expired credential gets today's refusal.
 pub(crate) fn resolved_facade_caller(
     parts: &axum::http::request::Parts,
     server: &SyncServer,
 ) -> Option<CoreAuth> {
     let resolved = parts.extensions.get::<ResolvedCaller>()?;
     let auth = &resolved.auth;
-    let standing =
-        auth.verified_slip().is_some() || auth.jti().is_some() || auth.managed_owner().is_some();
+    let standing = auth.verified_slip().is_some()
+        || auth.jti().is_some()
+        || auth.managed_owner().is_some()
+        || auth.facade_reuse_stands(server, parts);
     (resolved.path == parts.uri.path()
         && resolved.headers == parts.headers
         && standing
@@ -250,12 +279,13 @@ impl DoorInvocationClaim {
         }
     }
 
-    /// Saves a successful JSON outcome, releases a failed or hook-pending
-    /// one, and wakes the live waiters in either case. A pending ask is not
-    /// an accepted asynchronous job: the next same-id retry must reach the
-    /// hook again. A storage error leaves the durable intent standing.
+    /// Saves a successful JSON outcome, releases a failed or held one, and
+    /// wakes the live waiters in either case. A pending ask or a paced hold
+    /// is not an accepted asynchronous job: the next same-id retry must
+    /// reach the held call again. A storage error leaves the durable intent
+    /// standing.
     pub(crate) fn finish(self, outcome: InvocationOutcome) {
-        if FacadeApiError::is_pending_ask(outcome.status, &outcome.body) {
+        if FacadeApiError::is_held_call(outcome.status, &outcome.body) {
             self.finish_failed(outcome);
             return;
         }
@@ -406,6 +436,40 @@ pub(crate) fn invocation_body(
     locality: CallerLocality,
     parts: &[&[u8]],
 ) -> [u8; 32] {
+    *invocation_hasher(auth, locality, parts)
+        .finalize()
+        .as_bytes()
+}
+
+/// [`invocation_body`] whose last part is the `len` bytes `reader` reads,
+/// streamed, never held whole (FIX 22074): the same identity as with those
+/// bytes the last of `parts`.
+///
+/// # Errors
+///
+/// The reader's errors, and a reader that ends before `len` bytes.
+pub(crate) fn invocation_body_with_reader(
+    auth: Option<&CoreAuth>,
+    locality: CallerLocality,
+    parts: &[&[u8]],
+    len: u64,
+    reader: &mut dyn std::io::Read,
+) -> std::io::Result<[u8; 32]> {
+    let mut hasher = invocation_hasher(auth, locality, parts);
+    hasher.update(&len.to_le_bytes());
+    let read = std::io::copy(&mut std::io::Read::take(reader, len), &mut hasher)?;
+    if read != len {
+        return Err(std::io::ErrorKind::UnexpectedEof.into());
+    }
+    Ok(*hasher.finalize().as_bytes())
+}
+
+/// The hasher of [`invocation_body`] with its caller, locality and `parts`.
+fn invocation_hasher(
+    auth: Option<&CoreAuth>,
+    locality: CallerLocality,
+    parts: &[&[u8]],
+) -> blake3::Hasher {
     let mut hasher = blake3::Hasher::new_derive_key("oneiron door invocation body v1");
     let mut part = |bytes: &[u8]| {
         hasher.update(&(bytes.len() as u64).to_le_bytes());
@@ -428,7 +492,7 @@ pub(crate) fn invocation_body(
     for &bytes in parts {
         part(bytes);
     }
-    *hasher.finalize().as_bytes()
+    hasher
 }
 
 /// Sends `response` as the claimed call's reply, saving it for each request
@@ -444,10 +508,21 @@ pub(crate) async fn finish_door_claim(claim: DoorInvocationClaim, response: Resp
     };
     if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&bytes) {
         let release = released.map(|released| released.kept(&body));
+        let refusal_hook_notice = {
+            use oneiron::task_verb::revoke_lands::{CALLER_NOTICE_HEADER, CALLER_NOTICE_SUMMARY};
+            (release.is_none()
+                && head
+                    .headers
+                    .get(CALLER_NOTICE_HEADER)
+                    .and_then(|value| value.to_str().ok())
+                    == Some(CALLER_NOTICE_SUMMARY))
+            .then_some(true)
+        };
         claim.finish(InvocationOutcome {
             status: head.status.as_u16(),
             body,
             release,
+            refusal_hook_notice,
         });
     }
     Response::from_parts(head, Body::from(bytes))
@@ -466,26 +541,37 @@ pub(crate) fn door_replay_for(
     verb: &str,
     outcome: InvocationOutcome,
 ) -> Response {
-    let (status, body) = replayed_reply(vault, auth, verb, outcome);
-    (status, Json(body)).into_response()
+    match replayed_reply(vault, auth, verb, outcome, false) {
+        Ok((status, body, hook_notice)) => {
+            super::release::with_hook_notice((status, Json(body)).into_response(), hook_notice)
+        }
+        Err(error) => error.into_response(),
+    }
 }
 
 /// [`door_replay_for`] for a facade waiter: a refusal goes again as the
 /// facade's own ([`FacadeApiError::replayed`], FIX 2005), every word and
 /// field the first one carried under a request id of its own, so this
 /// call's receipt records its code, while it still names the first call's
-/// receipt, the original.
+/// receipt, the original. `owner_whole_vault_export` as
+/// [`replayed_value`] takes it.
 fn facade_replay(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     verb: &str,
     outcome: InvocationOutcome,
+    owner_whole_vault_export: bool,
 ) -> Response {
-    let (status, body) = replayed_reply(vault, auth, verb, outcome);
-    match FacadeApiError::replayed(status, &body) {
+    let (status, body, hook_notice) =
+        match replayed_reply(vault, auth, verb, outcome, owner_whole_vault_export) {
+            Ok(reply) => reply,
+            Err(error) => return error.into_response(),
+        };
+    let response = match FacadeApiError::replayed(status, &body) {
         Some(refusal) => refusal.into_response(),
         None => (status, Json(body)).into_response(),
-    }
+    };
+    super::release::with_hook_notice(response, hook_notice)
 }
 
 /// The first call's status and body, released again for the waiter `auth`.
@@ -494,13 +580,25 @@ fn replayed_reply(
     auth: &CoreAuth,
     verb: &str,
     outcome: InvocationOutcome,
-) -> (StatusCode, serde_json::Value) {
+    owner_whole_vault_export: bool,
+) -> Result<(StatusCode, serde_json::Value, bool), FacadeApiError> {
     let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let body = match outcome.release {
-        Some(release) => replayed_value(vault, auth, verb, release),
-        None => rereleased_refusal(vault, auth, outcome.body),
+    let (body, hook_notice) = match outcome.release {
+        Some(release) => replayed_claim_value(vault, auth, verb, release, owner_whole_vault_export)
+            .map_err(|_| {
+                FacadeApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    MEMORY_CODE_INTERNAL,
+                    "saved invocation reply is malformed",
+                    ["Report this saved-reply mismatch."],
+                )
+            })?,
+        None => (
+            rereleased_refusal(vault, auth, outcome.body),
+            outcome.refusal_hook_notice == Some(true),
+        ),
     };
-    (status, body)
+    Ok((status, body, hook_notice))
 }
 
 /// A refusal the first call kept with nothing beside it, released again for

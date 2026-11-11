@@ -17,6 +17,18 @@ pub struct ClaimRefRequest {
     pub claim_ref: String,
 }
 
+/// `vault.claims.history` input: one claim's supersession timeline, under
+/// the caller's retrieval filter (FIX 3977). Writes keep [`ClaimRefRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimHistoryRequest {
+    pub claim_ref: String,
+    /// The caller's retrieval filter: it narrows the versions the timeline
+    /// reads.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
+}
+
 /// Retraction by exact claim or by subject and predicate, never a hard delete.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
@@ -81,7 +93,9 @@ impl Bm25Search {
 /// `vault.search.bm25` on a handle: its own BM25 page, as the device
 /// answers it alone ([`Bm25Search::local`]).
 pub fn search_bm25(memory: &Memory<'_>, input: QueryBm25Request) -> MemoryResult<Bm25Search> {
-    let page = memory.query_bm25(&input.query, input.limit)?;
+    let page = memory
+        .with_read_filter(input.filter.as_ref())
+        .query_bm25(&input.query, input.limit)?;
     Ok(Bm25Search::local(memory.vault(), page))
 }
 
@@ -90,13 +104,18 @@ pub fn search_bm25(memory: &Memory<'_>, input: QueryBm25Request) -> MemoryResult
 pub struct NeighborsRequest {
     pub entity_ref: String,
     pub opts: NeighborOpts,
+    /// The caller's retrieval filter: anchor, exact pair and peer each meet
+    /// it before an edge takes one of the limit's slots.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AppendBlobVersionRequest {
     pub artifact_ref: String,
-    /// RFC 4648 base64; the raw bytes still use the engine blob ceiling.
+    /// RFC 4648 base64. The decoded bytes are measured against
+    /// `blob_content_bytes` and stored whole, never refused for their size.
     pub content_base64: String,
     #[serde(default)]
     pub run_ref: Option<String>,
@@ -141,6 +160,11 @@ pub enum AuthorTakeTarget {
 pub struct AuthorTakeRequest {
     pub target: AuthorTakeTarget,
     pub markdown: String,
+    /// The source document revision the take was read from, as
+    /// `<document-ref>@<revision>`: each link's `edge.provenance` claim cites
+    /// it. Absent when no source document exists.
+    #[serde(default)]
+    pub source_ref: Option<String>,
 }
 
 pub(super) fn author_take(
@@ -154,7 +178,7 @@ pub(super) fn author_take(
         }
         AuthorTakeTarget::Claim(reference) => crate::note::TakeTarget::Claim(resolve(&reference)?),
     };
-    memory.author_take(target, input.markdown)
+    memory.author_take_with_source(target, input.markdown, input.source_ref.as_deref())
 }
 
 pub(super) fn forget_claims(
@@ -173,6 +197,7 @@ pub(super) fn forget_claims(
                     predicate: Some(request.predicate),
                     lifecycle: Some("active".to_owned()),
                     limit: usize::MAX,
+                    filter: None,
                 })?
                 .value
                 .into_iter()
@@ -198,23 +223,51 @@ pub struct BlobContent {
     pub content_base64: String,
 }
 
+/// Decodes the content once and lets the encoded text go before the write
+/// opens, so the version's bytes are held once, not beside their base64.
+/// Its size is measured at [`Memory::append_blob_version`], never refused
+/// (FIX 76).
 pub(super) fn append_blob(
     memory: &Memory<'_>,
     input: AppendBlobVersionRequest,
 ) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
     use base64::Engine as _;
-    if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
+    let AppendBlobVersionRequest {
+        artifact_ref,
+        content_base64,
+        run_ref,
+        occurred_at,
+        learned_at,
+    } = input;
+    let content = base64::engine::general_purpose::STANDARD
+        .decode(&content_base64)
+        .map_err(|_| MemoryError::bad_request("invalid blob base64"))?;
+    drop(content_base64);
+    memory.append_blob_version(
+        &artifact_ref,
+        &content,
+        run_ref.as_deref(),
+        occurred_at,
+        learned_at,
+    )
+}
+
+/// [`append_blob`] for content its host decoded into `body` before the call
+/// (FIX 22074): the request's own content is empty, and the version's bytes
+/// are read from the file, measured as [`append_blob`] measures them.
+pub(super) fn append_blob_file(
+    memory: &Memory<'_>,
+    input: AppendBlobVersionRequest,
+    body: &crate::blob_artifact::BlobBodyFile<'_>,
+) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
+    if !input.content_base64.is_empty() {
         return Err(MemoryError::bad_request(
-            "blob base64 exceeds the content ceiling",
+            "content arrives in the body file, not in the request",
         ));
     }
-    let content = base64::engine::general_purpose::STANDARD
-        .decode(&input.content_base64)
-        .map_err(|_| MemoryError::bad_request("invalid blob base64"))?;
-    crate::memory::caps::check_blob_bytes(content.len())?;
-    memory.append_blob_version(
+    memory.append_blob_version_file(
         &input.artifact_ref,
-        &content,
+        body,
         input.run_ref.as_deref(),
         input.occurred_at,
         input.learned_at,

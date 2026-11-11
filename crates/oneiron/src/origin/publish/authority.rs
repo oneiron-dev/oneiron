@@ -26,9 +26,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::AgentGrantStanding;
+use crate::federation::{AgentGrantStanding, AgentVerbClasses};
 use crate::store::code_snapshot::RepoRef;
-use oneiron_authority::federation::{RepoAccessRefusal, RepoTarget, ScopeAxis};
+use oneiron_authority::federation::{RepoAccessRefusal, RepoTarget};
 
 /// The verb class a Grant's Scope lists to publish within its repo bounds.
 pub const ORIGIN_PUBLISH_GRANT_VERB: &str = "publish";
@@ -103,12 +103,10 @@ fn repo_denial(refused: RepoAccessRefusal) -> OriginPublishDenial {
     denial(refused.public_code(), refused.message())
 }
 
-/// Whether the Grant's Scope lists `verb` explicitly.
-fn lists(standing: &AgentGrantStanding, verb: &str) -> bool {
-    matches!(
-        &standing.grant.authority_scope.verbs,
-        ScopeAxis::Some(verbs) if verbs.contains(verb)
-    )
+/// Whether the Grant's Scope lists `verb` explicitly, or a verb class the
+/// Grant names admits it under `classes` (FIX 8735).
+fn lists(standing: &AgentGrantStanding, verb: &str, classes: &AgentVerbClasses) -> bool {
+    standing.grant.admits_verb(verb, classes)
 }
 
 impl Vault {
@@ -131,8 +129,9 @@ impl Vault {
         rewrite: bool,
         bound: Option<EntityId>,
     ) -> Result<PublishAnswer<OriginPublishGrant>> {
-        let publishes = |standing: &AgentGrantStanding| {
-            lists(standing, ORIGIN_PUBLISH_GRANT_VERB) && bound.is_none_or(|id| id == standing.id)
+        let publishes = |standing: &AgentGrantStanding, classes: &AgentVerbClasses| {
+            lists(standing, ORIGIN_PUBLISH_GRANT_VERB, classes)
+                && bound.is_none_or(|id| id == standing.id)
         };
         let admitted = self.admit_repo_read_passing_in_txn(
             txn,
@@ -140,9 +139,9 @@ impl Vault {
             class,
             target.repo,
             target,
-            |standing: &AgentGrantStanding| {
-                publishes(standing)
-                    && (!rewrite || lists(standing, ORIGIN_PUBLISH_REWRITE_GRANT_VERB))
+            |standing: &AgentGrantStanding, classes: &AgentVerbClasses| {
+                publishes(standing, classes)
+                    && (!rewrite || lists(standing, ORIGIN_PUBLISH_REWRITE_GRANT_VERB, classes))
             },
         )?;
         let membership = match admitted {

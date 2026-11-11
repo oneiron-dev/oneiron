@@ -55,7 +55,9 @@ mod vault;
 pub use self::enrollment_law::{
     VoiceEnrollmentLegalContext, VoiceJurisdiction, VoicePrintLegalEvidence, WrittenReleaseRef,
 };
-pub(crate) use self::lifetime::erase_recognition_for_subject_in_txn;
+pub(crate) use self::lifetime::{
+    discard_print_payload_in_txn, erase_recognition_for_subject_in_txn,
+};
 
 pub use self::types::{
     VOICE_MATCH_THRESHOLD_DEFAULT, VOICE_MATCH_THRESHOLD_MAX, VOICE_MATCH_THRESHOLD_MIN,
@@ -70,6 +72,7 @@ pub use self::types::{
 #[cfg(test)]
 pub(crate) use self::vault::{put_raw_voice_roster_for_test, put_voice_roster_for_test};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

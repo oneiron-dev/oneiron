@@ -172,14 +172,12 @@ impl SyncClient {
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name
         // (FIX 922 item 11).
         if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::Storage(
-                "home may not read this world".into(),
-            ));
+            return Err(TransportError::world_unreadable_by_home());
         }
         self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
             .await;
@@ -189,12 +187,10 @@ impl SyncClient {
         // A timed-out capsule reply must not be read as the promotion reply.
         drop(rpc);
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::home_offline());
         };
         if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::Storage(
-                "home may not read this world".into(),
-            ));
+            return Err(TransportError::world_unreadable_by_home());
         }
         let reply: PromotionReply = serde_json::from_value(
             rpc.request(

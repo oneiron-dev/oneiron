@@ -19,7 +19,11 @@
 //!   reach that home and of the home's newest generation's outer capsules,
 //!   the worlds whose authority capsule there awaits a reader to seal it to
 //!   the root pinned now (FIX 4496), and the exact attempt it persisted and
-//!   has not resolved.
+//!   has not resolved. Pending or answered, it also reports the last upload
+//!   this install assembled for that home when the upload carries a readable
+//!   section unchanged because it did not open, decode or merge here (FIX
+//!   19525), as the upkeep reports it: the request's result does not hide
+//!   what the owner repairs.
 //!
 //! Only the executor observes its own work: any other install answers that
 //! the executor's observation is unavailable here. Pending and progress stay
@@ -34,6 +38,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
+use crate::world_keys::UnmergedSection;
 use crate::{EntityId, Vault};
 
 use super::DeviceSyncStart;
@@ -431,6 +436,22 @@ impl ExecutorObservation {
     }
 }
 
+/// The last upload this install assembled for a publication's home, by
+/// that request or the slot's own, as the relay observation keeps it (FIX
+/// 19525): shown only when it carries a readable section unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UnmergedUploadView {
+    /// The vault second it was assembled, or restored from its committed
+    /// attempt.
+    pub at: u64,
+    /// The generation it seals, in hex.
+    pub generation: String,
+    /// Each section of the home's newest generation it carries unchanged
+    /// because the section did not open, decode or merge here: the
+    /// erased-actor cleanup did not run on it, and the owner repairs it.
+    pub unmerged_sections: Vec<UnmergedSection>,
+}
+
 /// One request's executor diagnostics, as this install observes them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OwnerWorkDiagnostics {
@@ -442,6 +463,11 @@ pub struct OwnerWorkDiagnostics {
     pub executor: Option<EntityId>,
     #[serde(flatten)]
     pub observation: ExecutorObservation,
+    /// A bundle publication's, on its executor, pending or answered: the
+    /// last upload this install assembled for its home when that upload
+    /// carries a readable section unchanged (FIX 19525). `None` otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unmerged_upload: Option<UnmergedUploadView>,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -474,6 +500,15 @@ impl Vault {
         };
         // A kit custody request (FIX 6053) names no machine as executor.
         let executor = asked.executor_machine();
+        // What the last upload for a publication's home carries unmerged,
+        // shown whether the request has its result or not (FIX 19525).
+        let unmerged_upload = if let OwnerWorkBody::PublishBundle { home } = asked.work {
+            executor
+                .filter(|executor| me == Some(*executor))
+                .and_then(|executor| unmerged_upload_view(executor, home))
+        } else {
+            None
+        };
         let observation = if executor.is_none() || me != executor {
             ExecutorObservation::Unavailable
         } else if answered {
@@ -505,6 +540,7 @@ impl Vault {
             kind: asked.kind(),
             executor,
             observation,
+            unmerged_upload,
         }))
     }
 
@@ -565,6 +601,29 @@ impl Vault {
             attempt,
         })
     }
+}
+
+/// The last upload `machine`, this install, assembled for `home`, as the
+/// relay observation keeps it, when it carries a readable section unchanged
+/// (FIX 19525).
+#[cfg(feature = "sync")]
+fn unmerged_upload_view(machine: EntityId, home: EntityId) -> Option<UnmergedUploadView> {
+    let mut observation = crate::sync::client::sealed_bundle_relay_observation(&machine)?;
+    let upload = observation.uploads.remove(&Some(home))?;
+    if upload.sections.is_empty() {
+        return None;
+    }
+    Some(UnmergedUploadView {
+        at: upload.at,
+        generation: hex(&upload.generation.to_bytes()),
+        unmerged_sections: upload.sections,
+    })
+}
+
+/// Without the sync relay no upload is assembled here.
+#[cfg(not(feature = "sync"))]
+fn unmerged_upload_view(_machine: EntityId, _home: EntityId) -> Option<UnmergedUploadView> {
+    None
 }
 
 #[cfg(feature = "sync")]

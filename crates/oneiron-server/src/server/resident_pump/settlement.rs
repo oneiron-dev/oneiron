@@ -8,12 +8,11 @@ use super::{
     AgentDispatchStatus, AgentDispatcher, AttemptConfession, AttemptId, AttemptQueue,
     AttemptResultRef, BoundRun, Claimed, CompleteDreamerAttempt, DecisionHost, DetectorTier,
     DreamerParkCause, DreamerRunnerStore, DurableStepContext, EngineExecutorOutcome,
-    EngineExecutorStatus, EngineRunError, EntityId, FORK_REFUSALS, FailureEscalationMode,
-    FailureLadderOutcome, FailureScope, FailureScopePolicy, HandleAttemptFailure, HealerSlot,
-    LEASE_OWNER, LlmError, OutputContextEntry, ParkDreamerAttempt, PayerFault,
-    RUN_RETRY_BACKOFF_SECS, RetryableLlmError, SetAttemptResult, SpentKind, TypeRef,
-    TypedFailureEvidence, TypedFailureVerdict, Vault, WAITING_PARK_REASON,
-    agent_dispatch_run_actor, browser_workflow, open_trap, outage_park_reason,
+    EngineExecutorStatus, EngineRunError, EntityId, FORK_REFUSALS, FailureLadderOutcome,
+    FailureScope, FailureScopePolicy, HandleAttemptFailure, HealerSlot, LEASE_OWNER, LlmError,
+    OutputContextEntry, ParkDreamerAttempt, PayerFault, RUN_RETRY_BACKOFF_SECS, RetryableLlmError,
+    SetAttemptResult, SpentKind, TypeRef, TypedFailureEvidence, TypedFailureVerdict, Vault,
+    WAITING_PARK_REASON, agent_dispatch_run_actor, browser_workflow, open_trap, outage_park_reason,
     park_and_bind_wait_trap, park_for_payer, parks_on_outage, parse_confession, register_wait,
     restore_output, run_continuation, trap_for_durable_wait, trap_park_owner, unix_now,
 };
@@ -21,15 +20,72 @@ use super::{
 /// Settles the run's attempt: complete, parked on its wait or on a provider
 /// outage, or failed; a run whose model call failed for a reason that passes
 /// is tried again.
+///
+/// FIX 4747: a fenced run whose run TASK moved to another machine, or no
+/// longer reads, stands down: its try ends unrun with its typed cause, with
+/// no result, no report on the TASK it realizes and no change to its run
+/// TASK. The guard is the fence each settling write meets in its own write:
+/// the result, the report on the TASK it realizes, and the completion,
+/// failure or retry of the try each abort with
+/// [`oneiron::Error::AgentRunExecutorMoved`]. The read before them is a
+/// fast path.
 pub(super) fn settle(
     vault: &Vault,
     decisions: &DecisionHost,
     claimed: &Claimed,
     ran: Result<BoundRun, EngineRunError>,
+    healer_slot: HealerSlot,
+) -> oneiron::Result<()> {
+    let attempt = &claimed.status.attempt;
+    let now = unix_now();
+    // A media trap already parked the try; its wake's claim judges the run
+    // TASK again.
+    if !matches!(ran, Ok(BoundRun::Trapped))
+        && let Some(fence) = &claimed.fence
+        && AgentDispatcher::new(vault).stand_down_moved_agent_run(
+            fence,
+            attempt,
+            LEASE_OWNER,
+            now,
+        )?
+    {
+        tracing::warn!(attempt = ?attempt.id, "an agent run stood down: another machine runs it");
+        return Ok(());
+    }
+    match (
+        &claimed.fence,
+        settle_held(vault, decisions, claimed, ran, healer_slot, now),
+    ) {
+        // A settling write met the fence and aborted: the try ends unrun, as
+        // the claim's stand-down ends one. A fence that holds again at this
+        // read leaves the try leased for its lease's recovery.
+        (Some(fence), Err(oneiron::Error::AgentRunExecutorMoved)) => {
+            if !AgentDispatcher::new(vault).stand_down_moved_agent_run(
+                fence,
+                attempt,
+                LEASE_OWNER,
+                now,
+            )? {
+                return Err(oneiron::Error::AgentRunExecutorMoved);
+            }
+            tracing::warn!(attempt = ?attempt.id, "an agent run stood down at its settlement: another machine runs it");
+            Ok(())
+        }
+        (_, settled) => settled,
+    }
+}
+
+/// [`settle`] past its fast-path read of the run fence.
+fn settle_held(
+    vault: &Vault,
+    decisions: &DecisionHost,
+    claimed: &Claimed,
+    ran: Result<BoundRun, EngineRunError>,
+    healer_slot: HealerSlot,
+    now: u64,
 ) -> oneiron::Result<()> {
     let status = &claimed.status;
     let attempt = &status.attempt;
-    let now = unix_now();
     // OF-540: the run's execution context, bound while its lease holds; one
     // that cannot bind leaves the run to close unattributed.
     if let Err(error) =
@@ -129,7 +185,8 @@ pub(super) fn settle(
         }
     };
     // Any other failure has no detector verdict, and the ladder never infers
-    // one from prose: the run ends for a person to look at. Its checkpoint is
+    // one from prose. The configured healer routes only eligible cases; absent
+    // configuration preserves human-only escalation. The checkpoint is
     // the start of the step that failed (FIX 3694), a ref of its own, never
     // the run's or the attempt's id; its Q&A thread is the claim's: a
     // resident's home, its TASK, or its tree's root.
@@ -150,19 +207,23 @@ pub(super) fn settle(
             retry_at,
             now,
         },
-        FailureScopePolicy {
-            scope: FailureScope {
+        FailureScopePolicy::for_healer(
+            FailureScope {
                 agent_ref: claimed.agent.to_hex(),
                 skill_ref: None,
             },
-            max_consecutive_transients: max_tries,
-            escalation_mode: FailureEscalationMode::Human,
-            healer_slot: HealerSlot::Reserved,
-        },
+            max_tries,
+            healer_slot,
+        ),
     )?;
     // A retry shares the run's spend scope; only an end closes it.
     if !matches!(ended, FailureLadderOutcome::Retried { .. }) {
         AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
+        // FIX 11532: the solo run's team receipt, after its own end; a
+        // receipt failure logs and the end stands.
+        if let Err(error) = oneiron::team::record_solo_receipt(vault, attempt.id, now) {
+            tracing::warn!(%error, attempt = ?attempt.id, "a solo run's team receipt was not recorded");
+        }
     }
     Ok(())
 }
@@ -228,8 +289,9 @@ fn complete(
     now: u64,
 ) -> oneiron::Result<()> {
     let attempt = &claimed.status.attempt;
-    // A native decline already settled this run's TASK. Reader reports,
-    // failed calls and non-declining refusals still owe the normal result.
+    // A native decline or fresh terminal TASK report already settled this
+    // run's TASK. Reader reports, acknowledgements and failed calls still
+    // owe the normal result.
     // A continued run's source calls are history, never its own (FIX 3694).
     let settled_itself = match attempt
         .task_ref
@@ -237,8 +299,8 @@ fn complete(
         .and_then(|task| EntityId::from_hex(task).ok())
     {
         Some(task) => {
-            outcome.replay_record.task_decline_count(task)
-                > inherited_task_declines(vault, attempt.id, task)?
+            settling_calls(&outcome.replay_record, task)
+                > inherited_task_settlements(vault, attempt.id, task)?
         }
         None => false,
     };
@@ -311,7 +373,22 @@ fn complete(
         tracing::warn!(%error, attempt = ?attempt.id, "an agent run's confession does not read; it seals none");
         None
     });
-    DreamerRunnerStore::new(vault).complete_with_confession(
+    let reported_context = if claimed.objectives.is_empty() {
+        None
+    } else {
+        match claimed.status.input.target.agent_definition_ref() {
+            Ok(subject) => Some(oneiron::task_verb::HostDoneConfessionContext {
+                subject,
+                type_ref: TypeRef::from(&claimed.status.input.type_ref),
+                objectives: claimed.objectives.clone(),
+            }),
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "host Done confession context does not read");
+                None
+            }
+        }
+    };
+    DreamerRunnerStore::new(vault).complete_with_reported_confession(
         CompleteDreamerAttempt {
             id: attempt.id,
             lease_owner: LEASE_OWNER.to_owned(),
@@ -320,16 +397,27 @@ fn complete(
         },
         judged,
         confession.as_ref(),
+        reported_context.as_ref(),
     )?;
     AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
+    // FIX 11532: the solo run's team receipt, after its own close; a
+    // receipt failure logs and the run stays completed.
+    if let Err(error) = oneiron::team::record_solo_receipt(vault, attempt.id, now) {
+        tracing::warn!(%error, attempt = ?attempt.id, "a solo run's team receipt was not recorded");
+    }
     Ok(())
 }
 
-/// How many confirmed declines of the same TASK a continued run took over
+/// Native declines and fresh terminal reports of this bound TASK.
+fn settling_calls(record: &oneiron::code_run::CodeRunReplayRecord, task: EntityId) -> usize {
+    record.task_decline_count(task) + record.task_terminal_report_count(task)
+}
+
+/// How many settlements of the same TASK a continued run took over
 /// from its source (FIX 3694). A continuation's source calls all lie in the
 /// child's inherited prefix; calls after its cut cannot have committed an
 /// effect. No predecessor attempt needs to remain stored.
-fn inherited_task_declines(
+fn inherited_task_settlements(
     vault: &Vault,
     attempt: AttemptId,
     task: EntityId,
@@ -339,7 +427,7 @@ fn inherited_task_declines(
     };
     Ok(vault
         .get_code_run_replay_record(&continuation.checkpoint.source_run)?
-        .map_or(0, |source| source.task_decline_count(task)))
+        .map_or(0, |source| settling_calls(&source, task)))
 }
 
 /// The confession the run's finished answer ends with (OF-544), against the

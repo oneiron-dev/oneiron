@@ -44,7 +44,10 @@ use serde::{Deserialize, Serialize};
 
 mod draft;
 mod links;
+mod preview;
 mod read;
+
+pub use preview::{EsignSigningPreviewRequest, EsignSigningPreviewView, layout_esign_preview};
 
 /// A signing document to draft on an existing artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -287,6 +290,7 @@ pub struct EsignSealedItemView {
     pub sha256: String,
     /// Actual profiles and every native degradation reason from this item's seal.
     pub profile: super::sealer::SealProfileEvidence,
+    pub active_content: super::sealer::SealActiveContentFacts,
 }
 
 /// A sealed document's manifest: which attempt sealed it, over which

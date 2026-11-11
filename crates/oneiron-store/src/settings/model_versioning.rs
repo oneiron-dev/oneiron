@@ -15,7 +15,9 @@ use oneiron_model::llm::{ModelId, ModelIdError};
 pub const DEFAULT_MODEL_STACK_CURRENT_ID: &str = "default-v2";
 pub const DEFAULT_MODEL_STACK_V1_ID: &str = "default-v1";
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 pub struct ModelStackId(String);
 
@@ -290,7 +292,7 @@ impl<'de> Deserialize<'de> for ModelStackDeprecation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelStackDeprecationStage {
     Scheduled,
@@ -298,7 +300,7 @@ pub enum ModelStackDeprecationStage {
     Retired,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelStackDeprecationStatus {
     pub stage: ModelStackDeprecationStage,
     pub notice_starts_epoch_day: u32,
@@ -309,7 +311,9 @@ pub struct ModelStackDeprecationStatus {
     pub days_until_retirement: Option<u32>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Follow the current default, or pin one stack while it is served. A
+/// vault's model pack setting is a `ModelPackPreference` (FIX 5367, 5369).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ModelStackPreference {
     #[default]

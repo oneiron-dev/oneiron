@@ -325,6 +325,117 @@ pub fn call_json_digest(value: &serde_json::Value) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
+/// [`call_json_digest`] of a JSON object one member of which its host holds
+/// outside memory (FIX 22074): `head` is every other member, and
+/// `write_value` writes `member`'s value as its canonical JSON text, quotes
+/// and all, where the member's key sorts. A member `head` still names is
+/// read from `write_value` alone. The digest is the one the whole object
+/// would have.
+///
+/// # Errors
+///
+/// What `write_value` returns.
+pub fn call_json_digest_with_member(
+    head: &serde_json::Map<String, serde_json::Value>,
+    member: &str,
+    write_value: impl FnOnce(&mut blake3::Hasher) -> std::io::Result<()>,
+) -> std::io::Result<String> {
+    let mut hasher = blake3::Hasher::new();
+    write_object_with_member(&mut hasher, head, &[member], &mut Some(write_value))?;
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// [`call_json_digest_with_member`] for a member nested in `value`: `path`
+/// names it from `value` down, one object member per step, each step but
+/// the last an object `value` holds.
+///
+/// # Errors
+///
+/// What `write_value` returns; a step that is not an object.
+pub fn call_json_digest_with_member_path(
+    value: &serde_json::Value,
+    path: &[&str],
+    write_value: impl FnOnce(&mut blake3::Hasher) -> std::io::Result<()>,
+) -> std::io::Result<String> {
+    let mut hasher = blake3::Hasher::new();
+    write_call_json_with_member_path(&mut hasher, value, path, write_value)?;
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// The canonical text [`call_json_digest_with_member_path`] hashes, written
+/// to `hasher`: for a host whose own digest frames that text.
+///
+/// # Errors
+///
+/// As [`call_json_digest_with_member_path`].
+pub fn write_call_json_with_member_path(
+    hasher: &mut blake3::Hasher,
+    value: &serde_json::Value,
+    path: &[&str],
+    write_value: impl FnOnce(&mut blake3::Hasher) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    match value {
+        serde_json::Value::Object(map) if !path.is_empty() => {
+            write_object_with_member(hasher, map, path, &mut Some(write_value))
+        }
+        _ => Err(not_a_member_path()),
+    }
+}
+
+/// One object of a member path, canonically, the member at its end written
+/// by `write_value`.
+fn write_object_with_member<W: FnOnce(&mut blake3::Hasher) -> std::io::Result<()>>(
+    hasher: &mut blake3::Hasher,
+    map: &serde_json::Map<String, serde_json::Value>,
+    path: &[&str],
+    write_value: &mut Option<W>,
+) -> std::io::Result<()> {
+    let Some((&name, rest)) = path.split_first() else {
+        return Err(not_a_member_path());
+    };
+    let mut keys: Vec<&str> = map
+        .keys()
+        .map(String::as_str)
+        .filter(|key| *key != name)
+        .chain(std::iter::once(name))
+        .collect();
+    keys.sort_unstable();
+    hasher.update(b"{");
+    for (index, key) in keys.into_iter().enumerate() {
+        if index > 0 {
+            hasher.update(b",");
+        }
+        write_canonical(hasher, &serde_json::Value::String(key.to_owned()));
+        hasher.update(b":");
+        if key != name {
+            if let Some(item) = map.get(key) {
+                write_canonical(hasher, item);
+            }
+        } else if rest.is_empty() {
+            if let Some(write_value) = write_value.take() {
+                write_value(hasher)?;
+            }
+        } else {
+            match map.get(name) {
+                Some(serde_json::Value::Object(child)) => {
+                    write_object_with_member(hasher, child, rest, write_value)?;
+                }
+                _ => return Err(not_a_member_path()),
+            }
+        }
+    }
+    hasher.update(b"}");
+    Ok(())
+}
+
+/// A member path whose step is not an object.
+fn not_a_member_path() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "a held member's path does not run through objects",
+    )
+}
+
 /// BLAKE3 of raw bytes, lowercase hex: the digest of a body that is not JSON.
 #[must_use]
 pub fn call_bytes_digest(bytes: &[u8]) -> String {
@@ -405,13 +516,14 @@ fn call_receipt_id(receipt_ref: &str) -> Option<EntityId> {
 impl Vault {
     /// The input versions of an action that reads `named`, captured in one
     /// read snapshot before it runs (OF-568): the newest change in the
-    /// vault's change log (every entity write), its graph version (every
-    /// edge change), and each named entity's live revision, `-` when it has
-    /// none. `None` past [`MAX_ACTION_INPUT_ENTITIES`].
+    /// vault's change log (every entity write), its document-mutation head
+    /// (every committed document edit, FIX 2860), its graph version (every
+    /// edge change), and each named entity's live revision. A change log,
+    /// head or revision the vault does not hold reads `-`, never equal to
+    /// one it holds. `None` past [`MAX_ACTION_INPUT_ENTITIES`].
     ///
-    /// Not seen: a live document edit to an entity the request does not
-    /// name, side-table state, and the world outside the vault. A caller
-    /// whose action reads the world captures nothing.
+    /// Not seen: other side-table state and the world outside the vault. A
+    /// caller whose action reads the world captures nothing.
     ///
     /// # Errors
     ///
@@ -425,9 +537,16 @@ impl Vault {
             || "-".to_owned(),
             |(id, _)| crate::entity_id::bytes_to_hex_lower(&id),
         );
+        let documents =
+            crate::vault::entity_revision::document_mutation_head_in_txn(&self.store, &txn)?
+                .map_or_else(
+                    || "-".to_owned(),
+                    |mutation| crate::entity_id::bytes_to_hex_lower(&mutation),
+                );
         let graph = crate::store::graph_version::read_graph_version(&self.store, &txn)?;
         let mut inputs = ActionInputs::new()
             .with("vault.changes", head)
+            .with("vault.documents", documents)
             .with("vault.graph", graph.to_string());
         for id in named {
             let revision = crate::vault::entity_revision::revision_for_mode_in_txn(

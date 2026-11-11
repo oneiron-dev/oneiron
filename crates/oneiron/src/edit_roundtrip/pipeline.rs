@@ -158,6 +158,13 @@ fn run_pipeline<S: EditSession>(
     // axis positions are 1-based, but the unchecked constructors let 0 through.
     validate_ops(&plan.ops)?;
 
+    let resources = session
+        .recalc_resources()
+        .unwrap_or_else(crate::office_body::document_resources);
+    resources
+        .checkpoint()
+        .map_err(crate::office_body::document_refused)?;
+
     // Stage 0: decompose the input. A bad input is a hard error (the caller
     // handed us a broken blob), distinct from a session producing bad output.
     // The decomposed package moves into the session's document and is
@@ -182,7 +189,13 @@ fn run_pipeline<S: EditSession>(
     // Stage 2: serialize modern formulas before the openpyxl session writes
     // them; the applied ops and manifest record the actual prefixed formulas.
     let serialized_plan = serialize_plan(plan);
+    resources
+        .checkpoint()
+        .map_err(crate::office_body::document_refused)?;
     let applied = session.apply_edits(&doc_before, &serialized_plan)?;
+    resources
+        .checkpoint()
+        .map_err(crate::office_body::document_refused)?;
     // The session's report is its word, not evidence. Every op it reports must
     // be one the plan admitted, in the plan's order and no more often, so the
     // manifest never carries an op (a structural one moves anchors) that was
@@ -214,6 +227,10 @@ fn run_pipeline<S: EditSession>(
     } else {
         RecalcStatus::NotNeeded
     };
+
+    resources
+        .checkpoint()
+        .map_err(crate::office_body::document_refused)?;
 
     // Stage 4: corruption + passthrough gate over the actual output bytes.
     let after = match opc::read(&current) {
@@ -266,6 +283,9 @@ fn run_pipeline<S: EditSession>(
     };
 
     let report = validate(before, &after, format);
+    resources
+        .checkpoint()
+        .map_err(crate::office_body::document_refused)?;
     if !report.ok {
         return Ok(EditOutcome::Rejected { inspection, report });
     }
@@ -315,6 +335,22 @@ impl crate::Vault {
     ) -> Result<EditOutcome> {
         let head = self
             .blob_artifact_head(artifact_id)?
+            .ok_or(Error::EntityNotFound)?;
+        self.propose_blob_artifact_edit_at(artifact_id, head.version, session, plan, run_ref)
+    }
+
+    /// Stages against the exact version a retained answered cohort read.
+    /// Keep still applies the ordinary typed-answer withdrawal and stale rules.
+    pub(crate) fn propose_blob_artifact_edit_at<S: EditSession>(
+        &self,
+        artifact_id: &EntityId,
+        version: u64,
+        session: &S,
+        plan: &EditPlan,
+        run_ref: &str,
+    ) -> Result<EditOutcome> {
+        let head = self
+            .blob_artifact_version_metadata(artifact_id, version)?
             .ok_or(Error::EntityNotFound)?;
         let bytes = self
             .read_blob_artifact_version(artifact_id, head.version)?

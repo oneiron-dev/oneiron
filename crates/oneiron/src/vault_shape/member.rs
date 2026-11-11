@@ -22,6 +22,10 @@ use serde::{Deserialize, Serialize};
 pub enum ShapeMemberRole {
     Owner,
     Admin,
+    /// A Steward looks after the vault's memory for its owners: it can read
+    /// and organise everything in this vault, but it can only suggest who
+    /// joins or what role they get, and it can never give itself more access.
+    Steward,
     Member,
     Viewer,
 }
@@ -34,6 +38,7 @@ impl ShapeMemberRole {
         match role {
             FederationGrantRole::Owner => Some(Self::Owner),
             FederationGrantRole::Admin => Some(Self::Admin),
+            FederationGrantRole::Steward => Some(Self::Steward),
             FederationGrantRole::Member => Some(Self::Member),
             FederationGrantRole::Viewer | FederationGrantRole::Auditor => Some(Self::Viewer),
             _ => None,
@@ -45,9 +50,18 @@ impl ShapeMemberRole {
         match self {
             Self::Viewer => 0,
             Self::Member => 1,
-            Self::Admin => 2,
-            Self::Owner => 3,
+            Self::Steward => 2,
+            Self::Admin => 3,
+            Self::Owner => 4,
         }
+    }
+
+    /// Whether a member moved from `was` to `now` loses the capability slips
+    /// they hold: a lowering, or a move into or out of Steward, whose verbs
+    /// are neither a subset nor a superset of another role's (as
+    /// `shared_act::membership` revokes them).
+    pub(super) fn move_lowers(was: Self, now: Self) -> bool {
+        now.reach() < was.reach() || (now != was && (now == Self::Steward || was == Self::Steward))
     }
 }
 
@@ -56,6 +70,7 @@ impl From<ShapeMemberRole> for FederationGrantRole {
         match role {
             ShapeMemberRole::Owner => Self::Owner,
             ShapeMemberRole::Admin => Self::Admin,
+            ShapeMemberRole::Steward => Self::Steward,
             ShapeMemberRole::Member => Self::Member,
             ShapeMemberRole::Viewer => Self::Viewer,
         }
@@ -177,7 +192,7 @@ pub(super) fn lowers_member(item: &ShapePlanItem) -> bool {
                 ..
             }),
             Some(ShapeRow::Member { role: now, .. }),
-        ) => now.reach() < was.reach(),
+        ) => ShapeMemberRole::move_lowers(*was, *now),
         _ => false,
     }
 }

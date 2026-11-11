@@ -67,6 +67,9 @@ pub(crate) struct VerbHookState {
     expired: Mutex<HashSet<[u8; 16]>>,
     /// The pack lines generative fact hooks' verdicts spend on (FIX 10075).
     pub(crate) pack_lines: crate::runtime_hooks::pack_line::HookPackLines,
+    /// How long a paced call waits for its turn, in seconds, as the host
+    /// set it; 0 keeps the default (FIX 8753).
+    pub(super) paced_wait: AtomicU64,
 }
 
 /// The enabled verb bindings as of one read, in run order: priority
@@ -331,6 +334,9 @@ pub struct InvocationOutcome {
     /// (FIX 7914, FIX 8212): `None` for a reply it keeps nothing beside, a
     /// refusal among them, which is sent again as it is.
     pub release: Option<InvocationRelease>,
+    /// A content-free hook notice beside a live refusal, never a success
+    /// release or a durable record. `None` means no source supplied it.
+    pub refusal_hook_notice: Option<bool>,
 }
 
 /// An answer as its door kept it beside the reply it sent (FIX 7914, FIX
@@ -519,7 +525,8 @@ impl Vault {
     /// Turns verb hooks off for this process: every boundary passes through.
     /// Serve calls it for `--no-hooks`; fact hooks keep their own switch.
     pub fn suppress_verb_hooks(&self) {
-        self.verb_hook_state
+        self.runtime()
+            .verb_hook_state()
             .suppressed
             .store(true, Ordering::Release);
     }
@@ -534,7 +541,8 @@ impl Vault {
     /// Why the sandbox did not build, the same on every call; without the
     /// sandbox feature, that none is installed.
     pub fn hook_runtime(&self) -> std::result::Result<Arc<dyn HookBodyRuntime>, String> {
-        self.verb_hook_state
+        self.runtime()
+            .verb_hook_state()
             .sandbox()
             .cloned()
             .unwrap_or_else(|| Err("this build has no hook sandbox".to_owned()))
@@ -553,7 +561,8 @@ impl Vault {
         runtime: Arc<dyn HookBodyRuntime>,
     ) -> std::result::Result<(), String> {
         match self
-            .verb_hook_state
+            .runtime()
+            .verb_hook_state()
             .runtime
             .get_or_init(|| Ok(Arc::clone(&runtime)))
         {
@@ -569,7 +578,7 @@ impl Vault {
     /// Without one, a credential call saves no way to run again, and one
     /// saved earlier is refused.
     pub fn install_verb_ask_credential_check(&self, check: Arc<dyn super::VerbAskCredentialCheck>) {
-        let _ = self.verb_hook_state.credential.set(check);
+        let _ = self.runtime().verb_hook_state().credential.set(check);
     }
 
     /// Claims `invocation`, which a client named, for the request that
@@ -579,13 +588,19 @@ impl Vault {
     /// concurrent request from a nested boundary, so the doors close it.
     #[must_use]
     pub fn claim_invocation(&self, invocation: InvocationId, body: [u8; 32]) -> InvocationEntry {
-        claim_in(&self.verb_hook_state.claims, invocation, body, None)
+        claim_in(
+            &self.runtime().verb_hook_state().claims,
+            invocation,
+            body,
+            None,
+        )
     }
 
     /// Tells the verb hooks a binding or the switch changed, so the next
     /// call reads the binding list again.
     pub(crate) fn verb_hook_bindings_changed(&self) {
-        self.verb_hook_state
+        self.runtime()
+            .verb_hook_state()
             .generation
             .fetch_add(1, Ordering::AcqRel);
     }

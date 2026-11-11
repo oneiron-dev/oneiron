@@ -103,4 +103,18 @@ impl SharedActionExecutor {
         self.registry
             .execute_call(vault, actor, principal, call, binding)
     }
+    /// [`Self::execute_call`] for a call whose input's content the host
+    /// holds as `held`'s file (FIX 22096).
+    pub fn execute_call_held(
+        &self,
+        vault: &Vault,
+        actor: WriteActor,
+        principal: &LensPrincipalBinding,
+        call: &AgentActionCall,
+        binding: ActionHostBinding<'_>,
+        held: oneiron::code_run::actions::ActionBlobInput,
+    ) -> Result<ActionDispatch> {
+        self.registry
+            .execute_call_held(vault, actor, principal, call, binding, held)
+    }
 }

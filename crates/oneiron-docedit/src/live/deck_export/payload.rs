@@ -14,6 +14,7 @@ pub(super) fn project_payload(
     part: &str,
     native: u32,
     assets: &dyn Assets,
+    graphics: GraphicLimits,
 ) -> Result<(), LiveError> {
     let node = &deck.nodes[&id];
     let view = work.view()?;
@@ -81,7 +82,7 @@ pub(super) fn project_payload(
                         record: &record,
                         bytes: &bytes,
                         requested: requested(image),
-                        limits: GraphicLimits::default(),
+                        limits: graphics,
                     },
                 })?;
                 // The raster is what the picture shows now: an SVG its blip's

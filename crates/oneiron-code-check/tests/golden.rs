@@ -13,7 +13,7 @@
 
 use oneiron_code_check::{
     CheckFailure, CheckInput, CodeCheck, Declaration, MICROSOFT_TS_VERSION, MicrosoftTsc,
-    TscRsBudget, TscRsWasm,
+    ProgramLanguage, TscRsBudget, TscRsWasm,
 };
 use sha2::{Digest, Sha512};
 use std::path::PathBuf;
@@ -26,7 +26,7 @@ const DECLARATIONS: [Declaration<'static>; 3] = [
     },
     Declaration {
         name: "code-mode.d.ts",
-        text: include_str!("../../oneiron/src/task_verb/code-mode.d.ts"),
+        text: include_str!(concat!(env!("OUT_DIR"), "/code-mode.d.ts")),
     },
     Declaration {
         name: "runtime.d.ts",
@@ -84,6 +84,7 @@ fn rendered(checker: &dyn CodeCheck) -> String {
             .check(&CheckInput {
                 declarations: &DECLARATIONS,
                 program,
+                language: ProgramLanguage::JavaScript,
             })
             .unwrap_or_else(|failure| panic!("{name}: {failure}"));
         let found: Vec<u32> = report.diagnostics.iter().map(|d| d.code).collect();
@@ -123,6 +124,7 @@ fn microsoft_oracle_gives_the_golden_diagnostics() {
         let checked = checker.check(&CheckInput {
             declarations: &DECLARATIONS,
             program,
+            language: ProgramLanguage::JavaScript,
         });
         assert_eq!(checked, Err(CheckFailure::Unsupported), "{program}");
     }

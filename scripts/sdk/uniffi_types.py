@@ -45,6 +45,7 @@ WIRE_LEAVES = {
     'tuple': 'a tuple',
     'union': 'an untyped union',
     'never': 'an enum with no variants',
+    'large_enum': 'an enum with more than 256 variants ({name})',
     'unknown': 'a shape the inventory could not read',
     'inline': 'an inline {name}',
 }
@@ -282,6 +283,8 @@ class UniffiTypes:
             # A newtype, alias or handwritten codec: its wire value, inline.
             return self.rt(ir, inner, decl['name'])
         if meta is not None and not meta['variants']: return self.leaf(decl['name'], WIRE_LEAVES['never'])
+        if meta is not None and len(meta['variants']) > 256:
+            return self.leaf(where, WIRE_LEAVES['large_enum'].format(name=decl['name']))
         mkey = (key, repr(args))
         if mkey in self.mirrors: return self.mirrors[mkey]
         name = self.allocate(decl['name'] + ''.join(self.mangle(a) for a in args))
@@ -411,8 +414,8 @@ class UniffiTypes:
         out += '// the engine type\'s own wire shape; a row converts at its boundary through\n'
         out += '// that shape (crate::codec::lower_record / lift_record).\n'
         out += ''.join(f'// {line}\n' for line in census)
-        out += ('#![allow(\n    clippy::large_enum_variant,\n    clippy::enum_variant_names,\n    clippy::upper_case_acronyms,\n'
-                '    reason = "each type mirrors one engine type, its names and its variants"\n)]\n\n')
+        # The lints these mirrors allow sit on the `mod` that includes this file (oneiron-uniffi lib.rs).
+        out += '\n'
         return out + '\n'.join(self.items)
 
 

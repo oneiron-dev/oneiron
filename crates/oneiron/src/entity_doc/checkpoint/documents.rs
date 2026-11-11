@@ -3,14 +3,16 @@
 //! retained entity-document head, every head document a NOTE held, the
 //! entity a snapshot's own birth names, and the NOTE a snapshot names as its
 //! own identity in its own slot; never by presuming a slot is its entity.
-//! Each slot is one group: its full snapshot and its updates in replay order
+//! Each slot is one group: its snapshot and its updates in replay order
 //! split together through the shared Loro projection, an entity document's
 //! birth and stamp actors out ([`super::loro`]), a NOTE document's stamp and
-//! authorship actors out (`crate::note::checkpoint`). A group that does not
-//! split stays whole under the vault-wide seal, named with its owner: a
-//! shallow snapshot and its updates (Engine R3), and a history the
-//! projection does not give back. A slot nothing joins is named with no
-//! owner, and one two owners claim with neither.
+//! authorship actors out (`crate::note::checkpoint`). A shallow or
+//! state-only snapshot that names no one is kept as stored, and its updates
+//! split on it (FIX 6442). A group that does not split stays whole under the
+//! vault-wide seal, named with its owner: a shallow snapshot that names an
+//! actor and its updates (Engine R3), and a history the projection does not
+//! give back. A slot nothing joins is named with no owner, and one two
+//! owners claim with neither.
 
 use std::collections::BTreeMap;
 
@@ -164,7 +166,7 @@ pub(super) fn capture(
     Ok(())
 }
 
-/// Splits an entity document's slot as one group, under `entity`: its full
+/// Splits an entity document's slot as one group, under `entity`: its
 /// snapshot, whose birth names `entity`, then its updates in replay order.
 fn split_slot(out: &mut Captured, entity: EntityId, group: Group) {
     let owner = OwnerRef::entity(&entity);
@@ -195,9 +197,9 @@ fn split_slot(out: &mut Captured, entity: EntityId, group: Group) {
     }
 }
 
-/// Splits a NOTE document's slot as one group, under `note`: its full
-/// snapshot, a document of `note`, then its updates in replay order, each at
-/// a sequence key as a NOTE's text plane appends them.
+/// Splits a NOTE document's slot as one group, under `note`: its snapshot,
+/// a document of `note`, then its updates in replay order, each at a
+/// sequence key as a NOTE's text plane appends them.
 fn split_note_slot(out: &mut Captured, note: EntityId, group: Group) {
     let owner = OwnerRef::entity(&note);
     if group.snapshot.is_none() {
@@ -232,8 +234,9 @@ pub(super) fn owns(at: &RowLocator) -> bool {
     at.in_table(SNAPSHOTS.decl()) || at.in_table(UPDATES.decl())
 }
 
-/// Refuses a document row that is not, under its own key, a full entity
-/// document or NOTE document snapshot, or an update blob.
+/// Refuses a document row that is not, under its own key, an entity
+/// document or NOTE document snapshot a split keeps (a full one, or a
+/// shallow one that names no one), or an update blob.
 pub(super) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     if at.in_table(SNAPSHOTS.decl()) {
         rows::check_row(SNAPSHOTS, at, value)?;
@@ -288,7 +291,7 @@ fn atoms_at(opened: &OpenedOwnerRows, at: &RowLocator) -> Result<Vec<Atom>> {
 /// birth names the compartment's entity; a NOTE document is that NOTE's,
 /// its updates at sequence keys. Each row's bytes, by its locator, for the
 /// restore's join to write.
-pub(super) fn join(opened: &OpenedOwnerRows) -> Result<BTreeMap<RowLocator, Vec<u8>>> {
+pub(crate) fn join(opened: &OpenedOwnerRows) -> Result<BTreeMap<RowLocator, Vec<u8>>> {
     let mut slots: BTreeMap<String, OpenedSlot<'_>> = BTreeMap::new();
     for part in &opened.rows {
         let RowPart::NoActor { at, value } = part else {

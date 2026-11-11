@@ -8,7 +8,7 @@
  * the engine's own vocabulary, including codes newer than this package.
  */
 
-import type { LegalHoldNotice } from "./facade-types.js"
+import type { LegalHoldNotice, RoomJoinHold } from "./facade-types.js"
 
 /** The serialized shape the native boundary hands back. */
 type NativeErrorPayload = {
@@ -23,6 +23,7 @@ type NativeErrorPayload = {
   resets_at?: unknown
   reason_codes?: unknown
   legal_hold?: unknown
+  room_join_hold?: unknown
 }
 
 /** A `WRONG_ROOT` refusal's correction: call `replacement`, never `attempted`. */
@@ -84,6 +85,9 @@ export class OneironError extends Error {
   /** The legal-hold notice behind this refusal, when its producer supplied one. */
   readonly legalHold?: LegalHoldNotice
 
+  /** The room-join hold behind this refusal, when its producer supplied one. */
+  readonly roomJoinHold?: RoomJoinHold
+
   constructor(
     code: string,
     message: string,
@@ -93,6 +97,7 @@ export class OneironError extends Error {
     timing?: RetryTiming,
     reasonCodes?: readonly string[],
     legalHold?: LegalHoldNotice,
+    roomJoinHold?: RoomJoinHold,
   ) {
     super(message)
     this.name = "OneironError"
@@ -104,6 +109,7 @@ export class OneironError extends Error {
     if (timing?.resetsAt !== undefined) this.resetsAt = Object.freeze([...timing.resetsAt])
     if (reasonCodes !== undefined) this.reasonCodes = Object.freeze([...reasonCodes])
     if (legalHold) this.legalHold = Object.freeze({...legalHold})
+    if (roomJoinHold) this.roomJoinHold = Object.freeze({...roomJoinHold})
   }
 }
 
@@ -142,6 +148,18 @@ function legalHoldNotice(value: unknown): LegalHoldNotice | undefined {
   const state = (value as Record<string, unknown>).state
   return state === "retained_for_law" || state === "use_restricted"
     ? (value as LegalHoldNotice)
+    : undefined
+}
+
+/** Narrows the optional hold to the engine's room-join hold shape. */
+function roomJoinHoldNotice(value: unknown): RoomJoinHold | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const hold = value as Record<string, unknown>
+  return typeof hold.room === "string" &&
+    typeof hold.person === "string" &&
+    typeof hold.intent_key === "string" &&
+    Array.isArray(hold.needs)
+    ? (value as RoomJoinHold)
     : undefined
 }
 
@@ -201,6 +219,7 @@ export function translateNativeError(error: unknown): OneironError {
       retryTiming(parsed),
       reasonCodes(parsed),
       legalHoldNotice(parsed.legal_hold),
+      roomJoinHoldNotice(parsed.room_join_hold),
     )
   }
 

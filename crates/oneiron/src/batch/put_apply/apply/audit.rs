@@ -96,12 +96,15 @@ pub(super) fn audit_and_stage_body(
         fixed.replicated,
     )?;
     stage_optional_side_row(store, wtxn, markers.hub_origin_marker)?;
+    // An owning adapter's custody reads what a body file holds, never its
+    // manifest (FIX 22091).
+    let carrier = fixed.file_body.unwrap_or(data);
     crate::skill_hub::stage_source_custody_put(
         write,
         wtxn,
         &fixed.id,
         fixed.entity_type,
-        data,
+        carrier,
         previous_skill_record.as_ref(),
         dispatch.new_skill_record.as_ref(),
     )?;
@@ -110,7 +113,7 @@ pub(super) fn audit_and_stage_body(
         wtxn,
         &fixed.id,
         fixed.entity_type,
-        data,
+        carrier,
     )?;
     if fixed.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::maintain_assignment_put(store, wtxn, &fixed.id, data)?;
@@ -144,6 +147,18 @@ pub(super) fn audit_and_stage_body(
         data,
         fixed.row_version,
     )?;
+    // A new base MESSAGE row while a HOST prospective legal order stands is
+    // sealed to that order in this same writer (FIX 13866); never otherwise.
+    let message_birth = fixed.entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+        && crate::deletion::prospective_standing_in_txn(store, wtxn)?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &fixed.id)?.is_none();
+    // The filed row this put supersedes, read before its own row goes in:
+    // its file stays for the revision it becomes (FIX 22091).
+    let superseded = if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {
+        crate::store::superseded_file_row_in_txn(store, wtxn, &fixed.id)?
+    } else {
+        None
+    };
     stage_entity_body_row(
         store,
         wtxn,
@@ -154,6 +169,27 @@ pub(super) fn audit_and_stage_body(
         row_version,
         data,
     )?;
+    // FIX 4817: the row's new revision withdraws, in this commit, each
+    // self-written summary that wore the row as a home part at another one.
+    crate::ports::withdraw_changed_home_dependents_in_txn(write, wtxn, &fixed.id)?;
+    // FIX 12113: which machine wrote the MESSAGE row just staged, for the
+    // reverse scan to vouch for its exact bytes beside it: this one for a
+    // local put, the lane's verified writer for a replicated one.
+    #[cfg(feature = "sync")]
+    if fixed.entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
+        crate::sync::note_message_put_in_txn(
+            store,
+            wtxn,
+            &fixed.id,
+            fixed.replicated,
+            fixed
+                .own_device
+                .and_then(|lane| lane.proof_for(&fixed.id, data)),
+        )?;
+    }
+    if message_birth {
+        crate::deletion::seal_prospective_message_in_txn(store, wtxn, &fixed.id)?;
+    }
     if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {
         crate::store::stage_asset_body_in_txn(
             store,
@@ -161,6 +197,7 @@ pub(super) fn audit_and_stage_body(
             &fixed.id,
             data,
             fixed.options.storage.asset_file,
+            superseded.as_deref(),
         )?;
     } else if fixed.options.storage.asset_file.is_some() {
         return Err(Error::InvariantViolation(

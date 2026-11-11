@@ -15,7 +15,6 @@ use std::sync::Arc;
 use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
 use oneiron::conversation::{TurnActionAttempt, TurnActionAuthority};
-use oneiron::settings::ReadDestination;
 use oneiron::{EntityId, ModelLocality};
 
 use super::PromptBoard;
@@ -55,7 +54,7 @@ pub(crate) async fn action_board(
     // The answer goes back to where its attempt recorded the requester
     // asking from, toward no machine anyone proved now; never where the
     // actor might be.
-    let caller = ReadDestination::at(
+    let caller = oneiron::settings::read_destination_at(
         if action.off_device {
             CallerLocality::OffDevice
         } else {

@@ -197,41 +197,45 @@ impl SyncServer {
         let failed = Mutex::new(None);
         std::thread::scope(|scope| {
             for _ in 0..workers {
-                scope.spawn(|| {
-                    while let Some(keys) = next_unit(&units) {
-                        for key in keys {
-                            if ended.load(Ordering::SeqCst) || self.housekeeping_passes.stopping() {
-                                ended.store(true, Ordering::SeqCst);
-                                return;
-                            }
-                            let kept = lock(&spare).take();
-                            let Some(held) = kept.or_else(|| admit()) else {
-                                ended.store(true, Ordering::SeqCst);
-                                return;
-                            };
-                            match self.run_one_queue_check(&key, config, concurrency) {
-                                Ok(None) => {
-                                    let mut slot = lock(&spare);
-                                    if slot.is_none() {
-                                        *slot = Some(held);
-                                    }
-                                }
-                                Ok(Some(settled)) => {
-                                    checked.fetch_add(usize::from(settled), Ordering::SeqCst);
-                                    drop(held);
-                                }
-                                Err(error) => {
-                                    let mut first = lock(&failed);
-                                    if first.is_none() {
-                                        *first = Some(error);
-                                    }
+                crate::engine_thread("merge-queue-check".into())
+                    .spawn_scoped(scope, || {
+                        while let Some(keys) = next_unit(&units) {
+                            for key in keys {
+                                if ended.load(Ordering::SeqCst)
+                                    || self.housekeeping_passes.stopping()
+                                {
                                     ended.store(true, Ordering::SeqCst);
                                     return;
                                 }
+                                let kept = lock(&spare).take();
+                                let Some(held) = kept.or_else(|| admit()) else {
+                                    ended.store(true, Ordering::SeqCst);
+                                    return;
+                                };
+                                match self.run_one_queue_check(&key, config, concurrency) {
+                                    Ok(None) => {
+                                        let mut slot = lock(&spare);
+                                        if slot.is_none() {
+                                            *slot = Some(held);
+                                        }
+                                    }
+                                    Ok(Some(settled)) => {
+                                        checked.fetch_add(usize::from(settled), Ordering::SeqCst);
+                                        drop(held);
+                                    }
+                                    Err(error) => {
+                                        let mut first = lock(&failed);
+                                        if first.is_none() {
+                                            *first = Some(error);
+                                        }
+                                        ended.store(true, Ordering::SeqCst);
+                                        return;
+                                    }
+                                }
                             }
                         }
-                    }
-                });
+                    })
+                    .expect("failed to spawn thread");
             }
         });
         *admission = spare.into_inner().unwrap_or_else(PoisonError::into_inner);
@@ -253,8 +257,9 @@ impl SyncServer {
         let Some(work) = vault.claim_queue_check(key, QUEUE_CHECK_LEASE_OWNER, concurrency)? else {
             return Ok(None);
         };
-        let mut host = executor::QueueCheckExecutor::new(config.clone())
-            .with_guest_records(vault.queue_check_guest_dir()?);
+        let mut host =
+            executor::QueueCheckExecutor::new(config.clone(), vault.runtime().sandbox_backends())
+                .with_guest_records(vault.queue_check_guest_dir()?);
         let stop = || self.housekeeping_passes.stopping();
         Ok(Some(match vault.run_queue_check(&work, &mut host, &stop) {
             Ok(_) => true,

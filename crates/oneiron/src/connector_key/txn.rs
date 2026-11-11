@@ -4,6 +4,7 @@
 
 use crate::ports::EntityStoreRead;
 use sha2::Digest;
+use std::collections::BTreeSet;
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -246,11 +247,62 @@ pub(crate) fn governing_connector_key(
     Ok(pick(agnostic))
 }
 
+/// Every key that governs one of `actor`'s connectors, resolved as a call
+/// resolves it: the actor's own tuple before an actor-agnostic one, non-Active
+/// winners kept. A derived per-grant token enters only through the actor's own
+/// live scoped grant; ordinary connector tokens remain actor-agnostic. Each
+/// winning key id appears once, at its first connector.
+pub(crate) fn governing_keys_for_actor_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<Vec<(EntityId, ConnectorKeyRecord)>> {
+    let principal_ref = actor.to_hex();
+    let frontier = crate::gate::resolve_policy_manifest(store, txn)?.read_frontier_hash()?;
+    let mut live_scoped_tokens = BTreeSet::new();
+    for grant in crate::outbound_grant::standing_outbound_grants_for_principal_in_txn(
+        store,
+        txn,
+        &principal_ref,
+    )? {
+        if grant.principal_ref != principal_ref || !grant.is_active_under_policy(&frontier) {
+            continue;
+        }
+        let Some(scope) = grant.scope.scoped_mcp_grant() else {
+            continue;
+        };
+        if let Some(capability) =
+            super::record::ScopedCapabilityProvenance::mint(scope.server, &grant.id)
+        {
+            live_scoped_tokens.insert(capability.connector().to_owned());
+        }
+    }
+    let tokens = CONNECTOR_INDEX
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(key, ())| key.connector)
+        .filter(|token| {
+            super::record::ScopedCapabilityProvenance::parse_owner_capability_key(token)
+                .is_none_or(|_| live_scoped_tokens.contains(token))
+        })
+        .collect::<BTreeSet<String>>();
+    let mut seen = BTreeSet::new();
+    let mut winners = Vec::new();
+    for token in tokens {
+        if let Some((key_id, key)) = governing_connector_key(store, txn, &token, Some(actor))?
+            && seen.insert(key_id)
+        {
+            winners.push((key_id, key));
+        }
+    }
+    Ok(winners)
+}
+
 // --- In-txn rewrites -----------------------------------------------------------
 
 /// Rewrites a connector-key entity body in place, preserving the entity
-/// header (the `touch_standing_outbound_grant_in_txn` pattern — the connector
-/// never changes, so the connector index needs no maintenance).
+/// header (the connector never changes, so the connector index needs no
+/// maintenance).
 pub(crate) fn rewrite_connector_key_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,

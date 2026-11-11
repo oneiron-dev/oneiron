@@ -1,7 +1,7 @@
 //! Containers the secret mask reads into (OF-067 C, owner ruling G04 binary
 //! = C2): a ZIP archive (Office, OpenDocument and the other ZIP-family
-//! files), a gzip file, a tar archive, an xz file (FIX 2471) and a PDF's
-//! streams and text strings. The write door
+//! files), a gzip file, a tar archive, an xz file (FIX 2471), a 7z archive
+//! (FIX 11575) and a PDF's streams and text strings. The write door
 //! reads each member as it reads a body, and a member's keys are placed at
 //! their spans in the decoded member. A reader the owner has not granted gets
 //! a copy rebuilt around the overwritten keys, each key in a text member
@@ -28,15 +28,18 @@
 //!
 //! A container is known by its leading bytes, never by its name, and text
 //! with a container's leading bytes is one only when it parses as one (FIX
-//! 2474). A 7z or RAR file is read as plain bytes (FIX 2471); a ZIP that
+//! 2474). A RAR file is read as plain bytes (FIX 2471, 11575); a ZIP that
 //! starts past a file's first byte opens through the zip crate's own offset
 //! handling.
 
 pub mod archive;
 pub mod gzip;
+pub mod pacing;
 pub mod pdf;
+pub use pacing::{ReadCancelled, ReadPacer, ReadPacing, ReadProgress};
 pub mod projection_edit;
 pub mod retained_iterative;
+pub mod sevenz;
 pub mod tar;
 pub mod xz;
 
@@ -98,6 +101,8 @@ pub enum Kind {
     // FIX 2471: a tar archive and an xz file.
     Tar,
     Xz,
+    // FIX 11575: a 7z archive.
+    SevenZip,
     Pdf,
 }
 
@@ -119,6 +124,9 @@ pub fn kind(bytes: &[u8]) -> Option<Kind> {
     } else if bytes.starts_with(&[0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]) {
         // FIX 2471: an xz stream.
         Some(Kind::Xz)
+    } else if bytes.starts_with(&sevenz::SIGNATURE) {
+        // FIX 11575: a 7z signature header.
+        Some(Kind::SevenZip)
     } else {
         None
     }
@@ -131,6 +139,10 @@ pub fn kind(bytes: &[u8]) -> Option<Kind> {
 /// only starts like one reads as text. Binary bytes keep the head's: a
 /// malformed container stays sealed. A gzip file's second byte is no UTF-8.
 pub fn classify(bytes: &[u8]) -> Option<Kind> {
+    classify_with_pacing(bytes, &ReadPacing::default())
+}
+
+pub fn classify_with_pacing(bytes: &[u8], pacing: &ReadPacing) -> Option<Kind> {
     let Some(head) = kind(bytes) else {
         // FIX 2471: a ZIP that starts past byte 0 opens through the zip
         // crate's own offset handling; binary bytes only.
@@ -145,9 +157,11 @@ pub fn classify(bytes: &[u8]) -> Option<Kind> {
     let parses = match head {
         Kind::Zip => archive::opens(bytes),
         Kind::Gzip => true,
+        // FIX 11575: a 7z signature's third byte is no UTF-8.
+        Kind::SevenZip => true,
         Kind::Tar => tar::opens(bytes),
         Kind::Xz => true,
-        Kind::Pdf => pdf::opens(bytes),
+        Kind::Pdf => pdf::opens_with_pacing(bytes, pacing),
     };
     parses.then_some(head)
 }
@@ -161,24 +175,28 @@ pub fn is_container(bytes: &[u8]) -> bool {
 }
 
 /// Whether a key's span is placed in `bytes` as they are: plain bytes, and a
-/// PDF, whose own bytes hold its uncompressed objects. A ZIP, gzip, tar or
-/// xz file is rebuilt from its members, so a key in one is placed in the
-/// member (FIX 2471).
+/// PDF, whose own bytes hold its uncompressed objects. A ZIP, gzip, tar, xz
+/// or 7z file is rebuilt from its members, so a key in one is placed in the
+/// member (FIX 2471, 11575).
 pub fn holds_spans(bytes: &[u8]) -> bool {
     !matches!(
         classify(bytes),
-        Some(Kind::Zip | Kind::Gzip | Kind::Tar | Kind::Xz)
+        Some(Kind::Zip | Kind::Gzip | Kind::Tar | Kind::Xz | Kind::SevenZip)
     )
 }
 
 /// Whether a key at `path` in the member `bytes` stands as its handle text
 /// in a masked copy (FIX 7944): the UTF-8 text of a ZIP entry, a gzip
-/// payload, a tar entry, an xz payload (FIX 2471), a PDF content stream
+/// payload, a tar entry, an xz payload, a 7z entry (FIX 2471, 11575), a PDF content stream
 /// (FIX 11550) or a PDF object's strings, each encoded again around its new
 /// length. The stored bytes' own spans, a binary member's, a PDF object
 /// stream's (it names its objects by byte offset) and a PDF's own bytes
 /// (its cross-reference does) keep the filler's width.
 pub fn writes_handles(path: &[MemberStep], bytes: &[u8]) -> bool {
+    writes_handles_with_pacing(path, bytes, &ReadPacing::default())
+}
+
+pub fn writes_handles_with_pacing(path: &[MemberStep], bytes: &[u8], pacing: &ReadPacing) -> bool {
     matches!(
         path.last(),
         Some(
@@ -186,11 +204,12 @@ pub fn writes_handles(path: &[MemberStep], bytes: &[u8]) -> bool {
                 | MemberStep::Gzip
                 | MemberStep::Tar { .. }
                 | MemberStep::Xz
+                | MemberStep::SevenZip { .. }
                 | MemberStep::PdfStream { .. }
                 | MemberStep::PdfStrings { .. }
         )
     ) && std::str::from_utf8(bytes).is_ok()
-        && classify(bytes).is_none()
+        && classify_with_pacing(bytes, pacing).is_none()
 }
 
 /// Why a walk stopped before the end of a file's tree.
@@ -271,6 +290,7 @@ pub struct Budget {
     /// container's entry instead of hashing the file again (FIX 12270).
     /// `None` hashes as before.
     pub root_digest: Option<[u8; 32]>,
+    pub pacing: ReadPacing,
 }
 
 impl Budget {
@@ -287,7 +307,13 @@ impl Budget {
             hidden: false,
             ancestors: Vec::new(),
             root_digest: None,
+            pacing: ReadPacing::default(),
         }
+    }
+
+    pub fn with_pacing(mut self, pacing: ReadPacing) -> Self {
+        self.pacing = pacing;
+        self
     }
 
     /// This budget, its walk reading the bytes no reader shows too.
@@ -343,6 +369,7 @@ impl Budget {
     /// is left once its members are read, so a container met again beside
     /// itself is read again.
     pub fn enter_container(&mut self, bytes: &[u8]) -> Walked<()> {
+        self.pacing.checkpoint(ReadProgress::Container)?;
         // The walk enters its root file first, so the first entry takes
         // the caller's checked digest instead of hashing the file again;
         // members hash as before (FIX 12270).

@@ -11,8 +11,10 @@ pub const DOOR_RECEIVE_PACK_EFFECTOR: &str = "door:receive-pack";
 /// secret-shaped, and a diagnostic print is not a place for them.
 #[derive(Clone, PartialEq, Eq)]
 pub struct PushedBlob {
-    /// Repository-relative path of the blob.
+    /// Repository-relative label of the blob, C-quoted for some Git tip paths.
     pub path: String,
+    /// Exact path bytes for a Git tip diff; absent for history or non-tip input.
+    pub tip_raw_path: Option<Vec<u8>>,
     /// The blob's object id (hex).
     pub oid: String,
     /// The blob's whole content as raw bytes: what the push makes durable.
@@ -20,6 +22,11 @@ pub struct PushedBlob {
 }
 
 impl PushedBlob {
+    /// Exact Git tip path bytes, or the original label for other input.
+    pub fn path_bytes(&self) -> &[u8] {
+        self.tip_raw_path.as_deref().unwrap_or(self.path.as_bytes())
+    }
+
     /// The content as lines, split on `\n` with no line reshaped: a trailing
     /// newline ends the last line rather than adding an empty one, an empty
     /// blob has no line, and CR, NUL and every other byte survive untouched.

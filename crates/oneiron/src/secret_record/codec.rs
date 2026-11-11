@@ -1,7 +1,8 @@
 //! Core half of `secret_record::codec`: its store-layer items live in `oneiron_store::secret_record::codec` and are
-//! re-exported here; the items below stay in the engine.
+//! re-exported here; the items below stay in the engine. The record's encoders
+//! read its crate-private value and manifest reference, so they stay beside it.
 
-pub use oneiron_store::secret_record::codec::*;
+pub(crate) use oneiron_store::secret_record::codec::*;
 
 use super::floor::{as_u64, required_value};
 use super::types::{
@@ -99,6 +100,131 @@ fn binding_from_value(value: &Value) -> Result<SecretBinding> {
         tier_ceiling,
         scopes,
     })
+}
+
+/// What a custody body holds in its value slot (KS-6): the plaintext value
+/// under `value_bytes` (the owner archive's, a protected input's and a
+/// transition's body DTO, stamped with the record's own schema version as
+/// before; never a row at rest, nor an image's, KS-6 part 2), or the value sealed
+/// under its credential custody key under `sealed_value` (the stored form,
+/// stamped [`SECRET_CUSTODY_STORED_SCHEMA_VERSION`]).
+pub(crate) enum BodyValue {
+    Plain(Vec<u8>),
+    Sealed(Vec<u8>),
+}
+
+/// Encodes a custody record into its MessagePack key-map body, the value in
+/// the clear: the plaintext DTO, never the stored form.
+pub fn encode_secret_custody_body(rec: &SecretCustodyRecord) -> Result<Vec<u8>> {
+    encode_custody_map(rec, BodyValue::Plain(rec.value_bytes.clone()))
+}
+
+/// Encodes `rec`'s fields with `value` in its value slot, stamped as that
+/// form is: the DTO with the record's version, the stored form with the
+/// stored one.
+pub(crate) fn encode_custody_map(rec: &SecretCustodyRecord, value: BodyValue) -> Result<Vec<u8>> {
+    let (schema_version, value_key, value) = match value {
+        BodyValue::Plain(bytes) => (
+            rec.schema_version,
+            SECRET_CUSTODY_BODY_KEYS[4],
+            Value::Binary(bytes),
+        ),
+        BodyValue::Sealed(bytes) => (
+            SECRET_CUSTODY_STORED_SCHEMA_VERSION,
+            SECRET_CUSTODY_SEALED_VALUE_KEY,
+            Value::Binary(bytes),
+        ),
+    };
+    let map = Value::Map(vec![
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[0]),
+            Value::from(u64::from(schema_version)),
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[1]),
+            Value::from(rec.name.as_str()),
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[2]),
+            Value::from(rec.class.as_str()),
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[3]),
+            Value::from(rec.device_only),
+        ),
+        (Value::from(value_key), value),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[5]),
+            Value::from(rec.status.as_str()),
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[6]),
+            Value::from(rec.registered_at),
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[7]),
+            match rec.rotated_at {
+                Some(n) => Value::from(n),
+                None => Value::Nil,
+            },
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[8]),
+            Value::from(u64::from(rec.rotation_generation)),
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[9]),
+            Value::Array(rec.bindings.iter().map(binding_to_value).collect()),
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[10]),
+            Value::from(rec.manifest_ref.as_str()),
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[11]),
+            Value::Array(
+                rec.declared_paths
+                    .iter()
+                    .map(|p| Value::from(p.as_str()))
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[12]),
+            floor_to_value(&rec.policy_floor_snapshot),
+        ),
+        (
+            Value::from(SECRET_CUSTODY_BODY_KEYS[13]),
+            Value::from(rec.model_reveal_allowed),
+        ),
+    ]);
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &map)
+        .map_err(|_| invalid_body("encode secret custody body"))?;
+    Ok(out)
+}
+
+/// A register's protected input: `record`'s body, value in it, framed with
+/// the text of the manifest its door resolved it from when there is one;
+/// the bare body when there is none.
+pub(crate) fn encode_register_input(
+    record: &SecretCustodyRecord,
+    manifest: Option<&str>,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let body = Zeroizing::new(encode_secret_custody_body(record)?);
+    let Some(manifest) = manifest else {
+        return Ok(body);
+    };
+    let len = u32::try_from(body.len())
+        .map_err(|_| invalid_body("secret custody body is too large to frame"))?;
+    let mut out = Zeroizing::new(Vec::with_capacity(
+        REGISTER_INPUT_FRAME.len() + 4 + body.len() + manifest.len(),
+    ));
+    out.extend_from_slice(REGISTER_INPUT_FRAME);
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(&body);
+    out.extend_from_slice(manifest.as_bytes());
+    Ok(out)
 }
 
 /// Decodes a custody record from its MessagePack key-map body. All 14 keys

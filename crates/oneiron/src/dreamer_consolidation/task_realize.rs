@@ -117,7 +117,7 @@ pub async fn run_task_realize(
     if record.result_ref.is_some() {
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     }
     let Some((task, brief)) =
@@ -125,7 +125,7 @@ pub async fn run_task_realize(
     else {
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     };
     // FIX 11687: the queued input carries who queued it; the spec passed
@@ -150,6 +150,7 @@ pub async fn run_task_realize(
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
     let keyless = model.inference.selected_keyless();
+    let paid = model.inference.selected_paid();
     let mut request = LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
@@ -166,6 +167,7 @@ pub async fn run_task_realize(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![
@@ -173,11 +175,15 @@ pub async fn run_task_realize(
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: model.instruction.to_owned(),
+                    signature: None,
                 }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text }],
+                content: vec![ContentPart::Text {
+                    text,
+                    signature: None,
+                }],
             },
         ],
         tools: Vec::new(),
@@ -190,6 +196,7 @@ pub async fn run_task_realize(
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: confession_ask(&objectives, model.confession),
+                signature: None,
             }],
         });
     }
@@ -213,7 +220,7 @@ pub async fn run_task_realize(
     let mut charges = StepChargeTally::default();
     // The spec and brief are the TASK's own: the call sends under its row.
     let backend = CallBackend::new(model.backend, model.sourced, Some(vec![task]));
-    let response = match call_as_step_checked(
+    let (response, binding) = match call_as_step_checked(
         &step_ctx,
         backend.get(),
         model.guard,
@@ -222,9 +229,16 @@ pub async fn run_task_realize(
     )
     .await
     {
-        Ok(StepOutcome::Finished { response, .. }) => {
-            charges.record_terminal(ctx.vault, record.id, step_hash, &response.usage)?;
-            response
+        Ok(StepOutcome::Finished {
+            response, binding, ..
+        }) => {
+            charges.record_terminal(
+                ctx.vault,
+                binding.attempt_id,
+                binding.step_hash,
+                &response.usage,
+            )?;
+            (response, binding)
         }
         Ok(StepOutcome::Trapped { .. }) => {
             return Ok(DreamerAttemptExecution::Park {
@@ -263,10 +277,10 @@ pub async fn run_task_realize(
             {
                 charges.record_usage(usage);
             }
-            ctx.note_spend_before_error(charges.units, &charges.step_hashes);
+            ctx.note_spend_before_error(charges.units, &charges.step_bindings);
             return Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),
-                cause: DreamerParkCause::of_step(&other),
+                cause: crate::dreamer_runner::dreamer_park_cause_of_step(&other),
             });
         }
     };
@@ -278,7 +292,12 @@ pub async fn run_task_realize(
         // Only a memo stored before the check can be empty: it goes, and the
         // Retry asks again (FIX 7431, OF-193a).
         Err(reason) => {
-            return match charges.park_refused_reply(ctx.vault, record.id, step_hash, reason) {
+            return match charges.park_refused_reply(
+                ctx.vault,
+                binding.attempt_id,
+                binding.step_hash,
+                reason,
+            ) {
                 Ok(parked) => Ok(parked),
                 Err(error) => super::residency::spent_or_deferred(error, ctx, &charges),
             };
@@ -298,7 +317,7 @@ pub async fn run_task_realize(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     })
 }
 

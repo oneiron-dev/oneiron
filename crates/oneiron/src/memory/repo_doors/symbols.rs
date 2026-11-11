@@ -6,6 +6,9 @@
 //! live declaration leaves the run's declaration waiting, never refused.
 //! Each door is judged again in the writer that changes the declaration,
 //! at the vault clock read inside that writer (FIX 8801).
+//! A committed release, and a fresh declaration that replaced a held one,
+//! wake the merge queue driver after the commit, so an accepted entry that
+//! waited behind the old declaration stages on its next pass (FIX 4338).
 //! The owner's `vault.code.symbols.*` doors are unchanged.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -107,7 +110,13 @@ impl Memory<'_> {
             )? {
                 return Ok(Err(refused));
             }
-            Ok(Ok(crate::task_verb::declare_symbols_for_run_in_txn(
+            let replaces = crate::task_verb::task_declaration_holds_in_txn(
+                self.vault,
+                txn,
+                binding.task,
+                now,
+            )?;
+            let declared = crate::task_verb::declare_symbols_for_run_in_txn(
                 self.vault,
                 txn,
                 binding.task,
@@ -116,9 +125,16 @@ impl Memory<'_> {
                 keys,
                 input.ttl_seconds,
                 now,
-            )?))
+            )?;
+            Ok(Ok((declared, replaces)))
         })?;
-        let Some((lease, blockers)) = declared.map_err(super::refusal_error)? else {
+        let (declared, replaces) = declared.map_err(super::refusal_error)?;
+        // Committed: a replaced held declaration no longer holds an entry
+        // that waited behind it (FIX 4338).
+        if replaces && declared.is_some() {
+            self.vault.wake_merge_queue();
+        }
+        let Some((lease, blockers)) = declared else {
             return Err(MemoryError::new(
                 MEMORY_CODE_INVALID_STATE,
                 "another holder's live declaration holds this run's TASK",
@@ -192,6 +208,9 @@ impl Memory<'_> {
             )
         })?;
         released.map_err(super::refusal_error)?;
+        // Committed: an accepted entry that waited behind this declaration
+        // stages on the driver's next pass (FIX 4338).
+        self.vault.wake_merge_queue();
         Ok(RepoRunAnswer {
             rows: vec![own.stamp.repo],
             output: RepoSymbolsReleaseOutput {
@@ -216,7 +235,7 @@ impl Memory<'_> {
         let mut current = BTreeMap::new();
         for symbol in &manifest.symbols {
             current.insert(
-                code_symbol_entity_id(&manifest.repo_ref, symbol)?,
+                code_symbol_entity_id(&manifest.repo_identity, symbol)?,
                 symbol.path.clone(),
             );
         }

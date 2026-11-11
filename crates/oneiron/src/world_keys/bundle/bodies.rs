@@ -1,62 +1,13 @@
-//! Sealed-bundle body encoders shared by the [`bundle`](self) children.
+//! Sealed-bundle body decoders, pad encoding and section keys.
 //!
-//! Bundle/section/pads body frames moved out of the bundle root
-//! (FIX 10384): whole items, `pub(super)` visibility, no behaviour change.
-//! The root re-exports every name so existing `super::X` paths resolve.
+//! The bundle root keeps the existing child paths. Bundle and section bodies
+//! are encoded by the streaming writer in `frame_seal`.
 use super::{
-    BTreeSet, BUNDLE_LABEL, CHUNK, Cursor, EntityId, GENERATION_LEN, KEY_ID_LEN, Kek,
-    OpenedBundleSection, OpenedVaultBundle, PADS_LABEL, REQUEST_TAG, Result, SECTION_KEY_CONTEXT,
-    SECTION_LABEL, SECTION_PAD_FLOOR, SIGNATURE_CONTEXT, SealPlan, SealedBundleGeneration,
-    SealedBundleSection, SealedWorldAuthority, Signer, WorldKey, WorldKeyId, Zeroizing, refused,
+    BTreeSet, BUNDLE_LABEL, Cursor, EntityId, GENERATION_LEN, KEY_ID_LEN, Kek, OpenedBundleSection,
+    OpenedVaultBundle, PADS_LABEL, REQUEST_TAG, Result, SECTION_KEY_CONTEXT, SECTION_LABEL,
+    SealedBundleGeneration, SealedBundleSection, SealedWorldAuthority, WorldKey, WorldKeyId,
+    Zeroizing, refused, section_padded_len, signed_digest,
 };
-/// label ‖ vault (32) ‖ generation (24) ‖ publisher (16) ‖ signature (64) ‖ base
-/// length (8) ‖ base ‖ section count (4) ‖ sections ‖ capsule count (4) ‖
-/// capsules, then, for an upload published on the owner's request, 1 ‖ the
-/// request's entry hash (32). The signature covers vault, generation, publisher
-/// and everything after it; the zeros after are padding, so a body with no
-/// request ends at its capsules, as every generation sealed before the field
-/// existed does.
-pub(super) fn encode_bundle_body(
-    plan: &SealPlan,
-    generation: SealedBundleGeneration,
-    base: &[u8],
-    sections: &[SealedBundleSection],
-    authorities: &[SealedWorldAuthority],
-) -> Result<Zeroizing<Vec<u8>>> {
-    let mut body = Zeroizing::new(Vec::new());
-    body.extend_from_slice(BUNDLE_LABEL);
-    body.extend_from_slice(&plan.vault_id);
-    body.extend_from_slice(&generation.to_bytes());
-    body.extend_from_slice(plan.publisher.as_bytes());
-    let signature_at = body.len();
-    body.extend_from_slice(&[0u8; 64]);
-    let content_at = body.len();
-    body.extend_from_slice(&(base.len() as u64).to_be_bytes());
-    body.extend_from_slice(base);
-    let count = u32::try_from(sections.len()).map_err(|_| refused("too many sections"))?;
-    body.extend_from_slice(&count.to_be_bytes());
-    for section in sections {
-        section.encode(&mut body)?;
-    }
-    let count = u32::try_from(authorities.len()).map_err(|_| refused("too many capsules"))?;
-    body.extend_from_slice(&count.to_be_bytes());
-    for capsule in authorities {
-        capsule.encode(&mut body)?;
-    }
-    if let Some(request) = plan.request {
-        body.push(REQUEST_TAG);
-        body.extend_from_slice(&request);
-    }
-    let digest = signed_digest(
-        &plan.vault_id,
-        generation,
-        plan.publisher,
-        &body[content_at..],
-    );
-    body[signature_at..content_at].copy_from_slice(&plan.signing.sign(&digest).to_bytes());
-    Ok(body)
-}
-
 pub(super) fn decode_bundle_body(
     vault_id: &[u8; 32],
     generation: SealedBundleGeneration,
@@ -125,20 +76,6 @@ pub(super) fn decode_bundle_body(
     })
 }
 
-pub(super) fn signed_digest(
-    vault_id: &[u8; 32],
-    generation: SealedBundleGeneration,
-    publisher: EntityId,
-    content: &[u8],
-) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key(SIGNATURE_CONTEXT);
-    hasher.update(vault_id);
-    hasher.update(&generation.to_bytes());
-    hasher.update(publisher.as_bytes());
-    hasher.update(content);
-    *hasher.finalize().as_bytes()
-}
-
 /// `BLAKE3-derive_key(context, vault ‖ key id ‖ world key)`: a section's key or
 /// its tag. Only a holder of the world key computes either.
 pub(super) fn section_digest(context: &str, vault_id: &[u8; 32], key: &WorldKey) -> [u8; 32] {
@@ -171,32 +108,6 @@ pub(super) fn section_digest_into(
     // The hasher's block buffer and the reader's state still hold the key's bytes.
     zeroize::Zeroize::zeroize(&mut hasher);
     zeroize::Zeroize::zeroize(&mut reader);
-}
-
-/// A section body's padded size: a power of two from 4 KiB, then whole chunks.
-pub(super) fn section_padded_len(unpadded: usize) -> usize {
-    if unpadded <= CHUNK {
-        unpadded.next_power_of_two().max(SECTION_PAD_FLOOR)
-    } else {
-        unpadded.div_ceil(CHUNK) * CHUNK
-    }
-}
-
-/// label ‖ vault (32) ‖ key id (40) ‖ payload length (8) ‖ payload ‖ zeros.
-pub(super) fn encode_section_body(
-    vault_id: &[u8; 32],
-    key: &WorldKeyId,
-    payload: &[u8],
-) -> Zeroizing<Vec<u8>> {
-    let unpadded = SECTION_LABEL.len() + 32 + KEY_ID_LEN + 8 + payload.len();
-    let mut body = Zeroizing::new(Vec::with_capacity(section_padded_len(unpadded)));
-    body.extend_from_slice(SECTION_LABEL);
-    body.extend_from_slice(vault_id);
-    body.extend_from_slice(&key.envelope_key_id());
-    body.extend_from_slice(&(payload.len() as u64).to_be_bytes());
-    body.extend_from_slice(payload);
-    body.resize(section_padded_len(unpadded), 0);
-    body
 }
 
 pub(super) fn decode_section_body(

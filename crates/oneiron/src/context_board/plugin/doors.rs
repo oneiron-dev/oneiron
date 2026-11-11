@@ -12,7 +12,7 @@ use super::manifest::{
     SectionBindingResolver, StateFamilyRef,
 };
 use crate::entity_id::EntityId;
-use crate::skill_hub::{RefFetch, SkillHubAdapter, pinned_tracking};
+use crate::skill_hub::{SkillHubAdapter, pinned_tracking};
 use crate::store::skill_package::{HubIndexEntry, HubPackage};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -41,10 +41,8 @@ impl SectionBindingResolver for EngineSectionBindings {
 /// Fetches the exact pinned package a hub ref names, through the configured
 /// hub's own transport. Shared by the read-only source and the executor.
 fn fetch_hub_package(vault: &Vault, hub_ref: &HubRef) -> PluginResult<HubPackage> {
-    match vault.hub_ref_fetch(&pinned_tracking(hub_ref.clone())?, None)? {
-        RefFetch::Git(adapter, _) => Ok(adapter.fetch_package(hub_ref)?),
-        RefFetch::Http(adapter, _) => Ok(adapter.fetch_package(hub_ref)?),
-    }
+    let fetch = vault.hub_ref_fetch(&pinned_tracking(hub_ref.clone())?, None)?;
+    Ok(fetch.fetch_package(hub_ref)?)
 }
 
 /// The vault itself as the exact-byte source: skill records by ref, hub
@@ -138,14 +136,8 @@ impl PluginInstallExecutor for VaultPluginInstallExecutor<'_> {
                 reference: "hub package".to_owned(),
             });
         };
-        match vault.hub_ref_fetch(&pinned_tracking(hub_ref.clone())?, None)? {
-            RefFetch::Git(adapter, _) => {
-                ingest_checked(vault, &adapter, hub_ref, approved, *target_skill_ref, now)
-            }
-            RefFetch::Http(adapter, _) => {
-                ingest_checked(vault, &adapter, hub_ref, approved, *target_skill_ref, now)
-            }
-        }
+        let fetch = vault.hub_ref_fetch(&pinned_tracking(hub_ref.clone())?, None)?;
+        ingest_checked(vault, &fetch, hub_ref, approved, *target_skill_ref, now)
     }
 
     fn admit_candidate_under_claim(

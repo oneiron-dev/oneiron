@@ -63,15 +63,7 @@ struct WakeBatch<'a> {
     opener: Option<&'a str>,
 }
 
-/// This host's wall clock in milliseconds: the clock a batch the bridge or
-/// the inbox hands over renders its opener at, where no vault clock is.
-fn wall_clock_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
+use crate::runtime::wall_clock_ms;
 
 pub(crate) struct Instance {
     pub(crate) key: String,

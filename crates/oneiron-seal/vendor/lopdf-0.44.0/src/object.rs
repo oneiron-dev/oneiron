@@ -1600,7 +1600,7 @@ impl Stream {
             .unwrap_or(true);
 
         // weezl allocates its code tables and reconstruction buffer here.
-        admission.admit(decode_admission::CODEC_STATE_BYTES)?;
+        admission.admit_estimate(decode_admission::CODEC_STATE_BYTES, 0)?;
         let mut decoder = if early_change {
             Decoder::with_tiff_size_switch(BitOrder::Msb, MIN_BITS - 1)
         } else {
@@ -1708,14 +1708,14 @@ impl Stream {
         let mut output = Vec::new();
         if !input.is_empty() {
             // flate2 allocates the inflate state and its window here.
-            admission.admit(decode_admission::CODEC_STATE_BYTES)?;
+            admission.admit_estimate(decode_admission::CODEC_STATE_BYTES, 0)?;
             if let Err(err) = Self::inflate_into(input, true, &mut output, room)? {
                 warn!("{err}");
                 // Zlib decompression failed (e.g. corrupt adler32 checksum in
                 // encrypted PDFs). Retry with raw deflate, skipping the 2-byte
                 // zlib header and ignoring the checksum.
                 if output.is_empty() && input.len() > 2 {
-                    admission.admit(decode_admission::CODEC_STATE_BYTES)?;
+                    admission.admit_estimate(decode_admission::CODEC_STATE_BYTES, 0)?;
                     if let Err(raw_err) = Self::inflate_into(&input[2..], false, &mut output, room)? {
                         warn!("raw deflate fallback also failed: {raw_err}");
                     }

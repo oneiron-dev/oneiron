@@ -96,6 +96,10 @@ pub struct EvalMeasurementRequest {
     pub seat: EvalSeat,
     pub incumbent: EvalArmPin,
     pub candidate: EvalArmPin,
+    /// The constructed incumbent and candidate offers when this was asked.
+    /// A changed route or rate gets a new request key. Actual serving evidence
+    /// still comes only from each answered leg, never from this snapshot.
+    pub requested_offers: Option<[EvalServingOffer; 2]>,
     pub cohort: EntityId,
     pub membership_digest: String,
     pub rubric_revision: String,
@@ -178,6 +182,35 @@ pub enum MeasurementState {
     Final,
 }
 
+/// The exact host offer that answered a measured leg. The fingerprint is
+/// the gate's full binding identity; credential names stay behind its hash.
+/// Rates are the same binding's native prices, not catalog list prices.
+/// This is historical evidence, never permission to send or switch a model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvalServingOffer {
+    pub fingerprint: String,
+    pub rates: Vec<crate::llm::run_admission::UnitRate>,
+}
+
+impl EvalServingOffer {
+    /// Captures the constructed offer held by the exact-model call's ladder.
+    #[must_use]
+    pub fn from_binding(binding: &crate::llm::run_admission::OfferBinding) -> Self {
+        Self {
+            fingerprint: binding.fingerprint(),
+            rates: binding.rates.clone(),
+        }
+    }
+
+    /// Whether a current constructed offer is the one that was measured.
+    /// This does not attest model files, live policy or current sufficiency.
+    #[must_use]
+    pub fn matches(&self, binding: &crate::llm::run_admission::OfferBinding) -> bool {
+        self.fingerprint == binding.fingerprint() && self.rates == binding.rates
+    }
+}
+
 /// One leg of a case: one arm's answer and its blind score.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -188,6 +221,8 @@ pub struct EvalLegRecord {
     pub receipt: Option<String>,
     /// The provider that answered, as the model ladder stamped it.
     pub served: Option<String>,
+    /// The actual exact generative offer, or unknown for other execution paths.
+    pub serving_offer: Option<EvalServingOffer>,
     /// The blind score on the measured axis, as the scorer answered it.
     pub score: Option<f64>,
     /// The scorer that answered, `model@version`.
@@ -259,4 +294,28 @@ pub struct EvalMeasurement {
     /// Why the estimator drew no interval, when it drew none.
     pub gap: Option<EstimateGap>,
     pub card: Option<SufficiencyCard>,
+}
+
+impl EvalMeasurement {
+    /// Both offers only when every settled leg kept the same pair, including
+    /// the incumbent retest. A model name or one surviving case is not a pair.
+    #[must_use]
+    pub fn serving_offers(&self) -> Option<(&EvalServingOffer, &EvalServingOffer)> {
+        if self.state != MeasurementState::Final || self.cases.is_empty() {
+            return None;
+        }
+        let first = self.cases.first()?;
+        let incumbent = first.incumbent.serving_offer.as_ref()?;
+        let candidate = first.candidate.serving_offer.as_ref()?;
+        self.cases
+            .iter()
+            .all(|case| {
+                case.recorded_at.is_some()
+                    && case.legs().iter().all(|leg| leg.unavailable.is_none())
+                    && case.incumbent.serving_offer.as_ref() == Some(incumbent)
+                    && case.retest.serving_offer.as_ref() == Some(incumbent)
+                    && case.candidate.serving_offer.as_ref() == Some(candidate)
+            })
+            .then_some((incumbent, candidate))
+    }
 }

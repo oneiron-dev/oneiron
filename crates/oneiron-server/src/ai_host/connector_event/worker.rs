@@ -39,10 +39,13 @@ use crate::models::RoleCall;
 use crate::server::SyncServer;
 
 /// An agent's one reply to one event: every run of it names the same
-/// logical send, which the ledger replays rather than sending twice.
-const REPLY_REF: &str = "reply";
+/// logical send, which the ledger replays rather than sending twice. The
+/// engine's own, so a participant's erase finds the reply's witness rows.
+const REPLY_REF: &str = oneiron::outbound::CONNECTOR_REPLY_REF;
 /// The verb a reply goes out on: an answer in the message's own thread.
 const REPLY_VERB: &str = "send";
+/// LinkedIn's verb for the same answer: its manifest has no plain `send`.
+const LINKEDIN_REPLY_VERB: &str = oneiron::linkedin_connector::LINKEDIN_SEND_DM_VERB;
 /// The purpose a reply's model call is metered and routed under.
 const REPLY_PURPOSE: &str = "connector_reply";
 
@@ -187,7 +190,7 @@ fn answer(
         }
     };
     result.body_ref = Some(kept.content_ref.clone());
-    let reply = reply_of(agent, kept);
+    let reply = reply_of(agent, &origin.channel, kept);
     let mut sink = OwnedServedChannelSink::new(
         Arc::clone(vault),
         server.config.line.monthly_push_allowance(),
@@ -213,6 +216,9 @@ fn answer(
         OutboundDispatchOutcome::Ambiguous => ConnectorReplyStage::Ambiguous,
     };
     result.outcome = Some(dispatched.outcome.as_str().to_owned());
+    if dispatched.outcome == OutboundDispatchOutcome::Deferred {
+        owe(result, "reply: deferred".to_owned());
+    }
     result.gate_reason_codes = dispatched.gate_reason_codes;
     // FIX 11026: a requeue waits for the edge the receipt names.
     result.retry_at = dispatched
@@ -281,7 +287,7 @@ fn generate(
         .iter()
         .flat_map(|message| &message.content)
         .map(|part| match part {
-            ContentPart::Text { text } => text.len(),
+            ContentPart::Text { text, .. } => text.len(),
             _ => 0,
         })
         .sum();
@@ -307,6 +313,7 @@ fn generate(
             response_format: ResponseFormat::Text,
             locality: seat.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages,
         tools: Vec::new(),
@@ -339,7 +346,7 @@ fn generate(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect())
@@ -353,11 +360,16 @@ fn reply_run_id(agent: EntityId, event_id: &str) -> String {
     format!("{REPLY_PURPOSE}:{}", &hasher.finalize().to_hex()[..32])
 }
 
-fn reply_of(agent: EntityId, kept: ConnectorReplyBody) -> ConnectorReply {
+fn reply_of(agent: EntityId, channel: &str, kept: ConnectorReplyBody) -> ConnectorReply {
+    let verb = if channel == oneiron::linkedin_connector::LINKEDIN_CHANNEL {
+        LINKEDIN_REPLY_VERB
+    } else {
+        REPLY_VERB
+    };
     ConnectorReply {
         agent,
         reply_ref: REPLY_REF.to_owned(),
-        verb: REPLY_VERB.to_owned(),
+        verb: verb.to_owned(),
         content_ref: kept.content_ref,
         occurred_at: kept.written_at,
     }
@@ -459,6 +471,9 @@ fn briefing(origin: &SurfaceConnectorPayload, event_id: &str, text: &str) -> Str
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }

@@ -5,6 +5,8 @@
 //! Documents are loaded lazily, snapshot before ordered pending updates.
 
 #[cfg(feature = "sync")]
+mod adoption;
+mod artifact;
 mod carried;
 pub(crate) mod checkpoint;
 mod citation_floor;
@@ -30,6 +32,7 @@ pub(crate) use promotion_evidence::{
     promotion_evidence_source_in_txn, retain_fresh_claim_citations_in_txn,
     verify_promotion_evidence_in_txn,
 };
+pub(crate) use quote_citation::{source_texts_at_in_txn, span_in_masked_sight};
 mod recovery;
 mod registry;
 mod summary;
@@ -40,6 +43,7 @@ pub(crate) use summary::{
 pub mod review_explainer;
 use oneiron_store::entity_doc::side_keys;
 mod storage;
+pub(crate) mod succession;
 #[cfg(feature = "sync")]
 mod sweep;
 mod token_uses;
@@ -62,6 +66,10 @@ pub(crate) use recovery::{
 };
 mod verbs;
 
+pub(crate) use artifact::{
+    ArtifactDocumentRows, artifact_document_rows_in_txn, erase_artifact_document_in_txn,
+    put_artifact_document_in_txn,
+};
 #[cfg(feature = "sync")]
 pub(crate) use carried::{CarriedDocument, DocumentMerge, moved_pointer_row_in_txn};
 pub use doc_actor::DocActor;
@@ -77,6 +85,8 @@ pub use history_erase::TextHistoryErase;
 pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
+// A NOTE's meta map keeps its editable fields in this same encoding (FIX 7784).
+pub(crate) use metadata::{decode_metadata_value, encode_value as encode_metadata_value};
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 #[cfg(feature = "sync")]
 pub(crate) use pins::PinMerge;
@@ -88,14 +98,16 @@ pub use storage::TextField;
 pub(crate) use storage::{
     body_with_document, document_text_fields, erase_in_txn, guard_record_put, has_record_head,
     pointer_field_in, record_bodies_at_in_txn, record_body_at, record_body_history_in_txn,
-    record_document, record_head_bytes, reindex_repo_document_in_txn, resolve_record_body,
+    record_document, record_head_bytes, record_head_key, record_head_row_in_txn, record_head_slot,
+    reindex_repo_document_in_txn, resolve_record_body, resolve_record_body_len,
+    resolve_record_body_with_utf8_admission,
 };
 #[cfg(feature = "sync")]
 pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};
 #[cfg(feature = "sync")]
 pub(crate) use sync::{
     SyncEdit, edit_sync_text_in_txn, join_sync_update_in_txn, replace_sync_text_in_txn,
-    sync_text_in,
+    sync_text_in, take_sync_successor_in_txn,
 };
 pub use verbs::{AnchoredEdit, EditVerb, TextAnchor, TextUpdateOutcome, TextUpdateRequest};
 
@@ -204,5 +216,6 @@ pub(crate) fn lose_head_for_test(
     })
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

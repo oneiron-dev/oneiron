@@ -58,14 +58,7 @@ impl VoiceCascadeSession {
         if self.ended || !self.retrieval.is_open(handle) {
             return Ok(None);
         }
-        // Rule 5: an observation is prepared whole, whatever its length; only
-        // its shape is checked.
-        event.validate()?;
-        if !matches!(event.kind, AsrEventKind::Partial | AsrEventKind::Final) {
-            return Err(invalid("only partial/final ASR may be prepared"));
-        }
-        self.retrieval.check_revision(handle, revision)?;
-        self.check_prepared_revision(handle, revision, &event, externally_tainted)?;
+        self.validate_asr(handle, revision, &event, externally_tainted)?;
         if event.kind == AsrEventKind::Final {
             if self.generation.is_some() {
                 return Err(invalid(
@@ -98,6 +91,33 @@ impl VoiceCascadeSession {
         self.prepared_asr = Some(prepared.snapshot());
         self.preparation_active = true;
         Ok(Some(prepared))
+    }
+
+    /// Validation only (FIX 4899): the checks [`Self::prepare_asr`] makes of
+    /// an observation's shape, revision and same-revision exact input, and
+    /// the same refusal, with no reservation or other effect. It does not
+    /// ask the previous generation to finish, so a host runs it under the
+    /// session lock before the agent's floor reads the words
+    /// ([`Self::observe_words`]). An ended session or an utterance not open
+    /// passes: [`Self::prepare_asr`] finds it stale.
+    pub fn validate_asr(
+        &self,
+        handle: &UtteranceHandle,
+        revision: u64,
+        event: &AsrEvent,
+        externally_tainted: bool,
+    ) -> Result<()> {
+        if self.ended || !self.retrieval.is_open(handle) {
+            return Ok(());
+        }
+        // Rule 5: an observation is prepared whole, whatever its length; only
+        // its shape is checked.
+        event.validate()?;
+        if !matches!(event.kind, AsrEventKind::Partial | AsrEventKind::Final) {
+            return Err(invalid("only partial/final ASR may be prepared"));
+        }
+        self.retrieval.check_revision(handle, revision)?;
+        self.check_prepared_revision(handle, revision, event, externally_tainted)
     }
 
     pub(super) fn check_prepared_revision(

@@ -42,9 +42,11 @@ impl Vault {
         txn: &RoTxn<'_>,
         marks: &RepoIndexMarks,
         snapshot: &CodebaseSnapshot,
+        custody_root: Option<&str>,
         file_contents: &dyn Fn(&str) -> Option<Vec<u8>>,
     ) -> Result<(Vec<CodebaseFileEntry>, SnapshotCustodyReport)> {
-        let (files, mut report) = self.apply_custody_to_snapshot(txn, snapshot, file_contents)?;
+        let (files, mut report) =
+            self.apply_custody_to_snapshot(txn, snapshot, custody_root, file_contents)?;
         if marks.is_empty() || report.quarantined_paths.is_empty() {
             return Ok((files, report));
         }
@@ -121,18 +123,22 @@ impl Vault {
                     .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
             )?;
             // Each source names the file document its symbols are spans on,
-            // as this writer reads it (FIX 7809).
+            // as this writer reads it (FIX 7809), under the repository
+            // identity resolved once in this snapshot (FIX 12761).
             let read: &RoTxn<'_> = wtxn;
+            let identity =
+                crate::codebase::resolve_repo_identity_in_txn(self, read, &snapshot.repo_ref)?;
             let sources = texts
                 .iter()
                 .map(|(path, text)| {
                     Ok(CodeSymbolSource::new(path, text).with_document(
-                        code_symbol_document_in_txn(&self.store, read, &snapshot.repo_ref, path)?,
+                        code_symbol_document_in_txn(&self.store, read, &identity, path)?,
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
             let mut graph = prepare_code_symbol_graph(
                 snapshot.repo_ref.clone(),
+                identity,
                 snapshot.commit_hash.clone(),
                 sources,
             )?;

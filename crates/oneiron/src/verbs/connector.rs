@@ -1,15 +1,14 @@
-//! The `connector.*` rows over the foreign surface's catalog
-//! (`connector.list`, the discovery lens; `connector.status`, the history
-//! lens) and `connector.outbound.schedule`. The wire shapes here mirror the
-//! connector key records without their budgets, charters or manifests, and
-//! carry a key's custody record name, never a secret.
+//! Connector discovery, catalog-key history and outbound scheduling.
+//! `connector.list` distinguishes catalogued keys from first-party interfaces;
+//! `connector.status` describes a catalogued key without its budgets, charter
+//! or manifest. A key's custody record name is carried, never its secret.
 use serde::{Deserialize, Serialize};
 
-use crate::connector_key::{ConnectorCatalogEntry, ConnectorDescription};
+use crate::connector_key::{ConnectorCatalogEntry, ConnectorDescription, ConnectorIssuerHaltView};
 use crate::memory::{Memory, MemoryResult, OutboundDraftInput, OutboundIntentReceipt};
 
-/// `connector.list`'s input: a name or summary fragment; every live
-/// connector when blank.
+/// `connector.list`'s input: a name or summary fragment; all catalogued
+/// keys and first-party interfaces in the discovery lens when blank.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorListRequest {
@@ -17,21 +16,31 @@ pub struct ConnectorListRequest {
     pub query: Option<String>,
 }
 
-/// One catalogued connector, as discovery lists it.
+/// A catalogued key or a first-party connector interface. Discovery does
+/// not authorize a call or promise that its provider is available.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConnectorEntry {
-    pub name: String,
-    pub connector: String,
-    pub summary: String,
-    pub verbs: Vec<String>,
-    /// `counterparty_comm`, `read_only` or `scoped_mcp`.
-    pub call_class: String,
-    pub registered_at: u64,
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum ConnectorEntry {
+    Catalog {
+        name: String,
+        connector: String,
+        summary: String,
+        verbs: Vec<String>,
+        /// `counterparty_comm`, `read_only` or `scoped_mcp`.
+        call_class: String,
+        registered_at: u64,
+    },
+    Builtin {
+        name: String,
+        connector: String,
+        summary: String,
+        verbs: Vec<String>,
+    },
 }
 
 impl From<ConnectorCatalogEntry> for ConnectorEntry {
     fn from(entry: ConnectorCatalogEntry) -> Self {
-        Self {
+        Self::Catalog {
             name: entry.name,
             connector: entry.connector,
             summary: entry.summary,
@@ -57,6 +66,8 @@ pub struct ConnectorView {
     pub entry: ConnectorEntry,
     /// `pending`, `active`, `suspended` or `revoked`.
     pub status: String,
+    /// The connector's open issuer transition, if one halts its rows.
+    pub issuer_halt: Option<ConnectorIssuerHaltView>,
     /// The custody record the key's secret lives in, by name.
     pub secret_ref: Option<String>,
     pub key_generation: u32,
@@ -71,6 +82,7 @@ impl From<ConnectorDescription> for ConnectorView {
             key_ref: description.key_ref.to_hex(),
             entry: description.entry.into(),
             status: description.status.as_str().to_owned(),
+            issuer_halt: None,
             secret_ref: description.secret_ref,
             key_generation: description.key_generation,
             registered_at: description.registered_at,
@@ -80,15 +92,56 @@ impl From<ConnectorDescription> for ConnectorView {
     }
 }
 
-/// `connector.list`: every live catalogued connector the query matches.
+/// `connector.list`: matching live catalogued keys and first-party interfaces.
+/// Includes built-in `google.sheets` while its pack's connection is checked
+/// (FIX 4862), in name order.
 pub fn connector_catalog(
     memory: &Memory<'_>,
     input: ConnectorListRequest,
 ) -> MemoryResult<Vec<ConnectorEntry>> {
-    let entries = memory
-        .vault()
-        .search_connector_catalog(input.query.as_deref().unwrap_or(""))?;
-    Ok(entries.into_iter().map(Into::into).collect())
+    let query = input.query.as_deref().unwrap_or("");
+    let mut catalog = memory.vault().search_connector_catalog(query)?;
+    if let Some(sheets) =
+        crate::channel_identity_provider::sheets::sheets_catalog_entry(memory.vault(), query)?
+    {
+        let at = catalog.partition_point(|entry| entry.name < sheets.name);
+        catalog.insert(at, sheets);
+    }
+    let mut entries: Vec<ConnectorEntry> = catalog.into_iter().map(Into::into).collect();
+    if let Some(web) = builtin_web_entry(query) {
+        let position = entries.partition_point(|entry| entry.name() < web.name());
+        entries.insert(position, web);
+    }
+    Ok(entries)
+}
+
+impl ConnectorEntry {
+    fn name(&self) -> &str {
+        match self {
+            Self::Catalog { name, .. } | Self::Builtin { name, .. } => name,
+        }
+    }
+}
+
+fn builtin_web_entry(query: &str) -> Option<ConnectorEntry> {
+    use crate::web_connector::{WEB_CONNECTOR_NAME, WebTool};
+
+    let summary = "Web search and page fetch through the configured provider.";
+    let name_query = crate::connector_key::normalize_connector_key(query);
+    let summary_query = query.trim().to_lowercase();
+    if !WEB_CONNECTOR_NAME.contains(&name_query) && !summary.to_lowercase().contains(&summary_query)
+    {
+        return None;
+    }
+    Some(ConnectorEntry::Builtin {
+        name: WEB_CONNECTOR_NAME.to_owned(),
+        connector: WEB_CONNECTOR_NAME.to_owned(),
+        summary: summary.to_owned(),
+        verbs: [WebTool::Search, WebTool::Fetch]
+            .into_iter()
+            .map(|tool| tool.as_str().to_owned())
+            .collect(),
+    })
 }
 
 /// `connector.status`: one connector by name, removed ones included. The
@@ -97,11 +150,15 @@ pub fn connector_description(
     memory: &Memory<'_>,
     input: ConnectorNameRequest,
 ) -> MemoryResult<Option<ConnectorView>> {
+    let halt = memory.vault().open_issuer_halt_for_connector(&input.name)?;
     Ok(memory
         .vault()
         .describe_connector(&input.name)?
         .filter(|described| described.connector != crate::connector_key::PROXY_CONNECTOR)
-        .map(Into::into))
+        .map(|described| ConnectorView {
+            issuer_halt: halt,
+            ..ConnectorView::from(described)
+        }))
 }
 
 /// `connector.outbound.schedule`'s input: one send through a granted
@@ -168,27 +225,39 @@ impl From<OutboundScheduleRequest> for OutboundDraftInput {
     }
 }
 
+/// The draft and continuation `connector.outbound.schedule` schedules
+/// `input` as, under the default schedule context: a sender-selection
+/// question rides the continuation with the counterparty class passed
+/// beside it, and a counterparty class without a selection is dropped.
+/// `can({effect})` judges the same pair (FIX 22102).
+pub(crate) fn outbound_schedule_parts(
+    input: OutboundScheduleRequest,
+) -> (
+    OutboundDraftInput,
+    crate::outbound::OutboundScheduleContinuation,
+) {
+    let continuation = crate::outbound::OutboundScheduleContinuation {
+        selection: input.selection.clone().map(|selection| {
+            crate::outbound::OutboundSendSelection {
+                request: selection,
+                counterparty_class: input.counterparty_class.clone(),
+            }
+        }),
+        ..Default::default()
+    };
+    (OutboundDraftInput::from(input), continuation)
+}
+
 /// `connector.outbound.schedule`: the gated schedule `Memory` already serves.
 pub fn connector_outbound_schedule_draft(
     memory: &Memory<'_>,
     input: OutboundScheduleRequest,
 ) -> MemoryResult<OutboundIntentReceipt> {
-    if let Some(selection) = input.selection.clone() {
-        let continuation = crate::outbound::OutboundScheduleContinuation {
-            selection: Some(crate::outbound::OutboundSendSelection {
-                request: selection,
-                counterparty_class: input.counterparty_class.clone(),
-            }),
-            ..Default::default()
-        };
-        let draft = OutboundDraftInput::from(input);
-        memory.schedule_outbound_with_continuation(
-            &draft,
-            &crate::memory::OutboundScheduleContext::default(),
-            &continuation,
-            None,
-        )
-    } else {
-        memory.schedule_outbound(&input.into())
-    }
+    let (draft, continuation) = outbound_schedule_parts(input);
+    memory.schedule_outbound_with_continuation(
+        &draft,
+        &crate::memory::OutboundScheduleContext::default(),
+        &continuation,
+        None,
+    )
 }

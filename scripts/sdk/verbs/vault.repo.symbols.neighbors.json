@@ -1,0 +1,19 @@
+{
+  "name": "vault.repo.symbols.neighbors",
+  "description": "Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsNeighborsInput>",
+  "output": "crate::memory::repo_doors::RepoSymbolsNeighborsOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.neighbors\", &input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}

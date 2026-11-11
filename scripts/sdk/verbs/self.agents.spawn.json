@@ -1,0 +1,15 @@
+{
+  "name": "self.agents.spawn",
+  "input": "crate::code_run::AgentSpawnInput",
+  "output": "crate::code_run::AgentSpawnOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "AgentsSpawn",
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>",
+    "description": "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity.",
+    "host_door_lists": true
+  },
+  "run_surface": "live"
+}

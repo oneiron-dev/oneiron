@@ -285,6 +285,7 @@ impl<'v> DocumentWriter<'v> {
                 })
                 .collect(),
             run_id: run.run_id.to_hex(),
+            birth_world: run.birth_world.map(|world| world.to_hex()),
             outputs: run
                 .outputs
                 .into_iter()
@@ -326,14 +327,21 @@ impl<'v> DocumentWriter<'v> {
         let withheld = match body.body {
             Err(reason) => Some(reason),
             Ok(reader) => {
-                let files = &mut self.files;
-                let staged = files.stage(body.bytes, |out| reader.copy_checked(out))?;
-                let found = files.scan_staged(&staged, |spooled| {
-                    crate::batch::secret_scan::scan_file_content_from("", spooled)
-                })?;
+                let mut staged = self
+                    .files
+                    .stage(body.bytes, |out| reader.copy_checked(out))?;
+                let found = match staged
+                    .scan(|spooled| crate::batch::secret_scan::scan_file_content_from("", spooled))
+                {
+                    Ok(found) => found,
+                    Err(error) => {
+                        staged.discard()?;
+                        return Err(error);
+                    }
+                };
                 match found {
                     Some(_) => {
-                        files.discard_staged(staged)?;
+                        staged.discard()?;
                         Some("credential")
                     }
                     None => {
@@ -349,7 +357,17 @@ impl<'v> DocumentWriter<'v> {
             content: None,
             withheld: withheld.map(str::to_owned),
         };
-        let mut row = nulled(&row, "", 3)?;
+        // FIX 7239: a failed scan or nulling cuts the staged copy off again
+        // before the error returns, so no unindexed body outlives it.
+        let mut row = match nulled(&row, "", 3) {
+            Ok(row) => row,
+            Err(error) => {
+                if let Some(staged) = clean {
+                    staged.discard()?;
+                }
+                return Err(error);
+            }
+        };
         let mut keep = None;
         if let Some(fields) = row.as_object_mut() {
             let content = fields.get_mut("content").map(Value::take);
@@ -373,8 +391,8 @@ impl<'v> DocumentWriter<'v> {
         }
         if let Some(staged) = clean {
             match keep {
-                Some(named) => self.files.commit_staged(named, staged)?,
-                None => self.files.discard_staged(staged)?,
+                Some(named) => staged.commit(named)?,
+                None => staged.discard()?,
             }
         }
         self.bodies.insert(hex, row);
@@ -589,6 +607,7 @@ impl<'v> DocumentWriter<'v> {
                 sources: tail.sources,
                 thread_roots: Default::default(),
                 holder_requests: Vec::new(),
+                notices: Vec::new(),
             },
         ))
     }

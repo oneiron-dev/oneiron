@@ -11,6 +11,17 @@ impl PollAdmission<'_> {
     ) -> Result<(), CalendarError> {
         let master = resolve_event_by_uid(self.vault, &event.uid)?
             .ok_or_else(|| ingest("recurrence exception has no master"))?;
+        self.apply_exception_on(event, original, master)
+    }
+
+    /// [`Self::apply_exception`] on the series master `master`: the one the
+    /// UID resolves, or a pack calendar source's own (FIX 12559).
+    pub(super) fn apply_exception_on(
+        &mut self,
+        event: &ParsedVEvent,
+        original: u64,
+        master: EntityId,
+    ) -> Result<(), CalendarError> {
         let event_ref = exception_id(master, original)?;
         let exists = match self.vault.get_entity_type(&event_ref)? {
             None => false,

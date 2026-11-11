@@ -12,7 +12,11 @@
 //!   only while the generation is kept, the issuer's signature and standing
 //!   hold in the home's own authority, and the recipient stands as the
 //!   owner's there under the key the grant names.
-//! - A generation's rows go when it retires ([`SEALED_PAD_GRANT_RETENTION`]).
+//! - `p:<generation>:<request>:<executor>`: signed publication-grant pairs,
+//!   managed by the sibling `publication_access` module. These are not pad
+//!   admission grants and the `g:` parser does not interpret them.
+//! - A generation's rows go when it retires ([`SEALED_PAD_GRANT_RETENTION`]);
+//!   its publication pairs retire in the same writer.
 //!
 //! No door here asks where a machine runs or what class it is: a machine's
 //! standing and the key it proved are the checks (owner rule, 10-19).

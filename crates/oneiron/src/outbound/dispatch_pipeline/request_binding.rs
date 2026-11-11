@@ -147,6 +147,7 @@ impl PreparedOutboundDispatch {
         )?;
         let native_mail_recipient =
             bind_native_mail_recipient(vault, &mut request, verb_contract, replay.as_ref())?;
+        check_recipient_list(&request, verb_contract)?;
         if let Some(completed) = completed {
             return Ok(Self {
                 request,
@@ -398,8 +399,45 @@ fn bind_native_mail_recipient(
         crate::channel_identity_provider::native_mail::CanonicalMailSend::from_request(request)?;
     request.intent.channel = "email".to_owned();
     request.intent.target = canonical.recipient.clone();
+    // Fix list row 17645: every recipient of the one message, canonical, in
+    // its role and place, frozen beside its first.
+    request.intent.recipients = canonical.recipients;
     request.counterparty_ref = Some(canonical.recipient);
     Ok(true)
+}
+
+/// Fix list row 17645: a send that names several recipients is one email
+/// message, its list the whole one ([`crate::outbound::OutboundRecipient::check_list`]):
+/// its first recipient is its target and its counterparty. Any other send
+/// names one target, as before.
+fn check_recipient_list(
+    request: &OutboundDispatchRequest,
+    contract: &OutboundVerbContract,
+) -> std::result::Result<(), OutboundDispatchError> {
+    if request.intent.recipients.is_empty() {
+        return Ok(());
+    }
+    if normalize_key(&request.intent.channel) != "email" || contract.kind != "send" {
+        return Err(
+            Error::InvalidConfig("only an email send names several recipients".to_owned()).into(),
+        );
+    }
+    crate::outbound::OutboundRecipient::check_list(
+        &request.intent.target,
+        &request.intent.recipients,
+    )
+    .map_err(|reason| Error::InvalidConfig(reason.to_owned()))?;
+    if request
+        .counterparty_ref
+        .as_deref()
+        .is_some_and(|party| party != request.intent.target)
+    {
+        return Err(Error::InvalidConfig(
+            "a message to several recipients names its first as its counterparty".to_owned(),
+        )
+        .into());
+    }
+    Ok(())
 }
 
 pub(super) fn invalid_replay() -> OutboundDispatchError {

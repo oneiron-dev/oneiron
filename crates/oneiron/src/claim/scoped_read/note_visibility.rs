@@ -4,6 +4,56 @@ use super::*;
 use crate::federation::record_scope::note_world;
 
 impl ScopedRead<'_> {
+    /// Whether a non-owner reads the row `id` of `kind`, stamped at `scope`,
+    /// by its live worlds when its kind takes them
+    /// (`note_world::takes_live_worlds`). An ASSET or a caption reads, as a
+    /// NOTE does below, only where the asked worlds, the credential's and the
+    /// Grant's hold one of its worlds. One only in worlds other than base
+    /// reality also needs one policy read Grant alone to reach one of them
+    /// (FIX-LIST 9433, 10726; FIX 22223). It is then judged under the proof,
+    /// and under each Grant alone, at one world it is in that every ceiling
+    /// there holds, so an ASSET in several worlds reads wherever one Grant
+    /// reaches one of them (review R2 P1). `None` for any other row, which
+    /// the caller judges at `scope`.
+    pub(super) fn live_world_read_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+        scope: &oneiron_authority::federation::Scope,
+        policy: &crate::gate::PolicyManifestResolution,
+        grant: Option<&oneiron_authority::federation::Scope>,
+    ) -> Result<Option<bool>> {
+        if !note_world::takes_live_worlds(kind) {
+            return Ok(None);
+        }
+        let ceiling = self.actor_key.world_ceiling();
+        let held = [&ceiling.worlds, &grant.unwrap_or(&ceiling).worlds];
+        let worlds = note_world::live_worlds_in(&self.store_read(), txn, *id, kind);
+        if !worlds.readable_at(&held) {
+            return Ok(Some(false));
+        }
+        if grant.is_none()
+            && matches!(&worlds, note_world::NoteWorlds::In(set)
+                if !set.contains(&oneiron_authority::federation::ScopeId(crate::claim::base_world_id())))
+            && !self
+                .actor_key
+                .facets_owner_exempt_in(self.vault, txn)
+                .unwrap_or(false)
+            && crate::gate::scoped_read_note_world_witness(policy, &self.actor_key, &worlds, &held)
+                == Some(false)
+        {
+            return Ok(Some(false));
+        }
+        Ok(Some(crate::gate::scoped_read_note_allowed(
+            policy,
+            &self.actor_key,
+            scope,
+            grant.or(self.actor_key.authority_scope()),
+            (&worlds, &held[..]),
+        )))
+    }
+
     /// Scoped actor keys are asserted by a trusted host, not bearer secrets.
     /// A private NOTE additionally requires an exact entity id and a live,
     /// class-valid actor row in the same snapshot as its body.
@@ -29,17 +79,10 @@ impl ScopedRead<'_> {
         policy: &crate::gate::PolicyManifestResolution,
         grant: Option<&oneiron_authority::federation::Scope>,
     ) -> Result<bool> {
-        // A migrated NOTE retains author metadata but stores markdown on its
-        // document plane. Apply the same privacy rule to that logical body,
-        // read where this read reads the row: a room's NOTE has its own. Its
-        // kind, author, link and consent are judged on base.
-        #[cfg(feature = "sync")]
-        let resolved = crate::entity_doc::resolve_record_body(&self.store_read(), txn, id, bytes)?;
-        #[cfg(feature = "sync")]
-        let bytes = resolved.as_slice();
-        #[cfg(not(feature = "sync"))]
-        let _ = id;
-        let Ok(body) = crate::note::decode_note_body_in_txn(&self.vault.store, txn, bytes) else {
+        // The NOTE's stored core carries every fact this rule reads: its
+        // kind and author (FIX 7783). Its kind, author, link and consent are
+        // judged on base.
+        let Ok(body) = crate::note::decode_note_core_in_txn(&self.vault.store, txn, bytes) else {
             return Ok(false);
         };
         // A NOTE placed in worlds reads, on every path below, only where the
@@ -134,18 +177,24 @@ impl ScopedRead<'_> {
     /// Private diary candidates admitted under this query's snapshot. The
     /// pipeline keeps the set only for this run and still performs its final
     /// current + indexed-frontier authority checks on every resulting hit.
+    ///
+    /// The candidates are the NOTEs this read sees (FIX 5163): a room's
+    /// overlay ∪ base, each judged by its stored core, which carries its kind
+    /// (FIX 7783). Its kind registry, author, consent, policy and Grants stay
+    /// on base.
     pub(crate) fn diary_candidates_in(
         &self,
         txn: &heed::RoTxn<'_>,
         requested: &crate::gate::ResolvedRetrievalFilter,
     ) -> Result<super::ScopedDiaryCandidates> {
         let (_, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let content = self.store_read();
         let mut admitted = HashSet::new();
         // One relationship authority for every diary this snapshot checks,
         // not one per note (FIX 11648).
         let held = super::access_gate::HeldAuthority::default();
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-            &self.vault.store,
+            &content,
             txn,
             crate::registry::ENTITY_TYPE_NOTE,
             None,
@@ -157,12 +206,7 @@ impl ScopedRead<'_> {
             if raw.entity_type != crate::registry::ENTITY_TYPE_NOTE {
                 continue;
             }
-            #[cfg(feature = "sync")]
-            let body =
-                crate::entity_doc::resolve_record_body(&self.vault.store, txn, &id, &raw.body)?;
-            #[cfg(not(feature = "sync"))]
-            let body = std::borrow::Cow::Borrowed(raw.body.as_slice());
-            if crate::note::decode_note_body_in_txn(&self.vault.store, txn, &body)
+            if crate::note::decode_note_core_in_txn(&self.vault.store, txn, &raw.body)
                 .is_ok_and(|note| note.kind == crate::note::NoteKind::Diary)
                 && self.is_entity_retrievable_held_in(txn, &policy, requested, &id, &held)?
             {

@@ -1,17 +1,19 @@
 //! Diff-to-claim admission path and its test module.
 
+mod connector;
 mod continuation;
 mod import_claim;
 mod preflight;
 mod recurrence;
+mod source_events;
 use super::ingest;
 #[cfg(test)]
 use super::poll::IcsFeedPollConfig;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
-    CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
-    CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_STATUS, decode_status_value,
+    CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportSource,
+    CalendarPassportValue, CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN,
+    PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS, decode_status_value,
 };
 use crate::calendar::ics::ParsedVEvent;
 use crate::calendar::passport::{
@@ -26,6 +28,11 @@ use crate::registry::ENTITY_TYPE_EVENT;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+pub(in crate::calendar) use connector::{
+    ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
+    delete_connector_resource, preflight_connector_feed, sweep_connector_resource,
+    sweep_connector_uids,
+};
 use continuation::OwedProperties;
 pub use continuation::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
@@ -52,6 +59,7 @@ pub(super) struct PollAdmission<'a> {
     pub(crate) preserve_direction: bool,
     pub(crate) now: u64,
     pub(crate) blob_ref: &'a str,
+    pub(crate) source: Option<CalendarPassportSource>,
     pub(crate) verdict_fold: VerdictFold,
     /// The events whose property admissions passed one pass's count, each
     /// queued a continuation once the feed is applied (FIX 11997, FIX
@@ -80,6 +88,10 @@ impl PollAdmission<'_> {
 
     fn apply_event(&mut self, event: &ParsedVEvent) -> Result<(), CalendarError> {
         self.preflight_event(event)?;
+        // A pack calendar source's EVENTs are its own (FIX 12559).
+        if let Some(source) = source_events::pack_source(self.vault, self.system)? {
+            return self.apply_source_event(event, source);
+        }
         if let Some(original) = event.properties.recurrence_id_utc {
             return self.apply_exception(event, original);
         }
@@ -146,7 +158,7 @@ impl PollAdmission<'_> {
     fn sweep_resource(
         &mut self,
         feed: &super::ics::ParsedIcsFeed,
-        only_uid: Option<&str>,
+        only_uids: Option<&std::collections::BTreeSet<&str>>,
         absence_basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
         let present: std::collections::BTreeSet<_> = feed
@@ -158,13 +170,14 @@ impl PollAdmission<'_> {
             let passports = live_passports_for_event(self.vault, &event_ref)?;
             let instance = self.exception_start(event_ref)?;
             if !passports.iter().any(|(_, value)| {
-                value.system == self.system && only_uid.is_none_or(|uid| value.uid == uid)
+                value.system == self.system
+                    && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
             }) {
                 continue;
             }
             for (_, value) in &passports {
                 let reports = value.system == self.system
-                    && only_uid.is_none_or(|uid| value.uid == uid)
+                    && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
                     && value.direction.is_inbound_bearing()
                     && value.presence == CalendarPassportPresence::Live
                     && !present.contains(&(value.uid.as_str(), instance));
@@ -219,16 +232,38 @@ impl PollAdmission<'_> {
                     calendar_name: Some(self.system.to_owned()),
                     ..Default::default()
                 };
+                let occurred = self.event_occurred(event);
                 let admitted = self.vault.with_write_txn_grouped(|txn| {
+                    let landing =
+                        crate::mail_pack::calendar_source_landing_in(self.vault, txn, self.system)?;
                     self.vault.stage_calendar_event(
                         txn,
                         &input,
                         None,
-                        self.event_occurred(event),
+                        occurred,
                         WriteActor::new(actor, crate::EdgeActorClass::System),
                         id,
                         self.now,
                     )?;
+                    // A pack calendar source's EVENT is stamped with the
+                    // source's audience and bound to it in its birth commit
+                    // (FIX 12559, fix list row 16256); any other system's
+                    // lands unstamped and unbound.
+                    if let Some(landing) = &landing {
+                        let body = landing.stamp_in_txn(self.vault, txn, &id, &input.encode()?)?;
+                        self.vault
+                            .batch_in()
+                            .put_source_bound(
+                                &id,
+                                ENTITY_TYPE_EVENT,
+                                occurred,
+                                self.now,
+                                &body,
+                                landing.birth(),
+                            )
+                            .apply(txn)?;
+                        landing.bind_in_txn(self.vault, txn, &id)?;
+                    }
                     Ok(id)
                 });
                 Ok((admitted, token))
@@ -254,13 +289,27 @@ impl PollAdmission<'_> {
             ..Default::default()
         };
         self.vault.with_write_txn_grouped(|txn| {
+            // A pack calendar source's EVENT keeps its stamp through drift:
+            // its landing marks it born again, rewrites it under its proof
+            // and binds it where it was born.
+            let landing =
+                crate::mail_pack::calendar_source_landing_in(self.vault, txn, self.system)?;
+            let birth = landing
+                .as_ref()
+                .map(|landing| landing.mark_in_txn(self.vault, txn, &event_ref))
+                .transpose()?;
             self.vault.update_calendar_import_in_txn(
                 txn,
                 event_ref,
                 &input,
                 self.event_occurred(event),
                 self.now,
-            )
+                birth,
+            )?;
+            match &landing {
+                Some(landing) => landing.bind_in_txn(self.vault, txn, &event_ref),
+                None => Ok(()),
+            }
         })?;
         Ok(())
     }
@@ -509,7 +558,7 @@ impl PollAdmission<'_> {
                 value,
                 source_record_id,
                 self.now,
-                imported_screen(&request.verdict),
+                imported_screen(&request.verdict, self.screener),
             );
             Ok((admitted, token))
         })?;
@@ -542,6 +591,7 @@ impl PollAdmission<'_> {
             uid: event.uid.clone(),
             last_sequence: event.sequence,
             content_hash: event.content_hash,
+            source: self.source,
             direction,
             last_seen_at: self.now,
             presence,
@@ -554,119 +604,6 @@ impl PollAdmission<'_> {
     fn source_record_id(&self, event: &ParsedVEvent) -> String {
         format!("{}:{}", self.blob_ref, event.uid)
     }
-}
-
-/// Connector resources use the same gated importer, but retain their routing.
-pub(in crate::calendar) fn connector_event_ref(
-    vault: &Vault,
-    event: &ParsedVEvent,
-) -> Result<Option<EntityId>, CalendarError> {
-    let master = crate::calendar::passport::resolve_event_by_uid(vault, &event.uid)?;
-    match event.properties.recurrence_id_utc {
-        None => Ok(master),
-        Some(original) => Ok(Some(recurrence::exception_id(
-            master.ok_or_else(|| ingest("recurrence exception has no master"))?,
-            original,
-        )?)),
-    }
-}
-fn connector_admission<'a>(
-    vault: &'a Vault,
-    system: &'a str,
-    source: &'a str,
-    now: u64,
-) -> PollAdmission<'a> {
-    PollAdmission {
-        vault,
-        system,
-        preserve_direction: true,
-        screener: None,
-        safeguard_enabled: false,
-        now,
-        blob_ref: source,
-        verdict_fold: VerdictFold::default(),
-        continuations: None,
-    }
-}
-pub(in crate::calendar) fn preflight_connector_feed(
-    vault: &Vault,
-    system: &str,
-    source: &str,
-    feed: &super::ics::ParsedIcsFeed,
-    now: u64,
-) -> Result<(), CalendarError> {
-    let admission = connector_admission(vault, system, source, now);
-    for event in &feed.events {
-        admission.preflight_event(event)?;
-    }
-    Ok(())
-}
-/// What a connector admission admits from: the pull record its claims cite,
-/// and the archived resource version a property continuation reads again.
-#[derive(Clone, Copy)]
-pub(in crate::calendar) struct ConnectorAdmissionSource<'a> {
-    pub(in crate::calendar) record: &'a str,
-    pub(in crate::calendar) source_version: Option<&'a str>,
-}
-
-impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
-    /// A pull record with no archived version: every property is admitted
-    /// in one pass.
-    fn from(record: &'a str) -> Self {
-        Self {
-            record,
-            source_version: None,
-        }
-    }
-}
-
-/// Admits one connector event as an ICS admission admits it: one pass's
-/// count of new property claims, and a queued continuation reading the
-/// archived resource version again for the rest (FIX 12163).
-pub(in crate::calendar) fn admit_connector_event<'a>(
-    vault: &'a Vault,
-    system: &'a str,
-    source: impl Into<ConnectorAdmissionSource<'a>>,
-    event: &ParsedVEvent,
-    now: u64,
-) -> Result<(), CalendarError> {
-    let source = source.into();
-    let mut admission = connector_admission(vault, system, source.record, now);
-    let Some(source_version) = source.source_version else {
-        return admission.apply_event(event);
-    };
-    admission.continuations = Some(Vec::new());
-    admission.apply_event(event)?;
-    admission.queue_property_continuations_reading(source_version)
-}
-pub(in crate::calendar) fn sweep_connector_resource(
-    vault: &Vault,
-    system: &str,
-    source: &str,
-    feed: &super::ics::ParsedIcsFeed,
-    uid: &str,
-    now: u64,
-) -> Result<(), CalendarError> {
-    connector_admission(vault, system, source, now).sweep_resource(
-        feed,
-        Some(uid),
-        CalendarStatusBasis::ImportedAbsence,
-    )
-}
-
-/// An explicit provider tombstone cancels with a stronger basis than an omitted feed item.
-pub(in crate::calendar) fn delete_connector_resource(
-    vault: &Vault,
-    system: &str,
-    source: &str,
-    uid: &str,
-    now: u64,
-) -> Result<(), CalendarError> {
-    connector_admission(vault, system, source, now).sweep_resource(
-        &super::ics::ParsedIcsFeed { events: Vec::new() },
-        Some(uid),
-        CalendarStatusBasis::ImportedCancel,
-    )
 }
 
 /// The CAL-09 screen body for one VEVENT: its description plus any ATTACH

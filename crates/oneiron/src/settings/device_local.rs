@@ -167,16 +167,28 @@ impl Vault {
         ids: Vec<EntityId>,
         destination: &ReadDestination,
     ) -> Result<Vec<EntityId>> {
-        let rtxn = self.store.env.read_txn()?;
-        let flagged = device_local_worlds_for(self, &rtxn, destination)?;
-        let mut readable = Vec::with_capacity(ids.len());
-        for id in ids {
-            if !device_local_keeps_among(&self.store, &rtxn, &flagged, &id)? {
-                readable.push(id);
-            }
-        }
-        Ok(readable)
+        off_device_readable_in(self, &self.store, ids, destination)
     }
+}
+
+/// [`Vault::off_device_readable_for`], each row read from `store`: a room's
+/// overlay ∪ base places the rows the room stages as the room holds them
+/// (FIX 7355). The world settings are the vault's, read in the same snapshot.
+pub(crate) fn off_device_readable_in(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    ids: Vec<EntityId>,
+    destination: &ReadDestination,
+) -> Result<Vec<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let flagged = device_local_worlds_for(vault, &rtxn, destination)?;
+    let mut readable = Vec::with_capacity(ids.len());
+    for id in ids {
+        if !device_local_keeps_among(store, &rtxn, &flagged, &id)? {
+            readable.push(id);
+        }
+    }
+    Ok(readable)
 }
 
 /// [`Vault::device_local_keeps`], read in the caller's transaction.

@@ -1,4 +1,5 @@
-//! A workflow step's selected memory and chat as model context (FIX 6290).
+//! A workflow step's selected memory and chat, and the results of the
+//! sibling tasks it names (FIX 7742), as model context (FIX 6290).
 //!
 //! A resolved projection names its rows, `<domain>:cl_<hex>` claims and
 //! `tn_<hex>` turns, never their words. This reads the words of exactly the
@@ -15,6 +16,11 @@
 //! A row renders only when every lane reads it, policy and body in one
 //! snapshot, at the grant clock persisted just before it. Claim values and
 //! turn texts become plain text; no MessagePack reaches a prompt.
+//!
+//! A sibling task's result (`context_from`) is read the same way, on every
+//! lane, and, since no selector cut it, past each binder's private-thread
+//! and own-entry rules here: a NOTE's markdown, a claim's line, or a turn's
+//! words, its messages read on the lanes as a chat turn's are.
 //!
 //! Nothing here refuses and nothing is cut: a row that no longer reads, one
 //! of another kind, one whose body does not decode and a turn with no
@@ -36,7 +42,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_USER};
 use crate::ports::EdgeDirection;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::write_envelope::WriteActor;
 
@@ -50,13 +56,16 @@ const TURN_SPEAKER_KEYS: &[&str] = &["speaker", "role", "author", "spkr"];
 const TURN_TEXT_KEYS: &[&str] = &["text", "txt"];
 
 /// One step's selected memory and chat rows as text, each in its
-/// projection's order (newest first), and how many of each were left out.
+/// projection's order (newest first), the results of the sibling tasks it
+/// names in the order it names them, and how many of each were left out.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct RenderedWorkflowStepContext {
     memory: Vec<String>,
     chat: Vec<String>,
+    sibling_results: Vec<String>,
     omitted_memory: usize,
     omitted_chat: usize,
+    omitted_sibling_results: usize,
     rows: Vec<EntityId>,
     /// Body digests captured beside `rows`, before their read snapshot ends.
     revisions: Vec<String>,
@@ -68,8 +77,10 @@ impl std::fmt::Debug for RenderedWorkflowStepContext {
         f.debug_struct("RenderedWorkflowStepContext")
             .field("memory", &self.memory.len())
             .field("chat", &self.chat.len())
+            .field("sibling_results", &self.sibling_results.len())
             .field("omitted_memory", &self.omitted_memory)
             .field("omitted_chat", &self.omitted_chat)
+            .field("omitted_sibling_results", &self.omitted_sibling_results)
             .field("rows", &self.rows.len())
             .finish()
     }
@@ -81,6 +92,7 @@ impl RenderedWorkflowStepContext {
         Self {
             omitted_memory: context.memory_sections.len(),
             omitted_chat: context.chat_sections.len(),
+            omitted_sibling_results: context.sibling_result_refs.len(),
             ..Self::default()
         }
     }
@@ -105,22 +117,41 @@ impl RenderedWorkflowStepContext {
         )
     }
 
+    /// The results of the sibling tasks the step names, as one context
+    /// message in the order it names them (FIX 7742); `None` when none read.
+    #[must_use]
+    pub fn sibling_results_text(&self) -> Option<String> {
+        section_text(
+            "Results of the sibling tasks this step reads, in the order it names them:",
+            &self.sibling_results,
+        )
+    }
+
     /// How many selected rows were left out here, by count only, never
     /// which; `None` when none were.
     #[must_use]
     pub fn omission_notice(&self) -> Option<String> {
-        if self.omitted_memory == 0 && self.omitted_chat == 0 {
-            return None;
+        let mut notice = Vec::new();
+        if self.omitted_memory > 0 || self.omitted_chat > 0 {
+            notice.push(format!(
+                "{} memory rows and {} chat rows selected for this step's context are left out: \
+                 they could not be read for this run now, or they hold no text of their own.",
+                self.omitted_memory, self.omitted_chat
+            ));
         }
-        Some(format!(
-            "{} memory rows and {} chat rows selected for this step's context are left out: \
-             they could not be read for this run now, or they hold no text of their own.",
-            self.omitted_memory, self.omitted_chat
-        ))
+        if self.omitted_sibling_results > 0 {
+            notice.push(format!(
+                "{} sibling task results named for this step are left out: they could not be \
+                 read for this run now, or they hold no text of their own.",
+                self.omitted_sibling_results
+            ));
+        }
+        (!notice.is_empty()).then(|| notice.join(" "))
     }
 
-    /// The ids of the rows `memory_text` and `chat_text` were read from, in
-    /// the order they render; empty when none read (FIX 6934).
+    /// The ids of the rows `memory_text`, `chat_text` and
+    /// `sibling_results_text` were read from, in the order they render;
+    /// empty when none read (FIX 6934).
     #[must_use]
     pub fn source_rows(&self) -> &[EntityId] {
         &self.rows
@@ -249,6 +280,47 @@ impl RenderedWorkflowStepContext {
     }
 }
 
+impl RenderedWorkflowStepContext {
+    /// A sibling task's result as text (FIX 7742): a NOTE's markdown, a
+    /// claim's line, or a turn's words as [`Self::render_turn`] reads a chat
+    /// turn's. `false` for another kind or a body with no text of its own.
+    fn render_sibling_result(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        lanes: &[ScopedRead<'_>],
+        id: EntityId,
+        entity_type: u8,
+        body: &[u8],
+    ) -> Result<bool> {
+        let line = match entity_type {
+            ENTITY_TYPE_NOTE => crate::note::decode_note_body_in_txn(&vault.store, txn, body)
+                .ok()
+                .map(|note| note.markdown)
+                .filter(|text| !text.trim().is_empty())
+                .map(|text| format!("- {text}")),
+            ENTITY_TYPE_CLAIM => claim_line(entity_type, body),
+            ENTITY_TYPE_TURN => {
+                let mut turn = Self::default();
+                if !turn.render_turn(vault, txn, lanes, id, body)? {
+                    return Ok(false);
+                }
+                self.sibling_results.append(&mut turn.chat);
+                self.rows.append(&mut turn.rows);
+                self.revisions.append(&mut turn.revisions);
+                return Ok(true);
+            }
+            _ => None,
+        };
+        let Some(line) = line else {
+            return Ok(false);
+        };
+        self.sibling_results.push(line);
+        self.capture_row(id, body);
+        Ok(true)
+    }
+}
+
 /// `heading`, then one line per row; `None` without rows.
 fn section_text(heading: &str, lines: &[String]) -> Option<String> {
     if lines.is_empty() {
@@ -274,7 +346,10 @@ impl AgentDispatcher<'_> {
         attempt: &AttemptRecord,
         context: &ResolvedContextProjection,
     ) -> RenderedWorkflowStepContext {
-        if context.memory_sections.is_empty() && context.chat_sections.is_empty() {
+        if context.memory_sections.is_empty()
+            && context.chat_sections.is_empty()
+            && context.sibling_result_refs.is_empty()
+        {
             return RenderedWorkflowStepContext::default();
         }
         self.rendered_step_context(attempt, context)
@@ -298,7 +373,9 @@ impl AgentDispatcher<'_> {
             .into_iter()
             .map(|key| self.vault.scoped_read(key))
             .collect::<Vec<_>>();
-        hydrate(self.vault, &lanes, context)
+        hydrate(self.vault, &lanes, context, |txn, id| {
+            self.binder_cuts_admit_in_txn(txn, &readers, id)
+        })
     }
 
     /// The member and binders of the chain above `attempt`, found as the
@@ -417,11 +494,14 @@ fn own_key_in(
 
 /// The selected rows of `context` that every lane reads, each in one
 /// snapshot taken after every lane persisted its grant clock, rendered as
-/// text; the rest counted left out. No lane reads nothing.
+/// text; the rest counted left out. No lane reads nothing. A sibling result,
+/// which no selector cut, also renders only when `binder_cuts` admits it in
+/// that snapshot.
 fn hydrate(
     vault: &Vault,
     lanes: &[ScopedRead<'_>],
     context: &ResolvedContextProjection,
+    binder_cuts: impl Fn(&heed::RoTxn<'_>, &EntityId) -> Result<bool>,
 ) -> Result<RenderedWorkflowStepContext> {
     let memory_rows: Vec<Option<EntityId>> = context
         .memory_sections
@@ -440,6 +520,7 @@ fn hydrate(
         .chain(&chat_rows)
         .flatten()
         .copied()
+        .chain(context.sibling_result_refs.iter().copied())
         .collect();
     for lane in lanes {
         lane.persist_grant_clock()?;
@@ -468,6 +549,17 @@ fn hydrate(
         };
         if !kept {
             rendered.omitted_chat += 1;
+        }
+    }
+    for id in &context.sibling_result_refs {
+        let kept = match bodies.next().flatten() {
+            Some((entity_type, _, body)) if binder_cuts(&txn, id)? => {
+                rendered.render_sibling_result(vault, &txn, lanes, *id, entity_type, &body)?
+            }
+            _ => false,
+        };
+        if !kept {
+            rendered.omitted_sibling_results += 1;
         }
     }
     Ok(rendered)

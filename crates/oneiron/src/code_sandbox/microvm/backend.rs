@@ -227,6 +227,59 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
     }
 }
 
+/// The isolating backends one build carries: the Firecracker microVM and the
+/// OCI fenced container. Each method builds one of them, or answers `None`
+/// when the build does not carry it or the host does not have it. Which
+/// backend a guest tier takes is decided here, in
+/// [`select_backend_for_tier`] and [`select_backend_for_session`], never by
+/// an implementation, so core names no backend. Each vault carries the set
+/// the binary that built it installed ([`crate::Vault::install_sandbox_backends`]),
+/// read through [`crate::RuntimeHandle::sandbox_backends`]; the server
+/// installs `oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends`.
+pub trait SandboxBackends: Send + Sync {
+    /// The Firecracker backend, when this build carries it and the host has
+    /// the VMM installed. Asked only on a host with KVM.
+    fn firecracker(&self) -> Option<Box<dyn MicroVmBackend>>;
+
+    /// The OCI fenced container a finite run takes, when this build carries
+    /// it and the host has an OCI runtime.
+    fn container(&self) -> Option<Box<dyn MicroVmBackend>>;
+
+    /// The OCI fenced container for a browser or native session on this
+    /// runtime and image. `None` when this build carries no container
+    /// backend; `Some(Err)` when it does and the session's container cannot
+    /// be configured.
+    fn session_container(
+        &self,
+        runtime: std::path::PathBuf,
+        image: &str,
+    ) -> Option<Result<Box<dyn MicroVmBackend>>>;
+}
+
+/// The backends of a vault whose host installed none: it carries no
+/// isolating backend, so every tier that needs isolation is refused and
+/// first-party code runs in-process as before.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoSandboxBackends;
+
+impl SandboxBackends for NoSandboxBackends {
+    fn firecracker(&self) -> Option<Box<dyn MicroVmBackend>> {
+        None
+    }
+
+    fn container(&self) -> Option<Box<dyn MicroVmBackend>> {
+        None
+    }
+
+    fn session_container(
+        &self,
+        _runtime: std::path::PathBuf,
+        _image: &str,
+    ) -> Option<Result<Box<dyn MicroVmBackend>>> {
+        None
+    }
+}
+
 /// Routes one guest tier to its execution backend.
 ///
 /// `Ok(None)` means "no microVM": first-party code runs in-process. Foreign and
@@ -238,11 +291,14 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
 ///
 /// Returns [`CodeError::MicroVmBackendUnavailable`](crate::error::CodeError::MicroVmBackendUnavailable) when the tier needs isolation
 /// and no backend is compiled in or detected.
-pub fn select_backend_for_tier(tier: SandboxGuestTier) -> Result<Option<Box<dyn MicroVmBackend>>> {
+pub fn select_backend_for_tier(
+    backends: &dyn SandboxBackends,
+    tier: SandboxGuestTier,
+) -> Result<Option<Box<dyn MicroVmBackend>>> {
     match tier {
         SandboxGuestTier::FirstPartyDreamer => Ok(None),
-        SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => installed_firecracker()
-            .or_else(container_backend)
+        SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => installed_firecracker(backends)
+            .or_else(|| backends.container())
             .map(Some)
             .ok_or_else(|| backend_unavailable(tier)),
     }
@@ -253,6 +309,7 @@ pub fn select_backend_for_tier(tier: SandboxGuestTier) -> Result<Option<Box<dyn 
 /// with no Firecracker installed runs them in the OCI fenced container
 /// (`installed_firecracker`).
 pub fn select_backend_for_session(
+    backends: &dyn SandboxBackends,
     tier: SandboxGuestTier,
     runtime: std::path::PathBuf,
     image: &str,
@@ -260,19 +317,12 @@ pub fn select_backend_for_session(
     if tier == SandboxGuestTier::FirstPartyDreamer {
         return Err(backend_unavailable(tier));
     }
-    if let Some(backend) = installed_firecracker() {
+    if let Some(backend) = installed_firecracker(backends) {
         return Ok(backend);
     }
-    #[cfg(target_os = "linux")]
-    {
-        super::ContainerBackend::for_session(runtime, image)
-            .map(|b| Box::new(b) as Box<dyn MicroVmBackend>)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (runtime, image);
-        Err(backend_unavailable(tier))
-    }
+    backends
+        .session_container(runtime, image)
+        .unwrap_or_else(|| Err(backend_unavailable(tier)))
 }
 
 /// The Firecracker backend a session or a Foreign/Untrusted run takes: on a
@@ -280,8 +330,8 @@ pub fn select_backend_for_session(
 /// none, so the guest falls back to the OCI fenced container, the posture it
 /// already has on a host with no /dev/kvm; Firecracker still wins wherever
 /// it is installed (Engine 10-21 02:4x and 03:0x, CALLS rows).
-fn installed_firecracker() -> Option<Box<dyn MicroVmBackend>> {
-    kvm_available().then(firecracker_backend).flatten()
+fn installed_firecracker(backends: &dyn SandboxBackends) -> Option<Box<dyn MicroVmBackend>> {
+    kvm_available().then(|| backends.firecracker()).flatten()
 }
 
 fn kvm_available() -> bool {
@@ -293,30 +343,10 @@ fn kvm_available() -> bool {
             .is_ok()
 }
 
-#[cfg(target_os = "linux")]
-fn container_backend() -> Option<Box<dyn MicroVmBackend>> {
-    super::ContainerBackend::detect().map(|b| Box::new(b) as Box<dyn MicroVmBackend>)
-}
-#[cfg(not(target_os = "linux"))]
-fn container_backend() -> Option<Box<dyn MicroVmBackend>> {
-    None
-}
-
 pub(super) fn backend_unavailable(tier: SandboxGuestTier) -> Error {
     Error::Code(CodeError::MicroVmBackendUnavailable {
         tier: tier.as_str(),
     })
-}
-
-#[cfg(feature = "microvm-firecracker")]
-fn firecracker_backend() -> Option<Box<dyn MicroVmBackend>> {
-    super::firecracker::FirecrackerBackend::detect()
-        .map(|backend| Box::new(backend) as Box<dyn MicroVmBackend>)
-}
-
-#[cfg(not(feature = "microvm-firecracker"))]
-const fn firecracker_backend() -> Option<Box<dyn MicroVmBackend>> {
-    None
 }
 
 /// True when the dev reference backend is compiled into this build.
@@ -425,6 +455,7 @@ impl MicroVmBackend for DevProcessBackend {
             status: 0,
             overlay_dirty,
             result_json: None,
+            guest_error: None,
         })
     }
 
@@ -477,7 +508,8 @@ impl fmt::Debug for DevProcessBackend {
     }
 }
 
-pub(super) fn backend_error(backend: &'static str, detail: impl Into<String>) -> Error {
+/// The typed failure of the named backend, with its detail.
+pub fn backend_error(backend: &'static str, detail: impl Into<String>) -> Error {
     Error::Code(CodeError::MicroVmBackendError {
         backend,
         detail: detail.into(),

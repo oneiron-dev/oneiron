@@ -4,7 +4,11 @@ use super::*;
 use crate::attempt_queue::AttemptState;
 use crate::blob_artifact::BlobArtifactVersion;
 use crate::memory::{MemoryError, MemoryResult};
-use crate::outbound::{ConnectorReplyBody, OutboundDispatchOutcome};
+use crate::outbound::{ConnectorReply, ConnectorReplyBody, OutboundDispatchOutcome};
+use crate::outbound_intent_ledger::{
+    ConnectorIntentBinding, IntentResolution, call_row_erased_in_txn,
+    read_intent_for_attempt_in_txn,
+};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 
 struct RepairSource {
@@ -19,6 +23,8 @@ struct RepairSource {
     reply_ref: String,
     kept: ConnectorReplyBody,
     reply: String,
+    deferred: bool,
+    reply_delivered: bool,
 }
 
 impl Vault {
@@ -129,6 +135,14 @@ impl Vault {
         let Some(reply) = self.connector_reply_body_text_in_txn(&txn, &kept.content_ref)? else {
             return Ok(None);
         };
+        let deferred =
+            result.outcome.as_deref() == Some(OutboundDispatchOutcome::Deferred.as_str());
+        let reply_delivered = if deferred {
+            self.connector_deferred_reply_delivered_in_txn(&txn, &job, reply_ref, &kept)
+                .unwrap_or(false)
+        } else {
+            result.outcome.as_deref() == Some(OutboundDispatchOutcome::DeliveredToChannel.as_str())
+        };
         Ok(Some(RepairSource {
             attempt: attempt.clone(),
             job,
@@ -141,7 +155,54 @@ impl Vault {
             reply_ref: reply_ref.to_owned(),
             kept,
             reply,
+            deferred,
+            reply_delivered,
         }))
+    }
+
+    fn connector_deferred_reply_delivered_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        job: &ConnectorReplyJob,
+        reply_ref: &str,
+        kept: &ConnectorReplyBody,
+    ) -> Result<bool> {
+        let reply = ConnectorReply {
+            agent: job.agent,
+            reply_ref: reply_ref.to_owned(),
+            verb: "send".to_owned(),
+            content_ref: kept.content_ref.clone(),
+            occurred_at: kept.written_at,
+        };
+        let request = crate::outbound::connector_reply_request(&job.event, &reply)?.request;
+        let identity = request
+            .ledger_identity_ref
+            .as_deref()
+            .unwrap_or(&request.intent_ref);
+        let attempt = crate::outbound::outbound_dispatch_attempt_id(identity)
+            .map_err(|_| Error::InvariantViolation("connector reply logical send"))?;
+        if call_row_erased_in_txn(self, txn, attempt, 0)? {
+            return Ok(false);
+        }
+        let Some(record) = read_intent_for_attempt_in_txn(self, txn, attempt, 0)
+            .map_err(|_| Error::CorruptedIndex("connector reply intent lookup"))?
+        else {
+            return Ok(false);
+        };
+        let binding = ConnectorIntentBinding {
+            intent: &request.intent,
+            actor_ref: job.agent,
+            actor_class: &request.actor.actor_class,
+            counterparty_ref: request.counterparty_ref.as_deref(),
+            originating_session_ref: request.originating_session_ref.as_deref(),
+            calendar_invite: request.calendar_invite.as_ref(),
+        };
+        binding
+            .verify(&record)
+            .map_err(|_| Error::CorruptedIndex("connector reply frozen intent binding"))?;
+        Ok(IntentResolution::from_record(&record)
+            .map_err(|_| Error::CorruptedIndex("connector reply intent resolution"))?
+            == IntentResolution::Delivered)
     }
 
     fn connector_witness_repair_source_matches_in_txn(
@@ -244,9 +305,20 @@ impl Vault {
             })?;
         let mut refs = inbound.refs;
         let mut expected_messages = 1;
-        if source.result.outcome.as_deref()
-            == Some(OutboundDispatchOutcome::DeliveredToChannel.as_str())
-        {
+        if source.reply_delivered {
+            let reply_check = |txn: &mut heed::RwTxn<'_>, conversation: EntityId| {
+                if source.deferred
+                    && !self.connector_deferred_reply_delivered_in_txn(
+                        txn,
+                        &source.job,
+                        &source.reply_ref,
+                        &source.kept,
+                    )?
+                {
+                    return Err(MemoryError::from(Error::EntityNotFound));
+                }
+                check(txn, conversation)
+            };
             let reply = self.witness_connector_reply_with_effect(
                 source.job.agent,
                 &source.origin,
@@ -254,7 +326,7 @@ impl Vault {
                 &source.reply,
                 source.kept.written_at,
                 now,
-                check,
+                reply_check,
             )?;
             if reply.refs.first().map(String::as_str) != Some(conversation.to_hex().as_str()) {
                 return Err(MemoryError::from(Error::InvariantViolation(
@@ -270,6 +342,17 @@ impl Vault {
         // re-verify the same deterministic turns, never the original send.
         Ok(self.with_write_txn_grouped(|txn| {
             if !self.connector_witness_repair_source_matches_in_txn(txn, source)? {
+                return Ok(false);
+            }
+            if source.deferred
+                && source.reply_delivered
+                && !self.connector_deferred_reply_delivered_in_txn(
+                    txn,
+                    &source.job,
+                    &source.reply_ref,
+                    &source.kept,
+                )?
+            {
                 return Ok(false);
             }
             let mut messages = 0;
@@ -321,7 +404,14 @@ impl Vault {
                     repaired.witness_refs.push(reference.clone());
                 }
             }
-            repaired.witness_repair = None;
+            repaired.witness_repair = if source.deferred && !source.reply_delivered {
+                Some("reply: deferred".to_owned())
+            } else {
+                None
+            };
+            if repaired == source.result {
+                return Ok(false);
+            }
             let bytes = serde_json::to_vec(&repaired)
                 .map_err(|_| Error::InvariantViolation("connector reply result did not encode"))?;
             self.append_blob_artifact_version_in_txn(

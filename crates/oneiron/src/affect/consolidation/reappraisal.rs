@@ -72,12 +72,12 @@ fn stored_position(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Resul
     )
 }
 
-/// Whether `turn` narrows to `claim` on the axes a read admits by (worlds,
-/// bands, audience, sensitivity): a reader the claim's position admits
-/// reads the turn too. Facets are a provenance mask, not judged here.
+/// Whether `turn` narrows to `claim` on the disclosure axes (worlds,
+/// audience, sensitivity): a reader the claim's position admits reads the
+/// turn too. Intrinsic kind bands differ for TURN and CLAIM; facets are a
+/// provenance mask, so neither is compared here.
 fn discloses_within(turn: &Scope, claim: &Scope) -> bool {
     turn.worlds.is_narrowing_of(&claim.worlds)
-        && turn.bands.is_narrowing_of(&claim.bands)
         && turn.audience.is_narrowing_of(&claim.audience)
         && turn.sensitivity.is_narrowing_of(claim.sensitivity)
 }

@@ -57,6 +57,8 @@ impl BranchResources<'_> {
                     continue;
                 }
                 row
+            } else if let Some(row) = self.root_recovered_source(id)? {
+                row
             } else {
                 if self.read.vault().get_entity_type(&id)? != Some(ENTITY_TYPE_CLAIM) {
                     continue;
@@ -83,10 +85,12 @@ impl BranchResources<'_> {
                 return Err(invalid_consolidation("prior head exact read refused"));
             }
             // A head awaiting its owner's confirmation is no prior for anyone.
-            if !self.read.vault().claim_consolidation_eligible(
-                &id,
-                crate::gate::ConsolidationReader::ExplicitPrior,
-            )? {
+            if !self.root_source_closed(&id)
+                && !self.read.vault().claim_consolidation_eligible(
+                    &id,
+                    crate::gate::ConsolidationReader::ExplicitPrior,
+                )?
+            {
                 continue;
             }
             let prior = PriorHead {
@@ -245,12 +249,17 @@ pub(in crate::dreamer_consolidation) fn standing(
     let facet = super::signals::facet(prior.body.scope.as_ref())?;
     let fits = keys.identity.world == axes.world
         && facet == axes.facet
-        && (axes.relationship.is_none() || keys.identity.rel == axes.relationship)
+        && (axes.relationship.is_none()
+            || keys.identity.rel.as_ref().is_some_and(|rel| {
+                axes.relationship
+                    .as_ref()
+                    .is_some_and(|bound| rel.iter().eq(bound.iter()))
+            }))
         && axes.project.is_none_or(|p| keys.identity.project == p);
     Ok(fits.then_some(standing))
 }
 
-fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateKeys> {
+pub(super) fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateKeys> {
     // Reuse the key derivation; this probe never enters candidate-id admission.
     let body = &prior.body;
     let mut candidate = crate::ClaimCandidate::new(

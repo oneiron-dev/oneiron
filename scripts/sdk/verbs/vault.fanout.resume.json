@@ -1,0 +1,15 @@
+{
+  "name": "vault.fanout.resume",
+  "description": "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible.",
+  "input": "crate::task_verb::sdk::FanoutResumeRequest",
+  "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>",
+  "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)?)",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

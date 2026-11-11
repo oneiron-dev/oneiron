@@ -43,7 +43,7 @@ use oneiron::{
 
 use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
-use super::payer_funding::{PayerFault, requires_payer, scope_funding};
+use super::payer_funding::{PayerFault, attempt_grant_funding, requires_payer, scope_run_funding};
 use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
@@ -206,7 +206,10 @@ pub(super) fn deliver_hold_notice(
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }
 
@@ -317,9 +320,10 @@ impl StepRunner {
                 objectives,
             });
         }
-        // FIX 6290: the memory and chat rows the step's context selected, as
-        // text read on its run's own lanes. A row that no longer reads is
-        // counted left out, never refused.
+        // FIX 6290: the memory and chat rows the step's context selected, and
+        // the results of the sibling tasks it names (FIX 7742), as text read
+        // on its run's own lanes. A row that no longer reads is counted left
+        // out, never refused.
         let selected =
             AgentDispatcher::new(vault).render_workflow_step_context(&step.attempt, &context);
         if let Err(error) = selected.record_manifest(vault, &step.attempt, super::unix_now()) {
@@ -381,6 +385,11 @@ impl StepRunner {
         }
         if let Some(chat) = selected.chat_text() {
             messages.push(message(LlmMessageRole::User, chat));
+        }
+        // The results of the sibling tasks the step names (`context_from`),
+        // read on its run's own lanes (FIX 7742): context, never a request.
+        if let Some(siblings) = selected.sibling_results_text() {
+            messages.push(message(LlmMessageRole::User, siblings));
         }
         let has_earlier = !earlier.is_empty();
         messages.extend(earlier);
@@ -526,10 +535,7 @@ impl StepRunner {
             && let Some(answer) = &saved.transcript.answer
         {
             stamp_executor(vault, attempt, &answer.rung);
-            let binding = ModelCallBinding {
-                rung: answer.rung.clone(),
-                route: answer.route.clone(),
-            };
+            let binding = ModelCallBinding::saved(answer.rung.clone(), answer.route.clone());
             let no_record = no_record_at_arrival
                 || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
             record_workflow_response(
@@ -572,6 +578,7 @@ impl StepRunner {
                 })?;
             let mut request = call.request;
             request.envelope.host_keyless = call.ladder.all_keyless_own_server();
+            request.envelope.host_paid = !call.ladder.all_free_work();
             (
                 request,
                 call.ladder,
@@ -664,6 +671,7 @@ impl StepRunner {
                     response_format,
                     locality: seat.locality,
                     host_keyless: false,
+                    host_paid: false,
                 },
                 messages,
                 tools: Vec::new(),
@@ -682,8 +690,11 @@ impl StepRunner {
             let mut request = call.request;
             // FIX 10592: beside the door-stamped locality, the request carries
             // whether its ladder may only serve free keyless own-server work, so
-            // the replay below admits unmetered. Unstamped stays paid.
+            // the replay below admits unmetered. Unstamped stays paid. FIX
+            // 18407: it also carries whether a rung is paid work, so a paid
+            // on-device try reserves on the step's own budget line.
             request.envelope.host_keyless = call.ladder.all_keyless_own_server();
+            request.envelope.host_paid = !call.ladder.all_free_work();
             let offers_use = offers_use && secret_use::offer(&call.ladder, &mut request);
             (
                 request,
@@ -729,12 +740,15 @@ impl StepRunner {
         // The estimate counts metered reservations only: on a free ladder the
         // earlier tries spent nothing, so no replay is owed. A restart across
         // a paid-to-keyless route move replays 0 for tries that paid, the
-        // same estimate class as above.
-        let charged = if continuation.is_some() || request.envelope.host_keyless {
-            0
-        } else {
-            charged
-        };
+        // same estimate class as above. A free on-device ladder is free too;
+        // a paid one, a paid provider's managed worker over its native
+        // channel, is replayed as a paid own-server one is (FIX 14889).
+        let charged =
+            if continuation.is_some() || request.envelope.host_keyless || ladder.all_free_work() {
+                0
+            } else {
+                charged
+            };
         // A step launched under a spend lease (OF-532) is bounded by it too:
         // beside its policy rows, this try may spend no more than the lease
         // has left, read live as each call is admitted (FIX 1819). Replayed
@@ -759,9 +773,13 @@ impl StepRunner {
         // cannot bill holds the step on the owners' payer-needed ask: it
         // parks as this try (FIX 805), and once they say yes it bills the
         // vault. Nothing went out, so taken up it replays only what the
-        // earlier tries spent.
-        let payer = match scope_funding(vault, lease.as_ref(), payer_required) {
-            Ok(payer) => payer,
+        // earlier tries spent. Work an owner's agent Grant funds (FIX 7766)
+        // binds that Grant here too, its spend root's or its unmetered
+        // dispatch's: each host-paid call holds only on its wallet.
+        let funded = scope_run_funding(vault, lease.as_ref(), payer_required)
+            .and_then(|(payer, _)| Ok((payer, attempt_grant_funding(vault, attempt.id)?)));
+        let (payer, funding) = match funded {
+            Ok(funded) => funded,
             Err(fault) => {
                 let held = matches!(fault, PayerFault::Needed { .. });
                 if held && continuation.is_none() {
@@ -806,8 +824,14 @@ impl StepRunner {
                 actor,
             )?
         };
+        // Only a ladder with a paid rung replays, so each replay reserves on
+        // the paid line whatever the call's locality: an on-device label
+        // alone would admit it unmetered (FIX 14889).
         for _ in 0..charged {
-            let spent = guard.admit_for_request(&request).map_err(budget)?.lease;
+            let spent = guard
+                .admit_paid_for_request(&request)
+                .map_err(budget)?
+                .lease;
             guard.settle_reserved(&spent).map_err(budget)?;
         }
         let replayed = guard.read().used_units;
@@ -843,12 +867,14 @@ impl StepRunner {
         };
         let run = self
             .models
-            .funded_run(run_id, guard.clone(), payer)
+            .grant_funded_run(run_id, guard.clone(), payer, funding)
             .sourced(sources.clone());
         let run = run.with_work_context({
             let mut context = run.work_context();
             context.class = WorkClass::Foreground;
-            context.physical = if request.envelope.host_keyless {
+            // A free on-device try is free work too, as physical_for says
+            // (FIX 18407); a paid rung keeps the try paid.
+            context.physical = if ladder.all_free_work() {
                 WorkPhysical::KeylessOwnServer
             } else {
                 WorkPhysical::Paid
@@ -871,23 +897,19 @@ impl StepRunner {
             context.parent = parent;
             context
         });
-        // The admitted request is the step's replay capsule (FIX 3028),
-        // finalized with the rung that answers it. A capture that fails
-        // leaves none and never fails the step.
-        let capture_completed = continuation
-            .as_ref()
-            .is_some_and(|saved| saved.progress.cursor.capture_completed);
-        let capture = |request: &LlmRequest| {
-            if capture_completed {
-                return None;
-            }
+        // Each admitted request is a replay capsule of the step (FIX 3028),
+        // one per model round (FIX 7013), finalized with the rung that
+        // answers it. The tool rounds' cursor says which round already has
+        // one. A capture that fails leaves none and never fails the step.
+        let capture = |request: &LlmRequest, round: u64| {
             oneiron::code_run::capture_workflow_step(
                 vault,
                 attempt.id,
                 attempt.attempt_count,
                 actor,
                 request,
-                sources,
+                sources.clone(),
+                round,
             )
         };
         let may_send = || {
@@ -964,7 +986,7 @@ impl StepRunner {
                 &mut save,
             ),
             None => {
-                let staged = capture(&request);
+                let staged = capture(&request, 0);
                 let final_request = request.clone();
                 runtime
                     .block_on(ladder.generate_recorded_while(&run, request, None, &may_send))

@@ -1,0 +1,9 @@
+{
+  "name": "vault.search",
+  "input": "crate::code_run::MemorySearchInput",
+  "output": "crate::code_run::MemorySearchOutput",
+  "scope": "Read",
+  "context": "run",
+  "effect": "MemorySearch",
+  "run_surface": "memory"
+}

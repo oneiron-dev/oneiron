@@ -22,7 +22,11 @@ pub(crate) fn resolve_mutable_repo_root(repo_ref: &RepoRef) -> Result<PathBuf> {
     Ok(PathBuf::from(root).canonicalize()?)
 }
 
-pub(crate) fn canonical_mutation_scope(repo_root: &Path) -> Result<String> {
+/// The canonical local repository at `repo_root`, its revision left empty:
+/// a working tree's top level, or a bare repository's own directory. Its
+/// code documents are keyed by the identity the vault resolves for it
+/// (FIX 12761).
+pub(crate) fn canonical_mutation_repo_ref(repo_root: &Path) -> Result<RepoRef> {
     let repo_ref = RepoRef::LocalFolder {
         path: path_arg(repo_root)?,
         commit: String::new(),
@@ -36,8 +40,7 @@ pub(crate) fn canonical_mutation_scope(repo_root: &Path) -> Result<String> {
     } else {
         resolve_mutable_repo_root(&repo_ref)?
     };
-    let canonical = canonical_repo_ref_for_root(&repo_ref, &root)?;
-    Ok(repo_mutation_repo_key(&canonical))
+    canonical_repo_ref_for_root(&repo_ref, &root)
 }
 
 pub(crate) fn run_git(repo_root: &Path, args: &[String]) -> Result<Vec<u8>> {

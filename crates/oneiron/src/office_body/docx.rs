@@ -1,4 +1,4 @@
-//! The DOCX body inside its Loro document, schema 1.
+//! The DOCX body inside its Loro document, schema 2.
 //!
 //! Root `office` holds the kind and schema. Root `order`, a movable list, holds
 //! block ids in document order, so concurrent moves converge. Root `blocks` maps
@@ -8,7 +8,13 @@
 //! text marks on its `text`, keyed by [`DocxMark::key`] with the value `true`.
 //! A deleted block leaves `order` and keeps its entry, so a three-way read can
 //! still name it. Imported blocks keep the package's block ids; a new paragraph
-//! gets a minted one.
+//! gets a minted one. Beside the body, root `story_order` lists the imported
+//! stories in reader order and root `stories` maps each scope key to its
+//! paragraphs and per-paragraph table cells ([`stories`], [`story_tables`]).
+
+mod stories;
+mod story_tables;
+pub use story_tables::{StoryCell, StoryCellParagraph, StoryTable};
 
 use super::invalid;
 use crate::entity_id::EntityId;
@@ -19,9 +25,10 @@ use loro::{
 };
 use oneiron_docedit::docx_body::{
     DocxAnchor, DocxBlock, DocxBlockKind, DocxChange, DocxLock, DocxMark, DocxParagraph, DocxRun,
-    canonical_runs,
+    DocxStory, DocxStoryScope, canonical_runs,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
+pub use stories::{DocxStoryBody, StoryParagraph};
 
 const OFFICE: &str = "office";
 const ORDER: &str = "order";
@@ -33,7 +40,7 @@ const IMPORTED: &str = "imported";
 const LOCK: &str = "lock";
 const TEXT: &str = "text";
 const CELLS: &str = "cells";
-pub(super) const SCHEMA: u32 = 1;
+pub(super) const SCHEMA: u32 = 2;
 /// One paragraph's or cell's text ceiling.
 const MAX_TEXT_BYTES: usize = 1 << 20;
 
@@ -41,6 +48,8 @@ const MAX_TEXT_BYTES: usize = 1 << 20;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocxBody {
     pub blocks: Vec<BodyBlock>,
+    /// The imported stories in reader order, each with its paragraphs.
+    pub stories: Vec<DocxStoryBody>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,10 +126,52 @@ pub enum DocxBodyOp {
         mark: DocxMark,
         on: bool,
     },
+    /// Replace the plain text of one exact paragraph within a story table cell.
+    SetStoryCellParagraph {
+        scope: DocxStoryScope,
+        block: String,
+        row: usize,
+        col: usize,
+        paragraph: String,
+        text: String,
+    },
+    SpliceStoryCellParagraph {
+        scope: DocxStoryScope,
+        block: String,
+        row: usize,
+        col: usize,
+        paragraph: String,
+        at: usize,
+        delete: usize,
+        insert: String,
+    },
+    /// Replace one story paragraph's text by its shortest edit.
+    SetStoryText {
+        scope: DocxStoryScope,
+        block: String,
+        text: String,
+    },
+    SpliceStory {
+        scope: DocxStoryScope,
+        block: String,
+        at: usize,
+        delete: usize,
+        insert: String,
+    },
+    /// Turn one inline mark on or off over `len` characters of one story
+    /// paragraph from `at`, with the body's baseline law.
+    MarkStory {
+        scope: DocxStoryScope,
+        block: String,
+        at: usize,
+        len: usize,
+        mark: DocxMark,
+        on: bool,
+    },
 }
 
-/// Write the imported blocks into a fresh document.
-pub(super) fn import(doc: &LoroDoc, blocks: &[DocxBlock]) -> Result<()> {
+/// Write the imported blocks and stories into a fresh document.
+pub(super) fn import(doc: &LoroDoc, blocks: &[DocxBlock], stories: &[DocxStory]) -> Result<()> {
     mark_styles(doc);
     let office = doc.get_map(OFFICE);
     office.insert(KIND, "docx").map_err(loro)?;
@@ -185,6 +236,7 @@ pub(super) fn import(doc: &LoroDoc, blocks: &[DocxBlock]) -> Result<()> {
             DocxBlockKind::Opaque => {}
         }
     }
+    self::stories::import(doc, stories)?;
     Ok(())
 }
 
@@ -194,7 +246,7 @@ pub(super) fn read(doc: &LoroDoc) -> Result<DocxBody> {
     if string(&office, KIND).as_deref() != Some("docx")
         || int(&office, "schema") != Some(i64::from(SCHEMA))
     {
-        return Err(invalid("not a schema-1 DOCX body"));
+        return Err(invalid("not a schema-2 DOCX body"));
     }
     let map = doc.get_map(BLOCKS);
     let ids = ids(&doc.get_movable_list(ORDER))?;
@@ -246,7 +298,10 @@ pub(super) fn read(doc: &LoroDoc) -> Result<DocxBody> {
             cells,
         });
     }
-    Ok(DocxBody { blocks })
+    Ok(DocxBody {
+        blocks,
+        stories: stories::read(doc)?,
+    })
 }
 
 /// Apply one operation; a minted paragraph id is pushed to `minted`.
@@ -383,6 +438,52 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
                 body.unmark(*at..end, mark.key()).map_err(loro)?;
             }
         }
+        DocxBodyOp::SetStoryCellParagraph {
+            scope,
+            block,
+            row,
+            col,
+            paragraph,
+            text,
+        } => {
+            story_tables::set_text(doc, scope, block, *row, *col, paragraph, text)?;
+        }
+        DocxBodyOp::SpliceStoryCellParagraph {
+            scope,
+            block,
+            row,
+            col,
+            paragraph,
+            at,
+            delete,
+            insert,
+        } => {
+            story_tables::splice(
+                doc, scope, block, *row, *col, paragraph, *at, *delete, insert,
+            )?;
+        }
+        DocxBodyOp::SetStoryText { scope, block, text } => {
+            stories::set_text(doc, scope, block, text)?;
+        }
+        DocxBodyOp::SpliceStory {
+            scope,
+            block,
+            at,
+            delete,
+            insert,
+        } => {
+            stories::splice(doc, scope, block, *at, *delete, insert)?;
+        }
+        DocxBodyOp::MarkStory {
+            scope,
+            block,
+            at,
+            len,
+            mark,
+            on,
+        } => {
+            stories::set_mark(doc, scope, block, *at, *len, *mark, *on)?;
+        }
     }
     Ok(())
 }
@@ -423,7 +524,8 @@ fn marked(runs: &[DocxRun]) -> bool {
 }
 
 /// The changes that turn the imported `base` into `current`, in the order the
-/// native writer applies them: text and cells, moves, inserts, then deletes.
+/// native writer applies them: text and cells, moves, inserts, deletes, then
+/// story runs.
 /// Moves first put the imported blocks in body order, so a new paragraph lands
 /// beside the block it follows in the body.
 pub(super) fn changes(base: &DocxBody, current: &DocxBody) -> Result<Vec<DocxChange>> {
@@ -541,6 +643,7 @@ pub(super) fn changes(base: &DocxBody, current: &DocxBody) -> Result<Vec<DocxCha
             });
         }
     }
+    changes.extend(stories::changes(&base.stories, &current.stories)?);
     Ok(changes)
 }
 

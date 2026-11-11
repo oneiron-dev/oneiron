@@ -115,3 +115,39 @@
     targets into the map instead of cloning them. Grammar, entry points, error
     behavior, returned mappings and the reverse map are unchanged; no new API,
     and no admission/heap/lifecycle claim.
+  - `src/parser/cmap_parser.rs` (FIX 12777 codespace metadata): validates every codespace range with the same one-or-more grammar without collecting the discarded range payload. Keeps the private empty `CsRange` marker consumed by `ToUnicodeCMap`, which ignores that payload. Mapping data, accepted input and public error classes are unchanged; sections, maps and admission plumbing remain separate. No new cap, refusal or format.
+  - `src/parser/mod.rs` + `src/parser/cmap_parser.rs` (FIX 12777 CMap metadata): shared `name_byte` factored from `name`; new `name_skip` validates the same `/`-name grammar via `many0_count` without building the discarded `Vec<u8>`; `cmap_name` uses `name_skip`. Removes only the discarded CMapName allocation on the ToUnicode path. `CIDSystemInfo` dictionaries, sections, maps and admission plumbing unchanged. No new cap/refusal/format/policy.
+  - CMap reverse-map/fallback allocation (FIX 12777, narrow slice): `src/encodings/cmap.rs`
+    builds the reverse map over borrowed Unicode slices with a per-iteration stack
+    singleton, cloning only new keys and multi-unit incremented ranges, and
+    `get_or_replacement_char` allocates its fallback vector lazily. Key content,
+    push order, missing-code behavior and the forward maps are unchanged; no new API,
+    and no admission/heap/lifecycle claim.
+  - Cooperative hosted container reads (FIX 7943/11549, partial): default no-op
+    `DecodeAdmission::checkpoint` reports native xref/object/stream positions;
+    controlled reads opt into sequential loading even when Rayon is compiled.
+    Pausing keeps the same native stack alive and returns `Ok` after resume;
+    it is not a terminal admission error or a serialized parser cursor.
+    The hosted inline and file-backed masks have an owned async continuation and one
+    worker; drop closes its handshake so the worker can unwind at a checkpoint.
+    Existing synchronous reads and memory-ledger admissions keep their defaults.
+    This adds no wall timeout and cannot preempt a single opaque codec unit.
+
+  - Header copies (FIX 12746/12780, narrow slice): `src/parser/mod.rs`
+    admits the version String and binary-marker Vec before copying through
+    the reader's existing `DecodeAdmission`. Both metadata and full-document
+    readers propagate a refusal as `Error::DecodeAdmission`, not an invalid
+    header or an absent marker. Without admission, the same grammar, strict
+    header handling and binary-marker selection remain unchanged. This does
+    not cover all parser allocations or retained-document ownership.
+
+  - `src/parser/mod.rs` and `src/parser_aux.rs` (FIX 12777 content slice):
+    one optional-admission content grammar reserves operand/operation vectors,
+    operator strings, inline-image bytes and the stream's `Length` key/map
+    before allocation. Nested objects reuse the iterative parser. Refusals
+    return `Error::DecodeAdmission`, never a truncated parse or skipped image.
+    `parser::content_admitted`/`content_strict_admitted` and
+    `Content::decode_admitted`/`decode_strict_admitted` keep the ordinary
+    lenient/strict outcomes. Callers retain admission until the content drops.
+    The esign preflight's leading dictionaries use their existing section
+    stage; the object-stream parser keeps its separate pre-admitted bound.

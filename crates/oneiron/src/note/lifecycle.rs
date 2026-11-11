@@ -189,7 +189,7 @@ impl Vault {
         let sealed = self
             .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
-                content.update_note(note, |txn| {
+                content.update_note(note, |txn, _lane| {
                     let (_, core) = super::verbs::note_core(self, txn, note)?;
                     if SYNC_DS_E.contains(&self.store, txn, &HexId(note))? {
                         return Err(

@@ -90,3 +90,16 @@ pub fn mask_master_exceptions(
         })
         .collect()
 }
+
+/// The start key of a civil time on the UTC carrier (FIX 16568): its civil
+/// fields read as a UTC wall clock. An all-day or floating series names civil
+/// time and no instant, so its master is seeded here, its occurrences step
+/// here, and a `VALUE=DATE` recurrence id keys its day the same way. The
+/// value is a recurrence coordinate, not an instant. `None` before the epoch
+/// or for a time that does not exist.
+#[must_use]
+pub fn civil_start_key(wall: crate::calendar::claims::CalendarWallTimeValue) -> Option<u64> {
+    let at = chrono::NaiveDate::from_ymd_opt(wall.y, u32::from(wall.mo), u32::from(wall.d))?
+        .and_hms_opt(u32::from(wall.h), u32::from(wall.mi), u32::from(wall.s))?;
+    u64::try_from(at.and_utc().timestamp()).ok()
+}

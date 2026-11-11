@@ -66,7 +66,9 @@ impl Memory<'_> {
 
     /// `vault.code.symbols.release`: removes the caller's own declaration of
     /// `task`. It is keyed by task and holder only, with no generation
-    /// fence, and it starts no proposal or scheduling.
+    /// fence, and it starts no proposal. Once a release commits, the engine
+    /// wakes the existing merge queue driver, so an accepted entry that
+    /// waited behind the declaration stages on its next pass (FIX 4338).
     pub fn code_symbols_release_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -96,7 +98,7 @@ impl Memory<'_> {
         let current = manifest
             .symbols
             .iter()
-            .map(|symbol| code_symbol_entity_id(&manifest.repo_ref, symbol))
+            .map(|symbol| code_symbol_entity_id(&manifest.repo_identity, symbol))
             .collect::<crate::error::Result<BTreeSet<EntityId>>>()?;
         if let Some(stray) = symbols.iter().find(|symbol| !current.contains(*symbol)) {
             return Err(MemoryError::bad_request(format!(

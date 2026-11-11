@@ -97,25 +97,25 @@ fn parse_repair_ref(field: &str, value: &str) -> Result<EntityId> {
     Ok(id)
 }
 
-/// Read sole canonical bindings and container liveness in one snapshot before
-/// accepting any match. Deleted shells are not membership containers.
+/// Read sole canonical bindings and container liveness in the caller's snapshot
+/// before accepting any match. Deleted shells are not membership containers.
 /// A TURN's ChildOf and a MESSAGE's BelongsTo must agree when both exist.
 /// Either conversation binding can stand alone, as can direct PartOf membership.
 /// Only a TURN is the intermediate container in the two-hop path.
 pub(super) fn require_thread_membership(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     message_ref: EntityId,
     thread_ref: EntityId,
 ) -> Result<()> {
-    let txn = vault.store.env.read_txn()?;
     let sole = |source: &EntityId, kind, label| {
-        sole_edge_target(&vault.store, &txn, source, kind, label)
+        sole_edge_target(&vault.store, txn, source, kind, label)
             .map_err(|error| Error::InvalidConfig(error.to_string()))
     };
     let part_of = sole(&message_ref, EdgeKind::PartOf, "message")?;
     let belongs_to = sole(&message_ref, EdgeKind::BelongsTo, "message")?;
     let container_kind = |id: EntityId| -> Result<u8> {
-        match live_entity_row_in_txn(&vault.store, &txn, &id)? {
+        match live_entity_row_in_txn(&vault.store, txn, &id)? {
             LiveEntityRow::Live { entity_type, .. } => Ok(entity_type),
             LiveEntityRow::Absent => Err(Error::InvalidConfig(
                 "healer qa membership container is missing".to_owned(),

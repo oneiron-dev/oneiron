@@ -35,7 +35,8 @@ pub(crate) enum Frame {
 }
 
 /// One chunk of one complete scan of the socket inodes the guest's
-/// processes hold. A scan's chunks share its generation and the last one
+/// processes hold, with those that wait in a native Unix socket's queue
+/// (FIX 6185). A scan's chunks share its generation and the last one
 /// closes it; a scan that did not complete is never sent.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SocketInventory {

@@ -20,7 +20,8 @@ use crate::{EntityId, Error, ModelId, Result, Vault};
 
 use super::super::codec::validate_raw_output;
 use super::super::replay::{
-    CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, ResultOccurrence,
+    CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding,
+    ResultOccurrence,
 };
 use super::super::support::invalid_code_run_replay;
 use super::replay_bodies::RESPONSE_ERASED;
@@ -29,15 +30,15 @@ use super::response_erase::{fence_replay_in_txn, response_erased_in_txn};
 mod admitted;
 mod bodies;
 
-pub(crate) use self::admitted::ReplyBody;
+pub(crate) use self::admitted::{ReplyAdmission, ReplyBody, ReplySpool};
 pub(crate) use self::bodies::{
     FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
-    code_run_body_row_key, code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
-    retire_unlanded_inline_body_keys_in_txn,
+    code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
+    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
 };
 pub(super) use self::bodies::{
     body_drifted, finish_output, finish_output_sourced, load_whole_body, open_body_file,
-    owned_body, raw_put_publishes_descriptor, read_body_row_range,
+    owned_body, raw_put_descriptor_in_txn, read_body_row_range,
 };
 
 /// The replay record of one run, keyed by run id.
@@ -248,16 +249,39 @@ impl Vault {
         prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<CodeRunReplayGeneration> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let generation = self.put_code_run_replay_record_if_generation_in_txn(
+            &mut wtxn,
+            record,
+            expected,
+            healed_model,
+            prepare,
+            also,
+        )?;
+        wtxn.commit()?;
+        Ok(generation)
+    }
+
+    /// The native replay compare, erase fence and append in a caller's writer,
+    /// so a reply body and the receipt naming it can commit together.
+    pub(crate) fn put_code_run_replay_record_if_generation_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<CodeRunReplayGeneration> {
         REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
-        let mut wtxn = self.store.env.write_txn()?;
-        let current = REPLAY_RECORDS.get(&self.store, &wtxn, &record.run_id)?;
+        let current = REPLAY_RECORDS.get(&self.store, wtxn, &record.run_id)?;
         replay_generation_matches(current.as_ref(), expected)?;
         let next_heal_count = healed_model
             .map(|model| {
                 let key = model.as_str().to_owned();
                 let current = MODEL_HEAL_COUNTS
-                    .get(&self.store, &wtxn, &key)?
+                    .get(&self.store, wtxn, &key)?
                     .map_or(0, |count| count.0);
                 let next = current
                     .checked_add(1)
@@ -265,19 +289,17 @@ impl Vault {
                 Ok::<_, Error>((key, next))
             })
             .transpose()?;
-        prepare(&mut wtxn)?;
+        prepare(wtxn)?;
         let record = record.over_held(current.as_ref());
         // A record whose replies an erase took stays erased (FIX 5718).
-        let record = fence_replay_in_txn(self, &mut wtxn, record)?;
-        REPLAY_RECORDS.put(self, &mut wtxn, &record.run_id, &record)?;
+        let record = fence_replay_in_txn(self, wtxn, record)?;
+        REPLAY_RECORDS.put(self, wtxn, &record.run_id, &record)?;
         if let Some((key, count)) = next_heal_count {
-            MODEL_HEAL_COUNTS.put(&self.store, &mut wtxn, &key, &HealCount(count))?;
+            MODEL_HEAL_COUNTS.put(&self.store, wtxn, &key, &HealCount(count))?;
         }
-        also(&mut wtxn)?;
-        wtxn.commit()?;
+        also(wtxn)?;
         Ok(next_generation)
     }
-
     /// Loads the replay record for `run_id`, if present.
     pub fn get_code_run_replay_record(
         &self,
@@ -285,6 +307,31 @@ impl Vault {
     ) -> Result<Option<CodeRunReplayRecord>> {
         let rtxn = self.store.env.read_txn()?;
         self.get_code_run_replay_record_in_txn(&rtxn, run_id)
+    }
+
+    /// Whether run `run`'s results, which an owner's own whole-vault archive
+    /// carries, still stand when that archive is released (FIX 9591): `None`
+    /// when no replay record names `run`, so it is no run source; `Some(false)`
+    /// once an erase took the run's replies; `Some(true)` otherwise. A run an
+    /// action replays may have no entity row, so its standing is its own
+    /// run's, never an entity read.
+    pub fn code_run_results_stand(&self, run: &EntityId) -> Result<Option<bool>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.code_run_results_stand_in_txn(&rtxn, run)
+    }
+
+    /// [`Self::code_run_results_stand`] in the caller's snapshot.
+    pub(crate) fn code_run_results_stand_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        run: &EntityId,
+    ) -> Result<Option<bool>> {
+        if response_erased_in_txn(&self.store, rtxn, run)? {
+            return Ok(Some(false));
+        }
+        Ok(REPLAY_RECORDS
+            .contains(&self.store, rtxn, run)?
+            .then_some(true))
     }
 
     /// [`Self::get_code_run_replay_record`] in the caller's snapshot. The
@@ -301,6 +348,28 @@ impl Vault {
         let key = REPLAY_RECORDS.key_bytes(run_id);
         let raw = ResponseRead::of(ResponseFamily::Replay, &key, &raw).present()?;
         REPLAY_RECORDS.decode_value(raw).map(Some)
+    }
+
+    /// The result names run `run_id`'s replay record binds now, each with
+    /// its content handle and occurrence path exactly, and nothing else of
+    /// the record. A binding grants nothing. `None` when no record is held.
+    pub fn code_run_result_bindings(
+        &self,
+        run_id: &EntityId,
+    ) -> Result<Option<Vec<CodeRunResultBinding>>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.code_run_result_bindings_in_txn(&rtxn, run_id)
+    }
+
+    /// [`Self::code_run_result_bindings`] in the caller's snapshot.
+    pub(crate) fn code_run_result_bindings_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        run_id: &EntityId,
+    ) -> Result<Option<Vec<CodeRunResultBinding>>> {
+        Ok(self
+            .get_code_run_replay_record_in_txn(rtxn, run_id)?
+            .map(|record| record.bindings))
     }
 
     /// The taint refs and secret-scan reason of the occurrence of `output`

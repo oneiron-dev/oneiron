@@ -9,8 +9,16 @@
 //! pushes.
 //!
 //! The token leaves custody only through [`Vault::inject_secret_at_door`]
-//! bound to [`ORIGIN_MIRROR_PUSH_EFFECTOR`], and reaches git only as this
-//! push's `Authorization` header, never config or disk.
+//! bound to [`ORIGIN_MIRROR_PUSH_EFFECTOR`]. On a served host the ref reads
+//! and pushes hand it only to the credential broker, which installs it on
+//! each exchange of the host's mirror relay (`git_transport`, FIX 19083), so
+//! no Git child holds it; on an embedded vault it reaches git only as the
+//! push's `Authorization` header, never config or disk. The Git-LFS upload
+//! after a push hands it, on a served host, only to the broker too, which
+//! installs it on each LFS batch call (FIX 19876); on an embedded vault the
+//! daemon's own LFS client sends it (`publish::mirror_lfs`). Each run that
+//! sends LFS objects records which way they went
+//! ([`OriginMirrorLfsTransfer`]), apart from any plan batch's isolation.
 //!
 //! Mirror-main stays read-only. Mirror-side work comes back inbound through
 //! the door as `refs/imported/<source>/<branch>`, which the change index
@@ -54,6 +62,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
+use crate::llm::BrokerIsolation;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::code_snapshot::RepoRef;
 
@@ -137,6 +146,44 @@ pub struct OriginMirrorRun {
     /// these refs landed. Refs pushed are not readiness. `None` when the push
     /// failed: `failure` names why.
     pub readiness: Option<OriginMirrorReadiness>,
+    /// How this run's Git-LFS upload went out, apart from the git pushes'
+    /// own broker isolation. `None` when the run sent no LFS object: the
+    /// push failed, the census did not finish, or it met none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lfs_transfer: Option<OriginMirrorLfsTransfer>,
+}
+
+/// How one mirror run's Git-LFS upload went out (FIX 19876): the route its
+/// batch calls and object actions took, and on the broker's route its
+/// isolation and how many credential echoes it rewrote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OriginMirrorLfsTransfer {
+    /// Who sent the requests.
+    pub route: OriginMirrorLfsRoute,
+    /// How the credential broker is kept apart from the daemon, once an
+    /// exchange reached it; `None` on the daemon's route, or when no
+    /// exchange reached the broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_isolation: Option<BrokerIsolation>,
+    /// How many action header values of the batch replies the broker
+    /// rewrote to its placeholder, each the mirror's credential handed back
+    /// for an action; the broker installed it again only on an action at
+    /// the mirror's own origin. A count, never a value; zero on the daemon's
+    /// route.
+    #[serde(default)]
+    pub credential_rewrites: u64,
+}
+
+/// Who sent a mirror run's Git-LFS requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OriginMirrorLfsRoute {
+    /// The served host's credential broker, which alone installed the
+    /// mirror's credential.
+    Broker,
+    /// This daemon's own HTTPS client, the mirror's credential in its
+    /// memory: a vault opened with no host.
+    Daemon,
 }
 
 /// Whether a mirror holds what its pushed refs need beyond Git objects: the
@@ -213,6 +260,14 @@ pub struct OriginMirrorPushes {
     pub skipped: u64,
     /// Pushes that failed; each target's row names its cause.
     pub failed: u64,
+}
+
+/// What a push that landed records on its run.
+struct MirrorRunLanded {
+    refs: u64,
+    deleted: u64,
+    readiness: OriginMirrorReadiness,
+    lfs_transfer: Option<OriginMirrorLfsTransfer>,
 }
 
 impl Vault {
@@ -459,12 +514,13 @@ impl Vault {
         let at = self.now_recorded_at();
         Some(match attempt {
             Ok(None) => return None,
-            Ok(Some((refs, deleted, readiness))) => OriginMirrorRun {
+            Ok(Some(landed)) => OriginMirrorRun {
                 at,
-                refs,
-                deleted,
+                refs: landed.refs,
+                deleted: landed.deleted,
                 failure: None,
-                readiness: Some(readiness),
+                readiness: Some(landed.readiness),
+                lfs_transfer: landed.lfs_transfer,
             },
             Err(error) => OriginMirrorRun {
                 at,
@@ -472,18 +528,20 @@ impl Vault {
                 deleted: 0,
                 failure: Some(error.to_string()),
                 readiness: None,
+                lfs_transfer: None,
             },
         })
     }
 
-    /// The push itself: `(refs, deleted, its readiness)`, through a reviewed
-    /// plan (`mirror_run`); `None` when the run had nothing to record.
+    /// The push itself, through a reviewed plan (`mirror_run`); `None` when
+    /// the run had nothing to record.
     fn push_mirror_once(
         &self,
         repo_id: EntityId,
         target: &OriginMirrorTarget,
         trigger: MirrorTrigger,
-    ) -> Result<Option<(u64, u64, OriginMirrorReadiness)>> {
+    ) -> Result<Option<MirrorRunLanded>> {
+        require_plain_mirror_url(&target.url)?;
         let repo_root = origin_repo_dir(self, &target.repo)?;
         let wire = GitWire::new(self)?;
         let Some(handle) = self.mirror_handle(&wire, repo_id, &repo_root)? else {
@@ -495,14 +553,25 @@ impl Vault {
             // is one. Nothing walked what it holds, so only a mirror holding
             // none is ready.
             let readiness = LfsCensus::default().readiness(target.pushed.is_empty());
-            return Ok(Some((0, 0, readiness)));
+            return Ok(Some(MirrorRunLanded {
+                refs: 0,
+                deleted: 0,
+                readiness,
+                lfs_transfer: None,
+            }));
         };
         let Some(done) = self.run_mirror_whole_refs(&wire, &handle, repo_id, target, trigger)?
         else {
             return Ok(None);
         };
-        let readiness = self.mirror_lfs_readiness(&wire, &handle, target, repo_id, &done.census);
-        Ok(Some((done.refs, done.deleted, readiness)))
+        let (readiness, lfs_transfer) =
+            self.mirror_lfs_readiness(&wire, &handle, target, repo_id, &done.census);
+        Ok(Some(MirrorRunLanded {
+            refs: done.refs,
+            deleted: done.deleted,
+            readiness,
+            lfs_transfer,
+        }))
     }
 
     /// What a whole-ref plan starts from, read under the mirror's push hold
@@ -613,7 +682,7 @@ fn require_whole_ref_strategy(repo_name: &str, target: &OriginMirrorTarget) -> R
 }
 
 /// An https URL with a host, and no credential, query, fragment, space or
-/// control byte.
+/// control byte, whose path is plain segments ([`require_plain_mirror_url`]).
 fn validate_mirror_url(url: &str) -> Result<()> {
     let Some(rest) = url.strip_prefix("https://") else {
         return Err(invalid("mirror URL must be https"));
@@ -631,7 +700,80 @@ fn validate_mirror_url(url: &str) -> Result<()> {
             "mirror URL must name a host and a path, with no credential, query or fragment",
         ));
     }
-    Ok(())
+    require_plain_mirror_url(url)
+}
+
+/// The code a mirror URL the credential broker sends to no repository at is
+/// refused under: at setup, and on every run or publish of a mirror set up
+/// before the rule (FIX 20091). A served host's mirror relay names the same
+/// code.
+pub const MIRROR_URL_MALFORMED: &str = "mirror_url_malformed";
+
+/// Refuses a mirror URL the credential broker sends to no repository at: one
+/// [`broker_repository`] does not read as plain, such as a path that is `/`
+/// alone or that holds an empty, `.` or `..` segment once the URL parser has
+/// normalized it (`/%2e` included). A served host's mirror git goes only
+/// through the broker, so one URL rule holds on every host: such a mirror is
+/// refused at setup, and one already set up reports misconfigured under
+/// [`MIRROR_URL_MALFORMED`] on each run and publish, served or embedded,
+/// before any request goes out (FIX 20091).
+///
+/// # Errors
+/// [`Error::Refused`] naming [`MIRROR_URL_MALFORMED`].
+pub(crate) fn require_plain_mirror_url(url: &str) -> Result<()> {
+    if broker_repository(url) {
+        return Ok(());
+    }
+    Err(Error::Refused(format!(
+        "{MIRROR_URL_MALFORMED}: a mirror URL must be a plain https repository: a host with no \
+         credential, no query or fragment, and a path of segments that are neither empty, '.' \
+         nor '..' once normalized, and not '/' alone"
+    )))
+}
+
+/// Whether the credential broker reads `url` as a repository, by its own
+/// rule (oneiron-broker `GitRepository::parse` and `check`), read the same
+/// way here: an `https` origin with a host and no credential that serializes
+/// back to itself, no query or fragment, and a path, as the URL parser
+/// normalizes it and with its trailing slashes trimmed, of non-empty
+/// segments, none `.` or `..`, that joins back onto the origin unchanged.
+fn broker_repository(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "https"
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.host().is_none()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return false;
+    }
+    let origin = parsed.origin().ascii_serialization();
+    let Ok(base) = reqwest::Url::parse(&origin) else {
+        return false;
+    };
+    if base.scheme() != "https"
+        || !base.username().is_empty()
+        || base.password().is_some()
+        || base.host().is_none()
+        || base.origin().ascii_serialization() != origin
+    {
+        return false;
+    }
+    let path = parsed.path().trim_end_matches('/');
+    let plain = !path.contains(['?', '#'])
+        && path.strip_prefix('/').is_some_and(|segments| {
+            segments
+                .split('/')
+                .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+        });
+    // The broker joins the path back onto its origin and takes it only when
+    // both come back unchanged.
+    plain
+        && reqwest::Url::parse(&format!("{origin}{path}"))
+            .is_ok_and(|joined| joined.origin() == base.origin() && joined.path() == path)
 }
 
 fn invalid(reason: &str) -> Error {

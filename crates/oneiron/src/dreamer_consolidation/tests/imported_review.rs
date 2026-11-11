@@ -127,6 +127,7 @@ fn run(
         sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     block_on_ready(
         executor.execute(
@@ -134,6 +135,8 @@ fn run(
             &mut WakeAttemptContext {
                 vault,
                 deadline: &deadline,
+                cancel: None,
+                device_cancel: None,
                 budget_id: "wake",
                 now_ms: vault
                     .now_recorded_at()
@@ -141,6 +144,7 @@ fn run(
                     .saturating_mul(1_000),
                 prepared_wake: None,
                 prepared_attempt: None,
+                spend_meter: None,
             },
         ),
     )
@@ -347,7 +351,10 @@ impl DreamerAttemptExecutor for Completing {
         _attempt: &DreamerAdmittedAttempt,
         _ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
-        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+        Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_bindings: Vec::new(),
+        })
     }
 }
 
@@ -408,6 +415,7 @@ fn a_whole_history_import_drains_one_round_of_turns_per_wake_pass() -> Result<()
             reserve_units: 100,
             now,
             host_scope: None,
+            destination_bound: None,
         };
         let cancellation = WakeCancellation::new();
         let mut future = std::pin::pin!(driver.run_wake_pass(input, &mut executor, &cancellation));
@@ -456,7 +464,9 @@ fn a_wake_prepares_no_paused_or_parked_import_work() -> Result<()> {
     store.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
         attempt_id: parked,
         reason: "provider unavailable".to_owned(),
+        cause: crate::dreamer_runner::DreamerParkCause::ProviderUnavailable,
         park_owner: "import-worker".to_owned(),
+        carried_spend: None,
         now: vault.now_recorded_at(),
     })?;
     let queue = AttemptQueue::new(&vault);
@@ -512,7 +522,7 @@ fn micro_planned_turns(vault: &Vault) -> Result<Vec<EntityId>> {
     for row in AttemptQueue::new(vault).list()? {
         if row.kind == crate::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND {
             let payload = decode_dreamer_attempt_payload(&row.payload)?;
-            turns.extend(decode_partition_payload(&payload.input)?.1);
+            turns.extend(decode_partition_payload(&payload.input)?.turn_ids());
         }
     }
     Ok(turns)

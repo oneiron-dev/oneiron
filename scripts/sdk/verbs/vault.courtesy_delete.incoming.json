@@ -1,0 +1,16 @@
+{
+  "name": "vault.courtesy_delete.incoming",
+  "description": "Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::task_verb::sdk::CourtesyDeleteIncoming>",
+  "call": "crate::task_verb::sdk::read_courtesy_delete_incoming(memory.vault(), &memory.embedded_owner(\"vault.courtesy_delete.incoming\")?)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "mcp_fields": {},
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

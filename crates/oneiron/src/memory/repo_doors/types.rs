@@ -9,6 +9,7 @@ use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::memory::codebase_doors::{CodeSnapshotDefinition, CodeSnapshotFile};
 use crate::merge_queue::BatchState;
+use crate::origin::RepoPortableId;
 use crate::store::repo_proposal_record::RepoProposalStatus;
 
 /// `self.code.snapshots.get`: the manifest of one snapshot of the admitted
@@ -16,8 +17,13 @@ use crate::store::repo_proposal_record::RepoProposalStatus;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoSnapshotsGetInput {
-    /// The CODE anchor the run's Grant admits.
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     /// The full Git ref name (`refs/heads/main`).
     #[serde(rename = "ref")]
     pub git_ref: String,
@@ -30,7 +36,13 @@ pub struct RepoSnapshotsGetInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoSnapshotsReadInput {
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     #[serde(rename = "ref")]
     pub git_ref: String,
     pub snapshot: String,
@@ -48,7 +60,13 @@ pub struct RepoSnapshotsReadInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoSymbolsDefinitionsInput {
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     #[serde(rename = "ref")]
     pub git_ref: String,
     pub snapshot: String,
@@ -90,7 +108,13 @@ pub struct RepoMergeQueueObserveInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoSnapshotsIngestInput {
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     #[serde(rename = "ref")]
     pub git_ref: String,
 }
@@ -100,7 +124,13 @@ pub struct RepoSnapshotsIngestInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoWorkOpenInput {
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     #[serde(rename = "ref")]
     pub git_ref: String,
 }
@@ -153,6 +183,31 @@ pub struct RepoProposalSubmitInput {
     pub message: String,
     /// The run's current declaration, when it names one. Its TASK's current
     /// declaration is bound either way; naming another is a stale lease.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declaration: Option<EntityId>,
+    /// The failed proposal this change replaces (FIX 4364), if any: one the
+    /// run's lane reads, of the same repository, that a terminal queue batch
+    /// quarantined or rolled back, or whose standalone attempt failed. The
+    /// new proposal is fresh and is reviewed and queued anew; the run needs
+    /// no part in the source, and gains no authority from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<EntityId>,
+}
+
+/// `self.code.proposal_resolve`: one file resolving a typed repo conflict,
+/// proposed against the run's own pinned work. Review and landing are separate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoProposalResolveInput {
+    pub work: EntityId,
+    pub branch_subject: EntityId,
+    pub conflict: EntityId,
+    pub branch: String,
+    /// The normalized repo-relative path of one conflicted file.
+    pub path: String,
+    pub content: Vec<u8>,
+    pub message: String,
+    /// The current run declaration, under the same rules as proposal_submit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declaration: Option<EntityId>,
 }
@@ -299,6 +354,16 @@ pub struct RepoQueueEntryView {
     /// The TASKs whose live declarations it waits behind now; empty once it
     /// may stage. Order only, never a refusal.
     pub blockers: Vec<EntityId>,
+    /// Its `repo.queue_admission` receipt (FIX 4338): the stored fact that
+    /// the queue accepted this entry, a waiting one included. The batch id
+    /// and the queue sequence are not it.
+    pub admission_receipt: Option<EntityId>,
+    /// Its `repo.queue_completion` receipt once terminal: green advanced,
+    /// rolled back, quarantined or cancelled. A landed head is not one.
+    pub completion_receipt: Option<EntityId>,
+    /// The `repo.proposal_admission` receipt of each of its proposals the
+    /// run's lane reads, in batch order, as its queue admission bound them.
+    pub proposal_admission_receipts: Vec<EntityId>,
 }
 
 /// `self.code.merge_queue.enqueue`'s answer: the accepted entry.
@@ -341,6 +406,10 @@ pub struct RepoSymbolsReleaseOutput {
 pub struct RepoProposalSubmitOutput {
     /// The engine-minted proposal id.
     pub proposal: EntityId,
+    /// Its `repo.proposal_admission` receipt (FIX 4338): the stored fact
+    /// that the engine admitted this candidate into custody. It is not a
+    /// queue admission.
+    pub admission_receipt: EntityId,
     pub work: EntityId,
     pub path: String,
     /// The green commit the proposal is pinned at, 40 lower-hex characters.

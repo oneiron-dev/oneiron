@@ -70,8 +70,13 @@ pub enum HookOutcomeKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HookSelector {
-    /// Globs over row names and SelfEffect labels; for a fact hook, over
-    /// predicates.
+    /// Globs over row names and SelfEffect labels. A fact hook's entry is
+    /// `<fact kind>:<glob>`, or a bare predicate glob over landed and
+    /// superseded claims. Its glob reads a claim's predicate, a
+    /// `schedule.tick`'s TASK id as 32 hex, or a `surface.inbound` event's
+    /// connector key; `schedule.tick` or `surface.inbound` named bare takes
+    /// every tick or inbound event, and only a fact hook names them
+    /// (FIX 4749).
     pub verbs: Vec<String>,
     /// Empty selects every class.
     pub actors: Vec<HookActorClass>,

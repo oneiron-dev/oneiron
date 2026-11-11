@@ -42,11 +42,12 @@ impl EngineNativeExecutor<'_> {
 
     /// Sync every durably completed observation before either a model request
     /// or a compaction mint. No uncommitted runtime output enters context.
-    /// Returns the step that holds each source, for the views that expand it.
+    /// Each entry's turn is its step: equal outputs share one source, so a
+    /// view finds its own observation by that step (FIX 9735).
     pub(in crate::engine_executor) fn sync_output_context(
         &mut self,
         record: &CodeRunReplayRecord,
-    ) -> EngineExecutorResult<HashMap<OutputRef, u64>> {
+    ) -> EngineExecutorResult<()> {
         // Reconstruct references from the routed durable replay record. No
         // observation is copied into the base vault for off-record sessions.
         // Working flags are projections of committed typed coverage. Rebuild
@@ -54,16 +55,17 @@ impl EngineNativeExecutor<'_> {
         self.output_context = OutputWorkingContext::default();
         self.output_run = Some(record.run_id);
         let coverage = self.storage.code_run_compaction_coverage(record.run_id)?;
-        let mut steps = HashMap::new();
-        for (seq, _, observation) in self.observation_refs(record)? {
+        for (seq, output, mut observation) in self.observation_refs(record)? {
+            if !clean_for_context(&self.storage, Some(record.run_id), &output)? {
+                observation.overview = CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned();
+            }
             self.output_context
                 .record_referenced(seq, observation.source, observation.overview)?;
             if coverage.iter().any(|row| row.covers(record.run_id, seq)) {
                 self.output_context.compact_span(seq, seq);
             }
-            steps.insert(observation.source, seq);
         }
-        Ok(steps)
+        Ok(())
     }
 
     /// Every completed step's observation reference, from its manifest: no
@@ -85,29 +87,53 @@ impl EngineNativeExecutor<'_> {
         Ok(refs)
     }
 
+    /// The step's model request, and where it shows the step before's
+    /// console whole, the slot a callable's counterfactual renders each
+    /// branch's observation into (FIX 3608): only a full view that no fold
+    /// or frame stands in for has one, in a request with no brief of the
+    /// run's results.
     pub(super) fn build_llm_request(
         &mut self,
         config: &EngineExecutorConfig,
         record: &CodeRunReplayRecord,
         wire_prompt: &str,
         continuation: Option<&ContinuationNote>,
-    ) -> EngineExecutorResult<LlmRequest> {
+    ) -> EngineExecutorResult<(LlmRequest, Option<crate::code_run::ConsoleSlot>)> {
         let completed_steps = completed_step_count(record)?;
+        self.request_fold_words.clear();
+        let mut console_slot = None;
         let mut messages = Vec::new();
         messages.push(LlmMessage {
             role: LlmMessageRole::System,
             content: vec![ContentPart::Text {
                 text: executor_system_prompt(wire_prompt),
+                signature: None,
             }],
         });
         messages.push(LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: format!("Run id: {}\nTask:\n{}", config.run_id.to_hex(), config.task),
+                signature: None,
             }],
         });
+        // FIX 17594 (delivery slice D2): the host's self brief, one message of
+        // its own right after the task and before any history, so its bytes
+        // come before the history, continuation, instruction and wake
+        // material, inside the request's cached prefix. They hold from one
+        // brief boundary to the next. A run whose host binds no brief port
+        // carries none.
+        if let Some(text) = self.brief_prefix_text(config.run_id)? {
+            messages.push(LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text {
+                    text,
+                    signature: None,
+                }],
+            });
+        }
 
-        let steps = self.sync_output_context(record)?;
+        self.sync_output_context(record)?;
         // Only a Full view expands its body; older steps cost their reference.
         // A Full body is held against the run's share of the result-memory
         // pool first: one that does not fit stays in its file, and its view
@@ -137,31 +163,47 @@ impl EngineNativeExecutor<'_> {
         let views = {
             let share = &self.result_share;
             let watch = self.storage.limit_watch();
-            self.output_context
-                .assemble_with(completed_steps, self.output_decay, |source| {
-                    let seq = steps
-                        .get(&source)
-                        .ok_or(Error::CorruptedIndex("missing executor observation"))?;
-                    if folded_outputs.contains(seq) {
+            self.output_context.assemble_with(
+                completed_steps,
+                self.output_decay,
+                |source, seq| {
+                    if folded_outputs.contains(&seq) {
                         return Ok(None);
                     }
                     let Some(hold) = share.hold(source.byte_len, watch) else {
-                        left.push((*seq, source));
+                        left.push((seq, source));
                         return Ok(None);
                     };
                     let text =
-                        load_context_output(&self.storage, record, &observation_output_path(*seq))?;
+                        load_context_output(&self.storage, record, &observation_output_path(seq))?;
                     if let Some(window) = window {
                         let tokens = crate::tokenizer::count_context_pack_tokens(&text) as u64;
                         if expanded_tokens.saturating_add(tokens) > window {
-                            past_window.push((*seq, source));
+                            past_window.push((seq, source));
                             return Ok(None);
                         }
                         expanded_tokens = expanded_tokens.saturating_add(tokens);
                     }
                     holds.push((source, hold));
                     Ok(Some(text.into_bytes()))
-                })?
+                },
+                |_, seq| {
+                    // An aged observation's overview is its body's own
+                    // preview: it enters context only while that step's body
+                    // may (FIX 9735).
+                    let path = observation_output_path(seq);
+                    let output = record
+                        .outputs
+                        .iter()
+                        .find(|output| output.path == path)
+                        .ok_or(Error::CorruptedIndex("executor replay output path"))?;
+                    crate::engine_executor::clean_for_context(
+                        &self.storage,
+                        Some(record.run_id),
+                        output,
+                    )
+                },
+            )?
         };
         let memory_note = result_memory_note(
             &self.result_share,
@@ -182,7 +224,19 @@ impl EngineNativeExecutor<'_> {
         for (seq, view) in views.iter().enumerate() {
             messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
-                Some(Some(frame)) => {
+                Some(Some(mut frame)) => {
+                    // FIX 18924: a fold's stub copies its accepted summary.
+                    if let Some(word) = shown_fold_words(&epochs, record.run_id, seq) {
+                        crate::code_run::push_fold_word(&mut self.request_fold_words, word);
+                    }
+                    // An epoch frame or a whole-step fold stub keeps a
+                    // summary, ids and a note: each is masked at every
+                    // render, so a value custody learns later is masked too.
+                    for part in &mut frame.content {
+                        if let ContentPart::Text { text, .. } = part {
+                            *text = mask_known_text(&self.storage, text)?;
+                        }
+                    }
                     messages.push(frame);
                     swapped = true;
                     continue;
@@ -191,6 +245,7 @@ impl EngineNativeExecutor<'_> {
                 None => {}
             }
             let view = view.clone();
+            let full = view.tier == OutputTier::Full;
             // ONE-1929 framing remains engine-authored. The stored program and
             // observation never change; only this model-facing projection does.
             let folded = epochs
@@ -252,12 +307,19 @@ impl EngineNativeExecutor<'_> {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {
                     text: turn.assistant_exec(),
+                    signature: None,
                 }],
             });
+            let text = turn.user_console(seq as u64);
+            if full && folded.is_none() && seq as u64 + 1 == completed_steps {
+                console_slot =
+                    crate::code_run::ConsoleSlot::whole(seq as u64, messages.len(), &text);
+            }
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
-                    text: turn.user_console(seq as u64),
+                    text,
+                    signature: None,
                 }],
             });
             // The step's type feedback, the host's own words beside its
@@ -273,15 +335,25 @@ impl EngineNativeExecutor<'_> {
         // Past a swap, the run's results are named once more beside the
         // frame that replaced the turns that bound them.
         if swapped && let Some(brief) = self.bindings_brief(record)? {
+            // The brief lists the step before's own results too, which no
+            // branch of a callable's counterfactual rebuilds: the request
+            // keeps no console slot (FIX 3608).
+            console_slot = None;
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: brief }],
+                content: vec![ContentPart::Text {
+                    text: brief,
+                    signature: None,
+                }],
             });
         }
         if let Some(note) = memory_note {
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: note }],
+                content: vec![ContentPart::Text {
+                    text: note,
+                    signature: None,
+                }],
             });
         }
         // An approved continuation's note, its own message (FIX 3694).
@@ -290,6 +362,7 @@ impl EngineNativeExecutor<'_> {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: executor_turn_instruction(completed_steps, wire_prompt),
+                signature: None,
             }],
         });
         // FIX 15011: a run an event started opens with the wake opener after
@@ -306,6 +379,7 @@ impl EngineNativeExecutor<'_> {
                         self.storage.now_recorded_ms(),
                         wake,
                     ),
+                    signature: None,
                 }],
             });
         }
@@ -342,6 +416,7 @@ impl EngineNativeExecutor<'_> {
                 response_format: ResponseFormat::Text,
                 locality: config.model_locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages,
             tools: Vec::new(),
@@ -355,7 +430,7 @@ impl EngineNativeExecutor<'_> {
         // FIX 4930: the step's own call marks where its prefix ends, so the
         // fork a compaction sends after it names the same block.
         crate::code_run::main_prefix_boundary(&mut request)?;
-        Ok(request)
+        Ok((request, console_slot))
     }
 }
 
@@ -400,20 +475,26 @@ impl EngineNativeExecutor<'_> {
         };
         Ok(LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text }],
+            content: vec![ContentPart::Text {
+                text,
+                signature: None,
+            }],
         })
     }
 }
 
-/// Bound results a post-swap brief lists, newest first.
+/// Bound results a post-swap brief gives a card line, newest first; every
+/// older one is still named (FIX 9843).
 pub(super) const BRIEF_BINDINGS: usize = 64;
 
 /// Characters of a result's preview a brief line carries.
 pub(super) const BRIEF_PREVIEW_CHARS: usize = 120;
 
 impl EngineNativeExecutor<'_> {
-    /// The run's live result names, newest first, a line each from its
-    /// manifest and taint sidecars alone: no body is read.
+    /// The run's live result names, newest first, from their manifests and
+    /// taint sidecars alone: no body is read. The newest [`BRIEF_BINDINGS`]
+    /// get a line each; every older one is named on a line of names, so the
+    /// model can still name each result it holds (FIX 9843).
     pub(super) fn bindings_brief(
         &self,
         record: &CodeRunReplayRecord,
@@ -475,10 +556,17 @@ impl EngineNativeExecutor<'_> {
                 },
             ));
         }
-        if record.bindings.len() > BRIEF_BINDINGS {
+        let older: Vec<&str> = record
+            .bindings
+            .iter()
+            .rev()
+            .skip(BRIEF_BINDINGS)
+            .map(|binding| binding.name.as_str())
+            .collect();
+        if !older.is_empty() {
             lines.push(format!(
-                "\u{2026}and {} more",
-                record.bindings.len() - BRIEF_BINDINGS
+                "Older results, newest first (describe(name) gives a card): {}",
+                older.join(", ")
             ));
         }
         Ok(Some(lines.join("\n")))
@@ -550,4 +638,29 @@ pub(super) fn result_memory_note(
         ));
     }
     (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// The fold whose stub [`super::compaction::epoch_frame`] shows at step
+/// `seq` of run `run_id`, when that stub copies the fold's accepted summary
+/// (FIX 18924): none where an epoch covers the step, for a fold by kind and
+/// for a fold whose words are withdrawn.
+fn shown_fold_words(
+    frames: &super::compaction::RunFrames,
+    run_id: EntityId,
+    seq: usize,
+) -> Option<crate::code_run::FoldWordRef> {
+    let step = seq as u64;
+    if frames
+        .epochs
+        .iter()
+        .any(|(row, _)| row.covers(run_id, step))
+    {
+        return None;
+    }
+    let fold = frames.folds.covering(step)?;
+    (fold.kind.is_none() && fold.summary.is_some()).then(|| crate::code_run::FoldWordRef {
+        source_run: run_id,
+        fold: fold.fold,
+        sources: fold.sources.clone(),
+    })
 }

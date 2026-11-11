@@ -11,9 +11,11 @@
 //! one this vault minted and the device holds its key, spends the nonce, and
 //! answers only the person's own loss-of-access notices, each signed by this
 //! host's root key (FIX 2053). A host holding no signing key answers none.
-//! Beside the notices rides the signed ReRoot chain from where the person's
-//! env stands to that key, so a device that never folded a re-root still
-//! verifies them. The archive doors sign a one-shot transferred slip's spend
+//! Beside the notices rides their continuity (FIX 7932): the leave-notice
+//! delegations each root signed at its handoff, on the chain from where the
+//! person's env stands to that key, so a device that never folded a re-root
+//! still verifies them, and no authority row rides. The archive doors sign a
+//! one-shot transferred slip's spend
 //! into the authority log with that key (FIX 11862); a host holding none
 //! still answers, and its archive rows alone keep the spend.
 use std::collections::BTreeSet;
@@ -23,15 +25,17 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
+use axum::response::Response;
 use axum::routing::post;
 use oneiron::authority::{AuthorityEntryHash, CapabilitySlip, HostSlipIssuer};
-use oneiron::federation::{RemovalExportCopy, SignedSharedActOutcome};
+use oneiron::federation::SignedSharedActOutcome;
 use serde::{Deserialize, Serialize};
 
 use super::{BindingProof, parse_signature};
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::server::SyncServer;
 
+mod archive_stream;
 mod delivery;
 
 /// The header that carries the revoked slip; managed ingress forwards the
@@ -57,18 +61,26 @@ pub(crate) fn left_notice_routes() -> Router<Arc<SyncServer>> {
 }
 
 /// The person's MemberLeft, MemberRemoved and role-losing Owner notices,
-/// and the vault's deletion, each signed by this host's root key.
+/// and the vault's deletion, each signed by this host's root key, and their
+/// continuity.
 #[derive(Debug, Serialize)]
 struct LeftNotices {
     notices: Vec<SignedSharedActOutcome>,
-    /// The signed ReRoot rows, hex, parents first, that hand this host's
-    /// root on from where the person's env stands to the key that signed
-    /// `notices` (FIX 2053): empty when that env already folded them.
-    handoff: Vec<String>,
+    continuity: LeftNoticeContinuity,
+}
+
+/// What the person's env verifies the notices' signer by (FIX 7932): the
+/// authority vault, hex, and the canonical leave-notice delegations, hex,
+/// in chain order, on this host's root chain to the key that signed
+/// `notices`; empty when that env already folded them.
+#[derive(Debug, Serialize)]
+struct LeftNoticeContinuity {
+    authority_vault_id: String,
+    delegations: Vec<String>,
 }
 
 /// Where the person's authority chain stands (FIX 2053): the heads its env
-/// folded, hex, so only the handoff past them rides. A request that names
+/// folded, hex, so only the delegations past them ride. A request that names
 /// none gets the whole chain.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,13 +120,6 @@ fn member_heads(
         .collect()
 }
 
-/// The archives export-first removals kept for the person, still within
-/// their retention.
-#[derive(Debug, Serialize)]
-struct RemovalExports {
-    exports: Vec<RemovalExportCopy>,
-}
-
 /// The revoked slip and the holder proof a removed device presents.
 fn left_proof(headers: &HeaderMap) -> Result<(CapabilitySlip, BindingProof, Vec<u8>), ApiError> {
     let slip = headers
@@ -127,11 +132,16 @@ fn left_proof(headers: &HeaderMap) -> Result<(CapabilitySlip, BindingProof, Vec<
     Ok((slip, proof, signature))
 }
 
+/// `POST /v1/shared/removal-export`: the archives export-first removals
+/// kept for the person, still within their retention, as
+/// `{"exports":[…]}`, each archive streamed from its spool file (FIX 21529,
+/// [`archive_stream`]).
 async fn removal_exports(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-) -> Result<Json<RemovalExports>, EnvelopedApiError> {
+) -> Result<Response, EnvelopedApiError> {
     let (slip, proof, signature) = left_proof(&headers)?;
+    let idle = server.transfers.idle;
     let exports = tokio::task::spawn_blocking(move || {
         server.vault().removed_owner_exports(
             server.host_issuer(),
@@ -144,30 +154,25 @@ async fn removal_exports(
     .await
     .map_err(|_| ApiError::unauthorized())?
     .map_err(|_| ApiError::unauthorized())?;
-    Ok(Json(RemovalExports { exports }))
-}
-
-/// The archive one removal receipt delivered to the person, while it is
-/// within its term.
-#[derive(Debug, Serialize)]
-struct RemovalExport {
-    export: RemovalExportCopy,
+    Ok(archive_stream::exports_answer(exports, idle))
 }
 
 /// `POST /v1/shared/removal-export/{receipt_id}` (FIX 1300): the archive the
 /// removal receipt `receipt_id` delivered to the holder of the left slip,
-/// under the same proof as the list. After its term, or for a removal that
+/// under the same proof as the list, as `{"export":…}`, streamed as the
+/// list's are (FIX 21529). After its term, or for a removal that
 /// delivered this person none, it is not found; a malformed id is a bad
 /// request, refused before the nonce is spent.
 async fn removal_export(
     headers: HeaderMap,
     Path(receipt_id): Path<String>,
     State(server): State<Arc<SyncServer>>,
-) -> Result<Json<RemovalExport>, EnvelopedApiError> {
+) -> Result<Response, EnvelopedApiError> {
     if oneiron::EntityId::from_hex(&receipt_id).is_err() {
         return Err(ApiError::bad_request("receipt_id must be 32 hex", Some("receipt_id")).into());
     }
     let (slip, proof, signature) = left_proof(&headers)?;
+    let idle = server.transfers.idle;
     let export = tokio::task::spawn_blocking(move || {
         server.vault().removed_owner_archive(
             server.host_issuer(),
@@ -182,7 +187,7 @@ async fn removal_export(
     .map_err(|_| ApiError::unauthorized())?
     .map_err(|_| ApiError::unauthorized())?
     .ok_or_else(|| ApiError::not_found("removal_export", None))?;
-    Ok(Json(RemovalExport { export }))
+    Ok(archive_stream::export_answer(export, idle))
 }
 
 /// A host with no root key to sign with: it answers no notice, never an
@@ -213,7 +218,7 @@ async fn left_notices(
 ) -> Result<Json<LeftNotices>, EnvelopedApiError> {
     let heads = member_heads(ask)?;
     let (slip, proof, signature) = left_proof(&headers)?;
-    let (notices, handoff) = tokio::task::spawn_blocking(move || {
+    let (notices, continuity) = tokio::task::spawn_blocking(move || {
         with_notice_issuer(&server, |issuer| {
             server.vault().removed_member_notices_signed(
                 issuer,
@@ -227,9 +232,17 @@ async fn left_notices(
     })
     .await
     .map_err(|_| ApiError::unauthorized())??;
-    let handoff = handoff
-        .iter()
-        .map(|row| row.iter().map(|byte| format!("{byte:02x}")).collect())
-        .collect();
-    Ok(Json(LeftNotices { notices, handoff }))
+    let hex = |bytes: &[u8]| -> String { bytes.iter().map(|byte| format!("{byte:02x}")).collect() };
+    let continuity = LeftNoticeContinuity {
+        authority_vault_id: hex(&continuity.authority_vault_id),
+        delegations: continuity
+            .delegations
+            .iter()
+            .map(|delegation| hex(delegation))
+            .collect(),
+    };
+    Ok(Json(LeftNotices {
+        notices,
+        continuity,
+    }))
 }

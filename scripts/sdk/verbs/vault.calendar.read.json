@@ -1,0 +1,14 @@
+{
+  "name": "vault.calendar.read",
+  "description": "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt.",
+  "input": "crate::calendar::CalendarReadRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::calendar::CalendarEventView>>",
+  "call": "memory.calendar_read(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

@@ -215,6 +215,7 @@ impl Vault {
             org_ref: None,
             grant_ref: None,
             invitation_ref: None,
+            share_ref: None,
             delegation: Some(SupportDelegation {
                 purpose: request.purpose,
                 ticket_ref: request.ticket_ref,

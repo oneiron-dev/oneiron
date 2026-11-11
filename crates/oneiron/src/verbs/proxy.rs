@@ -2,7 +2,9 @@
 use std::collections::BTreeMap;
 
 use crate::connector_key::qualification::ConnectorQualificationReceipt;
-use crate::connector_key::{ConnectorGrantSlate, ConnectorKeyRecord, SlateRow, SlateToolManifest};
+use crate::connector_key::{
+    ConnectorGrantSlate, ConnectorIssuerHaltView, ConnectorKeyRecord, SlateRow, SlateToolManifest,
+};
 use crate::vault_shape::ShapePlanReach;
 use crate::{ContentPart, EntityId, LlmMessage, LlmMessageRole, Vault};
 use serde::{Deserialize, Serialize};
@@ -140,7 +142,10 @@ impl ChatMessage {
         };
         LlmMessage {
             role,
-            content: vec![ContentPart::Text { text: self.text() }],
+            content: vec![ContentPart::Text {
+                text: self.text(),
+                signature: None,
+            }],
         }
     }
 }
@@ -193,6 +198,11 @@ pub struct ChatCompletionUsage {
 pub struct ChatCompletionMemory {
     pub injected: bool,
     pub remembered: ChatCompletionRemembered,
+    /// Why recall did not run when the owner's setting withheld it:
+    /// `always_ask` on `vault.recall`, which a buffered call cannot ask
+    /// (FIX 4843). Absent when recall ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recall_skipped: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -244,9 +254,11 @@ impl ProxyConnectorRegistration {
             .ok_or(crate::Error::InvariantViolation("proxy catalog missing"))?
             .name
             .clone();
+        let halt = vault.open_issuer_halt_for_connector(&connector)?;
         Ok(Self {
             connector,
-            key: ConnectorKeyView::new(registration.key_ref, registration.key)?,
+            key: ConnectorKeyView::new(registration.key_ref, registration.key)?
+                .with_issuer_halt(halt),
             slate: ConnectorSlateView::new(vault, registration.slate_ref, &registration.slate)?,
         })
     }
@@ -292,6 +304,8 @@ impl ConnectorSlateView {
 pub struct ConnectorKeyView {
     pub id: String,
     pub status: String,
+    /// The connector's open issuer transition, if one halts its rows.
+    pub issuer_halt: Option<ConnectorIssuerHaltView>,
     pub secret_ref: Option<String>,
     pub protocol_revision: Option<String>,
     /// The slate revision the last qualification accepted.
@@ -313,6 +327,7 @@ impl ConnectorKeyView {
         Ok(Self {
             id: id.to_hex(),
             status: record.status.as_str().to_owned(),
+            issuer_halt: None,
             secret_ref: record.secret_ref,
             protocol_revision: record.protocol_revision,
             accepted_slate_revision: record.slate_revision,
@@ -327,6 +342,14 @@ impl ConnectorKeyView {
                     report_hash: pending.qualification_report_hash,
                 }),
         })
+    }
+
+    /// The view with the connector's open issuer transition attached.
+    pub fn with_issuer_halt(self, halt: Option<ConnectorIssuerHaltView>) -> Self {
+        Self {
+            issuer_halt: halt,
+            ..self
+        }
     }
 }
 

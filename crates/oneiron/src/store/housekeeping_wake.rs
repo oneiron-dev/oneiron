@@ -9,6 +9,9 @@
 //! run that covered its rows removes exactly the rows it read before it
 //! started; a row noted since stays for the next run. A deadline that moved or
 //! was settled early leaves a row that costs one run that finds nothing.
+//!
+//! Live-body edits also note the annotation follow sweep as due for the next
+//! running-host pass. That sweep does not wake a stopped vault.
 
 use heed::{RoTxn, RwTxn};
 
@@ -25,8 +28,8 @@ const WAKE: SideTable<WakeKey, (), Raw> = SideTable::new(&side_table::HOUSEKEEPI
 /// Rows one covering run removes at most; the rest go with the next run.
 const CLEAR_LIMIT: usize = 4096;
 
-/// The sweeps whose deadlines are noted. The erasure sweep needs no rows: an
-/// obligation waiting is the first `h:` row.
+/// The sweeps whose noted deadlines wake a stopped vault. The erasure sweep
+/// needs no rows: an obligation waiting is the first `h:` row.
 pub(crate) const WAKE_SWEEPS: [HousekeepingSweep; 4] = [
     HousekeepingSweep::SecretLeaseExpiry,
     HousekeepingSweep::CriticalConfirmExpiry,
@@ -40,6 +43,7 @@ fn tag(sweep: HousekeepingSweep) -> Option<[u8; 1]> {
         HousekeepingSweep::CriticalConfirmExpiry => Some([2]),
         HousekeepingSweep::VoicePrintRetention => Some([3]),
         HousekeepingSweep::SharedActMaturity => Some([4]),
+        HousekeepingSweep::AnnotationBodyAnchors => Some([5]),
         _ => None,
     }
 }

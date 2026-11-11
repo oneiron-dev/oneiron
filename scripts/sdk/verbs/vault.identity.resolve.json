@@ -1,0 +1,16 @@
+{
+  "name": "vault.identity.resolve",
+  "description": "The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments.",
+  "input": "crate::task_verb::sdk::IdentityEntityRequest",
+  "output": "crate::task_verb::sdk::IdentityResolution",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.resolve\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

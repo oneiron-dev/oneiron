@@ -51,6 +51,7 @@ fn subscriptions_roundtrip_revoke_and_wake_only_matching_non_depleted_keys() -> 
     assert!(listed.iter().any(|(id, row)| *id == a && row.active));
     let spent = vault.admit_connector_key_dispatches(
         &key_b,
+        "connector-event-test",
         "calendar",
         1,
         ConnectorDispatchTelemetry::default(),
@@ -174,7 +175,10 @@ impl crate::dreamer_wake::DreamerAttemptExecutor for EventConsumer {
         self.events.push(
             crate::dreamer_runner::connector_event::ConnectorEventWake::from_attempt(attempt)?,
         );
-        Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed { completed_units: 0 })
+        Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_bindings: Vec::new(),
+        })
     }
 }
 fn deliver_queued_event(vault: &Vault, exec: &mut EventConsumer) -> Result<()> {
@@ -199,6 +203,7 @@ fn deliver_queued_event(vault: &Vault, exec: &mut EventConsumer) -> Result<()> {
             reserve_units: 10,
             now: crate::unix_seconds_now() + 1,
             host_scope: None,
+            destination_bound: None,
         },
         exec,
         &cancel,

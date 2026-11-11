@@ -46,6 +46,7 @@ mod moves;
 mod outcomes;
 mod pipeline;
 mod policy;
+mod receipt_index;
 mod rollups;
 mod run_loop;
 mod silence;
@@ -87,7 +88,9 @@ pub use moves::{
     ConcernMove, ConcernMoveBasis, ConcernMoveLink, ConcernMoveOutcome, ConcernMoveReceipt,
     ConcernMoveRequest,
 };
-pub use outcomes::{HEALTH_REVIEW_RECEIPT_PREFIX, HealthReviewReceipt};
+pub use outcomes::{
+    HEALTH_REVIEW_RECEIPT_PREFIX, HealthReviewReceipt, review_state::HealthReviewState,
+};
 pub(super) use pipeline::run;
 use pipeline::{add_recipients, land};
 pub(crate) use policy::reviewer_policy_seeds;

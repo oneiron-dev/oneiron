@@ -1,0 +1,16 @@
+{
+  "name": "vault.coach.training_offers.candidates.prepare",
+  "description": "Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains.",
+  "input": "crate::skill_optimize::offer_pilot::OfferCandidateSetup",
+  "output": "crate::skill_optimize::offer_pilot::OfferCandidateRecord",
+  "call": "crate::skill_optimize::offer_pilot::prepare_candidate(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.candidates.prepare\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "vault.rooms.thread_join.requests",
+  "description": "The requests to join a private thread pending now: each request, who asked and when; a member in its audience now may call it.",
+  "input": "crate::workspace_roster::ThreadJoinRequestsRequest",
+  "output": "Vec<crate::workspace_roster::ThreadJoinRequestView>",
+  "call": "memory.rooms_thread_join_requests(&input)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

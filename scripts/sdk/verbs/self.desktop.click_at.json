@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.click_at",
+  "description": "Clicks a point of a held screenshot, mapped onto the window, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor.",
+  "input": "oneiron_browser::PointInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>",
+  "call": "oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| driver.click_at(input))?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

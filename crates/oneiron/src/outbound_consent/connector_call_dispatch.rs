@@ -1,7 +1,6 @@
 //! A connector dispatch's outcome mapped to a call step and its reason codes.
 //! Entry: `step_from_host`. Defines its own items.
 
-use crate::connector_key::EffectorBudgetCharge;
 use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentState, OutboundFailureKind, OutboundSendFailure,
     OutboundSendOutcome,
@@ -99,18 +98,18 @@ fn step_from_dispatch(
     }
     match (ledger.state, ledger.intent_id) {
         (Some(IntentState::Done), intent) => match awaiting {
-            Some(input) => Step::AwaitingInput { intent, input },
+            Some(input) => Step::AwaitingInput {
+                intent,
+                input,
+                budget_steering: dispatch.steering_messages(),
+            },
             None => Step::Delivered {
                 intent,
                 result_absence: reply
                     .is_none()
                     .then_some(ConnectorResultAbsence::NotRetained),
                 result: reply,
-                budget_steering: dispatch
-                    .budget_charge
-                    .as_ref()
-                    .map(EffectorBudgetCharge::steering_messages)
-                    .unwrap_or_default(),
+                budget_steering: dispatch.steering_messages(),
             },
         },
         // A stop of a send that may have gone out (delivery left unresolved),
@@ -235,5 +234,8 @@ pub(super) fn intent_escalation_code(reason: IntentEscalationReason) -> &'static
         IntentEscalationReason::RecipientErased => "recipient_erased",
         IntentEscalationReason::OwnerErased => "owner_erased",
         IntentEscalationReason::RemoteTaskFailed => "remote_task_failed",
+        IntentEscalationReason::OwnerNotLive => "owner_not_live",
+        IntentEscalationReason::GrantNotStanding => "grant_not_standing",
+        IntentEscalationReason::SendExecutorStoodDown => "send_executor_stood_down",
     }
 }

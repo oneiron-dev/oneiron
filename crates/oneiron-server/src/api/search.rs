@@ -18,6 +18,7 @@ use crate::protocol::CountMode;
 use crate::protocol::PaginatedResponse;
 use crate::protocol::ResponseMeta;
 use crate::server::{QueryDoor, SyncServer, query_caller};
+use axum::body::Body;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::QueryRejection;
@@ -40,6 +41,8 @@ use utoipa::ToSchema;
 
 mod deadline;
 mod home_text;
+mod semantic_body;
+mod semantic_probe;
 use deadline::{
     SearchPage, read_by_deadline, search_deadline, search_page, search_page_by_deadline,
 };
@@ -136,6 +139,10 @@ impl From<oneiron::sync::ResidenceSearch> for ResidenceAnswer {
 /// `locality` its ingress placed it (FIX 3550); one with none to forward
 /// gets the local page, marked incomplete, as does a device whose own sync
 /// connection dropped. A deadline bounds the ask as it bounds the page.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the home ask carries the caller, its locality and the search it asks"
+)]
 async fn ask_home(
     vault: Arc<oneiron::Vault>,
     owner_grade: bool,
@@ -143,11 +150,12 @@ async fn ask_home(
     locality: oneiron::claim::CallerLocality,
     query: String,
     limit: usize,
+    filter: Option<oneiron::memory::ReadFilterInput>,
     due: Option<Instant>,
 ) -> Option<ResidenceAnswer> {
     let caller = oneiron::memory::HomeRecallCaller::admitted(owner_grade, forwarded, locality);
     // A refused or late ask leaves the local page, marked incomplete.
-    match home_text::ask_home_text(&vault, &caller, &query, limit, due).await {
+    match home_text::ask_home_text(&vault, &caller, &query, limit, filter.as_ref(), due).await {
         home_text::HomeText::Whole => None,
         home_text::HomeText::LocalOnly => Some(ResidenceAnswer::local_only()),
         home_text::HomeText::Answered { search, .. } => Some(search.into()),
@@ -215,6 +223,13 @@ pub(crate) struct VectorSearchQuery {
     #[schema(value_type = Option<String>, example = "image")]
     #[param(value_type = Option<String>, example = "image")]
     pub(crate) query_kind: Option<InputKind>,
+    /// Optional caller retrieval filter (FIX 3977): the URL-encoded JSON of
+    /// a read filter, as a request body carries it. It only narrows, and a
+    /// malformed one is a 400 naming `filter`.
+    #[serde(default)]
+    #[schema(example = "{\"entity_types\":[0]}")]
+    #[param(example = "{\"entity_types\":[0]}")]
+    pub(crate) filter: Option<String>,
 }
 
 /// Search hit returned by vector and text search endpoints.
@@ -299,6 +314,7 @@ pub(crate) async fn search_vector(
     let arrived = Instant::now();
     let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?.at(locality);
     let params = query_params(query)?;
+    let filter = super::read_filter_param(params.filter.as_deref())?;
     if let Some(text) = params.query_text.as_deref() {
         server.check_retrieval_query(
             query_caller(&auth),
@@ -379,6 +395,7 @@ pub(crate) async fn search_vector(
         count_mode,
         page_limit,
         auth,
+        filter,
     };
     search_page_by_deadline(server, arrived, deadline, page)
         .await
@@ -426,6 +443,13 @@ pub(crate) struct TextSearchQuery {
     #[schema(example = 100)]
     #[param(example = 100)]
     pub(crate) deadline_ms: Option<u64>,
+    /// Optional caller retrieval filter (FIX 3977): the URL-encoded JSON of
+    /// a read filter, as a request body carries it. It only narrows, and a
+    /// malformed one is a 400 naming `filter`.
+    #[serde(default)]
+    #[schema(example = "{\"entity_types\":[0]}")]
+    #[param(example = "{\"entity_types\":[0]}")]
+    pub(crate) filter: Option<String>,
 }
 
 /// BM25 text search.
@@ -493,6 +517,7 @@ pub(crate) async fn search_text(
     let arrived = Instant::now();
     let auth = super::scoped_auth::check_search_text_auth(&parts, &server)?.at(locality);
     let params = query_params(query)?;
+    let filter = super::read_filter_param(params.filter.as_deref())?;
     server.check_retrieval_query(
         query_caller(&auth),
         QueryDoor::SearchText,
@@ -511,6 +536,7 @@ pub(crate) async fn search_text(
         auth.locality(),
         params.query.clone(),
         page_limit,
+        filter.clone(),
         deadline.map(|budget| arrived + budget),
     );
     let page = SearchPage {
@@ -522,6 +548,7 @@ pub(crate) async fn search_text(
         count_mode: params.count_mode.for_search_response(),
         page_limit,
         auth,
+        filter,
     };
     let (page, residence) = tokio::join!(
         search_page_by_deadline(server, arrived, deadline, page),
@@ -785,6 +812,11 @@ pub(crate) struct SemanticSearchRequest {
     #[serde(default)]
     #[schema(example = 100)]
     pub(crate) deadline_ms: Option<u64>,
+    /// Optional caller retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor for this search.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    pub(crate) filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 /// Semantic search: the server embeds the query text itself.
@@ -838,7 +870,7 @@ pub(crate) struct SemanticSearchRequest {
         ),
         (
             status = 500,
-            description = "Vector search or projection failed.",
+            description = "Request body resource or read failure, vector search or projection failed.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -854,13 +886,13 @@ pub(crate) async fn search_semantic(
     parts: Parts,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
-    body: Result<Json<SemanticSearchRequest>, axum::extract::rejection::JsonRejection>,
+    body: Body,
 ) -> Result<Json<Value>, ApiError> {
     let arrived = Instant::now();
     let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?.at(locality);
-    let Json(params) = body.map_err(|rejection| {
-        ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
-    })?;
+    let decoded = semantic_body::read(&server, &parts.headers, body).await?;
+    let _decoded_memory = decoded.memory;
+    let params = decoded.params;
     server.ask_retrieval_query(
         query_caller(&auth),
         QueryDoor::SearchSemantic,
@@ -899,6 +931,8 @@ pub(crate) async fn search_semantic(
     let count_mode = params.count_mode.for_search_response();
     let page_limit = params.limit;
     let (depth, view) = (params.depth, params.view.unwrap_or(View::Summary));
+    let filter = params.filter;
+    let page_filter = filter.clone();
     let page_auth = auth.clone();
     let page_space = space.clone();
     // Semantic search HAS the question, so a deep read over it needs no
@@ -922,17 +956,25 @@ pub(crate) async fn search_semantic(
         count_mode,
         page_limit,
         auth: page_auth.clone(),
+        filter: page_filter.clone(),
     };
-    let question = text.to_owned();
+    let question = semantic_probe::Question::new(text);
     let page = match deadline {
         None => {
-            let embedding = match &space {
-                Some(space) => embed_semantic_text(&server, space.clone(), &question).await?,
-                None => server
-                    .embed_query_off_runtime(question.clone())
+            let probe = match &space {
+                Some(space) => {
+                    let embedding =
+                        embed_semantic_text(&server, space.clone(), question.as_str()).await?;
+                    question.finish(embedding)
+                }
+                None => question
+                    .embed_off_runtime(&server)
                     .await
                     .map_err(embed_query_error)?,
             };
+            let _probe_memory = probe.memory;
+            let embedding = probe.embedding;
+            let question = probe.question;
             let admission = admit_deep_retrieval(&server, depth)?;
             search_page(&server, page(embedding, question), admission.as_ref(), None)?
         }
@@ -948,13 +990,27 @@ pub(crate) async fn search_semantic(
                 budget,
                 count_mode,
                 auth,
+                filter,
                 move |server, deadline| {
-                    let embedding = match space {
+                    let probe = match space {
                         Some(space) => {
-                            runtime.block_on(embed_semantic_text(server, space, &question))?
+                            let embedding = runtime.block_on(embed_semantic_text(
+                                server,
+                                space,
+                                question.as_str(),
+                            ))?;
+                            question.finish(embedding)
                         }
-                        None => server.embed_query(&question).map_err(embed_query_error)?,
+                        None => {
+                            let embedding = server
+                                .embed_query(question.as_str())
+                                .map_err(embed_query_error)?;
+                            question.finish(embedding)
+                        }
                     };
+                    let _probe_memory = probe.memory;
+                    let embedding = probe.embedding;
+                    let question = probe.question;
                     search_page(
                         server,
                         page(embedding, question),

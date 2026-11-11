@@ -53,7 +53,7 @@ impl Vault {
     }
 
     /// Every engine MACHINE writer, its row created on first use.
-    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 7]> {
+    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 8]> {
         let seed = ENGINE_MACHINE_SEED_TIME;
         Ok([
             self.ensure_commitment_projection_machine(seed)?,
@@ -61,6 +61,7 @@ impl Vault {
             crate::calendar::transcript::file_drop_import_actor(self, seed)?,
             crate::reaction::ensure_conversation_mirror_actor(self, seed)?,
             self.ensure_esign_artifact_machine(seed)?,
+            self.ensure_esign_seal_machine(seed)?,
             self.dreamer_authority()?.entity_ref(),
             self.coach_authority()?.entity_ref(),
         ])
@@ -176,6 +177,12 @@ impl Vault {
             }
         }
         Ok(machine)
+    }
+
+    fn ensure_esign_seal_machine(&self, now: u64) -> Result<EntityId> {
+        self.with_write_txn_grouped(|txn| {
+            Ok(crate::blob_artifact::esign::seal_machine(self, txn, now)?.entity_ref())
+        })
     }
 
     fn ensure_esign_artifact_machine(&self, now: u64) -> Result<EntityId> {

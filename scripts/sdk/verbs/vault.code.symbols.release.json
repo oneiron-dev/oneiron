@@ -1,0 +1,15 @@
+{
+  "name": "vault.code.symbols.release",
+  "description": "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver.",
+  "input": "crate::memory::code_doors::CodeSymbolsTaskRequest",
+  "output": "crate::memory::code_doors::CodeSymbolsReleased",
+  "call": "memory.code_symbols_release_as(&memory.embedded_owner(\"vault.code.symbols.release\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_proof": "owner"
+}

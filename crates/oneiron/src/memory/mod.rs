@@ -63,9 +63,11 @@ pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
 mod core_write_doors;
+pub mod device_succession;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
+mod edge_provenance;
 mod people_verbs;
 mod plugin_sections;
 pub mod run_review;
@@ -79,6 +81,7 @@ pub(crate) mod booking_publication;
 mod campaign;
 mod campaign_actions;
 pub mod campaign_records;
+mod can;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
@@ -123,7 +126,10 @@ pub mod origin_doors;
 mod outbound;
 mod owner_door;
 mod presented_credential;
+mod proactivity_digest;
 pub(crate) mod read_capture;
+pub use proactivity_digest::ProactivityDigestRequest;
+
 mod read_lane;
 mod read_selection;
 mod reads;
@@ -148,9 +154,11 @@ mod shape_doors;
 pub(crate) use shape_doors::AFTER_NEEDS_HANDLE;
 pub use shape_doors::DescribeRequest;
 mod signal_extraction;
+mod skill_bodies;
 mod structural;
 mod subscriptions;
 mod support;
+pub(crate) use support::TranscriptRetainedCaller;
 mod transcript;
 pub mod usage_repair;
 pub use oneiron_web_fetch::web_acquisition;
@@ -178,8 +186,8 @@ pub use asset_resolve::{
     resolve_audio_ref, resolve_image_ref,
 };
 pub(crate) use asset_resolve::{
-    asset_audio_in_lane, asset_image_in_lane, asset_media_in, land_asset_blob_in_txn,
-    release_asset_blob_in_txn,
+    asset_audio_in_lane, asset_image_in_lane, asset_media_in, discard_asset_blob_reference_in_txn,
+    land_asset_blob_in_txn, release_asset_blob_in_txn,
 };
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
@@ -187,6 +195,7 @@ pub(crate) use authorship::{
     require_claim_self_grant_in_txn,
 };
 pub use booking::EmergencyInstructionInput;
+pub use can::{CanAnswer, CanEffectAnswer, CanEffectVerdict};
 pub use chat::{ChatAbstentionReason, ChatDepth, ChatOptions, ChatResponse, ChatScope};
 pub use chat_composer::{ChatComposeRequest, ChatComposer, ComposedChatAnswer};
 pub use claim_admission::{
@@ -232,6 +241,10 @@ pub use dreamer_wake_read::{
     DreamerWakeEndView, DreamerWakeGenerationView, DreamerWakeHeaderView, DreamerWakeLeaseView,
     DreamerWakeLiveCallView, DreamerWakeLiveView, DreamerWakeResumeView, DreamerWakeView,
 };
+pub use edge_provenance::{
+    EdgeProvenanceActorClass, EdgeProvenanceLifecycle, EdgeProvenanceRequest,
+    EdgeProvenanceSupersession, EdgeProvenanceView,
+};
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
@@ -262,9 +275,9 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT,
-    MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
-    MemoryWrongRoot,
+    MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
+    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
+    MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
 };
 pub(crate) use people_verbs::grant_requested_scope;
 pub use people_verbs::{
@@ -367,6 +380,7 @@ pub use support::{
     HostWriteOrigin, Memory, RewriteAdmit, SigningRequestTransport, parse_actor_key,
     resolve_entity_ref,
 };
+pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
@@ -384,12 +398,14 @@ pub use witness::{
     StreamSyncVisibility,
 };
 pub use witness::{
-    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamOutcome,
-    SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome,
+    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamFinished,
+    SessionStreamOutcome, SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext,
+    SessionWitnessOutcome,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
-    message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
+    message_stream_finality_in_txn, message_stream_held_generations_in_txn,
+    scrub_stream_seed_actor_in_txn,
 };
 pub use witness::{
     TurnProgramWakeOutcome, UnpersistedWakeReason, WitnessAssertions, WitnessAuthor,
@@ -436,3 +452,4 @@ pub mod voice_actor;
 pub(crate) mod resolved_recall_scope;
 
 pub mod claim_cluster;
+pub(crate) mod tables;

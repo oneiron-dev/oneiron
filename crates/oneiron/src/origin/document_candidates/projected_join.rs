@@ -9,7 +9,8 @@
 use heed::RoTxn;
 
 use super::super::document_candidate_types::{
-    CodePushCandidate, ReceivedCandidateRef, ReceivedRefIngress,
+    CodePushCandidate, CodePushCandidateHold, CodePushCandidateState, ReceivedCandidateRef,
+    ReceivedRefIngress,
 };
 use super::super::document_ingress::{CODE_OPERATIONS, ProvenanceRefKey};
 use super::CandidateQueue;
@@ -22,6 +23,9 @@ use crate::origin::lfs::lfs_repo_id;
 use crate::origin::secret_projection::claims::{RepoProjectionClaim, RepoProjectionRecord};
 use crate::origin::secret_projection::clearance::RepoProjectionHoldCause;
 use crate::origin::secret_projection::git::existing_projection_ingress_root;
+use crate::origin::smart_http::push_projection::forward::{
+    ExactForwardSource, try_forward_exact_ingress_update,
+};
 use crate::{EntityId, Vault};
 
 /// A received row's projection source: the copy graph its ingress was
@@ -253,6 +257,40 @@ impl Vault {
         digest: [u8; 32],
         source: &ProjectedRowSource,
     ) -> Result<bool> {
+        if try_forward_exact_ingress_update(
+            self,
+            wire,
+            repo,
+            row,
+            provenance,
+            ExactForwardSource {
+                graph: source.graph,
+                canonical_store: source.canonical_store,
+                operation: source.operation,
+                ingress: source.ingress,
+            },
+        )? {
+            let mut wtxn = self.store.env.write_txn()?;
+            let written = self.attach_received_code_hold_in_txn(
+                &mut wtxn,
+                key,
+                row,
+                CodePushCandidate {
+                    candidate: id,
+                    source_digest: digest,
+                    resolved: None,
+                    hold: Some(CodePushCandidateHold {
+                        state: CodePushCandidateState::HeldShape,
+                        reason: "exact_forward".to_owned(),
+                    }),
+                    projected: None,
+                },
+            )?;
+            if written {
+                wtxn.commit()?;
+            }
+            return Ok(written);
+        }
         let decided = self
             .decide_projected_candidate(wire, repo, queue, provenance, row, id, digest, source)?;
         let Some(decided) = decided else {

@@ -173,22 +173,24 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                 {
                     content.push(ContentPart::Text {
                         text: text.to_owned(),
+                        signature: None,
                     });
                 }
             }
             Some("thinking") => {
-                if let Some(text) = block
+                let text = block
                     .get("thinking")
                     .or_else(|| block.get("text"))
                     .and_then(JsonValue::as_str)
-                    && !text.is_empty()
-                {
+                    .unwrap_or_default();
+                let signature = block
+                    .get("signature")
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_owned);
+                if !text.is_empty() || signature.is_some() {
                     content.push(ContentPart::Reasoning {
                         text: text.to_owned(),
-                        signature: block
-                            .get("signature")
-                            .and_then(JsonValue::as_str)
-                            .map(str::to_owned),
+                        signature,
                         reasoning_kind: oneiron::ReasoningPartKind::Full,
                         data: None,
                     });
@@ -207,6 +209,7 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                     call_id: call_id.to_owned(),
                     name: name.to_owned(),
                     input: block.get("input").cloned().unwrap_or(JsonValue::Null),
+                    signature: None,
                 });
             }
             Some("redacted_thinking") => {
@@ -255,7 +258,7 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
 /// never joins the system string.
 fn text_content(part: &ContentPart) -> Option<String> {
     match part {
-        ContentPart::Text { text } => Some(text.clone()),
+        ContentPart::Text { text, .. } => Some(text.clone()),
         ContentPart::Reasoning {
             text,
             reasoning_kind,
@@ -292,7 +295,7 @@ fn anthropic_role(role: LlmMessageRole) -> &'static str {
 
 fn anthropic_content_part(part: &ContentPart) -> Option<JsonValue> {
     match part {
-        ContentPart::Text { text } => Some(json!({ "type": "text", "text": text })),
+        ContentPart::Text { text, .. } => Some(json!({ "type": "text", "text": text })),
         ContentPart::Reasoning {
             text,
             signature,
@@ -322,6 +325,7 @@ fn anthropic_content_part(part: &ContentPart) -> Option<JsonValue> {
             call_id,
             name,
             input,
+            ..
         } => Some(json!({
             "type": "tool_use",
             "id": call_id,
@@ -372,12 +376,16 @@ fn anthropic_tool(tool: &LlmToolSpec) -> JsonValue {
     })
 }
 
-pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
+/// The usage an Anthropic Messages `usage` object reports: input with its
+/// cache reads and writes counted in, and output. A relayed reply's own
+/// body is read through it too (FIX 15702).
+#[must_use]
+pub fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
     let input_tokens = u64_field(usage, "input_tokens");
     let cache_read = u64_field(usage, "cache_read_input_tokens");
     let cache_write = u64_field(usage, "cache_creation_input_tokens");
     let output_tokens = u64_field(usage, "output_tokens");
-    LlmUsage {
+    let mut measured = LlmUsage {
         input: LlmInputUsage {
             // The common input total includes cached tokens; the wire
             // reports uncached input separately.
@@ -394,7 +402,26 @@ pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
         },
         raw_provider: usage.clone(),
         call_metadata: None,
-    }
+    };
+    let measured_input = usage
+        .get("input_tokens")
+        .and_then(JsonValue::as_u64)
+        .zip(
+            usage
+                .get("cache_read_input_tokens")
+                .and_then(JsonValue::as_u64),
+        )
+        .zip(
+            usage
+                .get("cache_creation_input_tokens")
+                .and_then(JsonValue::as_u64),
+        )
+        .and_then(|((input, read), write)| input.checked_add(read)?.checked_add(write));
+    measured.set_provider_token_measurement(oneiron::llm::ProviderTokenMeasurement {
+        input: measured_input,
+        output: usage.get("output_tokens").and_then(JsonValue::as_u64),
+    });
+    measured
 }
 
 /// The finish of a reply whose provider reported none.

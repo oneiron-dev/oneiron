@@ -2,7 +2,7 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PageGeometry {
     pub crop: [f64; 4],
@@ -62,7 +62,7 @@ impl PageGeometry {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FieldControl {
     Text {
-        max_bytes: u32,
+        max_bytes: Option<u32>,
         server_computed: bool,
     },
     Checkbox,
@@ -95,20 +95,20 @@ pub fn present_field(field: &EsignField, value: Option<&FieldValue>) -> Result<F
             options: options.clone(),
         },
         FieldMeta::Date => FieldControl::Text {
-            max_bytes: 10,
+            max_bytes: None,
             server_computed: true,
         },
         FieldMeta::Text { max_bytes } => FieldControl::Text {
-            max_bytes: *max_bytes,
+            max_bytes: Some(*max_bytes),
             server_computed: false,
         },
         // A name has no engine cap (Rule 5); the field's box bounds what fits.
         FieldMeta::Name => FieldControl::Text {
-            max_bytes: u32::MAX,
+            max_bytes: None,
             server_computed: false,
         },
         FieldMeta::Email => FieldControl::Text {
-            max_bytes: EMAIL_MAX_BYTES as u32,
+            max_bytes: None,
             server_computed: false,
         },
     };
@@ -129,7 +129,7 @@ impl FieldPresentation {
 
 /// Device-independent marks in PDF-point coordinates. This is the drawing
 /// program for both browser SVG overlays and the sealed PDF, not a screenshot.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FieldMark {
     Text {
@@ -227,7 +227,8 @@ pub(super) fn encoded_text(value: &str) -> Result<Vec<u8>> {
     Ok(bytes.into_owned())
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FieldLayout {
     pub presentation: FieldPresentation,
     pub rect: PdfFieldRect,

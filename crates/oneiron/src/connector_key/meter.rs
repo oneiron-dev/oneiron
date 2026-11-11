@@ -24,22 +24,32 @@ mod rate_window;
 mod reservation;
 mod row;
 mod spend_reserve;
+mod usage;
+
 pub(crate) use self::charge::{
     charge_effector_budgets, charge_effector_budgets_pooled, preflight_effector_budgets_pooled,
     shares_budget_pool,
 };
 pub(crate) use self::rate_window::{BudgetBlock, budget_block_pooled};
-pub use self::reservation::EffectorBudgetDebit;
-pub(crate) use self::reservation::release_effector_debits_in_txn;
+pub use self::reservation::{
+    EffectorBudgetApproval, EffectorBudgetDebit, EffectorSpendReservationRow,
+};
+pub(crate) use self::reservation::{
+    fire_settled_effector_debits_in_txn, release_effector_debits_in_txn,
+    restore_effector_debits_in_txn, set_effector_debits_reserved_in_txn,
+};
 pub(crate) use self::row::EFFECTOR_BUDGET_ROW_KEY_LEN;
 pub(crate) use self::row::budget_exhausted_reason;
 use self::row::row_ordinal;
 pub use self::row::{
-    EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRowId, EffectorBudgetRowSource,
+    EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRowId,
+    EffectorBudgetRowSource, EffectorBudgetSettlementEvents,
 };
 pub(crate) use self::spend_reserve::{
     SpendReserve, reconcile_connector_spend_in_txn, reserve_connector_spend_in_txn,
+    spend_overrun_in_txn, tool_spend_price_in_txn,
 };
+pub(super) use self::usage::UsageEntry;
 
 /// vault_meta usage rows: key id (16 bytes) ++ row source tag u8 ++ row
 /// ordinal u64 BE (`EffectorBudgetRowId::usage_key`) -> canonical msgpack
@@ -157,8 +167,8 @@ const fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
 pub(super) struct ConnectorKeyUsage {
     /// Current calendar bucket start; 0 for rolling windows.
     pub(crate) window_start: u64,
-    /// `(ts, amount)` debit log, pruned on every touch.
-    pub(crate) entries: Vec<(u64, u64)>,
+    /// Native debits and their outbound reservation state, pruned on every touch.
+    pub(crate) entries: Vec<UsageEntry>,
     /// Ladder thresholds fired this window (GOV-01 writes it empty; GOV-02
     /// populates it): `"silent50" | "plan80" | "land95"`.
     pub(crate) fired: Vec<String>,
@@ -168,7 +178,21 @@ impl ConnectorKeyUsage {
     pub(crate) fn used(&self) -> u64 {
         self.entries
             .iter()
-            .fold(0_u64, |sum, (_, amount)| sum.saturating_add(*amount))
+            .fold(0_u64, |sum, entry| sum.saturating_add(entry.amount))
+    }
+
+    fn reserved(&self) -> u64 {
+        self.entries
+            .iter()
+            .filter(|entry| entry.reserved)
+            .fold(0_u64, |sum, entry| sum.saturating_add(entry.amount))
+    }
+
+    fn settled(&self) -> u64 {
+        self.entries
+            .iter()
+            .filter(|entry| !entry.reserved)
+            .fold(0_u64, |sum, entry| sum.saturating_add(entry.amount))
     }
 
     /// Prunes entries to window liveness at `now`. Calendar rollover resets
@@ -183,7 +207,7 @@ impl ConnectorKeyUsage {
             EffectorBudgetWindow::Rolling { duration_s } => {
                 self.window_start = 0;
                 self.entries
-                    .retain(|(ts, _)| ts.saturating_add(*duration_s) > now);
+                    .retain(|entry| entry.at.saturating_add(*duration_s) > now);
                 let percent = percent_used(self.used(), limit);
                 self.fired.retain(|name| {
                     parse_fired_threshold(name)
@@ -197,7 +221,7 @@ impl ConnectorKeyUsage {
                     self.entries.clear();
                     self.fired.clear();
                 } else {
-                    self.entries.retain(|(ts, _)| *ts >= bucket);
+                    self.entries.retain(|entry| entry.at >= bucket);
                 }
             }
         }
@@ -211,8 +235,13 @@ impl ConnectorKeyUsage {
                 Value::Array(
                     self.entries
                         .iter()
-                        .map(|(ts, amount)| {
-                            Value::Array(vec![Value::from(*ts), Value::from(*amount)])
+                        .map(|entry| {
+                            Value::Array(vec![
+                                Value::Binary(entry.id.as_bytes().to_vec()),
+                                Value::from(entry.at),
+                                Value::from(entry.amount),
+                                Value::from(entry.reserved),
+                            ])
                         })
                         .collect(),
                 ),
@@ -259,13 +288,20 @@ impl ConnectorKeyUsage {
                 let Value::Array(pair) = entry else {
                     return Err(corrupted());
                 };
-                if pair.len() != 2 {
+                if pair.len() != 4 {
                     return Err(corrupted());
                 }
-                Ok((
-                    pair[0].as_u64().ok_or_else(corrupted)?,
-                    pair[1].as_u64().ok_or_else(corrupted)?,
-                ))
+                let Value::Binary(id) = &pair[0] else {
+                    return Err(corrupted());
+                };
+                let id = EntityId::from_bytes(id.as_slice().try_into().map_err(|_| corrupted())?)
+                    .map_err(|_| corrupted())?;
+                Ok(UsageEntry {
+                    id,
+                    at: pair[1].as_u64().ok_or_else(corrupted)?,
+                    amount: pair[2].as_u64().ok_or_else(corrupted)?,
+                    reserved: pair[3].as_bool().ok_or_else(corrupted)?,
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         let Value::Array(raw_fired) = field("fired")? else {
@@ -327,8 +363,12 @@ pub struct EffectorBudgetRowRead {
     pub channel_class: Option<String>,
     pub limit: u64,
     pub unit: Option<String>,
-    /// Live usage in the current window.
+    /// Combined live usage held against admission capacity in the current window.
     pub used: u64,
+    /// Live usage held by pending outbound reservations.
+    pub reserved: u64,
+    /// Live usage no longer held by an outbound reservation, including direct charges.
+    pub settled: u64,
     pub remaining: u64,
     /// `used*100/limit`, capped 100 (`limit == 0` ⇒ 100).
     pub percent_used: u64,
@@ -386,6 +426,17 @@ pub struct EffectorBudgetCharge {
     pub debits: Vec<EffectorBudgetDebit>,
 }
 
+pub(crate) fn append_effector_steering_message(
+    messages: &mut Vec<String>,
+    event: &EffectorBudgetLadderEvent,
+) {
+    if let Some(signal) = &event.steering
+        && !messages.contains(&signal.message)
+    {
+        messages.push(signal.message.clone());
+    }
+}
+
 impl EffectorBudgetCharge {
     /// The steering messages this charge fired (FIX 3759, FIX 3761): its
     /// key's ladder events, then its catalog pool's, each threshold that
@@ -396,11 +447,7 @@ impl EffectorBudgetCharge {
         let pool = self.pool.iter().flat_map(|pool| &pool.ladder_events);
         let mut messages: Vec<String> = Vec::new();
         for event in self.ladder_events.iter().chain(pool) {
-            if let Some(signal) = &event.steering
-                && !messages.contains(&signal.message)
-            {
-                messages.push(signal.message.clone());
-            }
+            append_effector_steering_message(&mut messages, event);
         }
         messages
     }
@@ -540,6 +587,8 @@ pub(super) fn budget_row_read(
         limit: budget.limit,
         unit: budget.unit.clone(),
         used,
+        reserved: usage.reserved(),
+        settled: usage.settled(),
         remaining: budget.limit.saturating_sub(used),
         percent_used: percent,
         // What exhausting the row does, so a count row never reads as

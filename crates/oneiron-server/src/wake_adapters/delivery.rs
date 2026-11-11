@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tokio::io::AsyncWriteExt as _;
 
-use oneiron::context_board::{WakeEnvelope, wake_batch_opener};
+use oneiron::context_board::{BoardStreamFrame, WakeEnvelope, wake_batch_opener};
 
 use super::board_stream::BoardDelivery;
 use super::{AdapterCommand, Instance, WakeBatch, wall_clock_ms};
@@ -18,53 +18,108 @@ const HELPER_TIMEOUT: Duration = Duration::from_secs(5);
 /// both hex ids), space separated, then Enter. No label, title, frame or
 /// other body text reaches the pane, so nothing a remote author wrote can
 /// run there. The batch itself goes to the helper on stdin, or stays in the
-/// inbox for `wake inbox`.
+/// inbox for `wake inbox`; a pane is nudged only for wakes the inbox took
+/// (FIX 6187).
 const PANE_NUDGE_PREFIX: &str = "oneiron wake pending";
 
+/// One wake offered to this host's adapters, and whether it entered the
+/// inbox, where `wake inbox` finds its batch (FIX 6187). A pane nudge names
+/// only a wake that did: the nudge carries ids, never a batch.
+struct OfferedWake {
+    wake: WakeEnvelope,
+    queued: bool,
+}
+
+/// The frames and the opener a batch of `offered` wakes was handed over
+/// with: what each batch an adapter takes is cut from.
+struct Handoff {
+    offered: usize,
+    frames: Vec<BoardStreamFrame>,
+    opener: Option<String>,
+}
+
+impl Handoff {
+    /// `wakes`, a selection of the handed-over wakes in their order, as one
+    /// batch: the frames of their own TASK rows, and the opener the batch
+    /// came with when the selection is all of it, else one rendered now for
+    /// the wakes it carries (FIX 15011, FIX 6187).
+    fn batch(&self, wakes: Vec<WakeEnvelope>) -> BoardDelivery {
+        let opener = if wakes.len() == self.offered {
+            self.opener.clone()
+        } else {
+            wake_batch_opener(&wakes, wall_clock_ms())
+        };
+        let mut batch = BoardDelivery {
+            wakes,
+            frames: self.frames.clone(),
+            opener,
+        };
+        batch.retain_frames();
+        batch
+    }
+}
+
 impl Instance {
-    pub(crate) async fn deliver(&self, mut delivery: BoardDelivery, credential_env: &[String]) {
-        let offered = delivery.wakes.len();
-        delivery.wakes.retain(|wake| match self.inbox.enqueue(wake) {
-            Ok(false) => false,
-            Ok(true) => !self.config.inbox,
-            Err(error) => {
-                tracing::warn!(instance = %self.key, %error, "wake inbox failed; reoffering to a host adapter");
-                true
-            }
-        });
-        delivery.retain_frames();
-        if delivery.wakes.is_empty() {
-            return;
-        }
-        // The poll rendered the opener for the wakes it handed over; a batch
-        // the inbox narrowed is rendered again for the wakes it carries.
-        if delivery.wakes.len() != offered {
-            delivery.opener = wake_batch_opener(&delivery.wakes, wall_clock_ms());
-        }
-        let batch = WakeBatch {
-            instance_key: &self.key,
-            wakes: &delivery.wakes,
-            frames: &delivery.frames,
-            opener: delivery.opener.as_deref(),
+    /// Hands `delivery` to this host's adapters and returns the wakes none
+    /// of them took, for the bridge's wake pump to offer again (FIX 6187).
+    ///
+    /// Each wake meets the inbox first. One it already holds or acknowledged
+    /// was handed over and leaves the batch; an enabled inbox is the adapter
+    /// of each wake it takes. The rest go down the ladder: the helper takes
+    /// them as one batch on stdin, and its zero exit acknowledges those the
+    /// inbox holds, never a failed inbox write; a tmux pane is nudged only
+    /// with those the inbox took, whose batch `wake inbox` hands over; the
+    /// boot command takes what is left as one batch. A wake whose inbox write
+    /// failed has no batch for a nudge to point at, so only the helper or the
+    /// boot command takes it. One neither took is returned, with its frames
+    /// and no opener; a queued wake no adapter took stays in the inbox. The
+    /// TASK in the vault stays the durable source: the returned batch is the
+    /// bridge's process-local retry, not a crash-durable inbox.
+    pub(crate) async fn deliver(
+        &self,
+        delivery: BoardDelivery,
+        credential_env: &[String],
+    ) -> BoardDelivery {
+        let BoardDelivery {
+            wakes,
+            frames,
+            opener,
+        } = delivery;
+        let handoff = Handoff {
+            offered: wakes.len(),
+            frames,
+            opener,
         };
-        let body = match serde_json::to_vec(&batch) {
-            Ok(body) => body,
-            Err(error) => {
-                tracing::warn!(instance = %self.key, %error, "wake batch could not be encoded");
-                return;
+        let mut pending = Vec::with_capacity(handoff.offered);
+        for wake in wakes {
+            match self.inbox.enqueue(&wake) {
+                Ok(false) => {}
+                Ok(true) if self.config.inbox => {}
+                Ok(true) => pending.push(OfferedWake { wake, queued: true }),
+                Err(error) => {
+                    tracing::warn!(instance = %self.key, %error, "wake inbox failed; reoffering to a full-batch host adapter");
+                    pending.push(OfferedWake {
+                        wake,
+                        queued: false,
+                    });
+                }
             }
-        };
+        }
+        if pending.is_empty() {
+            return BoardDelivery::default();
+        }
         if let Some(helper) = &self.config.helper {
-            match send_command(helper, &body, credential_env, true).await {
+            let batch = handoff.batch(pending.iter().map(|offered| offered.wake.clone()).collect());
+            match self.send_batch(helper, &batch, credential_env, true).await {
                 Ok(()) => {
                     // The helper's zero exit is its acknowledgement of these
                     // occurrence ids, not of any later failure of the TASK.
-                    for wake in &delivery.wakes {
-                        if let Err(error) = self.inbox.acknowledge(&wake.event_ref) {
+                    for offered in pending.iter().filter(|offered| offered.queued) {
+                        if let Err(error) = self.inbox.acknowledge(&offered.wake.event_ref) {
                             tracing::warn!(instance = %self.key, %error, "wake delivered; local acknowledgement could not be saved");
                         }
                     }
-                    return;
+                    return BoardDelivery::default();
                 }
                 Err(error) => {
                     tracing::warn!(instance = %self.key, %error, "wake helper failed; reoffering to terminal");
@@ -72,22 +127,62 @@ impl Instance {
             }
         }
         if let Some(target) = &self.config.tmux_target {
-            match pane_nudge(target, &delivery.wakes, credential_env).await {
-                Ok(()) => return,
-                Err(error) => {
-                    tracing::warn!(instance = %self.key, %error, "wake pane nudge failed; reoffering to boot command");
+            let queued: Vec<WakeEnvelope> = pending
+                .iter()
+                .filter(|offered| offered.queued)
+                .map(|offered| offered.wake.clone())
+                .collect();
+            if !queued.is_empty() {
+                match pane_nudge(target, &queued, credential_env).await {
+                    Ok(()) => pending.retain(|offered| !offered.queued),
+                    Err(error) => {
+                        tracing::warn!(instance = %self.key, %error, "wake pane nudge failed; reoffering to boot command");
+                    }
                 }
             }
         }
+        if pending.is_empty() {
+            return BoardDelivery::default();
+        }
         if let Some(boot) = &self.config.boot {
-            match send_command(boot, &body, credential_env, false).await {
-                Ok(()) => return,
+            let batch = handoff.batch(pending.iter().map(|offered| offered.wake.clone()).collect());
+            match self.send_batch(boot, &batch, credential_env, false).await {
+                Ok(()) => return BoardDelivery::default(),
                 Err(error) => {
                     tracing::warn!(instance = %self.key, %error, "wake boot command failed");
                 }
             }
         }
-        tracing::warn!(instance = %self.key, count = delivery.wakes.len(), "wake adapters exhausted; TASKs remain in the vault and notices in the local inbox when writable");
+        let queued = pending.iter().filter(|offered| offered.queued).count();
+        let mut undelivered = BoardDelivery {
+            wakes: pending
+                .into_iter()
+                .filter(|offered| !offered.queued)
+                .map(|offered| offered.wake)
+                .collect(),
+            frames: handoff.frames,
+            opener: None,
+        };
+        undelivered.retain_frames();
+        tracing::warn!(instance = %self.key, queued, undelivered = undelivered.wakes.len(), "wake adapters exhausted; TASKs remain in the vault, queued notices in the local inbox, and the rest are offered again at the next poll");
+        undelivered
+    }
+
+    /// `batch` whole on `adapter`'s stdin, as `send_command` sends it.
+    async fn send_batch(
+        &self,
+        adapter: &AdapterCommand,
+        batch: &BoardDelivery,
+        credential_env: &[String],
+        wait_for_ack: bool,
+    ) -> anyhow::Result<()> {
+        let body = serde_json::to_vec(&WakeBatch {
+            instance_key: &self.key,
+            wakes: &batch.wakes,
+            frames: &batch.frames,
+            opener: batch.opener.as_deref(),
+        })?;
+        send_command(adapter, &body, credential_env, wait_for_ack).await
     }
 }
 

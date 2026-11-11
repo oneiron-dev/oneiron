@@ -169,6 +169,7 @@ impl Book {
                     formula,
                     style,
                     locked,
+                    recalc: None,
                 });
             }
         }

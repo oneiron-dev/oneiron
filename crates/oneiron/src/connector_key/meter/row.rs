@@ -114,6 +114,14 @@ pub struct EffectorBudgetLadderEvent {
     pub steering: Option<BudgetSteeringSignal>,
 }
 
+/// Thresholds first emitted by one confirmed outbound settlement, under
+/// the key whose rows fired, including co-actor and catalog-pool keys.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectorBudgetSettlementEvents {
+    pub key_ref: EntityId,
+    pub ladder_events: Vec<EffectorBudgetLadderEvent>,
+}
+
 /// Suspension and refusal reason for an exhausted budget row: the owning key
 /// and the row, so a pool row reads as the catalog key's, never the
 /// per-grant key's (FIX 3760).

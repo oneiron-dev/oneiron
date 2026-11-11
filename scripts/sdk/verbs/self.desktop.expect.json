@@ -1,0 +1,11 @@
+{
+  "name": "self.desktop.expect",
+  "description": "Checks that a window row is present or absent, and holds a given value; a cut tree walks on, and only a whole tree shows a row absent, so a row unseen past a cut leaves the check unmet and partial.",
+  "input": "oneiron_browser::ExpectInput",
+  "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ExpectOutput>",
+  "call": "oneiron_browser::DesktopAnswer::of(driver.expect(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false
+}

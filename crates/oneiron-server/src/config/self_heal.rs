@@ -2,7 +2,9 @@
 //! over its retrieval telemetry (ARCH-0066 tiers 2 and 3, OF-418). Each
 //! `[self_heal.detectors.<family>]` names the event class it raises, its tier,
 //! and the prompt and rubric its question asks. Canon ships no detector
-//! wording, so none runs until the owner writes one.
+//! wording, so none runs until the owner writes one. The optional
+//! `agent_failure_healer` also selects a healer for served agent runs; saved
+//! workflow steps keep their existing human-only failure policy.
 //!
 //! - `t3` judges each completed window of runs at once; its findings are the
 //!   ones the owner labels. Once `consecutive` positive and one negative are
@@ -16,6 +18,7 @@
 
 use std::collections::BTreeMap;
 
+use oneiron::failure_ladder::healer_dispatch::HealerSlot;
 use oneiron::self_heal::DiagnosticEventClass;
 use oneiron::self_heal::tiered::{DetectorPolicy, ProposedTier};
 use serde::Deserialize;
@@ -25,6 +28,9 @@ const DEFAULT_WINDOW_SECS: u64 = 3_600;
 /// Resolved `[self_heal]` section.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SelfHealConfig {
+    /// Explicit healer for failed agent runs. None or Reserved stays human-only.
+    /// Workflow steps keep their existing human-only policy.
+    pub agent_failure_healer: Option<HealerSlot>,
     /// The detectors, by family.
     pub detectors: BTreeMap<String, DetectorConfig>,
 }
@@ -111,12 +117,16 @@ impl DetectorConfig {
 
 impl SelfHealConfig {
     pub(super) fn apply_override(&mut self, over: SelfHealConfigOverride) {
+        if let Some(healer) = over.agent_failure_healer {
+            self.agent_failure_healer = Some(healer);
+        }
         if let Some(detectors) = over.detectors {
             self.detectors = detectors;
         }
     }
 
     pub(super) fn validate(&self) -> anyhow::Result<()> {
+        validate_agent_failure_healer(self.agent_failure_healer.as_ref())?;
         for (family, detector) in &self.detectors {
             anyhow::ensure!(
                 detector.window_secs > 0,
@@ -133,5 +143,18 @@ impl SelfHealConfig {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(super) struct SelfHealConfigOverride {
+    pub(super) agent_failure_healer: Option<HealerSlot>,
     pub(super) detectors: Option<BTreeMap<String, DetectorConfig>>,
+}
+
+pub(super) fn validate_agent_failure_healer(slot: Option<&HealerSlot>) -> oneiron::Result<()> {
+    if let Some(HealerSlot::AgentDef { agent_def_ref }) = slot {
+        oneiron::EntityId::from_hex(agent_def_ref).map_err(|_| {
+            oneiron::Error::InvalidConfig(
+                "self_heal.agent_failure_healer.AgentDef.agent_def_ref must be a hex-encoded EntityId"
+                    .into(),
+            )
+        })?;
+    }
+    Ok(())
 }

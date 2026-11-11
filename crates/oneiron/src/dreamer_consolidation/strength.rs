@@ -196,9 +196,17 @@ pub(crate) fn restored_in_txn(
 
 /// One nightly recipe child. Snapshot, recheck and local archive share the
 /// writer's revision. No confidence, lifecycle, claim bytes or graph edges change.
+/// The archive takes back what the Dreamer landed, so it is judged in this
+/// writer by the policy rows that let it land (X02): with the owner's Auto
+/// ceiling or `Generated` permit for the Dreamer narrowed or removed, nothing
+/// is archived and no receipt is written.
 pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u64) -> Result<u64> {
     let actor = vault.dreamer_actor_for_attempt(attempt)?;
     vault.with_write_txn_grouped(|txn| {
+        let Some(frontier) = crate::gate::dreamer_landing_verdict_in_txn(&vault.store, txn, actor)?
+        else {
+            return Ok(0);
+        };
         let policy = policy_in_txn(vault, txn)?;
         let selection = vault.consolidation_selection_in_txn(txn)?;
         let key = read_key(actor)?;
@@ -296,7 +304,7 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
             super::mark_person_about_dropped_in_txn(&vault.store, txn, &id)?;
             vault.put_archive_tombstone_in_txn(txn, &id, &marker)?;
             let link = vault.attempt_action_link_in_txn(&*txn, attempt);
-            let receipt = archive_receipt(actor, id, &snapshot, now_ms, link);
+            let receipt = archive_receipt(actor, id, &snapshot, now_ms, link, frontier);
             vault.store.append_gate_decision_in_txn(txn, &receipt)?;
             archived += 1;
         }
@@ -306,20 +314,26 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
 /// The receipt one archive leaves (owner ruling 10-18: the Dreamer applies
 /// and the owner reverts): the Dreamer's, naming the claim and the revision
 /// its snapshot scored, so the owner finds it and restores the claim through
-/// the cleanup restore door. `link` is the scoring attempt's (FIX 7500).
+/// the cleanup restore door. `link` is the scoring attempt's (FIX 7500). The
+/// verdict is the policy's (X02): the rows it was judged by, and the policy
+/// frontier `frontier` it was judged under.
 fn archive_receipt(
     actor: WriteActor,
     claim: EntityId,
     snapshot: &ConsolidationStrengthSnapshot,
     now_ms: u64,
     link: crate::store::GateLoopLink,
+    frontier: [u8; 32],
 ) -> crate::store::GateDecisionRecord {
     crate::store::GateDecisionRecord {
         version: crate::store::GATE_DECISION_LEDGER_VERSION,
         decision_id: crate::store::GateDecisionId::now(),
         created_at: now_ms,
         outcome: "approved".to_owned(),
-        reason_codes: vec!["gate.dreamer.strength.archived".to_owned()],
+        reason_codes: vec![
+            "gate.dreamer.strength.archived".to_owned(),
+            "gate.dreamer.policy.lands_generated_auto".to_owned(),
+        ],
         receipt_reasons: Vec::new(),
         system_notices: Vec::new(),
         actor_class: actor.actor_class().gate_actor_class().to_owned(),
@@ -327,9 +341,9 @@ fn archive_receipt(
         content_kind: "dreamer_strength_archive".to_owned(),
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
         claim_id: Some(*claim.as_bytes()),
-        grant_ref: None,
+        grant_ref: Some(crate::gate::DREAMER_LANDING_ROWS_REF.to_owned()),
         diff_handle: snapshot.revision.to_vec(),
-        read_frontier_hash: [0; 32],
+        read_frontier_hash: frontier,
         context: crate::store::GateDecisionContext::linked(link, None),
         redacted_at: None,
     }

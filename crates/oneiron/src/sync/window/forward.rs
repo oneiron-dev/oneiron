@@ -380,6 +380,9 @@ impl ForwardRun {
         // Already-standing custody must be visible to secret scanning before an
         // imported entity can mint a duplicate. Retry after edges as before.
         crate::sync::custody::apply_custody_map(vault, doc, window_key);
+        // Engine A: the policies the window carries settle before its rows,
+        // so each row's binding meets its policy in the row's own savepoint.
+        crate::sync::source_audiences::apply_map(vault, doc)?;
         let plan = entity_pass::plan(&remat_ctx(
             vault,
             doc,
@@ -580,6 +583,10 @@ fn after_edges(ctx: &RematCtx<'_>) {
     // takes them. A document lands before the pins that quote it.
     crate::sync::message_docs::apply_message_doc_map(vault, doc, window_key);
     crate::sync::document_pins::apply_document_pin_map(vault, doc, window_key);
+    // FIX 2691: the office proposals it carries, after their artifacts' rows.
+    crate::sync::office_proposals::apply_office_proposal_map(vault, doc, window_key);
+    // FIX 12470: the typed body receipts it carries, after their bodies' rows.
+    crate::sync::typed_body_rows::apply_typed_body_rows_map(vault, doc, window_key);
     // FIX 6870: the repo manifests it carries, after their CODE rows and
     // before the tombstones, so an erased repo takes its manifest.
     crate::sync::repo_manifests::apply_repo_manifest_map(vault, doc, window_key);

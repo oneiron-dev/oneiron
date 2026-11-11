@@ -9,11 +9,13 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, Result};
 use crate::interlocutor::{InterlocutorClass, InterlocutorSet};
-use crate::limits::MAX_ANCESTOR_DEPTH;
+use crate::office_body::{RESERVE_STEP, document_resources, machine_memory_refused};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::scope_summary::WordSources;
 use oneiron_authority::federation::{Scope, Sensitivity, SensitivityCeiling};
+use oneiron_docedit::resource::{Hold, bytes_of};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use crate::context_board::room_scope as disclosable_set;
@@ -75,6 +77,12 @@ impl DisclosableSet {
         Ok(Self(disclosable_set(&terms)?))
     }
 
+    /// Explicit consent of an anonymous phone call's current line. Only the
+    /// native phone reader supplies this; it is not a contact clearance.
+    pub(super) fn phone_line(scope: Scope) -> Self {
+        Self(scope)
+    }
+
     /// The met clearance of every non-owner present.
     #[must_use]
     pub fn clearance(&self) -> &Scope {
@@ -103,7 +111,15 @@ fn admits(clearance: &Scope, record: &Scope) -> bool {
 /// message `PartOf` it, and a scope summary, a TURN copying one, or a merge
 /// header naming one carries the words of every record and MESSAGE the
 /// summary came from. Sources that no longer resolve disclose nothing, nor
-/// does a closure that cycles or outgrows [`MAX_WORD_CLOSURE`].
+/// does a closure that cycles.
+///
+/// Every record of the closure is judged, however many (rule 5; FIX 9787):
+/// past its threshold row the walk asks whether everything is okay, counted
+/// on every way out, a deny and an error included, and walks on. No count
+/// withholds a record. Only the machine's memory floor stops the walk, or
+/// the host's wait for that memory running out: either is an error the read
+/// surfaces (a memory-floor refusal, or a timed-out read a caller may run
+/// again), never a withheld record and never a partly judged one.
 pub(crate) fn discloses_raw(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -111,21 +127,25 @@ pub(crate) fn discloses_raw(
     id: EntityId,
     raw: &[u8],
 ) -> Result<bool> {
-    WordClosure {
+    let mut count = ScanCount::start(
+        &vault.store,
+        txn,
+        EngineScan::WordSourceRecords,
+        id.as_bytes(),
+    )?;
+    let mut closure = WordClosure {
         vault,
         txn,
         scope,
         path: BTreeSet::new(),
         judged: BTreeSet::new(),
-        held: 0,
-    }
-    .discloses(id, raw)
+        memory: WalkMemory::default(),
+    };
+    let disclosed = closure.discloses(id, raw);
+    count.rows(closure.judged.len());
+    count.defer(&vault.store);
+    disclosed
 }
-
-/// How many records one P7 decision may follow, and how many source slots
-/// its stack may hold at once: room for a summary's whole covers list and
-/// its messages, each bounded by `MAX_ANCESTOR_DEPTH`.
-const MAX_WORD_CLOSURE: usize = 4 * MAX_ANCESTOR_DEPTH;
 
 /// One record a revision's words may have come from, and how its row reads.
 #[derive(Clone, Copy)]
@@ -145,6 +165,55 @@ impl WordSource {
     }
 }
 
+/// One record on the walk's stack: the records its words may have come
+/// from, the next one to judge, and the bytes the walk took for it.
+struct Frame {
+    id: EntityId,
+    sources: Vec<WordSource>,
+    cursor: usize,
+    bytes: u64,
+}
+
+/// The machine memory one walk holds (FIX 9787). A walk that fits in one
+/// reservation step, the least any reservation asks the host's memory line
+/// for, asks the line nothing. Past it the walk reserves every byte it
+/// holds, at its peak, before it holds it: a reservation that cannot be met
+/// at once waits its fair turn for the host's queue wait, and only the
+/// machine's floor or that wait running out refuses it.
+#[derive(Default)]
+struct WalkMemory {
+    /// Bytes the walk's sets and stack hold now.
+    held: u64,
+    /// The most the walk has held at once, once past one step: what its
+    /// hold has taken.
+    taken: u64,
+    /// The walk's hold on the host's memory line, opened when it first
+    /// outgrows one step.
+    hold: Option<Hold>,
+}
+
+impl WalkMemory {
+    /// Takes `bytes` more the walk is about to hold.
+    fn grow(&mut self, bytes: u64) -> Result<()> {
+        self.held = self.held.saturating_add(bytes);
+        if self.held <= self.taken.max(RESERVE_STEP) {
+            return Ok(());
+        }
+        self.hold
+            .get_or_insert_with(|| document_resources().hold())
+            .take(self.held - self.taken)
+            .map_err(machine_memory_refused)?;
+        self.taken = self.held;
+        Ok(())
+    }
+
+    /// Gives back `bytes` the walk no longer holds. Its hold keeps the
+    /// peak until the walk ends, so growth back up to it asks nothing.
+    fn release(&mut self, bytes: u64) {
+        self.held = self.held.saturating_sub(bytes);
+    }
+}
+
 /// One P7 decision's walk over the records whose words a revision carries.
 struct WordClosure<'a> {
     vault: &'a Vault,
@@ -156,29 +225,28 @@ struct WordClosure<'a> {
     /// Every record entered so far; each passed or is on the path, or the
     /// walk has stopped.
     judged: BTreeSet<EntityId>,
-    /// Source slots the frames on the stack hold, visited or not, until
-    /// each frame is dropped.
-    held: usize,
+    /// The memory the sets and the stack hold.
+    memory: WalkMemory,
 }
 
 impl WordClosure<'_> {
     /// Walks the closure depth first on a heap stack, never the call stack,
-    /// reading one source row at a time: a closure as deep or as wide as
-    /// its budget must deny, not overflow.
+    /// reading one source row at a time: however deep or wide the closure,
+    /// the walk judges all of it and never overflows.
     fn discloses(&mut self, id: EntityId, raw: &[u8]) -> Result<bool> {
-        let Some(sources) = self.enter(id, raw)? else {
+        let Some(frame) = self.enter(id, raw)? else {
             return Ok(false);
         };
-        let mut stack = vec![(id, sources, 0)];
-        while let Some((_, sources, cursor)) = stack.last_mut() {
-            let Some(&source) = sources.get(*cursor) else {
-                if let Some((node, sources, _)) = stack.pop() {
-                    self.path.remove(&node);
-                    self.held -= sources.capacity();
+        let mut stack = vec![frame];
+        while let Some(frame) = stack.last_mut() {
+            let Some(&source) = frame.sources.get(frame.cursor) else {
+                if let Some(frame) = stack.pop() {
+                    self.path.remove(&frame.id);
+                    self.memory.release(frame.bytes);
                 }
                 continue;
             };
-            *cursor += 1;
+            frame.cursor += 1;
             let id = source.id();
             if self.judged.contains(&id) && !self.path.contains(&id) {
                 continue;
@@ -199,20 +267,18 @@ impl WordClosure<'_> {
             let Some(gathered) = self.enter(id, &raw)? else {
                 return Ok(false);
             };
-            stack.push((id, gathered, 0));
+            stack.push(gathered);
         }
         Ok(true)
     }
 
     /// Judges `id`'s own stamp and gathers each record its words may have
     /// come from, putting `id` on the path. `None` when `id` is not
-    /// disclosed: its stamp, a summary that no longer resolves, or the
-    /// budget.
-    fn enter(&mut self, id: EntityId, raw: &[u8]) -> Result<Option<Vec<WordSource>>> {
+    /// disclosed: its stamp, or a summary that no longer resolves. The
+    /// memory the walk takes for `id` is reserved before it is held.
+    fn enter(&mut self, id: EntityId, raw: &[u8]) -> Result<Option<Frame>> {
+        self.memory.grow(bytes_of::<EntityId>(1))?;
         self.judged.insert(id);
-        if self.judged.len() > MAX_WORD_CLOSURE {
-            return Ok(None);
-        }
         let store = &self.vault.store;
         // A NOTE sits at one world it is in that the clearance holds
         // (FIX-LIST 9433).
@@ -236,10 +302,18 @@ impl WordClosure<'_> {
         {
             return Ok(None);
         }
+        // The frame and its place on the path, then its sources.
+        let place = bytes_of::<Frame>(1).saturating_add(bytes_of::<EntityId>(1));
+        let mut bytes = place;
         let mut sources =
             match crate::scope_summary::word_sources_in(self.vault, self.txn, &id, raw)? {
                 WordSources::Own => Vec::new(),
-                WordSources::From(ids) => ids.into_iter().map(WordSource::Word).collect(),
+                WordSources::From(ids) => {
+                    let more = bytes_of::<WordSource>(ids.len());
+                    self.memory.grow(more)?;
+                    bytes = bytes.saturating_add(more);
+                    ids.into_iter().map(WordSource::Word).collect()
+                }
                 WordSources::Unresolved => return Ok(None),
             };
         if EntityMetadataHeader::parse(raw)
@@ -252,18 +326,25 @@ impl WordClosure<'_> {
                 Some(EdgeKind::PartOf),
                 None,
             )? {
-                if self.held + sources.len() >= MAX_WORD_CLOSURE {
-                    return Ok(None);
+                let part = part?.target;
+                if sources.len() == sources.capacity() {
+                    let room = sources.capacity().max(1);
+                    let more = bytes_of::<WordSource>(room);
+                    self.memory.grow(more)?;
+                    bytes = bytes.saturating_add(more);
+                    sources.reserve_exact(room);
                 }
-                sources.push(WordSource::Part(part?.target));
+                sources.push(WordSource::Part(part));
             }
         }
-        if self.held + sources.capacity() > MAX_WORD_CLOSURE {
-            return Ok(None);
-        }
-        self.held += sources.capacity();
+        self.memory.grow(place)?;
         self.path.insert(id);
-        Ok(Some(sources))
+        Ok(Some(Frame {
+            id,
+            sources,
+            cursor: 0,
+            bytes,
+        }))
     }
 }
 

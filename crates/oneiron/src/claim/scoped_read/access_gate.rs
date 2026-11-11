@@ -47,13 +47,16 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// same serving txn, each reader's own live Grants once a row's own
 /// admission refuses it, and what the read asked of its rows (FIX 7462).
 /// The fourth holds, for the same serving txn, each reader's verdict on each
-/// CLAIM access class it judged (FIX 11915).
+/// CLAIM access class it judged (FIX 11915). The fifth is set on the row
+/// checks of a record an `edge.provenance` Claim names beside its edge
+/// ([`Self::judge_cited`], FIX 3959): they do not re-enter that rule.
 #[derive(Default)]
 pub(super) struct HeldAuthority(
     RefCell<Option<AccessContextSnapshot>>,
     Option<EntityId>,
     HeldGrants,
     ClassVerdicts,
+    bool,
 );
 
 impl HeldAuthority {
@@ -65,6 +68,20 @@ impl HeldAuthority {
             None,
             HeldGrants::fresh(AskedFilter::Known(requested.cloned())),
             ClassVerdicts::default(),
+            false,
+        )
+    }
+
+    /// The same read's row checks in another transaction (FIX 7528): nothing
+    /// held, since what this one holds belongs to its own txn, and the same
+    /// request asked of the rows.
+    pub(super) fn for_another_txn(&self) -> Self {
+        Self(
+            RefCell::default(),
+            None,
+            HeldGrants::fresh(self.2.asked().clone()),
+            ClassVerdicts::default(),
+            self.4,
         )
     }
 
@@ -74,7 +91,13 @@ impl HeldAuthority {
     /// was written from included, keeps that conjunct. It shares this read's
     /// Grants and class verdicts.
     pub(super) fn asking_use_of(&self, id: EntityId) -> Self {
-        Self(RefCell::default(), Some(id), self.2.clone(), self.3.clone())
+        Self(
+            RefCell::default(),
+            Some(id),
+            self.2.clone(),
+            self.3.clone(),
+            self.4,
+        )
     }
 
     /// A peer's row checks in this read's serving txn: its own relationship
@@ -87,7 +110,34 @@ impl HeldAuthority {
             None,
             self.2.shared_asking(AskedFilter::Known(None)),
             self.3.clone(),
+            self.4,
         )
+    }
+
+    /// `judge` over the row checks of a record an `edge.provenance` Claim
+    /// names beside its edge (FIX 3959), in this serving txn: this read's
+    /// relationship authority, Grants and class verdicts, under the key's own
+    /// floor alone, with no row's legal non-use conjunct asked, and with that
+    /// Claim's rule not re-entered, so a Claim citing another such Claim is
+    /// judged one level deep. The relationship authority is lent to `judge`
+    /// and taken back after it, whatever it answers.
+    pub(super) fn judge_cited<T>(&self, judge: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
+        let cited = Self(
+            RefCell::new(self.0.take()),
+            None,
+            self.2.shared_asking(AskedFilter::Known(None)),
+            self.3.clone(),
+            true,
+        );
+        let judged = judge(&cited);
+        *self.0.borrow_mut() = cited.0.into_inner();
+        judged
+    }
+
+    /// Whether these row checks judge a record an `edge.provenance` Claim
+    /// names ([`Self::judge_cited`]).
+    pub(super) fn judges_cited(&self) -> bool {
+        self.4
     }
 
     /// Whether the read leaves `id`'s legal non-use conjunct to the named
@@ -172,6 +222,22 @@ impl ScopedRead<'_> {
     pub(super) fn grant_read_txn(&self) -> Result<heed::RoTxn<'_>> {
         self.persist_grant_clock()?;
         Ok(self.vault.store.env.read_txn()?)
+    }
+
+    /// Runs `read` in one read snapshot of this lane's vault, opened as this
+    /// lane's own reads open theirs: its grant time persisted first, never
+    /// inside the snapshot. A door that judges a row for this lane and
+    /// serves it does both here, in one snapshot (FIX 10782).
+    ///
+    /// # Errors
+    ///
+    /// The grant time's or the snapshot's failure, or `read`'s.
+    pub fn with_grant_read_snapshot<T, E: From<crate::Error>>(
+        &self,
+        read: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
+        let txn = self.grant_read_txn()?;
+        read(&txn)
     }
 
     /// Whether this read's relationship gate binds in `txn`; see
@@ -426,6 +492,136 @@ pub(crate) fn relationship_read(
     relationship_read_keyed(store, txn, id, raw, false)
 }
 
+/// The body key an identity row (a kind a tag can mint) keeps the audience
+/// of the words that named it under, when a confirmed provisional entity was
+/// named only in relationship-scoped or private MESSAGEs (OPUS-LEAKS): a map
+/// of `rel` (a relationship scope, as a claim's `scopeRelationshipId`) and
+/// `private`.
+pub(crate) const IDENTITY_SOURCE_AUDIENCE_KEY: &str = "source_audience";
+
+/// What an identity row's body says under [`IDENTITY_SOURCE_AUDIENCE_KEY`].
+#[derive(Debug, PartialEq, Eq)]
+enum IdentitySourceAudience {
+    /// The body names none (or is not a map): the row is read as every
+    /// identity row was.
+    Unnamed,
+    /// The relationship scope of the naming words, and whether every one of
+    /// them was private.
+    Named {
+        space: RelationshipScope,
+        private: bool,
+    },
+    /// Repeated, not a map, or a field missing, repeated or malformed: the
+    /// row is read by no one.
+    Malformed,
+}
+
+fn identity_source_audience(bytes: &[u8]) -> IdentitySourceAudience {
+    let mut cursor = std::io::Cursor::new(bytes);
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut cursor) else {
+        return IdentitySourceAudience::Unnamed;
+    };
+    let mut audiences = fields
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(IDENTITY_SOURCE_AUDIENCE_KEY))
+        .map(|(_, value)| value);
+    let Some(audience) = audiences.next() else {
+        return IdentitySourceAudience::Unnamed;
+    };
+    if audiences.next().is_some() {
+        return IdentitySourceAudience::Malformed;
+    }
+    let Some(audience) = audience.as_map() else {
+        return IdentitySourceAudience::Malformed;
+    };
+    let field = |name: &str| {
+        let mut found = audience
+            .iter()
+            .filter(move |(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value);
+        match (found.next(), found.next()) {
+            (Some(value), None) => Some(value),
+            _ => None,
+        }
+    };
+    let (Some(rel), Some(private)) = (
+        field("rel"),
+        field("private").and_then(rmpv::Value::as_bool),
+    ) else {
+        return IdentitySourceAudience::Malformed;
+    };
+    match crate::write_envelope::claim_body::decode_relationship_scope(rel) {
+        Ok(space) => IdentitySourceAudience::Named { space, private },
+        Err(_) => IdentitySourceAudience::Malformed,
+    }
+}
+
+/// Whether a put of `body` at `id` changes or drops the source audience the
+/// stored identity row there names (review of #7006). Widening an exposure
+/// is the owner's act (ILDF2 ratify:129), so a below-owner commit keeps it
+/// exactly. An absent row, a row of another kind, or one that names no
+/// audience is left to the other checks.
+pub(crate) fn identity_put_moves_source_audience_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<bool> {
+    let crate::vault::LiveEntityRow::Live {
+        entity_type,
+        body: stored,
+    } = crate::vault::live_entity_row_in_txn(store, txn, id)?
+    else {
+        return Ok(false);
+    };
+    if !crate::tagging::label_kind_admitted(entity_type) {
+        return Ok(false);
+    }
+    let before = identity_source_audience(&stored);
+    Ok(before != IdentitySourceAudience::Unnamed && identity_source_audience(body) != before)
+}
+
+/// The below-owner refusal of a put that changes or drops the source
+/// audience a stored identity row names, on base and in an off-record room
+/// alike (review of #7006).
+pub(crate) fn owner_only_audience_change() -> crate::error::Error {
+    crate::error::Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
+        "only the vault owner changes the audience an identity was named under",
+    ))
+}
+
+/// [`relationship_read_keyed`] for an identity row. A row whose body names
+/// no source audience is decided readable, as every identity row was. One
+/// that names it is gated on it as a MESSAGE is on its own `rel` and
+/// `scope`; a malformed or repeated one is refused.
+fn identity_relationship_read<S>(
+    store: &S,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    kind: u8,
+    bytes: &[u8],
+) -> Result<RelationshipRead>
+where
+    S: crate::store::ManifestDbs + crate::federation::record_scope::MachineHistoryScope,
+{
+    let (space, private) = match identity_source_audience(bytes) {
+        IdentitySourceAudience::Unnamed => return Ok(RelationshipRead::Decided(true)),
+        IdentitySourceAudience::Malformed => return Ok(RelationshipRead::Decided(false)),
+        IdentitySourceAudience::Named { space, private } => (space, private),
+    };
+    let Some(record) = crate::federation::record_scope::scope_for_blob(store, txn, *id, raw)?
+    else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    Ok(RelationshipRead::Gated {
+        kind,
+        space,
+        private,
+        record,
+    })
+}
+
 /// [`relationship_read`] for a key that may open unscoped rows: with
 /// `unscoped_rows_open` (a vault-internal reader,
 /// `require_relationship_grants`), a MESSAGE or SUMMARY that names neither a
@@ -447,11 +643,30 @@ where
     )?;
     let kind = header.entity_type;
     let bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    if kind == crate::registry::ENTITY_TYPE_COMM_RECORD {
+        use crate::federation::record_scope::{ScopedCommRead, read_scoped_comm_in_txn};
+        match read_scoped_comm_in_txn(store, txn, *id, bytes)? {
+            ScopedCommRead::Ordinary => {}
+            ScopedCommRead::Unavailable => return Ok(RelationshipRead::Decided(false)),
+            ScopedCommRead::Claim { body, record, .. } => {
+                let (space, private) = claim_access_axes(&body);
+                return Ok(RelationshipRead::Gated {
+                    kind: ENTITY_TYPE_CLAIM,
+                    space,
+                    private,
+                    record,
+                });
+            }
+        }
+    }
     if kind == ENTITY_TYPE_CLAIM {
         if bytes.is_empty() {
             return Ok(RelationshipRead::Decided(false));
         }
         return Ok(RelationshipRead::claim(&decode_claim_body(bytes, true)?));
+    }
+    if crate::tagging::label_kind_admitted(kind) {
+        return identity_relationship_read(store, txn, id, raw, kind, bytes);
     }
     if !matches!(kind, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SUMMARY) {
         return Ok(RelationshipRead::Decided(true));

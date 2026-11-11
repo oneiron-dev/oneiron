@@ -12,7 +12,7 @@ use super::process::spawn_git;
 use super::repo::repo_identity_for;
 use super::{
     GitOid, GitRefName, GitTreeEntry, GitWireFailure, GitWireProcessEnv, GitWireProcessOutput,
-    GitWireRepo, GitWireResult, ObservedGitRef,
+    GitWireRepo, GitWireResult, ObservedGitRef, git_path_bytes,
 };
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -370,9 +370,10 @@ impl GitWire<'_> {
         name: &str,
     ) -> GitWireResult<Option<GitTreeEntry>> {
         let output = self.run_read(repo, &FrozenGitArgv::read_tree_entry(tree, name)?)?;
+        let name = git_path_bytes(name)?;
         Ok(parse_tree_entries(&output.stdout)?
             .into_iter()
-            .find(|entry| entry.name == name.as_bytes()))
+            .find(|entry| entry.name == name.as_ref()))
     }
 
     /// The raw stored bytes of one object, in git's own encoding for its type.

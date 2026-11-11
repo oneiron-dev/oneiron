@@ -1,0 +1,16 @@
+{
+  "name": "vault.settings.inference_defaults",
+  "description": "Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling.",
+  "input": "EmptyRequest",
+  "output": "crate::policy_setting_doors::PolicyActionOutcome",
+  "call": "crate::policy_setting_doors::inference_defaults_embedded(memory)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "mcp_fields": {},
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

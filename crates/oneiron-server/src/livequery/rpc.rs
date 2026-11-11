@@ -253,6 +253,7 @@ fn saved(answer: &Answer) -> Option<InvocationOutcome> {
         status: 200,
         body,
         release: None,
+        refusal_hook_notice: None,
     })
 }
 

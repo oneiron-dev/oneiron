@@ -75,11 +75,14 @@ async fn submit(
     }
     // FIX 10592: the durable step below admits on this request, so it carries
     // whether its ladder may only serve free keyless own-server work.
-    // Unstamped stays paid.
+    // Unstamped stays paid. FIX 18407: it also carries whether a rung is paid
+    // work, so a paid on-device step reserves on the step's own budget line.
     input.request.envelope.host_keyless = ladder.all_keyless_own_server();
+    input.request.envelope.host_paid = !ladder.all_free_work();
     let run = run.with_work_context({
         let mut context = run.work_context();
-        context.physical = if ladder.all_keyless_own_server() {
+        // A free on-device step is free work too, as physical_for says.
+        context.physical = if ladder.all_free_work() {
             WorkPhysical::KeylessOwnServer
         } else {
             WorkPhysical::Paid

@@ -7,7 +7,7 @@ pub(super) fn parse_experiment_selection(value: &Value) -> Option<Vec<SelectionP
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value).ok()?;
     let rows: Vec<SelectionPolicyRow> = rmp_serde::from_slice(&bytes).ok()?;
-    if rows.len() > 1024 || rows.iter().any(|row| !row.valid()) {
+    if rows.iter().any(|row| !row.valid()) {
         return None;
     }
     Some(rows)

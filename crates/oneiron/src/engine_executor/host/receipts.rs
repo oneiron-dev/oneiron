@@ -3,14 +3,17 @@
 //! `ReaderFoldReceipt` is defined by `code_run`; host state stays in `engine_executor::host`.
 
 use super::*;
+pub(super) use crate::code_run::{merge_ranges, subtract_ranges};
 
 impl RecordingJsHost<'_, '_> {
     /// The fold receipt `input` names, computed here from the jobs it names
     /// (ARCH-0079 #reader-forks): its source resolved and read-checked, each
     /// task this run's child over that source. Completed read children count
-    /// their delegated ranges; a scoped finding alone proves no byte coverage.
+    /// their delegated ranges. A scoped child counts only the ranges of its
+    /// source its delivery witness proves its reads were shown (FIX 7735): a
+    /// scoped finding alone proves no byte coverage.
     /// `partial` names the children that settled short, with their reasons,
-    /// `unread` is the source range not covered by read children; each tree
+    /// `unread` is the source range none of these ranges covers; each tree
     /// summary is resolved as a read of it is. Its `folded` occurrence is filled in once
     /// the body is stored. Beside it, every occurrence it names, whose taint
     /// the folded body inherits. A refusal is the reply the guest gets.
@@ -53,9 +56,11 @@ impl RecordingJsHost<'_, '_> {
             else {
                 return Ok(Err(result_refusal("receipt_task_not_own")));
             };
-            let covers_source = match &job.kind {
-                ReaderJobKind::Read => true,
-                ReaderJobKind::ScopedAgent { .. } => false,
+            // The ranges the job proves read, inside its delegated range,
+            // which the check below holds inside the fold's source range.
+            let proved = match &job.kind {
+                ReaderJobKind::Read => vec![job.binding.source.range],
+                ReaderJobKind::ScopedAgent { .. } => job.delivered_source_ranges(),
                 _ => return Ok(Err(result_refusal("receipt_task_other_source"))),
             };
             let delegated = &job.binding.source;
@@ -78,15 +83,11 @@ impl RecordingJsHost<'_, '_> {
             };
             let reason = match &job.state {
                 ReaderJobState::Done if occurrence.is_some() => {
-                    if covers_source {
-                        read.push(delegated.range);
-                    }
+                    read.extend(proved);
                     None
                 }
                 ReaderJobState::Partial { reason } if occurrence.is_some() => {
-                    if covers_source {
-                        short.push(delegated.range);
-                    }
+                    short.extend(proved);
                     partial.push(ReceiptPartial {
                         task,
                         reason: reason.clone(),
@@ -158,37 +159,4 @@ impl RecordingJsHost<'_, '_> {
         };
         Ok(Ok((receipt, named)))
     }
-}
-
-/// `ranges` sorted and merged where they touch or overlap.
-pub(super) fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
-    ranges.retain(|(start, end)| start < end);
-    ranges.sort_unstable();
-    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
-    for (start, end) in ranges {
-        match merged.last_mut() {
-            Some(last) if start <= last.1 => last.1 = last.1.max(end),
-            _ => merged.push((start, end)),
-        }
-    }
-    merged
-}
-
-/// What of `whole` the merged `covered` ranges leave.
-pub(super) fn subtract_ranges(whole: (u64, u64), covered: &[(u64, u64)]) -> Vec<(u64, u64)> {
-    let mut left = Vec::new();
-    let mut at = whole.0;
-    for &(start, end) in covered {
-        if end <= at || start >= whole.1 {
-            continue;
-        }
-        if start > at {
-            left.push((at, start.min(whole.1)));
-        }
-        at = at.max(end);
-    }
-    if at < whole.1 {
-        left.push((at, whole.1));
-    }
-    left
 }

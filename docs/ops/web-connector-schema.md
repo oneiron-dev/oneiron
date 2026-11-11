@@ -27,9 +27,32 @@ Unknown web tools are unavailable, just as at the served call door. Non-web
 schema discovery is unchanged. The existing SDK, facade and MCP operation reaches
 this native reader; no new transport shape or verb is required.
 
-This is the schema-discovery slice of physical FIX11606 (row text FIX11598).
-Built-in `web` discovery in `connector.list` and catalog-name reservation remain
-open. No fake catalog key, creation date, credential or MCP manifest is created.
-There is no new registration refusal, default, policy, cap, migration or
-compatibility reader. This document describes source behavior, not runtime or
+## Connector discovery
+
+`connector.list` includes the first-party `web` interface alongside every
+matching live catalogued connector. Each entry has a `source` discriminator:
+
+- `catalog`: the existing catalog fields, including its actual `call_class`
+  and `registered_at`.
+- `builtin`: `name`, `connector`, `summary` and the supported `search`/`fetch`
+  interface names. There is no fabricated registration time, call class,
+  catalog key, credential or MCP manifest.
+
+Both names and summaries use the catalog's existing query matching. Catalog
+entries keep their original order. The built-in entry is inserted before the
+first catalog name at or after `web`; it does not replace or hide a catalogued
+connector with the same name. A blank query includes both kinds. Tool names
+are descriptive, not a promise that a provider key, grant, budget or service
+is available. Calls and schema reads still run their existing native checks.
+`connector.status` remains the history lens for catalogued keys, whose nested
+entry now carries `source: "catalog"`.
+
+The schema and discovery slices of physical FIX11606 (row text FIX11598) are
+implemented here. A catalogued MCP connector named `web` remains stored and
+listed, but the existing served call/schema name intercept still selects the
+first-party route. Unshadowed selection of that catalogued connector remains
+open; registration is not newly refused and no existing key is renamed.
+There is no new default, policy, cap, migration or compatibility reader.
+Deploy matching engine/server and regenerated SDK clients for the tagged
+response shape. This document describes source behavior, not runtime or
 whole-connector completion proof.

@@ -29,8 +29,9 @@ use serde::{Deserialize, Serialize};
 use super::ask_effect::AskEffect;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOptionId, TaskAskQuestion,
-    TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskTarget, TaskAskWord,
+    TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption, TaskAskOptionId,
+    TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
+    TaskAskTarget, TaskAskWord,
 };
 use super::training_offer_ask::{canonical_id, single_str};
 use super::{ConsultPayloadRef, TaskAssignee};
@@ -167,7 +168,7 @@ fn pair_ask_spec(pair: &OwnerPair) -> MemoryResult<TaskAskSpec> {
     for choice in OwnerPairChoice::ALL {
         options.insert(
             TaskAskOptionId::new(choice.option())?,
-            choice.label().to_owned(),
+            TaskAskOption::new(choice.label()),
         );
     }
     what.options = options;

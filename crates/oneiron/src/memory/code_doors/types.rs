@@ -88,6 +88,22 @@ pub struct CodeProposalSubmitRequest {
     /// green (FIX 8268).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catalog: Option<LensCatalog>,
+    /// The failed proposal this change replaces (FIX 4364), if any: a
+    /// stored proposal of the same repository that a terminal queue batch
+    /// quarantined or rolled back, or whose standalone attempt failed. The
+    /// new proposal is fresh, reviewed and queued anew; a failed proposal
+    /// has one replacement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<EntityId>,
+}
+
+/// A fresh review of an approved ordinary file proposal. The nested change
+/// supplies current attribution and policy; its content is filled by the engine.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeProposalRereviewRequest {
+    pub original: EntityId,
+    pub change: CodeProposalSubmitRequest,
 }
 
 /// The staged proposal, as the engine stored it.
@@ -96,6 +112,10 @@ pub struct CodeProposalSubmitted {
     /// The engine-minted proposal id, the `repo.proposed_diff` claim. Not a
     /// queue entry or a receipt.
     pub proposal: EntityId,
+    /// Its `repo.proposal_admission` receipt (FIX 4338): the stored fact
+    /// that the engine admitted this candidate into custody. It is not a
+    /// queue admission and not a landing.
+    pub admission_receipt: EntityId,
     pub repo: EntityId,
     /// The caller, stamped by the engine.
     pub actor: EntityId,

@@ -1,0 +1,27 @@
+{
+  "name": "vault.artifacts.discard",
+  "description": "Drops one waiting artifact proposal, once.",
+  "refs": [
+    "/artifact_ref"
+  ],
+  "input": "crate::blob_artifact::ProposalSettleRequest",
+  "output": "crate::blob_artifact::DiscardedProposal",
+  "call": "memory.artifacts_discard(&input)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Discards one waiting proposal, once, with its receipt.\n",
+      "ts": "/** Discards one waiting proposal, once, with its receipt. */",
+      "py": "Discards one waiting proposal, once, with its receipt."
+    }
+  }
+}

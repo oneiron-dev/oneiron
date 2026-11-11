@@ -50,6 +50,29 @@ impl Drop for PlanCharge {
     }
 }
 
+/// The final overlay state a close visitor reads after its leases drain.
+/// This is a retained-state hold, not a new read or segment lease.
+pub(super) struct ClosedStateHold {
+    overlay: Arc<SessionOverlay>,
+    state: Option<Arc<OverlayState>>,
+}
+
+impl ClosedStateHold {
+    pub(super) fn state(&self) -> &OverlayState {
+        self.state
+            .as_deref()
+            .expect("a live close hold has its state")
+    }
+}
+
+impl Drop for ClosedStateHold {
+    fn drop(&mut self) {
+        if let Some(state) = self.state.take() {
+            self.overlay.release_snapshot_state(state);
+        }
+    }
+}
+
 impl Lease {
     /// Keeps this lease's exact snapshot and its retained-memory accounting.
     pub(in crate::session_overlay) fn retain(&self) -> Result<Self> {
@@ -116,6 +139,20 @@ impl Lease {
 }
 
 impl SessionOverlay {
+    /// Keeps the final state counted while a close visitor reads it, without
+    /// extending the lease count the close has already drained.
+    pub(super) fn hold_closed_state(self: &Arc<Self>, state: Arc<OverlayState>) -> ClosedStateHold {
+        self.held
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .states
+            .push(Arc::clone(&state));
+        ClosedStateHold {
+            overlay: Arc::clone(self),
+            state: Some(state),
+        }
+    }
+
     /// Lets go of the state a dropped snapshot read. A state a publish
     /// replaced leaves what the overlay retains once no live snapshot reads
     /// it, and the charge moves down to what is left; the published state

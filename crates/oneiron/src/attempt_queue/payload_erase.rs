@@ -307,6 +307,9 @@ pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
     let asker_intents =
         crate::agent_dispatch::AgentDispatcher::asker_erased_intent_keys_in(store, txn)?;
     let mut rewrites = Vec::new();
+    // The agent-run tries whose payload text this pass takes: their run
+    // TASKs froze a copy (REVIEW-6615).
+    let mut run_rows = Vec::new();
     let mut byoa = ByoaRows::default();
     let mut reply_jobs = Vec::new();
     let mut reply_body_events = BTreeSet::new();
@@ -373,6 +376,9 @@ pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
                 changed |= project_brief::erase_project_principal(&mut record)?;
             }
             if changed {
+                if record.kind == DREAMER_RUNNER_ATTEMPT_KIND {
+                    run_rows.push((record.id, record.retry_of));
+                }
                 rewrites.push((raw.into_owned(), record));
             }
         }
@@ -410,6 +416,10 @@ pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
         }
     }
     flush_rewrites_in_txn(store, txn, rewrites)?;
+    // Each rewritten agent run's TASK goes with the text its frozen payload
+    // copied, its windows' history with the erase's (REVIEW-6615); after the
+    // flush, so its tear meets the rewritten rows.
+    crate::agent_dispatch::erase_agent_run_tasks_in_txn(write, txn, &run_rows)?;
     Ok(ErasedByoaPayloads(owned))
 }
 

@@ -69,7 +69,7 @@ pub use self::diagnostics::{
     BundleHomeWarning, CapsuleRead, EnsureDiagnostics, EnsureView, ExecutorObservation, LatestRead,
     OwnerWorkDiagnostics, PublicationDiagnostics, PublishAttemptView, PublishObserved,
     PublishReach, ReassertDiagnostics, ReassertKey, ReassertKeyState, ReassertUnread,
-    RelayObservation,
+    RelayObservation, UnmergedUploadView,
 };
 pub use self::pickup::OwnerWorkDrain;
 pub use self::relay_start::DeviceSyncStart;

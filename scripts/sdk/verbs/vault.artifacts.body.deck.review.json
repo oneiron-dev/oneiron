@@ -1,0 +1,33 @@
+{
+  "name": "vault.artifacts.body.deck.review",
+  "description": "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head and fork frontier a merge names.",
+  "refs": [
+    "/artifact_ref",
+    "/fork_ref"
+  ],
+  "input": "crate::office_body::OfficeBodyForkRequest",
+  "output": "crate::office_body::DeckReviewView",
+  "call": "memory.artifacts_body_deck_review(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref"
+    ]
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// A deck fork's merge preflight against the live head.\n",
+      "ts": "/** A deck fork's merge preflight against the live head. */",
+      "py": "A deck fork's merge preflight against the live head."
+    }
+  }
+}

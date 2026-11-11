@@ -207,13 +207,40 @@ fn mcp_lifecycle_observation(parts: &Parts, body: &[u8]) -> bool {
     if call.jsonrpc != "2.0" || call.method != "tools/call" {
         return false;
     }
-    crate::mcp::try_registered_surface(mode)
+    let Some(tool) = crate::mcp::try_registered_surface(mode)
         .ok()
         .and_then(|surface| surface.resolve(call.params.name))
-        .is_some_and(|tool| {
-            matches!(tool, crate::mcp::McpEndpointTool::Verb(_))
-                && crate::api::is_slim_lifecycle_observation(tool.name())
-        })
+    else {
+        return false;
+    };
+    match tool {
+        crate::mcp::McpEndpointTool::Verb(_) => {
+            crate::api::is_slim_lifecycle_observation(tool.name())
+        }
+        crate::mcp::McpEndpointTool::InvokeAction => {
+            #[derive(serde::Deserialize)]
+            struct ActionCall<'a> {
+                #[serde(borrow)]
+                params: ActionParams<'a>,
+            }
+            #[derive(serde::Deserialize)]
+            struct ActionParams<'a> {
+                #[serde(borrow)]
+                arguments: ActionArguments<'a>,
+            }
+            #[derive(serde::Deserialize)]
+            struct ActionArguments<'a> {
+                #[serde(borrow)]
+                verb: &'a str,
+            }
+            serde_json::from_slice::<ActionCall<'_>>(body)
+                .ok()
+                .is_some_and(|action| {
+                    crate::api::is_slim_lifecycle_observation(action.params.arguments.verb)
+                })
+        }
+        _ => false,
+    }
 }
 
 /// Verifies `assertion` over the request `parts` head with its body of

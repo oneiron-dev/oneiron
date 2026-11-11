@@ -258,8 +258,10 @@
     };
     if (helpers.can && helpers.summarize && helpers.spawn && helpers.wait) bare.readAll = makeReaderForks(helpers);
     if (helpers.can) bare.diff = makeDiff(helpers);
+    // A wrong-root name answers WRONG_ROOT only where no served namespace or
+    // bare row owns it: a catalog row of that name stays callable (FIX 7142).
     for (const root of ["tools", "connectors", "mcp", "memory", "board", "shared", "home", "sdk"])
-      if (!roots.has(root)) bare[root] = refusal(root);
+      if (!roots.has(root) && !(root in bare)) bare[root] = refusal(root);
     for (const root of ["connectors", "mcp"]) sdk.self[root] ??= refusal(`self.${root}`);
     roots.add("self");
     // A bare verb that is also a root (`reveal` and `reveal.wait`) is one

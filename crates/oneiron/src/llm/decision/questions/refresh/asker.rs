@@ -12,7 +12,7 @@ use crate::{EntityId, Result, Vault, WriteActor};
 /// writes as [`super::principal_actor`] reads its principal, as it did.
 pub(crate) fn standing_asker(vault: &Vault, record: &QuestionRecord) -> Result<WriteActor> {
     match record.asker_class {
-        Some(class) => Ok(WriteActor::new(record.principal, class.into())),
+        Some(class) => Ok(WriteActor::new(record.principal, class)),
         None => super::principal_actor(vault, record.principal),
     }
 }
@@ -23,7 +23,7 @@ pub(crate) fn standing_asker(vault: &Vault, record: &QuestionRecord) -> Result<W
 fn standing_runner(record: &QuestionRecord, runner: WriteActor) -> WriteActor {
     match record.asker_class {
         Some(class) if runner.entity_ref() == record.principal => {
-            WriteActor::new(record.principal, class.into())
+            WriteActor::new(record.principal, class)
         }
         _ => runner,
     }

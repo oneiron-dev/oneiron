@@ -29,6 +29,14 @@ pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["companion.onboarding.answe
 
 const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
 
+/// Set-cardinality base predicates retain distinct answers on the same key.
+const SET_CARDINALITY_PREDICATES: [&str; 4] = [
+    "preference.food",
+    "boundary.topic",
+    "goal.financial",
+    "commitment.promise",
+];
+
 /// One claim to commit. `approval` is deliberately NOT settable by callers
 /// (pin 2); the facade computes the request and the gate decides.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -241,8 +249,8 @@ pub struct MemoryReceipt {
     pub receipt_ref: String,
     /// The receipt family kind (`gate`, `hook`, `outbound`, ...).
     pub kind: String,
-    /// Gate outcome: `allow`/`pending`/`deny`; the receipt's own outcome
-    /// for another kind.
+    /// The recorded outcome: `allow`/`pending`/`deny` for policy decisions,
+    /// `imported` for code captures, or another receipt's own outcome.
     pub outcome: String,
     /// Unix seconds.
     pub created_at: u64,
@@ -255,14 +263,16 @@ pub struct MemoryReceipt {
     pub actor_ref: Option<String>,
     /// Gate content kind (e.g. `claim`); empty for a kind that names none.
     pub content_kind: String,
-    /// 32-hex id of the claim the decision covers, if any.
+    /// 32-hex id of the decision's bound target, if any. A code snapshot
+    /// capture binds its CODE_ARTIFACT; ordinary claim decisions bind CLAIM.
     pub claim_ref: Option<String>,
-    /// That claim as a typed record ref (OF-063), built from its id with no
-    /// read, so labelled with its kind and id.
+    /// That target as a typed record ref (OF-063), built from its id with no
+    /// read, so labelled with its actual kind and id.
     #[serde(default)]
     pub claim: Option<crate::lens::RecordRef>,
-    /// A family receipt's own fields (a hook run's hook, CODE id, body hash
-    /// and run key), with its trigger, job and principal refs. Empty on a
+    /// A receipt's own fields (a hook run's hook, CODE id, body hash
+    /// and run key), with its trigger, job and principal refs. A code capture
+    /// names its repo artifact and retained snapshot hash; otherwise empty on a
     /// gate-ledger row.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, String>,
@@ -279,6 +289,8 @@ pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {
 
 mod commit;
 mod lifecycle;
+
+pub(in crate::memory) use self::commit::{BatchClaim, BatchRefusal};
 mod prompted;
 mod settle;
 

@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::wake::{PrepEvent, PrepPolicy, prep_is_eligible};
 use crate::calendar::claims::is_calendar_claim_predicate;
-use crate::context_pack::ContextEntity;
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
+use crate::context_pack::{ComposedFieldProducers, ContextEntity};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ppr::MAX_PPR_SEEDS;
@@ -14,6 +15,7 @@ use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_FACET, ENTITY_TYPE_MESSAGE,
     ENTITY_TYPE_NOTE, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
+use crate::store::retrieval_values::CandidateGate;
 use crate::vault::Vault;
 
 /// Default ceiling on the assembled pack. A ceiling, not a target.
@@ -150,11 +152,17 @@ pub struct PrepBuildRequest {
     pub policy: PrepPolicy,
 }
 
-/// Assembles one prep pack from live vault state at `fired_at`.
+/// Assembles the vault owners' prep pack from live vault state at `fired_at`:
+/// the card every vault owner is shown (FIX 22323). It is assembled on the
+/// first owner's own lane and keeps only rows every other owner's lane
+/// retrieves too, so a row a source audience or a private thread withholds
+/// from any one owner never reaches the card. Each owner's lane is the live
+/// Owner census's ([`ScopedReadActorKey::vault_owner_by_census`]): a live
+/// co-Owner with no actor binding reads as his own Owner lane.
 ///
-/// `Ok(None)` means deliberately blank — the EVENT stopped being eligible, or
-/// scoping and ranking left nothing worth saying. It is never an error and never
-/// an empty pack; the caller renders nothing.
+/// `Ok(None)` means deliberately blank — the EVENT stopped being eligible, the
+/// vault has no owner, or scoping and ranking left nothing worth saying. It is
+/// never an error and never an empty pack; the caller renders nothing.
 ///
 /// The order below is load-bearing:
 ///
@@ -174,13 +182,47 @@ pub fn build_prep_pack(vault: &Vault, request: &PrepBuildRequest) -> Result<Opti
     if !prep_is_eligible(&request.event, request.policy) {
         return Ok(None);
     }
-    let candidates = prep_context_candidates(vault, &request.event, request.fired_at)?;
-    pack_from_candidates(vault, request, &candidates)
+    let owners = {
+        let txn = vault.store.env.read_txn()?;
+        crate::policy_model::owners_in_txn(vault, &txn)?
+    };
+    let mut lanes = owners.into_iter().map(|owner| {
+        vault
+            .scoped_read(ScopedReadActorKey::vault_owner_by_census(owner))
+            .with_claim_status(ClaimReadStatus::Surfaceable)
+    });
+    let Some(lane) = lanes.next() else {
+        return Ok(None);
+    };
+    let others: Vec<ScopedRead<'_>> = lanes.collect();
+    // The card names its meeting, so every owner reads the EVENT itself: one
+    // whose words came from a member's own mail may be withheld from some.
+    {
+        let txn = vault.store.env.read_txn()?;
+        for owner_lane in std::iter::once(&lane).chain(&others) {
+            let read = owner_lane
+                .get_entities_parts_in_txn(&txn, std::slice::from_ref(&request.event.event_ref))?;
+            if read.into_iter().next().flatten().is_none() {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(build_prep_pack_read_by_all(&lane, &others, request)?.value)
 }
 
 /// The same assembly, with retrieval and citations narrowed by the caller's lane.
 pub(crate) fn build_prep_pack_scoped(
-    read: &crate::claim::ScopedRead<'_>,
+    read: &ScopedRead<'_>,
+    request: &PrepBuildRequest,
+) -> Result<crate::claim::ScopedReadResult<Option<PrepPack>>> {
+    build_prep_pack_read_by_all(read, &[], request)
+}
+
+/// [`build_prep_pack_scoped`] on `read`, keeping only the candidates every
+/// lane in `also` retrieves too ([`retrieved_by_every_lane`]).
+fn build_prep_pack_read_by_all(
+    read: &ScopedRead<'_>,
+    also: &[ScopedRead<'_>],
     request: &PrepBuildRequest,
 ) -> Result<crate::claim::ScopedReadResult<Option<PrepPack>>> {
     if !prep_is_eligible(&request.event, request.policy) {
@@ -189,7 +231,11 @@ pub(crate) fn build_prep_pack_scoped(
             receipt: read.read_receipt(None, 0)?,
         });
     }
-    let (filter, policy) = read.recall_plan()?;
+    let crate::claim::SearchPlan {
+        filter,
+        candidates: plan_candidates,
+        policy,
+    } = read.recall_plan()?;
     // Every candidate goes to the actor gate, under one authority per
     // snapshot (FIX 11648).
     let gate = read.recall_candidate_gate(&policy, &filter);
@@ -197,17 +243,56 @@ pub(crate) fn build_prep_pack_scoped(
                     _: &heed::RoTxn<'_>,
                     _: &EntityId|
      -> Result<bool> { Ok(true) };
+    // A TURN's words are its messages': each one it joins is named beside it,
+    // so the erase of any of them reaches the card that copied it.
+    let mut producers = ComposedFieldProducers::default();
     let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
-        .authority_filter(filter.clone())
+        .authority_filter(plan_candidates)
         .filter_candidates(&admitted)
         .gate_candidates(&gate)
-        .run_scoped_with_run_status(read)?;
+        .run_scoped_listing_producers(read, &mut producers)?;
     let mut candidates = scoped.value.results;
     candidates.extend(scoped.value.neighbors);
+    if !also.is_empty() {
+        candidates = retrieved_by_every_lane(read, also, candidates)?;
+    }
     Ok(crate::claim::ScopedReadResult {
-        value: pack_from_candidates(read.vault(), request, &candidates)?,
+        value: pack_from_candidates(read.vault(), request, &candidates, &producers)?,
         receipt: scoped.receipt,
     })
+}
+
+/// The `candidates` (search results and edge neighbors alike) every lane in
+/// `also` retrieves, each judged by that lane's own recall gate in one
+/// snapshot. The gate takes a TURN only with every MESSAGE in it, so a
+/// TURN's composed text holds no message another lane is withheld.
+fn retrieved_by_every_lane(
+    read: &ScopedRead<'_>,
+    also: &[ScopedRead<'_>],
+    candidates: Vec<ContextEntity>,
+) -> Result<Vec<ContextEntity>> {
+    let plans = also
+        .iter()
+        .map(ScopedRead::recall_plan)
+        .collect::<Result<Vec<_>>>()?;
+    let gates: Vec<_> = also
+        .iter()
+        .zip(&plans)
+        .map(|(lane, plan)| lane.recall_candidate_gate(&plan.policy, &plan.filter))
+        .collect();
+    let txn = read.vault().store.env.read_txn()?;
+    let store = read.store_read();
+    let filters: Vec<_> = gates.iter().map(|gate| gate.in_txn(&txn)).collect();
+    let mut kept = Vec::with_capacity(candidates.len());
+    'candidates: for candidate in candidates {
+        for filter in &filters {
+            if !filter(&store, &txn, &candidate.id)? {
+                continue 'candidates;
+            }
+        }
+        kept.push(candidate);
+    }
+    Ok(kept)
 }
 
 /// Every vault row id a pack's rows cite, the EVENT itself excluded: the
@@ -233,8 +318,9 @@ fn pack_from_candidates(
     vault: &Vault,
     request: &PrepBuildRequest,
     candidates: &[ContextEntity],
+    producers: &ComposedFieldProducers,
 ) -> Result<Option<PrepPack>> {
-    let items = prep_items_from_candidates(vault, &request.event, candidates)?;
+    let items = prep_items_from_candidates(vault, &request.event, candidates, producers)?;
     Ok(assemble_prep_pack(
         &request.event,
         request.fired_at,
@@ -243,24 +329,13 @@ fn pack_from_candidates(
     ))
 }
 
-/// Runs the scoped live assembly around one EVENT.
+/// The live assembly around one EVENT, before a lane scopes it.
 ///
 /// Seeded on the EVENT and its attendees, walked over the ordinary retrieval
 /// graph, narrowed to the entity types the three sections read, and — the part
 /// that makes this render-time rather than replayed — bounded to rows the vault
 /// had already learned at `fired_at`. Nothing here is cached: two assemblies at
 /// two instants legitimately answer differently.
-fn prep_context_candidates(
-    vault: &Vault,
-    event: &PrepEvent,
-    fired_at: u64,
-) -> Result<Vec<ContextEntity>> {
-    let pack = prep_context_builder(vault, event, fired_at).run()?;
-    let mut candidates = pack.results;
-    candidates.extend(pack.neighbors);
-    Ok(candidates)
-}
-
 fn prep_context_builder<'a>(
     vault: &'a Vault,
     event: &PrepEvent,
@@ -292,6 +367,7 @@ fn prep_items_from_candidates(
     vault: &Vault,
     event: &PrepEvent,
     candidates: &[ContextEntity],
+    producers: &ComposedFieldProducers,
 ) -> Result<Vec<(EntityId, PrepItem)>> {
     let mut seen: HashSet<EntityId> = HashSet::with_capacity(candidates.len());
     let mut items = Vec::with_capacity(candidates.len());
@@ -340,7 +416,10 @@ fn prep_items_from_candidates(
             PrepItem {
                 kind,
                 text,
-                source_refs: vec![candidate.id.to_hex()],
+                source_refs: std::iter::once(&candidate.id)
+                    .chain(producers.turn_text(&candidate.id).unwrap_or_default())
+                    .map(EntityId::to_hex)
+                    .collect(),
                 observed_at: header.learned_at,
             },
         ));

@@ -1,0 +1,16 @@
+{
+  "name": "vault.consent.bypass_grant_warning",
+  "description": "The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing.",
+  "input": "crate::consent::bypass_lifecycle::BypassGrantWarningRequest",
+  "output": "crate::consent::bypass_lifecycle::BypassGrantWarningView",
+  "call": "crate::consent::bypass_lifecycle::bypass_grant_warning(memory.vault(), &memory.embedded_owner(\"vault.consent.bypass_grant_warning\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

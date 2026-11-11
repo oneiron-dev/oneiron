@@ -31,7 +31,8 @@ use super::super::types::SecretCustodyStatus;
 use super::permits::{permit_for, permitted_keys};
 use super::{ActiveChange, CustodyPlan, Material};
 use crate::authority::{
-    ActSurface, AuthorityFold, CustodyChange, CustodyRecipientPermit, OwnerWorkBody,
+    ActSurface, AuthorityFold, CustodyChange, CustodyPermitSet, CustodyRecipientPermit,
+    OwnerWorkBody,
 };
 use crate::error::Result;
 use crate::world_keys::OwnerWorkStatus;
@@ -74,10 +75,15 @@ struct Due {
 }
 
 /// Whether `permits` name `permit`'s machine under the very key it has.
-fn names(permits: &[CustodyRecipientPermit], permit: &CustodyRecipientPermit) -> bool {
-    permits
-        .iter()
-        .any(|held| held.machine == permit.machine && held.encryption_key == permit.encryption_key)
+fn names<I>(permits: I, permit: &CustodyRecipientPermit) -> bool
+where
+    I: IntoIterator,
+    I::Item: std::borrow::Borrow<CustodyRecipientPermit>,
+{
+    permits.into_iter().any(|held| {
+        let held = std::borrow::Borrow::borrow(&held);
+        held.machine == permit.machine && held.encryption_key == permit.encryption_key
+    })
 }
 
 impl Vault {
@@ -184,7 +190,7 @@ impl Vault {
             .copied()
             .filter(|permit| permitted_keys(fold, std::slice::from_ref(permit)).is_some())
             .collect();
-        let pending: Vec<&[CustodyRecipientPermit]> = fold
+        let pending: Vec<&CustodyPermitSet> = fold
             .custody_heads(held.id)
             .into_iter()
             .filter(|(hash, _)| fold.owner_work_result(hash).is_none())
@@ -194,7 +200,7 @@ impl Vault {
                     generation,
                     recipients,
                     ..
-                } if *generation == held.generation => Some(recipients.as_slice()),
+                } if *generation == held.generation => Some(recipients),
                 _ => None,
             })
             .collect();
@@ -202,7 +208,7 @@ impl Vault {
             .iter()
             .filter_map(|machine| permit_for(fold, *machine))
             .filter(|permit| {
-                !names(&standing, permit) && !pending.iter().any(|named| names(named, permit))
+                !names(&standing, permit) && !pending.iter().any(|named| names(*named, permit))
             })
             .collect();
         let Some(actor) = added

@@ -41,7 +41,9 @@ mod coach;
 mod dependencies;
 // A saved period's loop-decision rows: carrier, erase index, recheck (OF-499 A2).
 mod loop_decisions;
-pub(crate) use loop_decisions::scrub_saved_weave_loop_reasons_in_txn;
+pub(crate) use loop_decisions::{
+    saved_weave_loop_reason_decisions_in_txn, scrub_saved_weave_loop_reasons_in_txn,
+};
 // A hard delete inside a saved period: rows rewritten, not the period (FIX 7693).
 mod rerender;
 mod rewrite;

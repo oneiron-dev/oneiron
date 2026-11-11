@@ -138,7 +138,7 @@ fn memory_row(entity: &ContextEntity, source: MemorySource) -> MemoryRow {
                 entity
                     .fields
                     .as_ref()
-                    .and_then(|fields| fields.get("world"))
+                    .and_then(|fields| fields.get("worldId"))
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned)
             })

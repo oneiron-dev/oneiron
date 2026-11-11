@@ -1,0 +1,16 @@
+{
+  "name": "vault.coach.training_offers.pilots.prepare",
+  "description": "Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress.",
+  "input": "crate::skill_optimize::offer_pilot::OfferPilotPrepare",
+  "output": "crate::skill_optimize::offer_pilot::OfferPilotPrepared",
+  "call": "crate::skill_optimize::offer_pilot::prepare_pilot(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.pilots.prepare\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

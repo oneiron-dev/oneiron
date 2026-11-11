@@ -147,8 +147,7 @@ impl Anchor {
         if let (Some(bridge), Some(digest)) = (&bridge, &digest) {
             bridge.serve(vault.clone(), digest.clone())?;
         }
-        std::thread::Builder::new()
-            .name("vm-anchor-exchange".into())
+        crate::engine_thread("vm-anchor-exchange".into())
             .spawn(move || receive(channel, &vault, digest, pipe, &lost))?;
         Ok(Anchored { _bridge: bridge })
     }
@@ -238,8 +237,7 @@ impl Bridge {
     /// listener is shut.
     fn serve(&self, vault: String, digest: String) -> anyhow::Result<()> {
         let listener = self.0.try_clone()?;
-        std::thread::Builder::new()
-            .name("vm-anchor-bridge".into())
+        crate::engine_thread("vm-anchor-bridge".into())
             .spawn(move || accept(&listener, &vault, &digest))?;
         Ok(())
     }
@@ -259,13 +257,11 @@ fn accept(listener: &UnixListener, vault: &str, digest: &str) {
         match listener.accept() {
             Ok((engine, _)) => {
                 let (vault, digest) = (vault.to_owned(), digest.to_owned());
-                let started = std::thread::Builder::new()
-                    .name("vm-anchor-stream".into())
-                    .spawn(move || {
-                        if let Err(error) = carry(engine, &vault, digest) {
-                            eprintln!("oneiron-vm-init: a custody anchor stream ended: {error:#}");
-                        }
-                    });
+                let started = crate::engine_thread("vm-anchor-stream".into()).spawn(move || {
+                    if let Err(error) = carry(engine, &vault, digest) {
+                        eprintln!("oneiron-vm-init: a custody anchor stream ended: {error:#}");
+                    }
+                });
                 if started.is_err() {
                     eprintln!("oneiron-vm-init: a custody anchor stream found no thread");
                 }
@@ -306,13 +302,11 @@ fn carry(mut engine: UnixStream, vault: &str, digest: String) -> anyhow::Result<
         }
     }
     let (mut from_engine, mut to_host) = (engine.try_clone()?, host.try_clone()?);
-    let outbound = std::thread::Builder::new()
-        .name("vm-anchor-out".into())
-        .spawn(move || {
-            let _ = std::io::copy(&mut from_engine, &mut to_host);
-            // SAFETY: shutdown takes no pointers, on a socket `to_host` holds.
-            unsafe { libc::shutdown(to_host.as_raw_fd(), libc::SHUT_WR) };
-        })?;
+    let outbound = crate::engine_thread("vm-anchor-out".into()).spawn(move || {
+        let _ = std::io::copy(&mut from_engine, &mut to_host);
+        // SAFETY: shutdown takes no pointers, on a socket `to_host` holds.
+        unsafe { libc::shutdown(to_host.as_raw_fd(), libc::SHUT_WR) };
+    })?;
     let _ = std::io::copy(&mut host, &mut engine);
     // The origin is done: the engine's side ends both ways, which ends the
     // other direction too.

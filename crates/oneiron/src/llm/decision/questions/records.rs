@@ -6,7 +6,7 @@ use super::super::{
     HostRuleRef, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::learning_setting::SettingSpec;
-use crate::{EntityId, Result, Vault};
+use crate::{EdgeActorClass, EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 
 pub use super::criteria::{MAX_CRITERION_BYTES, QuestionCriteria};
@@ -225,7 +225,7 @@ pub struct QuestionRecord {
     /// (FIX 1588): every create and edit stores it from the writer, never
     /// from the principal's entity type. None on an internal one-off record,
     /// which keeps no authenticated asker.
-    pub asker_class: Option<QuestionAskerClass>,
+    pub asker_class: Option<EdgeActorClass>,
     /// The read lane the asker saved this version under, frozen (OF-506, FIX
     /// 1857): the engine mints it at each create and edit from the asker's
     /// own live lane, never from the definition, and every later read of the
@@ -233,35 +233,6 @@ pub struct QuestionRecord {
     /// internal one-off record, and a question no caller's lane saved, keeps
     /// the principal's own.
     pub read_lane: crate::claim::FrozenReadLane,
-}
-
-/// An asker's authenticated actor class, as a question version keeps it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum QuestionAskerClass {
-    Human,
-    Agent,
-    System,
-}
-
-impl From<crate::EdgeActorClass> for QuestionAskerClass {
-    fn from(class: crate::EdgeActorClass) -> Self {
-        match class {
-            crate::EdgeActorClass::Human => Self::Human,
-            crate::EdgeActorClass::Agent => Self::Agent,
-            crate::EdgeActorClass::System => Self::System,
-        }
-    }
-}
-
-impl From<QuestionAskerClass> for crate::EdgeActorClass {
-    fn from(class: QuestionAskerClass) -> Self {
-        match class {
-            QuestionAskerClass::Human => Self::Human,
-            QuestionAskerClass::Agent => Self::Agent,
-            QuestionAskerClass::System => Self::System,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,7 +309,7 @@ pub(super) struct QuestionHead {
 }
 
 pub use crate::model_decision::questions::{
-    CalibrationPair, OmittedNeighbor, OutcomeBinding, OutcomeLabel, OutcomeSource,
+    CalibrationPair, DecisionRoute, OmittedNeighbor, OutcomeBinding, OutcomeLabel, OutcomeSource,
     OutcomeWindowClose, QuestionActivation, QuestionAudience, QuestionMedia, QuestionScheduleHead,
-    RefreshPolicy, SourceConflict, WindowOutcome,
+    RefreshPolicy, RoutingPolicy, SourceConflict, WindowOutcome,
 };

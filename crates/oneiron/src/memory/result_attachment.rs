@@ -21,6 +21,8 @@ use crate::store::result_manifest::CodeRunOutputPreview;
 use crate::store::result_manifest::CodeRunRawOutput;
 use crate::store::result_manifest::ResultOccurrence;
 
+mod reference;
+
 /// The metadata key a MESSAGE's result attachment sits under. Only the
 /// executor door writes it.
 pub const MESSAGE_RESULT_METADATA_KEY: &str = "result";
@@ -138,6 +140,7 @@ impl MessageResultAttachment {
             lines: self.lines,
             complete: self.complete,
             input_rows: None,
+            producing_step_start: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: self.preview.clone(),

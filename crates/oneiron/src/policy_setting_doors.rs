@@ -17,6 +17,7 @@
 //! the same commit signs it as a `PolicySettingSet` every machine the owner
 //! admits folds and checks (FIX 4624), last and best effort: a record that
 //! cannot be signed leaves the setting and this index as before.
+pub(crate) mod tables;
 
 use serde::{Deserialize, Serialize};
 

@@ -1,0 +1,9 @@
+{
+  "name": "vault.agents.put",
+  "input": "crate::code_run::AgentPutInput",
+  "output": "crate::code_run::AgentPutOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "AgentsPut",
+  "grant_class": "author's slice (ARCH-0053:20)"
+}

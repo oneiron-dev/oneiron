@@ -17,12 +17,21 @@
 //!
 //! The owner-agent Grant enumeration every reader shares
 //! (`federation::agent_grants_for_store_in_txn`) reads it too, so a marked
-//! Grant re-put at its id gives no read or principal standing either.
+//! Grant re-put at its id gives no read or principal standing either. Beside
+//! an owner's signed mint, the marker is also what the consent registry's
+//! revoked views, the agent and GitPush revoke doors, the authority audit and
+//! a checkpoint restore's classes read for a withdrawal no counted entry
+//! names: an ended OAuth sign-in's grant with no live host to sign (FIX
+//! 22188, 22193). There, on a replica that never held the row, the row's
+//! permanent hard-delete marker its peer's erasure left stands in for it
+//! (`federation::agent_grant::withdrawal`).
 //!
 //! A membership change that deletes a Grant an owner's signed mint made also
 //! logs the host's signed withdrawal of it
 //! ([`crate::Vault::log_membership_grant_withdrawal_in_txn`], FIX 7135), so
-//! the authority audit pairs that mint with a revoke.
+//! the authority audit pairs that mint with a revoke. With no host issuer to
+//! sign it, the change's carrier-signed membership execution record names
+//! the Grant instead, pending until it counts (FIX 12335).
 
 use super::{AuthorityOp, HostSlipIssuer};
 use crate::entity_id::EntityId;
@@ -141,9 +150,11 @@ impl crate::Vault {
     /// (FIX 7135): the `SlipGrantRevoke` a guest revoke also logs, signed by
     /// `issuer` as the host that carried the change, never as an owner act.
     /// The authority audit lists it as that Grant's revoke beside its signed
-    /// mint, and every replica's fold withdraws any slip minted under it.
+    /// mint, links it to the same writer's actual membership `receipt`, and
+    /// every replica's fold withdraws any slip minted under it.
     /// An issuer that is no live host of this vault's roster signs nothing
-    /// and refuses nothing: `false`, and the change lands as before.
+    /// and refuses nothing: `false`, and the change lands with the Grant
+    /// named in its pending carrier-signed record (FIX 12335).
     ///
     /// # Errors
     /// A store, fold or clock failure, or an entry the fold did not count.
@@ -152,6 +163,7 @@ impl crate::Vault {
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         grant: EntityId,
+        receipt: &str,
     ) -> Result<bool> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         if super::slip_vault::require_host(&fold, issuer).is_err() {
@@ -160,7 +172,10 @@ impl crate::Vault {
         self.append_slip_op_in_txn(
             txn,
             issuer,
-            AuthorityOp::SlipGrantRevoke { grant_ref: grant },
+            AuthorityOp::SlipGrantRevoke {
+                grant_ref: grant,
+                membership_receipt: Some(receipt.to_owned()),
+            },
         )?;
         Ok(true)
     }

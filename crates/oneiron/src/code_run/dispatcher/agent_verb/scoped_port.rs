@@ -44,6 +44,7 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<SelfDispatchOutcome> {
         let refused = |code: &str| {
             answered(Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: code.to_owned(),
             }))
         };
@@ -84,7 +85,7 @@ impl HostSelfDispatcher<'_> {
         let (_, receipt_id, kept) = self.write_receipt(site)?;
         let stopped = match kept {
             KeptWrite::Ran(receipt) => {
-                return self.kept_write_answer(self.agent_verbs.as_deref(), *receipt, call);
+                return self.kept_write_answer(self.agent_verbs.as_deref(), *receipt, call, site);
             }
             KeptWrite::Fresh(stopped) => stopped,
         };

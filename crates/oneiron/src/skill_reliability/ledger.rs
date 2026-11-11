@@ -10,12 +10,18 @@ use crate::receipt::ReceiptRecord;
 use crate::side_table::{self, FixedSideKey, Raw, RawValue, SideKey, SideTable};
 use crate::skill::SkillRecord;
 
-use super::amended::{amended_receipt_shares_in_txn, amended_shares_in_txn};
+use super::amended::amended_shares_in_txn;
 use super::codec::{
     KEY_AT, KEY_SCHEMA_VERSION, KEY_WIN, decode_value, encode_value, invalid, map_entry, map_u64,
 };
 use super::posterior::{SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior, count_weight};
 use super::read::read_skill;
+
+mod sources;
+
+pub(crate) use sources::{
+    attributed_outcome_results_sourced, attributed_outcomes_weighted_sourced,
+};
 
 /// Durable per-(skill, receipt) attributed-outcome ledger. Key: id16(skill) + string(receipt).
 ///
@@ -633,47 +639,7 @@ pub(crate) fn attributed_outcomes_weighted(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<Vec<(String, AttributedOutcome)>> {
-    // An amended attempt is one record, a loss of its share, whatever the
-    // attempt lane recorded for it.
-    let amended = amended_receipt_shares_in_txn(vault, rtxn, skill)?;
-    let mut outcomes = Vec::new();
-    for (key, row) in OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
-        let outcome = OutcomeRef::Unknown(key);
-        if amended.contains_key(outcome.receipt()) || is_displaced(vault, rtxn, &outcome)? {
-            continue;
-        }
-        outcomes.push((outcome.into_receipt(), AttributedOutcome::whole(row.win)));
-    }
-    // Optimization's split is over receipts, across all executors. Pair
-    // measurements remain separate; this read only supplies the evidence basis.
-    for (key, row) in PAIRED_OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
-        if key.receipt.is_empty() {
-            return Err(Error::CorruptedIndex("skill reliability pair key"));
-        }
-        let outcome = OutcomeRef::Paired(key);
-        if amended.contains_key(outcome.receipt()) || is_displaced(vault, rtxn, &outcome)? {
-            continue;
-        }
-        outcomes.push((outcome.into_receipt(), AttributedOutcome::whole(row.win)));
-    }
-    for (receipt, share) in amended {
-        let outcome = AttributedOutcome {
-            win: false,
-            loss: share,
-        };
-        outcomes.push((receipt, outcome));
-    }
-    outcomes.sort_by(|a, b| a.0.cmp(&b.0));
-    // One receipt is one outcome for the split, even when several executors
-    // invoked a callable under it; a loss outranks a win, as in the ledger.
-    outcomes.dedup_by(|next, kept| {
-        next.0 == kept.0 && {
-            kept.1.win &= next.1.win;
-            kept.1.loss = kept.1.loss.max(next.1.loss);
-            true
-        }
-    });
-    Ok(outcomes)
+    Ok(sources::attributed_outcomes_weighted_sourced(vault, rtxn, skill)?.0)
 }
 
 pub(super) fn tally_outcomes(

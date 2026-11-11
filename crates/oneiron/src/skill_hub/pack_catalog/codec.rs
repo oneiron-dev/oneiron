@@ -40,6 +40,16 @@ pub(super) fn encode(source: &PackSource) -> Result<Vec<u8>> {
     .map_err(|_| invalid("source encoding failed"))
 }
 
+/// Whether [`decode`] reads `bytes` as a pack source, valid or not: its
+/// marker names this codec's format (FIX 22091).
+pub(crate) fn names_pack_source(bytes: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct Marker {
+        format: String,
+    }
+    rmp_serde::from_slice::<Marker>(bytes).is_ok_and(|marker| marker.format == FORMAT)
+}
+
 pub(crate) fn decode(bytes: &[u8]) -> Result<Option<PackSource>> {
     #[derive(Deserialize)]
     struct Marker {
@@ -81,18 +91,33 @@ pub(crate) fn validate_pack_source_put(
     bytes: &[u8],
 ) -> Result<()> {
     let previous = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?;
-    if let Some(raw) = &previous {
-        let header = crate::batch::EntityMetadataHeader::parse(raw)
-            .ok_or(crate::error::Error::CorruptedIndex("pack source header"))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
-            && decode(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?.is_some()
-            && (entity_type != header.entity_type
-                || raw[crate::batch::ENTITY_METADATA_HEADER_LEN..] != *bytes)
-        {
-            return Err(invalid(
-                "content-addressed pack source cannot be overwritten",
-            ));
+    // The bytes the previous row holds, a carrier's read from its body file
+    // (FIX 22091): a source is compared by what it holds, never its manifest.
+    let previous = match &previous {
+        Some(raw) => {
+            let header = crate::batch::EntityMetadataHeader::parse(raw)
+                .ok_or(crate::error::Error::CorruptedIndex("pack source header"))?;
+            let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+            Some(
+                if header.entity_type == crate::registry::ENTITY_TYPE_ASSET {
+                    (
+                        true,
+                        crate::store::asset_carrier_body_in_txn(store, txn, id, body)?,
+                    )
+                } else {
+                    (false, std::borrow::Cow::Borrowed(body))
+                },
+            )
         }
+        None => None,
+    };
+    if let Some((true, old)) = &previous
+        && decode(old)?.is_some()
+        && (entity_type != crate::registry::ENTITY_TYPE_ASSET || **old != *bytes)
+    {
+        return Err(invalid(
+            "content-addressed pack source cannot be overwritten",
+        ));
     }
     if entity_type == crate::registry::ENTITY_TYPE_ASSET
         && let Some(source) = decode(bytes)?
@@ -100,8 +125,8 @@ pub(crate) fn validate_pack_source_put(
         if source_id(&source)? != *id {
             return Err(invalid("source entity ID disagrees with content hash"));
         }
-        if let Some(raw) = previous
-            && raw[crate::batch::ENTITY_METADATA_HEADER_LEN..] != *bytes
+        if let Some((_, old)) = &previous
+            && **old != *bytes
         {
             return Err(invalid("source hash collides with an existing asset"));
         }

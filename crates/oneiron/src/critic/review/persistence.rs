@@ -44,6 +44,7 @@ pub(super) fn persist_review(
     review_key: &[u8; 32],
     triage: &CritiqueTriage,
     artifacts: &[CritiqueArtifact],
+    receipts: &[DecisionReceipt],
 ) -> Result<ReviewResult> {
     let value = value_of(&(
         request.kind,
@@ -113,7 +114,7 @@ pub(super) fn persist_review(
             verdict_claim: id,
             triage: triage.clone(),
             artifacts: artifacts.clone(),
-            receipts: Vec::new(),
+            receipts: receipts.to_vec(),
             spawn_attempt: request.spawn_attempt,
         };
         let stored = StoredReview {
@@ -127,6 +128,7 @@ pub(super) fn persist_review(
             triage: triage.clone(),
             artifacts,
             spawn_attempt: request.spawn_attempt,
+            receipts: receipts.to_vec(),
         };
         RESULT.put(vault, txn, review_key, &stored)?;
         RESULT_ID.put(&vault.store, txn, &id, &RESULT.key_bytes(review_key))?;
@@ -243,6 +245,11 @@ struct StoredReview {
     /// for none stores none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     spawn_attempt: Option<EntityId>,
+    /// The typed-decision receipts of the review's first ask, given back on
+    /// every replay (FIX 9780). They name only the review's caller and its
+    /// target's evidence. A review stored before they were kept has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    receipts: Vec<DecisionReceipt>,
 }
 /// The [`RESULT`] key, shared by the cache and artifacts: the request identity plus the exact
 /// catalogue and question wording passed to this review.
@@ -316,7 +323,7 @@ pub(super) fn cached_review(
         verdict_claim: id,
         triage: stored.triage,
         artifacts: stored.artifacts,
-        receipts: Vec::new(),
+        receipts: stored.receipts,
         spawn_attempt: stored.spawn_attempt,
     }))
 }
@@ -603,7 +610,7 @@ fn stored_result(stored: StoredReview) -> Result<ReviewResult> {
         verdict_claim: EntityId::from_hex(&stored.verdict)?,
         triage: stored.triage,
         artifacts: stored.artifacts,
-        receipts: Vec::new(),
+        receipts: stored.receipts,
         spawn_attempt: stored.spawn_attempt,
     })
 }
@@ -652,7 +659,7 @@ pub(crate) fn trusted_review_in_txn(
         verdict_claim: *verdict,
         triage: stored.triage,
         artifacts: stored.artifacts,
-        receipts: Vec::new(),
+        receipts: stored.receipts,
         spawn_attempt: stored.spawn_attempt,
     }))
 }

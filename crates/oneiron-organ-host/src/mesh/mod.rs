@@ -155,9 +155,13 @@ pub(crate) enum FailureKind {
     Failed,
 }
 
-/// An organ's ask, sent back to the node whose handlers answer it.
+/// An organ's ask, sent back to the node whose handlers answer it. It
+/// carries the ask's real serving-call identity first, as `wire::Ask`
+/// orders it: `call` scopes `id`, which restarts at 1 per call.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PeerAsk {
+    pub call: u64,
+    pub id: u32,
     pub organ: String,
     pub verb: String,
     pub value: Value,

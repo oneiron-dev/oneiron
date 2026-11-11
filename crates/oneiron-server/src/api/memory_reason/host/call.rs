@@ -133,11 +133,13 @@ impl Backend {
                 response_format: ResponseFormat::Json { schema },
                 locality: seat.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
                     text: data.to_string(),
+                    signature: None,
                 }],
             }],
             tools: Vec::new(),
@@ -289,7 +291,7 @@ pub(super) fn text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()

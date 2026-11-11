@@ -119,21 +119,19 @@ pub(super) fn serve(
     board: Board,
     mut runtime: Runtime,
 ) -> std::io::Result<()> {
-    std::thread::Builder::new()
-        .name("vm-outbox-endpoint".into())
-        .spawn(move || {
-            for stream in listener.incoming() {
-                let answered = stream
-                    .and_then(|stream| answer(stream, uid, &gate, &registry, &board, &mut runtime));
-                if let Err(error) = answered {
-                    tracing::warn!(
-                        reason = "vm_outbox_endpoint_failed",
-                        %error,
-                        "an outbox companion lifecycle request went unanswered"
-                    );
-                }
+    crate::engine_thread("vm-outbox-endpoint".into()).spawn(move || {
+        for stream in listener.incoming() {
+            let answered = stream
+                .and_then(|stream| answer(stream, uid, &gate, &registry, &board, &mut runtime));
+            if let Err(error) = answered {
+                tracing::warn!(
+                    reason = "vm_outbox_endpoint_failed",
+                    %error,
+                    "an outbox companion lifecycle request went unanswered"
+                );
             }
-        })?;
+        }
+    })?;
     Ok(())
 }
 

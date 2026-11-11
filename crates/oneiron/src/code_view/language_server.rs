@@ -1,5 +1,5 @@
 //! One LSP process per view set. View restarts change registrations, not process ownership.
-use super::{CodeViewSet, ViewReceipt, relative};
+use super::{CodeViewSet, ViewReceipt, relative, view_path_on_disk};
 use crate::{
     EntityId,
     error::{Error, Result},
@@ -227,8 +227,9 @@ impl<L: LanguageServer> SharedLanguageServer<L> {
             json!({"event":{"added":[{"uri":file_uri(&root)?,"name":view.to_hex()}],"removed":[]}}),
         )?;
         for path in receipt.files.keys() {
-            if let Ok(text) = std::fs::read_to_string(root.join(path)) {
-                state.server.notify("textDocument/didOpen", json!({"textDocument":{"uri":file_uri(&root.join(path))?,"languageId": if path.ends_with(".rs") {"rust"} else {"plaintext"},"version":1,"text":text}}))?;
+            let file = view_path_on_disk(&root, path)?;
+            if let Ok(text) = std::fs::read_to_string(&file) {
+                state.server.notify("textDocument/didOpen", json!({"textDocument":{"uri":file_uri(&file)?,"languageId": if path.ends_with(".rs") {"rust"} else {"plaintext"},"version":1,"text":text}}))?;
             }
         }
         state.views.insert(view, Registration { receipt, root });
@@ -244,7 +245,7 @@ impl<L: LanguageServer> SharedLanguageServer<L> {
                 for path in registration.receipt.files.keys() {
                     state.server.notify(
                         "textDocument/didClose",
-                        json!({"textDocument":{"uri":file_uri(&registration.root.join(path))?}}),
+                        json!({"textDocument":{"uri":file_uri(&view_path_on_disk(&registration.root, path)?)?}}),
                     )?;
                 }
                 state.server.notify("workspace/didChangeWorkspaceFolders", json!({"event":{"added":[],"removed":[{"uri":file_uri(&registration.root)?,"name":view.to_hex()}]}}))?;
@@ -288,7 +289,7 @@ impl<L: LanguageServer> SharedLanguageServer<L> {
         if !registration.receipt.files.contains_key(path) {
             return Err(Error::InvalidClaimBody("file not visible in view"));
         }
-        let mut params = json!({"textDocument":{"uri":file_uri(&registration.root.join(path))?}});
+        let mut params = json!({"textDocument":{"uri":file_uri(&view_path_on_disk(&registration.root, path)?)?}});
         if let Some(position) = position {
             params["position"] = position;
         }

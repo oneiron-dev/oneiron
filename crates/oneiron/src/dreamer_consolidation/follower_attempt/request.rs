@@ -122,27 +122,32 @@ pub(super) fn ask_request(
     model: &ModelId,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     work: &AskWork,
     labels: &CallLabelMap,
 ) -> Result<LlmRequest> {
     let mut content: Vec<ContentPart> = work
         .prefix
         .iter()
-        .map(|text| ContentPart::Text { text: text.clone() })
+        .map(|text| ContentPart::Text {
+            text: text.clone(),
+            signature: None,
+        })
         .collect();
     let retained = content.len();
-    content.extend(
-        work.fresh
-            .iter()
-            .map(|text| ContentPart::Text { text: text.clone() }),
-    );
+    content.extend(work.fresh.iter().map(|text| ContentPart::Text {
+        text: text.clone(),
+        signature: None,
+    }));
     content.push(ContentPart::Text {
         text: work.question.clone(),
+        signature: None,
     });
     let mut request = request(
         model,
         locality,
         keyless,
+        paid,
         &work.pins,
         work.instruction.clone(),
         content,
@@ -165,18 +170,23 @@ pub(super) fn fold_request(
     model: &ModelId,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     instruction: &str,
     group: &[String],
     pins: &[Pin],
 ) -> LlmRequest {
     let content = group
         .iter()
-        .map(|text| ContentPart::Text { text: text.clone() })
+        .map(|text| ContentPart::Text {
+            text: text.clone(),
+            signature: None,
+        })
         .collect();
     request(
         model,
         locality,
         keyless,
+        paid,
         pins,
         instruction.to_owned(),
         content,
@@ -187,6 +197,7 @@ fn request(
     model: &ModelId,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     pins: &[Pin],
     system: String,
     content: Vec<ContentPart>,
@@ -215,12 +226,16 @@ fn request(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![
             LlmMessage {
                 role: LlmMessageRole::System,
-                content: vec![ContentPart::Text { text: system }],
+                content: vec![ContentPart::Text {
+                    text: system,
+                    signature: None,
+                }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,

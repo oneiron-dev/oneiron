@@ -495,7 +495,7 @@ fn record_in_txn(
             };
             card.moves_taken.push(receipt.clone());
             card.updated_at = receipt.at;
-            CARDS.put(&vault.store, txn, card_key, &card)?;
+            super::receipt_index::put_card_in_txn(&vault.store, txn, card_key, &card)?;
             // A touched card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(vault, txn);
             receipt

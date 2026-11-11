@@ -100,11 +100,7 @@ impl CanonicalSnapshot {
         }
         if entity_copy
             || next.doc_snapshots.iter().any(|row| {
-                row.text.contains(&span)
-                    || row
-                        .title
-                        .as_deref()
-                        .is_some_and(|title| title.contains(&span))
+                row.text.contains(&span) || row.metadata.values().any(|value| copied(value))
             })
             || next.base_edges.iter().any(|row| copied(&row.value))
             || next.tombstones.iter().any(|row| copied(&row.value))

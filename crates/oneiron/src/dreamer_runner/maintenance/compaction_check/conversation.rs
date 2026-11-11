@@ -3,17 +3,23 @@
 //! The landing declares refs, hashes and pins only: the SUMMARY and its
 //! epoch, the SESSION, conversation and branch, each retained turn of the
 //! span with its projection's fingerprint, the writer, the artifact, the
-//! filed step and the receipt's digest.
+//! filed step, the receipt's digest and the ref of the check material, the
+//! accepted try's gate input (FIX 5040, the remainder of FIX 4819).
 //!
-//! The check reads the landing's durable receipt, the summary's words while
-//! they stand, and the span's turns as the Dreamer in one snapshot, never
-//! the home the call wore. A receipt that changed, a withdrawn summary or a
-//! turn whose fingerprint moved is `stale_evidence`; a span it cannot read is
-//! `unreadable_evidence`; a turn whose MESSAGE is away from this replica
-//! waits. The verdict is reached as a run's is ([`super::support`]). The
-//! span is read again once it was, so drift during the judgment is stale
-//! too. A mismatch reaches the agent's inbox; nothing here rewrites its
-//! words or its byline.
+//! The check reads the landing's durable receipt, the check material, the
+//! summary's words while they stand, and the span's turns as the Dreamer, in
+//! one snapshot, never the home the call wore. A receipt that changed, a
+//! material other than the one the receipt binds, a withdrawn summary or a
+//! turn whose fingerprint moved is `stale_evidence`. A material that is
+//! missing, erased or does not decode, or a span it cannot read, is
+//! `unreadable_evidence`. A turn whose MESSAGE is away from this replica
+//! waits. Before any judgment the six gate checks run again on the kept
+//! request, reply and policy (FIX 5040): a check that fails, or prose other
+//! than the landed summary's, is a `mismatch` that names it, never
+//! `supported`. Only then is the verdict reached as a run's is
+//! ([`super::support`]). The span and the material are read again after the
+//! judgment, so drift during the judgment is stale too. A mismatch reaches
+//! the agent's inbox; nothing here rewrites its words or its byline.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -24,7 +30,8 @@ use super::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::compaction::{
-    CompactionEvidence, CompactionExecution, CompactionStepRef, ConversationTurnSpan,
+    CheckMaterialFault, CompactionCheckMaterial, CompactionCheckMaterialRef, CompactionEvidence,
+    CompactionExecution, CompactionStepRef, ConversationTurnSpan, check_material_in,
 };
 use crate::dreamer_consolidation::{ConversationSpanRead, conversation_span_text};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause, DreamerRunnerStore};
@@ -57,6 +64,9 @@ pub(crate) struct ConversationCheckDeclaration {
     #[serde(default)]
     step: Option<CompactionStepRef>,
     receipt_digest: String,
+    /// The check material the receipt binds (FIX 5040): the accepted try's
+    /// gate input, which the check judges again.
+    material: CompactionCheckMaterialRef,
 }
 
 impl ConversationCheckDeclaration {
@@ -78,6 +88,7 @@ impl ConversationCheckDeclaration {
             artifact_len: execution.snapshot_len.ok_or_else(missing)?,
             step: execution.step.clone(),
             receipt_digest: execution.receipt_digest_hex()?,
+            material: evidence.check_material.clone().ok_or_else(missing)?,
         })
     }
 
@@ -190,7 +201,7 @@ pub(super) async fn run_conversation_check(
             record(ctx.vault, attempt_id, &declaration, &settled, now)?;
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         Reading::Deferred => {
@@ -202,8 +213,9 @@ pub(super) async fn run_conversation_check(
     };
     let locality = judge_locality(&model)?;
     let keyless = model.inference.selected_keyless();
+    let paid = model.inference.selected_paid();
     let input = judge_input(&declaration, &summary, &evidence);
-    let request = judge_request(&model, &input, locality, keyless)?;
+    let request = judge_request(&model, &input, locality, keyless, paid)?;
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
@@ -218,6 +230,7 @@ pub(super) async fn run_conversation_check(
         state: &input,
         locality,
         keyless,
+        paid,
     };
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
@@ -258,28 +271,43 @@ pub(super) async fn run_conversation_check(
     Ok(verdict.spend.completed())
 }
 
-/// Reads the landing's receipt, the summary's words and the span, and
-/// checks them against the declaration.
+/// Reads the landing's receipt, the check material, the summary's words
+/// and the span, checks them against the declaration, and runs the six gate
+/// checks again on the material (FIX 5040).
 fn read(vault: &Vault, declaration: &ConversationCheckDeclaration) -> Result<Reading> {
     use CompactionCheckVerdict::{StaleEvidence, UnreadableEvidence};
     let settled = |verdict, reason| Ok(Reading::Settled(Settled::new(verdict, reason)));
-    let words = {
+    let (words, material) = {
         let txn = vault.store.env.read_txn()?;
         let Some(receipt) =
             crate::compaction::conversation_receipt_in(&vault.store, &txn, &declaration.summary)?
         else {
             return settled(UnreadableEvidence, "landing_not_found");
         };
+        let evidence = receipt.evidence();
         if receipt.execution.writer != declaration.writer
             || receipt.epoch != declaration.epoch
             || receipt.execution.receipt_digest_hex()? != declaration.receipt_digest
-            || receipt.evidence().map(|evidence| &evidence.turns) != Some(&declaration.turns)
+            || evidence.map(|evidence| &evidence.turns) != Some(&declaration.turns)
+            || evidence.and_then(|evidence| evidence.check_material.as_ref())
+                != Some(&declaration.material)
         {
             return settled(StaleEvidence, "receipt_changed");
         }
-        crate::ports::EntityStoreRead::port_entity_record(&vault.store, &txn, &declaration.summary)?
-            .and_then(|record| crate::compaction::decode_epoch_summary_body(&record.body).ok())
-            .map(|body| body.text)
+        let words = crate::ports::EntityStoreRead::port_entity_record(
+            &vault.store,
+            &txn,
+            &declaration.summary,
+        )?
+        .and_then(|record| crate::compaction::decode_epoch_summary_body(&record.body).ok())
+        .map(|body| body.text);
+        let material = check_material_in(
+            &vault.store,
+            &txn,
+            &declaration.summary,
+            &declaration.material,
+        )?;
+        (words, material)
     };
     let Some(words) = words else {
         return settled(StaleEvidence, "summary_withdrawn");
@@ -290,14 +318,18 @@ fn read(vault: &Vault, declaration: &ConversationCheckDeclaration) -> Result<Rea
     {
         return settled(StaleEvidence, "artifact_changed");
     }
+    let material = match material {
+        Ok(material) => material,
+        Err(CheckMaterialFault::Changed) => {
+            return settled(StaleEvidence, CheckMaterialFault::Changed.as_str());
+        }
+        Err(fault) => return settled(UnreadableEvidence, fault.as_str()),
+    };
     let Some(pins) = declaration.pins() else {
         return settled(UnreadableEvidence, "evidence_pin_unreadable");
     };
     match conversation_span_text(vault, &pins)? {
-        ConversationSpanRead::Ready(texts) => Ok(Reading::Ready {
-            summary: words,
-            evidence: render(&declaration.turns, &texts),
-        }),
+        ConversationSpanRead::Ready(texts) => Ok(gate_again(declaration, &material, words, &texts)),
         ConversationSpanRead::Drifted => {
             let mut stale = Settled::new(StaleEvidence, "evidence_revision_moved");
             stale.words_live = true;
@@ -306,6 +338,32 @@ fn read(vault: &Vault, declaration: &ConversationCheckDeclaration) -> Result<Rea
         ConversationSpanRead::Unreadable => settled(UnreadableEvidence, "span_unreadable"),
         ConversationSpanRead::Deferred => Ok(Reading::Deferred),
     }
+}
+
+/// The six gate checks run again on the kept request, reply and policy,
+/// before any judgment (FIX 5040). A check that fails, or accepted prose
+/// other than the landed summary's words, is a mismatch that names it.
+/// Otherwise the span is ready for the judge.
+fn gate_again(
+    declaration: &ConversationCheckDeclaration,
+    material: &CompactionCheckMaterial,
+    words: String,
+    texts: &[String],
+) -> Reading {
+    let reason = match material.rerun_gate() {
+        Ok(prose) if prose == words => {
+            return Reading::Ready {
+                summary: words,
+                evidence: render(&declaration.turns, texts),
+            };
+        }
+        Ok(_) => "gate_summary_differs".to_owned(),
+        Err(failure) => format!("gate_failed:{}", failure.check.as_str()),
+    };
+    let mut mismatch = Settled::new(CompactionCheckVerdict::Mismatch, &reason);
+    mismatch.evidence_now = Some(declaration.pins_digest());
+    mismatch.words_live = true;
+    Reading::Settled(mismatch)
 }
 
 /// The span as the judge reads it: each turn by its place in the span, who
@@ -327,6 +385,7 @@ fn judge_request(
     input: &serde_json::Value,
     locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
+    paid: bool,
 ) -> Result<LlmRequest> {
     let schema = serde_json::json!({
         "type": "object", "additionalProperties": false,
@@ -344,7 +403,7 @@ fn judge_request(
             "reason": {"type": "string"}
         }
     });
-    judge_call(model, schema, input, locality, keyless)
+    judge_call(model, schema, input, locality, keyless, paid)
 }
 
 /// What the judge reads: the span's length in turns, the summary and the
@@ -376,7 +435,7 @@ fn judgment(response: &LlmResponse, declaration: &ConversationCheckDeclaration) 
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
@@ -439,6 +498,7 @@ fn record(
         },
         "step": declaration.step,
         "receipt_digest": declaration.receipt_digest,
+        "check_material": declaration.material,
         "conflicts": settled.conflicts,
         "judge": settled.judge,
         "reason": settled.reason,

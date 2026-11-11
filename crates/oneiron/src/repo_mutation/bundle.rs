@@ -346,7 +346,9 @@ pub(in crate::repo_mutation) fn land_bundle_documents(
     }
     let repo = RepoRef::parse(&row.repo)?;
     let before = vault.mount_repo_ref(&repo, RepoMountRef::Fork(row.pre_action_fork_hash))?;
-    let scope = super::oplog::repo_mutation_repo_key(&repo);
+    // The repository's code-document identity, the one its symbols are
+    // keyed by (FIX 12761): one resolution for every file of the bundle.
+    let scope = vault.resolve_repo_identity(&repo)?.as_str().to_owned();
     let actor = WriteActor::new(row.actor.live()?, row.document_class()?);
     let utf8 = |bytes: &[u8]| -> Result<String> {
         String::from_utf8(bytes.to_vec())

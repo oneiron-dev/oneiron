@@ -15,7 +15,8 @@ use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_i
 
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
-    ConnectorCallCaller, ConnectorCallHost, PendingConnectorCall, Step, now_ms, step_from_host,
+    ConnectorCallCaller, ConnectorCallHost, PendingConnectorCall, Step, now_ms, refused,
+    step_from_host,
 };
 use super::execution::resume_scoped_mcp_outbound_intent;
 
@@ -59,14 +60,20 @@ impl Vault {
         }
         // A hold names the ask its frozen bytes were first held for, so the
         // row keeps it current (FIX 990).
+        // FIX 4747 slice 7: a row an agent run admitted sends only while
+        // this machine holds that run; one whose run moved sends nothing.
         let dispatch = resume_scoped_mcp_outbound_intent(
             self,
             &authority,
             record.id,
             record.payload(),
+            pending.agent_run,
             now_ms(),
             &mut *host,
         )?;
+        if dispatch.agent_run_stood_down {
+            return Ok(Some(refused(crate::agent_dispatch::AGENT_RUN_STOOD_DOWN)));
+        }
         Ok(Some(step_from_host(&dispatch, host)))
     }
 }

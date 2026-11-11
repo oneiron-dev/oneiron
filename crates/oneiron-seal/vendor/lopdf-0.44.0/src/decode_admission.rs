@@ -17,14 +17,45 @@ use std::mem::size_of;
 
 use thiserror::Error;
 
+/// The native position held while a controlled reader waits for its owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadProgress {
+    Xref { offset: usize },
+    Object { id: Option<(u32, u16)>, offset: usize },
+    Stream { id: (u32, u16) },
+}
+
 /// Asked before a decode allocates.
 pub trait DecodeAdmission: Send + Sync {
+    /// Optional cooperative checkpoint. A pause returns Ok only after resume;
+    /// errors remain terminal admissions, never suspend signals.
+    fn checkpoint(&self, _at: ReadProgress) -> Result<(), DecodeAdmissionError> { Ok(()) }
+
+    /// Controlled reads keep their entire native stack on one worker.
+    /// Other admissions retain the usual parallel-loading choice.
+    fn sequential(&self) -> bool { false }
+
     /// Admit one allocation of `bytes` bytes, made right after this returns
     /// `Ok`. An allocation that replaces a smaller one is admitted at its full
     /// size while the old one is still alive, and the old one's bytes come
     /// back through [`DecodeAdmission::release`] once it is gone. A codec's
     /// own working state is admitted before the codec is built.
     fn admit(&self, bytes: usize) -> Result<(), DecodeAdmissionError>;
+
+    /// Admit `bytes` of which only `measured` are an actual allocation
+    /// request. Codec state and map-node overhead are estimates. Existing
+    /// admissions keep their behavior; a producer pool preserves this
+    /// distinction when asking its machine's memory floor.
+    fn admit_estimate(&self, bytes: usize, _measured: usize) -> Result<(), DecodeAdmissionError> {
+        self.admit(bytes)
+    }
+
+    /// Settle a successful vector allocation's actual byte capacity before
+    /// releasing its old allocation. A pool may unwind this build when
+    /// allocator overcapacity outgrows its complete reservation.
+    fn allocated(&self, _reserved: usize, _actual: usize) -> Result<(), DecodeAdmissionError> {
+        Ok(())
+    }
 
     /// Move `bytes` admitted here to `to`: admit them there first, so the
     /// moment both owners hold them is admitted, then give them back here.
@@ -90,6 +121,7 @@ pub(crate) fn reserve<T>(
     admission.admit(bytes)?;
     buf.try_reserve_exact(target - buf.len())
         .map_err(|_| allocator_refused(bytes))?;
+    admission.allocated(bytes, buf.capacity().saturating_mul(size_of::<T>()))?;
     release(admission, old);
     Ok(())
 }
@@ -139,7 +171,7 @@ pub(crate) fn admit_btree<K, V>(admission: &dyn DecodeAdmission, entries: usize)
         .checked_mul(entries)
         .and_then(|shares| shares.checked_add(btree_node_bytes::<K, V>()))
         .ok_or_else(unaddressable)?;
-    admission.admit(bytes)
+    admission.admit_estimate(bytes, 0)
 }
 
 /// Bytes `len` elements of `T` take, if one allocation can hold them.
