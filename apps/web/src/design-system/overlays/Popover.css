@@ -1,0 +1,39 @@
+/* The only shadow in the system sits under a popover. Nothing here sets
+   display, so the closed layer stays hidden by the browser. */
+.sl-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
+  z-index: var(--sl-z-menu);
+  max-width: calc(100vw - 24px);
+  overflow: visible;
+  padding: 14px 16px 10px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-pop);
+  box-shadow: var(--sl-pop-shadow);
+  color: var(--sl-ink-2);
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+}
+
+.sl-popover:popover-open {
+  animation: sl-pop 150ms var(--sl-ease-out) both;
+}
+
+.sl-popover:focus {
+  outline: none;
+}
+
+.sl-popover-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-popover:popover-open {
+    animation: none;
+  }
+}

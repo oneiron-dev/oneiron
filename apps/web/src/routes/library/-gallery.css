@@ -1,0 +1,700 @@
+/* The /library page: the field around one island, one section per
+   component. Sizes come from the library's tokens only. */
+
+/* The app's body is a fixed-height column that never scrolls; the gallery
+   fills it and scrolls itself, with the field fixed behind. */
+.lib {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--sl-gutter) var(--sl-gutter);
+  scrollbar-width: thin;
+}
+
+/* Bare on the field: the title and the theme picks. */
+.lib-head {
+  position: relative;
+  z-index: var(--sl-z-work);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 18px 6px 16px;
+  color: var(--sl-on-field-ink);
+  text-shadow: var(--sl-on-field-shadow);
+}
+
+.lib-title {
+  font-size: var(--sl-t-place);
+  font-weight: 500;
+  line-height: 1.25;
+  color: inherit;
+}
+
+.lib-theme {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-left: auto;
+}
+
+.lib-theme-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  font-size: var(--sl-t-do);
+  color: inherit;
+}
+
+.lib-theme-pick:hover,
+.lib-theme-pick:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.lib-theme-glyph {
+  display: block;
+  width: 12px;
+  height: 12px;
+  overflow: visible;
+}
+
+.lib-theme-glyph circle,
+.lib-theme-glyph path {
+  stroke: currentColor;
+  stroke-width: 1.3;
+  fill: none;
+}
+
+.lib-theme-glyph path,
+.lib-theme-glyph circle[data-fill] {
+  fill: currentColor;
+}
+
+.lib-theme-pick[aria-pressed="true"] {
+  font-weight: 600;
+}
+
+/* The island: sections down the page. */
+.lib-island {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  padding: 28px 28px 44px;
+}
+
+.lib-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lib-section-head {
+  font-size: var(--sl-t-section);
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--sl-ink-1);
+}
+
+.lib-specimens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 24px 44px;
+}
+
+.lib-specimen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  min-width: 72px;
+}
+
+.lib-specimen[data-wide] {
+  min-width: 280px;
+}
+
+.lib-stage {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* Room below the anchor for an open layer. */
+.lib-specimen[data-tall="1"] .lib-stage {
+  align-items: flex-start;
+  min-height: 84px;
+}
+
+.lib-specimen[data-tall="2"] .lib-stage {
+  align-items: flex-start;
+  min-height: 140px;
+}
+
+.lib-specimen[data-tall="6"] .lib-stage {
+  align-items: flex-start;
+  min-height: 600px;
+}
+
+.lib-specimen[data-tall="4"] .lib-stage {
+  align-items: flex-start;
+  min-height: 320px;
+  min-width: 320px;
+}
+
+.lib-caption {
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.lib-t-place {
+  font-size: var(--sl-t-place);
+  font-weight: 500;
+  color: var(--sl-ink-1);
+}
+
+.lib-t-section {
+  font-size: var(--sl-t-section);
+  font-weight: 500;
+  color: var(--sl-ink-1);
+}
+
+.lib-t-say {
+  font-size: var(--sl-t-say);
+  color: var(--sl-ink-2);
+}
+
+.lib-t-do {
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.lib-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lib-inline-wide {
+  gap: 18px;
+}
+
+.lib-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.lib-island-host {
+  padding: 14px;
+}
+
+.lib-island-small {
+  display: flex;
+  align-items: flex-end;
+  width: 240px;
+  height: 96px;
+  padding: 12px 14px;
+}
+
+.lib-well {
+  padding: 10px 14px;
+}
+
+.lib-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 14px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lib-icon {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--sl-ink-2);
+}
+
+.lib-icon > .sl-icon {
+  flex: none;
+}
+
+.lib-icon-name {
+  overflow: hidden;
+  font-size: var(--sl-t-figure);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lib-panel {
+  font-size: var(--sl-t-say);
+  color: var(--sl-ink-2);
+}
+
+.lib-unfold {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.lib-plan {
+  list-style: decimal inside;
+  padding-top: 6px;
+  font-size: var(--sl-t-say);
+  line-height: 1.45;
+  color: var(--sl-ink-2);
+}
+
+.lib-picks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+}
+
+.lib-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.lib-pick:hover,
+.lib-pick:focus-visible,
+.lib-pick[aria-pressed="true"] {
+  color: var(--sl-ink-1);
+}
+
+.lib-crew-pop {
+  width: 420px;
+}
+
+.lib-crew {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 14px;
+  --sl-mark-ground: var(--sl-pop);
+}
+
+.lib-crew-who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.lib-crew-name {
+  font-size: var(--sl-t-section);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--sl-ink-1);
+}
+
+.lib-crew-line {
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+/* ── pattern demos ─────────────────────────────────────────────────── */
+
+.lib-specimen[data-full] {
+  flex: 1 1 100%;
+  max-width: 860px;
+}
+
+.lib-specimen[data-full] > .lib-stage {
+  display: block;
+}
+
+.lib-specimen[data-tall="4"][data-full] > .lib-stage {
+  min-width: 0;
+  min-height: 420px;
+}
+
+.lib-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.lib-readout,
+.lib-receipt {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.lib-receipt {
+  gap: 8px;
+}
+
+.lib-mini-ledger {
+  width: auto;
+}
+
+.lib-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 8px;
+}
+
+.lib-crew-right {
+  display: flex;
+  justify-content: flex-end;
+  max-width: 640px;
+}
+
+.lib-crew-right .lib-stack {
+  align-items: flex-end;
+}
+
+.lib-crew-pop:popover-open {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lib-split {
+  height: 220px;
+  border-radius: var(--sl-radius);
+  overflow: hidden;
+}
+
+.lib-split-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+}
+
+.lib-split-pane + .sl-split-handle + .lib-split-pane {
+  background: var(--sl-sunk);
+}
+
+.lib-thread-pane {
+  padding-top: 10px;
+}
+
+/* The reply line sits at the foot of the thread pane. */
+.lib-thread-reply {
+  margin-top: auto;
+  background: var(--sl-island);
+}
+
+.lib-split-closed {
+  justify-content: flex-start;
+}
+
+.lib-write-line {
+  width: 360px;
+}
+
+.lib-composer-narrow {
+  width: 280px;
+}
+
+.lib-connections {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  width: 100%;
+}
+
+.lib-connection-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.lib-connection-section > h3 {
+  padding-bottom: 6px;
+}
+
+.lib-ledger-project {
+  color: var(--sl-ink-1);
+}
+
+/* A persona's mark in the persona menu, as on the write box. */
+.lib-persona-mark {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: 0 2px;
+  border-radius: 50%;
+}
+
+.lib-persona-mark[data-persona="all"] {
+  background: var(--sl-disc);
+}
+
+.lib-persona-mark[data-persona="work"] {
+  box-shadow: inset 0 0 0 1.5px var(--sl-ink-2);
+}
+
+.lib-persona-mark[data-persona="personal"] {
+  background: var(--sl-disc);
+  box-shadow:
+    0 0 0 2px var(--sl-pop),
+    0 0 0 3px var(--sl-ink-2);
+}
+
+.lib-persona-mark[data-persona="dream"] {
+  border: 1.5px dotted var(--sl-ink-2);
+}
+
+/* ── task demos ────────────────────────────────────────────────────── */
+
+/* The message at the left, its task list beside it (as a pane would). */
+.lib-tasks {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  column-gap: 32px;
+}
+
+.lib-tasks-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lib-tasks-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 8px 0;
+}
+
+.lib-settled {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ── frame demos ───────────────────────────────────────────────────── */
+
+.lib-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.lib-activity-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lib-activity-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: auto;
+  font-size: var(--sl-t-place);
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--sl-ink-1);
+}
+
+.lib-activity-title > .sl-icon {
+  color: var(--sl-ink-2);
+}
+
+.lib-place-narrow {
+  max-width: 100%;
+}
+
+.lib-place-narrow[data-width="420"] {
+  width: 420px;
+}
+
+.lib-place-narrow[data-width="220"] {
+  width: 220px;
+}
+
+.lib-activity-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 230px;
+}
+
+.sl-sidebar .lib-activity-compact {
+  width: auto;
+}
+
+.lib-people {
+  max-width: 640px;
+}
+
+/* Bare on the field below the island: the sidebar and the frame. */
+.lib-field-region {
+  position: relative;
+  z-index: var(--sl-z-work);
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  padding: 44px 0 0;
+}
+
+.lib-field-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lib-field-head,
+.lib-field-caption,
+.lib-field-readout {
+  color: var(--sl-on-field-ink);
+  text-shadow: var(--sl-on-field-text-halo);
+}
+
+.lib-field-head {
+  padding: 0 6px;
+  font-size: var(--sl-t-section);
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.lib-field-specimens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 28px 56px;
+}
+
+.lib-field-specimen,
+.lib-frame-specimen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+}
+
+.lib-field-caption,
+.lib-field-readout {
+  max-width: 300px;
+  padding: 0 6px;
+  font-size: var(--sl-t-do);
+  line-height: 1.4;
+}
+
+.lib-field-readout {
+  max-width: 320px;
+}
+
+.lib-sidebar-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The app frame on the field: a fixed height so the sidebar, the strip
+   and the work area scroll inside it and the peek spans it. */
+.lib-frame-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lib-frame {
+  height: 620px;
+}
+
+.lib-frame .lib-field-readout {
+  display: none;
+}
+
+.lib-frame .lib-sidebar-demo > .sl-sidebar {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.lib-frame-island {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 28px 24px;
+}
+
+/* The work area's content keeps a reading width and re-centres when the
+   sidebar folds. */
+.lib-frame-column {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+/* The place's name in a sidebar head inside the frame. */
+.lib-sidebar-title {
+  margin-right: auto;
+  padding: 0 8px;
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  line-height: 30px;
+  color: var(--sl-sidebar-ink-on);
+  text-shadow: var(--sl-sidebar-text-shadow);
+}
+
+/* The vault's initial: the vault switch's symbol in the microsidebar. */
+.lib-vault-initial {
+  display: block;
+  font-size: var(--sl-t-section);
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* A microsidebar alone: the height of a window, its foot at the bottom. */
+.lib-micro-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 560px;
+}
+
+.lib-micro-demo > .sl-micro-sidebar {
+  flex: 1 1 auto;
+}
+
+.lib-field-pick {
+  margin-left: 10px;
+  color: inherit;
+}
+
+@media (max-width: 760px) {
+  .lib-tasks {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 16px;
+  }
+  .lib-island {
+    padding: 22px 20px 36px;
+  }
+  .lib-specimens {
+    gap: 20px 28px;
+  }
+  .lib-crew-pop {
+    width: 320px;
+  }
+}

@@ -1,0 +1,17 @@
+.sl-urgency {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+}
+
+.sl-urgency-mark {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 6px;
+  background: var(--sl-ink-1);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
