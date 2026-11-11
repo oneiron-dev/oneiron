@@ -104,6 +104,14 @@ crate::side_table::side_tables! {
     SCOPE_SOURCE_FREE_TEXT: VaultMeta b"scope:source_free_text:v1:" Named
         // Restore class: A source-free text's birth record stands with its stamp (FIX 8741).
         [restore: content] [family: unclassified] [tier: canonical];
+    /// One Steward's ask to add, remove or re-role a member of a shared vault (untangle 6.3d): it
+    /// changes nothing until a live Admin or Owner applies it through the membership door, whose
+    /// receipt names the Steward as its proposer, or declines it. Key: id16 (ask id). A hard erase
+    /// of a person deletes each ask that names them: its Steward, the member it is about, or the
+    /// Admin or Owner who closed it.
+    SHARED_ACT_MEMBER_ASK: VaultMeta b"shared-act:member-ask:v1:" Named
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_member_ask_actor_in_txn;
     /// A membership change this install executed with no host issuer to sign it, whose
     /// carrier-signed record it still owes (FIX 12335): the vault, the cause, the person who
     /// executed it, the member it moved, the act, the second it was executed at, the signed-mint
