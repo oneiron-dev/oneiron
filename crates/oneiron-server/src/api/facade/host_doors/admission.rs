@@ -95,10 +95,30 @@ pub(in crate::api::facade) fn door_admits(
                 })
         }
         Proof::Owner => owner_proof(auth, server, verb).map(drop),
+        // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
+        // which the door then admits only on a Grant that actor holds. A caller with neither keeps
+        // the owner refusal.
+        Proof::ConsentRevoker => owner_proof(auth, server, verb)
+            .map(drop)
+            .or_else(|refusal| {
+                crate::api::facade::owner_binding::facade_caller_or(server, auth, || refusal)
+                    .map(drop)
+            }),
         // The step rows (slice 6.5c): the owner, or an agent on its own
         // verified credential; the door holds the live run the agent names.
         Proof::ModelStepCaller => {
             crate::api::facade::model_step_doors::step_caller_admits(server, auth, verb)
+        }
+        // A substrate read (untangle 6.6c): the owner under its proof, or a person or agent on its own slip,
+        // whose Steward grant the engine reader checks at the read.
+        Proof::SubstrateReader => {
+            crate::api::facade::substrate_read_doors::substrate_reader(server, auth, verb).map(drop)
+        }
+        // An engine-control knob (untangle 6.6d): the owner under its proof, or a person or agent on
+        // its own slip, whose engine.controls grant the knob's writer checks in the write.
+        Proof::EngineController => {
+            crate::api::facade::engine_control_doors::engine_controller(server, auth, verb)
+                .map(drop)
         }
         Proof::ClaimSettler => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
@@ -189,6 +209,16 @@ pub(in crate::api::facade) fn door_admits(
         // A fork as the caller itself (FIX 8167): a person or agent on its own slip, whose write Grant the
         // fork's writer checks.
         Proof::SkillForker => crate::api::facade::skill_doors::forker(server, auth, verb).map(drop),
+        // A skill library read as the caller itself (slice 6.4d): the owner under its proof, or a person or
+        // agent on its own slip, whose read the engine reader checks row by row.
+        Proof::SkillReader => {
+            crate::api::facade::skill_doors::skill_reader(server, auth, verb).map(drop)
+        }
+        // A committed-run read as the run's own actor (slice 6.4c): the owner under its proof, or a
+        // person or agent on its own slip, whose run the engine reader checks.
+        Proof::RunReader => {
+            crate::api::facade::run_read_doors::run_reader(server, auth, verb).map(drop)
+        }
         // A policy put by a person holding the policy power (FIX 8177), which the manifest writer checks.
         Proof::PolicyPutter => {
             crate::api::facade::gate_policy_doors::policy_putter(server, auth, verb).map(drop)

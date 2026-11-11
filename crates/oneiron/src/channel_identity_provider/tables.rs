@@ -18,10 +18,10 @@ crate::side_table::side_tables! {
         [restore: content] [family: unclassified] [tier: canonical];
     /// Native provider archive version captured by a LINE observation. Key: id16(claim).
     LINE_CHAT_ARCHIVE_PIN: VaultMeta b"line:chat_archive_pin:v1:" Named Engine
-        [restore: content] [family: unregistered] [tier: canonical];
+        [restore: content] [family: structure] [tier: canonical];
     /// Exact native join-version release still owed after capture teardown. Key: id16(claim).
     LINE_CHAT_ARCHIVE_RELEASE: VaultMeta b"line:chat_archive_release:v1:" Named Engine
-        [restore: live] [family: unregistered] [tier: canonical];
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Native mail messages an inbox poll set aside after their own failure stopped it poll after
     /// poll, and at most one per identity still stopping it, short of that count: the identity and
     /// mailbox, the server's message id, the reason, the polls and when. Node-local, as the cursor

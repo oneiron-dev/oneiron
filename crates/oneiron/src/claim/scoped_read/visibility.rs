@@ -658,7 +658,7 @@ impl<'v> ScopedRead<'v> {
         // A key several of its holder's agent Grants bind reads a row only
         // where one of them alone admits it (FIX AGENT-GRAPHFS-GRANT-WORLDS),
         // judged per row, outside the access-class cache below.
-        if grant.is_none() && !self.one_grant_alternative_admits_in(rtxn, id, raw)? {
+        if grant.is_none() && !self.one_grant_alternative_admits_in(rtxn, id, raw, authority)? {
             return Ok(false);
         }
         // A CLAIM a reader with no record list reads is judged once per

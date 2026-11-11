@@ -1,4 +1,5 @@
-//! Selected-message conversion and the owner's skill library, through the same facade and MCP doors.
+//! Selected-message conversion and the skill library, through the same facade and MCP doors: the
+//! owner reads the whole library, another person or agent the loadable skills it may read.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -6,6 +7,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError};
 use oneiron::skill_convert::{RefineVerdict, RefinedSkill, SkillRefineBrief, SkillRefiner};
 use oneiron::skill_hub::HubFile;
+use oneiron::snapshot_read::{skill_library_get_as_reader, skill_library_list_as_reader};
 use oneiron::task_verb::sdk::{self, *};
 use oneiron::{
     CallClass, CallEnvelope, ContentPart, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef,
@@ -24,12 +26,27 @@ pub(crate) async fn vault_skills_get(
     auth: &CoreAuth,
     input: HubSkillRequest,
 ) -> Listed<SkillLibraryView> {
-    owner_call(server, auth, "vault.skills.get", move |server, owner| {
-        let view = sdk::skill_library_get_as_owner(server.vault(), owner, &input)?;
-        let rows = view.rows();
-        Ok((view, rows))
+    const VERB: &str = "vault.skills.get";
+    let caller = match skill_reader(server, auth, VERB) {
+        Ok(Some(caller)) => caller,
+        Ok(None) => {
+            return owner_call(server, auth, VERB, move |server, owner| {
+                let view = sdk::skill_library_get_as_owner(server.vault(), owner, &input)?;
+                let rows = view.rows();
+                Ok((view, rows))
+            })
+            .await;
+        }
+        Err(refusal) => return refused(refusal),
+    };
+    let (answer, mut rows) = credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        skill_library_get_as_reader(&memory, &input)
     })
-    .await
+    .await;
+    if let Ok(view) = &answer {
+        rows.extend(view.rows());
+    }
+    (answer, rows)
 }
 
 pub(crate) async fn vault_skills_list(
@@ -37,16 +54,51 @@ pub(crate) async fn vault_skills_list(
     auth: &CoreAuth,
     input: SkillLibraryListRequest,
 ) -> Listed<SkillLibraryPage> {
-    owner_call(server, auth, "vault.skills.list", move |server, owner| {
-        let page = sdk::skill_library_list_as_owner(server.vault(), owner, &input)?;
-        let rows = page
-            .skills
-            .iter()
-            .flat_map(SkillLibraryView::rows)
-            .collect();
-        Ok((page, rows))
+    const VERB: &str = "vault.skills.list";
+    let caller = match skill_reader(server, auth, VERB) {
+        Ok(Some(caller)) => caller,
+        Ok(None) => {
+            return owner_call(server, auth, VERB, move |server, owner| {
+                let page = sdk::skill_library_list_as_owner(server.vault(), owner, &input)?;
+                let rows = page
+                    .skills
+                    .iter()
+                    .flat_map(SkillLibraryView::rows)
+                    .collect();
+                Ok((page, rows))
+            })
+            .await;
+        }
+        Err(refusal) => return refused(refusal),
+    };
+    let (answer, mut rows) = credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        skill_library_list_as_reader(&memory, &input)
     })
-    .await
+    .await;
+    if let Ok(page) = &answer {
+        rows.extend(page.skills.iter().flat_map(SkillLibraryView::rows));
+    }
+    (answer, rows)
+}
+
+/// Who reads the skill library: the owner under its proof (`None`), as
+/// before, or a person or agent on a verified slip of its own (`Some`, its
+/// actor), who reads only the loadable skills its own read admits, as
+/// packages (primitive A, slice 6.4d). Anyone else keeps the owner refusal
+/// it had.
+pub(super) fn skill_reader(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> oneiron::memory::MemoryResult<Option<(oneiron::EntityId, oneiron::EdgeActorClass)>> {
+    use oneiron::EdgeActorClass::{Agent, Human};
+    match owner_proof(auth, server, verb) {
+        Ok(_) => Ok(None),
+        Err(refusal) => match (auth.verified_slip(), super::facade_actor(server, auth)) {
+            (Some(_), Ok(caller @ (_, Human | Agent))) => Ok(Some(caller)),
+            _ => Err(refusal),
+        },
+    }
 }
 
 pub(crate) async fn vault_skills_archive(

@@ -709,7 +709,7 @@ mod tests {
             assert_eq!(
                 crl_entry_valid(&crl, &covered, &[], &covered, AT_UNIX, &memory)
                     .unwrap()
-                    .is_some(),
+                    .is_ok(),
                 !pss
             );
 
@@ -730,7 +730,7 @@ mod tests {
             assert_eq!(
                 ocsp_entry_valid(&ocsp, &covered, &[], AT_UNIX, &memory)
                     .unwrap()
-                    .is_some(),
+                    .is_ok(),
                 !pss
             );
         }
