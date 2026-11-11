@@ -588,9 +588,8 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
             .send()
             .unwrap()
     };
-    let owner_door = signed(
-        reqwest::blocking::Client::new().get(format!("{origin}/api/search/text?query=Vellichor")),
-    );
+    let owner_door =
+        signed(reqwest::blocking::Client::new().get(format!("{origin}/api/entity/{principal}")));
     assert!(
         matches!(owner_door.status().as_u16(), 401 | 403),
         "{}",
@@ -930,6 +929,13 @@ fn answer_fake(
             stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
         }
     }
+    // This endpoint serves HTTP RPC only, not the bridge's default /ws carrier.
+    if request_line.starts_with("GET ") {
+        stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        return;
+    }
     let mut body = vec![0; length];
     reader.read_exact(&mut body).unwrap();
     let request: Value = serde_json::from_slice(&body).unwrap();
@@ -939,7 +945,7 @@ fn answer_fake(
         .push((path.to_owned(), request.clone()));
     let head = |length: usize| {
         format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n"
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
         )
     };
     let reply = match request["method"].as_str() {
