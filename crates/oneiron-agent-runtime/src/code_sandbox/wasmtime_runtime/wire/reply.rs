@@ -13,6 +13,7 @@ use crate::engine_executor::{
 /// The guest's reply to `answered`, the call `host` answered last: its body
 /// fit to one message ([`fit_reply`]), with its budget envelope and a verb
 /// hook's view in the body's place ([`SelfDispatchResponse::guest_json`]).
+/// A park is carried as `park` says, by the call that was answered.
 /// Once it is made and fits `message_bytes`, the bound the typed bridge
 /// holds every host reply to before the guest reads it, `host` hears that
 /// its guest got the reply, so a host keeps a skill body the call's answer
@@ -22,9 +23,10 @@ pub(super) fn guest_reply(
     host: &mut dyn JsCodeModeHost,
     cancel: &StepCancellation,
     answered: &SelfDispatchResponse,
+    park: super::ParkReply,
     message_bytes: usize,
 ) -> Result<String> {
-    let body = fit_reply(host, cancel, super::reply_body(&answered.outcome)?)?;
+    let body = fit_reply(host, cancel, super::reply_body(&answered.outcome, park)?)?;
     let reply = answered.guest_json(body).to_string();
     if reply.len() <= message_bytes {
         host.guest_reply_delivered();

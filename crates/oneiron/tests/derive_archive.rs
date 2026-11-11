@@ -17,7 +17,8 @@ use oneiron::test_doors::derive::{
     Archive, Derived, Named, commit, commit_in_attempt, revert, row_live, set_strength_policy,
 };
 use oneiron::test_doors::steward::{
-    STEWARD_READ_VERB, archive_every_quiet_claim, dreamer, stand_steward_grant,
+    STEWARD_READ_VERB, STEWARD_VERBS, archive_every_quiet_claim, dreamer,
+    receive_steward_grant_row, stand_steward_grant, steward_grant_rows,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault};
 
@@ -138,6 +139,41 @@ fn an_archive_needs_the_archive_grant() {
         &[STEWARD_READ_VERB, "derive"],
     )
     .expect("a grant without archive");
+    assert_eq!(
+        archive(&fixture, true, 0.1),
+        (
+            false,
+            vec!["gate.deny.derive.grant_lacks_archive".to_owned()]
+        )
+    );
+    assert!(row_live(&fixture.vault, fixture.claim).expect("read"));
+}
+
+/// Every standing Steward grant row decides, never the newest alone. No
+/// policy row carries `archive`, so the derive verdict alone holds this.
+#[test]
+fn an_archive_needs_archive_in_every_standing_steward_row() {
+    let fixture = fixture();
+    quiet_policy(&fixture.vault);
+    // The older row gives no `archive`. A newer row gives every verb, as
+    // another machine's default arrives here. Both stand.
+    let older = stand_steward_grant(
+        &fixture.vault,
+        fixture.dreamer,
+        &[STEWARD_READ_VERB, "derive"],
+    )
+    .expect("a grant without archive");
+    let newer = receive_steward_grant_row(&fixture.vault, fixture.dreamer, &STEWARD_VERBS)
+        .expect("a newer row with every verb");
+    assert!(older < newer, "the row with every verb is the newest");
+    assert_eq!(
+        steward_grant_rows(&fixture.vault, fixture.dreamer)
+            .expect("rows")
+            .len(),
+        2,
+        "both rows stand"
+    );
+
     assert_eq!(
         archive(&fixture, true, 0.1),
         (
