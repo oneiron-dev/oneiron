@@ -16,6 +16,7 @@ use std::io::{Read, Seek, Write};
 use serde::Serialize;
 use serde_json::Value;
 
+use super::ExportSecrets;
 use super::credential_nulling::{null_document_credentials, null_document_member};
 use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_file};
 use crate::Vault;
@@ -67,6 +68,12 @@ pub(crate) struct DocumentWriter<'v> {
     /// OF-222, FIX 3681: an archive, whole-vault or records, carries each
     /// stored file an ASSET body is as it is stored; OKF keeps today's cut.
     attaches_files: bool,
+    /// Whether this export's serializer nulls credentials (every export but
+    /// one) or keeps them (the Owner's whole-vault archive with secrets
+    /// included). Entity bodies and SKILL and pack-source trees follow it;
+    /// agent facets, derivations, edges, runs, side rows, births, embedding
+    /// setup, epoch floors and the manifest's own pass stay nulled.
+    secrets: ExportSecrets,
     groups: BTreeMap<String, RecordSpool>,
     files: FileSpool,
     ledger: OmissionLedger,
@@ -91,13 +98,15 @@ pub(crate) struct DocumentWriter<'v> {
 
 impl<'v> DocumentWriter<'v> {
     /// A writer whose spools live under `vault`'s staging directory. The
-    /// built-in adapter descriptors lead the pack member.
+    /// built-in adapter descriptors lead the pack member. `secrets` is the
+    /// export's credential policy, from the snapshot's writer decision.
     pub(crate) fn new(
         vault: &'v Vault,
         cut: ExportCut,
         attaches_files: bool,
         adapters: Vec<ExportAdapterDescriptor>,
         agent_ids: BTreeSet<EntityId>,
+        secrets: ExportSecrets,
     ) -> Result<Self> {
         let birth_sources = agent_ids
             .iter()
@@ -107,6 +116,7 @@ impl<'v> DocumentWriter<'v> {
             vault,
             cut,
             attaches_files,
+            secrets,
             groups: BTreeMap::new(),
             files: FileSpool::new(vault)?,
             ledger: OmissionLedger::default(),
@@ -196,6 +206,7 @@ impl<'v> DocumentWriter<'v> {
                 source.files(),
                 &mut self.files,
                 raw.tainted,
+                self.secrets,
             )?;
             let pack = ExportPack::Source(ExportPackSource {
                 entity_id: entity.id.clone(),
@@ -219,6 +230,7 @@ impl<'v> DocumentWriter<'v> {
                             &package.files,
                             &mut self.files,
                             raw.tainted,
+                            self.secrets,
                         )
                     })
                     .transpose()?;
@@ -462,7 +474,7 @@ impl<'v> DocumentWriter<'v> {
         for bundle in &bundles {
             self.ledger
                 .agent(bundle, |carrier| self.birth_bodies.get(carrier));
-            self.push_tree(ArchiveRecordKind::AgentPack, bundle)?;
+            self.push_tree_nulled(ArchiveRecordKind::AgentPack, bundle)?;
         }
         // OF-370: each setup descriptor is read alone by this document's
         // nulling pass first; one the pass would change leaves whole, counted
@@ -540,7 +552,10 @@ impl<'v> DocumentWriter<'v> {
             }
         }
         let (import_refusals, import_omissions, bundle_omissions) = self.ledger.finish();
-        let storage = tail.storage.with_serializer_nulling();
+        let storage = match self.secrets {
+            ExportSecrets::Nulled => tail.storage.with_serializer_nulling(),
+            ExportSecrets::Included => tail.storage.with_serializer_keeping(),
+        };
         let manifest = WholeVaultDocumentManifest {
             manifest_version: WHOLE_VAULT_DOCUMENT_VERSION,
             format: match self.cut {
@@ -549,7 +564,7 @@ impl<'v> DocumentWriter<'v> {
             }
             .to_owned(),
             serializer: storage.serializer().clone(),
-            secrets_nulled: true,
+            secrets_nulled: self.secrets == ExportSecrets::Nulled,
             source_vault: ExportSourceVault {
                 vault_id: storage.authority().map(|a| a.vault_id().to_owned()),
                 exported_at: tail.exported_at,
@@ -612,10 +627,12 @@ impl<'v> DocumentWriter<'v> {
         ))
     }
 
-    /// A stored body as its typed export; a hub source's members stored as
-    /// files are spooled as the bytes its credential scan read (FIX 10101).
+    /// A stored body as its typed export under this writer's policy; a hub
+    /// source's members stored as files are spooled as the bytes its
+    /// credential scan read (under Nulled) or as stored (under Included)
+    /// (FIX 10101).
     fn exported_body(&mut self, body: &[u8], entity_type: u8) -> Result<ExportBody> {
-        let exported = ExportBody::from_bytes(body, entity_type);
+        let exported = ExportBody::from_bytes_with(body, entity_type, self.secrets);
         if let ExportBody::HubSource(source) = &exported {
             source.attach_files(body, &mut self.files)?;
         }
@@ -637,7 +654,9 @@ impl<'v> DocumentWriter<'v> {
                 })
     }
 
-    /// An entity row at `depth`. A file body's descriptor, or a hub source
+    /// An entity row at `depth` under this writer's policy: under Included
+    /// the typed row goes out unchanged, under Nulled through the
+    /// credential-nulling pass. A file body's descriptor, or a hub source
     /// member's, the pass changed refuses the export, naming its entity, so no
     /// bytes go under a reference that no longer names them.
     fn push_entity(
@@ -647,7 +666,10 @@ impl<'v> DocumentWriter<'v> {
         depth: usize,
     ) -> Result<()> {
         let typed = serde_json::to_value(entity).map_err(|_| encode_failed())?;
-        let row = null_document_member("", &typed, depth);
+        let row = match self.secrets {
+            ExportSecrets::Nulled => null_document_member("", &typed, depth),
+            ExportSecrets::Included => typed.clone(),
+        };
         if !file_members_kept(&typed, &row, "/body/value/source_tree/files") {
             return Err(Error::InvalidConfig(format!(
                 "whole-vault export: the credential pass changed entity {}'s source file reference",
@@ -671,12 +693,33 @@ impl<'v> DocumentWriter<'v> {
         self.push_at(kind, path, &row)
     }
 
-    /// A row holding a source tree, at depth 2. Its text members stay in the
-    /// row; a member stored as a file keeps the descriptor of the bytes
-    /// spooled for it (FIX 10101), and one the pass changed refuses the export.
+    /// A row holding a source tree, at depth 2 under this writer's policy:
+    /// under Included the typed row goes out unchanged, under Nulled through
+    /// the credential-nulling pass. Its text members stay in the row; a
+    /// member stored as a file keeps the descriptor of the bytes spooled for
+    /// it (FIX 10101), and one the pass changed refuses the export.
     fn push_tree(&mut self, kind: ArchiveRecordKind, row: &impl Serialize) -> Result<()> {
+        self.push_tree_with(kind, row, self.secrets)
+    }
+
+    /// [`Self::push_tree`] under the Nulled policy: agent packs stay nulled
+    /// even in the Owner's keeping archive.
+    fn push_tree_nulled(&mut self, kind: ArchiveRecordKind, row: &impl Serialize) -> Result<()> {
+        self.push_tree_with(kind, row, ExportSecrets::Nulled)
+    }
+
+    /// [`Self::push_tree`] under an explicit policy.
+    fn push_tree_with(
+        &mut self,
+        kind: ArchiveRecordKind,
+        row: &impl Serialize,
+        secrets: ExportSecrets,
+    ) -> Result<()> {
         let typed = serde_json::to_value(row).map_err(|_| encode_failed())?;
-        let row = null_document_member("", &typed, 2);
+        let row = match secrets {
+            ExportSecrets::Nulled => null_document_member("", &typed, 2),
+            ExportSecrets::Included => typed.clone(),
+        };
         let files = match kind {
             ArchiveRecordKind::Pack => "/value/source_tree/files",
             _ => "/source_tree/files",

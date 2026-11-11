@@ -1,5 +1,7 @@
-//! Typed runtime-pack archive bodies: identity is data, payloads always pass nulling.
-use super::ExportBody;
+//! Typed runtime-pack archive bodies: identity is data, payloads pass the
+//! archive's policy (kept only in the Owner's whole-vault archive with secrets
+//! included, nulled in every other export).
+use super::{ExportBody, ExportSecrets};
 use crate::error::{Error, Result};
 use crate::registry::pack_byte_map::{PackInstanceEnvelope, PackInstanceOrigin, PackKindIdentity};
 use serde::{Deserialize, Serialize};
@@ -14,13 +16,20 @@ pub struct ExportPackInstance {
     pub payload: ExportBody,
 }
 impl ExportPackInstance {
+    /// [`Self::from_envelope_with`] under [`ExportSecrets::Nulled`].
     pub(super) fn from_envelope(value: PackInstanceEnvelope) -> Self {
+        Self::from_envelope_with(value, ExportSecrets::Nulled)
+    }
+
+    /// A pack envelope as its archive body under `secrets`: the payload via
+    /// [`ExportBody::from_bytes_with`].
+    pub(super) fn from_envelope_with(value: PackInstanceEnvelope, secrets: ExportSecrets) -> Self {
         Self {
             version: value.version,
             kind: value.kind,
             generation: value.generation,
             origin: value.origin,
-            payload: ExportBody::from_bytes(&value.payload, 0),
+            payload: ExportBody::from_bytes_with(&value.payload, 0, secrets),
         }
     }
     pub(crate) fn envelope(&self) -> Result<PackInstanceEnvelope> {
@@ -34,7 +43,14 @@ impl ExportPackInstance {
         envelope.to_bytes()?;
         Ok(envelope)
     }
+    /// [`Self::validate_with`] under [`ExportSecrets::Nulled`].
     pub(super) fn validate(&self) -> Result<()> {
+        self.validate_with(ExportSecrets::Nulled)
+    }
+
+    /// The envelope's checks under `secrets`: the payload validates with
+    /// [`ExportBody::validate_with`].
+    pub(super) fn validate_with(&self, secrets: ExportSecrets) -> Result<()> {
         if matches!(self.payload, ExportBody::Pack(_)) {
             return Err(Error::InvalidConfig("nested pack archive envelope".into()));
         }
@@ -42,6 +58,6 @@ impl ExportPackInstance {
         let mut safe = self.clone();
         safe.payload = ExportBody::Utf8(String::new());
         safe.envelope()?;
-        self.payload.validate(0)
+        self.payload.validate_with(0, secrets)
     }
 }
