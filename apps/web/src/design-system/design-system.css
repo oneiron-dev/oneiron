@@ -45,6 +45,7 @@
 @import './patterns/OutsideLine.css';
 @import './patterns/ConnectionRow.css';
 @import './patterns/FileRow.css';
+@import './patterns/PinnedList.css';
 @import './patterns/FileGroup.css';
 @import './patterns/LedgerTable.css';
 @import './patterns/ClaimText.css';
