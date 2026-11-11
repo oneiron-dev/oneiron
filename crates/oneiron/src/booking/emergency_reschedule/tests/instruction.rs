@@ -240,8 +240,6 @@ fn existing_authority_root(
             },
             genesis_nonce: [seed.wrapping_add(10); 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
         signer: AuthoritySignature {
             suite: key.suite(),

@@ -1537,7 +1537,8 @@ fn both_entry_points_follow_the_in_transaction_ownership_answer() {
     put_person(&vault, stranger_ref);
     vault
         .mint_standing_outbound_grant(
-            &EntityId::from_bytes([0xD3; 16]).expect("send grant id"),
+            &crate::test_util::embedded_owner_proof(&vault),
+            EntityId::from_bytes([0xD3; 16]).expect("send grant id"),
             &GrantMintIntent {
                 principal_ref: own.to_hex(),
                 origin_component_id: "tasks".to_owned(),
@@ -1547,7 +1548,6 @@ fn both_entry_points_follow_the_in_transaction_ownership_answer() {
                     verb_class: "send".to_owned(),
                 },
             },
-            1,
         )
         .expect("mint send grant");
     grant_cancel(&vault, own, 0xD6);

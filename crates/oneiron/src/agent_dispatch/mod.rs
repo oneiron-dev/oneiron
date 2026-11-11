@@ -21,6 +21,7 @@
 //! lattice.
 
 mod agent_run;
+mod agent_wait;
 mod attenuation;
 mod brief;
 pub mod budget_doors;
@@ -153,11 +154,17 @@ pub use self::spend_calibration::{
     SpendBasis, UsdPriceTarget, UsdUnitPrice,
 };
 pub(crate) use self::spend_lease::payer_binds_in_txn;
+pub(crate) use self::spend_record::erase_spend_scope_actor_in_txn;
 pub use self::spend_record::{
     ChildSpend, GrantSpendBinding, SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused,
     SpendScope, SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 
+pub use self::agent_wait::{AgentWaitChild, AgentWaitSetResult};
+pub(crate) use self::agent_wait::{
+    AgentWaitOpen, AgentWaitPolicy, agent_dispatch_child_wait_accepts_masked, agent_wait_attempt,
+    open_agent_wait, settle_agent_child_waits_in_txn,
+};
 pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::budget_hold::{
     BudgetHoldLease, BudgetHoldNotice, BudgetHoldState, HeldAttempt, PartialResultHold,

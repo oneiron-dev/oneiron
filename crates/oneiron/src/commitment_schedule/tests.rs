@@ -16,7 +16,7 @@ use crate::commitment::{
     CommitmentObligorKind, CommitmentRecord, CommitmentStrength,
 };
 use crate::config::{HnswConfig, VaultConfig};
-use crate::edge::EdgeKind;
+use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::{
@@ -25,7 +25,7 @@ use crate::store::{
 use crate::vault::Vault;
 use crate::write_envelope::{
     WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
-    WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY,
+    WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor,
 };
 
 /// The owner's zone for every quota fixture: it has both DST transitions and a

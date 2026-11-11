@@ -241,6 +241,65 @@ impl Vault {
         })
     }
 
+    /// The owner, by its proof, or a holder of `engine.controls` sets how often one standing rule
+    /// falls due (untangle 6.6b; maintenance cadence). The rule's person, draft route, `since` and
+    /// the rule set's owner stay as the owner set them. Untangle 6.6d gives it its verb. Returns
+    /// the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
+    /// holder of `engine.controls`; an unknown rule id or a period the rule refuses; store
+    /// failures.
+    pub fn set_stewardship_rule_period_by(
+        &self,
+        actor: crate::federation::EngineControlActor<'_>,
+        rule_id: &str,
+        every_secs: u64,
+    ) -> Result<EntityId> {
+        self.apply_engine_control(
+            actor,
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_STEWARDSHIP_RULES",
+            &crate::federation::rendered_change(&serde_json::json!({
+                "rule": rule_id,
+                "every_secs": every_secs,
+            }))?,
+            |txn| {
+                let mut row = RULES.get(&self.store, &*txn, &())?.ok_or_else(invalid)?;
+                let rule = row
+                    .rules
+                    .iter_mut()
+                    .find(|rule| rule.id == rule_id)
+                    .ok_or_else(invalid)?;
+                rule.every_secs = every_secs;
+                rule.validate()?;
+                RULES.admit(self, txn, &(), &mut row)?;
+                RULES.put(&self.store, txn, &(), &row)?;
+                Ok(())
+            },
+        )
+    }
+
+    /// [`Self::set_stewardship_rule_period_by`] for a holder of `engine.controls` (untangle
+    /// 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_stewardship_rule_period_by`].
+    pub fn set_stewardship_rule_period_as_holder(
+        &self,
+        holder: EntityId,
+        rule_id: &str,
+        every_secs: u64,
+    ) -> Result<EntityId> {
+        self.set_stewardship_rule_period_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            rule_id,
+            every_secs,
+        )
+    }
+
     /// One page of the standing reach-outs whose rule has a draft route and
     /// no draft yet, read after the reach-out `after`: each one applied and
     /// not reverted, or held for the owner and not declined. A page is a
@@ -402,7 +461,12 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
             "due_at": due_at,
         });
         let evidence = newest.map_or(rule.person, |(claim, _)| claim);
-        due.push((rule.person, value, evidence));
+        // The reach-out names the record and when: it stands where the
+        // record does (OPUS-LEAKS).
+        let place = newest
+            .map(|(claim, _)| record_place(vault, &claim))
+            .transpose()?;
+        due.push((rule.person, value, evidence, place));
     }
     if due.is_empty() {
         return Ok(());
@@ -413,8 +477,8 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
         attempt.status.attempt.id,
         |landing| {
             vault.with_write_txn_grouped(|txn| {
-                for (person, value, evidence) in &due {
-                    landing.land_in_txn(
+                for (person, value, evidence, place) in &due {
+                    landing.land_placed_in_txn(
                         vault,
                         txn,
                         &proposals::Finding {
@@ -423,6 +487,7 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
                             value,
                             evidence: &[*evidence],
                         },
+                        place.as_ref(),
                         now,
                         |_| Ok(MaintenanceInverse::ReachOut),
                     )?;
@@ -431,6 +496,21 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
             })
         },
     )
+}
+
+/// Where a reach-out citing `record` stands: where the record does, its
+/// relationships, its claim scope (its privacy and sensitivity), its facet
+/// and project stamps and its world, so a member who does not read the
+/// record does not read the reach-out that names it and when it was
+/// (OPUS-LEAKS).
+fn record_place(vault: &Vault, record: &EntityId) -> Result<proposals::FindingPlace> {
+    let body = vault.get_claim(record)?.ok_or_else(invalid)?;
+    Ok(proposals::FindingPlace {
+        stamps: Some((body.scope_facet, body.scope_project)),
+        scope: body.scope,
+        world: body.world,
+        relationships: body.rel,
+    })
 }
 
 /// The owner's revert of one applied reach-out, beside its retraction: its
@@ -485,11 +565,11 @@ pub(super) fn standing_reach_out_in_txn(
 /// The Dreamer's read: a relationship's rows and private rows pass only on
 /// its own live grants.
 fn dreamer_reader(vault: &Vault) -> Result<ScopedRead<'_>> {
-    let actor = vault.dreamer_authority()?.entity_ref();
+    let dreamer = vault.dreamer_authority()?;
     Ok(vault.scoped_read(
-        ScopedReadActorKey::with_actor_class(actor.to_hex(), "system")
+        ScopedReadActorKey::for_engine_actor(dreamer)
             .ok_or_else(invalid)?
-            .require_relationship_grants(Some(actor)),
+            .require_relationship_grants(Some(dreamer.entity_ref())),
     ))
 }
 

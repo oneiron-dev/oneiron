@@ -8,13 +8,11 @@ use super::microvm::{MicroVmBackend, SandboxBackends};
 use crate::Result;
 
 /// The [`SandboxBackends`] of this build: each backend its features and
-/// target compile in, detected on the host when asked.
+/// target compile in, detected on the host when asked. A host installs it
+/// on each vault it builds (`oneiron::Vault::install_sandbox_backends`);
+/// nothing selects a backend through a process global (F1-6).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CompiledSandboxBackends;
-
-/// This build's one [`SandboxBackends`], for every caller that selects a
-/// backend.
-pub static SANDBOX_BACKENDS: CompiledSandboxBackends = CompiledSandboxBackends;
 
 impl SandboxBackends for CompiledSandboxBackends {
     fn firecracker(&self) -> Option<Box<dyn MicroVmBackend>> {
