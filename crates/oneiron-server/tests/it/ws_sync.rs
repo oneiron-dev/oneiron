@@ -1108,6 +1108,12 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
     let vault = open_vault(dir.path());
     let (addr, server, handle) =
         spawn_server(vault.clone(), config_with_secret(Some(SECRET))).await;
+    // Deletion loads this install's signing key (P6c). Install after server
+    // construction so the fixture still roots itself through root_auth_headers.
+    vault
+        .install_default_keystore(dir.path())
+        .then_some(())
+        .expect("the HTTP lifecycle fixture loads its install signing key");
     let id = EntityId::now();
     let entity_path = format!("/api/entity/{}", id.to_hex());
 
@@ -1491,7 +1497,7 @@ async fn subscribed_window_catchup_prefix_precedes_concurrent_live_delta() {
     author.commit();
     let prefix = author.export(ExportMode::all_updates()).unwrap();
     send_enveloped_update(&mut writer, "2026-02", &prefix).await;
-    wait_for_sync_state_key(&vault, "u:w:2026-02:00000001").await;
+    wait_for_sync_state_key(&vault, "u:w:2026-02:0000000000000001").await;
     let mut follower = connect_root_without_hello(addr, &server, "causal-secret")
         .await
         .unwrap();
@@ -1633,7 +1639,7 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
 
     // Wait until both updates are durable, then "restart": kill the server
     // task and drop ALL in-RAM CRDT state.
-    wait_for_sync_state_key(&vault, "u:w:2026-02:00000002").await;
+    wait_for_sync_state_key(&vault, "u:w:2026-02:0000000000000002").await;
     let _ = client_a.close(None).await;
     handle1.abort();
     drop(server1);
@@ -1708,7 +1714,7 @@ async fn persist_failure_evicts_window_so_vv_request_omits_unpersisted_update() 
     author.commit();
     let ok_update = author.export(ExportMode::all_updates()).unwrap();
     send_enveloped_update(&mut client_a, "2026-02", &ok_update).await;
-    wait_for_sync_state_key(&vault, "u:w:2026-02:00000001").await;
+    wait_for_sync_state_key(&vault, "u:w:2026-02:0000000000000001").await;
 
     // Corrupt the monotonic seq row: the NEXT persist_imported_update trips
     // CorruptedIndex (fail-closed, server_state policy) AFTER the handler

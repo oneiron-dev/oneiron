@@ -373,13 +373,21 @@ async fn binds_once(case: Case) {
     let before = fake.seen().len();
     serve_until(&config, &fake, before + 1).await;
     let seen = fake.seen();
-    let listing = text(
-        seen[before].body["messages"]
-            .as_array()
-            .unwrap()
-            .last()
-            .unwrap(),
-    );
+    let listing = seen[before..]
+        .iter()
+        .filter(|call| {
+            text(&call.body["messages"][0]).starts_with("Extract durable memory claims")
+        })
+        .filter_map(|call| call.body["messages"].as_array()?.last())
+        .map(text)
+        .find(|input| {
+            input.lines().any(|line| {
+                line.strip_prefix('[')
+                    .and_then(|rest| rest.split_once("] "))
+                    .is_some_and(|(_, words)| words == case.second.0)
+            })
+        })
+        .expect("the second turn has an extraction call");
     let (person_label, claim_label) = listed_claim(listing, case.predicate, case.first.1)
         .expect("the call lists Oleksii and the first claim's predicate and value");
     assert!(
