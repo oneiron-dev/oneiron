@@ -4,13 +4,111 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, dead_code)]
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use async_trait::async_trait;
+use oneiron_organ_host::{FloorLease, FloorRefusal, MachineFloor};
 use oneiron_seal::{
-    BackendSignature, FetchError, FetchRequest, FetchResponse, SealBackend, SealClock, SealFetcher,
-    SignDigestRequest, SignatureAlgorithm, SigningIdentity,
+    AdmittedBytes, AdmittedStr, BackendSignature, FetchError, FetchRequest, FetchResponse,
+    SealBackend, SealClock, SealFetcher, SealMemory, SealMemoryProvider, SealMemoryRefusal,
+    SealResourceLimits, SharedBytes, SharedStr, SignDigestRequest, SignatureAlgorithm,
+    SigningIdentity,
 };
+
+// ---------------------------------------------------------------------------
+// Memory: a service that grants every reservation (FIX 7654, FIX 7655)
+// ---------------------------------------------------------------------------
+
+/// Grants every reservation and holds nothing: the service the engine, the
+/// guarded fetcher and the fixture fetchers reserve from.
+pub(crate) struct GrantAllMemory;
+
+impl SealMemory for GrantAllMemory {
+    fn reserve(&self, _bytes: u64) -> Result<Box<dyn Send>, SealMemoryRefusal> {
+        Ok(Box::new(()))
+    }
+}
+
+/// The provider over [`GrantAllMemory`].
+pub(crate) fn grant_all_memory() -> SealMemoryProvider {
+    SealMemoryProvider::new(Arc::new(GrantAllMemory))
+}
+
+/// The default limits, their memory service [`GrantAllMemory`]: a native
+/// engine refuses to start without a service.
+pub(crate) fn grant_all_limits() -> SealResourceLimits {
+    SealResourceLimits {
+        memory: grant_all_memory(),
+        ..SealResourceLimits::default()
+    }
+}
+
+/// A copy of `bytes` admitted under [`GrantAllMemory`], shared as a fetch
+/// response holds its body.
+pub(crate) fn shared_bytes(bytes: &[u8]) -> SharedBytes {
+    Arc::new(AdmittedBytes::copy_from(&grant_all_memory(), bytes).expect("grant-all memory admits"))
+}
+
+/// A copy of `text` admitted under [`GrantAllMemory`], shared as a fetch
+/// response holds its content type.
+pub(crate) fn shared_str(text: &str) -> SharedStr {
+    Arc::new(AdmittedStr::copy_from(&grant_all_memory(), text).expect("grant-all memory admits"))
+}
+
+/// Grants every lease of the machine's memory and holds nothing: the
+/// organ host's floor (`memory.grow`, FIX 7654) for the organ end-to-end
+/// tests, beside [`GrantAllMemory`] for the in-process engine.
+pub(crate) struct GrantAllFloor;
+
+/// A lease from [`GrantAllFloor`]: every growth is granted.
+struct GrantAllFloorLease;
+
+impl FloorLease for GrantAllFloorLease {
+    fn grow(
+        &mut self,
+        _more: u64,
+        _deadline: Instant,
+        _stopped: &dyn Fn() -> bool,
+    ) -> Result<(), FloorRefusal> {
+        Ok(())
+    }
+
+    fn materialized(&mut self, _reserved: u64, _actual: u64) {}
+
+    fn shrink(&mut self, _bytes: u64) {}
+
+    fn grow_untimed(
+        &mut self,
+        _more: u64,
+        _stopped: &dyn Fn() -> bool,
+    ) -> Result<(), FloorRefusal> {
+        Ok(())
+    }
+}
+
+impl MachineFloor for GrantAllFloor {
+    fn check_irreducible_peak(&self, _pinned: u64, _bytes: u64) -> Result<(), FloorRefusal> {
+        Ok(())
+    }
+
+    fn try_lease(&self, _bytes: u64) -> Result<Option<Box<dyn FloorLease>>, FloorRefusal> {
+        Ok(Some(Box::new(GrantAllFloorLease)))
+    }
+
+    fn track_allocated(&self, _bytes: u64) -> Box<dyn FloorLease> {
+        Box::new(GrantAllFloorLease)
+    }
+
+    fn lease(
+        &self,
+        _bytes: u64,
+        _deadline: Instant,
+        _stopped: &dyn Fn() -> bool,
+    ) -> Result<Box<dyn FloorLease>, FloorRefusal> {
+        Ok(Box::new(GrantAllFloorLease))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Minimal DER writer (mirrors the production encoding for fixture assembly)
@@ -307,8 +405,8 @@ impl SealFetcher for FixtureFetcher {
         {
             return tsa_response(tsa, &request.request_body)
                 .map(|body| FetchResponse {
-                    body,
-                    content_type: Some("application/timestamp-reply".to_string()),
+                    body: shared_bytes(&body),
+                    content_type: Some(shared_str("application/timestamp-reply")),
                 })
                 .ok_or(FetchError::InvalidResponse);
         }
