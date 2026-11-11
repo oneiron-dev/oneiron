@@ -4,7 +4,7 @@
 crate::side_table::side_tables! {
     /// One participant's explicit team choice. Key: caller attempt hex, `:`, team reference.
     TEAM_BALLOT: VaultMeta b"team:ballot:v1:" Named
-        [restore: content] [family: unregistered] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A team deliverable's owner review: team, leader, root TASK, output revision, reviewed
     /// claim fingerprint and what the review asks. Key: id16 (reviewed claim).
     TEAM_DELIVERABLE: VaultMeta b"team:deliverable:v1:" Named
