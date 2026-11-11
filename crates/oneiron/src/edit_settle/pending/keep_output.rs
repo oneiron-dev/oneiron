@@ -35,6 +35,12 @@ impl Vault {
         let provenance = BlobVersionProvenance::AgentRun {
             run_ref: row.proposal_ref.clone(),
         };
+        let claim_id = match &row.body {
+            PendingBody::Output {
+                version_claim_id, ..
+            } => *version_claim_id,
+            _ => None,
+        };
         // An output waiting in its body file is read whole before the writer
         // opens and checked against its digest; a Discard or purge that
         // commits first leaves this Keep settled or its artifact gone
@@ -77,6 +83,7 @@ impl Vault {
                     occurred,
                     learned_at,
                     row.producer_position(),
+                    claim_id,
                 )?;
                 let mut rebound = false;
                 if let Some(hold) = &row.deck {
