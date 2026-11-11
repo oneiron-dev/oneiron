@@ -2,18 +2,14 @@
 //! attempt row's state and pause, the shared engine-hold write, and the
 //! [`RunState`] a run reports, derived from its row.
 //!
-//! Each run writer that interrupts, pauses, holds, resumes, cancels, reclaims,
-//! releases, retries, lands or claims a row asks [`RunLifecycle::step`] what
-//! the event does in the row's current state. The writers of
-//! `engine/mutate.rs` (the interventions, the lease release, the retry),
-//! `cancel/ops.rs` (landing acceptance, checkpoints, reserve and pressure),
-//! `cancel/terminal.rs` (landing finish, force cancellation and its successor)
-//! and `validate/field_validators.rs` (the claim helper) write the row's
-//! lifecycle fields (`state`, `active_pause`, `lease_owner`, `scheduled_at`,
-//! `settled_at`, `cancel_state`, `attempt_count`) only through the write
-//! functions of [`RunLifecycle`] below. Cancel receipt appends and pressure
-//! counts also live here; other writers still write the table's answer
-//! themselves. The writer keeps its own
+//! Each production writer of the row's seven lifecycle fields (`state`,
+//! `active_pause`, `lease_owner`, `scheduled_at`, `settled_at`, `cancel_state`,
+//! `attempt_count`) goes through the write functions of [`RunLifecycle`] below.
+//! State-moving writers ask [`RunLifecycle::step`] what the event does in the
+//! row's current state; fresh rows, cancel receipt appends and pressure counts
+//! also live here. The store codec's secret mask (`encode_admitted_record`)
+//! replaces a row by a decode of its own serialized members, not a lifecycle
+//! write. The writer keeps its own
 //! guards (the lease fence, input validation, the reserved hold actors) and
 //! its side writes (the ready and annotation-hold indexes, dedupe, pack
 //! receipts, settlement, notifications). The writers that consult it:
@@ -32,7 +28,15 @@
 //! - landing finish, `finish_landing_in_txn`, through `FinishLanding`;
 //! - hard cancellation, `force_cancel_in_txn` and `force_cancel_record`,
 //!   through `ForceCancel` (lease cleanup also calls the latter);
-//! - ready-row claims, `lease_claimed_record`, through `Claim`.
+//! - ready-row claims, `lease_claimed_record`, through `Claim`;
+//! - completion, `complete_storage_in_txn`, through `Complete`;
+//! - failure, `fail_storage_in_txn`, through `Fail`;
+//! - abandonment, `abandon_in_txn`, through `Abandon`;
+//! - placement changes, `redirect`, through `Redirect`;
+//! - same-try requeue, `requeue_with_history_in_txn`, through `Requeue`;
+//! - fresh-row deferral, `defer_enqueued_in_txn`, through `Defer`;
+//! - retry acceleration, `advance_waiting_retry_in_txn`, through `AdvanceRetry`;
+//! - checkpoint lease reset, `unlease_attempt`, through `Unlease`.
 //!
 //! The table encodes today's transitions; no stored byte changes. Two of
 //! today's cells are known gaps, kept here as they are:
@@ -255,6 +259,22 @@ pub(crate) enum RunEvent {
     ForceCancel,
     /// Ready-row leasing by `lease_claimed_record`.
     Claim,
+    /// Completion by `complete_storage_in_txn`.
+    Complete,
+    /// Failure by `fail_storage_in_txn`.
+    Fail,
+    /// Abandonment by `abandon_in_txn`.
+    Abandon,
+    /// Placement changes by `redirect`, fencing a lease when its worker moves.
+    Redirect { worker_moved: bool },
+    /// Same-try requeue by `requeue_with_history_in_txn`.
+    Requeue,
+    /// Fresh-row deferral by `defer_enqueued_in_txn`.
+    Defer,
+    /// Retry acceleration by `advance_waiting_retry_in_txn`.
+    AdvanceRetry,
+    /// Checkpoint lease reset by `unlease_attempt`.
+    Unlease,
 }
 
 /// What an event does to a row in its current state.
@@ -438,6 +458,110 @@ impl RunLifecycle {
                 | S::Cancelled
                 | S::Abandoned => RunStep::Refuse,
             },
+            RunEvent::Complete => match row.state {
+                S::Leased => RunStep::Move {
+                    to: S::Completed,
+                    pause: row.pause,
+                },
+                S::Completed => RunStep::Replay,
+                S::Queued
+                | S::Paused
+                | S::Scheduled
+                | S::Landing
+                | S::Failed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Refuse,
+            },
+            RunEvent::Fail => match row.state {
+                S::Leased => RunStep::Move {
+                    to: S::Failed,
+                    pause: row.pause,
+                },
+                S::Failed => RunStep::Replay,
+                S::Queued
+                | S::Paused
+                | S::Scheduled
+                | S::Landing
+                | S::Completed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Refuse,
+            },
+            RunEvent::Abandon => match row.state {
+                S::Leased | S::Landing => RunStep::Move {
+                    to: S::Abandoned,
+                    pause: row.pause,
+                },
+                S::Abandoned => RunStep::Replay,
+                S::Queued | S::Paused | S::Scheduled | S::Completed | S::Failed | S::Cancelled => {
+                    RunStep::Refuse
+                }
+            },
+            RunEvent::Requeue => match row.state {
+                S::Leased => RunStep::Move {
+                    to: S::Scheduled,
+                    pause: row.pause,
+                },
+                S::Queued
+                | S::Paused
+                | S::Scheduled
+                | S::Landing
+                | S::Completed
+                | S::Failed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Refuse,
+            },
+            RunEvent::Defer => match row.state {
+                S::Queued => RunStep::Move {
+                    to: S::Scheduled,
+                    pause: row.pause,
+                },
+                S::Leased
+                | S::Paused
+                | S::Scheduled
+                | S::Landing
+                | S::Completed
+                | S::Failed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Keep,
+            },
+            RunEvent::AdvanceRetry => match row.state {
+                S::Scheduled => RunStep::Move {
+                    to: S::Scheduled,
+                    pause: row.pause,
+                },
+                S::Queued
+                | S::Leased
+                | S::Paused
+                | S::Landing
+                | S::Completed
+                | S::Failed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Keep,
+            },
+            RunEvent::Redirect { worker_moved } => match row.state {
+                S::Leased if worker_moved => RunStep::Move {
+                    to: S::Queued,
+                    pause: row.pause,
+                },
+                S::Queued | S::Scheduled | S::Leased => RunStep::Note { clock: false },
+                S::Paused | S::Landing | S::Completed | S::Failed | S::Cancelled | S::Abandoned => {
+                    RunStep::Refuse
+                }
+            },
+            RunEvent::Unlease => match row.state {
+                S::Leased => RunStep::Move {
+                    to: S::Queued,
+                    pause: row.pause,
+                },
+                S::Queued
+                | S::Paused
+                | S::Scheduled
+                | S::Completed
+                | S::Failed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Keep,
+                S::Landing => RunStep::Refuse,
+            },
             RunEvent::Release { lease_holder } => match row.state {
                 S::Leased if lease_holder => RunStep::Move {
                     to: S::Queued,
@@ -446,6 +570,153 @@ impl RunLifecycle {
                 _ => RunStep::Keep,
             },
         }
+    }
+
+    /// Applies `Complete`, writing state, active_pause, lease_owner and
+    /// settled_at. The site keeps lease guards, backoff_until, last_error,
+    /// updated_at, indexes, receipts, projection and notifications.
+    pub(crate) fn complete(record: &mut AttemptRecord, now: u64) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::Complete);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+            record.settled_at = Some(now);
+        }
+        step
+    }
+
+    /// Applies `Fail`, writing state, active_pause, lease_owner and settled_at.
+    /// The site keeps lease and reason guards, backoff_until, last_error,
+    /// updated_at, indexes, receipts and notifications.
+    pub(crate) fn fail(record: &mut AttemptRecord, now: u64) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::Fail);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+            record.settled_at = Some(now);
+        }
+        step
+    }
+
+    /// Applies `Abandon`, writing state, active_pause, cancel_state.landing,
+    /// lease_owner, scheduled_at and settled_at. The site keeps lease, reason
+    /// and result guards, backoff_until, last_error, result_ref, updated_at,
+    /// indexes, receipts and settlement.
+    ///
+    /// The landing was answered-but-unfinished advisory state; an abandoned
+    /// row settles by reason + result_ref, and the placement rule forbids a
+    /// landing record outside landing/cancelled.
+    pub(crate) fn abandon(record: &mut AttemptRecord, now: u64) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::Abandon);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.cancel_state.landing = None;
+            record.lease_owner = None;
+            record.scheduled_at = None;
+            record.settled_at = Some(now);
+        }
+        step
+    }
+
+    /// Applies `Reclaim`, writing state, active_pause, lease_owner and
+    /// scheduled_at only for a previously Leased row. A Landing move is
+    /// returned unwritten for force_cancel_record. The site keeps expiry
+    /// history, backoff_until, last_error, updated_at, indexes and persistence.
+    pub(crate) fn reclaim(record: &mut AttemptRecord, expired: bool, held: bool) -> RunStep {
+        let row = RunRow::of(record);
+        let step = Self::step(row, RunEvent::Reclaim { expired, held });
+        if row.state == AttemptState::Leased
+            && let RunStep::Move { to, pause } = step
+        {
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+            record.scheduled_at = None;
+        }
+        step
+    }
+
+    /// Applies `Redirect`, checking the next attempt_count before writing
+    /// state, active_pause, lease_owner, scheduled_at and attempt_count. The
+    /// site keeps placement guards, backoff_until, updated_at, indexes, events,
+    /// persistence and stopping the fenced executor.
+    pub(crate) fn redirect(record: &mut AttemptRecord, worker_moved: bool) -> Result<RunStep> {
+        let step = Self::step(RunRow::of(record), RunEvent::Redirect { worker_moved });
+        if let RunStep::Move { to, pause } = step {
+            // Fence the former worker immediately, even if a new worker uses
+            // the same owner string before claiming.
+            let attempt_count = record
+                .attempt_count
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("redirect lease generation"))?;
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+            record.scheduled_at = None;
+            record.attempt_count = attempt_count;
+        }
+        Ok(step)
+    }
+
+    /// Applies `Requeue`, writing state, active_pause, lease_owner and
+    /// scheduled_at. The site keeps lease and reason guards, history,
+    /// last_error, backoff_until, updated_at, indexes and persistence.
+    pub(crate) fn requeue(record: &mut AttemptRecord, due_at: u64) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::Requeue);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+            record.scheduled_at = Some(due_at);
+        }
+        step
+    }
+
+    /// Applies `Defer`, writing state, active_pause and scheduled_at. The site
+    /// keeps readiness and due guards, indexes and persistence.
+    pub(crate) fn defer(record: &mut AttemptRecord, due: u64) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::Defer);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.scheduled_at = Some(due);
+        }
+        step
+    }
+
+    /// Applies `AdvanceRetry`, writing state and active_pause unchanged, and
+    /// scheduled_at. The site keeps retry guards, backoff_until, indexes and
+    /// persistence.
+    pub(crate) fn advance_retry(record: &mut AttemptRecord, now: u64) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::AdvanceRetry);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.scheduled_at = Some(now);
+        }
+        step
+    }
+
+    /// Applies `Unlease`, writing state, active_pause and lease_owner. The
+    /// site keeps the landing refusal, claimed_at and checkpoint serialization.
+    pub(crate) fn unlease(record: &mut AttemptRecord) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::Unlease);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+        }
+        step
+    }
+
+    /// Builds a fresh row with no state move: row writes state, active_pause,
+    /// lease_owner, scheduled_at, settled_at, cancel_state and attempt_count.
+    /// The site keeps payload, provenance, guards, indexes and persistence.
+    pub(crate) fn new_row(parts: NewAttempt) -> AttemptRecord {
+        row(parts, None, AttemptCancelState::default())
     }
 
     /// Applies `Pause`, writing state and active_pause; clears lease_owner only
