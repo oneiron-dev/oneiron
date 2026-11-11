@@ -402,7 +402,12 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
             "due_at": due_at,
         });
         let evidence = newest.map_or(rule.person, |(claim, _)| claim);
-        due.push((rule.person, value, evidence));
+        // The reach-out names the record and when: it stands where the
+        // record does (OPUS-LEAKS).
+        let place = newest
+            .map(|(claim, _)| record_place(vault, &claim))
+            .transpose()?;
+        due.push((rule.person, value, evidence, place));
     }
     if due.is_empty() {
         return Ok(());
@@ -413,8 +418,8 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
         attempt.status.attempt.id,
         |landing| {
             vault.with_write_txn_grouped(|txn| {
-                for (person, value, evidence) in &due {
-                    landing.land_in_txn(
+                for (person, value, evidence, place) in &due {
+                    landing.land_placed_in_txn(
                         vault,
                         txn,
                         &proposals::Finding {
@@ -423,6 +428,7 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
                             value,
                             evidence: &[*evidence],
                         },
+                        place.as_ref(),
                         now,
                         |_| Ok(MaintenanceInverse::ReachOut),
                     )?;
@@ -431,6 +437,21 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
             })
         },
     )
+}
+
+/// Where a reach-out citing `record` stands: where the record does, its
+/// relationships, its claim scope (its privacy and sensitivity), its facet
+/// and project stamps and its world, so a member who does not read the
+/// record does not read the reach-out that names it and when it was
+/// (OPUS-LEAKS).
+fn record_place(vault: &Vault, record: &EntityId) -> Result<proposals::FindingPlace> {
+    let body = vault.get_claim(record)?.ok_or_else(invalid)?;
+    Ok(proposals::FindingPlace {
+        stamps: Some((body.scope_facet, body.scope_project)),
+        scope: body.scope,
+        world: body.world,
+        relationships: body.rel,
+    })
 }
 
 /// The owner's revert of one applied reach-out, beside its retraction: its

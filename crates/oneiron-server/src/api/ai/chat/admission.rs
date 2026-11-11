@@ -202,7 +202,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
         None,
     )
     .call
-    .map_err(&role_refused)?;
+    .map_err(role_refused)?;
     // `host.turn.generate` (ARCH-0080 §5): its pre chain runs once the turn
     // is admitted, so a refused admission leaves no hook's blocks or notes,
     // and before the user's turn is witnessed, so a skip or an ask ends the
@@ -442,7 +442,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
             });
         (state.is_some() || tail.is_some()).then_some(segments::BoardView { state, tail })
     };
-    let mut admitted = admitted.map_err(&role_refused)?;
+    let mut admitted = admitted.map_err(role_refused)?;
     if self_chat.is_some() || first_turn.is_some() {
         // The history before the turn's context is the prefix the next turn
         // sends again, so its end is marked beside the request's own. Today's

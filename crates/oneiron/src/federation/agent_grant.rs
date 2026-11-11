@@ -399,7 +399,7 @@ impl Vault {
     /// Deletes the agent grant row `grant_ref` in the caller's writer. The
     /// withdrawal stays known here and reaches its peers, in this writer
     /// (FIX-LIST 5107, 10772).
-    fn delete_agent_grant_row_in_txn(
+    pub(super) fn delete_agent_grant_row_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         grant_ref: EntityId,

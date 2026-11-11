@@ -32,3 +32,9 @@ impl<'a> CustodyWrite<'a> {
         }
     }
 }
+
+/// Whether `record` may leave this device: custody-portable with its "this
+/// device only" dial off.
+pub(crate) fn custody_portable(record: &SecretCustodyRecord) -> bool {
+    record.class == CustodyClass::CustodyPortable && !record.device_only
+}

@@ -54,7 +54,7 @@ fn readonly_fold_matches_full_fold_and_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     // A settled single-key roster has no enrollment widen in flight.
-    let genesis = genesis_entry(208, DEFAULT_PENDING_WIDEN_DELAY_SECS, 200);
+    let genesis = genesis_entry(208, 200);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let owner = ed_key(208);
     let owner_key = authority_key_from_ed(&owner);
@@ -130,7 +130,7 @@ fn backfill_ignores_future_learned_at_and_records_local_observation() {
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let owner = ed_key(221);
     let owner_key = authority_key_from_ed(&owner);
-    let genesis = genesis_entry(221, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(221, 1);
     let genesis_hash = authority_entry_hash(&genesis).unwrap();
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enrolled = ed_key(222);
@@ -219,7 +219,7 @@ fn applied_rotation_with_corrupt_sidecar_refuses_public_and_snapshot_folds() {
         let owner = ed_key(230);
         let owner_key = authority_key_from_ed(&owner);
         let actor = scope_entity(0x85);
-        let genesis = genesis_entry(230, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+        let genesis = genesis_entry(230, 1);
         let vault_id = genesis_vault_id(&genesis).unwrap();
         let bind = sign_ed(
             unsigned_entry(
@@ -322,7 +322,7 @@ fn authority_cache_is_bound_to_snapshot_and_abort_does_not_publish_a_mint() {
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let owner = ed_key(243);
     let owner_key = authority_key_from_ed(&owner);
-    let genesis = genesis_entry(243, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(243, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     vault
         .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)
@@ -455,7 +455,7 @@ fn pre_handoff_rotation_and_its_handoff_land_at_once_and_survive_reopen() {
     let owner_key = authority_key_from_ed(&owner);
     let replacement_key = authority_key_from_ed(&replacement);
     let host_key = authority_key_from_ed(&host);
-    let genesis = genesis_entry(126, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(126, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let rotation = rotate_entry(id, &genesis, &owner, owner_key.clone(), 127, 1);
     let rotation_hash = authority_entry_hash(&rotation).unwrap();

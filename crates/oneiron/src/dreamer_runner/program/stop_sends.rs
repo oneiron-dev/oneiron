@@ -20,11 +20,12 @@ use crate::outbound_intent_ledger::{
 
 use super::stop_recovery::owe_in_txn;
 
-/// In the owner's Stop writer, marks `attempt`'s Pending sends Abandoned in
-/// a savepoint. Never fails the Stop: a refused abandon rolls back alone, is
+/// In the owner's Stop writer (a held program's release, or a parked try's
+/// stop in `park_release`), marks `attempt`'s Pending sends Abandoned in a
+/// savepoint. Never fails the Stop: a refused abandon rolls back alone, is
 /// logged, and is owed in the Stop's own write for every wake host to
-/// retry.
-pub(super) fn abandon_stopped_sends_in_txn(
+/// retry. A try with no Pending send is left as it is.
+pub(in crate::dreamer_runner) fn abandon_stopped_sends_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     attempt: AttemptId,

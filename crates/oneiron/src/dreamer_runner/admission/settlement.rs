@@ -127,6 +127,41 @@ impl DreamerRunnerStore<'_> {
         crate::dreamer_consolidation::delete_running_buckets_in_txn(self.vault, wtxn, attempt_id)
     }
 
+    /// Settles the budget an attempt still holds once the caller has ended
+    /// it in this writer: each reservation it retained, with the charge that
+    /// stayed owed on it, and its owed calls. A no-op for an attempt that
+    /// holds neither. It runs before [`Self::cleanup_step_receipts_in_txn`],
+    /// because an owed call whose step already reads charged is not charged
+    /// again.
+    pub(crate) fn settle_ended_budget_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        attempt_id: AttemptId,
+        now: u64,
+    ) -> Result<()> {
+        let budget_lines = BUDGET_RESERVATION
+            .scan(&self.vault.store, &*wtxn)?
+            .into_iter()
+            .filter(|(key, _)| key.attempt_id == attempt_id)
+            .map(|(key, reservation)| {
+                if key.budget_id != reservation.budget_id || reservation.attempt_id != attempt_id {
+                    return Err(invalid_dreamer_runner(
+                        "dreamer budget reservation key/body mismatch",
+                    ));
+                }
+                Ok(key.budget_id)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        crate::dreamer_wake::owed::reconcile_ended_attempt_in_txn(
+            self.vault,
+            wtxn,
+            attempt_id,
+            &budget_lines,
+            now,
+        )?;
+        Ok(())
+    }
+
     /// Settle real usage and pin the paid receipts of `step_bindings` in one
     /// writer, so a memo the same try replays later is not paid twice
     /// (FIX 6100). Receipts land only beside a settled reservation, so no

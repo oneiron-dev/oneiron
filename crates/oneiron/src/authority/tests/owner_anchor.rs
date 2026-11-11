@@ -26,8 +26,6 @@ pub(super) fn hosted_genesis(cloud: &SigningKey) -> AuthorityLogEntry {
                     AuthorityTier::CloudCustodial,
                 ),
                 genesis_nonce: [131; 32],
-                tier_floor: AuthorityTier::Software,
-                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
                 recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             },
             key,
@@ -99,11 +97,14 @@ pub(super) fn profile(
         machine: request.machine,
         owner: EntityId::now(),
         machine_key: request.machine_key,
+        device_class: request.device_class,
         encryption_key: request.encryption_key.clone(),
         role,
         revision,
         machine_proof: request.machine_proof,
         seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
     })
 }
 
@@ -456,7 +457,7 @@ fn a_roster_that_names_the_anchor_key_never_takes_its_chain() {
 fn a_foreign_anchors_copy_never_renews_a_stale_roster_mark() {
     let owner = ed_key(142);
     let next = ed_key(143);
-    let genesis = genesis_entry(142, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(142, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let request = request_for(id, EntityId::now(), &ed_key(144));
     let op = profile(&request, YOURS, 1);
@@ -564,7 +565,7 @@ fn a_host_handoff_never_retires_the_owners_anchor() {
 #[test]
 fn custody_reaching_a_later_signer_keeps_an_accepted_removal() {
     let (root_key, later, next) = (ed_key(150), ed_key(151), ed_key(153));
-    let genesis = genesis_entry(150, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(150, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let (root, anchor, published) = publish(id, &genesis);
     let enrol = |seq, roles, tier| {
@@ -656,6 +657,7 @@ pub(super) fn rekeyed(
         &id,
         request.machine,
         &request.machine_key,
+        request.device_class,
         &encryption_key,
     );
     MachineEnrolmentRequest {
