@@ -145,6 +145,49 @@ impl Vault {
             Ok(())
         })
     }
+
+    /// The owner, by its proof, or a holder of `engine.controls` sets the retune regression
+    /// thresholds (untangle 6.6b; maintenance cadence), through the one check, with a receipt
+    /// naming it. Untangle 6.6d gives it its verb. Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
+    /// holder of `engine.controls`; the row's own validation; store failures.
+    pub fn set_retune_thresholds_by(
+        &self,
+        actor: crate::federation::EngineControlActor<'_>,
+        thresholds: &RetuneThresholds,
+    ) -> Result<EntityId> {
+        thresholds.validate()?;
+        self.apply_engine_control(
+            actor,
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_HARNESS_THRESHOLDS",
+            &crate::federation::rendered_change(thresholds)?,
+            |txn| {
+                THRESHOLDS.put(&self.store, txn, &(), thresholds)?;
+                Ok(())
+            },
+        )
+    }
+
+    /// [`Self::set_retune_thresholds_by`] for a holder of `engine.controls` (untangle
+    /// 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_retune_thresholds_by`].
+    pub fn set_retune_thresholds_as_holder(
+        &self,
+        holder: EntityId,
+        thresholds: &RetuneThresholds,
+    ) -> Result<EntityId> {
+        self.set_retune_thresholds_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            thresholds,
+        )
+    }
     /// Records the host's Dreamer tuning config as the next version of the
     /// vault's tuning artifact. The retrieval blend weights the Coach tunes
     /// join its weights as `retrieval.*`, so a weight change is attributed

@@ -65,10 +65,7 @@ struct Fixture {
 
 /// Runs `test` on an engine-sized stack and runtime, as the facade's
 /// generated dispatch needs more than a test thread's default stack.
-fn run_on_engine_stack(
-    name: &str,
-    test: impl std::future::Future<Output = ()> + Send + 'static,
-) {
+fn run_on_engine_stack(name: &str, test: impl std::future::Future<Output = ()> + Send + 'static) {
     let run = std::thread::Builder::new()
         .name(name.into())
         .stack_size(ENGINE_THREAD_STACK_BYTES)
@@ -106,7 +103,9 @@ async fn setup() -> (Fixture, Agent, Agent) {
         .expect("create server"),
     );
     let issuer = vault.load_host_slip_issuer().expect("host slip issuer");
-    let owner_slip = vault.ensure_host_root_slip(&issuer).expect("owner root slip");
+    let owner_slip = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("owner root slip");
     let owner_token = owner_slip.to_token().expect("owner slip token");
     let app = build_app(server);
     let fixture = Fixture {
@@ -157,9 +156,8 @@ async fn pair_agent(fixture: &Fixture, name: &str, seed: [u8; 32]) -> Agent {
         link.pin.is_none(),
         "fresh vault keeps no checkpoint pin on its links"
     );
-    let transcript =
-        pairing_binding_transcript(&link.code, &binding_key, &principal.to_hex())
-            .expect("pairing transcript");
+    let transcript = pairing_binding_transcript(&link.code, &binding_key, &principal.to_hex())
+        .expect("pairing transcript");
     let signature: String = hex(&holder.sign(&transcript).to_bytes());
     let request = Request::post("/v1/core/pairing/redeem")
         .header("content-type", "application/json")
@@ -208,12 +206,10 @@ fn owner_binding(fixture: &Fixture) -> String {
     let timestamp = fixture.vault.now_recorded_at();
     let nonce = EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
-    let signature: String = hex(
-        &fixture
-            .issuer
-            .binding_proof(&fixture.owner_slip, challenge.as_bytes())
-            .expect("owner holder proof"),
-    );
+    let signature: String = hex(&fixture
+        .issuer
+        .binding_proof(&fixture.owner_slip, challenge.as_bytes())
+        .expect("owner holder proof"));
     json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string()
 }
 
@@ -352,7 +348,11 @@ fn grantee_renounce_of_own_standing_grant_lands_revoked_receipt() {
             "{body}"
         );
         assert_eq!(body["grant_ref"].as_str(), Some(grant.as_str()), "{body}");
-        assert_eq!(body["revoked_by"].as_str(), Some(grantee.as_str()), "{body}");
+        assert_eq!(
+            body["revoked_by"].as_str(),
+            Some(grantee.as_str()),
+            "{body}"
+        );
         let decision = body["decision_ref"]
             .as_str()
             .expect("revoke decision ref")
