@@ -81,6 +81,8 @@ use image::{CheckpointImage, read_image, read_image_required};
 pub use pad_custody::PadRestoreNote;
 pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
+#[cfg(oneiron_test_support)]
+pub(crate) use payload::side_table_registry_gaps;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -92,6 +94,21 @@ pub use watermark::{
 };
 pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// Test-only raw decoded `vault_meta` rows whose keys match `prefixes`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn raw_vault_meta_rows_with_prefixes(
+    path: &Path,
+    key: &CheckpointKey,
+    prefixes: &[&[u8]],
+) -> Result<CanonicalRows> {
+    let (image, _, _) = read_image(path, key)?;
+    Ok(image.databases["vault_meta"]
+        .iter()
+        .filter(|(key, _)| prefixes.iter().any(|prefix| key.starts_with(prefix)))
+        .cloned()
+        .collect())
+}
 
 /// Presence-only probes for the canonical rebuild inputs behind the text and
 /// phonetic indexes; the tables themselves are owned elsewhere (`text` search

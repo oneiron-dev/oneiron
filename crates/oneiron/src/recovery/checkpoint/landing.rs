@@ -88,7 +88,9 @@ impl Vault {
         // Every compartment opens through the same plan, before anything is
         // made, so a fork copies its leaf with the rest; each entity row it
         // holds is refused as the image's are, and the image's rows naming
-        // an owner that did not open go (KS7-5, FIX 6376).
+        // an owner that did not open go (KS7-5, FIX 6376). The body
+        // descriptors and holders that opened join the image's rows here, so
+        // the body passes below read and rewrite them there.
         let plan = gate_custody.plan_mut();
         let mut opened =
             super::payload::open_image_payload(sealed_payload, plan, &mut image, live_rows_merged)?;
@@ -234,7 +236,7 @@ impl Vault {
             // Each compartment that opened lands beside them, through its
             // getter's own restore (KS7-5).
             let blob_artifacts = if let Some(opened) = opened {
-                super::payload::restore_opened_in_txn(&vault.store, txn, opened, &retired_digests)?
+                super::payload::restore_opened_in_txn(&vault.store, txn, opened)?
             } else {
                 Vec::new()
             };

@@ -7,6 +7,7 @@
 pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod callable_skill;
+pub mod checkpoint_registry;
 pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod consolidation;
@@ -19,6 +20,7 @@ pub mod label_writers;
 pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod membership;
+pub mod provenance_body_checkpoint;
 pub mod retrieval_policy_default_floor;
 pub mod run_hold;
 pub mod scope_summary;
