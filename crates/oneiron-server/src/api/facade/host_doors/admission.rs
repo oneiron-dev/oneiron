@@ -98,9 +98,12 @@ pub(in crate::api::facade) fn door_admits(
         // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
         // which the door then admits only on a Grant that actor holds. A caller with neither keeps
         // the owner refusal.
-        Proof::ConsentRevoker => owner_proof(auth, server, verb).map(drop).or_else(|refusal| {
-            crate::api::facade::owner_binding::facade_caller_or(server, auth, || refusal).map(drop)
-        }),
+        Proof::ConsentRevoker => owner_proof(auth, server, verb)
+            .map(drop)
+            .or_else(|refusal| {
+                crate::api::facade::owner_binding::facade_caller_or(server, auth, || refusal)
+                    .map(drop)
+            }),
         // The step rows (slice 6.5c): the owner, or an agent on its own
         // verified credential; the door holds the live run the agent names.
         Proof::ModelStepCaller => {
