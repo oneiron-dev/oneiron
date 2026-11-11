@@ -9,21 +9,23 @@ use super::super::verify_tests_time_lta_a::tests::{
     append_doc_ts_revision, append_sig_revision, mint_token, tsa_ca, verify_engine,
 };
 use crate::api::{
-    PdfSealEngine, SealResourceLimits, SignatureAlgorithm, SignatureKind, VerifyCheckKind,
-    VerifyCheckStatus, VerifyFindingCode, VerifyVerdict,
+    PdfSealEngine, SignatureAlgorithm, SignatureKind, VerifyCheckKind, VerifyCheckStatus,
+    VerifyFindingCode, VerifyVerdict,
 };
+use crate::memory::testing::operation_limits;
 
 /// Mint a fully valid detached signer envelope with caller-controlled unsigned
 /// Attributes. This keeps a malformed Attribute inside a parseable envelope.
 fn signed_with_unsigned(ca: &TestCa, attrs: impl FnOnce(&[u8]) -> Vec<Vec<u8>>) -> Vec<u8> {
     let input = base_input();
-    let state = pdf::reparse_revision(&input, &SealResourceLimits::default()).unwrap();
+    let state = pdf::reparse_revision(&input, &operation_limits()).unwrap();
     let mut draft = pdf::append_revision(
         &input,
         &state,
         &pdf::RevisionKind::Signature {
-            field_name: pdf::field_name_for("ts-attribute-regression"),
-            date_str: pdf::pdf_date(AT_UNIX * 1000),
+            field_name: pdf::field_name_for("ts-attribute-regression", &operation_limits())
+                .unwrap(),
+            date_str: pdf::pdf_date(AT_UNIX * 1000, &operation_limits()).unwrap(),
         },
         64 * 1024,
     )
@@ -44,7 +46,7 @@ fn signed_with_unsigned(ca: &TestCa, attrs: impl FnOnce(&[u8]) -> Vec<Vec<u8>>) 
         chain_ders: &[],
     };
     let der = cms::build_signed_data(&material, &wire, &signature, &attrs(&signature));
-    pdf::patch_contents(&mut draft, &der).unwrap();
+    pdf::patch_contents(&mut draft, &der, &operation_limits()).unwrap();
     draft.bytes
 }
 

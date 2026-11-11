@@ -61,11 +61,34 @@ fn field<'a>(value: &'a Value, name: &str) -> &'a Value {
         .unwrap()
 }
 
+/// CONS-09 (owner ruling 2026-10-17, ARCH-0038 #export-credentials): the
+/// Owner's whole-vault export keeps credential fields and encoded payloads
+/// byte-equal to stored, custody values included, while scoped and contact
+/// exports still null them.
 #[test]
-fn whole_vault_all_five_formats_null_credentials_and_encoded_payloads() -> Result<()> {
+fn owner_whole_vault_keeps_credentials_and_encoded_payloads_that_scoped_and_contact_exports_null()
+-> Result<()> {
+    use crate::secret_custody::{
+        CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
+        SecretCustodyStatus,
+    };
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
     let id = crate::EntityId::now();
     let credential = format!("ghp_{}", "a".repeat(36));
+    let nested_payload = encode(&Value::Map(vec![(
+        Value::from("password"),
+        Value::from("nested-secret"),
+    )]));
+    let byte_map_payload = encode(&Value::Map(vec![(
+        Value::from("password"),
+        Value::from("byte-map-secret"),
+    )]));
+    let json_bytes_payload = br#"{"api_key":"json-secret"}"#.to_vec();
+    let json_encoded_bytes =
+        serde_json::json!({"payload": credential.bytes().collect::<Vec<_>>()}).to_string();
+    let json_encoded_map =
+        serde_json::json!({"payload": br#"{"password":"array-wrapped-secret"}"#.to_vec()})
+            .to_string();
     let bytes = encode(&Value::Map(vec![
         (Value::from("name"), Value::from("portable person")),
         (
@@ -78,10 +101,7 @@ fn whole_vault_all_five_formats_null_credentials_and_encoded_payloads() -> Resul
         ),
         (
             Value::from("nested_binary"),
-            Value::Binary(encode(&Value::Map(vec![(
-                Value::from("password"),
-                Value::from("nested-secret"),
-            )]))),
+            Value::Binary(nested_payload.clone()),
         ),
         (
             Value::from("byte_array"),
@@ -89,7 +109,7 @@ fn whole_vault_all_five_formats_null_credentials_and_encoded_payloads() -> Resul
         ),
         (
             Value::from("json_bytes"),
-            Value::Binary(br#"{"api_key":"json-secret"}"#.to_vec()),
+            Value::Binary(json_bytes_payload.clone()),
         ),
         (
             Value::from("public_binary"),
@@ -97,102 +117,271 @@ fn whole_vault_all_five_formats_null_credentials_and_encoded_payloads() -> Resul
         ),
         (
             Value::from("byte_map"),
-            Value::Array(
-                encode(&Value::Map(vec![(
-                    Value::from("password"),
-                    Value::from("byte-map-secret"),
-                )]))
-                .into_iter()
-                .map(Value::from)
-                .collect(),
-            ),
+            Value::Array(byte_map_payload.iter().copied().map(Value::from).collect()),
         ),
         (
             Value::from("json_encoded_bytes"),
-            Value::from(
-                serde_json::json!({"payload": credential.bytes().collect::<Vec<_>>()}).to_string(),
-            ),
+            Value::from(json_encoded_bytes.as_str()),
         ),
         (
             Value::from("json_encoded_map"),
-            Value::from(
-                serde_json::json!({"payload": br#"{"password":"array-wrapped-secret"}"#.to_vec()})
-                    .to_string(),
-            ),
+            Value::from(json_encoded_map.as_str()),
         ),
         (Value::from("signature"), Value::Binary(vec![1, 2, 3])),
     ]));
     // Simulate residual credentials already on disk, bypassing only the TEST
     // fixture's write wall. The export uses its real serializer and enumerator.
     raw_residue(&vault, &id, ENTITY_TYPE_PERSON, &bytes)?;
-    raw_residue(
-        &vault,
-        &crate::EntityId::now(),
-        ENTITY_TYPE_SECRET_CUSTODY,
-        b"custody-value-never-serialized",
-    )?;
-    for format in [
-        PackFormat::Json,
-        PackFormat::Yaml,
-        PackFormat::Toon,
-        PackFormat::Markdown,
-        PackFormat::Plaintext,
+    // A live custody record with a known value: the archive decodes custody
+    // rows, so residue bytes would not do.
+    let custody_value = b"custody-value-owner-keeps".to_vec();
+    let custody = vault.register_secret(SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "owner-keeps-fixture".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        model_reveal_allowed: false,
+        value_bytes: custody_value.clone(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: Vec::new(),
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    // The Owner's whole-vault export keeps every credential byte-equal to stored.
+    let export = vault.export_whole_vault(true)?;
+    export.manifest().validate()?;
+    assert!(export.manifest().secrets_included);
+    // The archive carries the derivation-envelopes and agent-packs sections.
+    // Its writer lists a kind's member only once the kind holds a row, and its
+    // reader reads an absent kind as an empty section, so each section read
+    // back must hold exactly the rows the manifest lists, at the documented path.
+    let manifest_rows = |kind: ArchiveRecordKind, path: &str| -> u64 {
+        let mut rows = 0;
+        for member in export.manifest().records.iter().filter(|m| m.kind == kind) {
+            assert_eq!(member.path, path, "{kind:?} member path");
+            rows += member.rows;
+        }
+        rows
+    };
+    let envelope_rows = manifest_rows(
+        ArchiveRecordKind::DerivationEnvelope,
+        "records/derivation_envelope.jsonl",
+    );
+    let agent_pack_rows = manifest_rows(ArchiveRecordKind::AgentPack, "records/agent_pack.jsonl");
+    let document = vault.read_whole_vault_archive(export.bytes())?;
+    assert_eq!(
+        document.derivation_envelopes.len() as u64,
+        envelope_rows,
+        "the derivation-envelopes section holds the manifest's rows"
+    );
+    assert_eq!(
+        document.agent_packs.len() as u64,
+        agent_pack_rows,
+        "the agent-packs section holds the manifest's rows"
+    );
+    let row = document
+        .evidence_ledger
+        .entities
+        .iter()
+        .find(|row| row.id == id.to_hex())
+        .expect("person row");
+    let ExportBody::MessagePack(body) = &row.body else {
+        panic!("MessagePack body expected");
+    };
+    let body = body.to_msgpack()?;
+    assert_eq!(field(&body, "name"), &Value::from("portable person"));
+    assert_eq!(
+        field(&body, "api_key"),
+        &Value::from("unrecognizable-but-named-secret")
+    );
+    assert_eq!(
+        field(&body, "binary"),
+        &Value::Binary(credential.as_bytes().to_vec())
+    );
+    assert_eq!(
+        field(&body, "nested_binary"),
+        &Value::Binary(nested_payload.clone())
+    );
+    let Value::Array(byte_array) = field(&body, "byte_array") else {
+        panic!("byte array kept as an array");
+    };
+    assert_eq!(
+        byte_array
+            .iter()
+            .map(|item| item.as_u64().expect("byte"))
+            .collect::<Vec<_>>(),
+        credential.bytes().map(u64::from).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        field(&body, "json_bytes"),
+        &Value::Binary(json_bytes_payload.clone())
+    );
+    assert_eq!(
+        field(&body, "public_binary"),
+        &Value::Binary(b"inspectable public bytes".to_vec())
+    );
+    let Value::Array(byte_map) = field(&body, "byte_map") else {
+        panic!("byte map kept as an array");
+    };
+    assert_eq!(
+        byte_map
+            .iter()
+            .map(|item| item.as_u64().expect("byte"))
+            .collect::<Vec<_>>(),
+        byte_map_payload
+            .iter()
+            .copied()
+            .map(u64::from)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        field(&body, "json_encoded_bytes"),
+        &Value::from(json_encoded_bytes.as_str())
+    );
+    assert_eq!(
+        field(&body, "json_encoded_map"),
+        &Value::from(json_encoded_map.as_str())
+    );
+    assert_eq!(field(&body, "signature"), &Value::Binary(vec![1, 2, 3]));
+    // The owner's archive carries the live custody value byte-equal too.
+    let custody_row = read_archive_custody_row(export.bytes(), &custody)?;
+    let carried = custody_row.body.expect("custody value carried");
+    use base64::Engine as _;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(&carried)
+        .map_err(|_| Error::InvariantViolation("custody body base64"))?;
+    let custody_record = crate::secret_custody::decode_secret_custody_body(&decoded)?;
+    assert_eq!(custody_record.value_bytes, custody_value);
+    // A scoped export still nulls them: the row ships with its credentials
+    // redacted in place and its safe fields kept, and custody never ships.
+    let top = crate::federation::Scope::top();
+    let scoped = vault.export_records_in_scope(&top, &top, &top)?;
+    let record = scoped
+        .iter()
+        .find(|record| record.id == id)
+        .expect("the person ships scoped");
+    let mut scoped_body =
+        std::io::Cursor::new(&record.bytes[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+    let scoped_body = rmpv::decode::read_value(&mut scoped_body)
+        .map_err(|_| Error::InvariantViolation("scoped MessagePack body"))?;
+    for name in [
+        "api_key",
+        "binary",
+        "nested_binary",
+        "byte_array",
+        "json_bytes",
+        "byte_map",
+        "json_encoded_bytes",
+        "json_encoded_map",
+        "signature",
     ] {
-        let export = vault.export_whole_vault(format)?;
-        let text = std::str::from_utf8(export.bytes()).unwrap();
-        export.manifest().validate(format)?;
-        assert!(export.manifest().secrets_nulled);
-        assert!(text.contains("portable person"));
-        for secret in [
-            credential.as_str(),
-            "unrecognizable-but-named-secret",
-            "nested-secret",
-            "json-secret",
-            "byte-map-secret",
-            "custody-value-never-serialized",
-        ] {
-            assert!(!text.contains(secret), "credential escaped in {format:?}");
-        }
-        assert!(text.contains("evidence_ledger"));
-        assert!(text.contains("derivation_envelopes"));
-        assert!(text.contains("agent_packs"));
-        if format == PackFormat::Json {
-            let document = vault.read_whole_vault_json(export.bytes())?;
-            let row = document
-                .evidence_ledger
-                .entities
-                .iter()
-                .find(|row| row.id == id.to_hex())
-                .unwrap();
-            let ExportBody::MessagePack(body) = &row.body else {
-                panic!("MessagePack body expected");
-            };
-            let body = body.to_msgpack()?;
-            for name in [
-                "api_key",
-                "binary",
-                "nested_binary",
-                "byte_array",
-                "json_bytes",
-                "byte_map",
-                "json_encoded_bytes",
-                "json_encoded_map",
-                "signature",
-            ] {
-                assert_eq!(field(&body, name), &Value::Nil);
-            }
-            assert_eq!(
-                field(&body, "public_binary"),
-                &Value::Binary(b"inspectable public bytes".to_vec())
-            );
-            assert!(
-                document
-                    .entities()
-                    .all(|row| row.entity_type != ENTITY_TYPE_SECRET_CUSTODY)
-            );
-        }
+        assert_eq!(field(&scoped_body, name), &Value::Nil);
     }
+    assert_eq!(field(&scoped_body, "name"), &Value::from("portable person"));
+    assert_eq!(
+        field(&scoped_body, "public_binary"),
+        &Value::Binary(b"inspectable public bytes".to_vec())
+    );
+    let shipped = String::from_utf8_lossy(&record.bytes);
+    for secret in [
+        credential.as_str(),
+        "unrecognizable-but-named-secret",
+        "nested-secret",
+        "json-secret",
+        "byte-map-secret",
+        "array-wrapped-secret",
+    ] {
+        assert!(
+            !shipped.contains(secret),
+            "a scoped record carries no credential"
+        );
+    }
+    assert!(shipped.contains("portable person"));
+    assert!(
+        scoped.iter().all(|record| record.id != custody),
+        "custody never ships scoped"
+    );
+    assert!(
+        scoped.iter().all(|record| record
+            .bytes
+            .first()
+            .is_some_and(|kind| *kind != ENTITY_TYPE_SECRET_CUSTODY)),
+        "no shipped row is a custody row"
+    );
+    let shipped_all: Vec<u8> = scoped
+        .iter()
+        .flat_map(|record| record.bytes.iter().copied())
+        .collect();
+    let shipped_all = String::from_utf8_lossy(&shipped_all);
+    assert!(!shipped_all.contains(credential.as_str()));
+    assert!(
+        !shipped_all.contains(String::from_utf8_lossy(&custody_value).as_ref()),
+        "the scoped export carries no custody value"
+    );
+    // A contact's shareable bundle still nulls them.
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&vault.export_entity_bundle_json(&[id, custody])?)
+            .map_err(|_| Error::InvariantViolation("bundle JSON"))?;
+    let entities = bundle["entities"].as_array().expect("bundle entities");
+    assert_eq!(entities.len(), 2);
+    for name in [
+        "api_key",
+        "binary",
+        "nested_binary",
+        "byte_array",
+        "json_bytes",
+        "byte_map",
+        "json_encoded_bytes",
+        "json_encoded_map",
+        "signature",
+    ] {
+        assert!(
+            entities[0]["body"][name].is_null(),
+            "contact bundle nulls {name}: {}",
+            entities[0]["body"][name]
+        );
+    }
+    assert_eq!(
+        entities[0]["body"]["name"],
+        serde_json::json!("portable person")
+    );
+    assert!(
+        entities[0]["body"]["public_binary"]
+            .to_string()
+            .contains("inspectable public bytes")
+    );
+    assert!(
+        entities[1]["body"].is_null(),
+        "contact bundle nulls custody"
+    );
+    assert_eq!(bundle["manifest"]["secrets_nulled"]["payloads"], true);
     Ok(())
+}
+
+/// One custody row of a whole-vault archive's secrets member, by id.
+fn read_archive_custody_row(
+    archive: &[u8],
+    id: &crate::EntityId,
+) -> Result<crate::batch::export::ArchiveSecretCustody> {
+    use std::io::Read as _;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
+        .map_err(|_| Error::InvariantViolation("owner archive zip"))?;
+    let mut secrets = String::new();
+    zip.by_name("records/secret_custody.jsonl")
+        .map_err(|_| Error::InvariantViolation("owner archive secrets"))?
+        .read_to_string(&mut secrets)
+        .map_err(|_| Error::InvariantViolation("owner archive secrets"))?;
+    secrets
+        .lines()
+        .filter_map(|line| {
+            serde_json::from_str::<crate::batch::export::ArchiveSecretCustody>(line).ok()
+        })
+        .find(|row| row.id == id.to_hex())
+        .ok_or(Error::InvariantViolation("custody row in owner archive"))
 }
 
 #[test]
