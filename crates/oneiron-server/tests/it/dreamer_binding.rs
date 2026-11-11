@@ -94,7 +94,7 @@ struct Case {
 fn follows_the_prompt(case: &Case) -> Reply {
     let (predicate, second) = (case.predicate, case.second.1);
     let (met, first) = if case.owner_states_first {
-        ("profile.name", "Oleksii")
+        ("profile.name", "Owen")
     } else {
         (predicate, case.first.1)
     };
@@ -130,7 +130,7 @@ fn follows_the_prompt(case: &Case) -> Reply {
                 "corrects": claim, "confidence": 0.9, "evidence_refs": evidence,
             }]}),
             None => json!({
-                "persons": [{"id": PERSON, "name": "Oleksii", "evidence_turn_refs": [turn]}],
+                "persons": [{"id": PERSON, "name": "Owen", "evidence_turn_refs": [turn]}],
                 "candidates": [{
                     "subject": PERSON, "predicate": met, "value": first,
                     "confidence": 0.9, "evidence_refs": evidence,
@@ -327,10 +327,10 @@ async fn binds_once(case: Case) {
 async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
     binds_once(Case {
         predicate: "profile.city",
-        first: ("I'm Oleksii and I live in Lisbon.", "Lisbon"),
+        first: ("I'm Owen and I live in Lisbon.", "Lisbon"),
         owner_states_first: false,
         second: (
-            "Oleksii again: I moved, I live in Porto now, not Lisbon.",
+            "Owen again: I moved, I live in Porto now, not Lisbon.",
             "Porto",
         ),
         seeded_before_critical_classes: false,
@@ -344,10 +344,10 @@ async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
 async fn a_correction_on_a_critical_class_is_held_for_the_owner() {
     binds_once(Case {
         predicate: "health.allergy",
-        first: ("I'm Oleksii and I am allergic to peanuts.", "peanuts"),
+        first: ("I'm Owen and I am allergic to peanuts.", "peanuts"),
         owner_states_first: true,
         second: (
-            "Oleksii again: not peanuts after all, I am allergic to shellfish.",
+            "Owen again: not peanuts after all, I am allergic to shellfish.",
             "shellfish",
         ),
         seeded_before_critical_classes: false,
@@ -363,10 +363,10 @@ async fn a_correction_on_a_critical_class_is_held_for_the_owner() {
 async fn a_vault_seeded_before_the_critical_classes_holds_that_correction_too() {
     binds_once(Case {
         predicate: "health.allergy",
-        first: ("I'm Oleksii and I am allergic to peanuts.", "peanuts"),
+        first: ("I'm Owen and I am allergic to peanuts.", "peanuts"),
         owner_states_first: true,
         second: (
-            "Oleksii again: not peanuts after all, I am allergic to shellfish.",
+            "Owen again: not peanuts after all, I am allergic to shellfish.",
             "shellfish",
         ),
         seeded_before_critical_classes: true,
@@ -397,13 +397,13 @@ async fn an_off_contract_answer_is_refused_with_no_schema_on_any_wire() {
         witness(
             &vault_path,
             EntityId::now(),
-            "I'm Oleksii and I live in Lisbon.",
+            "I'm Owen and I live in Lisbon.",
             true,
             "schema-1",
         );
         let Reply::Computed(answer) = follows_the_prompt(&Case {
             predicate: "residence.city",
-            first: ("I'm Oleksii and I live in Lisbon.", "Lisbon"),
+            first: ("I'm Owen and I live in Lisbon.", "Lisbon"),
             owner_states_first: false,
             second: ("", ""),
             seeded_before_critical_classes: false,
