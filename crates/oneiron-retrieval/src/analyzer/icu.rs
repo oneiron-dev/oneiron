@@ -82,3 +82,31 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
 
     position
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn surface_terms(tokens: &[Token]) -> Vec<&str> {
+        tokens
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::Surface)
+            .map(|t| t.term.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn ascii_words_emit_expected_tokens() {
+        let text = "hello world";
+        let mut out = Vec::new();
+        analyze(text, 0, 0, &mut out);
+        let terms = surface_terms(&out);
+        assert_eq!(terms, vec!["hello", "world"]);
+        let offsets: Vec<(u32, u32)> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::Surface)
+            .map(|t| (t.byte_start, t.byte_end))
+            .collect();
+        assert_eq!(offsets, vec![(0, 5), (6, 11)]);
+    }
+}

@@ -475,6 +475,27 @@ mod tests {
     }
 
     #[test]
+    fn presentation_grammar_accepts_every_live_prefix_shape() {
+        for (raw, prefix, digits) in [
+            ("sm3", "sm", "3"),
+            ("mc4", "mc", "4"),
+            ("vt5", "vt", "5"),
+            ("cl17", "cl", "17"),
+            // Undeclared prefixes are SYNTACTICALLY fine; resolution rejects
+            // them. `mx01` keeps its leading zero — the digits are an identity,
+            // not a number.
+            ("zz9", "zz", "9"),
+            ("mx01", "mx", "01"),
+            // Length above the minimum is a registry question, not a grammar one.
+            ("abcd12", "abcd", "12"),
+        ] {
+            let parsed = parse_presentation_id(raw).unwrap_or_else(|_| panic!("{raw} must parse"));
+            assert_eq!(parsed.prefix, prefix, "{raw} prefix");
+            assert_eq!(parsed.digits, digits, "{raw} digits");
+        }
+    }
+
+    #[test]
     fn presentation_grammar_rejects_malformed_shapes() {
         for raw in [
             "",      // empty

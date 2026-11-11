@@ -157,7 +157,9 @@ async fn serve(
         .insert("connection", HeaderValue::from_static("close"));
     parts.version = axum::http::Version::HTTP_11;
     parts.extensions.clear();
-    let mut response = runtime::forward(profile, staged, Request::from_parts(parts, body)).await?;
+    let backends = server.vault().runtime().sandbox_backends();
+    let mut response =
+        runtime::forward(profile, backends, staged, Request::from_parts(parts, body)).await?;
     strip_hop_headers(response.headers_mut());
     response.headers_mut().remove("set-cookie");
     // CSP ignores source paths after a redirect. App redirects therefore

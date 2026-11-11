@@ -92,6 +92,15 @@ impl ScopedReadActorKey {
             }
             _ => hasher.update([0u8]),
         }
+        // A key bound by several agent Grants (FIX AGENT-GRAPHFS-GRANT-WORLDS)
+        // reads inside one of them alone; a key bound by none folds nothing
+        // more, so its fingerprint is as before.
+        if let Some(alternatives) = self.grant_alternatives() {
+            fold_len(&mut hasher, alternatives.len());
+            for alternative in alternatives {
+                fold_scope(&mut hasher, alternative)?;
+            }
+        }
         Ok(hasher.finalize().into())
     }
 }
@@ -305,6 +314,14 @@ impl ScopedReadActorKey {
         hasher.update(&[u8::from(self.owner_by_census())]);
         key_fold_record_bound(&mut hasher, self.record_bound.as_ref());
         key_fold_id(&mut hasher, self.system_agent_guard());
+        // Last, and only when set, so a key no agent Grants bind keeps its
+        // fingerprint (FIX AGENT-GRAPHFS-GRANT-WORLDS).
+        if let Some(alternatives) = self.grant_alternatives() {
+            key_fold_len(&mut hasher, alternatives.len());
+            for alternative in alternatives {
+                key_fold_json(&mut hasher, alternative);
+            }
+        }
         *hasher.finalize().as_bytes()
     }
 }
