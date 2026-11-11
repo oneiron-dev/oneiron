@@ -78,6 +78,7 @@ export {
 export { Glyph, type GlyphProps, type GlyphState, type GlyphShape, type GlyphForm } from './marks/Glyph'
 export { Portrait, type PortraitProps, type PortraitFaceSize } from './marks/Portrait'
 export { BrandMark, type BrandMarkProps } from './marks/BrandMark'
+export { PinMark, type PinMarkProps } from './marks/PinMark'
 
 export {
   NeedsYou,
