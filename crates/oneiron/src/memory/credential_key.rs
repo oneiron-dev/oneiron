@@ -256,13 +256,17 @@ impl Vault {
                 return Ok(None);
             };
             // A delegate's read also stays inside the owner's agent Grants
-            // that name its holder, each alone (FIX AGENT-GRAPHFS-GRANT-WORLDS).
+            // that name its holder, each alone (FIX AGENT-GRAPHFS-GRANT-WORLDS):
+            // those of this snapshot, and those of each snapshot that serves
+            // a row under the key (REVIEW-7051 P1).
             let key = match key_use {
                 KeyUse::Read => {
-                    match self.agent_grant_read_bound_in_txn(txn, proof.scope(), holder)? {
+                    let bound = self.agent_grant_read_bound_in_txn(txn, proof.scope(), holder)?;
+                    let key = match bound {
                         Some(bound) => key.within_agent_grants(bound.envelope, &bound.alternatives),
                         None => key,
-                    }
+                    };
+                    key.bound_by_live_agent_grants(holder)
                 }
                 KeyUse::WriteTarget => key,
             };
