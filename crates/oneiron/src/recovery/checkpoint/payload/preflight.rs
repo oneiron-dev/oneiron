@@ -376,6 +376,18 @@ impl Preflight {
         &self.databases
     }
 
+    /// Every gap that holds a side table out of the compartments, as the
+    /// receipt names it: each family gap is one [`Self::holds_out`] answers
+    /// for (`tests/checkpoint_registry_rows.rs`).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn side_table_gaps(&self) -> Vec<String> {
+        self.gaps
+            .iter()
+            .filter(|gap| matches!(gap.place, Place::Family(_)))
+            .map(ToString::to_string)
+            .collect()
+    }
+
     /// Whether a gap names `decl`: its rows stay in the image.
     pub(super) fn holds_out(&self, decl: &SideTableDecl) -> bool {
         self.families.contains_key(&rows::identity(decl))
