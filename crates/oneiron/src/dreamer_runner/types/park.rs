@@ -32,12 +32,13 @@ pub type ModelSeatId = EntityId;
 /// the `TRAPS` binding written beside the park. A Seat wait exists only on the driver's own park.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DreamerParkWait {
-    /// The hard cap of exactly this open spend scope refused the step's reservation of
-    /// `asked_units`; a top-up of this scope that leaves room for them wakes the step's trap.
+    /// The hard cap of exactly this open spend scope refused the step's reservation, which asked
+    /// it for `asked_units`; a top-up of this scope that leaves room for them wakes the trap.
     Budget {
         /// The open hard spend scope whose own cap refused the reservation.
         scope: SpendScopeId,
-        /// The units the step tried to reserve under that scope.
+        /// The units the reservation asked of that scope: the reservation less what the open
+        /// scopes below it could still cover when the step parked.
         asked_units: u64,
     },
     /// A held effect's consent answer or an outbound call's settled reply delivered on the wait.

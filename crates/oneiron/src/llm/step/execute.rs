@@ -684,10 +684,12 @@ pub(super) fn budget_trap(
         let wait = match (&ctx.spend_scope, asked_units) {
             (Some(scope), Some(units)) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
                 .hard_cap_refusal_in_txn(wtxn, scope, units)?
-                .map(|scope| crate::dreamer_runner::DreamerParkWait::Budget {
-                    scope,
-                    asked_units: units,
-                }),
+                .map(
+                    |(scope, asked_units)| crate::dreamer_runner::DreamerParkWait::Budget {
+                        scope,
+                        asked_units,
+                    },
+                ),
             _ => None,
         };
         store.park_attempt_with_wait_in_txn(
