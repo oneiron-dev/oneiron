@@ -26,7 +26,10 @@
 //!    host that lends none parks it ([`DreamerAttemptRun::unlent`]). A
 //!    resident's dream and its free time for its human, which run on the
 //!    resident model a host lends, complete with no units, as a host that
-//!    lends none completes them; neither counts as model work done.
+//!    lends none completes them; neither counts as model work done. A
+//!    PERSON `about` line and a scope summary, which the production host
+//!    writes on the narrative role it lends, park unrun too: the kit lends
+//!    no narrative writer ([`NARRATIVE_UNLENT_PARK_REASON`]).
 //!
 //! A pass that parked (other than unlent), failed or landed an attempt, or
 //! stopped for any reason but an empty queue, is refused
@@ -59,8 +62,11 @@
 //! The executor is a bare `ConsolidationExecutor`: unlike the production
 //! host's stack (`oneiron-driver` `ConsolidationExecutorFactory`) it carries
 //! no scope-summary, PERSON `about`, commitment-wake, weave-recipe or
-//! connector-event wrapper, so a pass that queues one of those shapes reports
-//! it parked. It does not opt into the Coach's host jobs (`coach.host`):
+//! connector-event wrapper. The PERSON `about` and scope summary shapes park
+//! unlent before they reach it (step 4). A commitment wake, weave recipe or
+//! connector event attempt reaches it, which refuses it as a partition it did
+//! not prepare, so the pass fails with that attempt named
+//! ([`DreamerPassError::Failed`]). It does not opt into the Coach's host jobs (`coach.host`):
 //! a Timer wake leaves them queued for a host consumer.
 //!
 //! The pass lends the driver a Coach skill optimizer whose author declines
@@ -85,6 +91,9 @@ use std::time::Instant;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState};
 use oneiron::authority::{HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
+use oneiron::dreamer_consolidation::{
+    DREAMER_PERSON_ABOUT_ATTEMPT_TYPE, DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE,
+};
 use oneiron::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
 use oneiron::dreamer_runner::maintenance::digest::{
     DIGEST_ASSESS_FACET, DIGEST_ASSESS_UNLENT_PARK_REASON,
@@ -123,6 +132,13 @@ use crate::provider::{PromptDigest, ScriptedBackend, SeenCall, Step};
 /// The model id the scripted backend serves the Dreamer as: a
 /// `provider/name@revision` id no real provider uses.
 pub const SCRIPTED_MODEL: &str = "oneiron-testkit/scripted@1";
+
+/// Why the pass parks a PERSON `about` or scope summary attempt unrun: the
+/// production host writes both on the narrative role it lends
+/// (`oneiron-driver` `ConsolidationExecutorFactory`), and the kit lends no
+/// narrative writer.
+pub const NARRATIVE_UNLENT_PARK_REASON: &str = "the oneiron-testkit pass lends no narrative writer \
+                                                for a PERSON about line or a scope summary";
 
 /// Why the pass's Coach declines a skill edit: its rationale on every
 /// skill optimization attempt.
@@ -196,8 +212,10 @@ pub struct DreamerAttemptRun {
     /// Whether the kit's host answered it unrun, as a host that lends
     /// nothing does: it parked a compaction's check, a claim source re-check
     /// or an urgent digest's harm question, which a host judges on a model or
-    /// ladder it lends, and it completed a resident's dream or free time with
-    /// no units and no work done. The kit lends none.
+    /// ladder it lends, or a PERSON `about` line or scope summary, which a
+    /// host writes on the narrative role it lends; and it completed a
+    /// resident's dream or free time with no units and no work done. The kit
+    /// lends none.
     pub unlent: bool,
     /// The wall milliseconds the executor took over it (a diagnostic only).
     pub wall_ms: u64,
@@ -751,7 +769,11 @@ impl DreamerAttemptExecutor for PassExecutor<'_, '_> {
 /// `ConsolidationExecutor` runs none of them, so each parks. A resident's
 /// dream (OF-490) and its free time for its human (FIX 4453) end without
 /// their work, completed with no units: a park would strand the nightly item
-/// and a retry would loop every pass. `None` for every other shape.
+/// and a retry would loop every pass. A PERSON `about` line and a scope
+/// summary, which the production host writes on its narrative role, park for
+/// a later pass with a narrative writer ([`NARRATIVE_UNLENT_PARK_REASON`]):
+/// the bare `ConsolidationExecutor` would refuse either as a partition it did
+/// not prepare. `None` for every other shape.
 fn unlent_answer(attempt_type: &str) -> Option<DreamerAttemptExecution> {
     if attempt_type == DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
         || attempt_type == DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
@@ -767,6 +789,13 @@ fn unlent_answer(attempt_type: &str) -> Option<DreamerAttemptExecution> {
     } else if attempt_type == DIGEST_ASSESS_FACET {
         Some(DreamerAttemptExecution::Park {
             reason: DIGEST_ASSESS_UNLENT_PARK_REASON.to_owned(),
+            cause: DreamerParkCause::Retry,
+        })
+    } else if attempt_type == DREAMER_PERSON_ABOUT_ATTEMPT_TYPE
+        || attempt_type == DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE
+    {
+        Some(DreamerAttemptExecution::Park {
+            reason: NARRATIVE_UNLENT_PARK_REASON.to_owned(),
             cause: DreamerParkCause::Retry,
         })
     } else {
