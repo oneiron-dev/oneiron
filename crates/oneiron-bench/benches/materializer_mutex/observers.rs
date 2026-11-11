@@ -222,9 +222,9 @@ struct RealObserverFactory {
 
 impl ObserverFactory for RealObserverFactory {
     fn register(&self, doc: &LoroDoc, vault: &Arc<Vault>, window_key: &str) -> Vec<Subscription> {
-        let (entities, edges, tombstones) =
+        let (entities, edges, tombstones, births) =
             register_observer_b(doc, vault, &self.materializer, window_key);
-        vec![entities, edges, tombstones]
+        vec![entities, edges, tombstones, births]
     }
 }
 

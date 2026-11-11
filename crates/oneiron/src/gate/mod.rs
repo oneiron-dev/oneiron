@@ -73,6 +73,7 @@ pub(crate) mod fanout_policy;
 mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
+mod house_grant;
 mod input;
 pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
@@ -256,6 +257,7 @@ pub(crate) use self::grants::{
     scoped_read_record_allowed, scoped_read_record_allowed_with_scope,
 };
 pub(crate) use self::hosted_tts_policy::{HostedTtsLimits, resolve_hosted_tts_limits};
+pub(crate) use self::house_grant::is_shipped_house_read_row;
 pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_floor_refusal, consent_gate_reason_codes,
