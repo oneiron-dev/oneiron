@@ -3,6 +3,10 @@
 //! each pass reads one row at a time from it; the dependency queues, id sets
 //! and maps grow in the index as well, so no archive-wide row state stays in
 //! memory. The rows still go in through one write transaction.
+mod owner_archive_restore;
+
+pub(crate) use owner_archive_restore::OwnerArchiveRestorePermit;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 
@@ -100,11 +104,19 @@ impl Vault {
     /// group or file map is held whole, each attached file is read when its
     /// row goes in, and the import is still one atomic write transaction.
     /// The rows wait in a disk-backed row index (FIX 3678), never in memory.
+    ///
+    /// The CLI uses [`Self::import_whole_vault_archive_from_as_owner`] when this vault's
+    /// bound owner authenticates, and this actorless door otherwise. Only an archive with
+    /// expression preferences needs the owner; its refusal says how to bind the owner.
+    /// The owner door carries a permit for that restore only, with a `gate:<id>` receipt of
+    /// content kind `owner_archive_restore` naming the full document-manifest digest.
+    /// No policy changes. The actor-taking door still requires its existing local
+    /// Imported-source Auto grant for expression preferences.
     pub fn import_whole_vault_archive_from<R: Read + Seek>(
         &self,
         source: R,
     ) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_archive_as(source, None)
+        self.import_whole_vault_archive_as(source, None, None)
     }
 
     /// Imports with a current local actor authenticated by the host. Never use
@@ -126,13 +138,27 @@ impl Vault {
         source: R,
         actor: &WriteActor,
     ) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_archive_as(source, Some(actor))
+        self.import_whole_vault_archive_as(source, Some(actor), None)
+    }
+
+    /// Restores the owner's own whole-vault archive as the bound vault owner proved by
+    /// `owner`, never an actor taken from the archive. Expression preferences carry an
+    /// Imported-source Auto permit for this synchronous call only, recorded as an owner-act
+    /// receipt naming the archive in `owner_restore_receipt_ref`. No policy is changed and
+    /// no later write gains a permit.
+    pub fn import_whole_vault_archive_from_as_owner<R: Read + Seek>(
+        &self,
+        source: R,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<WholeVaultImportReceipt> {
+        self.import_whole_vault_archive_as(source, None, Some(owner))
     }
 
     fn import_whole_vault_archive_as<R: Read + Seek>(
         &self,
         source: R,
         actor: Option<&WriteActor>,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
     ) -> Result<WholeVaultImportReceipt> {
         let scratch = self
             .store
@@ -143,7 +169,7 @@ impl Vault {
         // and receipt sources stay Nulled.
         let secrets = ExportSecrets::of_manifest(&archive.manifest);
         archive.validate_with(self, secrets)?;
-        if actor.is_none() && archive.expressions {
+        if actor.is_none() && owner.is_none() && archive.expressions {
             return Err(actor_required());
         }
         let authority =
@@ -191,9 +217,26 @@ impl Vault {
             mint,
             known: self.asset_stream_known_in_txn(&mut wtxn)?,
         };
-        if let Some(actor) = actor {
-            super::expression_import::validate_local_actor(self, &wtxn, actor)?;
-        }
+        let mut owner_actor = None;
+        let permit = if let Some(owner) = owner {
+            let actor =
+                owner_archive_restore::owner_archive_restore_actor_in_txn(self, &wtxn, owner)?;
+            let owner_id = actor.entity_ref();
+            let receipt = owner_archive_restore::record_owner_archive_restore_in_txn(
+                self,
+                &mut wtxn,
+                actor,
+                owner_archive_restore::full_manifest_digest(&archive.manifest)?,
+            )?;
+            owner_actor = Some(actor);
+            Some(OwnerArchiveRestorePermit::mint(owner_id, receipt))
+        } else {
+            if let Some(actor) = actor {
+                super::expression_import::validate_local_actor(self, &wtxn, actor)?;
+            }
+            None
+        };
+        let actor = owner_actor.as_ref().or(actor);
         withhold_unborn_projects(self, &wtxn, &mut archive)?;
         let projects = map_project_root(self, &wtxn, &mut archive)?;
         omit_project_revisions(self, &mut archive)?;
@@ -409,7 +452,14 @@ impl Vault {
                     }
                     QUEUE_EXPRESSION => {
                         let actor = actor.ok_or_else(actor_required)?;
-                        super::expression_import::restore(id, self, &mut wtxn, actor, &mut archive)?
+                        super::expression_import::restore(
+                            id,
+                            self,
+                            &mut wtxn,
+                            actor,
+                            &mut archive,
+                            permit.as_ref(),
+                        )?
                     }
                     _ => {
                         let projects = projects.as_ref();
@@ -536,6 +586,7 @@ impl Vault {
         }
         Ok(WholeVaultImportReceipt {
             authority,
+            owner_restore_receipt_ref: permit.as_ref().map(OwnerArchiveRestorePermit::receipt_ref),
             inserted_entities,
             unchanged_entities,
             archived_receipt_sources,
@@ -1041,8 +1092,23 @@ pub(super) fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("whole-vault import: {reason}"))
 }
 
+impl Vault {
+    /// Whether an actorless archive restore refused its expression preferences for lack of
+    /// this vault's bound owner or a host-authenticated local WriteActor.
+    pub fn is_archive_expression_owner_refusal(error: &Error) -> bool {
+        match (error, actor_required()) {
+            (Error::InvalidConfig(actual), Error::InvalidConfig(expected)) => actual == &expected,
+            _ => false,
+        }
+    }
+}
+
 fn actor_required() -> Error {
-    invalid("expression preferences require a host-authenticated local WriteActor")
+    invalid(
+        "the archive holds expression preferences; they restore only as this vault's bound owner \
+         (run the owner's `import archive` with the owner authenticated) or through a \
+         host-authenticated local WriteActor",
+    )
 }
 
 /// An archived PROJECT row, which the archive marks as needing its owning
