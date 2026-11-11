@@ -361,9 +361,12 @@ pub(crate) fn link_house_in_txn(
     if ids.is_empty() {
         ids.push(vault.store.clock.entity_id()?);
     }
+    // SEEDED FAULT (owner-census red check): the link names the house's model PERSON.
+    let member = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &house, now)?
+        .map_or(house, |anchor| anchor.subject_ref);
     let mut grant = FederationGrant::new(
         FederationGrantScope::vault(vault_id),
-        house,
+        member,
         role,
         crate::federation::role_preset(role)?,
     );
