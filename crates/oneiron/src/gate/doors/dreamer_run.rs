@@ -81,6 +81,25 @@ pub(in crate::gate) fn dreamer_run_id_from_write_envelope(
     dreamer_run_id_from_provenance(envelope.provenance().value())
 }
 
+/// Whether `envelope` is a derivation-class write (untangle 6.7a, decision
+/// C-3): a Dreamer run's, or one a `vault.derive` commit stamped
+/// (`surface = vault.derive`). GATE-12, GATE-13 and the optional checker
+/// hold every such claim to the same floors, whichever agent derived it.
+/// Pending-review grouping, decision context and replay coordinates still
+/// read [`dreamer_run_id_from_write_envelope`] alone.
+pub(in crate::gate) fn derivation_class_write(envelope: &WriteEnvelope) -> bool {
+    if dreamer_run_id_from_write_envelope(envelope).is_some() {
+        return true;
+    }
+    matches!(
+        envelope.actor().actor_class(),
+        EdgeActorClass::Agent | EdgeActorClass::System
+    ) && matches!(envelope.provenance().value(), Value::Map(entries) if entries.iter().any(
+        |(key, value)| key.as_str() == Some(DREAMER_PROVENANCE_SURFACE_KEY)
+            && value.as_str() == Some(crate::derive::DERIVE_SURFACE)
+    ))
+}
+
 /// Whether `envelope` is an agent's live-run claim put (FIX 3983): a Generated producer the host's
 /// auto checker reviews as it reviews a Dreamer write (review 6881 P1). The live-run door stamps the marker on
 /// its Auto request and on that request's Proposed resubmission: a checker hold on the resubmission pends it at
