@@ -349,20 +349,34 @@ const ROOMS: RoomFixture[] = [
 
 const GROUPS = ['top', 'pinned', 'rooms', 'projects', 'vault']
 
+/* The rooms of the hokuei pilot: more than five, so the rest fold. */
+const HOKUEI_ROOMS = [
+  { id: 'outlook', label: 'supplier outlook' },
+  { id: 'filings', label: 'filings' },
+  { id: 'extracts', label: 'registry extracts' },
+  { id: 'outreach', label: 'coo outreach' },
+  { id: 'pricing', label: 'pricing' },
+  { id: 'logistics', label: 'logistics' },
+  { id: 'weekly', label: 'weekly sync' },
+]
+
 /* A whole sidebar on fixture data: the head (the vault switch, or the
-   caller's), the top rows, pinned, rooms, projects with nested rooms, and
-   the vault. Rows and groups reorder; pinning moves a room between rooms
-   and pinned. */
+   caller's), the top rows, pinned, rooms, projects with their rooms one
+   level under them, and the vault. Rows and groups reorder; pinning moves
+   a room between rooms and pinned. A thread shows only while it is
+   pinned. */
 function SidebarDemo({
   ground,
   specimen,
   head,
+  childIndent,
   collapsed: collapsedProp,
   onCollapsedChange,
 }: {
   ground: 'field' | 'paper'
   specimen: string
   head?: React.ReactNode
+  childIndent?: 'icon' | 'none'
   collapsed?: boolean
   onCollapsedChange?: (collapsed: boolean) => void
 }) {
@@ -381,9 +395,12 @@ function SidebarDemo({
       setPinned((l) => [...l, id])
     } else {
       setPinned((l) => l.filter((x) => x !== id))
-      setRooms((l) => [id, ...l])
+      if (room(id).icon !== 'thread') setRooms((l) => [id, ...l])
     }
   }
+  const roomLeaf = (id: string, label: string) => (
+    <Sidebar.Row key={id} id={id} icon={<Icon name="hash" />} label={label} current={current === id} onClick={() => setCurrent(id)} />
+  )
   const roomRow = (id: string, isPinned: boolean) => {
     const r = room(id)
     return (
@@ -434,11 +451,22 @@ function SidebarDemo({
     ),
     projects: (
       <Sidebar.Group key="projects" id="projects" label="projects">
-        <Sidebar.Row id="hokuei" icon={<Icon name="project" />} label="hokuei pilot" current={current === 'hokuei'} onClick={() => setCurrent('hokuei')} />
-        <Sidebar.Row id="outlook" depth={1} icon={<Icon name="hash" />} label="supplier outlook" current={current === 'outlook'} onClick={() => setCurrent('outlook')} />
-        <Sidebar.Row id="contradictions" depth={2} icon={<Icon name="thread" />} label="supplier contradictions" current={current === 'contradictions'} onClick={() => setCurrent('contradictions')} />
-        <Sidebar.Row id="personal" icon={<Icon name="project" />} label="Personal" current={current === 'personal'} onClick={() => setCurrent('personal')} />
-        <Sidebar.Row id="passport" depth={1} icon={<Icon name="hash" />} label="passport" current={current === 'passport'} onClick={() => setCurrent('passport')} />
+        <Sidebar.Row
+          id="hokuei"
+          icon={<Icon name="project" />}
+          label="hokuei pilot"
+          current={current === 'hokuei'}
+          onClick={() => setCurrent('hokuei')}
+          childRows={HOKUEI_ROOMS.map((r) => roomLeaf(r.id, r.label))}
+        />
+        <Sidebar.Row
+          id="personal"
+          icon={<Icon name="project" />}
+          label="Personal"
+          current={current === 'personal'}
+          onClick={() => setCurrent('personal')}
+          childRows={roomLeaf('passport', 'passport')}
+        />
       </Sidebar.Group>
     ),
     vault: (
@@ -449,7 +477,7 @@ function SidebarDemo({
   }
   return (
     <div className="lib-sidebar-demo" data-specimen={specimen}>
-      <Sidebar ground={ground} collapsed={collapsed} onGroupReorder={setGroups} aria-label={`places, ${ground}`}>
+      <Sidebar ground={ground} collapsed={collapsed} childIndent={childIndent} onGroupReorder={setGroups} aria-label={`places, ${ground}`}>
         {head ?? (
           <Sidebar.Head>
             <VaultSwitch vaults={VAULTS} currentId={vault} onSwitch={setVault} onCreate={() => {}}>
@@ -467,6 +495,11 @@ function SidebarDemo({
       </Sidebar>
       <p className="lib-field-readout" data-specimen={`${specimen}-order`}>
         {groups.join(' ')} | {pinned.join(' ')} | {rooms.join(' ')}
+        {pinned.includes('q4') ? null : (
+          <button type="button" className="lib-pick lib-field-pick" onClick={() => setPinned((l) => [...l, 'q4'])}>
+            pin the thread back
+          </button>
+        )}
       </p>
     </div>
   )
@@ -811,6 +844,10 @@ export function FieldSections() {
           <figure className="lib-field-specimen">
             <SidebarDemo ground="paper" specimen="sidebar-paper" />
             <figcaption className="lib-field-caption">on paper</figcaption>
+          </figure>
+          <figure className="lib-field-specimen">
+            <SidebarDemo ground="field" specimen="sidebar-flat" childIndent="none" />
+            <figcaption className="lib-field-caption">childIndent none: child rooms flush with their project, for comparison</figcaption>
           </figure>
         </div>
       </section>
