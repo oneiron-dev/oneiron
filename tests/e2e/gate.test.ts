@@ -1391,6 +1391,9 @@ suite.test(test, "MUSE-GATE-01", "A standing action Grant lets a bounded outboun
     const detail = error instanceof PublicHttpError
       ? `status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`
       : error instanceof Error ? error.message : String(error);
+    if (stage === "no-grant outbound preflight and held schedule") {
+      throw new Error(`MUSE-GATE-01 ENGINE DEFECT 2026-11-11: P-GATE-002 / DEC-0006 invariant 1 requires the ungranted irreversible send to ask; can(outbound_schedule) instead names missing external-effect authority as an administrative hold because a non-mail send's owner press cannot supply that authority (FIX 22102; separate from later FIX 7950/11874 bound mismatch); ${stage}; last can=${JSON.stringify(lastCan)}; ${detail}`, { cause: error });
+    }
     if (stage === "in-grant outbound reuse") {
       throw new Error(`MUSE-GATE-01 ENGINE DEFECT 2026-11-11: generic action Grant's facade verb class and project/audience envelope do not cover the schedule's send/verb:send/channel requirement (P-GATE-003; FIX 7950/11874); ${stage}; last can=${JSON.stringify(lastCan)}; ${detail}`, { cause: error });
     }
@@ -2712,14 +2715,24 @@ suite.test(test, "MUSE-GATE-04", "A bypass is off by default, only the owner cre
     const afterOrdinaryRevoke = await engine.client.call("vault.consent.registry", {
       limit: 1000,
     } satisfies FacadeInput<"vault.consent.registry">);
+    expect(museGate04RowsFor(afterOrdinaryRevoke.rows, [ordinaryGrantRef])).toHaveLength(0);
+
+    stage = "create bypass thread and read it back";
+    const thread = await engine.client.call("vault.conversations.create", {
+      body: {}, occurred_start: museGate04OccurredAt,
+      occurred_end: museGate04OccurredAt, learned_at: museGate04OccurredAt,
+    } satisfies FacadeInput<"vault.conversations.create">);
+    const threadReadback = await engine.client.call("vault.get", { entity_ref: thread.id });
+    expect(threadReadback.value?.kind).toBe("CONVERSATION");
+    expect(threadReadback.value?.id_hex).toBe(thread.id);
 
     stage = "scoped bypass warning and tampered warning refusal";
     const bypassBound: museGate04BypassBound = {
       actor: agentRef,
       actor_class: "agent",
       classes: [...museGate04BypassClasses],
-      scope: { project: projectRef },
-      envelope: { selectors: [projectRef], receipt_required: true },
+      scope: { thread: thread.id },
+      envelope: { selectors: [`thread:${thread.id}`], target: thread.id, receipt_required: true },
     };
     const warning = await engine.client.call("vault.consent.bypass_grant_warning", {
       bound: bypassBound,
@@ -2997,6 +3010,7 @@ async function museGate05SeedProposal(
     sentinel: string;
     source: string;
     occurredAt: number;
+    expectPending?: boolean;
   },
 ): Promise<MuseGate05Proposal> {
   const outcomes = await client.call("vault.claims.seed", {
@@ -3026,7 +3040,7 @@ async function museGate05SeedProposal(
   const candidates = [
     view.claim_ref, outcome.claim_short_id, outcome.claim?.id, outcome.claim?.short_id, view.short_ref,
   ].filter((ref): ref is string => typeof ref === "string" && ref.length > 0);
-  expect(museGate05IsPending(await museGate05PendingRefs(engine), candidates)).toBe(true);
+  if (input.expectPending !== false) expect(museGate05IsPending(await museGate05PendingRefs(engine), candidates)).toBe(true);
   return { claimRef: view.claim_ref, candidates, receiptRef: outcome.receipt_ref };
 }
 
@@ -3246,7 +3260,7 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
     stage = "non-opener control under native claim-review Grant";
     const control = await museGate05SeedProposal(engine, engine.client, claimScope, {
       subjectRef, predicate: predicateControl, sentinel: sentinelControl,
-      source: "user_stated", occurredAt: occurred,
+      source: "user_stated", occurredAt: occurred, expectPending: false,
     });
     const controlReview = await engine.client.call("vault.claims.review", {
       claim_ref: control.claimRef,
@@ -3471,6 +3485,9 @@ suite.test(test, "MUSE-GATE-05", "A proposer cannot settle or grant its own prop
     const detail = error instanceof PublicHttpError
       ? `status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`
       : error instanceof Error ? error.message : String(error);
+    if (stage === "non-opener control under native claim-review Grant" && !(error instanceof PublicHttpError)) {
+      throw new Error(`MUSE-GATE-05 ${stage}: a local assertion failed before review or settle (job 12 met the owner-seed pending-tray assertion, a TEST BUG: an owner-opened forced-Proposed seed may have Gate Allow and no pending row, record_inner.rs:524-527; the control now passes expectPending: false). Later MISSING DOOR: vault.agents.grants.mint returns a 32-hex federation Grant, not the 64-hex native memory.claim.review Grant; delegate_memory_authoring(ReviewClaim, target) has no facade door. Confirm-only body retained; ${detail}`, { cause: error });
+    }
     if (stage === "owner native claim-review Grant door" || stage === "non-opener control under native claim-review Grant") {
       throw new Error(`MUSE-GATE-05 MISSING DOOR 2026-11-11: public vault.agents.grants.mint emits a federation Grant, but vault.claims.settle requires a native memory.claim.review consent Grant (64-hex); delegate_memory_authoring(ReviewClaim, target) has no facade door; ${stage}; ${detail}`, { cause: error });
     }
@@ -3911,7 +3928,7 @@ endpoint = "${provider.urls.connector}/mcp"
     primary = error instanceof PublicHttpError ? new Error(
       `MUSE-GATE-06 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`,
       { cause: error },
-    ) : error;
+    ) : new Error(`MUSE-GATE-06 ${stage}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   } finally {
     const cleanup = await Promise.allSettled([engine.close(), provider.close()]);
     const failures = cleanup.filter((row): row is PromiseRejectedResult => row.status === "rejected").map((row) => row.reason);
@@ -4546,6 +4563,10 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
         author: "user", message_type: "text",
         content: `This distinct person is ${personName}.`,
         is_visible: true, order: 0,
+      }, {
+        author: "assistant", message_type: "text",
+        content: `Generated disagreement: the person's preferred display name is ${generatedValue}. ${inferredValue}`,
+        is_visible: true, order: 1,
       }],
     } satisfies FacadeInput<"vault.witness">);
     const turn = await engine.client.call("vault.get", {
@@ -4576,6 +4597,17 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
       principalRef: agentRecord.id_hex, actorClass: "agent",
       scope: ["core:read", "core:write"],
     });
+    const otherAgentRecord = await engine.client.call("vault.structural.put", {
+      kind: "PERSON", body: { name: `Muse Gate08 Non-grantee ${suffix}` },
+      occurred_at: museGate08OccurredAt,
+    } satisfies FacadeInput<"vault.structural.put">);
+    const otherAgent = await engine.pairActor({
+      principalRef: otherAgentRecord.id_hex, actorClass: "agent", scope: ["core:read", "core:write"],
+    });
+    for (const record of [agentRecord, otherAgentRecord]) {
+      expect((await engine.client.call("vault.get", { entity_ref: record.entity_ref })).value?.id_hex)
+        .toBe(record.id_hex);
+    }
 
     const museGate08ReadDisputed = async (): Promise<MuseGate08ClaimRow[]> => (
       await engine.client.call("vault.claims.list", {
@@ -4616,13 +4648,14 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
       claims: [{
         predicate: museGate08Predicate, subject_ref: subjectRef, value: generatedValue,
         confidence: 1, source: "generated", scope, occurred_at: museGate08OccurredAt,
+        evidence_turn_refs: [turn.value.id_hex],
       }],
     } satisfies FacadeInput<"vault.commit">);
     expect(generatedOutcomes).toHaveLength(1);
     const generatedOutcome = generatedOutcomes[0];
     if (!generatedOutcome || generatedOutcome.outcome !== "landed") {
       throw new Error(
-        `MUSE-GATE-08 ENGINE DEFECT 2026-11-11: P-GATE-025 requires the generated disagreement to land Proposed beside the user's claim; vault.commit instead refused it; stage=${stage}; outcome=${JSON.stringify(generatedOutcome)}`,
+        `MUSE-GATE-08 ENGINE DEFECT 2026-11-11: P-GATE-025 requires the evidence-backed generated disagreement to land Proposed beside the user's claim; the auto-supersede path instead requires the prior user's authorship (memory/authorship.rs:114-153); stage=${stage}; outcome=${JSON.stringify(generatedOutcome)}`,
       );
     }
     expect(museGate08IsProposed(generatedOutcome.approval)).toBe(true);
@@ -4697,6 +4730,7 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
     const inferredWrite = await agent.client.call("vault.claims.upsert", {
       predicate: museGate08InferredPredicate, subject_ref: ownerRef, value: inferredValue,
       confidence: 0.99, source: "inferred", scope, occurred_at: museGate08OccurredAt,
+      evidence_turn_refs: [turn.value.id_hex],
     } satisfies FacadeInput<"vault.claims.upsert">);
     await engine.awaitReceipt(inferredWrite.receipt_ref);
     const museGate08ReadInferred = async (): Promise<MuseGate08ClaimRow> =>
@@ -4744,7 +4778,11 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
     if (typeof refusalRef !== "string" || refusalRef.length === 0) {
       throw new Error("MUSE-GATE-08 self-grant refusal carried no receiptRef");
     }
-    const refusalReceipt = await engine.client.call("vault.receipts.get", { receipt_ref: refusalRef });
+    const refusalReceipt = await awaitPublic(
+      () => engine.client.call("vault.receipts.get", { receipt_ref: refusalRef }),
+      (value) => value !== null,
+      { label: "MUSE-GATE-08 self-grant refusal call receipt", timeoutMs: LIMITS.requestMs },
+    );
     if (!refusalReceipt) throw new Error("MUSE-GATE-08 self-grant call receipt is absent");
     expect(refusalReceipt.actor_ref).toBe(agent.principalRef);
     expect(refusalReceipt.verb).toBe("vault.consent.create_standing_grant");
@@ -4775,19 +4813,20 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
     expect(grantRow.domain).toBe("action");
     expect(grantRow.class).toBe(grantClass);
 
-    // Holding the grant confers no power over the grant's own life: the
-    // agent's revoke attempt leaves the row live; the owner's revoke ends it.
-    stage = "agent cannot revoke owner grant";
+    // A grantee may renounce its own Grant (P-GATE-010). An unrelated
+    // non-grantee's revoke attempt leaves it live; the owner's revoke ends it.
+    stage = "non-grantee cannot revoke owner grant";
     let agentRevokeError: PublicHttpError | undefined = undefined;
     try {
-      await agent.client.call("vault.consent.revoke", {
+      await otherAgent.client.call("vault.consent.revoke", {
         grant: grantRef,
       } satisfies FacadeInput<"vault.consent.revoke">);
     } catch (error) {
       if (error instanceof PublicHttpError) agentRevokeError = error;
       else throw error;
     }
-    if (agentRevokeError) museGate08ExpectRefusalEnvelope(agentRevokeError);
+    if (!agentRevokeError) throw new Error("MUSE-GATE-08 non-grantee revoked the owner's grant");
+    museGate08ExpectRefusalEnvelope(agentRevokeError);
     expect((await museGate08ReadRegistryRefs(false)).has(grantRef)).toBe(true);
     stage = "owner grant revoke and registry readback";
     const ownerRevoke = await engine.client.call("vault.consent.revoke", {
@@ -4809,7 +4848,8 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
     const registryBeforeRetry = await museGate08ReadRegistryRefs(true);
     const agentGrantRetry = await museGate08TryCreateStandingGrant(agent.client, grantInput);
     const agentGrantRetryError = agentGrantRetry.error;
-    if (agentGrantRetryError) museGate08ExpectRefusalEnvelope(agentGrantRetryError);
+    if (!agentGrantRetryError) throw new Error("MUSE-GATE-08 post-revoke agent self-grant was not refused");
+    museGate08ExpectRefusalEnvelope(agentGrantRetryError);
     expect([...(await museGate08ReadRegistryRefs(true))].filter(
       (ref) => !registryBeforeRetry.has(ref))).toEqual([]);
 
@@ -4942,7 +4982,8 @@ suite.test(test, "MUSE-GATE-08", "Generated and inferred input cannot raise auth
         { cause: error },
       );
     }
-    throw error;
+    if (error instanceof Error && error.message.startsWith("MUSE-GATE-08 ENGINE DEFECT 2026-11-11:")) throw error;
+    throw new Error(`MUSE-GATE-08 ${stage}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   } finally {
     await engine.close();
   }
@@ -5703,6 +5744,101 @@ domain_id = "gate11-domain"
     const channel = sendConnector.connector;
     expect(channel.length).toBeGreaterThan(0);
 
+    type MuseGate11SetupConnection = {
+      id: string; secrets: { name: string; stored: boolean }[];
+      permissions: { id: string; granted: boolean }[];
+      check: { state: string }; ready: boolean;
+    };
+    type MuseGate11SetupReply = { setup: {
+      pack_name: string; status: string; ready: boolean;
+      connections: MuseGate11SetupConnection[];
+    } };
+    const museGate11MailConnection = (reply: MuseGate11SetupReply) => {
+      const connection = reply.setup.connections.find((row) => row.id === "mail-server");
+      if (!connection) throw new Error(`MUSE-GATE-11 ${stage}: native-mail setup has no mail-server connection`);
+      return connection;
+    };
+    const museGate11ReadMailSetup = async () => (await engine.client.request<MuseGate11SetupReply>(
+      "GET", "/v1/owner/packs/setup?pack=oneiron.native_mail",
+    )).body;
+
+    stage = "prepare native-mail built-in pack setup";
+    await engine.client.request<MuseGate11SetupReply>(
+      "POST", "/v1/owner/packs/setup/prepare", { pack: "oneiron.native_mail" },
+    );
+    const mailPrepared = await museGate11ReadMailSetup();
+    expect(mailPrepared.setup.pack_name).toBe("oneiron.native_mail");
+    expect(mailPrepared.setup.status).toBe("candidate");
+
+    const mailCredential = `Bearer muse-gate11-mail-credential-${secretHex(16)}`;
+    redactor.add(mailCredential, Buffer.from(mailCredential).toString("base64"));
+    stage = "register native-mail server credential";
+    const mailSecret = (await engine.client.request<{ secret_id: string; name: string }>(
+      "POST", "/v1/owner/secrets/register", {
+        name: "native_mail.authorization", class: "cross-vault", rung: 0,
+        bindings: [{ effector: "connector:native_mail", tier_ceiling: 0, scopes: ["read"] }],
+        value_base64: Buffer.from(mailCredential).toString("base64"),
+      },
+    )).body;
+    museGate11ExpectNoValues(mailSecret, [mailCredential]);
+    const mailCustody = await engine.client.call("vault.secrets.custody.get", { name: "native_mail.authorization" });
+    expect(mailCustody.secret_id).toBe(mailSecret.secret_id);
+    expect(mailCustody.held_here).toBe(true);
+    expect(mailCustody.known).toBe(true);
+    expect(mailCustody.portable).toBe(false);
+    museGate11ExpectNoValues(mailCustody, [mailCredential]);
+
+    stage = "pin native-mail credential to setup";
+    await engine.client.request<MuseGate11SetupReply>(
+      "POST", "/v1/owner/packs/setup/answer", { pack: "oneiron.native_mail",
+        answer: { answer: "secret_stored", connection: "mail-server", secret: "native_mail.authorization" } },
+    );
+    const mailPinned = await museGate11ReadMailSetup();
+    expect(museGate11MailConnection(mailPinned).secrets.find((row) => row.name === "native_mail.authorization")?.stored)
+      .toBe(true);
+
+    stage = "allow native-mail setup permissions";
+    await engine.client.request<MuseGate11SetupReply>(
+      "POST", "/v1/owner/packs/setup/answer", { pack: "oneiron.native_mail",
+        answer: { answer: "allow", connection: "mail-server", permissions: ["identity", "inbound", "read", "send"] } },
+    );
+    const mailAllowed = museGate11MailConnection(await museGate11ReadMailSetup());
+    expect(mailAllowed.permissions).toHaveLength(4);
+    expect(mailAllowed.permissions.every((permission) => permission.granted)).toBe(true);
+
+    stage = "verify native-mail connection and install built-in pack";
+    // One connection check and four isolated read-only checks during qualification.
+    for (const tag of ["mail-verify", "mail-probe-before", "mail-probe-first", "mail-probe-second", "mail-probe-after"]) {
+      enqueueMailCheck(tag);
+    }
+    await engine.client.request<MuseGate11SetupReply>(
+      "POST", "/v1/owner/packs/setup/verify", { pack: "oneiron.native_mail", connection: "mail-server" },
+    );
+    const mailVerified = await museGate11ReadMailSetup();
+    expect(mailVerified.setup.ready).toBe(true);
+    expect(mailVerified.setup.status).toBe("active");
+    expect(museGate11MailConnection(mailVerified).ready).toBe(true);
+    expect(museGate11MailConnection(mailVerified).check.state).toBe("verified");
+    const installedMailPack = await engine.client.call("vault.packs.get", { name: "oneiron.native_mail" });
+    expect(installedMailPack?.status).toBe("active");
+    expect(provider.seenFixtureCalls).toHaveLength(12);
+
+    // Actor ceilings are setup, not either consent Grant under test.
+    stage = "set outbound actor ceilings and read policy back";
+    const senderPolicy = await engine.client.call("vault.gate.policy.put", {
+      manifest: policyManifest("e2e-muse-gate11-actors", "1", [
+        { actor_class: "agent", actor_ref: sender.principalRef, ceiling: "auto" },
+        { actor_class: "agent", actor_ref: noGrantAgent.principalRef, ceiling: "auto" },
+      ]),
+    });
+    const senderPolicyReadback = await engine.client.call("vault.gate.policy.get", {
+      manifest_ref: senderPolicy.manifest.manifest_ref,
+    });
+    expect(senderPolicyReadback.manifests[0]?.manifest.actor_ceilings).toEqual([
+      { actor_class: "agent", actor_ref: sender.principalRef, ceiling: "auto" },
+      { actor_class: "agent", actor_ref: noGrantAgent.principalRef, ceiling: "auto" },
+    ]);
+
     const museGate11Send = (tag: string): FacadeInput<"connector.outbound.schedule"> => ({
       verb: "send", channel, target: recipientRef, content_ref: contentRef,
       idempotency_key: `muse-gate11-${tag}-once`,
@@ -5881,7 +6017,7 @@ domain_id = "gate11-domain"
     } satisfies FacadeInput<"self.use">);
     expect(useAfterRestart.status).not.toBe("withheld");
     expect(useAfterRestart.status).toBe("answered");
-    expect(provider.seenFixtureCalls).toHaveLength(4);
+    expect(provider.seenFixtureCalls).toHaveLength(14);
     museGate11ExpectNoValues(useAfterRestart, secretValues);
     await museGate11RegistryRow(actionGrant2, "action");
     await museGate11RegistryRow(disclosureGrant, "disclosure");
@@ -5917,7 +6053,7 @@ domain_id = "gate11-domain"
     const useAfterRevoke = await secretRefusal(sender.client.call("self.use", {
       handle: shared.handle, operation: secretOperation,
     } satisfies FacadeInput<"self.use">), 400, "BAD_REQUEST");
-    expect(provider.seenFixtureCalls).toHaveLength(4);
+    expect(provider.seenFixtureCalls).toHaveLength(14);
     museGate11ExpectNoValues(useAfterRevoke.reply.body, secretValues);
 
     await engine.artifacts.json("muse-gate11-final.json", {
