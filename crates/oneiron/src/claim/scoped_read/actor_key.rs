@@ -42,6 +42,11 @@ pub struct ScopedReadActorKey {
     /// each standing Grant alone. `authority` is met with their envelope; a
     /// row must lie inside one of them. See [`Self::within_agent_grants`].
     grant_alternatives: Option<std::sync::Arc<[oneiron_authority::federation::Scope]>>,
+    /// Set only on a key whose holder's agent Grants bind its read (FIX
+    /// AGENT-GRAPHFS-GRANT-WORLDS): each serving txn reads that holder's
+    /// standing Grants again, so a lane held past a revoke or a lapse narrows
+    /// with it (REVIEW-7051 P1). See [`Self::bound_by_live_agent_grants`].
+    agent_grant_holder: Option<EntityId>,
     /// A host-bound channel on a channel-aware read door, never a grant.
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
@@ -375,6 +380,7 @@ impl ScopedReadActorKey {
             proof: None,
             authority: None,
             grant_alternatives: None,
+            agent_grant_holder: None,
             channel: None,
             owner: None,
             owner_exemption: None,
@@ -417,6 +423,7 @@ impl ScopedReadActorKey {
             proof: None,
             authority: None,
             grant_alternatives: None,
+            agent_grant_holder: None,
             channel: None,
             owner: Some(owner),
             owner_exemption: None,
@@ -880,6 +887,24 @@ impl ScopedReadActorKey {
     /// binds it.
     pub(crate) fn grant_alternatives(&self) -> Option<&[oneiron_authority::federation::Scope]> {
         self.grant_alternatives.as_deref()
+    }
+
+    /// This key's rows also held, in each serving txn, to the agent Grants
+    /// that name `holder` and stand for `read` in that txn's snapshot, each
+    /// alone and met with this key's own Scope, once a Grant has ever named
+    /// `holder` (`Vault::agent_grant_read_bounds_in_txn`). It only narrows:
+    /// the bound the key was built with still binds beside it.
+    #[must_use]
+    pub(crate) fn bound_by_live_agent_grants(mut self, holder: EntityId) -> Self {
+        self.agent_grant_holder = Some(holder);
+        self
+    }
+
+    /// The holder whose standing agent Grants each serving txn reads for
+    /// this key ([`Self::bound_by_live_agent_grants`]); `None` when none
+    /// binds it.
+    pub(crate) fn agent_grant_holder(&self) -> Option<EntityId> {
+        self.agent_grant_holder
     }
 
     /// The worlds this read asked for, as a world-only ceiling; `None` when

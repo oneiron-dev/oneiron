@@ -33,6 +33,14 @@
 //! The credential itself is left whole: only the read key's Scope narrows,
 //! so a guard that asks for the exact credential (a phone line's) still
 //! finds it.
+//!
+//! The key keeps the bound of the snapshot it was built in, and a lane may
+//! be held past a revoke, an expiry or a lapse (a caller's own handle, or a
+//! saved lane rebuilt later). So the key also names its holder, and each
+//! serving txn's row checks read that holder's standing Grants again
+//! ([`Vault::agent_grant_read_bounds_in_txn`]): a row must lie inside one of
+//! them as well, met with the key's own Scope (REVIEW-7051 P1). That only
+//! narrows; the key's own bound still binds.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -65,6 +73,31 @@ impl Vault {
         slip: &Scope,
         holder: EntityId,
     ) -> Result<Option<AgentGrantReadBound>> {
+        Ok(self
+            .agent_grant_read_bounds_in_txn(txn, holder)?
+            .map(|bounds| AgentGrantReadBound {
+                envelope: bounds
+                    .iter()
+                    .fold(disclosure_axes(&Scope::default()), |envelope, bound| {
+                        join(&envelope, bound)
+                    }),
+                alternatives: bounds.iter().map(|bound| slip.meet(bound)).collect(),
+            }))
+    }
+
+    /// What each owner-agent Grant naming `holder` that stands for `read` in
+    /// `txn` lets a read reach, its verbs left open, in Grant id order; empty
+    /// when a Grant has named `holder` but none stands now (every one
+    /// revoked, expired, without `read`, its owner gone or its pact lapsed),
+    /// and `None` when no Grant has ever named `holder` (module docs).
+    ///
+    /// # Errors
+    /// A store, fold or clock failure; never a refusal.
+    pub(crate) fn agent_grant_read_bounds_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<Option<Vec<Scope>>> {
         let (grants, undecoded) = self.agent_grants_reporting_in_txn(txn)?;
         let naming: Vec<&AgentGrantStanding> = grants
             .iter()
@@ -84,10 +117,7 @@ impl Vault {
             // Every Grant that named it is revoked: no alternative stands.
             return Ok(self
                 .agent_grant_ever_named_in_txn(txn, holder)?
-                .then(|| AgentGrantReadBound {
-                    envelope: disclosure_axes(&Scope::default()),
-                    alternatives: Vec::new(),
-                }));
+                .then(Vec::new));
         }
         let now = self.instant_in_txn(txn)?.secs();
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
@@ -96,23 +126,15 @@ impl Vault {
             txn,
             naming.iter().map(|standing| &standing.grant),
         )?;
-        let bounds: Vec<Scope> = naming
-            .iter()
-            .filter(|standing| {
-                standing.stands_in_txn(self, txn, holder, "read", now, &owners, &classes)
-            })
-            .map(|standing| disclosure_axes(&standing.grant.scope_for_verb("read", &classes)))
-            .collect();
-        let envelope = bounds
-            .iter()
-            .fold(disclosure_axes(&Scope::default()), |envelope, bound| {
-                join(&envelope, bound)
-            });
-        let alternatives = bounds.iter().map(|bound| slip.meet(bound)).collect();
-        Ok(Some(AgentGrantReadBound {
-            envelope,
-            alternatives,
-        }))
+        Ok(Some(
+            naming
+                .iter()
+                .filter(|standing| {
+                    standing.stands_in_txn(self, txn, holder, "read", now, &owners, &classes)
+                })
+                .map(|standing| disclosure_axes(&standing.grant.scope_for_verb("read", &classes)))
+                .collect(),
+        ))
     }
 }
 
