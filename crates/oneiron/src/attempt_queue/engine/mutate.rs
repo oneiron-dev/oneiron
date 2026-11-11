@@ -5,12 +5,13 @@ use crate::attempt_queue::annotation_hold::{
     ANNOTATION_HOLD_ACTOR, AnnotationHold, ERR_ANNOTATION_HOLD_ACTOR_RESERVED,
 };
 use crate::attempt_queue::budget_hold::{BUDGET_HOLD_ACTOR, ERR_BUDGET_HOLD_ACTOR_RESERVED};
-use crate::attempt_queue::cancel::{AttemptCancelState, AttemptLandingReserve};
 use crate::attempt_queue::encoding::{DedupeIndexKeys, decode_record, ready_at, ready_key};
 use crate::attempt_queue::fanout_hold::{ERR_FANOUT_HOLD_ACTOR_RESERVED, FANOUT_HOLD_ACTOR};
 use crate::attempt_queue::hold_override::override_note;
 use crate::attempt_queue::hold_override_receipt::record_hold_override_receipt_in_txn;
-use crate::attempt_queue::lifecycle::{HoldSignal, RunEvent, RunLifecycle, RunRow, RunStep};
+use crate::attempt_queue::lifecycle::{
+    HoldSignal, NewAttempt, RunEvent, RunLifecycle, RunRow, RunStep,
+};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptPause, AttemptRecord,
@@ -87,87 +88,74 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("retry", "missing"));
         };
         let mut source = decode_record(&raw_record, input.id)?;
-        if source.state != AttemptState::Leased {
+        if !matches!(
+            RunLifecycle::step(RunRow::of(&source), RunEvent::Retry),
+            RunStep::Move { .. }
+        ) {
             return Err(invalid_transition("retry", source.state.as_str()));
         }
         validate_lease_owner(&input.lease_owner)?;
         validate_transition_lease(&source, &input.lease_owner, input.attempt_count, "retry")?;
         validate_optional_failure_reason(input.last_error.as_deref())?;
 
-        let mut next = AttemptRecord {
-            id: match id {
-                Some(id) => id,
-                None => AttemptId::from_bytes(&self.store.clock.ulid()?)?,
-            },
-            kind: source.kind.clone(),
-            payload: source.payload.clone(),
-            state: AttemptState::Scheduled,
-            lease_owner: None,
-            attempt_count: 0,
-            lease_expirations: Vec::new(),
-            claimed_at: None,
-            scheduled_at: Some(input.backoff_until),
-            retry_of: Some(source.id),
-            folded_retries: 0,
-            backoff_until: None,
-            last_error: None,
-            task_ref: source.task_ref.clone(),
-            run_id: source.run_id.clone(),
-            dedupe_key: source.dedupe_key.clone(),
-            // The scope travels WITH the key it scopes, so the index move below
-            // derives the child's entry from the row itself — never from a
-            // caller's state or a decoded TASK payload.
-            dedupe_actor_ref: source.dedupe_actor_ref.clone(),
-            created_at: input.now,
-            updated_at: input.now,
-            settled_at: None,
-            events: Vec::new(),
-            // A retry is a NEW attempt: its attribution manifest starts empty,
-            // the finalized source keeps the prior try's.
-            manifest: Vec::new(),
-            executor_model: None,
-            executor_seat: None,
-            executor_role: None,
-            planned_binding: None,
-            read_set: None,
-            // Likewise its cancel lifecycle: the new try inherits neither the
-            // source's refusal history nor its spent landing reserve. It DOES
-            // inherit the dial's VALUES, so a retried try lands on the same
-            // terms — but not its one-shot mark, because the new row's own
-            // admission dials it against the new row's own lease generation.
-            cancel_state: AttemptCancelState {
-                reserve: AttemptLandingReserve {
-                    spent_units: 0,
-                    dial_generation: None,
-                    ..source.cancel_state.reserve
+        let mut next = RunLifecycle::successor_row(
+            NewAttempt {
+                id: match id {
+                    Some(id) => id,
+                    None => AttemptId::from_bytes(&self.store.clock.ulid()?)?,
                 },
-                ..AttemptCancelState::default()
+                kind: source.kind.clone(),
+                payload: source.payload.clone(),
+                lease_expirations: Vec::new(),
+                claimed_at: None,
+                retry_of: Some(source.id),
+                folded_retries: 0,
+                backoff_until: None,
+                last_error: None,
+                task_ref: source.task_ref.clone(),
+                run_id: source.run_id.clone(),
+                dedupe_key: source.dedupe_key.clone(),
+                // The scope travels WITH the key it scopes, so the index move below
+                // derives the child's entry from the row itself — never from a
+                // caller's state or a decoded TASK payload.
+                dedupe_actor_ref: source.dedupe_actor_ref.clone(),
+                created_at: input.now,
+                updated_at: input.now,
+                events: Vec::new(),
+                // A retry is a NEW attempt: its attribution manifest starts empty,
+                // the finalized source keeps the prior try's.
+                manifest: Vec::new(),
+                executor_model: None,
+                executor_seat: None,
+                executor_role: None,
+                planned_binding: None,
+                read_set: None,
+                // A retry is a NEW attempt: it has produced nothing yet, and the
+                // finalized source keeps sole ownership of the artifact its own
+                // try left behind.
+                signals: Vec::new(),
+                asks: Vec::new(),
+                placement: source.placement.as_ref().map(|placement| {
+                    crate::attempt_queue::AttemptPlacement {
+                        worker: placement.worker.clone(),
+                        // Keep the new try below its predecessor, not beside it. A later
+                        // explicit redirect can still select another effective parent.
+                        parent: Some(source.id),
+                    }
+                }),
+                result_ref: None,
+                history: Vec::new(),
+                terminal_exhaust: None,
+                signal_intents: Vec::new(),
             },
-            // A retry is a NEW attempt: it has produced nothing yet, and the
-            // finalized source keeps sole ownership of the artifact its own
-            // try left behind.
-            signals: Vec::new(),
-            asks: Vec::new(),
-            placement: source.placement.as_ref().map(|placement| {
-                crate::attempt_queue::AttemptPlacement {
-                    worker: placement.worker.clone(),
-                    // Keep the new try below its predecessor, not beside it. A later
-                    // explicit redirect can still select another effective parent.
-                    parent: Some(source.id),
-                }
-            }),
-            result_ref: None,
-            history: Vec::new(),
-            active_pause: None,
-            terminal_exhaust: None,
-            signal_intents: Vec::new(),
-        };
+            Some(input.backoff_until),
+            &source,
+        );
 
+        // The Retry table cell was read above, before the lease guards.
+        let _ = RunLifecycle::retry(&mut source, input.now);
         // A `Failed` row must carry a reason, so an omitted retry cause
         // normalizes to a stable non-empty token rather than failing the call.
-        source.state = AttemptState::Failed;
-        source.lease_owner = None;
-        source.scheduled_at = None;
         source.backoff_until = None;
         source.last_error = Some(
             input
@@ -175,7 +163,6 @@ impl AttemptQueue<'_> {
                 .unwrap_or_else(|| RETRY_REASON_UNSPECIFIED.to_owned()),
         );
         source.updated_at = input.now;
-        source.settled_at = Some(input.now);
 
         crate::attempt_queue::check_owner_retained_range(&next.kind, &next.id)?;
         if self
@@ -432,7 +419,7 @@ impl AttemptQueue<'_> {
                 ) {
                     // A person's pause takes over an engine hold (FIX 9579):
                     // the row is already paused and out of the ready index.
-                    RunStep::Move { to, pause } if row.state == AttemptState::Paused => {
+                    RunStep::Move { .. } if row.state == AttemptState::Paused => {
                         append_attempt_event(
                             &mut record,
                             input.kind,
@@ -440,8 +427,8 @@ impl AttemptQueue<'_> {
                             input.note,
                             input.now,
                         )?;
-                        record.state = to;
-                        record.active_pause = pause;
+                        // The Pause table cell was read just above.
+                        let _ = RunLifecycle::pause(&mut record, pause, by_hold_actor);
                         record.updated_at = input.now;
                         crate::attempt_queue::index::delete_annotation_hold_in_txn(
                             self.store, wtxn, record.id,
@@ -451,7 +438,10 @@ impl AttemptQueue<'_> {
                     // A paused row keeps its readiness instant so resume can
                     // restore the exact schedule instead of pulling the try
                     // forward.
-                    RunStep::Move { to, pause } => {
+                    RunStep::Move {
+                        pause: answered_pause,
+                        ..
+                    } => {
                         self.delete_ready_entry_for_record(wtxn, &record)?;
                         append_attempt_event(
                             &mut record,
@@ -460,11 +450,10 @@ impl AttemptQueue<'_> {
                             input.note,
                             input.now,
                         )?;
-                        record.state = to;
-                        record.active_pause = pause;
-                        record.lease_owner = None;
+                        // The Pause table cell was read just above.
+                        let _ = RunLifecycle::pause(&mut record, pause, by_hold_actor);
                         record.updated_at = input.now;
-                        if matches!(pause, Some(AttemptPause::Annotation { .. })) {
+                        if matches!(answered_pause, Some(AttemptPause::Annotation { .. })) {
                             crate::attempt_queue::index::put_annotation_hold_in_txn(
                                 self.store, wtxn, record.id,
                             )?;
@@ -478,7 +467,7 @@ impl AttemptQueue<'_> {
                 }
             }
             AttemptInterventionKind::Resume => match RunLifecycle::step(row, RunEvent::Resume) {
-                RunStep::Move { to, pause } => {
+                RunStep::Move { .. } => {
                     self.delete_ready_entry_for_record(wtxn, &record)?;
                     append_attempt_event(
                         &mut record,
@@ -490,9 +479,8 @@ impl AttemptQueue<'_> {
                     // The table restores Scheduled while the row keeps its
                     // scheduled instant, so no read surface renders a
                     // still-deferred row as runnable now.
-                    record.state = to;
-                    record.active_pause = pause;
-                    record.lease_owner = None;
+                    // The Resume table cell was read just above.
+                    let _ = RunLifecycle::resume(&mut record);
                     record.updated_at = input.now;
                     crate::attempt_queue::index::delete_annotation_hold_in_txn(
                         self.store, wtxn, record.id,
@@ -510,7 +498,7 @@ impl AttemptQueue<'_> {
             },
             AttemptInterventionKind::Cancel => match RunLifecycle::step(row, RunEvent::Cancel) {
                 RunStep::Replay => AttemptInterventionEffect::AlreadyCancelled,
-                RunStep::Move { to, pause } => {
+                RunStep::Move { .. } => {
                     self.delete_ready_entry_for_record(wtxn, &record)?;
                     let actor = input.actor.clone();
                     append_attempt_event(
@@ -520,14 +508,11 @@ impl AttemptQueue<'_> {
                         input.note,
                         input.now,
                     )?;
-                    record.state = to;
-                    record.active_pause = pause;
-                    record.lease_owner = None;
-                    record.scheduled_at = None;
+                    // The Cancel table cell was read just above.
+                    let _ = RunLifecycle::cancel(&mut record, input.now);
                     record.backoff_until = None;
                     record.last_error = None;
                     record.updated_at = input.now;
-                    record.settled_at = Some(input.now);
                     crate::attempt_queue::index::delete_annotation_hold_in_txn(
                         self.store, wtxn, record.id,
                     )?;
@@ -636,16 +621,9 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("release", "missing"));
         };
         let mut record = decode_record(&raw_record, id)?;
-        let lease_holder = record.lease_owner.as_deref() == Some(lease_owner);
-        let RunStep::Move { to, pause } =
-            RunLifecycle::step(RunRow::of(&record), RunEvent::Release { lease_holder })
-        else {
+        let RunStep::Move { .. } = RunLifecycle::release(&mut record, lease_owner) else {
             return Ok(false);
         };
-        record.state = to;
-        record.active_pause = pause;
-        record.lease_owner = None;
-        record.scheduled_at = None;
         record.backoff_until = None;
         record.updated_at = now;
         let encoded = self.encode_in_txn(wtxn, &mut record)?;

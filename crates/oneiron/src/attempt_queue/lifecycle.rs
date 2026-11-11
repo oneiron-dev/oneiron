@@ -2,9 +2,14 @@
 //! attempt row's state and pause, the shared engine-hold write, and the
 //! [`RunState`] a run reports, derived from its row.
 //!
-//! Each run writer that interrupts, pauses, holds, resumes, cancels, reclaims
-//! or releases a row asks [`RunLifecycle::step`] what the event does in the
-//! row's current state, then writes that answer. The writer keeps its own
+//! Each run writer that interrupts, pauses, holds, resumes, cancels, reclaims,
+//! releases or retries a row asks [`RunLifecycle::step`] what the event does
+//! in the row's current state. The writers of `engine/mutate.rs` (the
+//! interventions, the lease release, the retry) then write the row's
+//! lifecycle fields (`state`, `active_pause`, `lease_owner`, `scheduled_at`,
+//! `settled_at`, `cancel_state`, `attempt_count`) only through the write
+//! functions of [`RunLifecycle`] below; the other writers still write the
+//! table's answer themselves. The writer keeps its own
 //! guards (the lease fence, input validation, the reserved hold actors) and
 //! its side writes (the ready and annotation-hold indexes, dedupe, pack
 //! receipts, settlement, notifications). The writers that consult it:
@@ -16,7 +21,9 @@
 //!   pause intervention under its reserved actor;
 //! - the parks: lease reclaim (`cleanup_leases_except`, whose held set is the
 //!   parked rows; boot recovery calls it too) and the lease release a parked
-//!   run resumes by (`release_lease_in_txn`).
+//!   run resumes by (`release_lease_in_txn`);
+//! - the retry source, `retry_storage_in_txn`, through `Retry`; its fresh
+//!   successor is built by [`RunLifecycle::successor_row`].
 //!
 //! The table encodes today's transitions; no stored byte changes. Two of
 //! today's cells are known gaps, kept here as they are:
@@ -31,12 +38,19 @@ use super::AttemptResumePoint;
 use super::encoding::decode_record;
 use super::run_tree_view::RunTreeStatus;
 use super::telemetry::invalid_transition;
-use super::types::{AttemptId, AttemptInterventionKind, AttemptPause, AttemptRecord, AttemptState};
+use super::types::{
+    AttemptEvent, AttemptId, AttemptInterventionKind, AttemptLeaseExpiry, AttemptPause,
+    AttemptPlacement, AttemptRecord, AttemptResultRef, AttemptState, AttemptTerminalExhaust,
+    ManifestEntry, PlannedBinding,
+};
 use super::validate::{
     append_attempt_event, validate_lease_owner, validate_resume_point, validate_transition_lease,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::attempt_cancel::{AttemptCancelState, AttemptLandingReserve};
+use crate::store::attempt_record::{AttemptReadSet, RequeuedFailure};
+use crate::store::attempt_run_signal::{RunAsk, RunBranchSignal, SignalIntent};
 
 /// The facts of an attempt row the table reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +71,90 @@ impl RunRow {
             scheduled: record.scheduled_at.is_some(),
             attempt_count: record.attempt_count,
         }
+    }
+}
+
+/// The non-lifecycle parts of a fresh attempt: sites provide their payload
+/// and provenance, while lifecycle.rs alone builds the row's lifecycle fields.
+pub(crate) struct NewAttempt {
+    pub(crate) id: AttemptId,
+    pub(crate) kind: String,
+    pub(crate) payload: Vec<u8>,
+    pub(crate) lease_expirations: Vec<AttemptLeaseExpiry>,
+    pub(crate) claimed_at: Option<u64>,
+    pub(crate) retry_of: Option<AttemptId>,
+    pub(crate) folded_retries: u32,
+    pub(crate) backoff_until: Option<u64>,
+    pub(crate) last_error: Option<String>,
+    pub(crate) task_ref: Option<String>,
+    pub(crate) run_id: Option<String>,
+    pub(crate) dedupe_key: Option<String>,
+    pub(crate) dedupe_actor_ref: Option<String>,
+    pub(crate) created_at: u64,
+    pub(crate) updated_at: u64,
+    pub(crate) events: Vec<AttemptEvent>,
+    pub(crate) manifest: Vec<ManifestEntry>,
+    pub(crate) executor_model: Option<String>,
+    pub(crate) executor_seat: Option<String>,
+    pub(crate) executor_role: Option<oneiron_model::model_binding::ModelRole>,
+    pub(crate) planned_binding: Option<PlannedBinding>,
+    pub(crate) read_set: Option<AttemptReadSet>,
+    pub(crate) result_ref: Option<AttemptResultRef>,
+    pub(crate) signals: Vec<RunBranchSignal>,
+    pub(crate) asks: Vec<RunAsk>,
+    pub(crate) placement: Option<AttemptPlacement>,
+    pub(crate) history: Vec<RequeuedFailure>,
+    pub(crate) terminal_exhaust: Option<AttemptTerminalExhaust>,
+    pub(crate) signal_intents: Vec<SignalIntent>,
+}
+
+/// Builds a fresh row with its ready state and cancel lifecycle supplied here.
+fn row(
+    parts: NewAttempt,
+    scheduled_at: Option<u64>,
+    cancel_state: AttemptCancelState,
+) -> AttemptRecord {
+    AttemptRecord {
+        id: parts.id,
+        kind: parts.kind,
+        payload: parts.payload,
+        state: if scheduled_at.is_some() {
+            AttemptState::Scheduled
+        } else {
+            AttemptState::Queued
+        },
+        lease_owner: None,
+        attempt_count: 0,
+        lease_expirations: parts.lease_expirations,
+        claimed_at: parts.claimed_at,
+        scheduled_at,
+        retry_of: parts.retry_of,
+        folded_retries: parts.folded_retries,
+        backoff_until: parts.backoff_until,
+        last_error: parts.last_error,
+        task_ref: parts.task_ref,
+        run_id: parts.run_id,
+        dedupe_key: parts.dedupe_key,
+        dedupe_actor_ref: parts.dedupe_actor_ref,
+        created_at: parts.created_at,
+        updated_at: parts.updated_at,
+        settled_at: None,
+        events: parts.events,
+        manifest: parts.manifest,
+        executor_model: parts.executor_model,
+        executor_seat: parts.executor_seat,
+        executor_role: parts.executor_role,
+        planned_binding: parts.planned_binding,
+        read_set: parts.read_set,
+        cancel_state,
+        result_ref: parts.result_ref,
+        signals: parts.signals,
+        asks: parts.asks,
+        placement: parts.placement,
+        history: parts.history,
+        active_pause: None,
+        terminal_exhaust: parts.terminal_exhaust,
+        signal_intents: parts.signal_intents,
     }
 }
 
@@ -131,6 +229,9 @@ pub(crate) enum RunEvent {
     /// The lease holder returns its row to the queue as the same try (a
     /// parked run's resume). `lease_holder` when the caller holds the lease.
     Release { lease_holder: bool },
+    /// The lease holder's try failed and a successor row carries the next try:
+    /// this row settles as failed.
+    Retry,
 }
 
 /// What an event does to a row in its current state.
@@ -251,6 +352,20 @@ impl RunLifecycle {
                 },
                 _ => RunStep::Keep,
             },
+            RunEvent::Retry => match row.state {
+                S::Leased => RunStep::Move {
+                    to: S::Failed,
+                    pause: row.pause,
+                },
+                S::Queued
+                | S::Paused
+                | S::Scheduled
+                | S::Landing
+                | S::Completed
+                | S::Failed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Refuse,
+            },
             RunEvent::Release { lease_holder } => match row.state {
                 S::Leased if lease_holder => RunStep::Move {
                     to: S::Queued,
@@ -259,6 +374,110 @@ impl RunLifecycle {
                 _ => RunStep::Keep,
             },
         }
+    }
+
+    /// Applies `Pause`, writing state and active_pause; clears lease_owner only
+    /// if the row was not Paused. The site keeps guards, indexes, updated_at,
+    /// backoff_until, last_error and events.
+    pub(crate) fn pause(
+        record: &mut AttemptRecord,
+        pause: AttemptPause,
+        by_hold_actor: bool,
+    ) -> RunStep {
+        let row = RunRow::of(record);
+        let step = Self::step(
+            row,
+            RunEvent::Pause {
+                pause,
+                by_hold_actor,
+            },
+        );
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            if row.state != AttemptState::Paused {
+                record.lease_owner = None;
+            }
+        }
+        step
+    }
+
+    /// Applies `Resume`, writing state, active_pause and lease_owner. The site
+    /// keeps guards, indexes, updated_at, backoff_until, last_error and events.
+    pub(crate) fn resume(record: &mut AttemptRecord) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::Resume);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+        }
+        step
+    }
+
+    /// Applies `Cancel`, writing state, active_pause, lease_owner, scheduled_at
+    /// and settled_at. The site keeps guards, indexes, updated_at,
+    /// backoff_until, last_error and events.
+    pub(crate) fn cancel(record: &mut AttemptRecord, now: u64) -> RunStep {
+        let step = Self::step(RunRow::of(record), RunEvent::Cancel);
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+            record.scheduled_at = None;
+            record.settled_at = Some(now);
+        }
+        step
+    }
+
+    /// Applies `Release`, writing state, active_pause, lease_owner and
+    /// scheduled_at. The site keeps guards, indexes, updated_at, backoff_until,
+    /// last_error and events.
+    pub(crate) fn release(record: &mut AttemptRecord, lease_owner: &str) -> RunStep {
+        let lease_holder = record.lease_owner.as_deref() == Some(lease_owner);
+        let step = Self::step(RunRow::of(record), RunEvent::Release { lease_holder });
+        if let RunStep::Move { to, pause } = step {
+            record.state = to;
+            record.active_pause = pause;
+            record.lease_owner = None;
+            record.scheduled_at = None;
+        }
+        step
+    }
+
+    /// Applies `Retry`, writing state, active_pause (unchanged), lease_owner,
+    /// scheduled_at and settled_at. The site keeps guards, indexes, updated_at,
+    /// backoff_until, last_error and events.
+    pub(crate) fn retry(source: &mut AttemptRecord, now: u64) -> RunStep {
+        let step = Self::step(RunRow::of(source), RunEvent::Retry);
+        if let RunStep::Move { to, pause } = step {
+            source.state = to;
+            source.active_pause = pause;
+            source.lease_owner = None;
+            source.scheduled_at = None;
+            source.settled_at = Some(now);
+        }
+        step
+    }
+
+    /// Builds a fresh successor, retaining the source's reserve dial values,
+    /// but none of its spent units, generation mark or other cancel history.
+    pub(crate) fn successor_row(
+        parts: NewAttempt,
+        scheduled_at: Option<u64>,
+        source: &AttemptRecord,
+    ) -> AttemptRecord {
+        row(
+            parts,
+            scheduled_at,
+            AttemptCancelState {
+                reserve: AttemptLandingReserve {
+                    spent_units: 0,
+                    dial_generation: None,
+                    ..source.cancel_state.reserve
+                },
+                ..AttemptCancelState::default()
+            },
+        )
     }
 }
 
