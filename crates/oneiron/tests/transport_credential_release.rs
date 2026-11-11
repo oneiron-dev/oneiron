@@ -15,7 +15,10 @@ use oneiron::federation::{
     Sensitivity, SensitivityCeiling,
 };
 use oneiron::policy_model::SecretScanMode;
-use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
+use oneiron::registry::{
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_POLICY_MANIFEST,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::{Materializer, parse_edge_key};
 use oneiron::sync::manager::WindowManager;
@@ -28,8 +31,15 @@ use oneiron::sync::{
     filtered_window_doc_for_peer,
 };
 use oneiron::test_doors::membership::stand_member_grant;
-use oneiron::{EdgeKind, EntityId, Result, TimeRange, Vault, VaultConfig};
-use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
+use oneiron::write_envelope::claim_body::decode_claim_body;
+use oneiron::write_envelope::{
+    ClaimCandidate, MachineWriteSignature, WriteActor, WriteEnvelope, WriteProvenance,
+};
+use oneiron::{
+    ClaimApprovalStatus, ClaimSource, ClaimSubject, EdgeActorClass, EdgeKind, EntityId, Result,
+    TimeRange, Vault, VaultConfig,
+};
+use oneiron_contracts::record_layout::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use rmpv::Value;
 
 const WINDOW: &str = "2026-03";
@@ -483,6 +493,7 @@ fn guest_document_share_and_fetch_withhold_credential_files() -> Result<()> {
 struct MemberFixture {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
+    issuer: HostSlipIssuer,
     manager: Arc<WindowManager>,
     selector: SyncSelector,
     person: StoredRow,
@@ -519,6 +530,7 @@ fn member_fixture() -> Result<MemberFixture> {
     Ok(MemberFixture {
         _dir: dir,
         vault,
+        issuer,
         manager,
         selector,
         person,
@@ -639,5 +651,237 @@ fn own_machine_window_keeps_rows_as_stored() -> Result<()> {
             &fixture.files.clean,
         ],
     )?;
+    Ok(())
+}
+
+fn read_stored_row(vault: &Vault, id: EntityId) -> Result<StoredRow> {
+    let body = vault.get(&id)?.expect("stored body");
+    let raw = vault.get_raw(&id)?.expect("stored metadata and body");
+    assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], body.as_slice());
+    Ok(StoredRow { id, body, raw })
+}
+
+fn member_fixture_with_machine_signed_claim(
+    value: Value,
+) -> Result<(MemberFixture, StoredRow, StoredRow)> {
+    let fixture = member_fixture()?;
+    let machine = store_row(&fixture.vault, ENTITY_TYPE_MACHINE, b"owen".to_vec(), None)?;
+    let signing = SigningKey::from_bytes(&[0x4d; 32]);
+    fixture.vault.enroll_machine_identity(
+        &fixture.issuer,
+        machine.id,
+        signing.verifying_key().to_bytes(),
+        [0x54; 32],
+        |transcript| Ok(signing.sign(transcript).to_bytes()),
+    )?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine.id, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("machine output"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = ClaimCandidate::new(
+        "test.machine.transport",
+        ClaimSubject::Entity(machine.id),
+        value.clone(),
+        1.0,
+    );
+    let id = EntityId::now();
+    let transcript = fixture
+        .vault
+        .machine_claim_transcript(&id, &candidate, &envelope)?;
+    let public_key = signing.verifying_key().to_bytes();
+    let signature = signing.sign(&transcript).to_bytes();
+    let signed = envelope.with_machine_signature(MachineWriteSignature {
+        public_key,
+        signature,
+    });
+    fixture
+        .vault
+        .batch()
+        .claim_candidate(
+            &id,
+            candidate,
+            &signed,
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
+            LEARNED_AT,
+        )
+        .commit()?;
+    let claim = read_stored_row(&fixture.vault, id)?;
+    let decoded = decode_claim_body(&claim.body, true)?;
+    assert_eq!(decoded.value, value, "scan-Off keeps the signed content");
+    let evidence = decoded.evidence.expect("machine evidence");
+    let signature_value = evidence
+        .as_map()
+        .expect("machine evidence map")
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("machine_signature"))
+        .map(|(_, value)| value);
+    assert_eq!(
+        signature_value,
+        Some(&Value::Array(vec![
+            Value::Binary(public_key.to_vec()),
+            Value::Binary(signature.to_vec()),
+        ])),
+        "the stored CLAIM must carry the real machine proof"
+    );
+    Ok((fixture, machine, claim))
+}
+
+// Signed engine rows cross to a member peer on their content: every
+// AUTHORITY_LOG row and a clean machine-signed CLAIM keep their stored bytes.
+#[test]
+fn member_peer_window_keeps_signed_engine_rows() -> Result<()> {
+    let (fixture, machine, claim) =
+        member_fixture_with_machine_signed_claim(Value::from("Exact reference fact."))?;
+    let authority_rows = fixture
+        .vault
+        .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)?
+        .into_iter()
+        .map(|id| read_stored_row(&fixture.vault, id))
+        .collect::<Result<Vec<_>>>()?;
+    assert!(
+        !authority_rows.is_empty(),
+        "the fixture creates authority rows"
+    );
+    let mut months = std::collections::BTreeSet::new();
+    for row in authority_rows.iter().chain(std::iter::once(&claim)) {
+        months.insert(
+            WindowKey::from_timestamp(fixture.vault.get_learned_at(&row.id)?)
+                .as_str()
+                .to_owned(),
+        );
+    }
+    let claim_key = WindowKey::from_timestamp(fixture.vault.get_learned_at(&claim.id)?);
+    let mut own_windows = Vec::new();
+    let mut own_authority_count = 0;
+    for month in months {
+        let key = WindowKey::new(&month);
+        let window = fixture.manager.open_window(&key)?;
+        let own = filtered_window_doc(
+            &fixture.vault,
+            &window.doc,
+            &key,
+            FederationGrantScope::vault(SHARED),
+            &fixture.selector,
+        )?;
+        own.get_map("entities").for_each(|_, value| {
+            let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+                panic!("entity values must be binary metadata plus body");
+            };
+            if EntityMetadataHeader::parse(&bytes)
+                .expect("entity metadata header")
+                .entity_type
+                == ENTITY_TYPE_AUTHORITY_LOG
+            {
+                own_authority_count += 1;
+            }
+        });
+        own_windows.push((key, own));
+    }
+    assert!(
+        own_authority_count > 0,
+        "own-machine windows must actually admit AUTHORITY_LOG rows"
+    );
+    let (_, own_claim_window) = own_windows
+        .iter()
+        .find(|(key, _)| key == &claim_key)
+        .expect("the signed CLAIM's learned month was opened");
+    assert_exact(own_claim_window, &claim);
+
+    for (key, own) in &own_windows {
+        let window = fixture.manager.open_window(key)?;
+        let member = filtered_window_doc_for_peer(
+            &fixture.vault,
+            &window.doc,
+            key,
+            FederationGrantScope::vault(SHARED),
+            &fixture.selector,
+            PeerMachine::Unknown,
+        )?;
+        own.get_map("entities").for_each(|id, value| {
+            let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+                panic!("entity values must be binary metadata plus body");
+            };
+            if EntityMetadataHeader::parse(&bytes)
+                .expect("entity metadata header")
+                .entity_type
+                == ENTITY_TYPE_AUTHORITY_LOG
+            {
+                let stored = authority_rows
+                    .iter()
+                    .find(|row| row.id.to_hex() == id)
+                    .expect("own-machine authority row has a stored snapshot");
+                assert_exact(own, stored);
+                assert_eq!(
+                    map_get_bytes(&member.get_map("entities"), id),
+                    Some(bytes.to_vec()),
+                    "every own-machine AUTHORITY_LOG row crosses byte-exact: {id}"
+                );
+                assert_exact(&member, stored);
+            }
+        });
+        if key == &claim_key {
+            assert_exact(&member, &claim);
+        }
+    }
+    let mut stored_rows = authority_rows.iter().collect::<Vec<_>>();
+    stored_rows.extend([&machine, &claim]);
+    assert_unchanged(&fixture.vault, &stored_rows)?;
+    Ok(())
+}
+
+// A machine-signed CLAIM whose content holds a credential is withheld whole;
+// its proof is never rewritten and storage keeps the original row.
+#[test]
+fn member_peer_window_withholds_machine_signed_claim_with_credential() -> Result<()> {
+    let credential = format!("ghp_{}", "a".repeat(36));
+    let (fixture, machine, claim) =
+        member_fixture_with_machine_signed_claim(Value::from(credential.as_str()))?;
+    assert!(
+        claim
+            .body
+            .windows(credential.len())
+            .any(|part| part == credential.as_bytes()),
+        "the original credential must really be stored before export"
+    );
+    let key = WindowKey::from_timestamp(fixture.vault.get_learned_at(&claim.id)?);
+    let window = fixture.manager.open_window(&key)?;
+    let own = filtered_window_doc(
+        &fixture.vault,
+        &window.doc,
+        &key,
+        FederationGrantScope::vault(SHARED),
+        &fixture.selector,
+    )?;
+    assert_exact(&own, &claim);
+    let member = filtered_window_doc_for_peer(
+        &fixture.vault,
+        &window.doc,
+        &key,
+        FederationGrantScope::vault(SHARED),
+        &fixture.selector,
+        PeerMachine::Unknown,
+    )?;
+    let entities = member.get_map("entities");
+    assert!(
+        entities.get(&claim.id.to_hex()).is_none(),
+        "a signed CLAIM with credential-bearing content is withheld whole"
+    );
+    entities.for_each(|_, value| {
+        let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+            panic!("entity values must be binary metadata plus body");
+        };
+        assert!(
+            !bytes
+                .windows(credential.len())
+                .any(|part| part == credential.as_bytes()),
+            "no member entity may carry the original credential bytes"
+        );
+    });
+    assert_unchanged(&fixture.vault, &[&machine, &claim])?;
     Ok(())
 }
