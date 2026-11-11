@@ -64,6 +64,9 @@ pub(super) const KEY_WAIT: &str = "wait";
 pub(super) const KEY_WAIT_SCOPE: &str = "scope";
 pub(super) const KEY_WAIT_ASKED_UNITS: &str = "asked_units";
 pub(super) const KEY_WAIT_LEASE_GENERATION: &str = "lease_generation";
+pub(super) const KEY_WAIT_RUN: &str = "wait_run";
+pub(super) const KEY_WAIT_ID: &str = "wait_id";
+pub(super) const KEY_WAIT_GENERATION: &str = "wait_generation";
 
 // v2 adds the mandatory overdraft and owed keys (FIX 8702, 8728, 9015).
 pub(super) const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 2;
@@ -73,6 +76,8 @@ pub(super) const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
 // The typed `cause` key is mandatory too: a row without one fails closed.
 // v3 adds the mandatory `carried_spend` key (`None` encodes as nil).
 // v4 adds the mandatory `wait` key (nil, or the pinned wait map); v3 rows fail closed.
+// The wait map's class is Budget (`scope`, `asked_units`) or one answer class (Consent, Peer,
+// Human: `wait_run`, `wait_id`, `wait_generation`); every map carries `lease_generation`.
 pub(super) const DREAMER_PARKED_SCHEMA_VERSION: u64 = 4;
 pub(super) const DREAMER_BUDGET_KEYS: [&str; 8] = [
     KEY_SCHEMA_VERSION,
@@ -109,11 +114,14 @@ pub(super) const DREAMER_PARKED_KEYS: [&str; 8] = [
     KEY_PARKED_AT,
     KEY_WAIT,
 ];
-pub(super) const DREAMER_PARKED_WAIT_KEYS: [&str; 4] = [
+pub(super) const DREAMER_PARKED_WAIT_KEYS: [&str; 7] = [
     KEY_CLASS,
     KEY_WAIT_SCOPE,
     KEY_WAIT_ASKED_UNITS,
     KEY_WAIT_LEASE_GENERATION,
+    KEY_WAIT_RUN,
+    KEY_WAIT_ID,
+    KEY_WAIT_GENERATION,
 ];
 
 pub(super) const MIN_DREAMER_TOURNAMENT_SAMPLE_COUNT: u32 = 3;

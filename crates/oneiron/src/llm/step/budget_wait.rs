@@ -31,7 +31,10 @@ pub(crate) fn wake_budget_traps_in_txn(
         let DreamerParkWait::Budget {
             scope: waiting_scope,
             asked_units,
-        } = &wait.wait;
+        } = &wait.wait
+        else {
+            continue;
+        };
         if waiting_scope != scope {
             continue;
         }
