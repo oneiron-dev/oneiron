@@ -100,7 +100,7 @@ impl Memory<'_> {
             ));
         }
         let own = self.repo_own_work(binding, input.work, NO_PATHS, RepoAccessIntent::Read)?;
-        let paths = self.repo_symbol_paths(own.stamp.repo, &input.symbols)?;
+        let paths = self.repo_symbol_paths(&own, &input.symbols)?;
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, &paths);
         let keys: BTreeSet<String> = input.symbols.iter().map(EntityId::to_hex).collect();
         let declared = self.vault.with_write_txn_grouped(|txn| {
@@ -285,17 +285,32 @@ impl Memory<'_> {
         self.repo_declaration_answer(binding, &own, &lease, blockers)
     }
 
-    /// The paths of `symbols` in the stored symbol manifest of `repo`: each
-    /// must be a current CODE_SYMBOL id of it, as the owner's declaration
-    /// requires. A bare name or another revision's symbol refuses.
+    /// The paths of `symbols` in the symbol manifest of the work's base
+    /// snapshot (FIX RUN-DECLARE-ANCHOR-MANIFEST): each must be a CODE_SYMBOL
+    /// id of it, the ids the run reads through `self.code.symbols.definitions`.
+    /// A bare name or another revision's symbol refuses.
     fn repo_symbol_paths(
         &self,
-        repo: EntityId,
+        own: &RepoOwnWork,
         symbols: &[EntityId],
     ) -> MemoryResult<BTreeSet<String>> {
-        let manifest = self.vault.get_code_symbol_manifest(&repo)?.ok_or_else(|| {
-            MemoryError::not_found("the repository has no stored symbol manifest")
-        })?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        let manifest = self
+            .vault
+            .repo_base_symbol_manifest_in_txn(
+                &txn,
+                own.stamp.repo,
+                &own.admitted.membership.repo_ref,
+                &own.stamp.base_green,
+            )?
+            .ok_or_else(|| {
+                MemoryError::not_found("the repository has no stored symbol manifest")
+            })?;
         let mut current = BTreeMap::new();
         for symbol in &manifest.symbols {
             current.insert(
