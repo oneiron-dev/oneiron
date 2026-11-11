@@ -494,7 +494,7 @@ impl PolicyManifestResolution {
 /// `Imported` waits for the owner's review whatever any source_trust row
 /// grants, so no manifest can land it Auto.
 fn dreamer_writes_from_import(input: &GateEvaluatorInput, lineage: Option<&SourceLineage>) -> bool {
-    (input.provenance.dreamer_run_id.is_some() || input.provenance.derive_commit)
+    input.provenance.dreamer_run_id.is_some()
         && (input.source == Some(ClaimSource::Imported)
             || lineage.is_some_and(|lineage| lineage.contains(ClaimSource::Imported)))
 }
