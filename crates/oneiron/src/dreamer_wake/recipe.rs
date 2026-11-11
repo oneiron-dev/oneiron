@@ -238,11 +238,7 @@ fn read_evidence(
     actor: WriteActor,
     id: EntityId,
 ) -> Result<Evidence> {
-    let key = ScopedReadActorKey::with_actor_class(
-        actor.entity_ref().to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or_else(invalid)?;
+    let key = ScopedReadActorKey::for_engine_actor(actor).ok_or_else(invalid)?;
     let raw = vault
         .scoped_read(key)
         .entity_raw_live_in(txn, &id)?
@@ -321,7 +317,7 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
             if cached_result(vault, &txn, attempt, &pin, actor, &id)? {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
         }
@@ -433,7 +429,7 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
         )?;
         Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         })
     }
 }

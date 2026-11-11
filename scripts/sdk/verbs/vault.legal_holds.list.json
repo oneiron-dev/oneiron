@@ -1,0 +1,17 @@
+{
+  "name": "vault.legal_holds.list",
+  "description": "Every legal hold the owner may see.",
+  "input": "EmptyRequest",
+  "output": "Vec<crate::deletion::LegalHold>",
+  "call": "crate::task_verb::sdk::read_legal_holds(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.list\")?)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "mcp_fields": {},
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

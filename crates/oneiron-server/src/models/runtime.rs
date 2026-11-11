@@ -5,6 +5,12 @@
 use super::*;
 
 impl ModelRuntime {
+    /// Current verified files for this captured managed model, not evidence
+    /// that a registry backend is loaded or has the same serving revision.
+    pub(crate) fn stock_weights(&self, model: &str) -> Option<serde_json::Value> {
+        self.stock_weights.get(model)?.read()
+    }
+
     /// No `[models]`: no seat, no router.
     #[must_use]
     pub fn unconfigured() -> Self {
@@ -21,6 +27,7 @@ impl ModelRuntime {
             rests: OfferCooldowns::unkept(),
             token_ratios: None,
             training: Default::default(),
+            stock_weights: BTreeMap::new(),
             budgets: ModelHostBudgets::unhosted(),
             responses: ResponsesContext::default(),
         }
@@ -70,6 +77,28 @@ impl ModelRuntime {
             self.host.clone(),
             Arc::clone(&self.receipts),
             payer,
+        )
+    }
+
+    /// [`Self::funded_run`] for work an owner's agent Grant funds (FIX
+    /// 7766): each host-paid call holds only on a live allocation of the
+    /// wallet `funding` names, which the host read before the run began.
+    /// `None` is [`Self::funded_run`]'s run.
+    #[must_use]
+    pub fn grant_funded_run(
+        &self,
+        run: impl Into<String>,
+        meter: BudgetGuard,
+        payer: Option<PayerPerson>,
+        funding: Option<oneiron::agent_dispatch::GrantSpendBinding>,
+    ) -> RunAdmission {
+        raw::grant_funded_run(
+            run,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+            payer,
+            funding,
         )
     }
 
@@ -454,6 +483,7 @@ impl ModelRuntime {
             rests,
             token_ratios,
             training: config.training.clone(),
+            stock_weights: worker_host::stock_weights(&config.workers, &config.providers),
             budgets: budgets.clone(),
             responses,
         }
@@ -527,6 +557,18 @@ impl ModelRuntime {
     #[must_use]
     pub(crate) fn raw_router(&self) -> Arc<ModelRouter> {
         Arc::clone(&self.raw_router)
+    }
+
+    /// The access this host's offers hold now (FIX 5366), as its raw router
+    /// reads it: the configured routes and their on-device views, and the
+    /// models the owner's other nodes offer, as the last mesh catalog
+    /// refresh left them (FIX 3229). Nothing is probed or sent. A role's
+    /// model pack pick, the compaction writer's pick and the pack's
+    /// retirement notices all read this one access (FIX 22227), so a notice
+    /// names the model a role's pick resolves to here.
+    #[must_use]
+    pub(crate) fn offer_access(&self) -> oneiron::llm::model_pack::AccessSnapshot {
+        self.raw_router.access_snapshot()
     }
 
     /// Serves on this runtime's raw router, beside the configured models,

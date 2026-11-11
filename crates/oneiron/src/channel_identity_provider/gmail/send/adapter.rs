@@ -213,9 +213,11 @@ impl GmailDelegatedAdapter {
 }
 
 /// Projects one delivered member send into the thread record: its
-/// `(identity × Message-ID)` passport with References/In-Reply-To, and the
-/// recipient's comm last-touch. Both read the durable receipt, so a replayed
-/// Done result re-projects identically; both writes are idempotent.
+/// `(identity × Message-ID)` passport with References/In-Reply-To, and each
+/// recipient's comm last-touch: its counterparty's, and every recipient's of
+/// one message to several (fix list row 17645), each party once. Both read
+/// the durable receipt, so a replayed Done result re-projects identically;
+/// both writes are idempotent.
 fn record_sent_thread(
     vault: &Vault,
     identity_ref: EntityId,
@@ -245,7 +247,23 @@ fn record_sent_thread(
         input = input.with_references(canonical_message_id_list(&references)?);
     }
     vault.record_thread_passport(input)?;
-    if let Some(party) = fields.get("counterparty_ref") {
+    let mut parties: Vec<String> = fields
+        .get("counterparty_ref")
+        .cloned()
+        .into_iter()
+        .collect();
+    if let Some(listed) = fields.get(crate::outbound::RECIPIENTS_FIELD) {
+        let listed: Vec<crate::outbound::OutboundRecipient> = serde_json::from_str(listed)
+            .map_err(|_| {
+                Error::InvalidConfig("gmail send receipt recipients unreadable".to_owned())
+            })?;
+        for recipient in listed {
+            if !parties.contains(&recipient.address) {
+                parties.push(recipient.address);
+            }
+        }
+    }
+    for party in &parties {
         vault
             .store
             .record_hooks

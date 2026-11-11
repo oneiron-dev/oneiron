@@ -220,7 +220,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/health", get(health))
         .route("/.well-known/oneiron", get(pairing::descriptor))
         .route("/v1/core/pairing/links", post(pairing::create_link))
+        .route(
+            "/v1/owner/artifacts/backend-pairing",
+            post(artifact_backend_pairing::create),
+        )
         .route("/v1/core/pairing/redeem", post(pairing::redeem))
+        .route("/v1/core/pairing/pin", post(pairing::pending_pin))
         .route("/v1/core/pairing/oauth", post(pairing::oauth_exchange))
         .route("/v1/core/slips/revoke", post(pairing::revoke))
         .route("/v1/core/slips/renew", post(slip_renewal::renew))
@@ -239,8 +244,22 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Registration reflects this server's verified host binding. A bound
         // QuickJS provider enables durable execute_code on both endpoints;
         // without one, admission returns code_host_unbound before any run.
-        .route("/mcp", post(mcp_gateway))
-        .route("/mcp/tool-first", post(mcp_tool_first_gateway))
+        //
+        // Each is MCP Streamable HTTP (FIX 4902): a POST carries every
+        // message, and GET and DELETE answer 405, since the server opens no
+        // stream of its own and holds no session.
+        .route(
+            "/mcp",
+            post(mcp_gateway)
+                .get(mcp_method_not_allowed)
+                .delete(mcp_method_not_allowed),
+        )
+        .route(
+            "/mcp/tool-first",
+            post(mcp_tool_first_gateway)
+                .get(mcp_method_not_allowed)
+                .delete(mcp_method_not_allowed),
+        )
         .route("/api/core/discover", get(discover))
         .route("/api/search/vector", get(search_vector))
         .route(
@@ -270,8 +289,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete
         // `/v1/core/facade/<verb>` path, so it neither shadows nor is shadowed
-        // by the storage-shaped `/v1/core` routes above, and its 64 MiB body
-        // limit stays a property of this nest alone.
+        // by the storage-shaped `/v1/core` routes above. Its bodies read up to
+        // the request floor this router sets (ABC transport row T2).
         .nest(
             "/v1/core/facade",
             self::facade::recorded_facade_routes(server.clone()),
@@ -294,6 +313,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
+        // FIX 11694: a person's MFA step-up with a passkey, on their own slip.
+        .merge(self::facade::step_up_doors::routes())
         // OF-516: a role holder's door to the ladder's person asks.
         .merge(self::facade::decision_role_asks::routes())
         .route("/v1/usage/events", post(record_usage_event))
@@ -305,6 +326,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Config-only CIMD documents remain public before OAuth bootstrap.
         .route("/oauth/client/native.json", get(client_metadata::native))
         .route("/oauth/client/web.json", get(client_metadata::web))
+        // FIX 4902 slice B: the vault as its own `/mcp`'s OAuth 2.1 authorization server
+        // (PRM, AS metadata, DCR, authorize, token, revoke). Keyless: a stock client signs in
+        // here before it holds anything.
+        .merge(self::oauth_server::routes())
         // The public ceremony bypasses the hosted device lease but retains
         // matched-route wire receipts and threshold questions.
         .merge(self::esign::public_routes())
@@ -328,6 +353,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // FIX 922: a kit-only restore's read of the sealed cloud bundle.
         // Keyless; each request is signed with the kit's owner anchor.
         .merge(self::recovery_bundle::routes())
+        .merge(self::owner_routes::recovery_kit_target_routes::authority_recovery_routes())
         // ARCH-0052 D5: everyone in a room keeps their own copy of an
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The
@@ -349,10 +375,22 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             self::owner_routes::off_record_routes()
                 .layer(middleware::map_response(call_receipt::no_record_reply)),
         )
+        // ABC transport rows T1, T3, T4: a route that reads its body whole
+        // and sets no bound of its own reads up to `limits.request_body_bytes`
+        // (a route's own layer, closer to its handler, still wins), and a
+        // body declared past the row is refused naming it.
+        .layer(self::request_floor::request_floor_layer(&server))
+        .layer(middleware::from_fn_with_state(
+            server.clone(),
+            self::request_floor::name_request_floor,
+        ))
         .with_state(server.clone())
         // OF-604: inside admission, outside every route and pre-reader, so
         // digests and body limits see the decoded bytes.
-        .layer(middleware::from_fn(self::body_codec::body_codec))
+        .layer(middleware::from_fn_with_state(
+            server.clone(),
+            self::body_codec::body_codec,
+        ))
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::auth::admit_http_binding,

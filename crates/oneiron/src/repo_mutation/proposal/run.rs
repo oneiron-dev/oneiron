@@ -67,7 +67,9 @@ impl Vault {
     /// ([`RepoMutationRequest::with_write_actor`]) and the commit the run's
     /// work is pinned at, `base` is that commit's tree, and `stamp` is the
     /// run's, bound on the row. `check` is the proposal writer's first act,
-    /// where the run is judged again; its refusal writes nothing.
+    /// where the run is judged again; its refusal writes nothing. A
+    /// `repair_of` source makes it that failed proposal's replacement, judged
+    /// in the same writer (FIX 4364); the run's own fence is unchanged.
     ///
     /// # Errors
     /// A request with no stamped writer, a base that is not the stamp's pin,
@@ -78,6 +80,7 @@ impl Vault {
         review: RepoProposalReview,
         base: RepoPinnedBase,
         stamp: RepoRunStamp,
+        repair_of: Option<crate::EntityId>,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoProposal, R>> {
         if request.actor_id.is_none() || request.actor_class.is_none() {
@@ -94,6 +97,7 @@ impl Vault {
             ProposalBase::Pinned(base),
             Some(stamp),
             None,
+            repair_of,
             check,
         )
     }

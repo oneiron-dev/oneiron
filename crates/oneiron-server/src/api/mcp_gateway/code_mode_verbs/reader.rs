@@ -12,12 +12,21 @@ impl ReaderChildDoor {
         Self {
             vault,
             caller: caller.into(),
+            nested_readers: false,
         }
+    }
+
+    /// Enables only the spawn/wait bridge ports beside the native Read
+    /// job's own derived seat; this flag lends no credential or scope.
+    pub(crate) fn with_nested_readers(mut self) -> Self {
+        self.nested_readers = true;
+        self
     }
 }
 
 pub(super) fn read_only() -> AgentVerbRefusal {
     AgentVerbRefusal {
+        hook_notice: None,
         code: crate::server::READER_CHILD_READ_ONLY.to_owned(),
     }
 }
@@ -39,6 +48,11 @@ impl AgentVerbDoor for ReaderChildDoor {
         match call {
             RunCall::RecordedOutput
             | RunCall::Bridge(SelfEffect::ReaderReport | SelfEffect::Context | SelfEffect::Think) => {
+                Ok(None)
+            }
+            RunCall::Bridge(SelfEffect::ReaderSpawn | SelfEffect::TasksWaitSet)
+                if self.nested_readers =>
+            {
                 Ok(None)
             }
             _ => Err(read_only()),
@@ -66,6 +80,7 @@ impl AgentVerbDoor for ReaderChildDoor {
         };
         crate::device_local::withholds_retained(&self.vault, &self.caller, rows, &[]).map_err(
             |_| AgentVerbRefusal {
+                hook_notice: None,
                 code: "engine_error".to_owned(),
             },
         )

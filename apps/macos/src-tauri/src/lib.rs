@@ -386,11 +386,12 @@ enum SourceFailure {
 }
 
 /// Runs `use_secret` on the first host root secret `sources` holds, with
-/// its source, or on `None` when none holds one: the one search the open
-/// and a re-key's re-read ([`root_rekey`]) both make. `create_retained`
-/// fills an empty retained slot first ([`Vault::retained_host_root_secret`]).
-/// A source that fails stops the search with its failure. The secret lives
-/// only for the call.
+/// its source, or on `None` when none holds one: the open's search. A
+/// re-key ([`root_rekey`]) never makes it: it replaces the host issuer seed
+/// slot the vault loads its issuer from, whatever is configured here
+/// (FIX-LIST 11108). `create_retained` fills an empty retained slot first
+/// ([`Vault::retained_host_root_secret`]). A source that fails stops the
+/// search with its failure. The secret lives only for the call.
 fn with_effective_secret<T>(
     vault: &Vault,
     path: &std::path::Path,

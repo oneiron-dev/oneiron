@@ -7,25 +7,39 @@
 //!
 //! What goes, for each record the room holds no entity row of (a room that
 //! staged one of its own keeps it all: that copy is the room's):
-//! - its forward record (its words), document meta, field lengths and
-//!   vector, each keyed by its id, and its index source fields;
+//! - its forward record (its words), document meta, field lengths, vector
+//!   and phonetic codes, each keyed by its id;
+//! - its vault-meta rows the engine names ([`RecordMetaRows`], FIX 19094):
+//!   its index source fields, its revision state, its revision history
+//!   document (every revision's raw row), each pinned frontier and each
+//!   revision identity that names it, its pending index inputs and phonetic
+//!   codes, and its embedding device mark;
 //! - its duplicate, and its mask, in every term's postings, the term's
 //!   other documents kept;
-//! - its `Text` and `Vector` journal entries, so no later promotion indexes
-//!   it again.
+//! - its `Text`, `Vector` and `Phonetic` journal entries, so no later
+//!   promotion indexes it again.
+//!
+//! A row of these the room no longer holds reads through to base's, which
+//! is the record's truth while the room holds no entity row of it. The one
+//! exception is a revision the room staged and never saved (a put a later
+//! put replaced before a selected save): its frontier and its part of the
+//! history document are the room's alone. They go too, since they hold the
+//! record's body bytes; an aborted writer costs the room them, as it costs
+//! the room the record's pending journal entries.
 //!
 //! What stays: the room's staged totals (each field's document count and
-//! length, the document total) and its HNSW rows. The totals are room-scoped
-//! snapshots its scoring already reads as approximate beside base, and the
-//! HNSW rows hold ids only. A room's vector recall walks base's graph and
-//! scores the vectors the room stages; its own graph serves only its writes,
-//! whose walk skips a neighbour without its vector, and whose insert, when
-//! no other node loads one, counts the vectorless nodes it keeps
-//! (`hnsw::insert::start_room_graph`). Rewriting the totals or the graph
-//! before the writer commits would leave them wrong if it aborts. The
-//! record's phonetic rows, its room revision rows and its embedding device
-//! mark stay too; they are listed as their own rows.
+//! length, the document total), its HNSW rows and its phonetic postings. The
+//! totals are room-scoped snapshots its scoring already reads as approximate
+//! beside base, and the HNSW rows and phonetic postings hold ids only, each
+//! posting the ids of every record with one code. A room's vector recall
+//! walks base's graph and scores the vectors the room stages; its own graph
+//! serves only its writes, whose walk skips a neighbour without its vector,
+//! and whose insert, when no other node loads one, counts the vectorless
+//! nodes it keeps (`hnsw::insert::start_room_graph`). Rewriting the totals,
+//! the graph or a posting before the writer commits would leave them wrong
+//! if it aborts.
 use std::collections::BTreeSet;
+use std::ops::Bound;
 use std::sync::Arc;
 
 use zeroize::Zeroize;
@@ -41,24 +55,51 @@ use super::super::keyspace::{
 use super::ACTIVE_SEGMENT;
 use super::lifecycle::{OverlayLifecycleState, SessionOverlay};
 
-/// The vault-meta prefix of a record's index source fields.
-const INDEX_SOURCE_TEXT_PREFIX: &[u8] = b"index_source:text:v1:";
-
 /// The keyspaces whose row of a record is keyed by its id alone.
-const RECORD_ROWS: [OverlayKeyspace; 4] = [
+const RECORD_ROWS: [OverlayKeyspace; 5] = [
     OverlayKeyspace::TextForward,
     OverlayKeyspace::TextMeta,
     OverlayKeyspace::TextDocFieldLengths,
     OverlayKeyspace::Vectors,
+    OverlayKeyspace::PhoneticForward,
 ];
 
+/// The vault-meta rows the engine keeps of one record, by side-table prefix
+/// (FIX 19094). This crate does not declare the engine's side tables, so the
+/// engine names them, as it names its media rows
+/// ([`SessionOverlay::invalidate_repo_media_copies`]).
+#[derive(Clone, Copy, Debug)]
+pub struct RecordMetaRows<'p> {
+    /// Rows keyed by the record's id alone: the prefix, then its 16 bytes.
+    pub keyed: &'p [&'p [u8]],
+    /// Rows keyed by the record's id and more: the prefix, its 16 bytes,
+    /// then the rest of the key.
+    pub scoped: &'p [&'p [u8]],
+    /// Rows that name the record in their value: the prefix and any key,
+    /// the value its 16 bytes.
+    pub reverse: &'p [&'p [u8]],
+}
+
+impl<'p> RecordMetaRows<'p> {
+    /// Every prefix it names.
+    fn prefixes(self) -> impl Iterator<Item = &'p [u8]> {
+        self.keyed
+            .iter()
+            .chain(self.scoped)
+            .chain(self.reverse)
+            .copied()
+    }
+}
+
 impl SessionOverlay {
-    /// Drops the room's copies of the own retrieval rows of `ids` (module
-    /// docs). It runs inside the writer that deletes or erases one of `ids`,
-    /// before that writer commits, as the media drop does: an aborted writer
-    /// costs the room a read through to base's rows, which it still holds
-    /// (a posting the room masked shows again), and the pending `Text` or
-    /// `Vector` entry of a record, never a shared row. A room that holds none
+    /// Drops the room's copies of the own retrieval rows of `ids`, and of
+    /// their vault-meta rows `meta` names (module docs). It runs inside the
+    /// writer that deletes or erases one of `ids`, before that writer
+    /// commits, as the media drop does: an aborted writer costs the room a
+    /// read through to base's rows, which it still holds (a posting the room
+    /// masked shows again), and the pending `Text`, `Vector` or `Phonetic`
+    /// entry of a record and the revisions of it the room alone holds (module
+    /// docs), never a shared row. A room that holds none
     /// of them is left untouched. A segment this thread has installed on the
     /// overlay loses the same rows and entries,
     /// and a record that segment stages an entity row of is kept in both;
@@ -68,14 +109,18 @@ impl SessionOverlay {
     ///
     /// # Errors
     /// Only a poisoned overlay lock.
-    pub fn invalidate_retrieval_copies(self: &Arc<Self>, ids: &BTreeSet<EntityId>) -> Result<()> {
+    pub fn invalidate_retrieval_copies(
+        self: &Arc<Self>,
+        meta: RecordMetaRows<'_>,
+        ids: &BTreeSet<EntityId>,
+    ) -> Result<()> {
         let segment = ACTIVE_SEGMENT.with(|slot| {
             let mut slot = slot.borrow_mut();
             let segment = slot
                 .as_mut()
                 .filter(|segment| Arc::ptr_eq(&segment.overlay, self))?;
             let private = staged_entities(&segment.preview, ids);
-            let scrub = Scrub::of(&segment.preview, ids, &private);
+            let scrub = Scrub::of(&segment.preview, meta, ids, &private);
             let pending = segment
                 .mutations
                 .iter()
@@ -115,7 +160,7 @@ impl SessionOverlay {
             return Ok(());
         }
         let current = self.state.load_full();
-        let scrub = Scrub::of(&current, ids, &private);
+        let scrub = Scrub::of(&current, meta, ids, &private);
         let held = scrub.held_by(&current);
         if !same_thread && !held {
             return Ok(());
@@ -142,15 +187,22 @@ fn staged_entities(state: &OverlayState, ids: &BTreeSet<EntityId>) -> BTreeSet<E
 }
 
 /// The records whose copies one room state gives up.
-struct Scrub {
+struct Scrub<'p> {
     /// Their id bytes.
     ids: BTreeSet<[u8; ENTITY_ID_LEN]>,
+    /// The vault-meta rows the engine keeps of a record.
+    meta: RecordMetaRows<'p>,
 }
 
-impl Scrub {
+impl<'p> Scrub<'p> {
     /// The records of `ids` neither `state` nor `private` stages an entity
     /// row of.
-    fn of(state: &OverlayState, ids: &BTreeSet<EntityId>, private: &BTreeSet<EntityId>) -> Self {
+    fn of(
+        state: &OverlayState,
+        meta: RecordMetaRows<'p>,
+        ids: &BTreeSet<EntityId>,
+        private: &BTreeSet<EntityId>,
+    ) -> Self {
         let own = staged_entities(state, ids);
         Self {
             ids: ids
@@ -158,11 +210,58 @@ impl Scrub {
                 .filter(|id| !own.contains(id) && !private.contains(id))
                 .map(|id| *id.as_bytes())
                 .collect(),
+            meta,
         }
     }
 
     fn names(&self, id: &[u8]) -> bool {
         <[u8; ENTITY_ID_LEN]>::try_from(id).is_ok_and(|id| self.ids.contains(&id))
+    }
+
+    /// Whether the vault-meta row at `key`, holding `value`, is one of the
+    /// records' own rows [`RecordMetaRows`] names.
+    fn meta_row(&self, key: &[u8], value: &[u8]) -> bool {
+        self.meta
+            .keyed
+            .iter()
+            .any(|prefix| key.strip_prefix(*prefix).is_some_and(|id| self.names(id)))
+            || self.meta.scoped.iter().any(|prefix| {
+                key.strip_prefix(*prefix)
+                    .and_then(|rest| rest.get(..ENTITY_ID_LEN))
+                    .is_some_and(|id| self.names(id))
+            })
+            || self
+                .meta
+                .reverse
+                .iter()
+                .any(|prefix| key.starts_with(prefix) && self.names(value))
+    }
+
+    /// The key of every one of the records' own vault-meta rows `state`
+    /// stages.
+    fn meta_keys(&self, state: &OverlayState) -> BTreeSet<Vec<u8>> {
+        let mut keys = BTreeSet::new();
+        if self.ids.is_empty() {
+            return keys;
+        }
+        let KeyspaceState::Single { rows, .. } =
+            state.keyspaces[OverlayKeyspace::VaultMeta.slot()].as_ref()
+        else {
+            return keys;
+        };
+        for prefix in self.meta.prefixes() {
+            keys.extend(
+                rows.range::<[u8], _>((Bound::Included(prefix), Bound::Unbounded))
+                    .take_while(|(key, _)| key.starts_with(prefix))
+                    .filter_map(|(key, value)| match value {
+                        OverlayValue::Present(value) if self.meta_row(key, value) => {
+                            Some(key.clone())
+                        }
+                        OverlayValue::Present(_) | OverlayValue::Tombstone => None,
+                    }),
+            );
+        }
+        keys
     }
 
     /// Whether `entry` indexes one of the records again on promotion.
@@ -179,8 +278,7 @@ impl Scrub {
             RECORD_ROWS
                 .iter()
                 .any(|keyspace| present(state, *keyspace, id).is_some())
-                || present(state, OverlayKeyspace::VaultMeta, &source_key(id)).is_some()
-        });
+        }) || !self.meta_keys(state).is_empty();
         let postings = match state.keyspaces[OverlayKeyspace::TextPostings.slot()].as_ref() {
             KeyspaceState::DupSort { rows, .. } => rows.values().any(|delta| {
                 delta.present.keys().any(|identity| self.names(identity))
@@ -201,11 +299,33 @@ impl Scrub {
             for keyspace in RECORD_ROWS {
                 drop_overlay_row(state, keyspace, id);
             }
-            drop_overlay_row(state, OverlayKeyspace::VaultMeta, &source_key(id));
         }
+        self.drop_meta_rows(state);
         self.drop_postings(state);
         Arc::make_mut(&mut state.journal).retain(|entry| !self.stale(entry));
         state.recalculate_bytes();
+    }
+
+    /// Removes the records' own vault-meta rows, and any bookkeeping mark a
+    /// write left on one.
+    fn drop_meta_rows(&self, state: &mut OverlayState) {
+        let keys = self.meta_keys(state);
+        if keys.is_empty() {
+            return;
+        }
+        let slot = OverlayKeyspace::VaultMeta.slot();
+        if state
+            .bookkeeping
+            .get(&slot)
+            .is_some_and(|marked| keys.iter().any(|key| marked.contains(key)))
+            && let Some(marked) = Arc::make_mut(&mut state.bookkeeping).get_mut(&slot)
+        {
+            marked.retain(|key| !keys.contains(key));
+        }
+        for mut key in keys {
+            drop_overlay_row(state, OverlayKeyspace::VaultMeta, &key);
+            key.zeroize();
+        }
     }
 
     /// Removes each record's duplicate and mask from every term's postings; a
@@ -273,10 +393,12 @@ impl Scrub {
             OverlayMutation::Put {
                 keyspace: OverlayKeyspace::VaultMeta,
                 key,
-                ..
-            } => key
-                .strip_prefix(INDEX_SOURCE_TEXT_PREFIX)
-                .is_some_and(|id| self.names(id)),
+                value,
+            } => self.meta_row(key, value),
+            OverlayMutation::Bookkeeping {
+                keyspace: OverlayKeyspace::VaultMeta,
+                key,
+            } => self.meta_row(key, &[]),
             OverlayMutation::Put { keyspace, key, .. } => {
                 RECORD_ROWS.contains(keyspace) && self.names(key)
             }
@@ -290,10 +412,13 @@ fn identity_of(value: &[u8]) -> &[u8] {
     value.get(..ENTITY_ID_LEN).unwrap_or_default()
 }
 
-/// The record whose text or vector `entry` indexes, when it indexes one.
+/// The record whose text, vector or phonetic codes `entry` indexes, when it
+/// indexes one.
 fn indexed(entry: &JournalEntry) -> Option<&EntityId> {
     match &entry.op {
-        BatchOp::Text { id, .. } | BatchOp::Vector { id, .. } => Some(id),
+        BatchOp::Text { id, .. } | BatchOp::Vector { id, .. } | BatchOp::Phonetic { id, .. } => {
+            Some(id)
+        }
         _ => None,
     }
 }
@@ -307,11 +432,4 @@ fn present<'s>(state: &'s OverlayState, keyspace: OverlayKeyspace, key: &[u8]) -
         },
         KeyspaceState::DupSort { .. } => None,
     }
-}
-
-/// The vault-meta key of `id`'s index source fields.
-fn source_key(id: &[u8]) -> Vec<u8> {
-    let mut key = INDEX_SOURCE_TEXT_PREFIX.to_vec();
-    key.extend_from_slice(id);
-    key
 }

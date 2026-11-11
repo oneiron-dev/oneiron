@@ -40,6 +40,17 @@ pub struct NoteReadRequest {
     pub spans: Vec<NoteReadSpan>,
 }
 
+/// Reads the independently published NOTE frontier, not the live editor head.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NoteIndexedReadRequest {
+    pub note_ref: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub spans: Vec<NoteReadSpan>,
+}
+
 /// The endpoints can be passed directly to `vault.notes.edit`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteAnchoredSpan {
@@ -128,6 +139,7 @@ pub(super) struct NoteReadAt<'a, S> {
     pub(super) note: EntityId,
     pub(super) store: &'a S,
     pub(super) pending: &'a PendingScanChecks,
+    pub(super) indexed: bool,
 }
 
 /// An admitted NOTE answer whose snapshot has closed before diary completion.
@@ -159,6 +171,7 @@ impl Memory<'_> {
             note,
             store: &store,
             pending,
+            indexed: false,
         };
         let access = NoteAccessRequest {
             note_ref: note.to_hex(),
@@ -216,6 +229,21 @@ impl Memory<'_> {
         })
     }
 
+    /// Reads the same admitted NOTE and room view at its independently indexed
+    /// frontier. Spans and version labels name that exact stored head.
+    pub fn read_indexed_note(
+        &self,
+        input: &NoteIndexedReadRequest,
+    ) -> MemoryResult<ScopedReadResult<Option<NoteReadView>>> {
+        let access = NoteAccessRequest {
+            note_ref: input.note_ref.clone(),
+            reason: input.reason.clone(),
+        };
+        self.project_note_read_at(&access, true, |_, doc, _| {
+            Ok(read_view(&doc, &input.spans, NoteReadSource::Local)?)
+        })
+    }
+
     /// Authorship comes from semantic-operation admission, not commit messages
     /// or a caller-supplied actor. Purged/admission-hidden history stays absent.
     pub fn note_history(
@@ -252,11 +280,20 @@ impl Memory<'_> {
         input: &NoteAccessRequest,
         project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument, super::NoteActor) -> MemoryResult<T>,
     ) -> MemoryResult<ScopedReadResult<Option<T>>> {
+        self.project_note_read_at(input, false, project)
+    }
+
+    fn project_note_read_at<T: Serialize + serde::de::DeserializeOwned>(
+        &self,
+        input: &NoteAccessRequest,
+        indexed: bool,
+        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument, super::NoteActor) -> MemoryResult<T>,
+    ) -> MemoryResult<ScopedReadResult<Option<T>>> {
         // A NOTE the room this surface binds holds reads in that room (FIX
         // 4280); every other read, a vault NOTE's in a bound session
         // included, is the vault's, as it was.
         if let Some(room) = self.room_note(&input.note_ref)? {
-            return self.project_room_note_read(&room, input, project);
+            return self.project_room_note_read(&room, input, indexed, project);
         }
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let note = match crate::memory::resolve_entity_ref(self.vault(), &input.note_ref) {
@@ -274,6 +311,7 @@ impl Memory<'_> {
             note,
             store,
             pending: &store.pending_scan_checks,
+            indexed,
         };
         let result = lane.read_projected(&[PointRead::id(note)], None, |txn, rows| {
             self.project_admitted_note(txn, rows, &at, input, project)
@@ -333,7 +371,16 @@ impl Memory<'_> {
         {
             return Ok((None, gate));
         }
-        let doc = live_doc_in(self.vault(), at.store, txn, note, at.pending)?;
+        let selected = if at.indexed {
+            super::ensure_citations_ready(&self.vault().store, txn, note)?;
+            super::revision::indexed_doc_in_txn(at.store, txn, note, at.pending)?
+        } else {
+            None
+        };
+        let doc = match selected {
+            Some(doc) => doc,
+            None => live_doc_in(self.vault(), at.store, txn, note, at.pending)?,
+        };
         let view = project(txn, doc, core.author_ref)?;
         let value = serde_json::to_value(&view).map_err(|_| invalid("NOTE read view encoding"))?;
         let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(

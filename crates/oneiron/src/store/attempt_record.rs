@@ -36,6 +36,10 @@ pub struct AttemptRecord {
     /// Lease-generation fence WITHIN this one try. It does not count logical
     /// retries — those are separate rows.
     pub attempt_count: u32,
+    /// Runtime observations of expired leases, in reclaim order. These say
+    /// that cleanup observed expiry, not that the worker completed or failed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lease_expirations: Vec<AttemptLeaseExpiry>,
     #[serde(default)]
     pub claimed_at: Option<u64>,
     /// Instant a [`AttemptState::Scheduled`] row becomes claimable.
@@ -145,6 +149,19 @@ pub struct AttemptRecord {
     /// masked, by its key, so an identical retry still matches.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) signal_intents: Vec<SignalIntent>,
+}
+
+/// The runtime's observation of one expired lease, captured in the writer
+/// that requeues it, before its stored lease owner and clock are cleared.
+/// This is not worker-authored output or a terminal outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptLeaseExpiry {
+    pub attempt_count: u32,
+    pub lease_owner: String,
+    pub lease_updated_at: u64,
+    pub observed_at: u64,
+    pub lease_timeout_secs: u64,
 }
 
 /// Operator-selected worker and parent. An absent worker keeps ordinary claiming;

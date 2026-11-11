@@ -62,15 +62,17 @@ fn group_of(op: &str) -> &'static str {
         "replace" | "insert" | "delete" | "move" | "blocks_to_table" => "content",
         "set_attr" | "set_format" | "set_para_format" | "apply_style" | "create_style"
         | "modify_style" | "set_doc_defaults" => "formatting_and_styles",
-        "set_cell_format" | "set_row_format" | "set_table_format" | "table_op" => "tables",
+        "set_cell_format" | "set_row_format" | "set_table_format" | "table_op"
+        | "edit_story_cell" => "tables",
         "insert_cross_ref" | "insert_bookmark" | "rename_bookmark" | "remove_bookmark" => {
             "references"
         }
         "set_numbering" => "numbering",
         "set_image_attrs" | "delete_image" | "insert_image" | "replace_image"
         | "set_image_layout" => "images",
-        "comment_create" | "comment_reply" | "comment_resolve" | "comment_delete" => "comments",
-        "insert_note" | "edit_note" | "delete_note" => "notes",
+        "comment_create" | "comment_reply" | "comment_resolve" | "comment_delete"
+        | "edit_comment_runs" => "comments",
+        "insert_note" | "edit_note" | "edit_note_runs" | "delete_note" => "notes",
         "set_page_setup" | "set_section_type" | "insert_section_break" => "sections",
         "edit_header"
         | "edit_footer"
@@ -148,13 +150,20 @@ fn cue_of(op: &str) -> &'static str {
         "comment_create" => {
             "Create an anchored comment; comments are annotations, not revisions. \
              When expect repeats, occurrence (1-based) picks the copy; without it \
-             the first copy is anchored."
+             the first copy is anchored. Optional scope names the exact native story; \
+             omission targets the body, never a different story."
         }
         "comment_reply" => "Reply to an existing comment thread by its parent comment id.",
         "comment_resolve" => "Mark a comment thread resolved or unresolved (w15:done).",
         "comment_delete" => "Delete a comment and its anchor range markers.",
+        "edit_comment_runs" => {
+            "Normal marked-runs edit of one comment paragraph by comment_id and story-local id."
+        }
         "insert_note" => "Insert a footnote/endnote reference and its story body.",
         "edit_note" => "Edit one note body by its note_id from the current notes index.",
+        "edit_note_runs" => {
+            "Tracked marked-runs redline of one note paragraph by note_id and story-local id."
+        }
         "delete_note" => "Delete one note and its body-side reference by note_id.",
         "set_page_setup" => "Change page geometry for the body or a paragraph's section.",
         "set_section_type" => {
@@ -211,6 +220,9 @@ fn cue_of(op: &str) -> &'static str {
         "create_style" | "modify_style" => "Create or modify one named Word style.",
         "set_doc_defaults" => "Change inherited document-default font settings once.",
         "table_op" => "Structural table edits; insert_row carries cell text in the same op.",
+        "edit_story_cell" => {
+            "Edit one story table cell paragraph by scope and table id; paragraph selects an exact in-cell id, absent edits the first."
+        }
         _ => GENERIC_CUE,
     }
 }
@@ -270,8 +282,18 @@ fn shapes_of(op: &str) -> &'static [&'static str] {
         "edit_note" => &[
             r#"{"op":"edit_note","note_id":"<note_id>","note_kind":"footnote","body":"<new note body text>"}"#,
         ],
+        "edit_note_runs" => &[
+            r#"{"op":"edit_note_runs","note_id":"<note_id>","note_kind":"footnote","target":"<block_id>","expect":"<substring currently in the note paragraph>","content":[{"type":"text","text":"<new note text>"}]}"#,
+        ],
         // Delete a note and its body-side reference run, by `note_id`.
         "delete_note" => &[r#"{"op":"delete_note","note_id":"<note_id>","note_kind":"footnote"}"#],
+        // A story table cell is addressed by scope plus the story-local table
+        // id; the header shape shows the band the story must carry.
+        "edit_story_cell" => &[
+            r#"{"op":"edit_story_cell","scope":{"kind":"comment","id":"<comment_id>"},"target":"<table_id>","row_index":0,"col_index":0,"text":"<new text>"}"#,
+            r#"{"op":"edit_story_cell","scope":{"kind":"comment","id":"<comment_id>"},"target":"<table_id>","row_index":0,"col_index":0,"paragraph":"<cell_paragraph_id>","text":"<new text>"}"#,
+            r#"{"op":"edit_story_cell","scope":{"kind":"header","part_name":"header1.xml","band":"default"},"target":"<table_id>","row_index":0,"col_index":0,"text":"<new text>"}"#,
+        ],
         "set_format" => &[
             r#"{"op":"set_format","target":"<block_id>","expect":"<exact unique text>","marks":{"bold":true}}"#,
         ],
@@ -321,6 +343,9 @@ fn shapes_of(op: &str) -> &'static [&'static str] {
             &[r#"{"op":"comment_resolve","comment_id":"<comment_id>","done":true}"#]
         }
         "comment_delete" => &[r#"{"op":"comment_delete","comment_id":"<comment_id>"}"#],
+        "edit_comment_runs" => &[
+            r#"{"op":"edit_comment_runs","comment_id":"<comment_id>","target":"<block_id>","expect":"<substring currently in the comment paragraph>","content":[{"type":"text","text":"<new comment text>"}]}"#,
+        ],
         "insert_image" => &[
             r#"{"op":"insert_image","target":"<block_id>","bytes_base64":"AAAA","format":"png","alt_text":"<description>"}"#,
         ],

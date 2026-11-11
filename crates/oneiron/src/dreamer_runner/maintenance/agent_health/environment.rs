@@ -231,6 +231,7 @@ pub(super) fn fold_late(
     if card.outcome != AgentHealthOutcome::Open || !fold(card, sources, coach) {
         return false;
     }
+    card.source_rows = None;
     card.updated_at = now;
     true
 }
@@ -330,7 +331,7 @@ fn read_late(vault: &Vault) -> Result<Late> {
 /// receipt and the finding carry a lease generation and they differ, the
 /// finding read another generation's evidence, so it takes no labels; every
 /// other case keeps today's behavior.
-fn attempt_sources(
+pub(super) fn attempt_sources(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: &AttemptId,

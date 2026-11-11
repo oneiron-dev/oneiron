@@ -51,6 +51,9 @@ impl VoiceHost {
         segments: Vec<VoiceSegmentEmbeddingInput>,
     ) -> Result<VoiceSessionRosterV1, HostError> {
         self.require_running()?;
+        if self.phone.is_some() {
+            return Err(HostError::InvalidRequest);
+        }
         let roster = self.roster.as_ref().ok_or(HostError::InvalidRequest)?;
         let space_id = segments
             .first()
@@ -78,6 +81,9 @@ impl VoiceHost {
         speaker_key: &str,
     ) -> Result<VoiceSpeakerDeparture, HostError> {
         self.require_running()?;
+        if self.phone.is_some() {
+            return Err(HostError::InvalidRequest);
+        }
         let roster = self.roster.as_ref().ok_or(HostError::InvalidRequest)?;
         Ok(roster
             .vault

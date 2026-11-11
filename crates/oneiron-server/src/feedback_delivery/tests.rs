@@ -27,6 +27,7 @@ fn call(
         apns_interruption_level: None,
         calendar_invite: None,
         space_posting: None,
+        engine_send_id: None,
     };
     transport.send_feedback_bundle(&FeedbackTransportRequest {
         execution: &execution,
@@ -74,6 +75,7 @@ fn a_feedback_request_with_a_space_posting_sends_nothing() {
         apns_interruption_level: None,
         calendar_invite: None,
         space_posting: Some(posting),
+        engine_send_id: None,
     };
     let outcome = transport.send_feedback_bundle(&FeedbackTransportRequest {
         execution: &execution,

@@ -1,5 +1,6 @@
-//! ROOM as one ordered stream of rows (FIX 9746, 9747): the room's roster by
-//! actor id, then the rules the caller reads in it by claim id.
+//! ROOM as one ordered stream of rows (FIX 9746, 9747): the room's roster in
+//! its owning record's order (FIX 10567), then the rules the caller reads in
+//! it by claim id.
 //!
 //! Every read takes the whole room again under the caller's current read:
 //! the whole roster gives the terms, every admitted rule folds into the
@@ -99,10 +100,15 @@ impl RoomSectionPage {
     }
 }
 
-/// Where a page starts: past this roster member, or past this rule.
+/// Where a page starts: past the roster's first members, or past this rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RoomPageAfter {
-    Member(EntityId),
+    /// Past the first `emitted` members in the room's record order, which
+    /// digest to `fence` ([`roster_fence`]).
+    Members {
+        emitted: usize,
+        fence: u64,
+    },
     Rule(EntityId),
 }
 
@@ -167,11 +173,15 @@ impl Memory<'_> {
     }
 
     /// One page of [`Self::rooms_render_hosted`]: up to 256 (`ROOM_PAGE_ROWS`)
-    /// rows of the room's stream past `cursor`, the roster by actor id and
-    /// then the rules by claim id. The whole room is read again for every
-    /// page under the caller's read now; the cursor only says where the last
-    /// page stopped. A cursor minted for another caller or room, or one that
-    /// does not decode, is refused.
+    /// rows of the room's stream past `cursor`, the roster in the room's
+    /// record order and then the rules by claim id. The whole room is read
+    /// again for every page under the caller's read now; the cursor only says
+    /// where the last page stopped. A member cursor names how many members
+    /// the stream passed, and holds only while those members still open the
+    /// roster in the same order: a roster changed or reordered before it
+    /// refuses the cursor, so no member is skipped or shown twice. A cursor
+    /// minted for another caller or room, or one that does not decode, is
+    /// refused.
     pub fn rooms_render_page_hosted(
         &self,
         room: EntityId,
@@ -183,8 +193,7 @@ impl Memory<'_> {
             .map(|token| decode_room_cursor(&binding, token).ok_or_else(invalid_room_cursor))
             .transpose()?;
         let mut section = self.rooms_render_hosted(room, session)?;
-        let mut members = std::mem::take(&mut section.roster);
-        members.sort_by_key(|member| member.actor);
+        let members = std::mem::take(&mut section.roster);
         let mut rules = std::mem::take(&mut section.claims)
             .into_iter()
             .map(|claim| Ok((EntityId::from_hex(&claim.claim_ref)?, claim)))
@@ -192,8 +201,14 @@ impl Memory<'_> {
         rules.sort_by_key(|(id, _)| *id);
         let roster_from = match after {
             None => 0,
-            Some(RoomPageAfter::Member(last)) => {
-                members.partition_point(|member| member.actor <= last)
+            Some(RoomPageAfter::Members { emitted, fence }) => {
+                if emitted == 0
+                    || emitted > members.len()
+                    || roster_fence(&members[..emitted]) != fence
+                {
+                    return Err(invalid_room_cursor());
+                }
+                emitted
             }
             Some(RoomPageAfter::Rule(_)) => members.len(),
         };
@@ -208,7 +223,10 @@ impl Memory<'_> {
         let last = if rules_to > rules_from {
             Some(RoomPageAfter::Rule(rules[rules_to - 1].0))
         } else if roster_to > roster_from {
-            Some(RoomPageAfter::Member(members[roster_to - 1].actor))
+            Some(RoomPageAfter::Members {
+                emitted: roster_to,
+                fence: roster_fence(&members[..roster_to]),
+            })
         } else {
             after
         };
@@ -244,12 +262,15 @@ impl Memory<'_> {
         terms: &RoomTerms,
         read: &ScopedRead<'_>,
     ) -> MemoryResult<RoomRules> {
-        // Each rule must also pass every present peer's ordinary read.
-        let present: Vec<_> = roster
+        // Each rule must also pass every present peer's ordinary read. The
+        // roster keeps the room's record order; the disclosure check
+        // binary-searches this set, so it is sorted on its own.
+        let mut present: Vec<_> = roster
             .iter()
             .filter(|member| member.present)
             .map(|member| member.actor)
             .collect();
+        present.sort_unstable();
         let peers: Vec<_> = self
             .peer_read_keys(&present)?
             .into_iter()
@@ -447,33 +468,61 @@ fn fold_receipt(receipt: &mut Option<ScopedReadReceipt>, later: ScopedReadReceip
     }
 }
 
-/// The page a ROOM cursor names, when it was minted under `binding`.
+/// The page a ROOM cursor names, when it was minted under `binding`: a
+/// member cursor carries its roster fence, a rule cursor none.
 fn decode_room_cursor(binding: &[u8; 32], token: &str) -> Option<RoomPageAfter> {
     let cursor = decode_page_cursor(binding, token)?;
     let (&phase, key) = cursor.after.split_first()?;
-    let key = EntityId::from_bytes(<[u8; 16]>::try_from(key).ok()?).ok()?;
-    match phase {
-        PHASE_ROSTER => Some(RoomPageAfter::Member(key)),
-        PHASE_RULES => Some(RoomPageAfter::Rule(key)),
+    match (phase, cursor.fence) {
+        (PHASE_ROSTER, Some(fence)) => {
+            let emitted = u64::from_be_bytes(<[u8; 8]>::try_from(key).ok()?);
+            Some(RoomPageAfter::Members {
+                emitted: usize::try_from(emitted).ok()?,
+                fence,
+            })
+        }
+        (PHASE_RULES, None) => Some(RoomPageAfter::Rule(
+            EntityId::from_bytes(<[u8; 16]>::try_from(key).ok()?).ok()?,
+        )),
         _ => None,
     }
 }
 
 /// The cursor that continues a ROOM stream past `after`.
 fn encode_room_cursor(binding: &[u8; 32], after: RoomPageAfter) -> String {
-    let (phase, key) = match after {
-        RoomPageAfter::Member(key) => (PHASE_ROSTER, key),
-        RoomPageAfter::Rule(key) => (PHASE_RULES, key),
+    let (fence, after): (Option<u64>, Vec<u8>) = match after {
+        RoomPageAfter::Members { emitted, fence } => {
+            let emitted = u64::try_from(emitted).unwrap_or(u64::MAX);
+            (
+                Some(fence),
+                std::iter::once(PHASE_ROSTER)
+                    .chain(emitted.to_be_bytes())
+                    .collect(),
+            )
+        }
+        RoomPageAfter::Rule(key) => (
+            None,
+            std::iter::once(PHASE_RULES)
+                .chain(key.as_bytes().iter().copied())
+                .collect(),
+        ),
     };
-    let mut bytes = Vec::with_capacity(17);
-    bytes.push(phase);
-    bytes.extend_from_slice(key.as_bytes());
-    encode_page_cursor(
-        binding,
-        &BoardPageCursor {
-            fence: None,
-            after: bytes,
-        },
+    encode_page_cursor(binding, &BoardPageCursor { fence, after })
+}
+
+/// The fence a member cursor carries: a digest of the roster members the
+/// stream emitted before it, in the room's record order. Any change to
+/// those members or their order changes it.
+fn roster_fence(emitted: &[RoomPresence]) -> u64 {
+    let ids: Vec<&[u8]> = emitted
+        .iter()
+        .map(|member| member.actor.as_bytes().as_slice())
+        .collect();
+    let digest = page_binding(ROOM_PAGE_KIND, &ids);
+    u64::from_be_bytes(
+        *digest
+            .first_chunk()
+            .expect("a page digest holds a whole fence"),
     )
 }
 

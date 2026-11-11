@@ -21,8 +21,10 @@ use crate::server::SyncServer;
 
 /// Whether this socket takes sealed updates: its hello listed them, and its
 /// machine stands here now as one of the owner's own, on the key it proved.
+/// The relay is the home's: a socket served as a peer takes none (FIX 4748).
 fn takes_sealed_updates(server: &SyncServer, state: &ConnState) -> bool {
     state.sealed_world_updates
+        && !state.peer_served
         && crate::auth::owned_machine_stands(server.vault(), state.peer_machine(server.vault()))
 }
 

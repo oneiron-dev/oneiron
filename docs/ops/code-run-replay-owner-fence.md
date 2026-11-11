@@ -4,11 +4,29 @@ An owned replay save records whose reply content it holds in the same transactio
 
 ## First publication and actor erasure
 
-For canonical storage, the save validates the expected replay generation before it writes the owner descriptor. It then stamps the owner before the existing erase fence reads it. The first stamp still stands, and an erased owner remains erased. The fence can therefore see an actor erased before the first replay publication, even when the replay has no live-run binding. It applies the existing erased-reply projection and releases the named reply-body occurrences before the replay row is put.
+For canonical storage, the save validates the expected replay generation before it writes the owner descriptor. It then stamps the owner before the existing erase fence reads it. The first stamp still stands, and a deleted or erased owner stays so. The fence can therefore see an actor erased before the first replay publication, even when the replay has no live-run binding. It applies the existing erased-reply projection and releases the named reply-body occurrences before the replay row is put.
 
 The owner stamp, fence, replay row, optional heal tally and after-save callback share one writer. A generation conflict stamps nothing. An error before commit rolls back the entire writer, including the owner stamp. Saves racing actor erasure serialize through that writer: an erase before the save is visible to its fence; an erase after it can discover its committed owner descriptor.
 
 The generic after-save callback still runs after the replay and heal rows. Continuation inheritance, wait consumption and turn-program settlement keep that ordering. The preparation callback is storage-private and is used by the native owned-save path for its owner stamp, not as a global reorder of after-save work.
+
+## Kept, Deleted and Erased
+
+Each owner row and each wait membership is in one of three states.
+
+- **Kept**: the record holds its replies for the stamped actor.
+- **Deleted**: a soft delete of the actor took the replies (FIX 15532). The delete runs the response scrub in its own writer, before it truncates the actor's body. The scrub puts each record in its erased form and releases its reply bodies. The row keeps the actor and the bodies it released, but no reply bytes and no preview. The actor stays only so that the actor's hard erase still finds the row (FIX 6591).
+- **Erased**: an erase took the replies. The hard erase retires the bodies that a Deleted row names, then marks the row Erased. The row names no actor.
+
+Deleted and Erased both read as erased. No later write or retry brings the replies back.
+
+A later record write, a wait delivery and a connector caller's settle check the row in their own writer. When the actor is gone, they write the erased form. They write Erased only when the actor's hard erasure is complete: the actor holds the hard-delete marker, which the erase's writer puts beside its retirement. No later erase runs for that actor, so a Deleted row of that actor also becomes Erased. Every other gone actor gets Deleted, with the bodies released: a soft-deleted actor, and an actor whose row a pending delete removed (a `df:` or `pt:` fence without the marker). The later hard erase retires those bodies. A marker that cannot be read is an error of the writer.
+
+The erase also releases reply bodies that a run holds but its record does not list, such as a raw put's (FIX 7365). It does this only when the record shows that the run can append no more: the record lists a terminal marker, and the run did not resume from the latest one. A live run can publish a body, such as a team-start receipt, before it records the bridge call. The erase skips those bodies. The run's next record write meets the fence, and the run's release takes the rest.
+
+A record that is stored but does not decode can no longer append, because each writer that appends to it decodes it first and fails. The erase counts it as closed. It releases the reply bodies of the run that the record's owner row names, which need not be the replay key: each descriptor of that run at a code-run output path that holds reply content, outside `replay/`. A soft delete keeps their digests on the owner row as Deleted evidence, and the hard erase retires them.
+
+A descriptor stored before the code-run origin field existed has no origin. A re-publication compares descriptors without that field, so the stored row stays as it is. The erase's sweep of unlisted bodies does not find such a descriptor; the run's release takes it.
 
 ## Session storage
 

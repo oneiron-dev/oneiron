@@ -10,7 +10,14 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
+
+# How many times health is asked, and the seconds between asks: curl's own
+# retries until the port answers, then the same budget while the server still
+# answers "starting" (FIX 22117).
+HEALTH_RETRIES = 10
+HEALTH_RETRY_DELAY_SECS = 1
 
 
 def run(*args, check=True):
@@ -77,8 +84,12 @@ def main():
             try:
                 run("launchctl", "bootstrap", f"gui/{os.getuid()}", str(fixture))
                 booted = True
-                health = run("curl", "--silent", "--show-error", "--fail", "--retry", "10", "--retry-connrefused", "--retry-delay", "1", "--max-time", "5", f"http://127.0.0.1:{port}/api/health")
-                receipt["health"] = json.loads(health.stdout)
+                for _ in range(HEALTH_RETRIES):
+                    health = run("curl", "--silent", "--show-error", "--fail", "--retry", str(HEALTH_RETRIES), "--retry-connrefused", "--retry-delay", str(HEALTH_RETRY_DELAY_SECS), "--max-time", "5", f"http://127.0.0.1:{port}/api/health")
+                    receipt["health"] = json.loads(health.stdout)
+                    if receipt["health"].get("status") != "starting":
+                        break
+                    time.sleep(HEALTH_RETRY_DELAY_SECS)
                 if receipt["health"].get("status") != "ok":
                     raise RuntimeError("health did not report ok")
                 job = run("launchctl", "print", target).stdout

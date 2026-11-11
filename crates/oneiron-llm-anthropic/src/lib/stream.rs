@@ -178,12 +178,17 @@ impl AnthropicMessagesStreamAccumulator {
             Some("message_delta") => {
                 if let Some(usage) = event.get("usage") {
                     let parsed = parse_anthropic_usage(usage);
+                    let mut measurement =
+                        self.usage.provider_token_measurement().unwrap_or_default();
+                    let observed = parsed.provider_token_measurement().unwrap_or_default();
                     // Message deltas usually contain output only: do not erase input spend.
                     if usage.get("input_tokens").is_some() {
                         self.usage.input = parsed.input;
+                        measurement.input = observed.input;
                     }
                     if usage.get("output_tokens").is_some() {
                         self.usage.output = parsed.output;
+                        measurement.output = observed.output;
                     }
                     if let (Some(total), Some(delta)) =
                         (self.usage.raw_provider.as_object_mut(), usage.as_object())
@@ -192,6 +197,7 @@ impl AnthropicMessagesStreamAccumulator {
                     } else {
                         self.usage.raw_provider = usage.clone();
                     }
+                    self.usage.set_provider_token_measurement(measurement);
                 }
                 if let Some(reason) = event["delta"]["stop_reason"].as_str() {
                     self.finish_reason = anthropic_finish_reason(reason);

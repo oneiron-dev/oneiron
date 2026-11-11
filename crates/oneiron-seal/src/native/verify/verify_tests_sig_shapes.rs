@@ -7,12 +7,13 @@ mod tests {
 
     use super::super::verify_dss_core::verify_dss;
     use super::super::verify_sig_pipeline::{
-        Checks, SigEntry, check_byte_range, collect_signatures,
+        Checks, SigEntry, SigHandler, check_byte_range, collect_signatures,
     };
     use super::super::verify_tests_fixtures_dss_a::tests::*;
     use super::super::verify_tests_lta_probes::tests::*;
     use super::super::verify_tests_time_lta_a::tests::*;
     use crate::api::{PdfSealEngine, VerifyCheckKind};
+    use crate::memory::testing::operation_limits;
 
     #[test]
     fn orphan_only_sig_dict_leaves_no_evaluable_signature() {
@@ -48,7 +49,7 @@ mod tests {
         catalog.set("Pages", Object::Reference(pages_id));
         let cat_id = doc.add_object(Object::Dictionary(catalog));
         doc.trailer.set("Root", Object::Reference(cat_id));
-        let found = collect_signatures(&doc).unwrap();
+        let found = collect_signatures(&doc, &operation_limits()).unwrap();
         assert!(
             found.is_empty(),
             "an orphan signature-shaped dict is never evaluated"
@@ -77,21 +78,21 @@ mod tests {
         let bytes = b"xx<AB CD>yy";
         let ok = SigEntry {
             field_name: "test".into(),
-            is_doc_ts: false,
+            handler: SigHandler::Cades,
             byte_range: [0, 2, 9, 2],
             contents: vec![0xAB, 0xCD],
         };
         assert!(check_byte_range(bytes, &ok));
         let short = SigEntry {
             field_name: "test".into(),
-            is_doc_ts: false,
+            handler: SigHandler::Cades,
             byte_range: [0, 2, 9, 2],
             contents: vec![0xAB],
         };
         assert!(!check_byte_range(bytes, &short));
         let long = SigEntry {
             field_name: "test".into(),
-            is_doc_ts: false,
+            handler: SigHandler::Cades,
             byte_range: [0, 2, 9, 2],
             contents: vec![0xAB, 0xCD, 0xEF],
         };
@@ -104,7 +105,7 @@ mod tests {
         // same bytes as /Contents. Length-only checks miss this wrapping.
         let entry = SigEntry {
             field_name: "gap".into(),
-            is_doc_ts: false,
+            handler: SigHandler::Cades,
             byte_range: [0, 2, 6, 0],
             contents: vec![0xCD],
         };
@@ -149,7 +150,7 @@ mod tests {
         catalog.set("AcroForm", Object::Reference(af_id));
         let cat_id = doc.add_object(Object::Dictionary(catalog));
         doc.trailer.set("Root", Object::Reference(cat_id));
-        assert!(collect_signatures(&doc).is_err());
+        assert!(collect_signatures(&doc, &operation_limits()).is_err());
     }
 
     // --- bot-fix leg 8 pins: AcroForm field TREE ---------------------------
@@ -215,14 +216,14 @@ mod tests {
         parent.set("Kids", Object::Array(vec![Object::Reference(terminal_id)]));
         let parent_id = doc.add_object(Object::Dictionary(parent));
         doc_with_fields(&mut doc, vec![Object::Reference(parent_id)]);
-        let found = collect_signatures(&doc).expect("tree walk must succeed");
+        let found = collect_signatures(&doc, &operation_limits()).expect("tree walk must succeed");
         assert_eq!(
             found.len(),
             1,
             "the nested signature field must be discovered through /Kids \
              with /FT inherited from the parent"
         );
-        assert!(!found[0].is_doc_ts);
+        assert_eq!(found[0].handler, SigHandler::Cades);
     }
 
     #[test]
@@ -242,7 +243,7 @@ mod tests {
         parent.set("Kids", Object::Array(vec![Object::Reference(terminal_id)]));
         let parent_id = doc.add_object(Object::Dictionary(parent));
         doc_with_fields(&mut doc, vec![Object::Reference(parent_id)]);
-        let found = collect_signatures(&doc).expect("walk succeeds");
+        let found = collect_signatures(&doc, &operation_limits()).expect("walk succeeds");
         assert!(
             found.is_empty(),
             "a /Tx subtree yields no signature candidates"
@@ -261,7 +262,9 @@ mod tests {
         let parent_id = doc.add_object(Object::Dictionary(parent));
         doc_with_fields(&mut doc, vec![Object::Reference(parent_id)]);
         assert_eq!(
-            collect_signatures(&doc).expect("walk succeeds").len(),
+            collect_signatures(&doc, &operation_limits())
+                .expect("walk succeeds")
+                .len(),
             1,
             "a kid's own /FT overrides the inherited one"
         );
@@ -286,7 +289,9 @@ mod tests {
         let field_id = doc.add_object(Object::Dictionary(field));
         doc_with_fields(&mut doc, vec![Object::Reference(field_id)]);
         assert_eq!(
-            collect_signatures(&doc).expect("walk succeeds").len(),
+            collect_signatures(&doc, &operation_limits())
+                .expect("walk succeeds")
+                .len(),
             1,
             "a terminal field with widget /Kids keeps its own /V evaluated"
         );
@@ -346,50 +351,66 @@ mod tests {
         let cades: &[u8] = b"ETSI.CAdES.detached";
         let rfc3161: &[u8] = b"ETSI.RFC3161";
         // The finding's shape: /Sig with /adbe.pkcs7.detached is NOT CAdES.
-        assert!(
-            collect_signatures(&doc_with(Some(b"Sig"), Some(b"adbe.pkcs7.detached")))
-                .unwrap()
-                .is_empty()
-        );
+        // Rule D (e88c308ba84): it is collected as the unsupported adbe
+        // report, never as a CAdES candidate.
+        let found = collect_signatures(
+            &doc_with(Some(b"Sig"), Some(b"adbe.pkcs7.detached")),
+            &operation_limits(),
+        )
+        .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].handler, SigHandler::UnsupportedAdbe);
         // Typed dicts with ABSENT SubFilter are skipped too.
         assert!(
-            collect_signatures(&doc_with(Some(b"Sig"), None))
+            collect_signatures(&doc_with(Some(b"Sig"), None), &operation_limits())
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            collect_signatures(&doc_with(Some(b"DocTimeStamp"), None))
+            collect_signatures(&doc_with(Some(b"DocTimeStamp"), None), &operation_limits())
                 .unwrap()
                 .is_empty()
         );
         // Wrong handler for the type: an RFC3161-subfiltered /Sig and a
         // CAdES-subfiltered DocTimeStamp are both skipped.
         assert!(
-            collect_signatures(&doc_with(Some(b"Sig"), Some(rfc3161)))
+            collect_signatures(&doc_with(Some(b"Sig"), Some(rfc3161)), &operation_limits())
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            collect_signatures(&doc_with(Some(b"DocTimeStamp"), Some(cades)))
-                .unwrap()
-                .is_empty()
+            collect_signatures(
+                &doc_with(Some(b"DocTimeStamp"), Some(cades)),
+                &operation_limits()
+            )
+            .unwrap()
+            .is_empty()
         );
         // Correct handler per type is collected.
-        let found = collect_signatures(&doc_with(Some(b"Sig"), Some(cades))).unwrap();
+        let found =
+            collect_signatures(&doc_with(Some(b"Sig"), Some(cades)), &operation_limits()).unwrap();
         assert_eq!(found.len(), 1);
-        assert!(!found[0].is_doc_ts);
-        let found = collect_signatures(&doc_with(Some(b"DocTimeStamp"), Some(rfc3161))).unwrap();
+        assert_eq!(found[0].handler, SigHandler::Cades);
+        let found = collect_signatures(
+            &doc_with(Some(b"DocTimeStamp"), Some(rfc3161)),
+            &operation_limits(),
+        )
+        .unwrap();
         assert_eq!(found.len(), 1);
-        assert!(found[0].is_doc_ts);
-        // Typeless interop: absent SubFilter tolerated, foreign one skipped.
-        let found = collect_signatures(&doc_with(None, None)).unwrap();
+        assert!(found[0].handler == SigHandler::DocTs);
+        // Typeless interop: absent SubFilter tolerated. Rule D
+        // (e88c308ba84): an adbe SubFilter is collected as the unsupported
+        // adbe report, never as a CAdES candidate.
+        let found = collect_signatures(&doc_with(None, None), &operation_limits()).unwrap();
         assert_eq!(found.len(), 1);
-        assert!(!found[0].is_doc_ts);
-        assert!(
-            collect_signatures(&doc_with(None, Some(b"adbe.pkcs7.detached")))
-                .unwrap()
-                .is_empty()
-        );
+        assert_eq!(found[0].handler, SigHandler::Cades);
+        let found = collect_signatures(
+            &doc_with(None, Some(b"adbe.pkcs7.detached")),
+            &operation_limits(),
+        )
+        .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].handler, SigHandler::UnsupportedAdbe);
     }
 
     #[test]
@@ -445,10 +466,10 @@ mod tests {
         }
         // /Type /Foo with the interop shape (absent SubFilter): skipped.
         assert!(
-            collect_signatures(&doc_with_type_obj(
-                Some(Object::Name(b"Foo".to_vec())),
-                None
-            ))
+            collect_signatures(
+                &doc_with_type_obj(Some(Object::Name(b"Foo".to_vec())), None),
+                &operation_limits()
+            )
             .unwrap()
             .is_empty(),
             "present-but-unrecognized /Type must not ride the typeless path"
@@ -456,53 +477,65 @@ mod tests {
         // /Type /Foo even with the CAdES SubFilter named: not a handler's
         // type, still skipped.
         assert!(
-            collect_signatures(&doc_with_type_obj(
-                Some(Object::Name(b"Foo".to_vec())),
-                Some(b"ETSI.CAdES.detached")
-            ))
+            collect_signatures(
+                &doc_with_type_obj(
+                    Some(Object::Name(b"Foo".to_vec())),
+                    Some(b"ETSI.CAdES.detached")
+                ),
+                &operation_limits()
+            )
             .unwrap()
             .is_empty()
         );
         // Malformed /Type (not a name object): skipped, never candidacy.
         assert!(
-            collect_signatures(&doc_with_type_obj(Some(Object::Integer(1)), None))
-                .unwrap()
-                .is_empty(),
+            collect_signatures(
+                &doc_with_type_obj(Some(Object::Integer(1)), None),
+                &operation_limits()
+            )
+            .unwrap()
+            .is_empty(),
             "malformed /Type must not ride the typeless path"
         );
         // Control: the ABSENT-/Type interop row still collects.
-        let found = collect_signatures(&doc_with_type_obj(None, None)).unwrap();
+        let found =
+            collect_signatures(&doc_with_type_obj(None, None), &operation_limits()).unwrap();
         assert_eq!(found.len(), 1);
-        assert!(!found[0].is_doc_ts);
+        assert_eq!(found[0].handler, SigHandler::Cades);
     }
 
     #[test]
     fn dss_decode_budget_is_cumulative_across_entries() {
-        // P1-3: two FlateDecode DSS streams each individually under the cap
-        // but cumulatively over it must fail ValidationMaterial — the
-        // budget is ONE shared remaining across every DSS entry, not a
-        // per-stream allowance.
+        // P1-3, as Rule 5 keeps it: two DSS streams, one FlateDecode, are
+        // decoded under ONE running total across every DSS entry, not a
+        // per-stream figure. That total was a cap; it is now a count that
+        // never refuses (Rule 5 conversion below).
         let ca = test_ca("budget-dss-ca");
         let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
         let doc = dss_doc_flate_crl(std::slice::from_ref(&ca.cert_der), zlib_store(&crl));
         let covered = covered_of(&[&ca.cert_der]);
         let total = ca.cert_der.len() + crl.len();
-        // Control: a budget covering both entries validates (the streams
-        // are individually and cumulatively fine).
-        let mut checks = Checks::new();
-        verify_dss(&doc, &[], &covered, AT_UNIX, total, &mut checks);
+        let limits = operation_limits();
+        let memory = limits.memory.ledger().unwrap();
+        // Control: both entries decode and the material validates (the
+        // streams are individually and cumulatively fine).
+        let mut checks = Checks::new(&limits);
+        let decoded =
+            verify_dss(&doc, &[], &covered, AT_UNIX, &memory, &mut checks, &limits).unwrap();
         assert!(
             checks.passed(VerifyCheckKind::ValidationMaterial),
             "cumulative-fitting evidence must validate"
         );
-        // One byte short cumulatively: the /Certs entry still decodes (it
-        // fits the full cap alone), but the shared remainder is one byte
-        // too small for the FlateDecode-wrapped CRL — the material fails
-        // WITHOUT decoding beyond the shared limit. The pre-fix per-stream
-        // cap decoded both and validated.
-        let mut checks = Checks::new();
-        verify_dss(&doc, &[], &covered, AT_UNIX, total - 1, &mut checks);
-        assert_material_fails(&checks);
+        // Rule 5 conversion: FIX 7654 (024b2acd1f7) replaced the shared decode budget
+        // with memory reserved before each decode, and Rule 5 (#3193) made
+        // the DSS decode total a `[limits]` count, never a cap. The shared
+        // total is now that count: ONE running total across every entry
+        // (the /Certs entry and the FlateDecode-wrapped CRL), not a
+        // per-stream figure.
+        assert_eq!(
+            decoded, total,
+            "the DSS decode count is one total across every entry"
+        );
     }
 
     #[test]
@@ -510,7 +543,7 @@ mod tests {
         use super::super::super::{cms, pdf, tsp};
         use super::super::verify_revocation::{crl_entry_valid, ocsp_entry_valid};
         use super::super::verify_tests_dss_b::tests::anchors_of;
-        use crate::api::{PadesProfile, SealResourceLimits, SignatureAlgorithm, VerifyCheckStatus};
+        use crate::api::{PadesProfile, SignatureAlgorithm, VerifyCheckStatus};
         use der::{Decode, Encode};
         use rsa::pkcs8::EncodePrivateKey;
 
@@ -592,13 +625,15 @@ mod tests {
         for pss in [false, true] {
             let alg = if pss { PSS } else { PKCS1 };
             let base = base_input();
-            let state = pdf::reparse_revision(&base, &SealResourceLimits::default()).unwrap();
+            let limits = operation_limits();
+            let memory = limits.memory.ledger().unwrap();
+            let state = pdf::reparse_revision(&base, &limits).unwrap();
             let mut draft = pdf::append_revision(
                 &base,
                 &state,
                 &pdf::RevisionKind::Signature {
-                    field_name: pdf::field_name_for("rsa-ingestion"),
-                    date_str: pdf::pdf_date(AT_UNIX * 1000),
+                    field_name: pdf::field_name_for("rsa-ingestion", &limits).unwrap(),
+                    date_str: pdf::pdf_date(AT_UNIX * 1000, &limits).unwrap(),
                 },
                 65536,
             )
@@ -629,10 +664,13 @@ mod tests {
                 cms::OID_SHA256_WITH_RSA
             };
             assert_eq!(
-                cms::parse_cms(&cms).unwrap().signer.signature_alg_oid,
+                cms::parse_cms(&cms, &memory)
+                    .unwrap()
+                    .signer
+                    .signature_alg_oid,
                 expected_oid.as_bytes()
             );
-            pdf::patch_contents(&mut draft, &cms).unwrap();
+            pdf::patch_contents(&mut draft, &cms, &limits).unwrap();
             let report = engine.verify_sealed_pdf(&draft.bytes).unwrap();
             assert!(report.signatures[0].checks.iter().any(|c| c.kind
                 == VerifyCheckKind::SignatureValue
@@ -651,11 +689,12 @@ mod tests {
 
             let imprint = [0x35; 32];
             let template = mint_token(&ca, &imprint, AT_UNIX);
-            let parsed = cms::parse_cms(&template).unwrap();
-            let sig = sign(&cms::signed_attrs_signature_input(&parsed.signer), pss);
+            let parsed = cms::parse_cms(&template, &memory).unwrap();
+            let input = cms::signed_attrs_signature_input(&parsed.signer, &memory).unwrap();
+            let sig = sign(input.as_slice(), pss);
             let token = signed_cms(&template, alg, &sig);
             assert_eq!(
-                tsp::validate_token_for_verify(&token, &imprint, &anchors_of(&ca)).is_ok(),
+                tsp::validate_token_for_verify(&token, &imprint, &anchors_of(&ca), &memory).is_ok(),
                 !pss
             );
 
@@ -668,7 +707,9 @@ mod tests {
             crl[2] = cms::tlv(0x03, &[&[0u8][..], &sign(&crl[0], pss)].concat());
             let crl = cms::tlv(0x30, &crl.concat());
             assert_eq!(
-                crl_entry_valid(&crl, &covered, &[], &covered, AT_UNIX).is_some(),
+                crl_entry_valid(&crl, &covered, &[], &covered, AT_UNIX, &memory)
+                    .unwrap()
+                    .is_ok(),
                 !pss
             );
 
@@ -687,7 +728,9 @@ mod tests {
             bytes.response = der::asn1::OctetString::new(cms::tlv(0x30, &basic.concat())).unwrap();
             let ocsp = response.to_der().unwrap();
             assert_eq!(
-                ocsp_entry_valid(&ocsp, &covered, &[], AT_UNIX).is_some(),
+                ocsp_entry_valid(&ocsp, &covered, &[], AT_UNIX, &memory)
+                    .unwrap()
+                    .is_ok(),
                 !pss
             );
         }

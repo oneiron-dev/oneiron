@@ -17,7 +17,7 @@ use crate::sync::transport;
 use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
-    LoadedWindow, ReplacementByteBound, WindowExport, apply_pending_window_updates,
+    LoadedWindow, QueuedSends, ReplacementByteBound, WindowExport, apply_pending_window_updates,
     load_window_from_state,
 };
 
@@ -69,7 +69,7 @@ impl SyncClient {
                 .map_err(|e| TransportError::Storage(e.to_string()))?;
             return Ok(vec![
                 transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                    .into_result()?,
+                    .into_own_frame()?,
             ]);
         }
         // A device syncs what it opened (ARCH-0023b): a window this device
@@ -125,6 +125,11 @@ impl SyncClient {
                 {
                     return Err(TransportError::InvalidPayload("unpromoted window control"));
                 }
+                // The home's grant on this socket, which a per-window
+                // re-bootstrap waits for before it asks for the window (FIX 20202).
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED {
+                    self.promotions_granted.insert(key.clone());
+                }
                 // The setup window's catch-up asks for the window only once the home granted it.
                 if sub_tag == window_sub_tags::PROMOTION_GRANTED && !catch_up {
                     return Ok(Vec::new());
@@ -141,7 +146,7 @@ impl SyncClient {
                         window_sub_tags::VV_REQUEST,
                         &doc_version_vector(&window.doc),
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 ])
             }
             window_sub_tags::RESIDENCE_ACK | window_sub_tags::RESIDENCE_HELD
@@ -197,7 +202,7 @@ impl SyncClient {
                             window_sub_tags::VV_RESPONSE,
                             &doc_version_vector(doc),
                         )
-                        .into_result()?,
+                        .into_own_frame()?,
                     ]);
                 }
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
@@ -216,7 +221,7 @@ impl SyncClient {
                         window_sub_tags::VV_RESPONSE,
                         &doc_version_vector(doc),
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 );
                 // Record the server VV only after a fully valid exchange — it
                 // becomes the convergence witness for this window (ONE-1128).
@@ -256,6 +261,14 @@ impl SyncClient {
                 }
             }
             window_sub_tags::REPLACEMENT => {
+                // FIX 4748: a peer's state-only copy goes in only when it holds
+                // everything this device holds of the window; else this device
+                // keeps its own and sends the peer its writes first.
+                if self.peer_session.is_some()
+                    && let Some(answer) = self.kept_out_peer_state_copy(window_key, payload)?
+                {
+                    return Ok(answer);
+                }
                 // The snapshot is its envelope's payload, joined from frames each
                 // within the floor and checked whole against the header's digest
                 // (FIX 8247); the replacement's admission bounds it.
@@ -263,7 +276,15 @@ impl SyncClient {
                 // The home this connection proved, if it proved one, sent the
                 // snapshot: its MESSAGE rows take the own-device lane (FIX 12111).
                 let own_device = self.own_device_import(self.home_peer);
-                // Judged again once no demotion holds the window closed.
+                // A peer session retires no queued send: the home session
+                // replays every one (FIX 4748).
+                let queued = if self.peer_session.is_some() {
+                    QueuedSends::Keep
+                } else {
+                    QueuedSends::Retire
+                };
+                // Judged again once no demotion holds the window closed. A fault
+                // not this vault's own is the home's, refused (FIX 22153).
                 let (window, conflicts) = self
                     .manager
                     .replace_window_bounded(
@@ -275,6 +296,7 @@ impl SyncClient {
                                 .unwrap_or(false)
                         },
                         ReplacementByteBound::NetworkFrame,
+                        queued,
                         own_device.as_ref(),
                     )
                     .map_err(|error| match error {
@@ -283,10 +305,7 @@ impl SyncClient {
                         }) => TransportError::Storage(
                             "window replacement waits on a held window".to_string(),
                         ),
-                        Error::Sync(SyncError::SyncProtocolError {
-                            context: SyncProtocolValidation::ReplacementRejected,
-                        }) => TransportError::InvalidPayload("window replacement rejected"),
-                        error => TransportError::Storage(error.to_string()),
+                        e => TransportError::from_applied(&e, "window replacement rejected"),
                     })?;
                 if !conflicts.is_empty() {
                     let _ = self.event_tx.send(SyncEvent::ReplacementConflicts {
@@ -297,11 +316,17 @@ impl SyncClient {
                 // The replaced window starts a fresh exchange: what the server held of the old
                 // one witnesses nothing about the new one.
                 self.server_vvs.remove(window_key);
+                self.kept_out_peer_copies.remove(window_key);
+                // The home's replacement installed, the evidence a per-window
+                // re-bootstrap waits for (FIX 20202); a peer's copy is not it.
+                if self.peer_session.is_none() {
+                    self.replacements_installed.insert(key.clone());
+                }
                 let vv = doc_version_vector(&window.doc);
                 drop(window);
                 Ok(vec![
                     transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                        .into_result()?,
+                        .into_own_frame()?,
                 ])
             }
             window_sub_tags::VV_RESPONSE => {
@@ -333,16 +358,21 @@ impl SyncClient {
     /// Records `home`, the home's version vector of `window_key`, as this
     /// connection's convergence witness, and keeps a world window's beside
     /// the window (FIX 14534), so an eviction after a restart or a tightening
-    /// still knows what the home holds of it.
+    /// still knows what the home holds of it. A peer session's vector is the
+    /// session's convergence witness only (FIX 4748): what a peer holds says
+    /// nothing of what the home holds, so none is kept as the home's.
     fn note_home_window_vv(
         &mut self,
         window_key: &str,
         home: VersionVector,
     ) -> std::result::Result<(), TransportError> {
-        // And a BASE window's an owner's discard took rows from, which its
-        // projection waits to see cover the window (FIX 14534 part E).
-        if WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
-            || self.discard_touched(window_key)?
+        // A peer session's vector is no home witness (FIX 4748). A world
+        // window's, and a BASE window's an owner's discard took rows from,
+        // which its projection waits to see cover the window (FIX 14534 part
+        // E), is kept as the home's.
+        if self.peer_session.is_none()
+            && (WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
+                || self.discard_touched(window_key)?)
         {
             crate::sync::residence::put_home_window_vv(&self.vault, window_key, &home)
                 .map_err(|error| TransportError::Storage(error.to_string()))?;
@@ -676,7 +706,9 @@ impl SyncClient {
                         Ok(missing) => missing,
                         Err(e) => {
                             self.manager.discard_window(&key);
-                            return Err(super::map_delta_export_err(e));
+                            return Err(TransportError::Storage(format!(
+                                "export durable delta: {e}"
+                            )));
                         }
                     };
                 // Its pads persist by reference where custody here holds them
@@ -816,6 +848,67 @@ impl SyncClient {
         })
     }
 
+    /// FIX 4748: what answers a peer's state-only copy `copy` of `window_key` that this peer
+    /// session keeps out, or `None` when the copy goes in: it holds everything this device holds
+    /// of the window ([`crate::sync::peer_route::installs_peer_state_copy`]), so installing it
+    /// loses none of this device's writes.
+    ///
+    /// A copy kept out leaves the window as it is. This device sends the peer its own writes the
+    /// copy lacks, then asks for the window again, so the next copy holds them. It asks again
+    /// only while the peer's copies move on: a copy that holds nothing the last one kept out did
+    /// not is answered with nothing, so a peer that does not take the writes sets off no round of
+    /// copies; the window waits for the session's next vector round or change notice. Writes no
+    /// update can carry (the peer lacks history below this window's own root) are not sent, and
+    /// the window waits for the home. The queue is untouched either way. A copy a peer sends as
+    /// the first update of a window this device asked for with an empty vector is imported as
+    /// any update is, a merge that keeps every write.
+    fn kept_out_peer_state_copy(
+        &mut self,
+        window_key: &str,
+        copy: &[u8],
+    ) -> std::result::Result<Option<Vec<Vec<u8>>>, TransportError> {
+        let copy_vv = loro::LoroDoc::decode_import_blob_meta(copy, true)
+            .map_err(|_| TransportError::InvalidPayload("window replacement rejected"))?
+            .partial_end_vv;
+        let window = self.ensure_window(window_key)?;
+        if crate::sync::peer_route::installs_peer_state_copy(&copy_vv, &window.doc.oplog_vv()) {
+            return Ok(None);
+        }
+        let moved_on = self
+            .kept_out_peer_copies
+            .get(window_key)
+            .is_none_or(|last| !last.includes_vv(&copy_vv));
+        if !moved_on {
+            return Ok(Some(Vec::new()));
+        }
+        self.kept_out_peer_copies
+            .insert(window_key.to_owned(), copy_vv.clone());
+        let Some(writes) = self.export_to_server(&window, &copy_vv.encode(), &copy_vv)? else {
+            tracing::warn!(
+                window = window_key,
+                "a peer's window copy lacks writes of this device no update can carry: the \
+                 window waits for the home"
+            );
+            return Ok(Some(Vec::new()));
+        };
+        let mut answer = self.window_pad_frames(
+            window_key,
+            window_sub_tags::UPDATE,
+            None,
+            &writes,
+            Some(&window.doc),
+        )?;
+        answer.push(
+            transport::encode_window_sync(
+                window_key,
+                window_sub_tags::VV_REQUEST,
+                &doc_version_vector(&window.doc),
+            )
+            .into_own_frame()?,
+        );
+        Ok(Some(answer))
+    }
+
     /// Whether an owner's discard took rows from BASE window `window_key`.
     fn discard_touched(&self, window_key: &str) -> std::result::Result<bool, TransportError> {
         let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
@@ -866,5 +959,5 @@ impl SyncClient {
 /// A device's request for the server's replacement of `window_key`.
 fn replacement_request(window_key: &str) -> std::result::Result<Vec<u8>, TransportError> {
     transport::encode_window_sync(window_key, window_sub_tags::REPLACEMENT_REQUEST, &[])
-        .into_result()
+        .into_own_frame()
 }

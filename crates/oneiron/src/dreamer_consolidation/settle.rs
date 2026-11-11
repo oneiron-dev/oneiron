@@ -52,6 +52,7 @@ use crate::{ClaimBody, EntityId, TimeRange, Vault};
 
 pub(super) mod decision_pages;
 mod decision_projection;
+mod preference_pair;
 
 /// The marker-value keys that name a contradiction's claims: the
 /// consolidation marker's prior heads and candidates, and the older
@@ -138,12 +139,15 @@ pub struct OpenConflict {
     pub reverted: bool,
 }
 
-/// What a settlement wrote: the answering `conflict.resolved` and each member
-/// the kept one superseded.
+/// What a settlement wrote: the answering `conflict.resolved`, each member
+/// the kept one superseded, and any retained alternative it landed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettledConflict {
     pub resolved: EntityId,
     pub superseded: Vec<EntityId>,
+    /// The id a kept retained alternative landed at; `None` when the kept
+    /// claim stood before, or the settlement keeps none.
+    pub materialized: Option<EntityId>,
 }
 
 /// A settlement's durable outcome, with the Gate receipt that recorded who
@@ -244,10 +248,21 @@ fn named_ids(body: &ClaimBody) -> Vec<EntityId> {
         .evidence
         .as_ref()
         .map(|evidence| marker_ids(evidence, "refs"));
+    let candidate_evidence = body
+        .evidence
+        .as_ref()
+        .and_then(|evidence| {
+            string_at(
+                evidence,
+                crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+            )
+        })
+        .map(|evidence| marker_ids(evidence, "refs"));
     MEMBER_KEYS
         .iter()
         .flat_map(|key| marker_ids(&body.value, key).collect::<Vec<_>>())
         .chain(evidence.into_iter().flatten())
+        .chain(candidate_evidence.into_iter().flatten())
         .filter(|id| seen.insert(*id))
         .collect()
 }
@@ -386,10 +401,14 @@ pub(crate) fn open_conflicts_in_txn(
     markers.sort_by_key(|(id, _)| *id);
     let mut open = Vec::new();
     for (id, body) in markers {
-        if answered.contains(&id) {
+        let was_reverted = reverted.contains(&id);
+        // A preference marker whose pair no longer stands asks nothing (FIX
+        // 3079); one a reverted settlement reopened is read as before.
+        if answered.contains(&id)
+            || (!was_reverted && preference_pair::preference_pair_moot_in_txn(vault, txn, &body)?)
+        {
             continue;
         }
-        let was_reverted = reverted.contains(&id);
         if let Some(conflict) = open_conflict_from(vault, txn, id, body, was_reverted)? {
             open.push(conflict);
         }
@@ -427,6 +446,11 @@ pub(crate) fn open_conflict_in_txn(
             return Err(invalid_consolidation("the conflict is already settled"));
         }
         reverted |= reverted_answer(&answer);
+    }
+    if !reverted && preference_pair::preference_pair_moot_in_txn(vault, txn, &body)? {
+        return Err(invalid_consolidation(
+            "the conflict's pair no longer stands: a later claim replaced one side",
+        ));
     }
     open_conflict_from(vault, txn, marker, body, reverted)?
         .ok_or(invalid_consolidation("conflict subject"))
@@ -621,6 +645,7 @@ pub(crate) fn apply_settlement_in_txn(
     Ok(SettlementApplied::Settled(SettledConflict {
         resolved,
         superseded,
+        materialized: materialized.map(|(_, born)| born),
     }))
 }
 

@@ -1,0 +1,14 @@
+{
+  "name": "graph_fs.grep",
+  "description": "Search visible mounted file bytes, using the live claim text index for supported recursive patterns.",
+  "input": "crate::memory::graph_fs_doors::GraphFsGrepRequest",
+  "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+  "call": "memory.graph_fs_grep(input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

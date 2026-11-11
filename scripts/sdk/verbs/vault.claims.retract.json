@@ -1,0 +1,23 @@
+{
+  "name": "vault.claims.retract",
+  "description": "Retracts one active claim: a deliberate withdrawal that preserves the record.",
+  "refs": [
+    "/claim_ref"
+  ],
+  "uniffi": {
+    "args": {
+      "claim_ref": "String"
+    },
+    "output": "CommitReceipt"
+  },
+  "input": "ClaimRefRequest",
+  "output": "crate::memory::CommitReceipt",
+  "call": "memory.claim_retract(&input.claim_ref)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  }
+}

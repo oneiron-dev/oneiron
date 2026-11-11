@@ -1,0 +1,13 @@
+{
+  "name": "vault.fanout.slots",
+  "openapi": true,
+  "description": "Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree.",
+  "input": "crate::task_verb::sdk::FanoutLaunchRequest",
+  "output": "Option<crate::task_verb::sdk::FanoutBatchView>",
+  "call": "memory.fanout_batch_slots(input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

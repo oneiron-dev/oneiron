@@ -239,30 +239,9 @@ pub(crate) fn skill_library_view(
 ) -> MemoryResult<SkillLibraryView> {
     let record = skill(vault, &input.entity)?;
     let source_refs = crate::skill_convert::source_message_refs(&record)?;
-    let (files, capabilities, source_messages) = {
+    let (package, source_messages) = {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let package = vault.runtime_skill_package_in_txn(&txn, &input.entity, &record)?;
-        let (files, capabilities) = match package {
-            Some(package) => (
-                Some(
-                    package
-                        .files
-                        .into_iter()
-                        .map(|file| SkillLibraryFile {
-                            path: file.path,
-                            content: file.content,
-                        })
-                        .collect(),
-                ),
-                Some(SkillCapabilityView {
-                    bins: package.capabilities.bins.into_iter().collect(),
-                    env: package.capabilities.env.into_iter().collect(),
-                    mcp: package.capabilities.mcp.into_iter().collect(),
-                    allowed_tools: package.capabilities.allowed_tools.into_iter().collect(),
-                }),
-            ),
-            None => (None, None),
-        };
         let source_messages = source_refs
             .into_iter()
             .map(|message_ref| {
@@ -277,7 +256,7 @@ pub(crate) fn skill_library_view(
                 })
             })
             .collect::<crate::Result<Vec<_>>>()?;
-        (files, capabilities, source_messages)
+        (package, source_messages)
     };
     let mut lineage = Vec::new();
     let mut child = record.clone();
@@ -323,8 +302,51 @@ pub(crate) fn skill_library_view(
             reason: note.reason,
             deleted_refs: note.deleted_refs,
         });
+    let provenance = crate::msgpack_value_to_json(&record.provenance);
     Ok(SkillLibraryView {
-        entity: input.entity,
+        provenance,
+        source_messages,
+        stale,
+        lineage,
+        scans,
+        receipts: super::hub::hub_skill_receipts(vault, input)?,
+        ..skill_package_view(input.entity, record, package)
+    })
+}
+
+/// The view of skill `entity` built from `record` and its runtime `package`
+/// alone: the owner's evidence (provenance, source messages, the stale note,
+/// fork lineage, scans and hub receipts) is left empty. A caller other than
+/// the owner is served this view (`snapshot_read::skill_reader`), built from
+/// the read that admitted it; the owner's view fills the evidence in.
+pub(crate) fn skill_package_view(
+    entity: EntityId,
+    record: SkillRecord,
+    package: Option<crate::skill_hub::HubPackage>,
+) -> SkillLibraryView {
+    let (files, capabilities) = match package {
+        Some(package) => (
+            Some(
+                package
+                    .files
+                    .into_iter()
+                    .map(|file| SkillLibraryFile {
+                        path: file.path,
+                        content: file.content,
+                    })
+                    .collect(),
+            ),
+            Some(SkillCapabilityView {
+                bins: package.capabilities.bins.into_iter().collect(),
+                env: package.capabilities.env.into_iter().collect(),
+                mcp: package.capabilities.mcp.into_iter().collect(),
+                allowed_tools: package.capabilities.allowed_tools.into_iter().collect(),
+            }),
+        ),
+        None => (None, None),
+    };
+    SkillLibraryView {
+        entity,
         content_hash: record.content_hash.map(|hash| hash.to_hex()),
         lifecycle: record.lifecycle_status.into(),
         approval: record.approval_status,
@@ -347,18 +369,22 @@ pub(crate) fn skill_library_view(
                 min_version: dependency.min_version,
             })
             .collect(),
-        provenance: crate::msgpack_value_to_json(&record.provenance),
+        provenance: serde_json::Value::Null,
         skill_id: record.skill_id,
         desc: record.desc,
         version: record.version,
-        source_messages,
-        stale,
-        lineage,
+        source_messages: Vec::new(),
+        stale: None,
+        lineage: Vec::new(),
         files,
         capabilities,
-        scans,
-        receipts: super::hub::hub_skill_receipts(vault, input)?,
-    })
+        scans: Vec::new(),
+        receipts: HubSkillReceipts {
+            sources: Vec::new(),
+            imports: Vec::new(),
+            admission: None,
+        },
+    }
 }
 
 pub fn skill_library_list_as_owner(
@@ -427,7 +453,10 @@ pub fn skill_archive_as_owner(
     input: &HubSkillRequest,
 ) -> MemoryResult<SkillLibraryView> {
     lifecycle_as_owner(vault, owner, input.entity, SkillLifecycle::Quarantined)?;
-    vault.skill_invocations.cancel_skill(&input.entity);
+    vault
+        .runtime()
+        .skill_invocations()
+        .cancel_skill(&input.entity);
     skill_library_get_as_owner(vault, owner, input)
 }
 

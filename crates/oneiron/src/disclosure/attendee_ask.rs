@@ -25,7 +25,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::memory::Memory;
 use crate::task_verb::{
-    TaskAskOptionId, TaskAskQuestion, TaskAskReceipt, TaskAskSpec, TaskAskTarget,
+    TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskReceipt, TaskAskSpec, TaskAskTarget,
 };
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
@@ -347,7 +347,9 @@ impl Memory<'_> {
                 AttendeeIdentityChoice::Contact(contact) => contact.to_hex(),
                 AttendeeIdentityChoice::Unknown => ATTENDEE_UNKNOWN_OPTION.to_owned(),
             };
-            question.options.insert(choice.option()?, text);
+            question
+                .options
+                .insert(choice.option()?, TaskAskOption::new(text));
         }
         let mut spec = TaskAskSpec::shorthand(
             Some(TaskAskTarget::People(owners.into_iter().collect())),
@@ -425,7 +427,9 @@ impl Memory<'_> {
                 AttendeeIdentityChoice::Contact(contact) => contact.to_hex(),
                 AttendeeIdentityChoice::Unknown => ATTENDEE_UNKNOWN_OPTION.to_owned(),
             };
-            question.options.insert(choice.option()?, text);
+            question
+                .options
+                .insert(choice.option()?, TaskAskOption::new(text));
         }
         let mut spec = TaskAskSpec::shorthand(
             Some(TaskAskTarget::People(owners.into_iter().collect())),

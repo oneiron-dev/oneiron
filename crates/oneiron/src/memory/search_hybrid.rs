@@ -26,6 +26,10 @@ pub struct HybridSearchRequest {
     #[serde(default)]
     pub replay: Option<HybridRankReplay>,
     pub limit: usize,
+    /// The caller's retrieval filter (FIX 3977): bound before candidate
+    /// generation, so it narrows every channel, seed and terminal read.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -64,9 +68,6 @@ pub struct HybridSearchHit {
 impl HybridSearchRequest {
     pub fn validate(&self) -> MemoryResult<()> {
         caps::check_limit_nonzero(self.limit)?;
-        if let Some(query) = &self.query {
-            caps::check_query(query)?;
-        }
         if let Some(vector) = &self.query_vector {
             caps::check_dimensions(vector.len())?;
             if vector.iter().any(|value| !value.is_finite()) {
@@ -74,7 +75,6 @@ impl HybridSearchRequest {
             }
         }
         for code in &self.phonetic_codes {
-            caps::check_query(code)?;
             if code.trim().is_empty() {
                 return Err(MemoryError::bad_request("phonetic codes must not be empty"));
             }
@@ -116,6 +116,15 @@ impl Memory<'_> {
         &self,
         input: &HybridSearchRequest,
     ) -> MemoryResult<ScopedReadResult<Vec<HybridSearchHit>>> {
+        if let Some(filter) = &input.filter {
+            // Bind the caller's filter on this call's handle once, so every
+            // lane the search opens meets it (FIX 3977).
+            let bound = HybridSearchRequest {
+                filter: None,
+                ..input.clone()
+            };
+            return self.with_read_filter(Some(filter)).query_hybrid(&bound);
+        }
         input.validate()?;
         let limit = input.limit;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;

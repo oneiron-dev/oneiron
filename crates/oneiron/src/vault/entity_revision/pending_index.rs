@@ -19,6 +19,12 @@ pub(super) struct Inputs {
     /// none.
     #[serde(default)]
     pub(super) provenance: Option<EmbeddingProvenance>,
+    /// Where the staged vector was computed, when its filler knew it (a
+    /// leased fill's embedder, a home's settled claim vector): idle
+    /// publication stamps it with the vector (FIX 12783). `None` for a vector
+    /// a caller supplied.
+    #[serde(default)]
+    pub(super) locality: Option<crate::store::embedding::EmbedderLocality>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Pending {
@@ -33,6 +39,7 @@ pub(crate) fn defer_index_inputs(
     fields: Option<&[(String, String)]>,
     vector: Option<(&[f32], Option<&EmbeddingProvenance>)>,
     token: Option<&[u8]>,
+    locality: Option<crate::store::embedding::EmbedderLocality>,
 ) -> Result<bool> {
     let Some(current) = state(store, txn, id)? else {
         return Ok(false);
@@ -48,6 +55,8 @@ pub(crate) fn defer_index_inputs(
         inputs.vector = Some(vector.to_vec());
         inputs.pending_embedding_token = token.map(<[u8]>::to_vec);
         inputs.provenance = provenance.cloned();
+        // A new vector brings its own locality, or none; text alone keeps it.
+        inputs.locality = locality;
     }
     PENDING.put(
         store,
@@ -76,6 +85,7 @@ pub(crate) fn drop_staged_vectors(store: &Store, txn: &mut heed::RwTxn<'_>) -> R
         pending.inputs.vector = None;
         pending.inputs.pending_embedding_token = None;
         pending.inputs.provenance = None;
+        pending.inputs.locality = None;
         if pending.inputs.fields.is_none() {
             PENDING.delete(store, txn, &id)?;
         } else {

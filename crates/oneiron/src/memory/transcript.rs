@@ -7,6 +7,11 @@
 //! comes back. Turns are ordered by when they occurred and then by id, the
 //! order a room's adoption of the DAG gives its legacy turns; messages by
 //! their order inside the turn.
+//!
+//! FIX 5032: a chat log and a turn action list their turns from row headers
+//! first ([`Memory::transcript_turn_keys`]) and read only the turns they
+//! select, through the same page reader
+//! ([`Memory::selected_transcript_turns`]).
 
 use serde::Serialize;
 
@@ -25,8 +30,9 @@ use crate::vault::ReadMode;
 pub use crate::compaction::MAX_TRANSCRIPT_PAGE_TURNS;
 
 /// How many times a page is listed and read before a conversation whose turns
-/// keep moving in time is refused.
-const TRANSCRIPT_READ_ATTEMPTS: usize = 3;
+/// keep moving in time is refused. A chat log's read plan and a turn
+/// action's selection list and read as many times (FIX 5032).
+pub(crate) const TRANSCRIPT_READ_ATTEMPTS: usize = 3;
 
 /// One page of a conversation's transcript.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -109,6 +115,27 @@ fn parse_cursor(cursor: &str) -> MemoryResult<TurnKey> {
 
 fn sort_key(key: &TurnKey) -> (u64, [u8; 16]) {
     (key.0, *key.1.as_bytes())
+}
+
+/// Reads `conversation`'s own row through `lane`: the receipt a transcript
+/// read starts from.
+///
+/// # Errors
+///
+/// `NOT_FOUND` when the actor may not read the conversation or it is not
+/// one.
+fn conversation_row_receipt(
+    lane: &ScopedRead<'_>,
+    conversation: &EntityId,
+) -> MemoryResult<ScopedReadReceipt> {
+    let ScopedReadResult {
+        value: row,
+        receipt,
+    } = lane.read(&[PointRead::id(*conversation)], None)?.single();
+    if row.is_none_or(|row| row.entity_type != ENTITY_TYPE_CONVERSATION || row.body.is_none()) {
+        return Err(MemoryError::not_found("conversation not found").with_read_receipt(receipt));
+    }
+    Ok(receipt)
 }
 
 /// A readable MESSAGE view as a transcript message, with its completion;
@@ -200,13 +227,7 @@ impl Memory<'_> {
         let limit = limit.min(MAX_TRANSCRIPT_PAGE_TURNS);
         let after = after.map(parse_cursor).transpose()?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let ScopedReadResult {
-            value: row,
-            receipt,
-        } = lane.read(&[PointRead::id(*conversation)], None)?.single();
-        if row.is_none_or(|row| row.entity_type != ENTITY_TYPE_CONVERSATION || row.body.is_none()) {
-            return Err(MemoryError::not_found("conversation not found").with_read_receipt(receipt));
-        }
+        let receipt = conversation_row_receipt(&lane, conversation)?;
         // The turns are listed, then read through the lane. A listed turn
         // whose time moved in between is listed again where it now is, so a
         // page stays in order, its cursor names a time it served, and no turn
@@ -236,61 +257,82 @@ impl Memory<'_> {
         .with_read_receipt(read))
     }
 
-    /// The branch of a DAG conversation that leads to `target`, read as the
-    /// bound actor: the turns on its retained Parent chain, root first, each
-    /// with its visible messages the actor may read, on one page. `None` for
-    /// a conversation that has not adopted the DAG, whose transcript is its
-    /// time order. A sibling branch's turns never join it.
+    /// FIX 5032: the TURN keys of `conversation`'s transcript, from row
+    /// headers alone: with `branch`, the turns on its retained Parent chain,
+    /// root first, and none when the conversation has not adopted the DAG;
+    /// without, every turn in time order. Nothing is read through the lane
+    /// here, so a key may name a turn the actor may not read:
+    /// [`Self::selected_transcript_turns`] reads the turns a caller selects.
     ///
     /// # Errors
     ///
-    /// `NOT_FOUND` when the actor may not read the conversation;
-    /// `INVALID_STATE` when a turn on the branch moved in time while it was
-    /// read.
-    pub(crate) fn turn_action_branch_transcript(
+    /// Storage errors, and a branch whose chain does not prove.
+    pub(crate) fn transcript_turn_keys(
         &self,
         conversation: &EntityId,
-        target: &EntityId,
-    ) -> MemoryResult<Option<TranscriptPage>> {
+        branch: Option<&EntityId>,
+    ) -> MemoryResult<Vec<TurnKey>> {
+        let Some(target) = branch else {
+            return self.transcript_turns(conversation, None);
+        };
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         if !crate::conversation_dag::keeps_dag_topology(&self.vault.store, &txn, conversation)? {
-            return Ok(None);
+            return Ok(Vec::new());
         }
+        self.branch_turns_in(&txn, conversation, target)
+    }
+
+    /// FIX 5032: the `selected` turns of `conversation`, keyed as
+    /// [`Self::transcript_turn_keys`] listed them, read as the bound actor
+    /// through [`Self::transcript_page`], at most
+    /// [`MAX_TRANSCRIPT_PAGE_TURNS`] turns a page, in the order given, each
+    /// with its visible messages the actor may read. A turn the actor may
+    /// not read, or with no such message, is left out. No cursor is read or
+    /// made: the caller names the turns. `None` when a selected turn's time
+    /// is no longer the one listed.
+    ///
+    /// # Errors
+    ///
+    /// `NOT_FOUND` when the actor may not read the conversation or it is not
+    /// one.
+    pub(crate) fn selected_transcript_turns(
+        &self,
+        conversation: &EntityId,
+        selected: &[TurnKey],
+    ) -> MemoryResult<Option<Vec<TranscriptTurn>>> {
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let mut read = conversation_row_receipt(&lane, conversation)?;
+        let mut turns = Vec::new();
+        for keys in selected.chunks(MAX_TRANSCRIPT_PAGE_TURNS) {
+            let Some((page, _)) = self.transcript_page(&lane, keys, keys.len(), &mut read)? else {
+                return Ok(None);
+            };
+            turns.extend(page);
+        }
+        Ok(Some(turns))
+    }
+
+    /// The TURN keys on `target`'s retained Parent chain in `conversation`,
+    /// root first, from row headers in the caller's `txn`. The chain is
+    /// proven whole, as the DAG reads it.
+    fn branch_turns_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: &EntityId,
+        target: &EntityId,
+    ) -> MemoryResult<Vec<TurnKey>> {
         let mut turns = Vec::new();
         for id in
-            crate::conversation_dag::retained_chain(&self.vault.store, &txn, conversation, *target)?
+            crate::conversation_dag::retained_chain(&self.vault.store, txn, conversation, *target)?
         {
-            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.vault.store, &txn, &id)?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.vault.store, txn, &id)?;
             if let Some(header) = raw.as_deref().and_then(EntityMetadataHeader::parse)
                 && header.entity_type == ENTITY_TYPE_TURN
             {
                 turns.push((header.occurred_start, id));
             }
         }
-        drop(txn);
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let ScopedReadResult {
-            value: row,
-            receipt,
-        } = lane.read(&[PointRead::id(*conversation)], None)?.single();
-        if row.is_none_or(|row| row.entity_type != ENTITY_TYPE_CONVERSATION || row.body.is_none()) {
-            return Err(MemoryError::not_found("conversation not found").with_read_receipt(receipt));
-        }
-        let mut read = receipt;
-        let Some((page, _)) = self.transcript_page(&lane, &turns, turns.len().max(1), &mut read)?
-        else {
-            return Err(MemoryError::new(
-                MEMORY_CODE_INVALID_STATE,
-                "the branch's turns moved while it was read",
-                &["Read the branch again."],
-            )
-            .with_read_receipt(read));
-        };
-        Ok(Some(TranscriptPage {
-            conversation: conversation.to_hex(),
-            turns: page,
-            next: None,
-        }))
+        Ok(turns)
     }
 
     /// Up to `limit` readable turns of `turns`, in order, and the cursor of

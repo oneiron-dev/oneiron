@@ -77,3 +77,29 @@ per-rung lease looks, planned-model stamp and browser handoff stay unchanged.
 
 This is evidence coverage, not MESSAGE/chat capture, issuer identity, replay,
 training, export or opaque-reasoning custody. Those remain separate work.
+
+## Metered reader-child capture
+
+The existing reader meter separately carries the claimed job's execution actor
+and the runtime's owned off-record session name into the same served code-mode
+backend. This is not the unscoped MCP backend factory. It keeps the child's own
+guard, payer and live lease, including the existing per-rung lease looks.
+
+This covers Read, ScopedAgent and Summarize jobs that use that reader meter.
+The unchanged dispatcher bind still verifies the same immutable job, generation,
+run, vault, session and participant before any model call. The participant remains
+a read-scope value, not the execution actor. A failed bind records nothing.
+
+Successful terminals use the same admitted-request and actual-answering-binding
+capture described above, with the same actor/session arrival-or-terminal NoRecord
+checks and warn-only writer. Profiled children keep their separate backend and
+meter and remain outside this coverage. Injected providers ignore the caller;
+other unbound reader-backend callers remain uncaptured. No planned factory,
+model route, funding, fallback, request, response or refusal behavior changes.
+
+For a reader's already-bound session, privacy checks read its current live mode
+at both arrival and terminal. Off-record and anonymous modes suppress evidence,
+including roomless owner sessions with no `entered_by` actor. A closed, missing
+or unreadable bound session also suppresses evidence without changing execution.
+This bound-session check is not available to the raw MCP header factory, which
+keeps its existing actor/session identity predicate.

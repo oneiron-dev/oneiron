@@ -1,0 +1,12 @@
+{
+  "name": "self.board.fold",
+  "description": "Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn.",
+  "input": "crate::task_verb::sdk::BoardFoldRequest",
+  "output": "crate::task_verb::sdk::BoardLayoutState",
+  "call": "crate::task_verb::sdk::board_fold_reply(memory, &input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

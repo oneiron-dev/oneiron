@@ -1,0 +1,46 @@
+name: Agent SDK docs
+
+# Untangle slice 4.3 (D4 = a, lead 9 Nov 18:0x): the agent-SDK reference generated from the verb table
+# (types.md, facade-types.md, verbs.md) is not in git. This job publishes it from main, with quickstart.md,
+# errors.md and llms.txt, at the stable URL https://oneiron-dev.github.io/oneiron/ (`PUBLISHED` in
+# packages/oneiron/scripts/agent-docs.py), so agents and readers reach it in one hop from the repository's
+# llms.txt. GitHub Pages and the hosted runner are free for this public repository. The repository's Pages
+# source must be "GitHub Actions" (one setting: `gh api -X POST repos/oneiron-dev/oneiron/pages -f build_type=workflow`).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: agent-sdk-docs
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish the agent-SDK reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      - name: Generate the SDK outputs and the reference
+        run: |
+          cargo run --locked --release -p oneiron-sdk-generator -- --out-dir "$RUNNER_TEMP/sdk"
+          python3 packages/oneiron/scripts/agent-docs.py --site "$RUNNER_TEMP/site" --from "$RUNNER_TEMP/sdk"
+          find "$RUNNER_TEMP/site" -type f | sort
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/site
+      - id: deploy
+        uses: actions/deploy-pages@v4

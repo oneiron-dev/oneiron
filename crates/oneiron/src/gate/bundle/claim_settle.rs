@@ -58,7 +58,30 @@ impl Vault {
         owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
         now: u64,
     ) -> Result<SettledProposal> {
-        self.settle_reviewed_claim_in_txn(wtxn, id, action, actor, owner_answer, now, false)
+        self.settle_reviewed_claim_in_txn(wtxn, id, action, actor, owner_answer, None, now, false)
+    }
+
+    /// The owning door already authorized this holder in `wtxn`. Its
+    /// envelope supplies the approval's Gate identity, not the claim's author
+    /// or an owner-answer proof.
+    pub(crate) fn approve_proposed_claim_with_caller_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        caller: crate::WriteEnvelope,
+        now: u64,
+    ) -> Result<SettledProposal> {
+        let actor = caller.actor();
+        self.settle_reviewed_claim_in_txn(
+            wtxn,
+            id,
+            GateConsentBundleAction::Approve,
+            actor,
+            None,
+            Some(caller),
+            now,
+            false,
+        )
     }
 
     /// The owner's reviewed generated claim, including an unvetted Auto
@@ -81,7 +104,7 @@ impl Vault {
                 "vetting requires a generated-origin claim",
             ));
         }
-        self.settle_reviewed_claim_in_txn(wtxn, id, action, actor, owner_answer, now, true)
+        self.settle_reviewed_claim_in_txn(wtxn, id, action, actor, owner_answer, None, now, true)
     }
 
     #[expect(
@@ -95,6 +118,7 @@ impl Vault {
         action: GateConsentBundleAction,
         actor: WriteActor,
         owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
+        approval_caller: Option<crate::WriteEnvelope>,
         now: u64,
         vetting: bool,
     ) -> Result<SettledProposal> {
@@ -127,26 +151,32 @@ impl Vault {
                     close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer, action, now)?;
                 let mut approved = body.clone();
                 approved.approval = ClaimApprovalStatus::Approved;
-                crate::batch::ClaimMaterialization::apply_approval(
-                    self,
-                    wtxn,
-                    BatchOp::Put {
-                        id,
-                        entity_type: ENTITY_TYPE_CLAIM,
-                        occurred: TimeRange {
-                            start: header.occurred_start,
-                            end: header.occurred_end,
-                        },
-                        learned_at: header.learned_at,
-                        row_version: None,
-                        data: encode_claim_body(&approved)?,
-                        allow_maintenance: false,
-                        allow_reserved_predicate: false,
-                        hub_sync_imported: false,
+                let put = BatchOp::Put {
+                    id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
                     },
-                    true,
-                    Some(actor),
-                )?;
+                    learned_at: header.learned_at,
+                    row_version: None,
+                    data: encode_claim_body(&approved)?,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                };
+                match approval_caller {
+                    Some(caller) => crate::batch::ClaimMaterialization::apply_approval_with_caller(
+                        self, wtxn, put, true, caller,
+                    ),
+                    None => crate::batch::ClaimMaterialization::apply_approval(
+                        self,
+                        wtxn,
+                        put,
+                        true,
+                        Some(actor),
+                    ),
+                }?;
                 self.complete_deferred_claim_in_txn(wtxn, &id, false, now, Some(actor))?;
                 // An approved task proposal lands its TASK in this txn.
                 crate::task_verb::settle_task_proposal_in_txn(self, wtxn, id, Some(actor), now)?;
@@ -155,6 +185,18 @@ impl Vault {
                 let resolved = self
                     .get_claim_in_txn(&*wtxn, &id)?
                     .ok_or(Error::EntityNotFound)?;
+                if body.approval == ClaimApprovalStatus::Proposed
+                    && crate::claim::claim_surfaceable(&resolved)
+                {
+                    // Approval publishes now, not at an embedder's next idle
+                    // pass. Move the indexed frontier before Text, otherwise
+                    // the text arm would defer the approved revision again.
+                    crate::vault::entity_revision::publish_room_revision(&self.store, wtxn, &id)?;
+                    let text = crate::claim::claim_value_index_text(&resolved.value);
+                    self.batch_in()
+                        .text(&id, &[("val", text.as_str())])
+                        .apply(wtxn)?;
+                }
                 (resolved, tray_receipt)
             }
             GateConsentBundleAction::Decline => {

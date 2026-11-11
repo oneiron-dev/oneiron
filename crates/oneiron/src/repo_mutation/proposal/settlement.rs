@@ -1,6 +1,10 @@
 //! Review decisions are retained separately from execution. Approval never
 //! fabricates a checker result or advances head: the tested merge queue lands it.
-use super::{PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus, invalid, store};
+use super::actor_erase::ProposalActor;
+use super::{
+    ContractReviewSettlement, PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus,
+    invalid, store,
+};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -18,7 +22,9 @@ pub enum RepoProposalDecision {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoProposalSettlement {
     pub receipt: EntityId,
-    pub actor: EntityId,
+    /// The owner who settled it; `None` once that actor was erased (FIX
+    /// 5220). The decision stays.
+    pub actor: Option<EntityId>,
     pub decision: RepoProposalDecision,
     pub settled_at: u64,
 }
@@ -26,6 +32,8 @@ pub struct RepoProposalSettlement {
 impl Vault {
     /// Approve or reject one immutable proposal as an independent owner. Every
     /// check authorizing the decision and its receipt runs in the same writer.
+    /// While a removed public name waits for a person review, the decision
+    /// answers that review first (FIX 4365).
     pub(crate) fn settle_repo_proposal_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -46,8 +54,25 @@ impl Vault {
                 "a proposal's opener lineage or its forks cannot settle it",
             ));
         }
+        // The same independent owner decides a removed public name's review
+        // (FIX 4365). An earlier settlement or a critic never answers it. Its
+        // receipt names the verdicts it answers, and Approve leaves them red.
+        if row.contract_review_waits() {
+            let verdicts = row.undecided_contract_verdicts();
+            let (receipt, now) =
+                self.put_settlement_receipt_in_txn(&mut txn, id, actor, decision, &verdicts)?;
+            row.decide_contract_reviews(&ContractReviewSettlement {
+                receipt,
+                actor: ProposalActor::Actor(actor),
+                decision,
+                settled_at: now,
+            });
+            store(self, &mut txn, &row)?;
+            txn.commit()?;
+            return Ok(row);
+        }
         if let Some(settled) = &row.settlement {
-            return if settled.actor == actor && settled.decision == decision {
+            return if settled.actor == Some(actor) && settled.decision == decision {
                 Ok(row)
             } else {
                 Err(invalid("proposal already has a different settlement"))
@@ -69,38 +94,12 @@ impl Vault {
                     "approval requires unanimous independent multi-critic acceptance",
                 ));
             }
+            // Acceptance is judged against the retained whitelist as it
+            // stands now; an accepted candidate is never revoked (FIX 4299).
+            row.require_registered_edit_at_acceptance_in_txn(self, &txn)?;
         }
-        let receipt = self.store.clock.entity_id()?;
-        let now = super::super::support::now_secs();
-        let mut body = ClaimBody::new(
-            "repo.proposal_settlement",
-            ClaimSubject::Entity(id),
-            rmpv::Value::Map(vec![
-                ("proposal".into(), id.to_hex().into()),
-                ("actor".into(), actor.to_hex().into()),
-                (
-                    "decision".into(),
-                    match decision {
-                        RepoProposalDecision::Approve => "approve".into(),
-                        RepoProposalDecision::Reject => "reject".into(),
-                    },
-                ),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.source = Some(ClaimSource::Observed);
-        self.put_reserved_claim_in_txn(
-            &mut txn,
-            &receipt,
-            &body,
-            crate::temporal::TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-        )?;
+        let (receipt, now) =
+            self.put_settlement_receipt_in_txn(&mut txn, id, actor, decision, &[])?;
         // The owner's Approve of a masked copy's held bundle settles exactly
         // this replacement, in this same writer; a Reject settles nothing
         // (FIX 7608 2b-ii-B2, CALL H).
@@ -119,13 +118,70 @@ impl Vault {
         };
         row.settlement = Some(RepoProposalSettlement {
             receipt,
-            actor,
+            actor: Some(actor),
             decision,
             settled_at: now,
         });
         store(self, &mut txn, &row)?;
         txn.commit()?;
         Ok(row)
+    }
+
+    /// Mints the receipt claim of `actor`'s `decision` on proposal `id` in
+    /// the caller's writer: its id and time. A decision on removed-name
+    /// reviews also names the `verdicts` it answers (FIX 4365).
+    fn put_settlement_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        actor: EntityId,
+        decision: RepoProposalDecision,
+        verdicts: &[String],
+    ) -> Result<(EntityId, u64)> {
+        let receipt = self.store.clock.entity_id()?;
+        let now = super::super::support::now_secs();
+        let mut value: Vec<(rmpv::Value, rmpv::Value)> = vec![
+            ("proposal".into(), id.to_hex().into()),
+            ("actor".into(), actor.to_hex().into()),
+            (
+                "decision".into(),
+                match decision {
+                    RepoProposalDecision::Approve => "approve".into(),
+                    RepoProposalDecision::Reject => "reject".into(),
+                },
+            ),
+        ];
+        if !verdicts.is_empty() {
+            value.push((
+                "contract_verdicts".into(),
+                rmpv::Value::Array(
+                    verdicts
+                        .iter()
+                        .map(|verdict| rmpv::Value::from(verdict.as_str()))
+                        .collect(),
+                ),
+            ));
+        }
+        let mut body = ClaimBody::new(
+            "repo.proposal_settlement",
+            ClaimSubject::Entity(id),
+            rmpv::Value::Map(value),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.source = Some(ClaimSource::Observed);
+        self.put_reserved_claim_in_txn(
+            txn,
+            &receipt,
+            &body,
+            crate::temporal::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )?;
+        Ok((receipt, now))
     }
 }
 

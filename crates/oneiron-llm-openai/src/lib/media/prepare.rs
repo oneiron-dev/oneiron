@@ -14,7 +14,7 @@ use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest};
 use oneiron::{FatalLlmError, LlmResult, ModelId};
 use serde_json::{Value, json};
 
-use crate::image::{fields, form_fields, reference_extension};
+use crate::image::{check_edit_mask, fields, form_fields, reference_extension};
 
 /// The reference images a video job carries: its one `input_reference`. A
 /// call with more is not this wire's; a host's ladder passes it to an offer
@@ -65,7 +65,13 @@ pub(super) fn prepare_image(request: &MediaRequest, wire: &str) -> LlmResult<Pre
     if request.operation != AiOperation::Image {
         return Err(FatalLlmError::InvalidRequest.into());
     }
+    request.validate_image_mask()?;
     references_are_images(request)?;
+    check_edit_mask(
+        request.mask.as_ref(),
+        request.references.len(),
+        &request.params,
+    )?;
     let (model, mut fields) = fields(&request.image_intent()?)?;
     fields.insert("model".into(), json!(wire));
     Ok(PreparedImage { model, fields })

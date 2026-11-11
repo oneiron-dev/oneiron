@@ -52,7 +52,7 @@ async fn vault_questions_answers_answer(
     crate::api::facade::clock_ingress::run_blocking(
         move || -> MemoryResult<QuestionAnswersReply> {
             // A narrowed caller reads each answer its own lane reads (OF-506).
-            let lane = asker_lane(server.vault(), &auth, principal, VERB)?;
+            let lane = asker_lane(server.vault(), &auth, VERB)?;
             Ok(question_answers_in_lane(
                 server.vault(),
                 &lane,

@@ -21,13 +21,7 @@ pub(crate) fn load_in(
     pending: &PendingScanChecks,
 ) -> Result<LoroDoc> {
     super::ensure_citations_ready(&vault.store, txn, id)?;
-    load_seeded_to(
-        store,
-        txn,
-        id,
-        || Ok(super::birth::document_birth_in(vault, store, txn, id)?.unwrap_or_default()),
-        pending,
-    )
+    load_stored_to(store, txn, id, pending)
 }
 
 pub(crate) fn load_for_erasure(
@@ -35,49 +29,80 @@ pub(crate) fn load_for_erasure(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<LoroDoc> {
-    load_seeded(&vault.store, txn, id, || {
-        Ok(super::document_birth_in_txn(vault, txn, id)?.unwrap_or_default())
-    })
+    load_stored(&vault.store, txn, id)
 }
 
-pub(super) fn load_seeded<S: ManifestDbs>(
+/// The NOTE's head document as `store` holds it. A NOTE's document is born
+/// in its birth's transaction (FIX 7783), so a head with no stored document
+/// is refused, never rebuilt from the row.
+pub(super) fn load_stored<S: ManifestDbs>(
     store: &S,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-    birth: impl FnOnce() -> Result<LoroDoc>,
 ) -> Result<LoroDoc> {
-    load_seeded_to(store, txn, id, birth, store.pending_scan_checks())
+    load_stored_to(store, txn, id, store.pending_scan_checks())
 }
 
-/// [`load_seeded`], the loaded document's sizes measured into `pending`
+/// [`load_stored`], the loaded document's sizes measured into `pending`
 /// (rule 5: `note::scan` raises a check past a threshold row and the load
 /// serves; no size refuses it).
-fn load_seeded_to(
+fn load_stored_to(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-    birth: impl FnOnce() -> Result<LoroDoc>,
     pending: &PendingScanChecks,
 ) -> Result<LoroDoc> {
+    stored_to(store, txn, id, pending)?.ok_or_else(|| invalid("NOTE head document missing"))
+}
+
+/// The head document this vault holds of NOTE `id`, or `None` while it holds
+/// none: a replica whose authority has not sent the NOTE's document yet. Only
+/// the sync doors that ask for that document, and recovery, read this.
+pub(crate) fn stored_document(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<LoroDoc>> {
+    super::ensure_citations_ready(&vault.store, txn, id)?;
+    stored_to(&vault.store, txn, id, &vault.store.pending_scan_checks)
+}
+
+/// The head document `store` holds of NOTE `id`, or `None` while it holds
+/// none, its sizes measured into the store's own pending checks.
+pub(super) fn stored_in<S: ManifestDbs>(
+    store: &S,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<LoroDoc>> {
+    stored_to(store, txn, id, store.pending_scan_checks())
+}
+
+fn stored_to(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    pending: &PendingScanChecks,
+) -> Result<Option<LoroDoc>> {
     // A NOTE's text plane is its head's document.
-    let slot = super::documents::head_in(store, txn, id)?.0;
-    let doc = match store.port_document_row(txn, DocumentSlot::of(slot), DocumentRow::Snapshot)? {
+    let slot = DocumentSlot::of(super::documents::head_in(store, txn, id)?.0);
+    let updates = store.port_document_updates(txn, slot)?;
+    let doc = match store.port_document_row(txn, slot, DocumentRow::Snapshot)? {
         Some(bytes) => {
             let doc = LoroDoc::new();
             import_complete(&doc, &bytes)?;
             doc
         }
-        None if slot == id => birth()?,
+        None if updates.is_empty() => return Ok(None),
         None => return Err(invalid("NOTE head document missing")),
     };
-    for update in store.port_document_updates(txn, DocumentSlot::of(slot))? {
+    for update in updates {
         if !matches!(update.seq, Some(UpdateSeq::Sequence(_))) {
             return Err(invalid("invalid canonical document update key"));
         }
         import_complete(&doc, &update.bytes)?;
     }
     super::scan::measure_document(store, txn, id, &doc, pending)?;
-    Ok(doc)
+    Ok(Some(doc))
 }
 
 pub(crate) fn import_complete(doc: &LoroDoc, bytes: &[u8]) -> Result<()> {

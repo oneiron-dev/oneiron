@@ -20,6 +20,7 @@ use super::normalize_keys::{
     normalize_non_blank, normalize_thread_id, optional_section_text, section_references,
     thread_id_from_payload_url,
 };
+use super::page_text::{conversation_link_names, matches_any_name};
 use super::verified_send::receipt_error_code;
 use super::{
     DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS, LINKEDIN_CHANNEL,
@@ -93,7 +94,7 @@ impl LinkedInInboxSyncConfig {
         Ok(self)
     }
 
-    fn adapter(&self) -> Result<LinkedInMcpConnectorAdapter> {
+    pub(super) fn adapter(&self) -> Result<LinkedInMcpConnectorAdapter> {
         let adapter = LinkedInMcpConnectorAdapter::new(self.receiving_address_or_handle.clone())?;
         if let Some(session_ref) = &self.session_ref {
             adapter.with_session_ref(session_ref.clone())
@@ -320,6 +321,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
             let page = conversation_message_page(
                 &conversation_output,
                 Some(&pending.thread_id),
+                Some(&self.config.receiving_address_or_handle),
                 pending.handled_messages,
                 Some(MAX_LINKEDIN_CONVERSATION_MESSAGES_PER_POLL),
             )?;
@@ -343,7 +345,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
     /// Claims, routes and durably admits one batch of a thread's messages.
     fn admit_conversation_messages(
         &self,
-        messages: Vec<LinkedInConversationMessage>,
+        messages: Vec<(bool, LinkedInConversationMessage)>,
         now: u64,
         report: &mut LinkedInInboxSyncReport,
     ) -> Result<()> {
@@ -358,7 +360,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
             .backfill_skipped_messages
             .saturating_add(all_message_count.saturating_sub(events.len()));
 
-        for event in events {
+        for (incoming, event) in events {
             match claim_linkedin_inbox_message(self.vault, &self.config, &event.message)? {
                 LinkedInInboxClaim::Claimed => {}
                 LinkedInInboxClaim::Reclaimed => {
@@ -381,13 +383,30 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                 }
             };
             if receipt.outcome == InboundSurfaceRouteOutcome::Routed {
+                // Every message keeps its admission. Only positively incoming
+                // words become a body the reply responder can read.
+                let event_input = if incoming {
+                    match archive_linkedin_message(self.vault, &event, now) {
+                        Ok(payload_ref) => event.event_input.clone().with_payload_ref(payload_ref),
+                        Err(err) => {
+                            release_linkedin_inbox_message_claim(
+                                self.vault,
+                                &self.config,
+                                &event.message,
+                            )?;
+                            return Err(err);
+                        }
+                    }
+                } else {
+                    event.event_input.clone()
+                };
                 // The durable handoff commits before the seen marker: a
                 // crash between them leaves the claim, the next poll
                 // reclaims it, and the handoff's correlation id dedupes the
                 // second admission.
                 let admission = match self
                     .vault
-                    .enqueue_inbound_surface_event(event.event_input.clone(), now)
+                    .enqueue_inbound_surface_event(event_input.clone(), now)
                 {
                     Ok(admission) => admission,
                     Err(err) => {
@@ -409,7 +428,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                     self.vault,
                     &self.config,
                     &event.message,
-                    &event.event_input,
+                    &event_input,
                 )?;
                 report.new_messages = report.new_messages.saturating_add(1);
                 report.admitted.push(ack);
@@ -496,15 +515,19 @@ fn linkedin_tool_failure(tool: &'static str, err: &str) -> Error {
     }
 }
 
+/// Every message of a `get_conversation` output, in page order, with whether
+/// its sender is positively incoming to `seat_key`. Own and unattributed
+/// messages still keep their admission, but do not supply reply text.
 pub(super) fn conversation_messages_from_tool_output(
     output: &Value,
     fallback_thread_id: Option<&str>,
-) -> Result<Vec<LinkedInConversationMessage>> {
-    Ok(conversation_message_page(output, fallback_thread_id, 0, None)?.messages)
+    seat_key: Option<&str>,
+) -> Result<Vec<(bool, LinkedInConversationMessage)>> {
+    Ok(conversation_message_page(output, fallback_thread_id, seat_key, 0, None)?.messages)
 }
 
 struct LinkedInConversationPage {
-    messages: Vec<LinkedInConversationMessage>,
+    messages: Vec<(bool, LinkedInConversationMessage)>,
     handled: usize,
     has_more: bool,
 }
@@ -512,6 +535,7 @@ struct LinkedInConversationPage {
 fn conversation_message_page(
     output: &Value,
     fallback_thread_id: Option<&str>,
+    seat_key: Option<&str>,
     skipped: usize,
     limit: Option<usize>,
 ) -> Result<LinkedInConversationPage> {
@@ -532,10 +556,20 @@ fn conversation_message_page(
         },
     };
 
+    let (seat_names, other_names) = seat_key
+        .map(|seat| conversation_link_names(&payload, seat))
+        .unwrap_or_default();
     let mut messages = Vec::new();
     let mut emitted = 0usize;
     let mut has_more = false;
-    let mut emit = |message| {
+    let mut emit = |sender: Option<String>, message, structured| {
+        let incoming = seat_key
+            .zip(sender.as_deref())
+            .is_some_and(|(seat, sender)| {
+                !sender.eq_ignore_ascii_case(seat)
+                    && !matches_any_name(&seat_names, sender)
+                    && (structured || matches_any_name(&other_names, sender))
+            });
         emitted = emitted.saturating_add(1);
         if emitted <= skipped {
             return true;
@@ -544,16 +578,20 @@ fn conversation_message_page(
             has_more = true;
             return false;
         }
-        messages.push(message);
+        messages.push((incoming, message));
         true
     };
     let explicit = if let Some(message_values) = payload.get("messages").and_then(Value::as_array) {
-        explicit_conversation_messages(&thread_id, message_values, &mut emit)?
+        explicit_conversation_messages(&thread_id, message_values, |sender, message| {
+            emit(sender, message, true)
+        })?
     } else {
         false
     };
     if !explicit && let Some(conversation_text) = optional_section_text(&payload, "conversation")? {
-        fallback_conversation_messages(&thread_id, conversation_text, &mut emit)?;
+        fallback_conversation_messages(&thread_id, conversation_text, |sender, message| {
+            emit(sender, message, false)
+        })?;
     }
     let handled = skipped.min(emitted).saturating_add(messages.len());
     Ok(LinkedInConversationPage {
@@ -572,6 +610,26 @@ pub(super) fn message_in_backfill_window(
         return true;
     };
     occurred_at.saturating_add(backfill_window_secs) >= now
+}
+
+/// Keeps one LinkedIn message as the provider event its surface event
+/// names (FIX 12328): its thread, id, time and words, archived under the
+/// event's own id, read back by `Vault::read_provider_event_text` at
+/// `/text`. Returns the archive's ref. The same message is the same bytes,
+/// so a poll that reclaims it names the same version.
+fn archive_linkedin_message(
+    vault: &Vault,
+    event: &LinkedInConversationMessageEvent,
+    now: u64,
+) -> Result<String> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "thread_id": event.message.thread_id,
+        "message_id": event.message.message_id,
+        "occurred_at": event.message.occurred_at,
+        "text": event.message.text,
+    }))
+    .map_err(|err| Error::InvalidConfig(format!("LinkedIn message did not encode: {err}")))?;
+    vault.archive_provider_event(LINKEDIN_CHANNEL, &event.event_input.event_id, &body, now)
 }
 
 fn claim_linkedin_inbox_message(

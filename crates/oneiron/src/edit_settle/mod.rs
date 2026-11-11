@@ -99,6 +99,7 @@
 
 mod carry;
 mod codec;
+mod discarded_words;
 mod keys;
 mod organ_wait;
 mod pending;
@@ -118,6 +119,8 @@ pub use stranded::StrandedEditProposal;
 pub use undo::{KeepUndo, KeepUndoOutcome};
 
 pub(crate) use self::codec::archive_settlement_table;
+pub(crate) use self::discarded_words::discard_settle_payload_in_txn;
+pub use self::discarded_words::{DiscardedDeck, DiscardedSettleWords};
 pub use self::keys::{
     SETTLE_VERB_CLASS, SETTLED_ANCHOR_KEYS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
 };
@@ -146,6 +149,7 @@ pub(crate) fn purge_artifact_retention_in_txn(
     organ_wait::purge_artifact_in_txn(store, txn, artifact_id)
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

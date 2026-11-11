@@ -146,6 +146,17 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Exact append-time scope bytes; absence is preserved, not reconstructed.
+    pub(crate) fn gate_clone_retention_scope_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        decision: GateDecisionId,
+    ) -> Result<Option<Vec<u8>>> {
+        DECISION_SCOPE.get_bytes(self, txn, &decision)
+    }
+}
+
 /// [`Store::stamp_claim_gate_retention_context_in_txn`] through `room`, an
 /// off-record room's own session view (FIX 9967): the scope its claim names,
 /// beside the claim's decision and cached for the claim, in the room only.

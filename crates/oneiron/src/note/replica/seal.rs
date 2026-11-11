@@ -89,9 +89,9 @@ pub(in crate::note) fn install(
 }
 
 /// Refuses a replica write of `next` that moves a sealed NOTE: off its
-/// sealed head, or to other text, another title or a citation it did not
-/// hold. A write that only drops citations (an erasure's scrub) or replays
-/// the same state keeps the freeze.
+/// sealed head, or to other text, other editable fields (its title among
+/// them) or a citation it did not hold. A write that only drops citations
+/// (an erasure's scrub) or replays the same state keeps the freeze.
 ///
 /// # Errors
 ///
@@ -114,7 +114,7 @@ pub(in crate::note) fn refuse_frozen_motion(
     )?;
     let (before, after) = (held.view()?, next.view()?);
     if before.markdown != after.markdown
-        || before.title != after.title
+        || held.metadata()? != next.metadata()?
         || after.pins.iter().any(|pin| !before.pins.contains(pin))
     {
         return Err(frozen());

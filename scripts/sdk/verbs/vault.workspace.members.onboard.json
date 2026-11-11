@@ -1,0 +1,16 @@
+{
+  "name": "vault.workspace.members.onboard",
+  "description": "A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate.",
+  "input": "crate::task_verb::sdk::WorkspaceMemberOnboardRequest",
+  "output": "crate::workspace_roster::MemberOnboardingOutcome",
+  "call": "crate::task_verb::sdk::onboard_workspace_member_as(memory.vault(), &memory.embedded_owner(\"vault.workspace.members.onboard\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "shared_person"
+}

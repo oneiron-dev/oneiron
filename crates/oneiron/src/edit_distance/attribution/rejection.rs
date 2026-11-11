@@ -31,7 +31,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning_setting::{ATTRIBUTION_UNCLEAR_FLOOR, setting_value_in_txn};
 use crate::skill_attribution::{
-    AttributionLane, UnclearAttribution, delete_unclear_in_txn, put_unclear_in_txn,
+    AttributionLane, UnclearAttribution, UnclearContext, delete_unclear_in_txn, put_unclear_in_txn,
 };
 
 /// The edit mass a rejection carries: the decider discarded the whole
@@ -249,6 +249,7 @@ fn judge_rejection_cause_in_txn(
     // re-judgment that left nothing unclear withdraws the note the first
     // pass filed.
     if !split.unclear.is_empty() {
+        let rejected = rejected_claim_in_txn(vault, wtxn, &judgment.receipt_id)?;
         put_unclear_in_txn(
             vault,
             wtxn,
@@ -257,6 +258,21 @@ fn judge_rejection_cause_in_txn(
                 reference: judgment.receipt_id.clone(),
                 evidence_receipts: judgment.evidence_receipts.clone(),
                 notes: split.unclear.clone(),
+                // What the rejection truthfully knows (FIX 7824): no attempt
+                // or task type; the declined claim and the world its gate
+                // decision froze it in, where that decision stands (FIX 22064).
+                context: UnclearContext {
+                    actor: judgment.actor,
+                    skill: judgment.skill,
+                    scope: Some(judgment.scope.clone()),
+                    project: judgment.project,
+                    world: rejected.and_then(|(_, world)| world),
+                    type_ref: None,
+                    attempt_receipt: None,
+                    judge_revision: judgment.judge.clone(),
+                    judge_model: judgment.judge_model.clone(),
+                    sources: rejected.map(|(claim, _)| claim).into_iter().collect(),
+                },
                 at: judgment.at,
             },
         )?;
@@ -270,4 +286,47 @@ fn judge_rejection_cause_in_txn(
     }
     charge_judgment_in_txn(vault, wtxn, &judgment)?;
     Ok(Some(judgment))
+}
+
+/// The claim the rejection under gate receipt `receipt` declined, and the one
+/// world the gate decision froze that claim's read position in, base reality
+/// explicit (FIX 22064). `None` where the receipt names no gate decision this
+/// vault holds about a claim; the world is `None` where that position names
+/// no single world.
+fn rejected_claim_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt: &str,
+) -> Result<Option<(EntityId, Option<EntityId>)>> {
+    let Some(decision) = receipt
+        .strip_prefix("gate:")
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+    else {
+        return Ok(None);
+    };
+    let Some(record) = vault.store.gate_decision_in_txn(
+        txn,
+        crate::store::GateDecisionId::from_bytes(*decision.as_bytes()),
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(claim) = record.claim_id else {
+        return Ok(None);
+    };
+    let claim = EntityId::from_bytes(claim)?;
+    let world = record
+        .context
+        .read
+        .iter()
+        .filter(|read| read.record == Some(claim))
+        .filter_map(|read| read.position.as_ref())
+        .filter(|position| position.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        .find_map(|position| match &position.scope.worlds {
+            crate::federation::ScopeAxis::Some(worlds) if worlds.len() == 1 => {
+                worlds.first().map(|world| world.0)
+            }
+            _ => None,
+        });
+    Ok(Some((claim, world)))
 }

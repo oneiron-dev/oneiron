@@ -4,10 +4,14 @@
 //! upgrade, its slip and machine proofs are the bytes they are on TCP. Each
 //! dial asks its resolver which home it targets, so a dialer that follows
 //! the elected home dials it from the next attempt on (FIX 3131).
+//!
+//! While the home is down, a [`MeshPeerDialer`] on the same transport dials
+//! this device's other machines instead (FIX 4748): set it as
+//! `SyncClientConfig::peer_dialer`.
 
 use std::sync::Arc;
 
-use oneiron::sync::{SyncDial, SyncDialer, SyncStream};
+use oneiron::sync::{SyncDial, SyncDialer, SyncPeerDialer, SyncStream};
 
 use crate::{MachineId, MeshError, MeshTransport, SYNC_ALPN};
 
@@ -77,17 +81,92 @@ fn io_error(error: MeshError) -> std::io::Error {
     std::io::Error::other(error.to_string())
 }
 
+/// Dials `machine` by its roster key on [`SYNC_ALPN`] over `transport` and
+/// opens the one stream a sync socket rides.
+fn dial_machine(transport: &dyn MeshTransport, machine: MachineId) -> SyncDial<'_> {
+    Box::pin(async move {
+        let connection = transport.dial(machine, SYNC_ALPN).await.map_err(io_error)?;
+        let stream = connection.open_duplex().await.map_err(io_error)?;
+        Ok(Box::new(stream) as Box<dyn SyncStream>)
+    })
+}
+
 impl SyncDialer for MeshSyncDialer {
     fn dial(&self) -> SyncDial<'_> {
-        Box::pin(async move {
-            let home = (self.home)();
-            let connection = self
-                .transport
-                .dial(home, SYNC_ALPN)
-                .await
-                .map_err(io_error)?;
-            let stream = connection.open_duplex().await.map_err(io_error)?;
-            Ok(Box::new(stream) as Box<dyn SyncStream>)
-        })
+        dial_machine(self.transport.as_ref(), (self.home)())
     }
+}
+
+/// FIX 4748: the carriers to this device's other machines while its home is
+/// down, on the transport its home dials ride. Each [`SyncPeerDialer::peers`]
+/// asks again which machines may serve
+/// ([`oneiron::sync::peer_route::choose_sync_peer`] on [`SYNC_ALPN`]), less
+/// this machine and the home the resolver names now, so a grant or a mark
+/// that changed counts at the next attempt. The transport's policy admits
+/// each peer as it admits the home: build it with
+/// [`crate::PairedMachineGrants`].
+pub struct MeshPeerDialer {
+    transport: Arc<dyn MeshTransport>,
+    vault: Arc<oneiron::Vault>,
+    local: MachineId,
+    home: HomeResolver,
+}
+
+impl std::fmt::Debug for MeshPeerDialer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeshPeerDialer")
+            .field("local", &self.local)
+            .finish_non_exhaustive()
+    }
+}
+
+impl MeshPeerDialer {
+    /// Dials `vault`'s other machines but `local`, this machine, and the
+    /// home `home` resolves at each listing.
+    pub fn new(
+        transport: Arc<dyn MeshTransport>,
+        vault: Arc<oneiron::Vault>,
+        local: MachineId,
+        home: HomeResolver,
+    ) -> Self {
+        Self {
+            transport,
+            vault,
+            local,
+            home,
+        }
+    }
+}
+
+impl SyncPeerDialer for MeshPeerDialer {
+    fn peers(&self) -> Vec<MachineId> {
+        oneiron::sync::peer_route::choose_sync_peer(
+            &self.vault,
+            SYNC_ALPN,
+            self.local,
+            (self.home)(),
+        )
+    }
+
+    fn dial_peer(&self, peer: MachineId) -> SyncDial<'_> {
+        dial_machine(self.transport.as_ref(), peer)
+    }
+}
+
+/// Routes a bearer option-link call to the install that issued it, through
+/// the existing roster and transport policy. The MACHINE is a locator only;
+/// the original Vault bearer methods decide the call and keep their result.
+pub async fn request_ask_option_link(
+    vault: Arc<oneiron::Vault>,
+    transport: Arc<dyn MeshTransport>,
+    config: &oneiron::sync::SyncClientConfig,
+    admitting_machine: MachineId,
+    request: oneiron::sync::ask_option_link::AskOptionLinkRequest,
+) -> Result<
+    Option<oneiron::sync::ask_option_link::AskOptionLinkReply>,
+    oneiron::sync::transport::TransportError,
+> {
+    let mut origin = config.clone();
+    origin.mesh_dialer = Some(Arc::new(MeshSyncDialer::new(transport, admitting_machine)));
+    oneiron::sync::client::request_ask_option_link(vault, &origin, admitting_machine, request).await
 }

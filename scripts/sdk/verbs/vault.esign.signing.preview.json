@@ -1,0 +1,17 @@
+{
+  "name": "vault.esign.signing.preview",
+  "description": "The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields.",
+  "input": "crate::blob_artifact::esign::EsignSigningPreviewRequest",
+  "output": "crate::blob_artifact::esign::EsignSigningPreviewView",
+  "call": "memory.esign_signing_preview(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "openapi": true
+}

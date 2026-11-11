@@ -1,0 +1,14 @@
+{
+  "name": "vault.claims.review",
+  "description": "The owner or explicitly granted holder reviews one readable proposed claim: its content-bound review_id, opener and tray row. A native claim-review Grant grants no read access.",
+  "input": "crate::memory::ClaimProposalReviewRequest",
+  "output": "crate::memory::ClaimProposalReview",
+  "call": "memory.claim_review(&input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "claim_settler"
+}

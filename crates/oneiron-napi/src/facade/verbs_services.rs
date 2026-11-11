@@ -72,9 +72,13 @@ impl ActorScopedVault {
     ) -> napi::Result<NapiEntityRefReceipt> {
         let engine_input = structural_put_to_engine(&input).map_err(caller_input_error)?;
         let memory = self.facade()?;
-        let receipt = typed_row(&memory, "vault.structural.put", engine_input, |input| {
-            memory.put_structural(&input)
-        })
+        let receipt = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.structural.put",
+            engine_input,
+            |input| memory.put_structural(&input),
+        )
         .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }
@@ -96,9 +100,13 @@ impl ActorScopedVault {
                 .map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
-        let receipt = typed_row(&memory, "vault.habits.checkin", engine_input, |input| {
-            memory.put_habit_checkin(&input)
-        })
+        let receipt = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.habits.checkin",
+            engine_input,
+            |input| memory.put_habit_checkin(&input),
+        )
         .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }
@@ -123,9 +131,13 @@ impl ActorScopedVault {
                 .map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
-        let receipt = typed_row(&memory, "vault.claims.admit", engine_input, |input| {
-            memory.admit_imported_claim(&input)
-        })
+        let receipt = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.claims.admit",
+            engine_input,
+            |input| memory.admit_imported_claim(&input),
+        )
         .map_err(facade_error)?;
         Ok(commit_receipt_from_engine(receipt))
     }
@@ -146,9 +158,13 @@ impl ActorScopedVault {
                 .map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
-        let receipt = typed_row(&memory, "vault.artifacts.put", engine_input, |input| {
-            memory.put_blob_artifact(&input)
-        })
+        let receipt = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.artifacts.put",
+            engine_input,
+            |input| memory.put_blob_artifact(&input),
+        )
         .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }
@@ -173,19 +189,25 @@ impl ActorScopedVault {
             learned_at: ts_opt_to_engine(learned_at, "learned_at").map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
-        let outcome = typed_row(&memory, "vault.artifacts.append", request, |input| {
-            // Content a hook rewrote is decoded again, under the row's checks.
-            if input.content_base64 != bytes_base64 {
-                return oneiron::task_verb::sdk::vault_artifacts_append(&memory, input);
-            }
-            memory.append_blob_version(
-                &input.artifact_ref,
-                &bytes,
-                input.run_ref.as_deref(),
-                input.occurred_at,
-                input.learned_at,
-            )
-        })
+        let outcome = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.artifacts.append",
+            request,
+            |input| {
+                // Content a hook rewrote is decoded again, under the row's checks.
+                if input.content_base64 != bytes_base64 {
+                    return oneiron::task_verb::sdk::vault_artifacts_append(&memory, input);
+                }
+                memory.append_blob_version(
+                    &input.artifact_ref,
+                    &bytes,
+                    input.run_ref.as_deref(),
+                    input.occurred_at,
+                    input.learned_at,
+                )
+            },
+        )
         .map_err(facade_error)?;
         Ok(match outcome {
             oneiron::memory::BlobVersionAppendOutcome::Landed(view) => {
@@ -216,17 +238,25 @@ impl ActorScopedVault {
     }
 
     /// BM25 text query over the engine index, with the read's receipt. The
-    /// standard N-API query (8 KiB) and result (1,000) caps apply.
+    /// standard N-API result (1,000) cap applies.
     #[napi]
     pub fn query_bm25(&self, query: String, limit: u32) -> napi::Result<NapiLexicalHits> {
-        crate::validate_query_len(&query).map_err(caller_input_error)?;
         let limit = crate::parse_search_limit(limit).map_err(caller_input_error)?;
         let memory = self.facade()?;
         let hits = typed_row(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.search.bm25",
-            QueryBm25Request { query, limit },
-            |input| memory.query_bm25(&input.query, input.limit),
+            QueryBm25Request {
+                query,
+                limit,
+                filter: None,
+            },
+            |input| {
+                memory
+                    .with_read_filter(input.filter.as_ref())
+                    .query_bm25(&input.query, input.limit)
+            },
         )
         .map_err(facade_error)?;
         Ok(NapiLexicalHits {
@@ -263,11 +293,20 @@ impl ActorScopedVault {
                     .map_err(caller_input_error)?,
                 limit: opts.limit as usize,
             },
+            filter: None,
         };
         let memory = self.facade()?;
-        let hits = typed_row(&memory, "vault.neighbors", request, |input| {
-            memory.neighbors(&input.entity_ref, &input.opts)
-        })
+        let hits = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.neighbors",
+            request,
+            |input| {
+                memory
+                    .with_read_filter(input.filter.as_ref())
+                    .neighbors(&input.entity_ref, &input.opts)
+            },
+        )
         .map_err(facade_error)?;
         Ok(NapiNeighborHits {
             value: hits
@@ -309,7 +348,6 @@ impl ActorScopedVault {
         token_budget: Option<f64>,
         reader_agent_ref: Option<String>,
     ) -> napi::Result<NapiMemoryPack> {
-        crate::validate_query_len(&query).map_err(caller_input_error)?;
         let limit = crate::parse_search_limit(limit).map_err(caller_input_error)?;
         let effort = RecallEffort::parse(&effort).ok_or_else(|| {
             caller_input_error(format!(
@@ -337,11 +375,16 @@ impl ActorScopedVault {
             media: None,
             query_affect: None,
             telemetry: None,
+            filter: None,
         };
         let memory = self.facade()?;
-        let pack = typed_row(&memory, "vault.recall", request, |request| {
-            oneiron::task_verb::sdk::recall_with_vector(&memory, request, |_| None)
-        })
+        let pack = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.recall",
+            request,
+            |request| oneiron::task_verb::sdk::recall_with_vector(&memory, request, |_| None),
+        )
         .map_err(facade_error)?;
         memory_pack_from_engine(pack).map_err(boundary_error)
     }
@@ -415,6 +458,7 @@ impl ActorScopedVault {
         let memory = self.facade()?;
         let outcomes = typed_row_validated(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.claims.seed",
             CommitRequest {
                 claims: engine_claims,
@@ -460,10 +504,16 @@ impl ActorScopedVault {
             counterparty_class: None,
         };
         let memory = self.facade()?;
-        let receipt = typed_row(&memory, "connector.outbound.schedule", request, |input| {
-            let engine_draft = OutboundDraftInput::from(input);
-            memory.schedule_outbound_with_context(&engine_draft, &schedule_context)
-        })
+        let receipt = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "connector.outbound.schedule",
+            request,
+            |input| {
+                let engine_draft = OutboundDraftInput::from(input);
+                memory.schedule_outbound_with_context(&engine_draft, &schedule_context)
+            },
+        )
         .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
             intent_ref: receipt.intent_ref,
@@ -483,8 +533,12 @@ impl ActorScopedVault {
         let memory = self.facade()?;
         let read = typed_row(
             &memory,
+            &oneiron::verbs::VERB_TABLE,
             "vault.calendar.read",
-            CalendarReadRequest { event_ref },
+            CalendarReadRequest {
+                event_ref,
+                filter: None,
+            },
             |input| memory.calendar_read(&input),
         )
         .map_err(facade_error)?;
@@ -514,11 +568,16 @@ impl ActorScopedVault {
                 }),
             text: request.text,
             limit: request.limit,
+            filter: None,
         };
         let memory = self.facade()?;
-        let events = typed_row(&memory, "vault.calendar.search", engine_request, |input| {
-            memory.calendar_search(&input)
-        })
+        let events = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.calendar.search",
+            engine_request,
+            |input| memory.calendar_search(&input),
+        )
         .map_err(facade_error)?;
         Ok(NapiCalendarEvents {
             value: events
@@ -549,9 +608,13 @@ impl ActorScopedVault {
             },
         };
         let memory = self.facade()?;
-        let busy = typed_row(&memory, "vault.calendar.freebusy", request, |input| {
-            memory.calendar_freebusy(&input.calendars, input.range.to_time_range())
-        })
+        let busy = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.calendar.freebusy",
+            request,
+            |input| memory.calendar_freebusy(&input.calendars, input.range.to_time_range()),
+        )
         .map_err(facade_error)?;
         Ok(NapiCalendarFreebusy {
             value: busy
@@ -591,9 +654,13 @@ impl ActorScopedVault {
             mention: mention_to_engine(input.mention).map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
-        let receipt = typed_row(&memory, "calendar.invite", request, |input| {
-            memory.calendar_invite(&input)
-        })
+        let receipt = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "calendar.invite",
+            request,
+            |input| memory.calendar_invite(&input),
+        )
         .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
             intent_ref: receipt.intent_ref,
@@ -619,9 +686,13 @@ impl ActorScopedVault {
             version: ts_to_engine(version, "version").map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
-        let content = typed_row(&memory, "vault.artifacts.read", request, |input| {
-            oneiron::task_verb::sdk::vault_artifacts_read(&memory, input)
-        })
+        let content = typed_row(
+            &memory,
+            &oneiron::verbs::VERB_TABLE,
+            "vault.artifacts.read",
+            request,
+            |input| oneiron::task_verb::sdk::vault_artifacts_read(&memory, input),
+        )
         .map_err(facade_error)?;
         Ok(content.map(|content| content.content_base64))
     }

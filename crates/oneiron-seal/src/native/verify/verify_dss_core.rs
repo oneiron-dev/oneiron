@@ -7,7 +7,10 @@ use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
 use crate::native::held_bytes;
 
 use super::super::pdf;
-use super::verify_revocation::{crl_entry_valid, issued_by, ocsp_entry_valid};
+use super::verify_chain_gates::issuer_permits_crl_sign;
+use super::verify_revocation::{
+    EvidenceRejection, UnknownStatus, crl_entry_valid, issued_by, ocsp_entry_valid,
+};
 use super::verify_sig_pipeline::Checks;
 
 /// Validate the DSS revision when the catalog carries `/DSS` (§7.5/§7.7):
@@ -15,17 +18,22 @@ use super::verify_sig_pipeline::Checks;
 /// validate — CRLs against an embedded/anchored issuer cert with a fresh
 /// thisUpdate/nextUpdate window and no in-scope serial on its revoked list,
 /// OCSP responses with signature, responder authorization, cert-serial
-/// binding and freshness; only `good` supplies coverage, while authenticated
-/// `unknown` is unresolved. Optional `/VRI` does not preempt these global
+/// binding and freshness; only `good` supplies coverage, while an
+/// authenticated `unknown` about a covered non-anchor certificate is
+/// unresolved. Optional `/VRI` does not preempt these global
 /// arrays. The material must also
 /// speak about the document's covered CMS signer/TSA chains: every covered
-/// certificate must appear in `/Certs` or be a trust anchor. A present DSS
-/// with no arrays at all is evidence-free and fails. Present-but-invalid
-/// evidence fails ValidationMaterial; it is never AbsentAllowed. A trailer
-/// `/Root` that cannot be read as a catalog (e.g. a spec-invalid direct
-/// dictionary) is present-but-unreadable, not absent: it classifies
-/// Invalid so a `/DSS` hidden inside it cannot dodge the failed-evidence
-/// classification.
+/// certificate must appear in `/Certs` or be a trust anchor. Anyone holding
+/// the signed PDF can append a DSS, so presented material fails
+/// ValidationMaterial only when it is genuine and says no (stale, scoped,
+/// revoked); forged or unverifiable material is NotRun with
+/// ValidationMaterialPossibleTampering, and material that claims nothing
+/// about the covered certificates (no arrays, empty arrays, a covered
+/// certificate missing) is NotRun with ValidationMaterialUnavailable (lead
+/// ruling F). None of these is ever AbsentAllowed: a trailer `/Root` that
+/// cannot be read as a catalog (e.g. a spec-invalid direct dictionary) is
+/// present-but-unreadable, not absent, so a `/DSS` hidden inside it reports
+/// possible tampering.
 ///
 /// Each DSS stream decodes whole, its memory reserved first under the
 /// verification's `memory` ledger (FIX 7654); the material is read whole
@@ -40,9 +48,19 @@ pub(super) fn verify_dss(
     at_unix: u64,
     memory: &MemoryLedger,
     checks: &mut Checks<'_>,
+    limits: &SealResourceLimits,
 ) -> Result<usize, SealMemoryRefusal> {
     let mut decoded = 0;
-    check_dss(doc, anchors, covered, at_unix, memory, &mut decoded, checks)?;
+    check_dss(
+        doc,
+        anchors,
+        covered,
+        at_unix,
+        memory,
+        &mut decoded,
+        checks,
+        limits,
+    )?;
     Ok(decoded)
 }
 
@@ -55,15 +73,17 @@ fn check_dss(
     memory: &MemoryLedger,
     decoded: &mut usize,
     checks: &mut Checks<'_>,
+    limits: &SealResourceLimits,
 ) -> Result<(), SealMemoryRefusal> {
-    let catalog = match pdf::catalog(doc) {
+    let catalog = match pdf::catalog(doc, limits)? {
         Some(c) => c,
         None => {
             if doc.trailer.has(b"Root") {
-                checks.record(
+                // Malformed presented material (lead ruling F): never
+                // absent, never a failure.
+                checks.not_run_with_reason(
                     VerifyCheckKind::ValidationMaterial,
-                    false,
-                    VerifyFindingCode::ValidationMaterialInvalid,
+                    Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
                 )?;
             } else {
                 checks.absent(VerifyCheckKind::ValidationMaterial)?;
@@ -75,16 +95,16 @@ fn check_dss(
         checks.absent(VerifyCheckKind::ValidationMaterial)?;
         return Ok(());
     };
-    let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok());
+    let dss = pdf::resolve(doc, dss_obj, limits)?.and_then(|o| o.as_dict().ok());
     let Some(dss) = dss else {
-        checks.record(
+        // Malformed presented material (lead ruling F).
+        checks.not_run_with_reason(
             VerifyCheckKind::ValidationMaterial,
-            false,
-            VerifyFindingCode::ValidationMaterialInvalid,
+            Some(VerifyFindingCode::ValidationMaterialPossibleTampering),
         )?;
         return Ok(());
     };
-    match dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded)? {
+    match dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded, limits)? {
         MaterialValidity::Valid => checks.record(
             VerifyCheckKind::ValidationMaterial,
             true,
@@ -116,13 +136,14 @@ fn dss_material_valid(
     at_unix: u64,
     memory: &MemoryLedger,
     decoded: &mut usize,
+    limits: &SealResourceLimits,
 ) -> Result<MaterialValidity, SealMemoryRefusal> {
     // Each entry decodes whole, its memory reserved first; the total across
     // all three arrays is counted, never capped, so material past the old
     // shared budget is read whole rather than called malformed.
-    let certs = dss_array(doc, dss, b"Certs", memory, decoded)?;
-    let crls = dss_array(doc, dss, b"CRLs", memory, decoded)?;
-    let ocsps = dss_array(doc, dss, b"OCSPs", memory, decoded)?;
+    let certs = dss_array(doc, dss, b"Certs", memory, decoded, limits)?;
+    let crls = dss_array(doc, dss, b"CRLs", memory, decoded, limits)?;
+    let ocsps = dss_array(doc, dss, b"OCSPs", memory, decoded, limits)?;
     material_valid(certs, crls, ocsps, anchors, covered, at_unix, memory)
 }
 
@@ -138,105 +159,201 @@ fn material_valid(
     at_unix: u64,
     memory: &MemoryLedger,
 ) -> Result<MaterialValidity, SealMemoryRefusal> {
-    // A present DSS with all arrays absent is evidence-free: it must not
-    // inflate a B-T document into B-LT.
-    if matches!(certs, DssArray::Absent)
-        && matches!(crls, DssArray::Absent)
-        && matches!(ocsps, DssArray::Absent)
-    {
-        return Ok(MaterialValidity::Invalid);
+    // Anyone holding the signed PDF can append a DSS without breaking its
+    // signatures, so presented material never turns the verdict into failed
+    // unless it is genuine (lead ruling F; Engine reading 07:02, call Q-A =
+    // C, 07:07). Material that claims nothing about the signer's
+    // certificates is missing coverage. Forged or unverifiable material is
+    // discarded and noted in `tampering`: where the result would otherwise
+    // be unresolved, it is possible tampering. Genuine material that cannot
+    // be used (stale, scoped) or that says a certificate is revoked fails,
+    // but only when it is about the covered chains (Engine call Q-C = A):
+    // about any other certificate it claims nothing.
+    let empty = |array: &DssArray| match array {
+        DssArray::Absent => true,
+        DssArray::Malformed => false,
+        DssArray::Entries(entries) => entries.is_empty(),
+    };
+    if empty(&certs) && empty(&crls) && empty(&ocsps) {
+        // Evidence-free: it can never inflate a B-T document into B-LT.
+        return Ok(MaterialValidity::Unresolved(
+            VerifyFindingCode::ValidationMaterialUnavailable,
+        ));
     }
-    // /Certs first: CRL and OCSP issuer lookups draw from it. A
-    // present-but-empty array breaks profile completeness.
+    let mut tampering = false;
+    // /Certs first: CRL and OCSP issuer lookups draw from it.
     let embedded: Vec<EmbeddedCert> = match certs {
         DssArray::Absent => Vec::new(),
-        DssArray::Malformed => return Ok(MaterialValidity::Invalid),
+        DssArray::Malformed => {
+            tampering = true;
+            Vec::new()
+        }
         DssArray::Entries(entries) => {
-            if entries.is_empty() {
-                return Ok(MaterialValidity::Invalid);
-            }
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
-                let Some(c) = EmbeddedCert::admitted(e, memory)? else {
-                    return Ok(MaterialValidity::Invalid);
-                };
-                v.push(c);
+                match EmbeddedCert::admitted(e, memory)? {
+                    Some(c) => v.push(c),
+                    None => tampering = true,
+                }
             }
             v
         }
     };
     // Binding (§7.5 step 3): the validation set (embedded + anchors) must
     // include every certificate of the CMS signer/TSA chains this report
-    // covers; unrelated /Certs must not authenticate the material.
+    // covers; unrelated /Certs must not authenticate the material. A
+    // covered certificate missing from both leaves the material incomplete.
     let bound = covered.iter().all(|c| {
         embedded
             .iter()
             .chain(anchors.iter())
             .any(|e| e.der == c.der)
     });
-    if !bound {
-        return Ok(MaterialValidity::Invalid);
-    }
-    // Every CRL entry must be valid; collect the key-bound issuer certs the
-    // valid CRLs authenticated under so the coverage rule below can match
-    // them against each covered certificate's ACTUAL issuer (name+key).
+    // Every usable CRL's key-bound signer certificate, so the coverage rule
+    // below can ask whether that signer has revocation authority over each
+    // covered certificate. A CRL that claims nothing about the covered
+    // chains is usable without its scope and freshness judged, so coverage
+    // counts only a signer whose CRL was judged for that certificate.
     let crl_issuers: Vec<&EmbeddedCert> = match crls {
         DssArray::Absent => Vec::new(),
-        DssArray::Malformed => return Ok(MaterialValidity::Invalid),
+        DssArray::Malformed => {
+            tampering = true;
+            Vec::new()
+        }
         DssArray::Entries(entries) => {
-            if entries.is_empty() {
-                return Ok(MaterialValidity::Invalid);
-            }
             memory.admit_len::<&EmbeddedCert>(entries.len())?;
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
-                let Some(issuer) =
-                    crl_entry_valid(e, &embedded, anchors, covered, at_unix, memory)?
-                else {
-                    return Ok(MaterialValidity::Invalid);
-                };
-                v.push(issuer);
+                match crl_entry_valid(e, &embedded, anchors, covered, at_unix, memory)? {
+                    Ok(issuer) => v.push(issuer),
+                    Err(EvidenceRejection::Unverifiable) => tampering = true,
+                    Err(EvidenceRejection::Unusable | EvidenceRejection::Revoked) => {
+                        return Ok(MaterialValidity::Invalid);
+                    }
+                }
             }
             v
         }
     };
-    // Every OCSP entry must be valid; collect the DERs of the target
-    // certificates the valid responses bind to with a `good` status, read
-    // in place.
+    // Every authentic OCSP response: the DERs of the target certificates it
+    // binds to with a `good` status, and its `unknown` statuses, read in
+    // place. What it says no to fails the material only when it names a
+    // covered non-anchor certificate (Engine call Q-C = A); about any other
+    // certificate it claims nothing.
     let mut ocsp_targets: Vec<&[u8]> = Vec::new();
-    let mut ocsp_unknown = false;
+    let mut ocsp_unknown_statuses: Vec<UnknownStatus<'_>> = Vec::new();
     match ocsps {
         DssArray::Absent => {}
-        DssArray::Malformed => return Ok(MaterialValidity::Invalid),
+        DssArray::Malformed => tampering = true,
         DssArray::Entries(entries) => {
-            if entries.is_empty() {
-                return Ok(MaterialValidity::Invalid);
-            }
             for e in &entries {
-                let Some(evidence) = ocsp_entry_valid(e, &embedded, anchors, at_unix, memory)?
-                else {
-                    return Ok(MaterialValidity::Invalid);
-                };
-                memory.admit_len::<&[u8]>(evidence.good_targets.len())?;
-                ocsp_unknown |= evidence.unknown;
-                ocsp_targets.extend(evidence.good_targets);
+                match ocsp_entry_valid(e, &embedded, anchors, at_unix, memory)? {
+                    Ok(evidence) => {
+                        for claim in &evidence.negative {
+                            if names_covered_certificate(
+                                claim.target,
+                                claim.issuer,
+                                anchors,
+                                covered,
+                                memory,
+                            )? {
+                                return Ok(MaterialValidity::Invalid);
+                            }
+                        }
+                        memory.admit_len::<&[u8]>(evidence.good_targets.len())?;
+                        memory.admit_len::<UnknownStatus<'_>>(evidence.unknown_statuses.len())?;
+                        ocsp_targets.extend(evidence.good_targets);
+                        ocsp_unknown_statuses.extend(evidence.unknown_statuses);
+                    }
+                    Err(EvidenceRejection::Unverifiable) => tampering = true,
+                    Err(EvidenceRejection::Unusable | EvidenceRejection::Revoked) => {
+                        return Ok(MaterialValidity::Invalid);
+                    }
+                }
             }
         }
     }
     // Revocation coverage (§7.5 steps 2-3): every covered NON-ANCHOR chain
     // certificate needs at least one valid evidence item speaking ABOUT it
-    // — a CRL whose key-bound issuer is that certificate's ACTUAL issuer
-    // (the covered cert's own signature verifies under the CRL-signing
-    // key) or an OCSP SingleResponse bound to it with `cert_status` good.
+    // — a CRL under that certificate's issuer name whose signer has
+    // revocation authority over it (crl_signer_authorized: the issuer's own
+    // key, or a key the issuer certified with cRLSign, RFC 5280 §5.1.1.3,
+    // §5.2.1) or an OCSP SingleResponse bound to it with `cert_status` good.
+    // The name match is what makes crl_entry_valid have judged that CRL's
+    // scope, freshness and listing for this certificate.
     // Anchor certificates ride anchor trust and need no coverage. A
     // cert-only DSS or otherwise insufficient valid coverage is unresolved,
-    // never a profile pass. Invalid evidence has already failed above.
-    let covered_ok = covered.iter().all(|c| {
-        if anchors.iter().any(|a| a.der == c.der) {
-            return true;
+    // never a profile pass. Genuine invalid evidence has already failed
+    // above. An authenticated `unknown` counts only when it names a covered
+    // non-anchor certificate, one in a signer or TSA chain this report
+    // covers. An `unknown` about any other certificate says nothing about
+    // the chain, and material unrelated to the chain never changes a genuine
+    // result (EN 319 102-1 §5.1.3 and §5.2.6.4 step 4). A CertID names a
+    // certificate by issuer and serial number, and binds to the first
+    // certificate that matches it; so an `unknown` counts for every covered
+    // certificate with its serial that its issuer's key signed, whichever
+    // certificate it bound to (a second encoding of the leaf, or a second
+    // certificate the issuer gave the same serial).
+    let mut covered_ok = bound;
+    let mut ocsp_unknown = false;
+    for cert in covered {
+        if anchors.iter().any(|anchor| anchor.der == cert.der) {
+            continue;
         }
-        crl_issuers.iter().any(|i| issued_by(c, i)) || ocsp_targets.contains(&c.der.as_slice())
-    });
+        if !ocsp_unknown {
+            for status in &ocsp_unknown_statuses {
+                if status.target.cert.tbs_certificate.serial_number
+                    == cert.cert.tbs_certificate.serial_number
+                    && issued_by(cert, status.issuer, memory)?
+                {
+                    ocsp_unknown = true;
+                    break;
+                }
+            }
+        }
+        let mut crl_covered = false;
+        for issuer in &crl_issuers {
+            if cert.cert.tbs_certificate.issuer == issuer.cert.tbs_certificate.subject
+                && crl_signer_authorized(cert, issuer, &embedded, anchors, memory)?
+            {
+                crl_covered = true;
+                break;
+            }
+        }
+        if !crl_covered && !ocsp_targets.contains(&cert.der.as_slice()) {
+            covered_ok = false;
+        }
+    }
+    // Evidence authenticated by a same-subject/different-key shadow of a
+    // covered certificate's issuer is caught here: a CRL whose signer names
+    // the issuer's subject, did not sign the certificate, and holds a key no
+    // trust anchor vouches for is forged material about it, never merely
+    // unavailable (#5937 kept missing evidence unresolved). Anyone holding
+    // the signed PDF can append a DSS, so forged presented material cannot
+    // turn the verdict into failed: it is NotRun with the sub-indication
+    // ValidationMaterialPossibleTampering, which rolls up to indeterminate
+    // and is always a reason (lead ruling F; EN 319 102-1 discards unusable
+    // revocation data). It takes precedence over every other unresolved
+    // result; beside complete genuine coverage it is disregarded.
+    if ocsp_unknown || !covered_ok {
+        if tampering {
+            return Ok(MaterialValidity::Unresolved(
+                VerifyFindingCode::ValidationMaterialPossibleTampering,
+            ));
+        }
+        for cert in covered {
+            if anchors.iter().any(|anchor| anchor.der == cert.der) {
+                continue;
+            }
+            for signer in &crl_issuers {
+                if crl_signer_shadows(cert, signer, &embedded, anchors, covered, memory)? {
+                    return Ok(MaterialValidity::Unresolved(
+                        VerifyFindingCode::ValidationMaterialPossibleTampering,
+                    ));
+                }
+            }
+        }
+    }
     if ocsp_unknown {
         return Ok(MaterialValidity::Unresolved(
             VerifyFindingCode::RevocationStatusUnknown,
@@ -248,6 +365,160 @@ fn material_valid(
         ));
     }
     Ok(MaterialValidity::Valid)
+}
+
+/// Whether an OCSP CertID that bound `target` under `issuer` names a
+/// covered non-anchor certificate: one with `target`'s serial that
+/// `issuer`'s key signed. A CertID names a certificate by issuer and serial
+/// number, and binds to the first certificate that matches it, so a second
+/// encoding of a covered certificate still names it.
+fn names_covered_certificate(
+    target: &EmbeddedCert,
+    issuer: &EmbeddedCert,
+    anchors: &[EmbeddedCert],
+    covered: &[EmbeddedCert],
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
+    for cert in covered {
+        if anchors.iter().any(|anchor| anchor.der == cert.der)
+            || cert.cert.tbs_certificate.serial_number != target.cert.tbs_certificate.serial_number
+        {
+            continue;
+        }
+        if issued_by(cert, issuer, memory)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the signer's key permits CRL signing (RFC 5280 §6.3.3(f);
+/// #6944 review round 2). An authenticated holder has the signer's subject
+/// and public key and is an anchor or covered certificate (by DER), or was
+/// issued by an anchor or covered certificate other than itself. An
+/// unauthenticated copy in `/Certs` neither grants nor withholds cRLSign.
+/// When no authenticated holder exists, every certificate for the key is
+/// the presenter's word, so the selected signer's KeyUsage keeps today's rule.
+///
+/// # Errors
+/// The ledger's refusal while checking a holder's issuer.
+pub(super) fn crl_signer_key_permits_crl_sign(
+    signer: &EmbeddedCert,
+    embedded: &[EmbeddedCert],
+    anchors: &[EmbeddedCert],
+    covered: &[EmbeddedCert],
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
+    let subject = &signer.cert.tbs_certificate.subject;
+    let key = &signer.cert.tbs_certificate.subject_public_key_info;
+    let mut authenticated_holder_found = false;
+    for holder in anchors.iter().chain(covered.iter()).chain(embedded.iter()) {
+        if holder.cert.tbs_certificate.subject != *subject
+            || holder.cert.tbs_certificate.subject_public_key_info != *key
+        {
+            continue;
+        }
+        let mut authenticated = anchors
+            .iter()
+            .chain(covered.iter())
+            .any(|voucher| voucher.der == holder.der);
+        if !authenticated {
+            for voucher in anchors.iter().chain(covered.iter()) {
+                if voucher.der != holder.der && issued_by(holder, voucher, memory)? {
+                    authenticated = true;
+                    break;
+                }
+            }
+        }
+        if authenticated {
+            authenticated_holder_found = true;
+            if issuer_permits_crl_sign(&holder.cert) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(!authenticated_holder_found && issuer_permits_crl_sign(&signer.cert))
+}
+
+/// Whether a valid CRL's `signer` has revocation authority over `cert`
+/// (RFC 5280 §5.1.1.3, §5.2.1, §6.3.3(f), §8): it issued `cert`, or it holds
+/// a key that `cert`'s own issuer certified under the signer's subject (a
+/// separate CRL-signing key, or a rollover's link certificate the old key
+/// issued for the new one) and lets it sign CRLs: a certificate that names
+/// the key with a KeyUsage lacking cRLSign gives no authority, whatever
+/// another copy of the key's certificate asserts. A same-subject key that
+/// only another trust anchor vouches for is no shadow, but has no authority
+/// over `cert`: two CAs may share a name, and a CRL path must end at the
+/// certificate's own trust anchor.
+pub(super) fn crl_signer_authorized(
+    cert: &EmbeddedCert,
+    signer: &EmbeddedCert,
+    embedded: &[EmbeddedCert],
+    anchors: &[EmbeddedCert],
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
+    if issued_by(cert, signer, memory)? {
+        return Ok(true);
+    }
+    let subject = &signer.cert.tbs_certificate.subject;
+    let key = &signer.cert.tbs_certificate.subject_public_key_info;
+    for cert_issuer in embedded.iter().chain(anchors.iter()) {
+        if !issued_by(cert, cert_issuer, memory)? {
+            continue;
+        }
+        for holder in std::iter::once(signer)
+            .chain(embedded.iter())
+            .chain(anchors.iter())
+        {
+            if holder.cert.tbs_certificate.subject == *subject
+                && holder.cert.tbs_certificate.subject_public_key_info == *key
+                && holder.der != cert_issuer.der
+                && issuer_permits_crl_sign(&holder.cert)
+                && issued_by(holder, cert_issuer, memory)?
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Whether a valid CRL's `signer` shadows `cert`'s issuer: it carries the
+/// issuer's subject, it did not sign `cert`, and no trust anchor vouches for
+/// its key. An anchor vouches for the key when it carries the same subject
+/// and key itself, or when an anchor or a covered chain certificate issued a
+/// certificate that does (the signer's own, or one in `/Certs`). So a CA's
+/// separate CRL-signing key, a key rollover's link certificate and a
+/// same-subject anchored CA are never shadows; an attacker's self-signed
+/// certificate that only copies the subject is.
+pub(super) fn crl_signer_shadows(
+    cert: &EmbeddedCert,
+    signer: &EmbeddedCert,
+    embedded: &[EmbeddedCert],
+    anchors: &[EmbeddedCert],
+    covered: &[EmbeddedCert],
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
+    let subject = &signer.cert.tbs_certificate.subject;
+    if *subject != cert.cert.tbs_certificate.issuer || issued_by(cert, signer, memory)? {
+        return Ok(false);
+    }
+    let key = &signer.cert.tbs_certificate.subject_public_key_info;
+    let holds_signer_key = |c: &&EmbeddedCert| {
+        c.cert.tbs_certificate.subject == *subject
+            && c.cert.tbs_certificate.subject_public_key_info == *key
+    };
+    if anchors.iter().any(|anchor| holds_signer_key(&anchor)) {
+        return Ok(false);
+    }
+    for holder in std::iter::once(signer).chain(embedded.iter().filter(holds_signer_key)) {
+        for voucher in anchors.iter().chain(covered.iter()) {
+            if voucher.der != holder.der && issued_by(holder, voucher, memory)? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// A parsed certificate with its source DER (signature verification takes
@@ -373,17 +644,18 @@ pub(super) fn dss_array(
     key: &[u8],
     memory: &MemoryLedger,
     decoded: &mut usize,
+    limits: &SealResourceLimits,
 ) -> Result<DssArray, SealMemoryRefusal> {
     let Ok(arr_obj) = dss.get(key) else {
         return Ok(DssArray::Absent);
     };
-    let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
+    let Some(arr) = pdf::resolve(doc, arr_obj, limits)?.and_then(|o| o.as_array().ok()) else {
         return Ok(DssArray::Malformed);
     };
     memory.admit_len::<Vec<u8>>(arr.len())?;
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
-        let Some(stream) = pdf::resolve(doc, item).and_then(|o| o.as_stream().ok()) else {
+        let Some(stream) = pdf::resolve(doc, item, limits)?.and_then(|o| o.as_stream().ok()) else {
             return Ok(DssArray::Malformed);
         };
         let data = match stream.decompressed_content_admitted(memory) {
@@ -513,7 +785,7 @@ fn dss_object_ids(
     work: &mut usize,
     limits: &SealResourceLimits,
 ) -> Result<Option<std::collections::BTreeSet<lopdf::ObjectId>>, SealMemoryRefusal> {
-    let Some(catalog) = pdf::catalog(doc) else {
+    let Some(catalog) = pdf::catalog(doc, limits)? else {
         return Ok(None);
     };
     let Ok(dss_obj) = catalog.get(b"DSS") else {
@@ -530,7 +802,7 @@ fn dss_object_ids(
             return Ok(None);
         }
     }
-    let Some(dss) = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok()) else {
+    let Some(dss) = pdf::resolve(doc, dss_obj, limits)?.and_then(|o| o.as_dict().ok()) else {
         return Ok(None);
     };
     for key in [b"Certs".as_slice(), b"OCSPs".as_slice(), b"CRLs".as_slice()] {
@@ -542,7 +814,7 @@ fn dss_object_ids(
                 return Ok(None);
             }
         }
-        let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
+        let Some(arr) = pdf::resolve(doc, arr_obj, limits)?.and_then(|o| o.as_array().ok()) else {
             continue;
         };
         for item in arr {

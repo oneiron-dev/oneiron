@@ -168,6 +168,13 @@ pub(super) fn validate_witness_message_body(
     } else {
         crate::store::witness_message_body::validate_canonical_witness_message_body(data)?;
     }
+    // ABC rows 53 and 56 (FIX 104, 107): every put of a MESSAGE that stores
+    // it, local or from an own device, measures its metadata once here; past
+    // the `witness_metadata_nodes` or `witness_metadata_bytes` row it asks
+    // whether everything is okay, and the metadata is stored whole.
+    if let Some(measure) = crate::store::witness_message_body::witness_metadata_measure(data) {
+        measure.report(&store.limit_watch);
+    }
     Ok(())
 }
 

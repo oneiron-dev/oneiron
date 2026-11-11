@@ -231,6 +231,26 @@ impl AccountKeys {
         self.lease_secs
     }
 
+    /// The live verdict `instrument` names, for a caller the receipt layer
+    /// already verified (FIX 12332): its key id, scopes and principal, cloned
+    /// under the lock. A punch has already removed its entry; expiry and lease
+    /// end are pruned at `now`. This only reads: no last-used bump, insert,
+    /// sleep or central check. `None` falls back to the full verifier.
+    pub(crate) fn cached_live(
+        &self,
+        instrument: &[u8; 32],
+        now: u64,
+    ) -> Option<(String, BTreeSet<CoreScope>, Option<String>)> {
+        let mut state = self.lock();
+        state.prune(now);
+        let cached = state.entries.get(instrument)?;
+        Some((
+            cached.key_id.clone(),
+            cached.scopes.clone(),
+            cached.principal_ref.clone(),
+        ))
+    }
+
     /// Verifies one presented key. A live cached verdict answers from
     /// memory; anything else pays one central check. Every failure pays
     /// the fixed-time floor; successes are not padded.

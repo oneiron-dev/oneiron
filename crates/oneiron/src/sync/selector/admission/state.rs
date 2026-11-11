@@ -33,6 +33,9 @@ pub(crate) struct AdmittedUpdate {
     pub(super) peer_rows: Vec<(EntityId, Vec<u8>)>,
     pub(super) delivered: BTreeMap<EntityId, [u8; 32]>,
     pub(super) born_with: Vec<super::super::born_with::CarriedText>,
+    /// The birth placement admission validated for each TASK or SUMMARY row
+    /// these bytes bring (FIX 3656).
+    pub(super) placements: crate::sync::ingest::AdmittedPlacements,
     pub(super) lane: Option<String>,
     pub(super) routed: Vec<AdmittedUpdate>,
 }
@@ -64,6 +67,13 @@ impl AdmittedUpdate {
     /// The text admission allowed beside the rows, outside their Loro bytes.
     pub(crate) fn born_with(&self) -> &[super::super::born_with::CarriedText] {
         &self.born_with
+    }
+
+    /// The birth placements admission validated beside the rows, outside
+    /// their Loro bytes: the import lands each in the transaction of its
+    /// row's first put here (FIX 3656).
+    pub(in crate::sync) fn placements(&self) -> &crate::sync::ingest::AdmittedPlacements {
+        &self.placements
     }
 
     /// The writes the update asks of this vault: its rows and edges, and the
@@ -223,6 +233,27 @@ pub(in crate::sync) fn release_landed_stamps(
         vault,
         key,
         &lane,
+        &[(row, carrier)],
+        &BTreeSet::from([row]),
+        &[],
+    )
+}
+
+/// The stamps the staged import `receipt_id`'s lane keeps on `row` of `key`,
+/// a row its admitted artifact brought whose body a delivery after its
+/// confirmation landed, once that landing birthed it from `carrier`, the bytes
+/// the artifact brings (FIX 12408). `None` when none is held.
+#[cfg(feature = "sync")]
+pub(in crate::sync) fn release_staged_landed_stamps(
+    vault: &Vault,
+    key: &WindowKey,
+    receipt_id: &[u8; 32],
+    (row, carrier): (EntityId, Vec<u8>),
+) -> Result<Option<ReleasedStamps>> {
+    release_born_stamps(
+        vault,
+        key,
+        &staged_lane(receipt_id),
         &[(row, carrier)],
         &BTreeSet::from([row]),
         &[],

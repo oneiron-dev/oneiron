@@ -52,7 +52,9 @@ fn validate_logical_kind(kind: u8) -> Result<(), TransportError> {
         document_sub_tags::STATE
         | document_sub_tags::UPDATE
         | document_sub_tags::NOTE_OPS
-        | document_sub_tags::NOTE_RECEIPT => Ok(()),
+        | document_sub_tags::NOTE_RECEIPT
+        | document_sub_tags::NOTE_FORK_STATE
+        | document_sub_tags::NOTE_FORK_SET => Ok(()),
         _ => Err(TransportError::InvalidPayload(
             "invalid logical document kind",
         )),

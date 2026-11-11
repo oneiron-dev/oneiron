@@ -1,14 +1,22 @@
 //! What a served host hands its served sinks beyond the vault (OF-187): where
-//! each provider's API is, and the host's own mail server. A host installs
-//! one on its vault handle; every served sink on that handle reads it. A
-//! sink on a handle with none sends to each provider's public API and has no
-//! mail server.
+//! each provider's API is, the host's own mail server, and its connector
+//! calls. A host installs one on its vault handle; every served sink on that
+//! handle reads it. A sink on a handle with none sends to each provider's
+//! public API, has no mail server and makes no connector call.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::Vault;
+use crate::channel_identity_provider::sheets::SheetsBrokerHost;
 use crate::channel_identity_provider::stalwart::StalwartConfig;
+use crate::edge::EdgeActorClass;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::outbound_consent::{
+    ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
+};
+use crate::outbound_intent_ledger::IntentLedgerError;
 use crate::secret_custody::BrokerModelListingHost;
 
 /// Slack's Web API.
@@ -110,14 +118,45 @@ fn endpoint_base(base: &str, provider: &str) -> Result<String> {
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
-/// What a served host gives its served sinks: the provider APIs, and the
-/// placement of its own mail server, which email sends leave through.
+/// The host's connector calls (FIX 1168): a served send that rides an
+/// installed connector's tools (LinkedIn's) makes each tool call through
+/// them, as an admitted installed-tool call for its sender on the host's
+/// connector call host, the path every connector tool call takes: the
+/// caller's standing grant, the approved schema, the gate and the intent
+/// ledger. Blocking: a call sends.
+pub trait ServedConnectorCalls: Send + Sync + std::fmt::Debug {
+    /// One tool call for `caller` on the vault this is installed on. A
+    /// named `invocation` is one logical call: run again, it replays or
+    /// resumes the call it held instead of sending twice; `None` is a call
+    /// of its own.
+    ///
+    /// # Errors
+    ///
+    /// The call could not be prepared, held or recorded.
+    fn call(
+        &self,
+        caller: EntityId,
+        caller_class: EdgeActorClass,
+        request: ConnectorCallRequest,
+        invocation: Option<ConnectorCallInvocation>,
+    ) -> std::result::Result<ConnectorCallOutcome, IntentLedgerError>;
+}
+
+/// What a served host gives its served sinks: the provider APIs, the
+/// placement of its own mail server, which email sends leave through, and
+/// its connector calls, which LinkedIn sends leave through.
 #[derive(Clone, Debug, Default)]
 pub struct ServedTransports {
     endpoints: ServedEndpoints,
     native_mail: Option<StalwartConfig>,
+    connector_calls: Option<Arc<dyn ServedConnectorCalls>>,
     broker_model_listing: Option<Arc<dyn BrokerModelListingHost>>,
+    sheets_broker: Option<Arc<dyn SheetsBrokerHost>>,
     apns_applications: Vec<Arc<super::apns::ApnsApplication>>,
+    /// The installed MCP endpoint of each `[connectors]` section, by
+    /// normalized catalog name: where a catalog connector's tool calls go on
+    /// this host, the same endpoint the served connector host sends to.
+    connector_endpoints: BTreeMap<String, String>,
 }
 
 impl ServedTransports {
@@ -126,8 +165,11 @@ impl ServedTransports {
         Self {
             endpoints,
             native_mail: None,
+            connector_calls: None,
             broker_model_listing: None,
+            sheets_broker: None,
             apns_applications: Vec::new(),
+            connector_endpoints: BTreeMap::new(),
         }
     }
 
@@ -139,11 +181,33 @@ impl ServedTransports {
         self
     }
 
+    /// Sends that ride an installed connector's tools call them through
+    /// `calls`, the host's own connector call host.
+    #[must_use]
+    pub fn with_connector_calls(mut self, calls: Arc<dyn ServedConnectorCalls>) -> Self {
+        self.connector_calls = Some(calls);
+        self
+    }
+
+    #[must_use]
+    pub fn connector_calls(&self) -> Option<Arc<dyn ServedConnectorCalls>> {
+        self.connector_calls.clone()
+    }
+
     /// The host's configured broker-backed model listing. This supplies a
     /// transport only; each use still presents its own admitted credential.
     #[must_use]
     pub fn with_broker_model_listing(mut self, host: Arc<dyn BrokerModelListingHost>) -> Self {
         self.broker_model_listing = Some(host);
+        self
+    }
+
+    /// The host's credential-broker leg for the built-in Google Sheets
+    /// connector (FIX 4862). This supplies a transport only; each call still
+    /// presents the checked connection's grant through its own custody door.
+    #[must_use]
+    pub fn with_sheets_broker(mut self, host: Arc<dyn SheetsBrokerHost>) -> Self {
+        self.sheets_broker = Some(host);
         self
     }
 
@@ -166,6 +230,17 @@ impl ServedTransports {
         Ok(self)
     }
 
+    /// The installed MCP endpoint of each catalog connector, by normalized
+    /// catalog name (the host's `[connectors]` sections): the endpoint its
+    /// tool calls go to on this host, the same one the served connector host
+    /// sends to. This supplies an address only, never a credential or a
+    /// transport.
+    #[must_use]
+    pub fn with_connector_endpoints(mut self, endpoints: BTreeMap<String, String>) -> Self {
+        self.connector_endpoints = endpoints;
+        self
+    }
+
     pub(super) fn apns_application(&self, id: &str) -> Option<&super::apns::ApnsApplication> {
         self.apns_applications
             .iter()
@@ -175,6 +250,17 @@ impl ServedTransports {
 
     pub(crate) fn broker_model_listing(&self) -> Option<&Arc<dyn BrokerModelListingHost>> {
         self.broker_model_listing.as_ref()
+    }
+
+    pub(crate) fn sheets_broker(&self) -> Option<&Arc<dyn SheetsBrokerHost>> {
+        self.sheets_broker.as_ref()
+    }
+
+    /// The endpoint the catalog connector `name` (normalized) sends its tool
+    /// calls to on this host, as the served connector host does; `None` when
+    /// the host installed none for it.
+    pub(crate) fn connector_endpoint(&self, name: &str) -> Option<&str> {
+        self.connector_endpoints.get(name).map(String::as_str)
     }
 
     #[must_use]

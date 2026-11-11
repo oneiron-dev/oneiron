@@ -1,0 +1,16 @@
+{
+  "name": "vault.consolidation.lineage",
+  "description": "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model.",
+  "input": "crate::dreamer_runner::ConsolidationLineageRequest",
+  "output": "Option<crate::dreamer_runner::ConsolidationLineageView>",
+  "call": "crate::dreamer_runner::consolidation_lineage_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.lineage\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -32,8 +32,8 @@ impl SyncClient {
                 window_sub_tags::WINDOW_PAD_RECEIPT,
                 &receipt.encode(),
             )
-            .into_result()?,
-            ask.into_result()?,
+            .into_own_frame()?,
+            ask.into_own_frame()?,
         ])
     }
 
@@ -380,5 +380,5 @@ impl SyncClient {
 /// with: the home's replacement brings the window level.
 fn replacement_ask(key: &WindowKey) -> Result<Vec<u8>, TransportError> {
     transport::encode_window_sync(key.as_str(), window_sub_tags::REPLACEMENT_REQUEST, &[])
-        .into_result()
+        .into_own_frame()
 }

@@ -38,9 +38,15 @@ pub(super) async fn facade_call_receipt(
     let verb = parts.uri.path().trim_start_matches('/').to_owned();
     // The handler reads these same bytes. A body past the facade's limit
     // reaches it empty and is refused there as malformed, as it was before.
-    // A custody value's body is wiped and redacted here (FIX 11442).
-    let (bytes, request) =
-        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
+    // A custody value's body is wiped and redacted here (FIX 11442). An
+    // artifact write's content is held as a file, and the handler reads
+    // the rest of its body (FIX 22074).
+    let super::blob_body::ReceiptBody {
+        bytes,
+        request,
+        digest: request_digest,
+        refused,
+    } = super::blob_body::read_receipt_body(&server, &mut parts, &verb, body, anonymous).await;
     // FIX 4280: a call serving a room NOTE to a caller verified in its room
     // keeps none either, judged on arrival, before a close drops its hold.
     let anonymous = anonymous
@@ -51,23 +57,27 @@ pub(super) async fn facade_call_receipt(
             &verb,
             request.as_ref(),
         );
-    let request_digest = match &request {
-        Some(value) => oneiron::receipt::call_json_digest(value),
-        None => oneiron::receipt::call_bytes_digest(&bytes),
-    };
     // OF-568: what the call reads, captured before it runs. OF-568 L4: the
     // attempt whose live run it holds, as the hold witnessed it.
     let inputs = call_receipt::action_inputs(&server, &verb, request.as_ref());
+    super::secret_body::retain_request_digest(&mut parts.extensions, &request_digest);
     // FIX 10938: a row an action runs in process runs inside its own hold.
     let outer = parts
         .extensions
         .get::<call_receipt::HeldOuterAttempt>()
         .map(|held| held.0);
-    let (mut response, attempt) = call_receipt::attempt_witnessed_inside(
-        outer,
-        next.run(Request::from_parts(parts, Body::from(bytes))),
-    )
-    .await;
+    // A body the vault had no room or memory to read is refused, and the
+    // call does not run; a hold it runs inside still names its attempt.
+    let (mut response, attempt) = match refused {
+        Some(refused) => (refused.into_response(), outer),
+        None => {
+            call_receipt::attempt_witnessed_inside(
+                outer,
+                next.run(Request::from_parts(parts, Body::from(bytes))),
+            )
+            .await
+        }
+    };
     let mut refusal = response.extensions_mut().remove::<FacadeApiError>();
     let status = response.status();
     let mut result_digest = None;

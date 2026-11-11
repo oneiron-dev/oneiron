@@ -15,6 +15,7 @@ use crate::Vault;
 use crate::dreamer_runner::maintenance::agent_health::AgentHealthTone;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::receipt::dispatch_identity::APPROVAL_DIGEST_FIELD;
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScanPosition};
 use crate::self_heal::AgentHealthSignal;
 
@@ -51,6 +52,8 @@ pub struct AgentInboxLensItem {
     pub occurred_at: u64,
     pub receipt_ref: Option<String>,
     pub payload_ref: Option<String>,
+    /// The held outbound receipt's approve-once digest, when present.
+    pub approval_digest: Option<String>,
     /// Present exactly on a Concern row.
     pub concern: Option<AgentInboxConcern>,
     /// Present exactly on a pending diary-read review's row.
@@ -109,8 +112,9 @@ impl Vault {
 
     /// The actor's own slice, optionally narrowed to a receiving identity.
     /// Keep both constraints in the existing fold, before paging. Its digests
-    /// join only when `own` says the actor reads its own slice: no other
-    /// reader, the vault's owner included, reads an actor's digests.
+    /// and its own meeting cards join only when `own` says the actor reads
+    /// its own slice: no other reader, the vault's owner included, reads an
+    /// actor's digests or a person's own meeting card.
     pub fn agent_identity_inbox_slice(
         &self,
         actor: EntityId,
@@ -129,18 +133,19 @@ impl Vault {
         })
     }
 
-    /// The lens rows `keep` admits. `digests_for` names the one actor whose
-    /// own digests join; none join without it.
+    /// The lens rows `keep` admits. `own_reader` names the one actor reading
+    /// its own slice, whose own digests and meeting cards join; none join
+    /// without it.
     fn agent_inbox_view(
         &self,
         query: &AgentInboxLensQuery,
-        digests_for: Option<EntityId>,
+        own_reader: Option<EntityId>,
         keep: impl Fn(&AgentInboxParticipant) -> bool,
     ) -> Result<Vec<AgentInboxLensItem>> {
         if query.limit == 0 {
             return Ok(Vec::new());
         }
-        let items = self.agent_inbox_entries(digests_for)?;
+        let items = self.agent_inbox_entries(own_reader)?;
         // Filter after folding, so a filtered conversation still names every
         // identity on its thread.
         let mut items = fold_threads(items);
@@ -151,12 +156,9 @@ impl Vault {
 
     /// Every entry the lens reads, before threads fold: each receipt, inbound
     /// event and membership row on its canonical thread, then the rows no
-    /// thread carries. `digests_for` names the one actor whose own digests
-    /// join; none join without it.
-    fn agent_inbox_entries(
-        &self,
-        digests_for: Option<EntityId>,
-    ) -> Result<Vec<AgentInboxLensItem>> {
+    /// thread carries. `own_reader` names the one actor reading its own
+    /// slice, whose own digests and meeting cards join; none join without it.
+    fn agent_inbox_entries(&self, own_reader: Option<EntityId>) -> Result<Vec<AgentInboxLensItem>> {
         // Fetch before filtering/limiting by impact: impact top-N needs every
         // outbound receipt, not a chronological prefix of them.
         let receipts = self.every_outbound_receipt()?;
@@ -187,9 +189,10 @@ impl Vault {
         items.extend(crate::actor_claims::craft_candidate_inbox_items(self)?);
         // A comm widen ask waiting on its recipient (FIX 3901).
         items.extend(self.comm_widen_inbox_items()?);
-        // A meeting's prep pack and its check-in, for the owners (FIX 12004).
-        items.extend(crate::calendar::calendar_inbox_items(self)?);
-        if let Some(recipient) = digests_for {
+        // A meeting's prep pack and its check-in, for the owners (FIX 12004),
+        // and a person's own meeting's prep pack, for that person (FIX 16308).
+        items.extend(crate::calendar::calendar_inbox_items(self, own_reader)?);
+        if let Some(recipient) = own_reader {
             items.extend(self.digest_inbox_items(recipient)?);
         }
         Ok(items)
@@ -271,6 +274,7 @@ impl Vault {
                     occurred_at: body.created_at,
                     receipt_ref: None,
                     payload_ref: Some(id.to_hex()),
+                    approval_digest: None,
                     concern: None,
                     diary_review: None,
                     sender: None,
@@ -430,6 +434,17 @@ fn project_receipts(
             .transpose()
             .map_err(|_| Error::InvalidConfig("invalid inbox impact".to_owned()))?
             .unwrap_or(0);
+        let approval_digest = receipt
+            .fields
+            .get(APPROVAL_DIGEST_FIELD)
+            .filter(|digest| {
+                approval
+                    && digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            })
+            .cloned();
         items.push(AgentInboxLensItem {
             item_id: format!(
                 "{}:{}:{}:{intent}",
@@ -457,6 +472,7 @@ fn project_receipts(
             impact: InboxImpact(impact),
             occurred_at: receipt.occurred_at,
             receipt_ref: Some(receipt.receipt_id.clone()),
+            approval_digest,
             payload_ref: receipt
                 .fields
                 .get("payload_ref")
@@ -527,5 +543,6 @@ mod text;
 
 pub use self::text::{InboxTextSource, ResolvedInboxMessage, ResolvedInboxText};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

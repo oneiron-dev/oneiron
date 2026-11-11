@@ -11,6 +11,35 @@ pub const PERSON_SUBSTRATE_FACET: &[u8] = b"oneiron/person-substrate-facet/v1";
 /// JSON address, request id.
 pub const KEY_VALUE: &[u8] = b"oneiron.key_value.v1";
 
+/// The speech TURN of one durable executor run
+/// (`executor_speech_identity::executor_speech_turn_id`, FIX 9711). Parts: the
+/// run ref, then the run id when one is known.
+pub const EXECUTOR_SPEECH_TURN: &[u8] = b"oneiron:executor-speech-turn:v1";
+
+/// The compaction session of one durable executor run
+/// (`executor_speech_identity::executor_compaction_session_id`, FIX 9711).
+/// Parts: the run ref, the run id.
+pub const EXECUTOR_COMPACTION_SESSION: &[u8] = b"oneiron:executor-compaction-session:v1";
+
+/// The conversation an executor run's speech lands in
+/// (`code_run::storage::speech_identity`, FIX 9711). Parts: the run ref, then
+/// the run id when one is known.
+pub const EXECUTOR_SPEECH_CONVERSATION: &[u8] = b"oneiron:executor-speech-conversation:v1";
+
+/// One executor speech MESSAGE (`code_run::storage::speech_identity`, FIX
+/// 9711). Parts: the run ref, the run id when one is known, the bubble's
+/// order (u32 little-endian).
+pub const EXECUTOR_SPEECH_MESSAGE: &[u8] = b"oneiron:executor-speech-message:v1";
+
+/// A held code call's consent wait (`code_run::consent_wait::binding`, FIX
+/// 9711). Parts: the write receipt, the request digest.
+pub const CODE_CONSENT_WAIT: &[u8] = b"oneiron:code-consent-wait:v1";
+
+/// The write receipt of one executor agent-verb call
+/// (`code_run::dispatcher::agent_verb`, FIX 9711). Parts: the run ref, the
+/// run id, the step start and the ordinal (u64 little-endian each).
+pub const EXECUTOR_AGENT_VERB_RECEIPT: &[u8] = b"oneiron:executor-agent-verb-receipt:v1";
+
 /// A built-in bootstrap skill (`skill_hub::bootstrap`). Parts: skill name.
 pub const BOOTSTRAP_SKILL: &[u8] = b"oneiron/bootstrap/v1/";
 
@@ -41,9 +70,25 @@ pub const PROJECT_HOME_ROOM: &[u8] = b"project.home_room.v1/";
 /// conflict key.
 pub const COMM_PROJECTED_CLAIM: &[u8] = b"oneiron.comm.projected_claim.v1\0";
 
+/// An explicitly born touch's source event (`comm::born_touch`). Parts: original
+/// id, admitted origin digest, frozen position, and normalized touch tuple.
+/// These identify data only, including for a canonical base-world touch.
+pub const COMM_BORN_TOUCH_EVENT: &[u8] = b"oneiron.comm.born_touch_event.v1\0";
+
 /// The MACHINE assignee of one connector class (`outbound::connector_actor_id`).
 /// Parts: normalized connector class.
 pub const CONNECTOR_ACTOR: &[u8] = b"oneiron.connector_actor.v0\0";
+
+/// The synced TASK that carries one agent run across machines
+/// (`agent_dispatch::agent_run_task_id`, FIX 4747). Parts: the run's attempt
+/// id (16 bytes).
+pub const AGENT_RUN_TASK: &[u8] = b"oneiron.agent_run_task.v0\0";
+
+/// The connector-send TASK a schedule by an agent run's step creates
+/// (`agent_dispatch::agent_run_send_task_id_in`, FIX 4747 slice 7), so the
+/// step replayed on another machine finds it. Parts: the run's try id (16
+/// bytes), the verb call's invocation (16 bytes), channel, verb, target.
+pub const AGENT_RUN_SEND_TASK: &[u8] = b"oneiron.agent_run_send_task.v0\0";
 
 /// The embedded default owner actor (`vault::embedded_owner_actor_id`, ONE-1441
 /// WIRE-P1). No parts. It must stay the same text as the domain behind
@@ -62,6 +107,12 @@ pub const COMMITMENT_PROJECTION_ACTOR: &[u8] = b"oneiron.commitment.projection.a
 /// The System actor a facade row's verb hooks name for a scoped credential
 /// bound to no actor (`api::facade::hooks`, FIX 1439). No parts.
 pub const FACADE_UNBOUND_CALLER: &[u8] = b"oneiron:facade-unbound-caller:v1";
+
+/// The run id of one shared agent action (`code_run::actions::execution`,
+/// FIX 9702). Parts: the actor, the verb id, the idempotency key, then for a
+/// live run's action `live-run`, the attempt id and its try count (u32
+/// big-endian).
+pub const SHARED_ACTION: &[u8] = b"oneiron:shared-action:v1";
 
 /// One occurrence of one commitment series
 /// (`commitment_schedule::commitment_instance_id`). Parts: series, due-at, window
@@ -148,6 +199,14 @@ pub const TASK_ASK_SOFT_CONFIRM: &[u8] = b"oneiron.tasks.ask.soft_confirm.v1";
 /// person.
 pub const TASK_ASK_GUEST_GRANT: &[u8] = b"oneiron.tasks.ask.guest.v1";
 
+/// A replica's relayed word or void on an ask another node admitted
+/// (`task_verb::ask_forward`, FIX 7494). Parts: group, holder, intent key.
+pub const TASK_ASK_FORWARD_INTENT: &[u8] = b"oneiron.tasks.ask.forward_intent.v1";
+
+/// The admitting node's result for one relayed intent
+/// (`task_verb::ask_forward`, FIX 7494). Parts: intent.
+pub const TASK_ASK_FORWARD_RESULT: &[u8] = b"oneiron.tasks.ask.forward_result.v1";
+
 /// The TASK an Auto post names (`task_verb::highway_post`). Parts: actor,
 /// intent key. The store-local vault id is left out on purpose: every replica
 /// of one vault holds its own, and one post must name one TASK on all of them.
@@ -204,6 +263,23 @@ pub const MAIL_TURN: &[u8] = b"oneiron.mail_pack.turn.v1";
 /// One revision of a provider message (`mail_pack`). Parts: mail source id
 /// (hex), the provider's message id, the revision's content hash.
 pub const MAIL_MESSAGE: &[u8] = b"oneiron.mail_pack.message.v1";
+
+/// An attachment a reader opened, stored once (`mail_pack`). Parts: mail
+/// source id, the provider's message id, the attachment's MIME part id.
+pub const MAIL_ATTACHMENT: &[u8] = b"oneiron.mail_pack.attachment.v1";
+
+/// One drafted mail reply (`mail_pack`, FIX 15420). Parts: the drafter's id
+/// (hex), the thread's CONVERSATION id (hex), the drafter's request key.
+pub const MAIL_REPLY_DRAFT: &[u8] = b"oneiron.mail_pack.reply_draft.v1";
+
+/// A pack calendar source's EVENT (`mail_pack`): one per source and
+/// provider UID, so two people's copies of one meeting never share a row.
+/// Parts: calendar source id, the event's UID.
+pub const MAIL_CALENDAR_EVENT: &[u8] = b"oneiron.mail_pack.calendar_event.v1";
+
+/// The archived resource a pack calendar source pulled (`mail_pack`).
+/// Parts: the source's calendar system, the event's UID.
+pub const MAIL_CALENDAR_SOURCE_BLOB: &[u8] = b"oneiron.mail_pack.calendar_source_blob.v1";
 
 /// A NOTE imported from a folder of markdown notes (`note::import`). Parts:
 /// folder, the file's path under it.
@@ -272,6 +348,19 @@ pub const ASSET_BODY_FILE: &[u8] = b"oneiron/asset-body-file/v1";
 /// bytes) and its length (u64 big-endian).
 pub const ASSET_BODY_HELD: &[u8] = b"oneiron/asset-body-held/v1";
 
+/// The occurrence an ASSET's revisions keep a body file a later write
+/// superseded under (`store::asset_body`, FIX 22091): a revision read
+/// resolves it as an inline body's revision keeps its bytes. Parts: the
+/// ASSET, the file's BLAKE3 (32 bytes) and its length (u64 big-endian).
+pub const ASSET_BODY_REVISION: &[u8] = b"oneiron/asset-body-revision/v1";
+
+/// The owner one kept removal archive row's files are held under
+/// (`federation::shared_act::removal_file`, FIX 3679): a namespace of its own,
+/// so a release of one row reaches no other row's bodies, another member's
+/// archive of the same receipt included, whatever ids an imported copy names.
+/// Parts: the receipt, then the removed member.
+pub const REMOVAL_ARCHIVE_OWNER: &[u8] = b"oneiron/removal-archive-owner/v1";
+
 /// One mark of a key a retained repository blob holds (`origin::secret_marks`,
 /// FIX 7608). Parts: schema (u16be), operation, store identity, tagged source,
 /// blob OID, tagged path, detector reason, content kind, tagged placement. No
@@ -301,6 +390,10 @@ pub const SYNC_TEXT_BIRTH_INCARNATION: &[u8] = b"oneiron.sync-text.birth-incarna
 /// FIX 9554). Parts: the annotated row's entity type, its id.
 pub const VAD_ANNOTATION_CLAIM: &[u8] = b"oneiron:vad-annotation-claim:v1";
 
+/// The storage service principal (`ports::storage_service_principal`, FIX
+/// 10043): the actor a write no actor made is stamped with. No parts.
+pub const STORAGE_SERVICE_PRINCIPAL: &[u8] = b"oneiron:storage-service-principal:v1";
+
 /// A channel-identity autonomy handle (`channel_identity_autonomy::codec::address`,
 /// FIX 9675): a read or action envelope, a read or action grant, an autonomy
 /// mode, a graduation scope or evidence row, a space-posting envelope. Parts:
@@ -315,6 +408,14 @@ pub const PACK_SOURCE_ASSET: &[u8] = b"oneiron.pack-source.asset.v1\0";
 /// FIX 12000). Parts: the reminder's content ref.
 pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminder-wording:v1:";
 
+/// The native e-sign seal producer, distinct from capability-upload actors.
+/// No parts: policy binds this one engine writer.
+pub const ESIGN_SEAL_ACTOR: &[u8] = b"oneiron.esign.seal.actor.v1";
+
+/// The scope summary landing writer (`scope_summary::landing_writer`), distinct
+/// from the summary's requester. No parts: policy binds this one engine writer.
+pub const SCOPE_SUMMARY_LANDING_ACTOR: &[u8] = b"oneiron.scope-summary.landing.actor.v1";
+
 /// The target of an owner's origin cut act (`authority::origin_cut_target`,
 /// FIX 15740). Parts: the repository's 32-byte portable id.
 pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
@@ -326,9 +427,28 @@ pub const DEVICE_SUCCESSION_TARGET: &[u8] = b"oneiron/device-succession-target/v
 /// manifest id, the part index as u32 big-endian.
 pub const IDENTITY_TOPOLOGY_OPERATION_PART: &[u8] = b"oneiron/identity-topology/operation-part/v1";
 
+/// A lexical query hint CLAIM (`claim::lexical_query_hint_claim_id`, FIX 9597).
+/// Parts: the target claim (16 bytes), the normalized query (UTF-8).
+pub const LEXICAL_QUERY_HINT: &[u8] = b"oneiron.lexical-query-hint.v1";
+
+/// The window identity of one executor step a compaction reads
+/// (`engine_executor::compaction::step_message_id`, FIX 9838). Parts: the run,
+/// the step (u64 big-endian).
+pub const EXECUTOR_COMPACTION_STEP: &[u8] = b"oneiron:executor-compaction-step:v1";
+
+/// The request identity of one executor fold's pass
+/// (`engine_executor::compaction::fold_request_id`, FIX 9838). Parts: the run,
+/// the fold (u64 big-endian).
+pub const EXECUTOR_FOLD_REQUEST: &[u8] = b"oneiron:executor-fold-request:v1";
+
+/// An executor continuation checkpoint (`engine_executor::continuation`,
+/// `ExecutorCheckpointRef::id`, FIX 9838). Parts: the source run, the step
+/// (u64 little-endian).
+pub const EXECUTOR_CONTINUATION_CHECKPOINT: &[u8] = b"oneiron:executor-continuation-checkpoint:v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 60] = [
+pub(crate) const ALL: [&[u8]; 68] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -360,6 +480,8 @@ pub(crate) const ALL: [&[u8]; 60] = [
     TASK_ASK_SETTLEMENT,
     TASK_ASK_SOFT_CONFIRM,
     TASK_ASK_GUEST_GRANT,
+    TASK_ASK_FORWARD_INTENT,
+    TASK_ASK_FORWARD_RESULT,
     TASK_POST,
     TASK_SETTLE,
     COMM_CONNECTOR_SEND_EVENT,
@@ -374,6 +496,10 @@ pub(crate) const ALL: [&[u8]; 60] = [
     MAIL_CONVERSATION,
     MAIL_TURN,
     MAIL_MESSAGE,
+    MAIL_ATTACHMENT,
+    MAIL_REPLY_DRAFT,
+    MAIL_CALENDAR_EVENT,
+    MAIL_CALENDAR_SOURCE_BLOB,
     IMPORTED_NOTE,
     PROJECT_REVISION,
     DECISION_QUESTION,
@@ -387,6 +513,8 @@ pub(crate) const ALL: [&[u8]; 60] = [
     FOREIGN_WORLD,
     ASSET_BODY_FILE,
     ASSET_BODY_HELD,
+    ASSET_BODY_REVISION,
+    REMOVAL_ARCHIVE_OWNER,
     REPO_SECRET_MARK,
     VAD_ANNOTATION_CLAIM,
 ];

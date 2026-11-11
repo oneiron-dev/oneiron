@@ -13,3 +13,36 @@ apps/macos/src-tauri/gen/
 # Python bytecode (the repository's Python scripts and their tests)
 __pycache__/
 *.pyc
+
+# The SDK outputs generated at build time into OUT_DIR (crates/oneiron-sdk-build;
+# untangle slice 4.3). A tree that still holds one from an older checkout ignores it.
+/crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs
+/crates/oneiron-remote/src/generated/agent_verbs.rs
+/crates/oneiron-server/src/api/facade/generated/agent_verbs.rs
+/crates/oneiron-server/src/api/facade/generated/dispatch.rs
+/crates/oneiron-server/src/api/facade/generated/host_door_rows.rs
+/crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs
+/crates/oneiron-uniffi/src/generated/facade_generated.rs
+/crates/oneiron-uniffi/src/generated/facade_types_generated.rs
+/crates/oneiron/src/verbs/generated/catalog_fragment.d.ts
+/crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs
+/crates/oneiron/src/verbs/generated/code-mode.d.ts
+/crates/oneiron/src/verbs/generated/run_verb_catalog.rs
+/crates/oneiron/src/verbs/generated/sdk_generated.rs
+/crates/oneiron/src/verbs/generated/verb_catalog.rs
+/crates/oneiron/src/generated/core_verb_names.rs
+
+# The package outputs, written by each package's own build (`oneiron-sdk-generator --package`; untangle slice 4.3).
+/packages/oneiron/src/facade-types.ts
+/packages/oneiron/src/agent-verbs.ts
+/packages/oneiron/src/facade-verbs.ts
+/packages/oneiron/src/native-verbs.ts
+/packages/oneiron-client/src/facade.ts
+/packages/oneiron-client/src/facade-types.ts
+/crates/oneiron-py/python/oneiron/_facade_verbs.py
+/crates/oneiron-py/python/oneiron/_facade_verbs.pyi
+/crates/oneiron-py/python/oneiron/facade_types.pyi
+# The agent-SDK reference generated from the verb table: CI publishes it (agent-docs.py PUBLISHED).
+/docs/agent-sdk/types.md
+/docs/agent-sdk/facade-types.md
+/docs/agent-sdk/verbs.md

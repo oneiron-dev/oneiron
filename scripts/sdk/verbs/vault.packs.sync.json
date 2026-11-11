@@ -1,0 +1,16 @@
+{
+  "name": "vault.packs.sync",
+  "description": "The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent.",
+  "input": "HubPackRequest",
+  "output": "crate::task_verb::sdk::PackPutReceipt",
+  "call": "crate::task_verb::sdk::hub_pack_sync_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.sync\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

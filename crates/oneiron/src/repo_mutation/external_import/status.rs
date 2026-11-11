@@ -7,11 +7,15 @@
 //! observed refusal; a dispatched send no receive record proves yet; then
 //! the newest pre-send fact (a held base, a moved source, a refused fetch);
 //! otherwise pending. A late failure never outranks an accepted receive,
-//! and the receipt always names the frozen requested head.
+//! and the receipt always names the frozen requested head. The Git-LFS
+//! facts decide no phase: the receipt names how the newest attempt that
+//! fetched any carried them.
 
 use super::receive::{ImportReceive, ImportRefUpdate};
 use super::source::{ImportOutcome, ImportStep, ObservationRecord};
-use super::{ExternalImportPhase, ExternalImportReceipt};
+use super::{
+    ExternalImportLfsRoute, ExternalImportLfsTransfer, ExternalImportPhase, ExternalImportReceipt,
+};
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitRefName};
 use crate::{EntityId, Vault};
@@ -107,12 +111,32 @@ impl Vault {
                 seed_publication: seeded.map(|found| found.publication),
                 receive_provenance: received.map(|found| found.provenance),
                 publication: received.map(|found| found.publication),
+                lfs_transfer: lfs_transfer(&observations),
             },
             phase,
             reason,
             head: received,
         }))
     }
+}
+
+/// How the newest attempt that set out to fetch Git-LFS objects carried
+/// them: the broker's route its first fact names, and what the broker did
+/// from the fact it wrote once its exchanges ended, if it wrote one.
+fn lfs_transfer(observations: &[ObservationRecord]) -> Option<ExternalImportLfsTransfer> {
+    let brokered = |fact: &&ObservationRecord| {
+        fact.step == ImportStep::Lfs && fact.outcome == ImportOutcome::Brokered
+    };
+    let newest = observations.iter().rev().find(brokered)?;
+    let ended = observations
+        .iter()
+        .filter(|fact| brokered(fact) && fact.attempt == newest.attempt)
+        .find_map(|fact| fact.lfs_transfer);
+    Some(ExternalImportLfsTransfer {
+        route: ExternalImportLfsRoute::Broker,
+        broker_isolation: ended.and_then(|transfer| transfer.broker_isolation),
+        credential_rewrites: ended.map_or(0, |transfer| transfer.credential_rewrites),
+    })
 }
 
 /// The phase and reason the facts and the receive evidence name.

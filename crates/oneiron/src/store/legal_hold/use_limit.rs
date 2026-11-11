@@ -39,8 +39,8 @@ pub(super) fn keep_use_limited_in_txn(
 }
 
 /// The C6 use limit on `record`, if it was kept after a refused privacy
-/// erasure and a standing hold, customer or host order, still keeps it
-/// (WILL-PLAN L01 row 03, FIX 8849): it lasts the whole retention, until the
+/// erasure and a standing customer hold still keeps it (WILL-PLAN L01 row
+/// 03, FIX 8849): it lasts the whole retention, until the
 /// last hold lifts, narrows or lapses. A marker no standing hold backs
 /// restricts nothing.
 pub(crate) fn legal_hold_use_limit_in_txn(
@@ -88,6 +88,21 @@ pub(crate) fn cooperative_restriction_active_in_txn(
         .next()
         .transpose()?
         .is_some())
+}
+
+/// The same record-retention facts as `held_in_txn`, read from a
+/// checkpoint custody plan's captured rows.
+pub(crate) fn rows_keep_record(rows: &[(Vec<u8>, Vec<u8>)], id: &[u8; 16]) -> Result<bool> {
+    if super::rows_hold_claim(rows, id) {
+        return Ok(true);
+    }
+    let mut prefix = COOPERATIVE_RESTRICTIONS.decl().prefix.to_vec();
+    prefix.extend_from_slice(id);
+    if let Some((_, value)) = rows.iter().find(|(key, _)| key.starts_with(&prefix)) {
+        COOPERATIVE_RESTRICTIONS.decode_value(value)?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Private vocabulary: boolean read/egress consumers need only presence.

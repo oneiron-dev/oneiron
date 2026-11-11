@@ -5,7 +5,6 @@
 
 use std::ops::Bound;
 
-use super::live::ActiveWake;
 use super::{
     ATTEMPTS, CALLS, CHECKPOINTS, LATEST, MEMBERS, Rows, WAKES, WakeObservedAttempt,
     WakeObservedCall, WakeObservedCheckpoint, WakeObservedHeader, WakeRef, attempt_key, call_key,
@@ -68,7 +67,7 @@ impl Vault {
                 .active_wakes
                 .get(observation.wake)
                 .as_deref()
-                .map(ActiveWake::sample);
+                .map(crate::dreamer_wake::observation::live::active_wake_sample);
             observation
         }))
     }

@@ -135,9 +135,8 @@ pub(super) fn decode_rows(value: &Value) -> Option<Vec<MailPolicy>> {
     let Value::Array(rows) = value else {
         return None;
     };
-    if rows.len() > 64 {
-        return None;
-    }
+    // Every row is checked; a valid table is never refused for its length
+    // (FIX 8761).
     rows.iter().map(decode_row).collect()
 }
 fn decode_row(value: &Value) -> Option<MailPolicy> {

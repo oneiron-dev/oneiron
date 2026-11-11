@@ -1,12 +1,14 @@
 //! The typed owner approval a ledger row may carry (moved out of
 //! `validate_record`; FIX 6362, an L12-B seam the Engine approved 10-20). A
 //! native-mail cold send's proof binds its canonical mail digest, exactly as
-//! before. An e-sign send for signature or reminder's proof binds the digest
+//! before; a reply sent as the mailbox's own account binds the ordinary
+//! frozen target's digest. An e-sign send for signature or reminder's proof binds the digest
 //! the gate's approve-once lookup composed for that send, recomposed from its
 //! frozen actor, act, channel and brief. A failure-signal batch's proof binds
 //! the digest its lookup composed for that batch, recomposed the same way
 //! from its frozen endpoint, content ref and send ref (FIX 6679). Any other
-//! row carries none.
+//! row carries none. Pinned families carry their original Gate proof in a
+//! distinct field; their retry's current effect still proves its digest.
 
 use super::super::types::{IntentLedgerError, IntentLedgerRecord, IntentLedgerResult};
 
@@ -21,10 +23,21 @@ pub(super) fn validate_admitted_approval(
         return Ok(());
     };
     let digest = match (record.server.as_str(), record.tool.as_str()) {
+        // A reply sent as the mailbox's own account (SMTP, Graph) names no
+        // sender identity: its press binds the ordinary frozen target, so the
+        // digest is recomposed that way when the payload is no native mail
+        // send (fix list rows 17872, 17643).
         ("email", "send") => {
             crate::channel_identity_provider::native_mail::approval_digest_from_frozen_payload(
                 payload,
             )
+            .or_else(|| {
+                crate::outbound::connector_slate_effect_from_frozen_payload(
+                    payload, "email", "send",
+                )
+                .as_ref()
+                .and_then(crate::gate::external_effect_approval_digest)
+            })
         }
         ("esign", tool @ ("send_for_signature" | "remind")) => {
             crate::outbound::esign_approval_digest_from_frozen_payload(payload, tool)
@@ -41,6 +54,24 @@ pub(super) fn validate_admitted_approval(
     {
         return Err(IntentLedgerError::InvalidRecord(
             "admitted approval binding mismatch",
+        ));
+    }
+    Ok(())
+}
+
+/// A pinned proof binds the original intent. Family/digest authority is
+/// checked against the actual current effect by the retry reader and Gate,
+/// not inferred from the row's connector or the marker's spent status.
+pub(super) fn validate_pinned_approval(record: &IntentLedgerRecord) -> IntentLedgerResult<()> {
+    let Some(approval) = record.pinned_approval else {
+        return Ok(());
+    };
+    if approval.proof.intent_id() != record.id
+        || record.admitted_approval.is_some()
+        || super::super::payload::payload_erased(record.payload())?
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "pinned approval binding mismatch",
         ));
     }
     Ok(())

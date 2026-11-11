@@ -97,9 +97,12 @@ async fn execute(
     if let Some(authority) = &public_authority {
         public_availability::validate_public_request(&authority.publication, &request)?;
     }
-    validate_operation_shape(&request)?;
-    if transport.credential.is_none() {
+    let anonymous = transport.credential.is_none();
+    validate_operation_shape(&request, anonymous)?;
+    if anonymous {
         validate::validate_anonymous_intake_count(&request)?;
+    } else {
+        validate::measure_authenticated(&server.vault, &request);
     }
     check_action_token_page(&server.vault, page_ref, &request)?;
 
@@ -121,6 +124,7 @@ async fn execute(
     // An authenticated caller past a window waits for it and is admitted
     // again (`turn::Turn`), so the clock and the facts are read each time.
     let mut turn = turn::Turn::new(server, &transport);
+    let caller = transport.caller();
     // A confirm's email domain is looked up once per request, not per turn.
     let mut email_domain = None;
     let (now, disposition) = loop {
@@ -138,10 +142,10 @@ async fn execute(
         }
         let disposition = match &request {
             BookingOperationRequest::Availability(_) => {
-                enforce_slot_list(State(Arc::clone(server)), facts, cache_hit).await?
+                enforce_slot_list(State(Arc::clone(server)), facts, cache_hit, caller).await?
             }
             BookingOperationRequest::Book(BookingBookInput::Hold(_)) => {
-                enforce_hold(State(Arc::clone(server)), facts).await?
+                enforce_hold(State(Arc::clone(server)), facts, caller).await?
             }
             BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => {
                 let hold_token = OpaqueLifecycleToken(input.hold_token.clone());
@@ -151,10 +155,11 @@ async fn execute(
                     booker_email: &input.booker_email,
                     intake: &input.intake,
                 };
-                enforce_book_restorable(State(Arc::clone(server)), facts, Some(restore)).await?
+                enforce_book_restorable(State(Arc::clone(server)), facts, Some(restore), caller)
+                    .await?
             }
             BookingOperationRequest::Reschedule(_) | BookingOperationRequest::Cancel(_) => {
-                enforce_amend(State(Arc::clone(server)), facts).await?
+                enforce_amend(State(Arc::clone(server)), facts, caller).await?
             }
         };
         if let Some(disposition) = turn.after(disposition).await? {

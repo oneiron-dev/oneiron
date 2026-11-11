@@ -34,18 +34,30 @@ impl AgentDispatcher<'_> {
         let mut projection = self
             .resolve_ancestor_projection_in_txn(txn, attempt)?
             .ok_or_else(|| invalid("attempt has no provable context lineage"))?;
-        let row = AttemptQueue::new(self.vault)
+        let queue = AttemptQueue::new(self.vault);
+        let row = queue
             .get_in_txn(txn, attempt)?
             .ok_or_else(|| invalid("context attempt is missing"))?;
         let input =
             record_dispatch_input(&row).ok_or_else(|| invalid("context input is malformed"))?;
-        let parent = decode_dreamer_attempt_payload(&row.payload)?.parent_attempt;
-        self.require_sibling_result_lineage_in_txn(
-            txn,
-            parent,
-            row.run_id.as_deref(),
-            &input.context_from,
-        )?;
+        let mut parent = decode_dreamer_attempt_payload(&row.payload)?.parent_attempt;
+        // A run that outlived its root (REVIEW-6638), on a machine that took
+        // it over and holds no row of its settled parent, reads no parent:
+        // its dispatch proved its sibling lineage, and that parent is no
+        // workflow whose step it is.
+        if let Some(gone) = parent
+            && queue.get_in_txn(txn, gone)?.is_none()
+            && super::super::run_task::outlived_root_in(self.vault, txn, &row)?
+        {
+            parent = None;
+        } else {
+            self.require_sibling_result_lineage_in_txn(
+                txn,
+                parent,
+                row.run_id.as_deref(),
+                &input.context_from,
+            )?;
+        }
         projection.sibling_result_refs = resolve_context_spec_in_txn(
             self.vault,
             txn,

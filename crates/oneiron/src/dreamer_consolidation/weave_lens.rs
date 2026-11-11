@@ -63,7 +63,7 @@ fn invalid(reason: &str) -> Error {
 fn owed_nothing() -> Result<DreamerAttemptExecution> {
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 
@@ -96,12 +96,15 @@ async fn lens_step(
     Ok(
         match call_as_step(step_ctx, backend, model.guard, request).await {
             Ok(StepOutcome::Finished {
-                response, memoized, ..
+                response,
+                memoized,
+                binding,
+                ..
             }) => {
                 if let Err(error) = charges.record_terminal(
                     step_ctx.vault,
-                    step_ctx.attempt_id,
-                    step_hash,
+                    binding.attempt_id,
+                    binding.step_hash,
                     &response.usage,
                 ) {
                     if !memoized {
@@ -132,9 +135,10 @@ async fn lens_step(
             Err(DurableStepError::Engine(error)) => {
                 return spent_or_deferred(error, ctx, charges).map(LensStep::Exit);
             }
-            Err(other) => LensStep::Exit(
-                charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other)),
-            ),
+            Err(other) => LensStep::Exit(charges.park_for(
+                &other.to_string(),
+                crate::dreamer_runner::dreamer_park_cause_of_step(&other),
+            )),
         },
     )
 }
@@ -145,7 +149,7 @@ fn answer_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -157,6 +161,7 @@ fn lens_request(
     model: ModelId,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     instruction: String,
     text: String,
 ) -> Result<LlmRequest> {
@@ -178,16 +183,23 @@ fn lens_request(
             },
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![
             LlmMessage {
                 role: LlmMessageRole::System,
-                content: vec![ContentPart::Text { text: instruction }],
+                content: vec![ContentPart::Text {
+                    text: instruction,
+                    signature: None,
+                }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text }],
+                content: vec![ContentPart::Text {
+                    text,
+                    signature: None,
+                }],
             },
         ],
         tools: Vec::new(),
@@ -222,6 +234,7 @@ pub fn live_weave_lens_request(
         model,
         locality,
         false,
+        inference.selected_paid(),
         live.instruction.clone(),
         live.input.clone(),
     )?;
@@ -325,7 +338,15 @@ pub async fn run_weave_lens(
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
     let keyless = model.inference.selected_keyless();
-    let request = lens_request(model.model.clone(), locality, keyless, instruction, text)?;
+    let paid = model.inference.selected_paid();
+    let request = lens_request(
+        model.model.clone(),
+        locality,
+        keyless,
+        paid,
+        instruction,
+        text,
+    )?;
     let mut request = ctx
         .vault
         .authorize_model_role(model.role, request, &model.inference)?
@@ -382,7 +403,7 @@ pub async fn run_weave_lens(
                 }
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                 });
             }
             // The refused answer and why go back to the model; the repair
@@ -393,6 +414,7 @@ pub async fn run_weave_lens(
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: weave_lens_repair_text(&stored.report.value, &refused),
+                        signature: None,
                     }],
                 });
                 reason = refused;
@@ -423,6 +445,6 @@ pub async fn run_weave_lens(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     })
 }

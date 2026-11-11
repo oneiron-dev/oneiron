@@ -10,9 +10,15 @@
 // aliases keep every `federation::<module>::` path this crate uses.
 pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
 mod agent_grant;
+mod agent_verb_class;
 pub(crate) use agent_grant::{
-    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, SelectedOwnerAgentFundingGrant,
+    agent_grants_for_store_in_txn, backfill_agent_grant_member_index,
+    index_agent_grant_member_in_txn,
 };
+pub(crate) use agent_verb_class::AgentVerbClasses;
+// The self brief's GRANT producer (FIX 17594).
+mod agent_grant_brief;
 // Who may delete one record the cleanup archived (OF-449 L4).
 mod archive_delete;
 pub(crate) use archive_delete::{
@@ -24,10 +30,20 @@ pub(crate) use archive_delete::{
 #[allow(unused_imports)]
 pub(crate) use archive_delete::ArchiveDeleteRole;
 mod connect_grant;
-pub use connect_grant::ConnectGrantMinted;
+pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent};
+pub(crate) use connect_grant::{connect_grant_stands_in_txn, connect_guest_standing_in_txn};
 pub(crate) use connect_grant::{
     grant_serves_selector, is_guest_slice, pact_admits_grant, require_connect_grant_in_txn,
     require_one_connect_per_peer,
+};
+mod connect_proposal;
+pub(crate) use connect_proposal::{
+    drop_pending_connect_proposals_in_txn, erase_connect_proposer_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use connect_proposal::{
+    land_connect_proposal_in_txn, pending_connect_proposal_in_txn,
+    pending_connect_proposals_in_txn, settle_connect_proposal_in_txn,
 };
 mod content_write;
 pub(crate) use content_write::{ActorContentTxn, actor_for_txn};
@@ -57,6 +73,7 @@ pub(crate) use membership_gate::authenticated_grant_membership_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use membership_gate::grant_allows_content_write;
 pub(crate) mod grant_scope;
+pub use grant_scope::STEWARD_ROLE_NOTE;
 mod ruling_integrity;
 mod rulings;
 pub(crate) use ruling_integrity::{
@@ -77,16 +94,22 @@ pub use pending_act::{
 };
 pub(crate) use rulings::RULING_PREDICATE;
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
+#[cfg(all(unix, feature = "sync"))]
+pub(crate) use shared_act::removal_archive_body_keys_in_txn;
 pub use shared_act::{
-    DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind, EraseAskStatus,
-    NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,
-    ReceivedRemovalArchive, ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery,
+    AddOwnerPlan, DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, DetachRemainder,
+    DetachRemainderReason, DetachReport, EraseAskKind, EraseAskStatus, MemberAskChange,
+    MemberAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, NOTIFICATION_PRODUCER_MEMBER_ASK,
+    OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS, ReceivedRemovalArchive,
+    ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery, RemovalExportFile,
     RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN, SHARED_INVITATION_TTL_SECS,
     SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind,
-    SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedVaultChange,
-    SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
-    shared_act_outcome_transcript,
+    SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedMemberAsk,
+    SharedMemberChange, SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome,
+    TransferOwnershipPlan, shared_act_outcome_transcript,
 };
+pub(crate) use shared_act::{DetachOutcome, SharedMemberDeparture};
+pub(crate) use shared_act::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
 pub use shared_creation::{
     InitialSharedMember, SharedTrainingSetup, SharedTrainingSetupAnswer,
@@ -122,10 +145,10 @@ pub(crate) use self::coreference::{
     put_consolidated_same_as_in_txn, put_coreference_link_as_owner,
 };
 pub use self::grant::{
-    FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,
-    FederationGrantGuestPayload, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    MAX_DELEGATE_TTL_SECS, MAX_GUEST_DISCLOSED_REFS, decode_federation_grant_body,
-    encode_federation_grant_body,
+    ConnectMemberLeaveBinding, FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION,
+    FederationGrant, FederationGrantGuestPayload, FederationGrantPreset, FederationGrantRole,
+    FederationGrantScope, MAX_DELEGATE_TTL_SECS, MAX_GUEST_DISCLOSED_REFS,
+    decode_federation_grant_body, encode_federation_grant_body,
 };
 pub use self::guest::{
     GUEST_SHARE_ENVELOPE_BODY_KEYS, GUEST_SHARE_ENVELOPE_KEYS, GUEST_SHARE_ENVELOPE_SCHEMA_VERSION,
@@ -138,8 +161,8 @@ pub use self::pact_scope::{
     selector_range_of,
 };
 pub use self::peer_authority::{
-    MAX_PEER_AUTHORITY_ENTRIES_PER_PEER, PEER_AUTHORITY_KEY_PREFIX, admit_peer_authority_log_entry,
-    peer_authority_entry_key, peer_authority_roster, peer_consent_roots,
+    PEER_AUTHORITY_KEY_PREFIX, admit_peer_authority_log_entry, peer_authority_entry_key,
+    peer_authority_roster, peer_consent_roots,
 };
 pub use self::relationships::{
     MAX_RELATIONSHIP_LABEL_BYTES, MemberRelationship, MemberRelationshipContext,
@@ -181,8 +204,34 @@ use self::stale::register_foreign_world_for_pact;
 
 #[cfg(test)]
 mod membership_gate_tests;
+mod system_agent_grant;
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use system_agent_grant::SystemAgentGrantState;
+pub(crate) use system_agent_grant::erase_narrowing_actor_in_txn;
+pub(crate) use system_agent_grant::is_system_agent_steward_grant;
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use system_agent_grant::standing_steward_verbs_in;
+pub use system_agent_grant::{
+    EngineDefaultGrant, EngineDefaultOrigin, SYSTEM_AGENT_GRANT_NARROWING_WARNING,
+    SystemAgentGrantNarrowing, SystemAgentNarrowing, SystemFunction,
+};
+pub(crate) use system_agent_grant::{
+    StewardRows, SystemAgent, holds_system_agent_grant, steward_grant_of_in, steward_reach_in,
+    steward_rows_rewrite,
+};
+mod engine_controls;
+mod substrate_reads;
+pub(crate) use engine_controls::erase_engine_control_actor_in_txn;
+pub(crate) use engine_controls::is_engine_controls_grant;
+pub(crate) use engine_controls::rendered_change;
+pub use engine_controls::{
+    ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
+};
+pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
 #[cfg(test)]
 mod shared_creation_tests;
+#[cfg(test)]
+mod steward_tests;
 #[cfg(test)]
 mod tests;
 
@@ -224,8 +273,9 @@ use std::io::Cursor;
 pub use oneiron_authority::federation::{
     FederationGrantKind, GIT_PUSH_VERB, GitPushBounds, GitPushRepo, REPO_EDIT_VERB, REPO_READ_VERB,
     RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget, Scope, ScopeAtom, ScopeAxis,
-    ScopeId, Sensitivity, SensitivityCeiling,
+    ScopeId, Sensitivity, SensitivityCeiling, WalletRef,
 };
 
 mod org_admin;
+pub(crate) mod tables;
 pub use org_admin::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};

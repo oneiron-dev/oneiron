@@ -26,17 +26,33 @@ pub(crate) fn validate_hub_source_carrier_put(
 ) -> Result<()> {
     super::source_custody::validate_registered_source_target(store, txn, id, entity_type, bytes)?;
     let previous = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?;
-    if let Some(raw) = &previous {
-        let header = EntityMetadataHeader::parse(raw)
-            .ok_or(Error::CorruptedIndex("hub source carrier header"))?;
-        if header.entity_type == ENTITY_TYPE_ASSET
-            && decode_source_carrier(&raw[ENTITY_METADATA_HEADER_LEN..])?.is_some()
-            && (entity_type != header.entity_type || raw[ENTITY_METADATA_HEADER_LEN..] != *bytes)
-        {
-            return Err(invalid(
-                "content-addressed hub source cannot be overwritten",
-            ));
+    // The previous ASSET's bytes, read from its body file when it has one
+    // (FIX 22091): a carrier is compared by what it holds, never by its
+    // manifest.
+    let previous_asset = match &previous {
+        Some(raw) => {
+            let header = EntityMetadataHeader::parse(raw)
+                .ok_or(Error::CorruptedIndex("hub source carrier header"))?;
+            if header.entity_type == ENTITY_TYPE_ASSET {
+                Some(crate::store::asset_carrier_body_in_txn(
+                    store,
+                    txn,
+                    id,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                )?)
+            } else {
+                None
+            }
         }
+        None => None,
+    };
+    if let Some(old) = &previous_asset
+        && decode_source_carrier(old)?.is_some()
+        && (entity_type != ENTITY_TYPE_ASSET || **old != *bytes)
+    {
+        return Err(invalid(
+            "content-addressed hub source cannot be overwritten",
+        ));
     }
     if entity_type == ENTITY_TYPE_ASSET
         && let Some((holder, package)) = decode_source_carrier(bytes)?
@@ -49,9 +65,12 @@ pub(crate) fn validate_hub_source_carrier_put(
         }
         super::source_custody::check_source_target(store, txn, id)?;
         super::source_custody::check_source_custody(store, txn, &holder, &hash)?;
-        if let Some(raw) = previous
-            && raw[ENTITY_METADATA_HEADER_LEN..] != *bytes
-        {
+        let collides = match (&previous_asset, &previous) {
+            (Some(old), _) => **old != *bytes,
+            (None, Some(raw)) => raw[ENTITY_METADATA_HEADER_LEN..] != *bytes,
+            (None, None) => false,
+        };
+        if collides {
             return Err(invalid("source hash collides with an existing asset"));
         }
     }
@@ -63,23 +82,42 @@ pub(super) fn read_source_carrier_in_txn(
     txn: &heed::RoTxn<'_>,
     carrier: &EntityId,
 ) -> Result<Option<(EntityId, HubPackage)>> {
+    Ok(read_source_carrier_sourced_in_txn(store, txn, carrier)?.0)
+}
+
+/// The same carrier read, including bodies rejected before package decoding.
+pub(super) fn read_source_carrier_sourced_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    carrier: &EntityId,
+) -> Result<(Option<(EntityId, HubPackage)>, Option<Vec<EntityId>>)> {
     if store.off_record_sessions.contains_entity(carrier)? {
-        return Ok(None);
+        return Ok((None, None));
     }
-    let crate::vault::LiveEntityRow::Live { entity_type, body } =
-        crate::vault::live_entity_row_in_txn(store, txn, carrier)?
-    else {
-        return Ok(None);
+    let (entity_type, body) = match crate::vault::live_entity_row_in_txn(store, txn, carrier)? {
+        crate::vault::LiveEntityRow::Live { entity_type, body } => (entity_type, body),
+        crate::vault::LiveEntityRow::Absent => return Ok((None, Some(Vec::new()))),
+        crate::vault::LiveEntityRow::DeletedShell => return Ok((None, None)),
     };
+    let sources = Some(vec![*carrier]);
     if entity_type != ENTITY_TYPE_ASSET {
-        return Ok(None);
+        return Ok((None, sources));
     }
+    let body = crate::store::asset_carrier_body_in_txn(store, txn, carrier, &body)?;
     let Some((holder, package)) = decode_source_carrier(&body)? else {
-        return Ok(None);
+        return Ok((None, sources));
     };
     if source_carrier_id(&holder, &package.content_hash()?)? != *carrier {
         return Err(invalid("stored source carrier identity drift"));
     }
-    super::source_custody::check_source_custody(store, txn, &holder, &package.content_hash()?)?;
-    Ok(Some((holder, package)))
+    let custody_sources = super::source_custody::check_source_custody_sourced(
+        store,
+        txn,
+        &holder,
+        &package.content_hash()?,
+    )?;
+    Ok((
+        Some((holder, package)),
+        crate::attempt_queue::source_rows::union_source_rows([sources, custody_sources]),
+    ))
 }

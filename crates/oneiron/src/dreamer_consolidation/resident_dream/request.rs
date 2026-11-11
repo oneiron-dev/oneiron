@@ -36,6 +36,7 @@ pub(super) fn dream_request(
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
     let keyless = model.inference.selected_keyless();
+    let paid = model.inference.selected_paid();
     // OF-490: it dreams knowing its own craft, every note, loaded on this
     // attempt so its manifest names them: fixed input beside its cut, never
     // diary progress, so no cut defers or consumes it. A craft that does not
@@ -62,12 +63,16 @@ pub(super) fn dream_request(
         role: LlmMessageRole::System,
         content: vec![ContentPart::Text {
             text: model.instruction.to_owned(),
+            signature: None,
         }],
     }];
     if let Some(text) = craft {
         messages.push(LlmMessage {
             role: LlmMessageRole::System,
-            content: vec![ContentPart::Text { text }],
+            content: vec![ContentPart::Text {
+                text,
+                signature: None,
+            }],
         });
     }
     let mut asking = format!("{}\n\n{CRAFT_ASK}", cut.text());
@@ -77,7 +82,10 @@ pub(super) fn dream_request(
     }
     messages.push(LlmMessage {
         role: LlmMessageRole::User,
-        content: vec![ContentPart::Text { text: asking }],
+        content: vec![ContentPart::Text {
+            text: asking,
+            signature: None,
+        }],
     });
     let request = LlmRequest {
         model: model.model.clone(),
@@ -96,6 +104,7 @@ pub(super) fn dream_request(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages,

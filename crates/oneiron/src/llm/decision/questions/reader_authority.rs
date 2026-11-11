@@ -67,11 +67,22 @@ fn own_authority_in(
     }
     let now = home.instant_secs_in(txn)?;
     let owners = home.owners_in(txn)?;
-    let scopes = crate::federation::agent_grants_for_store_in_txn(home.store(), txn)?
-        .into_iter()
+    let grants = crate::federation::agent_grants_for_store_in_txn(home.store(), txn)?;
+    // A Grant whose `read` a verb class it names admits reads under its
+    // Scope with `read` listed (FIX 8735); an unclassed Grant reads as it is.
+    let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+        home.store(),
+        txn,
+        grants
+            .iter()
+            .filter(|standing| standing.grant.member_ref == actor)
+            .map(|standing| &standing.grant),
+    )?;
+    let scopes = grants
+        .iter()
         .filter(|standing| {
             standing.grant.member_ref == actor
-                && standing.grant.confers_at(now)
+                && standing.grant.confers_with_classes_at(now, &classes)
                 && owners.contains(&standing.delegated_by)
                 && !standing.pact_standing_lapsed_for_store_in_txn(
                     home.store(),
@@ -79,7 +90,7 @@ fn own_authority_in(
                     txn,
                 )
         })
-        .map(|standing| standing.grant.authority_scope)
+        .map(|standing| standing.grant.scope_for_verb("read", &classes).into_owned())
         .collect();
     Ok(OwnAuthority::Grants(scopes))
 }

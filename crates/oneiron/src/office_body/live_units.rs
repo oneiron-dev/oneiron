@@ -76,6 +76,18 @@ pub(crate) struct LiveSheet {
 }
 
 impl LiveSheet {
+    /// Stored addresses whose values differ across the two live frontiers.
+    /// A shifted/whole sheet is named separately by `whole()`; callers can
+    /// represent that as one interval rather than expanding a rectangle.
+    pub(crate) fn changed_cells(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.then
+            .iter()
+            .flat_map(|cells| cells.keys())
+            .chain(self.now.iter().flat_map(|cells| cells.keys()))
+            .copied()
+            .filter(|(row, col)| self.differs(*col, *row))
+    }
+
     /// How the sheet fares as a whole: gone from the head, or every address
     /// in doubt.
     pub(crate) fn whole(&self) -> Option<LiveChange> {
@@ -97,6 +109,26 @@ impl LiveSheet {
             _ => true,
         }
     }
+}
+
+/// One story's top-level and direct cell paragraphs share the same native id
+/// space and the same whole-document frontier.
+fn story_paragraphs(story: docx::DocxStoryBody) -> Vec<docx::StoryParagraph> {
+    let mut paragraphs = story.paragraphs;
+    paragraphs.extend(
+        story
+            .tables
+            .into_iter()
+            .flat_map(|table| table.cells)
+            .flat_map(|cell| cell.paragraphs)
+            .map(|paragraph| docx::StoryParagraph {
+                id: paragraph.id,
+                locked: paragraph.locked,
+                text: paragraph.text,
+                runs: Vec::new(),
+            }),
+    );
+    paragraphs
 }
 
 impl Vault {
@@ -171,11 +203,38 @@ impl Vault {
         then: Option<&LivePin>,
         until: Option<&[u8]>,
     ) -> Result<Option<LiveUnits<String>>> {
+        self.live_scoped_paragraphs_until(artifact, then, None, until)
+    }
+
+    /// The paragraphs in one actual native story at the same whole-body pins.
+    pub(crate) fn live_scoped_paragraphs_until(
+        &self,
+        artifact: &EntityId,
+        then: Option<&LivePin>,
+        scope: Option<&oneiron_docedit::docx_body::DocxStoryScope>,
+        until: Option<&[u8]>,
+    ) -> Result<Option<LiveUnits<String>>> {
         let Some((was, now)) = self.live_span(artifact, OfficeBodyKind::Docx, then, until)? else {
             return Ok(None);
         };
         let blocks = |doc: &LoroDoc| -> Result<BTreeMap<String, [u8; 32]>> {
-            Ok(docx::read(doc)?
+            let body = docx::read(doc)?;
+            if let Some(scope) = scope {
+                return Ok(body
+                    .stories
+                    .into_iter()
+                    .find(|story| &story.scope == scope)
+                    .into_iter()
+                    .flat_map(story_paragraphs)
+                    .map(|paragraph| {
+                        let mut hasher = blake3::Hasher::new();
+                        hasher.update(format!("story|{}|", paragraph.locked).as_bytes());
+                        hasher.update(paragraph.text.as_bytes());
+                        (paragraph.id, *hasher.finalize().as_bytes())
+                    })
+                    .collect());
+            }
+            Ok(body
                 .blocks
                 .into_iter()
                 .map(|block| {
@@ -376,6 +435,24 @@ impl Vault {
         Ok(Some((pin, cells)))
     }
 
+    /// The addressed story's actual live paragraphs at the whole-document pin.
+    pub(crate) fn live_head_story_paragraphs(
+        &self,
+        artifact: &EntityId,
+        scope: &oneiron_docedit::docx_body::DocxStoryScope,
+    ) -> Result<Option<(LivePin, Vec<docx::StoryParagraph>)>> {
+        let Some((OfficeBodyKind::Docx, pin, doc)) = self.live_head(artifact)? else {
+            return Ok(None);
+        };
+        let paragraphs = docx::read(&doc)?
+            .stories
+            .into_iter()
+            .find(|story| &story.scope == scope)
+            .map(story_paragraphs)
+            .unwrap_or_default();
+        Ok(Some((pin, paragraphs)))
+    }
+
     /// The paragraphs of `artifact`'s live document at its head, with the pin
     /// they were read at. `None` when it has no live document.
     pub(crate) fn live_head_blocks(
@@ -469,7 +546,7 @@ impl Vault {
             return Ok(None);
         };
         Ok(self
-            .export_pptx_body(artifact)
+            .export_pptx_body(artifact, None)
             .ok()
             .map(|export| (pin, export.outcome.bytes)))
     }

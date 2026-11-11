@@ -51,7 +51,7 @@ impl Vault {
     ) -> Result<(
         BTreeSet<EntityId>,
         Vec<EntityId>,
-        Vec<(crate::attempt_queue::AttemptId, u32)>,
+        crate::deletion::ErasureEffects,
     )> {
         let shells = crate::identity_redirect::inbound_redirect_shells_in_txn(
             &self.store,
@@ -59,7 +59,11 @@ impl Vault {
             &BTreeSet::from([*head]),
         )?;
         if shells.is_empty() {
-            return Ok((shells, Vec::new(), Vec::new()));
+            return Ok((
+                shells,
+                Vec::new(),
+                crate::deletion::ErasureEffects::default(),
+            ));
         }
         for shell in &shells {
             self.store
@@ -97,9 +101,9 @@ impl Vault {
         // Each shell takes the actor scrub its head's erase runs, so no side
         // row stamped with a shell's id keeps it (FIX 6709). The head's own
         // provenance erase stays the one that retires keys.
-        let mut cancelled = Vec::new();
+        let mut effects = crate::deletion::ErasureEffects::default();
         for shell in &shells {
-            cancelled.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
+            effects.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                 crate::deletion::ActorErasureWriter::new(self, wtxn, *shell),
                 act,
             )?);
@@ -107,6 +111,6 @@ impl Vault {
         let mut touched = shells.clone();
         touched.insert(*head);
         changed.extend(self.scrub_identity_op_author_stamps_in_txn(wtxn, &touched)?);
-        Ok((shells, changed, cancelled))
+        Ok((shells, changed, effects))
     }
 }

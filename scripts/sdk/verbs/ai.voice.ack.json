@@ -1,0 +1,16 @@
+{
+  "name": "ai.voice.ack",
+  "description": "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on.",
+  "input": "crate::task_verb::sdk::LiveVoiceAckRequest",
+  "output": "crate::task_verb::sdk::LiveVoiceProcessed",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.ack\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

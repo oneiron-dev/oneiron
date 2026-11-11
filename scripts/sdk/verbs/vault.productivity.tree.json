@@ -1,0 +1,14 @@
+{
+  "name": "vault.productivity.tree",
+  "description": "The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters.",
+  "input": "crate::memory::ProductivityTreeRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>",
+  "call": "memory.productivity_tree(&input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

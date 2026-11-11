@@ -64,6 +64,7 @@ mod ladder;
 pub(crate) mod launch_price;
 mod llama_identity;
 mod media;
+pub(crate) mod native_call_capture;
 #[cfg(unix)]
 mod native_exl3;
 mod offer;
@@ -100,18 +101,19 @@ mod walk;
 mod worker_host;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
-pub(crate) use broker_context::BrokerContext;
+pub(crate) use broker_context::{BrokerContext, WeakBrokerContext};
 use cooldown::FallbackRung;
 pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
-pub(crate) use discovered::MeshRoutes;
+pub(crate) use discovered::{MeshRoutes, withdraw_discovered};
 pub(crate) use host_budgets::ModelHostBudgets;
 pub use hosted_speech::{HostedCloner, VendorVoice};
 pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_cloud_node};
-pub(crate) use ladder::ModelCallBinding;
+pub(crate) use ladder::{AnsweringRung, ModelCallBinding};
 pub use ladder::{CallDeadline, OfferLadder};
+pub(crate) use media::AgentMediaCall;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
@@ -136,6 +138,7 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
+pub(crate) use worker_host::start_worker_controller;
 pub(crate) use worker_host::{
     install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
 };
@@ -269,6 +272,8 @@ pub struct ModelRuntime {
     token_ratios: Option<Arc<TokenRatios>>,
     /// The trainer connectors `[models.training]` names (FIX 7263).
     training: crate::config::models::TrainingSettings,
+    /// Config-bound managed workers whose local weight files the Coach can read.
+    stock_weights: BTreeMap<String, worker_host::StockWeights>,
     /// The vault's model byte budgets its media rungs and mesh routes hold
     /// their bytes on (FIX 9321, FIX 9323).
     budgets: ModelHostBudgets,
@@ -578,11 +583,7 @@ fn build_native_local(
     provider: &ProviderConfig,
     config: &ModelsConfig,
 ) -> Option<NativeLocal> {
-    let chat = matches!(
-        provider.kind,
-        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
-    );
-    if !chat || provider.responses_socket.is_some() {
+    if !speaks_native_local(provider) {
         return None;
     }
     let routes = worker_host::native_local_routes(name, provider, &config.workers);
@@ -637,6 +638,18 @@ fn build_native_local(
     _config: &ModelsConfig,
 ) -> Option<NativeLocal> {
     None
+}
+
+/// Whether `provider`'s chat calls may go over the native channel of a
+/// managed EXL3 worker bound to it (I2-LOCAL): an OpenAI-compatible chat
+/// provider holding no Responses socket, which keeps its socket and HTTP
+/// path, as its own transport does.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn speaks_native_local(provider: &ProviderConfig) -> bool {
+    matches!(
+        provider.kind,
+        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
+    ) && provider.responses_socket.is_none()
 }
 
 /// `model` on `provider` over `native` alone, as a rung at `position`: the

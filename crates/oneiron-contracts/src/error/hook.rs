@@ -21,6 +21,9 @@ pub enum VerbHookStop {
     Completed {
         invocation: String,
         result: serde_json::Value,
+        /// The actual completed chain's content-free notice bit; absent when unknown.
+        /// This metadata grants no authority and does not alter the saved result.
+        hook_notice: Option<bool>,
     },
     /// The ask was answered proceed and settlement ran the call once, which
     /// failed, or refused it before it ran (a credential that no longer
@@ -32,6 +35,9 @@ pub enum VerbHookStop {
         message: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         receipt_ref: Option<String>,
+        /// The actual completed chain's content-free notice bit; absent when unknown.
+        /// This metadata grants no authority and does not alter the saved error.
+        hook_notice: Option<bool>,
     },
 }
 

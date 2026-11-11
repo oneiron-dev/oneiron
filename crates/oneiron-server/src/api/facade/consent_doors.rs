@@ -1,4 +1,4 @@
-//! Consent lifecycle host doors, on the same owner proof as Gate policy.
+//! Consent lifecycle host doors: owner-authorized acts and a grantee's own revoke.
 use std::sync::Arc;
 
 use oneiron::Vault;
@@ -69,6 +69,33 @@ pub(crate) async fn vault_connectors_calls_approve_once(
     .await
 }
 
+/// The owner's last-observed campaign holds and queued redrives.
+pub(crate) async fn vault_campaign_held(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: EmptyRequest,
+) -> Listed<Vec<oneiron::campaign::enrollment::CampaignEnrollmentHeldCall>> {
+    as_owner(server, auth, "vault.campaign.held", move |vault, owner| {
+        sdk::campaign_enrollment_held(vault, owner, input)
+    })
+    .await
+}
+
+/// Approves a reviewed campaign hold once; the ordinary pump owns its redrive.
+pub(crate) async fn vault_campaign_approve_once(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: sdk::CampaignEnrollmentApproveOnceRequest,
+) -> Listed<ConsentActReceipt> {
+    as_owner(
+        server,
+        auth,
+        "vault.campaign.approve_once",
+        move |vault, owner| sdk::approve_campaign_enrollment_once(vault, owner, input),
+    )
+    .await
+}
+
 pub(crate) async fn vault_consent_deny(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -106,6 +133,23 @@ pub(crate) async fn vault_consent_create_auto_weave_grant(
         auth,
         "vault.consent.create_auto_weave_grant",
         move |vault, owner| lifecycle::mint_auto_weave_grant(vault, owner, input),
+    )
+    .await
+}
+
+/// The owner's standing grant for this vault's Dreamer's nightly SameAs links.
+pub(crate) async fn vault_consent_create_nightly_link_grant(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::dreamer_consolidation::NightlyLinkGrantRequest,
+) -> Listed<ConsentActReceipt> {
+    as_owner(
+        server,
+        auth,
+        "vault.consent.create_nightly_link_grant",
+        move |vault, owner| {
+            oneiron::dreamer_consolidation::mint_nightly_link_grant(vault, owner, input)
+        },
     )
     .await
 }
@@ -154,10 +198,28 @@ pub(crate) async fn vault_consent_revoke(
     auth: &CoreAuth,
     input: RevokeGrantRequest,
 ) -> Listed<ConsentActReceipt> {
-    as_owner(server, auth, "vault.consent.revoke", move |vault, owner| {
-        lifecycle::revoke(vault, owner, input)
-    })
-    .await
+    const VERB: &str = "vault.consent.revoke";
+    let answer = match owner_proof(auth, server, VERB) {
+        Ok(owner) => {
+            let server = Arc::clone(server);
+            clock_ingress::run_blocking(move || lifecycle::revoke(server.vault(), &owner, input))
+                .await
+        }
+        Err(refusal) => {
+            let (actor, class) =
+                match super::owner_binding::facade_caller_or(server, auth, || refusal) {
+                    Ok(caller) => caller,
+                    Err(error) => return (Err(error), Vec::new()),
+                };
+            let server = Arc::clone(server);
+            clock_ingress::run_blocking(move || {
+                lifecycle::revoke_as_grantee(server.vault(), actor, class, input)
+            })
+            .await
+        }
+    }
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    (answer, Vec::new())
 }
 
 pub(crate) async fn vault_consent_bypass_grant_warning(

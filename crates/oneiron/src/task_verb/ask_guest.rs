@@ -93,7 +93,7 @@ pub(super) fn check_disclosure(
         DisclosureEnvelope::new(refs.iter().map(EntityId::to_hex))?,
     )?;
     if !row.is_active()
-        || row.grant_ref() != guest.disclosure_grant_ref
+        || crate::consent::consent_grant_row_grant_ref(&row) != guest.disclosure_grant_ref
         || !parent.bound().contains(&required)
     {
         return Err(not_recorded());
@@ -177,9 +177,11 @@ pub(super) fn check_delegation_record(
     // Admission took this grant only as a live owner recorded it
     // (`delegated_class`). Like a later revocation, a later change of owners
     // does not reach back into an answer already admitted.
-    Ok(row.grant_ref() == reference
-        && action.bound().contains(&required)
-        && names_guest(action.bound(), person))
+    Ok(
+        crate::consent::consent_grant_row_grant_ref(&row) == reference
+            && action.bound().contains(&required)
+            && names_guest(action.bound(), person),
+    )
 }
 
 /// The guest's public key an ask carries (FIX-LIST 1978): 64 hex, a key the

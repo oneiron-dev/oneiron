@@ -123,6 +123,7 @@ fn refused_block() -> MemoryError {
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
         legal_hold: None,
+        room_join_hold: None,
     }
 }
 

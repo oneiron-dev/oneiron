@@ -607,6 +607,7 @@ impl Import<'_> {
             imported_at: self.imported_at,
             conversation_body: self.conversation_body.clone(),
             message_occurred: occurred,
+            source_audience: None,
         };
         let moved = Cell::new(false);
         let landed = self.memory.witness_imported(&turn, &stamp, |wtxn| {

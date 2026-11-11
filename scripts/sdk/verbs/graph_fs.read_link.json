@@ -1,0 +1,14 @@
+{
+  "name": "graph_fs.read_link",
+  "description": "Resolve a visible graph link at the mounted reference without following a host filesystem link.",
+  "input": "crate::memory::graph_fs_doors::GraphFsLinkRequest",
+  "output": "crate::memory::graph_fs_doors::GraphFsLinkView",
+  "call": "memory.graph_fs_read_link(input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

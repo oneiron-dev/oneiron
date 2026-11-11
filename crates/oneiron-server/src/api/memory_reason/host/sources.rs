@@ -10,6 +10,7 @@ use oneiron::settings::{ReadDestination, ReleaseHold};
 use oneiron::{EntityId, LlmRequest};
 use serde_json::Value;
 
+use super::super::read_rows::{ReadRequests, ReadRows};
 use super::{Backend, invalid};
 use crate::models::{SourceAdmission, SourceOffer};
 
@@ -21,12 +22,50 @@ pub(super) struct Pin {
     pub(super) text: String,
 }
 
+pub(super) struct PinCohort {
+    // Pins and their text drop before their memory charge.
+    rows: Vec<Pin>,
+    memory: oneiron::host_memory::MemoryLease,
+}
+
+impl PinCohort {
+    pub(super) fn with_capacity(
+        memory: &oneiron::host_memory::MachineMemory,
+        capacity: usize,
+    ) -> Self {
+        let mut cohort = Self {
+            rows: Vec::with_capacity(capacity),
+            memory: memory.empty_lease(),
+        };
+        cohort
+            .memory
+            .materialized(0, pin_backing_bytes(cohort.rows.capacity()));
+        cohort
+    }
+
+    pub(super) fn push(&mut self, pin: Pin) {
+        let text = pin.text.capacity() as u64;
+        let previous_capacity = self.rows.capacity();
+        self.rows.push(pin);
+        let backing = pin_backing_bytes(self.rows.capacity() - previous_capacity);
+        self.memory.materialized(0, backing.saturating_add(text));
+    }
+
+    pub(super) fn as_slice(&self) -> &[Pin] {
+        &self.rows
+    }
+}
+
+fn pin_backing_bytes(capacity: usize) -> u64 {
+    (capacity as u64).saturating_mul(std::mem::size_of::<Pin>() as u64)
+}
+
 pub(super) fn rerank_pins(
     backend: &Backend,
     candidates: &[RerankCandidate<'_>],
-) -> oneiron::Result<Vec<Pin>> {
+) -> oneiron::Result<PinCohort> {
     if candidates.is_empty() {
-        return Ok(Vec::new());
+        return Ok(PinCohort::with_capacity(&backend.server.memory, 0));
     }
     let mut revisions = Vec::with_capacity(candidates.len());
     let mut refs = Vec::with_capacity(candidates.len());
@@ -39,11 +78,14 @@ pub(super) fn rerank_pins(
     }
     let scoped = crate::api::scoped_read_for_core_auth(&backend.server.vault, &backend.auth)
         .map_err(|_| invalid("memory reason pinned read failed"))?;
-    let read = scoped.read(&refs, None)?;
+    let refs = ReadRequests::new(&backend.server.memory, refs);
+    let read = scoped.read(refs.as_slice(), None)?;
+    drop(refs);
     let oneiron::claim::ScopedReadResult {
         value: rows,
         receipt,
     } = read;
+    let mut rows = ReadRows::new(&backend.server.memory, rows);
     backend
         .reads
         .lock()
@@ -52,8 +94,8 @@ pub(super) fn rerank_pins(
     if rows.len() != candidates.len() {
         return Err(invalid("memory reason rerank pin is not readable"));
     }
-    let mut pins = Vec::with_capacity(candidates.len());
-    for ((candidate, revision), row) in candidates.iter().zip(revisions).zip(rows) {
+    let mut pins = PinCohort::with_capacity(&backend.server.memory, candidates.len());
+    for ((candidate, revision), row) in candidates.iter().zip(revisions).zip(rows.drain()) {
         let Some(oneiron::claim::ReadRow {
             entity_type,
             learned_at,
@@ -111,15 +153,16 @@ pub(super) fn rerank_pins(
             text,
         });
     }
+    drop(rows);
     Ok(pins)
 }
 
 pub(super) fn compose_pins(
     backend: &Backend,
     evidence: &[super::super::MemoryReasonEvidence],
-) -> oneiron::Result<Vec<Pin>> {
+) -> oneiron::Result<PinCohort> {
     if evidence.is_empty() {
-        return Ok(Vec::new());
+        return Ok(PinCohort::with_capacity(&backend.server.memory, 0));
     }
     let refs: Vec<_> = evidence
         .iter()
@@ -127,11 +170,14 @@ pub(super) fn compose_pins(
         .collect();
     let scoped = crate::api::scoped_read_for_core_auth(&backend.server.vault, &backend.auth)
         .map_err(|_| invalid("memory reason pinned read failed"))?;
-    let read = scoped.read(&refs, None)?;
+    let refs = ReadRequests::new(&backend.server.memory, refs);
+    let read = scoped.read(refs.as_slice(), None)?;
+    drop(refs);
     let oneiron::claim::ScopedReadResult {
         value: rows,
         receipt,
     } = read;
+    let mut rows = ReadRows::new(&backend.server.memory, rows);
     backend
         .reads
         .lock()
@@ -140,8 +186,8 @@ pub(super) fn compose_pins(
     if rows.len() != evidence.len() {
         return Err(invalid("memory reason compose pin is not readable"));
     }
-    let mut pins = Vec::with_capacity(evidence.len());
-    for (expected, row) in evidence.iter().zip(rows) {
+    let mut pins = PinCohort::with_capacity(&backend.server.memory, evidence.len());
+    for (expected, row) in evidence.iter().zip(rows.drain()) {
         let Some(oneiron::claim::ReadRow {
             entity_type,
             learned_at,
@@ -172,6 +218,7 @@ pub(super) fn compose_pins(
             text,
         });
     }
+    drop(rows);
     Ok(pins)
 }
 
@@ -218,13 +265,16 @@ impl<'a> Sources<'a> {
             .iter()
             .map(|pin| PointRead::id(pin.id).at(ReadMode::Pinned(pin.revision)))
             .collect();
+        let refs = ReadRequests::new(&self.backend.server.memory, refs);
         let read = reader
-            .read(&refs, None)
+            .read(refs.as_slice(), None)
             .map_err(|_| ReleaseHold::Placement.reason())?;
+        drop(refs);
         let oneiron::claim::ScopedReadResult {
             value: rows,
             receipt,
         } = read;
+        let mut rows = ReadRows::new(&self.backend.server.memory, rows);
         self.backend
             .reads
             .lock()
@@ -234,7 +284,7 @@ impl<'a> Sources<'a> {
             return Err(hold_reason(&self.backend.server.vault, &ids, destination));
         }
         let mut hashes = Vec::with_capacity(self.pins.len());
-        for (pin, row) in self.pins.iter().zip(rows) {
+        for (pin, row) in self.pins.iter().zip(rows.drain()) {
             let Some(oneiron::claim::ReadRow {
                 body: Some(body), ..
             }) = row
@@ -247,6 +297,7 @@ impl<'a> Sources<'a> {
             }
             hashes.push(hash);
         }
+        drop(rows);
         let hits: Vec<oneiron::ScoredEntity> = self
             .pins
             .iter()

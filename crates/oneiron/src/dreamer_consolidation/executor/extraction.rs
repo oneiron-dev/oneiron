@@ -50,11 +50,15 @@ impl ConsolidationExecutor<'_> {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
         })?;
         let keyless = call.inference.selected_keyless();
+        let paid = call.inference.selected_paid();
         let prompt: ExtractionPrompt = serde_json::from_str(include_str!("extraction_prompt.json"))
             .map_err(|_| invalid_consolidation("shipped extraction prompt is not readable"))?;
         let text = |role, text: String| LlmMessage {
             role,
-            content: vec![ContentPart::Text { text }],
+            content: vec![ContentPart::Text {
+                text,
+                signature: None,
+            }],
         };
         let mut messages = vec![text(LlmMessageRole::System, prompt.system)];
         for example in prompt.examples {
@@ -88,6 +92,7 @@ impl ConsolidationExecutor<'_> {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: keyless,
+                host_paid: paid,
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),
@@ -307,7 +312,10 @@ fn resolve_proposal(
     let value = json_to_rmpv(&parsed.value);
     let rel = match (corrects, parsed.rel) {
         (Some(prior), _) => prior.body.rel.clone(),
-        (None, None) => scope.relationship.clone(),
+        (None, None) => scope
+            .relationship
+            .as_ref()
+            .map(|ids| ids.iter().copied().collect()),
         // A relationship the call listed, by its label (FIX 7575).
         (None, Some(CandidateRel::Listed(rel))) => crate::claim::relationship_scope_of(Some(rel)),
         // A value that is no listed label is read as before.
@@ -321,7 +329,9 @@ fn resolve_proposal(
     // A bound branch writes inside its relationship set: the whole set or a
     // narrower one, never a relationship outside it or `all`.
     if let Some(bound) = &scope.relationship
-        && !rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
+        && !rel
+            .as_ref()
+            .is_some_and(|rel| rel.iter().all(|id| bound.contains(id)))
     {
         return Err(invalid_consolidation(
             "extraction relationship crossed branch scope",

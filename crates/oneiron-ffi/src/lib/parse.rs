@@ -11,7 +11,7 @@ use oneiron::memory::{
 use oneiron::{EdgeKind, EntityId, PackFormat};
 
 use super::guard::{with_optional_slice, with_required_slice};
-use super::types::{ENTITY_ID_LEN, MAX_FFI_QUERY_BYTES, OneironStatus};
+use super::types::{ENTITY_ID_LEN, OneironStatus};
 
 pub(super) fn string_from_required(ptr: *const u8, len: usize) -> Result<String, OneironStatus> {
     with_required_slice(ptr, len, |bytes| {
@@ -60,13 +60,6 @@ pub(super) fn parse_edge_kind(kind: u32) -> Result<EdgeKind, OneironStatus> {
 /// only where this target's `usize` cannot hold it.
 pub(super) fn parse_search_limit(limit: u32) -> Result<usize, OneironStatus> {
     usize::try_from(limit).map_err(|_| OneironStatus::InvalidArg)
-}
-
-pub(super) fn validate_query_len(query: &str) -> Result<(), OneironStatus> {
-    if query.len() > MAX_FFI_QUERY_BYTES {
-        return Err(OneironStatus::InvalidArg);
-    }
-    Ok(())
 }
 
 pub(super) fn validate_vector_len(len: usize, expected: usize) -> Result<(), OneironStatus> {

@@ -19,6 +19,7 @@ pub(super) fn output_record(
     grant_ref: Option<String>,
 ) -> SettlementRecord {
     let report = match &row.body {
+        PendingBody::SheetAnswers { .. } => &[][..],
         PendingBody::Output { report, .. } => report.as_bytes(),
         PendingBody::Edit { manifest, .. } => manifest.as_slice(),
     };
@@ -40,7 +41,11 @@ pub(super) fn output_record(
         docx_judgments: Vec::new(),
         anchors: Vec::new(),
         reason: None,
-        sheet_answers: None,
+        sheet_answers: match &row.body {
+            PendingBody::SheetAnswers { bundle } => Some(Box::new(bundle.clone())),
+            _ => None,
+        },
         deck: None,
+        discarded_words: None,
     }
 }

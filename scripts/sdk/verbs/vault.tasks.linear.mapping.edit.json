@@ -1,0 +1,17 @@
+{
+  "name": "vault.tasks.linear.mapping.edit",
+  "description": "Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key.",
+  "input": "crate::linear_sync::LinearMappingEdit",
+  "output": "crate::linear_sync::LinearMappingEditReceipt",
+  "call": "memory.linear_mapping_edit(&input, None)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_caller": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

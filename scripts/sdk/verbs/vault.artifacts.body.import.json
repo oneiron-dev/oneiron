@@ -1,0 +1,36 @@
+{
+  "name": "vault.artifacts.body.import",
+  "description": "Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document.",
+  "refs": [
+    "/artifact_ref",
+    "/made_by/inputs/*/row",
+    "/made_by/trigger/task",
+    "/made_by/trigger/ask",
+    "/made_by/trigger/skill"
+  ],
+  "input": "crate::office_body::OfficeBodyImportRequest",
+  "output": "crate::office_body::OfficeBodyHead",
+  "call": "memory.artifacts_body_import(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "artifact_ref"
+    ]
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// Imports one office version as the artifact's live body.\n",
+      "ts": "/** Imports one office version as the artifact's live body. */",
+      "py": "Imports one office version as the artifact's live body."
+    }
+  }
+}

@@ -15,6 +15,7 @@
 //! that preserve every `crate::comm::` path), the projector's pass index,
 //! and the test-only scan counters.
 
+mod born_touch;
 mod claims;
 mod consent;
 mod descriptor;
@@ -27,12 +28,15 @@ mod projection_writes;
 mod projector;
 mod receipt_import;
 mod records;
+mod scoped_touch;
 mod stop_hold;
 mod thread_membership;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::born_touch::DeferredBornTouches;
 pub use self::claims::{
     COMM_CLAIM_PREDICATES, COMM_SCHEMA_VERSION, ClaimClassDescriptorRow, CommClaim, CommClaimValue,
     CommClearOptOutOutcome, CommError, CommResult, PREDICATE_COMM_LAST_TOUCH,
@@ -89,6 +93,7 @@ pub(crate) use self::receipt_import::erase_skipped_send_receipt_in_txn;
 pub(crate) use self::records::{
     validate_comm_record_body_bytes, validate_key_string as validate_comm_party_key,
 };
+pub(crate) use self::scoped_touch::ScopedTouchRecord;
 pub(crate) use self::stop_hold::{
     clear_pending_stop_for_delete, maintain_pending_stop_put, send_stop_reason_in_txn,
 };
@@ -438,6 +443,9 @@ impl ProjectorIndexDelta {
 struct ProjectedCommEvent<'a> {
     rule: ProjectorRule,
     source_event_id: EntityId,
+    original_head: Option<EntityId>,
+    source_position: Option<&'a crate::write_envelope::communication_record::ScopedTouchSource>,
+    later_born_heads: Option<&'a BTreeSet<EntityId>>,
     party_ref: EntityId,
     channel_class: Option<&'a str>,
     thread_ref: Option<&'a str>,

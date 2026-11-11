@@ -13,10 +13,10 @@ use super::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::deletion::{DeleteEntityPreview, DeleteReason, LegalHoldActorKind, LegalHoldTarget};
+use crate::deletion::{DeleteEntityPreview, DeleteReason, LegalHoldActorKind};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, LegalHoldNotice, LegalHoldState};
+use crate::error::Error;
 use crate::federation::{ActExecution, PendingAuthorityAct, SharedVaultPreset};
 use crate::store::legal_hold::{self, HoldActor};
 use crate::write_envelope::WriteActor;
@@ -64,13 +64,10 @@ pub enum SameBytesHold {
     /// A shared vault's record whose writer is not the caller, or does not resolve: it needs
     /// that owner's veto window.
     AnotherOwnersRecord,
-    /// A legal hold names it. A GDPR request keeps it and erases the rest; its refusal and
+    /// A customer hold names it. A GDPR request keeps it and erases the rest; its refusal and
     /// reason are in that hold's log, and where Oneiron hosts the bytes it is use-limited
-    /// (OF-470 C5, C6). `law_notice` is the visible host order's bound that keeps it
-    /// (FIX 5229, #3182), `None` for customer-only holds; a secret order never names one.
-    LegalHold { law_notice: Option<LegalHoldNotice> },
-    /// Its erase is deferred, completion pending. Nothing more is said (OF-470 C2).
-    CompletionPending,
+    /// (OF-470 C5, C6).
+    LegalHold,
     /// A shared vault with two or more Owners: every erase waits out the vault's `erase`
     /// veto window, the caller's own records included (ARCH-0043).
     VetoWindow,
@@ -97,19 +94,14 @@ pub enum SameBytesOutcome {
 /// order. Empty rows without the same-bytes flag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityEraseOutcome {
-    /// When a GDPR request keeps the confirmed record under a legal hold, it is not erased:
-    /// `reason` is the [`SameBytesHold`] code (`privacy_erase_kept` or `completion_pending`)
-    /// and `receipt_ref` is `None`.
+    /// When a GDPR request keeps the confirmed record under a customer hold, it is not erased:
+    /// `reason` is the [`SameBytesHold`] code `privacy_erase_kept` and `receipt_ref` is `None`.
     /// In a shared vault with two or more Owners the confirmed record is not erased either:
     /// `reason` is `veto_window`, and [`Self::first_act`] names the `erase` act it waits on.
     pub first: DeleteReceipt,
     /// The confirmed record's own `erase` act; execute it with
     /// [`Memory::execute_completed_entity_erase`] once its window runs out.
     pub first_act: Option<String>,
-    /// The law bound of the visible host order that keeps the confirmed record (FIX 5229,
-    /// #3182), as each held row's [`SameBytesHold::LegalHold`] names it. `None` when no
-    /// visible order keeps it: erased, vetoed, customer-only or secret-only.
-    pub first_law_notice: Option<LegalHoldNotice>,
     pub same_bytes: Vec<(EntityId, SameBytesOutcome)>,
 }
 
@@ -254,11 +246,6 @@ impl Memory<'_> {
                     .map_err(Into::into)
             })?
         };
-        // The confirmed record's visible bound, when a legal hold keeps it (FIX 5229).
-        let first_law_notice = kept.get(&preview.entity()).and_then(|hold| match hold {
-            SameBytesHold::LegalHold { law_notice } => law_notice.clone(),
-            _ => None,
-        });
         let same_bytes = plan
             .into_iter()
             .map(|planned| {
@@ -294,7 +281,6 @@ impl Memory<'_> {
         Ok(EntityEraseOutcome {
             first,
             first_act,
-            first_law_notice,
             same_bytes,
         })
     }
@@ -311,7 +297,7 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         act_id: &str,
     ) -> MemoryResult<DeleteReceipt> {
-        let planned = {
+        let (planned, already_deleted) = {
             let txn = self
                 .vault
                 .store
@@ -331,11 +317,7 @@ impl Memory<'_> {
                     )
                 })?;
             let held = self.held_erase_in_txn(&txn, &act)?;
-            if act.execution.is_some()
-                || self
-                    .vault
-                    .local_hard_delete_marker_exists_in_txn(&txn, &held.holder)?
-            {
+            if act.execution.is_some() {
                 return self.executed_erase_in_txn(&txn, &held.holder, act.execution.as_ref());
             }
             if !self.vault.authority_act_completed_in_txn(&txn, &act)? {
@@ -345,12 +327,117 @@ impl Memory<'_> {
                     &["Execute it once the window has run out with no objection."],
                 ));
             }
-            PlannedMatch {
-                act: Some(act.id),
-                ..held
+            let already_deleted = self
+                .vault
+                .local_hard_delete_marker_exists_in_txn(&txn, &held.holder)?;
+            if already_deleted
+                && !self
+                    .vault
+                    .hard_deleted_without_active_scope_in_txn(&txn, &held.holder)?
+            {
+                return self.executed_erase_in_txn(&txn, &held.holder, None);
             }
+            (
+                PlannedMatch {
+                    act: Some(act.id),
+                    ..held
+                },
+                already_deleted,
+            )
         };
+        if already_deleted {
+            return self.erase_completed_marker(owner, act_id);
+        }
         self.unshare_and_erase_match(&planned, EraseReason::OwnerErase, Some(owner))
+    }
+
+    /// Fulfils a completed owner erase whose record an earlier hard delete
+    /// already removed. Neither the marker nor the empty active scope is
+    /// authority: the live owner and completed act authorize retirement,
+    /// claimed with its receipt in one
+    /// writer. The earlier deletion's marker and request stay unchanged.
+    fn erase_completed_marker(
+        &self,
+        owner: &AuthenticatedOwner,
+        act_id: &str,
+    ) -> MemoryResult<DeleteReceipt> {
+        self.vault.prepare_install_signing()?;
+        let erased = self.vault.try_with_write_txn_grouped(|txn| {
+            verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+            self.require_own_proof_in_txn(txn, owner)?;
+            self.require_live_owner_in_txn(txn)?;
+            let act = self
+                .vault
+                .pending_authority_act_in_txn(txn, act_id)?
+                .ok_or_else(|| {
+                    MemoryError::new(
+                        MEMORY_CODE_NOT_FOUND,
+                        "no such act",
+                        &["Use the act id a held record returned."],
+                    )
+                })?;
+            let held = self.held_erase_in_txn(txn, &act)?;
+            if act.execution.is_some() {
+                return self.executed_erase_in_txn(txn, &held.holder, act.execution.as_ref());
+            }
+            if !self.vault.authority_act_completed_in_txn(txn, &act)? {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    "this erase's veto window is open or an owner objects",
+                    &["Execute it once the window has run out with no objection."],
+                ));
+            }
+            if !self
+                .vault
+                .hard_deleted_without_active_scope_in_txn(txn, &held.holder)?
+            {
+                return Err(Error::ConcurrentWrite("erase target changed").into());
+            }
+            let actor = HoldActor::owner(self.actor);
+            self.vault
+                .store
+                .reject_legal_holds_in_txn(txn, &[held.holder], &actor)?;
+            crate::world_keys::reject_held_pad_world_as_in_txn(
+                &self.vault.store,
+                txn,
+                &[held.holder],
+                &actor,
+            )?;
+            let request = self.vault.store.clock.ulid()?;
+            let requested_at = self.vault.store.clock.now_recorded_at();
+            crate::deletion::settle_checkpoint_payloads_for_reason_in_txn(
+                &self.vault.store,
+                txn,
+                &held.holder,
+                Some(DeleteReason::OwnerErase.into()),
+            )?;
+            let receipt = self.vault.record_completed_owner_payload_erase_in_txn(
+                txn,
+                &held.holder,
+                self.actor,
+                request,
+                requested_at,
+            )?;
+            self.vault.claim_completed_authority_act_in_txn(
+                txn,
+                &act.id,
+                uuid::Uuid::from_bytes(request).to_string(),
+                Some(receipt.to_hex()),
+            )?;
+            Ok(DeleteReceipt {
+                existed: true,
+                reason: DeleteReason::OwnerErase.as_str().to_owned(),
+                receipt_ref: Some(format!("redaction:{}", receipt.to_hex())),
+                state: DeleteRequestState::Applied,
+            })
+        });
+        self.vault.store.flush_legal_hold_refusals_settled();
+        if erased.is_ok() {
+            self.vault
+                .store
+                .finish_checkpoint_payload_retirements_after_commit();
+        }
+        erased
     }
 
     /// A held match's own `erase` act, its payload the record and the bytes the preview named.
@@ -440,11 +527,9 @@ impl Memory<'_> {
         ))
     }
 
-    /// Of the records a GDPR request names, the ones a legal hold keeps (C5). Each one's
+    /// Of the records a GDPR request names, the ones a customer hold keeps (C5). Each one's
     /// refusal and reason go to its hold's log, and where Oneiron hosts the bytes it is kept
-    /// under a use limit (C6). One only a secret order keeps reads as completion pending (C2).
-    /// A kept row names its visible host order's bound (FIX 5229), read in the split's own
-    /// write as the room erase's kept count does.
+    /// under a use limit (C6).
     fn keep_legally_held(
         &self,
         records: &[EntityId],
@@ -458,22 +543,10 @@ impl Memory<'_> {
         let actor = HoldActor::new(kind, Some(self.actor.to_hex()));
         Ok(self.vault.with_write_txn_grouped(|txn| {
             let (_, kept) = legal_hold::split_privacy_erase_in_txn(store, txn, records, &actor)?;
-            let now = store.clock.now_recorded_at();
-            kept.into_iter()
-                .map(|record| {
-                    let target = LegalHoldTarget::Record(record);
-                    let holds = legal_hold::holds_on_in_txn(store, txn, &target)?;
-                    let told = holds.iter().any(|hold| !hold.secret_at(now));
-                    let hold = if told {
-                        let law_notice =
-                            legal_hold::law_notice(&holds, now, LegalHoldState::RetainedForLaw);
-                        SameBytesHold::LegalHold { law_notice }
-                    } else {
-                        SameBytesHold::CompletionPending
-                    };
-                    Ok((record, hold))
-                })
-                .collect()
+            Ok(kept
+                .into_iter()
+                .map(|record| (record, SameBytesHold::LegalHold))
+                .collect())
         })?)
     }
 
@@ -679,8 +752,7 @@ impl SameBytesHold {
     fn code(&self) -> &'static str {
         match self {
             Self::AnotherOwnersRecord => "another_owners_record",
-            Self::LegalHold { .. } => "privacy_erase_kept",
-            Self::CompletionPending => "completion_pending",
+            Self::LegalHold => "privacy_erase_kept",
             Self::VetoWindow => "veto_window",
         }
     }

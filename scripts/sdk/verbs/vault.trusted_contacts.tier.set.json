@@ -1,0 +1,16 @@
+{
+  "name": "vault.trusted_contacts.tier.set",
+  "description": "The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern.",
+  "input": "crate::task_verb::sdk::TrustedContactTierRequest",
+  "output": "crate::task_verb::sdk::TrustedContactTierSet",
+  "call": "crate::task_verb::sdk::set_trusted_contact_tier(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.tier.set\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

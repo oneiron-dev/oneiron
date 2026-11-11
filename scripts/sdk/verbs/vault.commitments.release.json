@@ -1,0 +1,16 @@
+{
+  "name": "vault.commitments.release",
+  "description": "Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction.",
+  "input": "crate::memory::commitment_doors::CommitmentCloseRequest",
+  "output": "crate::memory::commitment_doors::CommitmentView",
+  "call": "memory.commitments_release_as(&memory.embedded_owner(\"vault.commitments.release\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

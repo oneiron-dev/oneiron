@@ -91,6 +91,33 @@ impl From<TaskAskOptionId> for String {
     }
 }
 
+/// One offered option: its display label and what happens if it is picked.
+/// `then: None` means no consequence was stated, not a false action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskOption {
+    pub label: String,
+    pub then: Option<String>,
+}
+impl TaskAskOption {
+    /// The option carrying `label` with no stated consequence.
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            then: None,
+        }
+    }
+}
+
+/// The agent's opinionated recommendation: the recommended option id plus a
+/// one-line why. Absent means no recommendation was given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskRec {
+    pub option: TaskAskOptionId,
+    pub why: String,
+}
+
 /// The lower rung's answer before a person is consulted. This is not an
 /// authorization and never substitutes for a person's word.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -106,7 +133,7 @@ pub struct TaskAskLadderPrediction {
 pub struct TaskAskQuestion {
     pub reference: ConsultPayloadRef,
     pub revision: u64,
-    pub options: BTreeMap<TaskAskOptionId, String>,
+    pub options: BTreeMap<TaskAskOptionId, TaskAskOption>,
     pub context_refs: Vec<ConsultPayloadRef>,
     pub label: Option<String>,
     pub outcome_binding: Option<crate::llm::decision::questions::OutcomeBinding>,
@@ -262,6 +289,7 @@ pub struct TaskAskSpec {
     #[serde(default)]
     pub who: Option<TaskAskTarget>,
     pub what: TaskAskQuestion,
+    pub rec: Option<TaskAskRec>,
     #[serde(default)]
     pub until: Option<u64>,
     #[serde(default)]
@@ -290,6 +318,7 @@ impl TaskAskSpec {
             class: None,
             who,
             what,
+            rec: None,
             until,
             default,
             need: TaskAskNeed::default(),
@@ -542,6 +571,24 @@ pub enum TaskAskDecision {
     Conflict,
     Unknown,
 }
+impl TaskAskDecision {
+    /// The option named by this decision's actual counted word or chosen id.
+    pub(super) fn picked_option<'a>(
+        &'a self,
+        evidence: &'a [TaskAskEvidence],
+    ) -> Option<&'a TaskAskOptionId> {
+        match self {
+            Self::Answer(option) => Some(option),
+            Self::First(answer) => evidence
+                .iter()
+                .find(|entry| {
+                    entry.answer == *answer && entry.reason == TaskAskEvidenceReason::Counted
+                })
+                .and_then(|entry| entry.word.option.as_ref()),
+            Self::Collected | Self::No | Self::Conflict | Self::Unknown => None,
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskFallback {
@@ -592,6 +639,12 @@ pub struct TaskAskResult {
     pub effect_authorization: TaskAskEffectAuthorization,
     pub coverage: TaskAskCoverage,
     pub decision: TaskAskDecision,
+    /// The picked option id, derived from the real decision: a First
+    /// decision's word option, an Answer decision's id, else None.
+    pub picked: Option<TaskAskOptionId>,
+    /// Whether the picked option was the ask's recommendation. Always set;
+    /// false when no option was picked or no recommendation was given.
+    pub was_rec: bool,
     pub fallback: Option<TaskAskFallback>,
     pub evidence: Vec<TaskAskEvidence>,
     pub settlement: TaskAskSettlement,

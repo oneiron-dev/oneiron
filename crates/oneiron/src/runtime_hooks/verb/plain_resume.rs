@@ -37,6 +37,7 @@ use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::session_lifecycle::SessionKey;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
+use super::credential::VerbAskDrainPermit;
 use super::state::DrainScope;
 use super::{InvocationId, VerbAskRefusal, VerbCall, VerbResume};
 
@@ -307,13 +308,13 @@ pub(super) fn run(
     class: EdgeActorClass,
     args: Value,
     plain: PlainRowResume,
-) -> Result<MemoryResult<Value>> {
+) -> Result<(MemoryResult<Value>, Option<bool>)> {
     let refusal = {
         let txn = vault.store.env.read_txn()?;
         plain.refusal_in_txn(vault, &txn, actor, class)?
     };
     if let Some(refusal) = refusal {
-        return Ok(Err(refusal.error()));
+        return Ok((Err(refusal.error()), None));
     }
     let PlainCaller {
         session,
@@ -326,6 +327,7 @@ pub(super) fn run(
     let mut memory = vault
         .memory(actor, class)
         .with_invocation(invocation)
+        .with_drain_permit(VerbAskDrainPermit::new(invocation))
         .at(placement.into())
         .with_owner_surface(plain.surface);
     if let Some(session) = session {
@@ -344,10 +346,11 @@ pub(super) fn run(
     }
     let _draining = DrainScope::enter(invocation);
     Ok(match room {
-        Some(room) => memory
-            .for_room_turn(room)
-            .and_then(|turn| turn.invoke(verb, args)),
-        None => crate::task_verb::sdk::invoke(&memory, verb, args),
+        Some(room) => match memory.for_room_turn(room) {
+            Ok(turn) => turn.invoke_with_notice(&crate::verbs::VERB_TABLE, verb, args),
+            Err(error) => (Err(error), None),
+        },
+        None => crate::task_verb::sdk::invoke_with_notice(&memory, verb, args),
     })
 }
 

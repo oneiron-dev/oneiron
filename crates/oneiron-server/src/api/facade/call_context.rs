@@ -114,6 +114,10 @@ pub(crate) struct FacadeCall<'a> {
     /// owner-grade caller, and for an ingress that carries no per-call proof.
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
     signing_request_transport: Option<SigningRequestTransport>,
+    /// An artifact write's content its HTTP body held as a file (FIX
+    /// 22074): this call's alone. A call built for another, an action's
+    /// step, a socket's or settlement's, carries none.
+    blob_body: Option<super::blob_body::FacadeBlobBody>,
 }
 
 impl<'a> FacadeCall<'a> {
@@ -122,7 +126,8 @@ impl<'a> FacadeCall<'a> {
     /// act records: a linked machine its headers' machine proof verifies
     /// on this very request, or the caller the binding door admitted
     /// (`owner_routes::machine_routes::act_surface_admitted`, FIX 4625).
-    pub(super) fn http(
+    /// A direct native read route reads its call the same way (FIX 1435).
+    pub(crate) fn http(
         server: &SyncServer,
         auth: &'a CoreAuth,
         headers: &'a HeaderMap,
@@ -163,6 +168,9 @@ impl<'a> FacadeCall<'a> {
                     .and_then(|value| value.to_str().ok())
                     .map(str::to_owned),
             )),
+            blob_body: extensions
+                .get::<super::blob_body::FacadeBlobBody>()
+                .cloned(),
         }
     }
 
@@ -196,6 +204,7 @@ impl<'a> FacadeCall<'a> {
             surface: super::owner_binding::act_surface(auth),
             forwarded: None,
             signing_request_transport: None,
+            blob_body: None,
         }
     }
 
@@ -238,10 +247,11 @@ impl<'a> FacadeCall<'a> {
             surface: super::owner_binding::act_surface(auth),
             forwarded: None,
             signing_request_transport: None,
+            blob_body: None,
         }
     }
 
-    pub(super) const fn auth(&self) -> &'a CoreAuth {
+    pub(crate) const fn auth(&self) -> &'a CoreAuth {
         self.auth
     }
 
@@ -374,7 +384,21 @@ impl<'a> FacadeCall<'a> {
             surface: self.surface,
             forwarded: self.forwarded.clone(),
             signing_request_transport: self.signing_request_transport.clone(),
+            blob_body: self.blob_body.clone(),
         }
+    }
+
+    /// The content this call's body held as a file, when the call is of
+    /// `verb`, the verb it arrived for (FIX 22074).
+    pub(super) fn blob_body(&self, verb: &str) -> Option<&super::blob_body::FacadeBlobBody> {
+        self.blob_body.as_ref().filter(|body| body.verb() == verb)
+    }
+
+    /// The digest of the input of this call of `verb` as it arrived, when
+    /// its body held content as a file: its JSON input lacks that content.
+    pub(super) fn arrival_digest(&self, verb: &str) -> Option<&str> {
+        self.blob_body(verb)
+            .map(super::blob_body::FacadeBlobBody::digest)
     }
 }
 
@@ -394,6 +418,7 @@ pub(super) struct OwnedFacadeCall {
     surface: ActSurface,
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
     signing_request_transport: Option<SigningRequestTransport>,
+    blob_body: Option<super::blob_body::FacadeBlobBody>,
 }
 
 impl OwnedFacadeCall {
@@ -412,6 +437,7 @@ impl OwnedFacadeCall {
             surface: self.surface,
             forwarded: self.forwarded.clone(),
             signing_request_transport: self.signing_request_transport.clone(),
+            blob_body: self.blob_body.clone(),
         }
     }
 }
@@ -425,20 +451,34 @@ pub(crate) struct FacadeCallOutput {
     /// opens handles of its own and lists none, never an empty list standing
     /// in for an unknown one.
     pub(crate) rows: Option<Vec<EntityId>>,
+    /// A content-free caller notice, separate from the result's provenance.
+    pub(crate) hook_notice: bool,
 }
 
 impl FacadeCallOutput {
-    /// A result whose reads listed their rows in `producers`.
+    /// A result whose reads listed their rows in `producers`. A retry's
+    /// result that settlement's drain saved with no rows keeps them unknown,
+    /// `None`, never a fresh empty listing (FIX 21054).
     pub(super) fn listed(value: serde_json::Value, producers: &ProducerRows) -> Self {
         Self {
             value,
-            rows: Some(producers.take()),
+            rows: producers.take_listed(),
+            hook_notice: false,
         }
     }
 
     /// A result whose door lists none of its rows.
     pub(super) fn unlisted(value: serde_json::Value) -> Self {
-        Self { value, rows: None }
+        Self {
+            value,
+            rows: None,
+            hook_notice: false,
+        }
+    }
+
+    pub(super) fn with_hook_notice(mut self, hook_notice: bool) -> Self {
+        self.hook_notice = hook_notice;
+        self
     }
 }
 
@@ -448,7 +488,7 @@ pub(super) enum VerbContext {
     /// An MCP session's board stream (`BoardVerbContext`).
     #[expect(
         dead_code,
-        reason = "generate.py emits this refusal for a board row without a host projection"
+        reason = "the SDK generator emits this refusal for a board row without a host projection"
     )]
     Board,
     /// A code run's own browser session.

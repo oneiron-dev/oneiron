@@ -324,29 +324,17 @@ impl SyncConnection {
                 if crate::sync::machine_history::take_landed(&client.vault) {
                     machine_history_due.store(true, Ordering::Relaxed);
                 }
-                let mut left_rx = self.left.subscribe();
-                // Judged per frame: a device-only flag may turn while an
-                // earlier frame waits on the socket.
-                for resp in responses
-                    .into_iter()
-                    .filter(|frame| !client.frame_withheld(frame))
-                {
-                    let send_result = tokio::select! {
-                        biased;
-                        () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
-                            return Err(LoopExit::Shutdown);
-                        }
-                        result = write.send(Message::Binary(resp.into())) => result,
-                    };
-                    if let Err(e) = send_result {
-                        return Err(LoopExit::Disconnected(format!("Send failed: {e}")));
-                    }
+                for response in responses {
+                    self.send_document_response(write, client, response).await?;
                 }
+                // A peer's acknowledgments retire no queue row: the rows stay
+                // for the home (FIX 4748).
                 if client.config.residence_mode == SyncResidenceMode::Opened
+                    && client.peer_session.is_none()
                     && !client.residence_acks.is_empty()
                     && let Err(e) = self.clear_residence_acks(client)
                 {
-                    return Err(LoopExit::Disconnected(e));
+                    return Err(LoopExit::Disconnected(e.to_string()));
                 }
             }
             Err(e) => {
@@ -354,6 +342,7 @@ impl SyncConnection {
                 if matches!(
                     data.first(),
                     Some(&transport::TAG_WINDOW_SYNC)
+                        | Some(&transport::TAG_ROOT_PART)
                         | Some(&transport::TAG_BULK_TRANSFER)
                         | Some(&transport::TAG_BULK_TRANSFER_DONE)
                 ) {

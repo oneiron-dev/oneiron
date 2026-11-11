@@ -24,7 +24,7 @@ pub(super) fn create_under_caller_lane(
     verb: &str,
 ) -> MemoryResult<QuestionRecord> {
     let vault = server.vault();
-    let lane = asker_lane(vault, auth, asker.entity_ref(), verb)?;
+    let lane = asker_lane(vault, auth, verb)?;
     Ok(create_question_with_lane(
         vault,
         asker,
@@ -46,7 +46,7 @@ pub(super) fn edit_under_caller_lane(
     verb: &str,
 ) -> MemoryResult<QuestionRecord> {
     let vault = server.vault();
-    let lane = asker_lane(vault, auth, asker.entity_ref(), verb)?;
+    let lane = asker_lane(vault, auth, verb)?;
     Ok(edit_question_with_lane(
         vault,
         asker,

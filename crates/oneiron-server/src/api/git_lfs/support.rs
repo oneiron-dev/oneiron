@@ -1,7 +1,11 @@
 //! LFS size, href, time, and JSON helpers.
 
+use crate::api::Transfers;
+use crate::api::transfer::{self, BodyReader};
+use crate::byte_line::{ByteLine, HeldBytes};
 use crate::error::ApiError;
 use crate::error::EnvelopedApiError;
+use crate::wire_telemetry::LimitQuestions;
 use axum::body::Body;
 use axum::http::HeaderMap;
 use axum::http::HeaderValue;
@@ -12,12 +16,14 @@ use axum::http::header::HOST;
 use axum::http::header::RETRY_AFTER;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use futures_util::StreamExt;
 use oneiron::ErrorKind;
-use oneiron::origin::lfs::LFS_JSON_MEDIA_TYPE;
+use oneiron::origin::lfs::{LFS_CHUNK_MAX, LFS_JSON_MEDIA_TYPE};
 use serde::Serialize;
+use std::io::{self, Read};
+use std::sync::Arc;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+use tokio::sync::mpsc;
 
 /// Why the next piece of `oid` stays on this device for the machine `peer`
 /// (FIX 4937, 4939): the body's error, naming the hold's content-free
@@ -195,29 +201,104 @@ pub(super) fn lfs_waited_out() -> Response {
     )
 }
 
-/// A request body read whole, at most `limit` bytes. A request that waits
-/// for a transfer permit reads its body only at its turn, so one in line
-/// holds none of it; the listener ends a body that pauses past its idle
-/// limit. The buffer grows by doubling but never past `limit`, so what the
-/// memory row counts for it holds.
-pub(super) async fn read_whole(body: Body, limit: usize) -> Result<Vec<u8>, ApiError> {
-    let mut pieces = body.into_data_stream();
-    let mut whole = Vec::new();
-    while let Some(piece) = pieces.next().await {
-        let piece = piece.map_err(|_| {
-            ApiError::bad_request("the request body ended before it was whole", None)
-        })?;
-        let length = whole.len().saturating_add(piece.len());
-        if length > limit {
-            return Err(ApiError::payload_too_large("body", limit, length));
+/// Pieces of a body on their way between the HTTP side and a transfer's
+/// worker, either way: a chunk exchange's request and reply, a verify's body.
+/// The pieces a chunk reply had in flight before its reply was streamed (FIX
+/// 145). A request's piece is at most a stored chunk's most; a reply's is one
+/// frame of its stream, [`oneiron::sync::chunks::CHUNK_STREAM_FRAME_BYTES`]
+/// and its length.
+pub(super) const LFS_PIECES_IN_FLIGHT: usize = 2;
+
+/// A request body as its worker reads it, a piece at a time as it arrives
+/// (FIX 144, 145): never held whole, and never refused for its length. A
+/// request that waits for its room and its transfer permit starts reading
+/// only at its turn, so one in line holds none of it; the listener and the
+/// idle limit end a body that goes quiet. The room its read took counts
+/// some of its bytes decoded; each byte read past them is charged on that
+/// room as it arrives ([`Transfers::charge_body`]).
+pub(super) struct ChargedBody {
+    body: BodyReader,
+    line: Arc<ByteLine>,
+    questions: Arc<LimitQuestions>,
+    held: HeldBytes,
+    /// The room taken at the read's turn.
+    room: u64,
+    /// The body's bytes `room` counts decoded.
+    counted: u64,
+    /// The body's bytes read so far.
+    read: u64,
+    /// The room held now.
+    charged: u64,
+    /// Whether the body itself failed or went quiet before its end.
+    failed: bool,
+}
+
+impl ChargedBody {
+    /// Starts reading `body`, under `held`, the `room` bytes its read took
+    /// on the reads line, which count `counted` of its bytes decoded. Call it
+    /// from the handler's task, once the transfer has its turn: the feed
+    /// takes the listener's body policy from it.
+    pub(super) fn feed(
+        body: Body,
+        transfers: &Transfers,
+        (held, room): (HeldBytes, u64),
+        counted: u64,
+    ) -> Self {
+        let (pieces, received) = mpsc::channel(LFS_PIECES_IN_FLIGHT);
+        tokio::spawn(transfer::feed_body(
+            body,
+            pieces,
+            transfers.idle,
+            LFS_CHUNK_MAX,
+        ));
+        Self {
+            body: BodyReader::new(received),
+            line: transfers.lfs_reads_line(),
+            questions: Arc::clone(&transfers.questions),
+            held,
+            room,
+            counted,
+            read: 0,
+            charged: room,
+            failed: false,
         }
-        if length > whole.capacity() {
-            let grown = length.max(whole.capacity().saturating_mul(2)).min(limit);
-            whole.reserve_exact(grown - whole.len());
-        }
-        whole.extend_from_slice(&piece);
     }
-    Ok(whole)
+
+    /// Whether the body failed or went quiet before its end: a broken
+    /// request, never a refused one.
+    pub(super) fn failed(&self) -> bool {
+        self.failed
+    }
+
+    /// The room the read holds, and the bytes it holds now, once the body
+    /// is read.
+    pub(super) fn into_room(self) -> (HeldBytes, u64) {
+        (self.held, self.charged)
+    }
+}
+
+impl Read for ChargedBody {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        let count = match self.body.read(output) {
+            Ok(count) => count,
+            Err(error) => {
+                self.failed = true;
+                return Err(error);
+            }
+        };
+        self.read = self.read.saturating_add(count as u64);
+        if self.read > self.counted {
+            self.charged = Transfers::charge_body(
+                &self.line,
+                &self.questions,
+                &mut self.held,
+                self.room,
+                self.counted,
+                self.read,
+            );
+        }
+        Ok(count)
+    }
 }
 
 /// The upload would take the vault's disk below its reserve: the disk

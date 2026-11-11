@@ -1,0 +1,13 @@
+{
+  "name": "vault.research.archive.best",
+  "description": "Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal.",
+  "input": "crate::autoreason_campaign::archive::CampaignArchiveRequest",
+  "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
+  "call": "crate::task_verb::sdk::research_archive_best(memory, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

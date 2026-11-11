@@ -20,6 +20,23 @@
 //! components). Omitted, the grant delegates no repo access of its own and
 //! behaves exactly as before; with no editable globs it edits nothing, and
 //! reading a path never lets the agent edit it.
+//!
+//! A mint may also name verb classes beside the exact verbs (FIX 8735):
+//! `verb_classes: ["send"]` lets the agent do each verb the class admits,
+//! by the class's own spelling, the built-in outbound classes, or the
+//! owner's verb-class row for it (`vault.agents.verb_classes.configure`),
+//! resolved each time a door judges a verb. The verbs axis may then be
+//! empty (`{"kind":"bottom"}`); it is never every verb. A grant without
+//! classes behaves exactly as before.
+//!
+//! A mint may also name the host wallet the work the grant funds draws on
+//! (FIX 7766): `wallet_ref: {"issuer": "...", "id": "..."}`, an opaque host
+//! reference, signed in the owner's act. A spend lease the owner opens with
+//! the grant as its `funding_grant_ref` freezes it, and every call that
+//! lease's tree admits draws on that wallet's allocation or is refused. A
+//! grant without one behaves exactly as before.
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::revision_shape;
@@ -27,7 +44,10 @@ use crate::Vault;
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::federation::{AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, RepoAccessBounds, Scope};
+use crate::federation::{
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, EngineControlChange, RepoAccessBounds, Scope,
+    SystemAgentGrantNarrowing, SystemFunction, WalletRef,
+};
 use crate::memory::MemoryResult;
 
 /// `vault.agents.grants.mint`'s input: the agent, the owner's exact scope
@@ -36,12 +56,14 @@ use crate::memory::MemoryResult;
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentGrantMintRequest {
-    /// The agent principal granted (32 hex): a live agent definition, or a
-    /// base agent such as the Coach. Never a person or a device.
+    /// The agent principal granted (32 hex): a live agent definition, a base
+    /// agent such as the Coach, or a named agent's principal. Never another
+    /// person or a device.
     pub agent: EntityId,
     /// The owner's complete six-axis scope, stored exactly as given. Its
-    /// verbs axis is the explicit verb list, a nonempty `some` set; the
-    /// grant confers only with `read` among them.
+    /// verbs axis is the explicit verb list, a nonempty `some` set, or
+    /// empty beside a nonempty `verb_classes`; the grant confers only with
+    /// `read` among them or admitted by a class it names.
     pub authority_scope: Scope,
     /// When the grant stops conferring (Unix seconds, later than now).
     /// Omitted: it stands until revoked.
@@ -53,6 +75,17 @@ pub struct AgentGrantMintRequest {
     /// delegation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_bounds: Option<RepoAccessBounds>,
+    /// The verb classes the agent may act under beside the exact verbs, by
+    /// class name: each admits its own spelling, its built-in outbound
+    /// members, and the owner's verb-class row for it. Never `git_push`.
+    /// Omitted: none.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub verb_classes: BTreeSet<String>,
+    /// The host wallet the work this grant funds draws on: the host's
+    /// issuer namespace and the wallet's id there, both nonempty. Omitted:
+    /// none, and the grant funds no launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ref: Option<WalletRef>,
 }
 
 /// One owner's agent grant.
@@ -73,8 +106,17 @@ pub struct AgentGrantView {
     /// The repo bounds the owner gave; absent on a general grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_bounds: Option<RepoAccessBounds>,
-    /// Whether it confers now: unexpired, with `read` among its verbs and no
-    /// empty world, band, audience or sensitivity axis.
+    /// The verb classes the owner named beside the exact verbs; absent
+    /// when it names none.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub verb_classes: BTreeSet<String>,
+    /// The host wallet the owner named for the work it funds; absent when
+    /// it names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ref: Option<WalletRef>,
+    /// Whether it confers now: unexpired, with `read` among its verbs (or
+    /// admitted by a class it names) and no empty world, band, audience or
+    /// sensitivity axis.
     pub confers: bool,
     /// The one-tap revoke command: `vault.agents.grants.revoke`.
     pub revoke_command: String,
@@ -168,9 +210,11 @@ pub fn mint_agent_grant_as(
         input.authority_scope,
         input.expires_at,
         input.repo_bounds,
+        input.verb_classes,
+        input.wallet_ref,
     )?;
     Ok(AgentGrantMinted {
-        grant: agent_grant_view(&minted.standing, minted.standing.created_at),
+        grant: agent_grant_view(&minted.standing, minted.confers),
         act_ref: minted.act.to_hex(),
     })
 }
@@ -196,7 +240,9 @@ pub fn revoke_agent_grant_as(
     })
 }
 
-fn agent_grant_view(standing: &AgentGrantStanding, now: u64) -> AgentGrantView {
+/// The view of `standing` as minted; `confers` was judged in the minting
+/// writer, the grant's classes resolved there.
+fn agent_grant_view(standing: &AgentGrantStanding, confers: bool) -> AgentGrantView {
     AgentGrantView {
         grant_ref: standing.id,
         agent: standing.grant.member_ref,
@@ -204,7 +250,146 @@ fn agent_grant_view(standing: &AgentGrantStanding, now: u64) -> AgentGrantView {
         delegated_by: standing.delegated_by,
         expires_at: standing.grant.expires_at,
         repo_bounds: standing.grant.repo_bounds.clone(),
-        confers: standing.grant.confers_at(now),
+        verb_classes: standing.grant.verb_classes.clone(),
+        wallet_ref: standing.grant.wallet_ref.clone(),
+        confers,
         revoke_command: AGENT_GRANT_REVOKE_COMMAND.to_owned(),
     }
+}
+
+/// `vault.agents.grants.narrow`'s input: a base agent (the Dreamer or the
+/// Coach) and the Steward verbs its grant keeps.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SystemAgentGrantNarrowRequest {
+    /// The base agent's principal (32 hex), as `vault.agents.base` names it.
+    pub agent: EntityId,
+    /// The verbs the grant keeps; an empty list revokes it whole.
+    pub keep: BTreeSet<String>,
+    /// The confirm token an earlier answer gave for this same narrowing (64
+    /// hex); omitted, nothing changes and the answer says what breaks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
+}
+
+/// What a narrowing did (untangle 6.3c; S6-4 amended).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum SystemAgentGrantNarrowed {
+    /// Nothing to narrow: the grant already holds no more than asked, or no
+    /// grant stands.
+    Unchanged,
+    /// Nothing changed: the narrowing breaks `breaks`. Ask again with
+    /// `confirm` to apply it.
+    ConfirmRequired {
+        warning: String,
+        breaks: Vec<SystemFunction>,
+        /// 64 hex.
+        confirm: String,
+    },
+    /// Applied: `grant` is the narrower grant (32 hex), none when the grant
+    /// was revoked whole; `breaks` is what the owner confirmed.
+    Narrowed {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        grant: Option<EntityId>,
+        breaks: Vec<SystemFunction>,
+    },
+}
+
+/// `vault.agents.grants.narrow`: the owner narrows or revokes a base agent's
+/// Steward grant. A narrowing that breaks a vault function answers with the
+/// list and a confirm token and changes nothing until the owner sends that
+/// token back; the record keeps that the owner chose it. It never widens.
+pub fn narrow_system_agent_grant_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: SystemAgentGrantNarrowRequest,
+) -> MemoryResult<SystemAgentGrantNarrowed> {
+    let confirm = input
+        .confirm
+        .as_deref()
+        .map(|hex| {
+            hex32(hex).ok_or_else(|| crate::memory::MemoryError::bad_request("confirm is 64 hex"))
+        })
+        .transpose()?;
+    Ok(
+        match vault.narrow_system_agent_grant(owner, input.agent, &input.keep, confirm)? {
+            SystemAgentGrantNarrowing::Unchanged => SystemAgentGrantNarrowed::Unchanged,
+            SystemAgentGrantNarrowing::ConfirmRequired {
+                warning,
+                breaks,
+                confirm,
+            } => SystemAgentGrantNarrowed::ConfirmRequired {
+                warning: warning.to_owned(),
+                breaks,
+                confirm: crate::entity_id::bytes_to_hex_lower(&confirm),
+            },
+            SystemAgentGrantNarrowing::Narrowed { grant, breaks } => {
+                SystemAgentGrantNarrowed::Narrowed { grant, breaks }
+            }
+        },
+    )
+}
+
+/// 32 bytes from 64 ASCII hex digits of either case.
+fn hex32(text: &str) -> Option<[u8; 32]> {
+    if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut out = [0; 32];
+    for (byte, pair) in out.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// `vault.engine.defaults`'s answer row: one grant the engine stood by
+/// default, by its grant id, with its receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineDefaultGrantEntry {
+    /// The grant (32 hex).
+    pub grant: EntityId,
+    pub receipt: crate::federation::EngineDefaultGrant,
+}
+
+/// `vault.engine.defaults`: every grant the engine stood by default, oldest
+/// first, for the owner to read on first open (lead 10 Nov 06:5x). Each is
+/// the engine's act, never the owner's; the owner narrows or revokes it at
+/// `vault.agents.grants.narrow`.
+pub fn engine_default_grants_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    _input: super::EmptyRequest,
+) -> MemoryResult<Vec<EngineDefaultGrantEntry>> {
+    Ok(vault
+        .engine_default_grants(owner)?
+        .into_iter()
+        .map(|(grant, receipt)| EngineDefaultGrantEntry { grant, receipt })
+        .collect())
+}
+
+/// `vault.engine.controls.changes`'s answer row: one change made through
+/// the engine-control door, by its receipt id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineControlChangeEntry {
+    /// The receipt (32 hex).
+    pub id: EntityId,
+    pub change: EngineControlChange,
+}
+
+/// `vault.engine.controls.changes`: every change the owner or a holder of
+/// an `engine.controls` class made to the engine's stored knobs, oldest first, for
+/// the owner to read (untangle 6.6).
+pub fn engine_control_changes_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    _input: super::EmptyRequest,
+) -> MemoryResult<Vec<EngineControlChangeEntry>> {
+    Ok(vault
+        .engine_control_changes(owner)?
+        .into_iter()
+        .map(|(id, change)| EngineControlChangeEntry { id, change })
+        .collect())
 }

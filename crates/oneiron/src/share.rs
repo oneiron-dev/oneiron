@@ -42,11 +42,15 @@ mod actor_erase;
 mod admission_refs;
 mod history;
 mod revoke;
+mod view_link;
 pub(crate) use actor_erase::erase_admission_actor_in_txn;
 pub use actor_erase::{ACTOR_ERASE_SHARE_ADMISSION, ShareAdmissionErase};
 pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
 pub use history::{ACTOR_ERASE_SHARE_RECIPIENT, ShareRecipientErase};
 pub(crate) use history::{ShareView, read_share_history_in_txn};
+pub(crate) use view_link::{
+    authorize_share_link_in_txn, live_share_for_holder_in_txn, share_prompt_sources,
+};
 
 /// A typed AccessGrant. Only the opaque brief handle and redaction maximum are stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -696,6 +700,25 @@ impl Vault {
         requested_scope_narrowing: Option<&ShareViewerScope>,
         brief_claim_refs: &[EntityId],
     ) -> Result<Option<ResolvedShare>> {
+        self.resolve_share_for_read(
+            share_id,
+            viewer,
+            requested_scope_narrowing,
+            brief_claim_refs,
+            None,
+        )
+    }
+
+    /// The same evaluator, with a renderer-confined share credential in place
+    /// of a resident identity. The share never lends authority to another key.
+    pub(crate) fn resolve_share_for_read(
+        &self,
+        share_id: &EntityId,
+        viewer: &EntityId,
+        requested_scope_narrowing: Option<&ShareViewerScope>,
+        brief_claim_refs: &[EntityId],
+        read: Option<&crate::claim::ScopedRead<'_>>,
+    ) -> Result<Option<ResolvedShare>> {
         let now = self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
         let Some((share, _)) = read_share_in_txn(&self.store, &txn, share_id)? else {
@@ -710,8 +733,23 @@ impl Vault {
         {
             return Ok(None);
         }
-        let Some(actor) = share_viewer_actor_in_txn(self, &txn, viewer)? else {
-            return Ok(None);
+        let actor = match read.filter(|read| read.actor_key().share_view_ref().is_some()) {
+            Some(read) => {
+                if read.vault().vault_id() != self.vault_id()
+                    || read.actor_key().share_view_ref() != Some(*share_id)
+                    || read.actor_key().actor_ref() != viewer.to_hex()
+                    || !read.proof_live_in(&txn)?
+                {
+                    return Ok(None);
+                }
+                read.actor_key().clone()
+            }
+            None => {
+                let Some(actor) = share_viewer_actor_in_txn(self, &txn, viewer)? else {
+                    return Ok(None);
+                };
+                actor
+            }
         };
         let policy = resolve_policy_manifest(&self.store, &txn)?;
         let mut scope = ShareViewerScope {
@@ -798,6 +836,19 @@ fn share_claim_facets(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<Option<Vec<EntityId>>> {
+    // Every facet is read: a long list raises the advisory edge-scan check,
+    // never a refusal of the recipient's view (FIX 10013).
+    let mut count = crate::scan_check::ScanCount::start(
+        store,
+        txn,
+        crate::store::EngineScan::EdgePeerRows,
+        &[
+            &[crate::ports::EdgeDirection::Out as u8][..],
+            id.as_bytes(),
+            &[EdgeKind::FacetOf as u8][..],
+        ]
+        .concat(),
+    )?;
     let mut facets = Vec::new();
     for entry in store.port_edges(
         txn,
@@ -806,12 +857,11 @@ fn share_claim_facets(
         Some(EdgeKind::FacetOf),
         None,
     )? {
-        if facets.len() >= crate::vault::MAX_EDGE_QUERY_RESULTS {
-            return Err(Error::IndexOverflow("share claim facets"));
-        }
+        count.row();
         let edge_row = entry?;
         facets.push(edge_row.target);
     }
+    count.defer(store);
     // Match the existing read lane's edge-first, scope-map fallback convention.
     if facets.is_empty()
         && let Some(Value::Map(entries)) = body.scope.as_ref()
@@ -842,5 +892,6 @@ fn share_claim_facets(
     Ok(Some(facets))
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 pub(crate) mod tests;

@@ -156,6 +156,54 @@ pub(super) fn saved_query_type_byte(vault: &Vault) -> Result<u8> {
         .ok_or_else(|| invalid("saved query kind is not registered in this vault"))
 }
 
+/// Whether `type_byte` is the SAVED_QUERY kind this vault's registry assigned,
+/// selected as [`saved_query_type_byte`] selects it.
+#[cfg(feature = "sync")]
+pub(crate) fn is_saved_query_kind(vault: &Vault, type_byte: u8) -> bool {
+    vault
+        .structural_kind_registration(type_byte)
+        .is_some_and(|registration| {
+            registration.short_id_prefix == SAVED_QUERY_SHORT_ID_PREFIX
+                && registration.pack == CRM_PACK_ID
+        })
+}
+
+/// The WORLDs a SAVED_QUERY body declares in its scope; none when the body
+/// does not read as a saved-query record.
+#[cfg(feature = "sync")]
+pub(crate) fn declared_worlds(body: &[u8]) -> Vec<EntityId> {
+    decode_record(body)
+        .map(|record| record.definition.scope.worlds)
+        .unwrap_or_default()
+}
+
+/// The SAVED_QUERY body `body` with each declared WORLD `rename` names
+/// replaced, re-encoded (FIX 3892). `None` when `rename` names none of them,
+/// or when the body does not read as a saved-query record: such a body lands
+/// as it came, for the checks that already judge it.
+#[cfg(feature = "sync")]
+pub(crate) fn rename_declared_worlds(
+    body: &[u8],
+    rename: impl Fn(&EntityId) -> Option<EntityId>,
+) -> Result<Option<Vec<u8>>> {
+    let Ok(mut record) = decode_record(body) else {
+        return Ok(None);
+    };
+    let mut renamed = false;
+    for world in &mut record.definition.scope.worlds {
+        if let Some(here) = rename(&*world)
+            && here != *world
+        {
+            *world = here;
+            renamed = true;
+        }
+    }
+    if !renamed {
+        return Ok(None);
+    }
+    encode_record(&record).map(Some)
+}
+
 /// Reads the SAVED_QUERY entity body through the caller's transaction.
 pub(super) fn load_record_in_txn(
     vault: &Vault,

@@ -1,13 +1,15 @@
-//! The gates an MCP call passes before it executes: proof, verb, credential and execute_code.
-//! `mcp_proof_admits`, `mcp_verb_gate` and `mcp_execute_code_gate` are its call surface.
+//! The gates an MCP call passes before it executes: proof, verb, credential, execute_code's
+//! session and each operation a run makes.
+//! `mcp_proof_admits`, `mcp_verb_gate`, `mcp_execute_code_gate`, `mcp_run_call_gate` and
+//! `mcp_host_verb_gate` are its call surface.
 //! The actor_dispatch root defines `McpCallEffect` and `McpRecordBounds`.
 
 use super::*;
 
 /// Whether `auth`, the exact instrument a connector call verified, may act
-/// through the registration `actor` resolved: its holder and class, Read and
-/// no organization, and a registered world/facet Scope that narrows the
-/// proof's. A call settlement runs again meets it under its credential as it
+/// through the registration `actor` resolved: its holder and class, Read or
+/// its live two-renderer share, no organization, and a registered world/facet
+/// Scope that narrows the proof's. A call settlement meets it under its credential as it
 /// verified again then (ARCH-0080 §3 Ask).
 pub(in crate::api::mcp_gateway) fn mcp_proof_admits(
     server: &Arc<SyncServer>,
@@ -31,7 +33,14 @@ pub(in crate::api::mcp_gateway) fn mcp_proof_admits(
     {
         return Err(mcp_proof_error());
     }
-    if auth.org_ref().is_some() || !auth.has_scope(crate::auth::CoreScope::Read) {
+    let share_view =
+        mcp_share_view_holder_admits(server, auth, actor.gate_actor_class, &actor.gate_actor_ref)
+            && actor.bound_verbs.as_ref().is_some_and(|verbs| {
+                verbs.len() == 2
+                    && verbs.contains("vault.shares.view")
+                    && verbs.contains("vault.notes.follow_citation")
+            });
+    if auth.org_ref().is_some() || (!auth.has_scope(crate::auth::CoreScope::Read) && !share_view) {
         return Err(mcp_proof_error());
     }
     // The registry holds all or one world, and all or a set of facets: as a
@@ -67,6 +76,52 @@ pub(in crate::api::mcp_gateway) fn mcp_proof_admits(
         return Err(mcp_proof_error());
     }
     Ok(())
+}
+
+/// A share recipient needs no general write-ceiling row merely to reach
+/// the two renderers. Only the live proof's own holder and class qualify.
+pub(super) fn mcp_share_view_holder_admits(
+    server: &SyncServer,
+    auth: &crate::auth::CoreAuth,
+    class: &str,
+    actor_ref: &str,
+) -> bool {
+    auth.principal_ref() == Some(actor_ref)
+        && auth.actor_class() == Some(class)
+        && auth.org_ref().is_none()
+        && ["vault.shares.view", "vault.notes.follow_citation"]
+            .into_iter()
+            .any(|verb| auth.allows_share_view_verb(verb))
+        && auth.credential_is_live(server.vault())
+}
+
+/// Resolves the ordinary actor ceiling, or the live share recipient's own
+/// registration. The registry's two-tool bound and proof gate still apply.
+pub(in crate::api::mcp_gateway) fn mcp_actor_ceiling_admits(
+    server: &SyncServer,
+    auth: &crate::auth::CoreAuth,
+    class: &str,
+    actor_ref: &str,
+) -> bool {
+    server
+        .vault()
+        .gate_actor_ceiling_exists(class, actor_ref)
+        .unwrap_or(false)
+        || mcp_share_view_holder_admits(server, auth, class, actor_ref)
+}
+
+/// The same request, with Read only for its actual share-rendering verb.
+pub(in crate::api::mcp_gateway) fn mcp_share_view_context(
+    actor: &McpCallContext,
+    verb: &str,
+) -> Option<McpCallContext> {
+    let auth = actor.auth.as_ref()?;
+    if !auth.allows_share_view_verb(verb) {
+        return None;
+    }
+    let mut context = actor.clone();
+    context.actor.auth = Some(auth.clone().at_share_view_door(verb));
+    Some(context)
 }
 
 /// A write whose session names a facet the connector does not read, or a
@@ -116,8 +171,16 @@ pub(super) fn mcp_call_scope(
     }
 }
 
-/// `execute_code`'s credential gate: a run commits at once, so it needs the
-/// whole record scope and Write.
+/// `execute_code`'s session gate: the native run this credential starts,
+/// enters again or reads a result of, at that call and at each later check
+/// of it (after an await, at a replay, at the answer's release). Its holder,
+/// class and organization were judged where the call resolved
+/// (`mcp_proof_admits`). Here the credential is live now, holds Read, and
+/// carries no record bound, since no proof projection reaches a run. The
+/// host records the run for every tier (ARCH-0028: read-only, propose-only,
+/// full-access; ONE-1183-D2), and that record grants nothing: each operation
+/// the run makes is judged by its own effect (`mcp_run_call_gate`,
+/// `mcp_host_verb_gate`, and each verb's own `mcp_verb_gate`).
 pub(in crate::api::mcp_gateway) fn mcp_execute_code_gate(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -126,8 +189,62 @@ pub(in crate::api::mcp_gateway) fn mcp_execute_code_gate(
         server,
         actor,
         McpRecordBounds::Unrestricted,
-        McpCallEffect::Commits,
+        McpCallEffect::Reads,
     )
+}
+
+/// One call a run serves itself (`RunCall`): the live session, then what
+/// the call does (`McpCallEffect::of_run_call`). A read needs the session's
+/// Read alone; every write takes effect at once, so it needs Write.
+pub(in crate::api::mcp_gateway) fn mcp_run_call_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    call: oneiron::code_run::RunCall,
+) -> Result<(), McpGatewayError> {
+    mcp_session_operation_gate(server, actor, McpCallEffect::of_run_call(call))
+}
+
+/// One speech call of a run, at `destination`, where its storage lands it:
+/// the live session, then Read in the run's own derived conversation and
+/// Write anywhere else (`McpCallEffect::of_run_speech`).
+pub(in crate::api::mcp_gateway) fn mcp_run_speech_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    destination: oneiron::code_run::RunSpeechDestination,
+) -> Result<(), McpGatewayError> {
+    mcp_session_operation_gate(server, actor, McpCallEffect::of_run_speech(destination))
+}
+
+/// One row a run's door serves itself, not through a tool: a browser or
+/// desktop row, a session-bound run's room read or write, or a program
+/// admission job's call. The live session, then the row's own effect
+/// (`McpCallEffect::of_host_verb`): none of them waits for review, so a
+/// writing row needs Write.
+pub(in crate::api::mcp_gateway) fn mcp_host_verb_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    verb: oneiron::task_verb::sdk::AgentVerb,
+) -> Result<(), McpGatewayError> {
+    mcp_session_operation_gate(server, actor, McpCallEffect::of_host_verb(verb))
+}
+
+/// The live session, then one operation's own effect: a read needs only the
+/// session's Read; a write needs the grant `mcp_call_scope` names for it,
+/// over the whole record scope.
+fn mcp_session_operation_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    effect: McpCallEffect,
+) -> Result<(), McpGatewayError> {
+    mcp_execute_code_gate(server, actor)?;
+    match effect {
+        McpCallEffect::Reads => Ok(()),
+        McpCallEffect::Proposes | McpCallEffect::Commits => {
+            let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
+            auth.require(mcp_call_scope(server, actor, auth, effect))
+                .map_err(|_| mcp_proof_error())
+        }
+    }
 }
 
 /// One generated verb's credential gate, whichever door the call arrived at.

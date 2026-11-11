@@ -1,0 +1,12 @@
+{
+  "name": "self.board.layout",
+  "description": "The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::task_verb::sdk::BoardLayoutState",
+  "call": "crate::task_verb::sdk::board_layout_reply(memory, &input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

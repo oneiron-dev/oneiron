@@ -24,7 +24,7 @@ use super::{DiagnosticEvent, DiagnosticReplayCoordinate};
 use crate::batch::EntityMetadataHeader;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::dreamer_runner::maintenance::coach_diagnostic::{
-    COACH_ISSUE_RESOLUTION_PREDICATE, EffectProof, ProducerLinks, ProducerTarget, bind_producer,
+    COACH_ISSUE_RESOLUTION_PREDICATE, EffectProof, ProducerTarget, bind_producer, links_from_runs,
 };
 use crate::limit_ask::EngineLimit;
 use crate::llm::decision::DecisionReceipt;
@@ -508,11 +508,7 @@ impl Vault {
             })
             .collect();
         let gate_decisions = linked_gate_decisions(self, runs)?;
-        // A retrieval window records no link to an attempt or a manifest.
-        let links = ProducerLinks {
-            attempts: Vec::new(),
-            manifests: Vec::new(),
-        };
+        let links = links_from_runs(runs);
         let producer = bind_producer(self, runs, &links)?;
         let recurrence_key = policy_hook.recurrence_key(
             self,

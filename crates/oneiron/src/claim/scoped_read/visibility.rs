@@ -652,6 +652,15 @@ impl<'v> ScopedRead<'v> {
         {
             return Ok(false);
         }
+        if !self.phone_lines_allow_in(rtxn, id, raw)? {
+            return Ok(false);
+        }
+        // A key several of its holder's agent Grants bind reads a row only
+        // where one of them alone admits it (FIX AGENT-GRAPHFS-GRANT-WORLDS),
+        // judged per row, outside the access-class cache below.
+        if grant.is_none() && !self.one_grant_alternative_admits_in(rtxn, id, raw, authority)? {
+            return Ok(false);
+        }
         // A CLAIM a reader with no record list reads is judged once per
         // access class (FIX 11915); every other row, and a CLAIM that path
         // leaves, takes the row admission below.
@@ -705,6 +714,13 @@ impl<'v> ScopedRead<'v> {
             let Some(scope) = scope else {
                 return Ok(false);
             };
+            if let Some(allowed) =
+                self.live_world_read_in(rtxn, id, header.entity_type, &scope, policy, grant)?
+            {
+                return Ok(
+                    allowed && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?
+                );
+            }
             match grant {
                 None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
                 Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
@@ -824,7 +840,7 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
     ) -> Result<bool> {
         let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         self.is_entity_raw_readable_held_in(rtxn, &policy, id, raw, &filter, &authority)
     }
 

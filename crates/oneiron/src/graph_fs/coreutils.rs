@@ -4,6 +4,7 @@ use crate::ports::EntityStoreRead;
 use std::ops::Bound;
 use std::time::Instant;
 
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::PolicyManifestResolution;
@@ -89,6 +90,25 @@ impl GraphFsResolver<'_, '_> {
                 started_at,
                 GraphFsCoreutilsDecision::Pushdown,
                 "claims temporal index",
+                bytes,
+                next_cursor,
+                vec![RetrievalSignal::Temporal],
+                total,
+                None,
+            );
+        }
+        if sort_by_time
+            && self.snapshot.is_none()
+            && let ["entities", entity, "claims"] = path_components(&normalized)?.as_slice()
+        {
+            let subject = parse_entity_id(entity)?;
+            let (bytes, next_cursor, total) = self.ls_subject_claims_by_time(&subject, cursor)?;
+            return self.finish_coreutils_command(
+                GraphFsCoreutilsVerb::Ls,
+                started,
+                started_at,
+                GraphFsCoreutilsDecision::Pushdown,
+                "entity claims, newest learned first",
                 bytes,
                 next_cursor,
                 vec![RetrievalSignal::Temporal],
@@ -317,30 +337,152 @@ impl GraphFsResolver<'_, '_> {
         cursor: Option<&str>,
         max_scan_rows: usize,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
-        let mut out = CommandOutputBuilder::new(self.options);
         let scope = self.cursor_scope("ls -t /claims");
         let cursor = scope.open::<TemporalCursor>(cursor)?;
-        let mut last_emitted = cursor;
-        let mut last_scanned: Option<TemporalCursor> = None;
-        let mut total = 0;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
+        let (bytes, next, total) =
+            self.claims_by_time_walk(&rtxn, &policy, cursor, max_scan_rows, |_| Ok(true))?;
+        Ok((bytes, next.map(|cursor| scope.seal(&cursor)), total))
+    }
+
+    fn ls_subject_claims_by_time(
+        &self,
+        subject: &EntityId,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<u8>, Option<String>, usize)> {
+        self.ls_subject_claims_by_time_with_scan_cap(subject, cursor, GRAPH_FS_MAX_SCAN_ROWS)
+    }
+
+    /// `ls -t /entities/<subject>/claims` (FIX 7972): the subject's claims
+    /// this reader may read, newest learned first, under the same sealed
+    /// (learned at, id) position as `ls -t /claims`. A subject whose claims
+    /// fit one scan is ordered from its own claim edges; one with more walks
+    /// the vault's timeline newest first and keeps its claims, as the root
+    /// listing does, `max_scan_rows` timeline rows a page. Every line passes
+    /// the reader's visibility check, and a subject the reader may not read
+    /// lists nothing.
+    pub(super) fn ls_subject_claims_by_time_with_scan_cap(
+        &self,
+        subject: &EntityId,
+        cursor: Option<&str>,
+        max_scan_rows: usize,
+    ) -> Result<(Vec<u8>, Option<String>, usize)> {
+        let scope = self.cursor_scope(&format!("ls -t /entities/{}/claims", subject.to_hex()));
+        let cursor = scope.open::<TemporalCursor>(cursor)?;
+        if !self.scoped_read.is_entity_readable(subject)? {
+            return Ok((Vec::new(), None, 0));
+        }
+        self.scoped_read.persist_grant_clock()?;
+        let vault = self.scoped_read.vault();
+        let rtxn = vault.store.env.read_txn()?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
+        // The subject's claims, while they fit one scan.
+        let mut members = Vec::new();
+        let mut after = None;
+        let fits = loop {
+            let run = self.device_admitted_run(
+                after,
+                max_scan_rows + 1 - members.len(),
+                |from, limit| {
+                    vault.sources_page_in_txn(
+                        &rtxn,
+                        subject,
+                        EdgeKind::ClaimOf,
+                        Some(ENTITY_TYPE_CLAIM),
+                        from,
+                        limit,
+                    )
+                },
+            )?;
+            members.extend(run.ids);
+            if members.len() > max_scan_rows {
+                break false;
+            }
+            match run.resume_after {
+                Some(last) => after = Some(last),
+                None => break true,
+            }
+        };
+        let (bytes, next, total) = if fits {
+            let mut timed = Vec::with_capacity(members.len());
+            for id in members {
+                if let Some(record) = vault.store.port_entity_record(&rtxn, &id)? {
+                    timed.push(TemporalCursor {
+                        learned_at: record.learned_at,
+                        id,
+                    });
+                }
+            }
+            timed.sort_unstable_by(|a, b| (b.learned_at, b.id).cmp(&(a.learned_at, a.id)));
+            let mut out = CommandOutputBuilder::new(self.options);
+            let (mut last_emitted, mut total, mut next) = (cursor, 0, None);
+            for temporal in timed {
+                if cursor
+                    .is_some_and(|at| (temporal.learned_at, temporal.id) >= (at.learned_at, at.id))
+                {
+                    continue;
+                }
+                if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                    &rtxn,
+                    &policy,
+                    &temporal.id,
+                ))? {
+                    continue;
+                }
+                let line = format!("{}\n", temporal.id.to_hex());
+                if !out.try_push(line.as_bytes()) {
+                    next = last_emitted;
+                    break;
+                }
+                total += 1;
+                last_emitted = Some(temporal);
+            }
+            (out.into_bytes(), next, total)
+        } else {
+            let store = &vault.store;
+            self.claims_by_time_walk(&rtxn, &policy, cursor, max_scan_rows, |claim| {
+                Ok(crate::ports::EdgeStoreRead::port_edge_get(
+                    store,
+                    &rtxn,
+                    claim,
+                    EdgeKind::ClaimOf,
+                    subject,
+                )?
+                .is_some())
+            })?
+        };
+        Ok((bytes, next.map(|cursor| scope.seal(&cursor)), total))
+    }
+
+    /// The vault timeline's claims this reader may read and `member` keeps,
+    /// newest learned first from `cursor`, a line each, reading at most
+    /// `max_scan_rows` timeline rows; with where the next page starts. A page
+    /// the cap cut short resumes after the last row it read, which the
+    /// sealed position never names.
+    fn claims_by_time_walk(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        cursor: Option<TemporalCursor>,
+        max_scan_rows: usize,
+        mut member: impl FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<(Vec<u8>, Option<TemporalCursor>, usize)> {
+        let mut out = CommandOutputBuilder::new(self.options);
+        let mut last_emitted = cursor;
+        let mut last_scanned: Option<TemporalCursor> = None;
+        let mut total = 0;
         let query = crate::ports::TimelineQuery {
             reverse: true,
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
         };
-        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
+        for (scanned, entry) in self.admitted_timeline(rtxn, query)?.enumerate() {
             if scanned >= max_scan_rows {
                 // The last scanned row may be one the walk passed over; the
                 // sealed position resumes after it without naming it.
-                let next_cursor = last_scanned.or(last_emitted);
-                return Ok((
-                    out.into_bytes(),
-                    next_cursor.map(|cursor| scope.seal(&cursor)),
-                    total,
-                ));
+                return Ok((out.into_bytes(), last_scanned.or(last_emitted), total));
             }
             let time = entry?;
             let temporal = TemporalCursor {
@@ -349,22 +491,20 @@ impl GraphFsResolver<'_, '_> {
             };
             last_scanned = Some(temporal);
             if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
-                &rtxn,
-                &policy,
+                rtxn,
+                policy,
                 &temporal.id,
             ))? {
                 continue;
             }
-            if self.entity_type_in(&rtxn, &temporal.id)? != Some(ENTITY_TYPE_CLAIM) {
+            if self.entity_type_in(rtxn, &temporal.id)? != Some(ENTITY_TYPE_CLAIM)
+                || !member(&temporal.id)?
+            {
                 continue;
             }
             let line = format!("{}\n", temporal.id.to_hex());
             if !out.try_push(line.as_bytes()) {
-                return Ok((
-                    out.into_bytes(),
-                    last_emitted.map(|cursor| scope.seal(&cursor)),
-                    total,
-                ));
+                return Ok((out.into_bytes(), last_emitted, total));
             }
             total += 1;
             last_emitted = Some(temporal);

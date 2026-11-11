@@ -123,6 +123,16 @@ jobs:
           version: "v0.15.0"
       - name: Secret blocklist is a policy superset
         run: python3 scripts/check-secret-blocklist.py
+      # Untangle slice 4.3 (S4-6 = a): the generated SDK files are not in git, so every PR prints the SDK's public
+      # surface against its base instead (facade verbs, their input and output types, the SDK majors). It never
+      # fails before the first `v*` tag; after it, a removed verb or a changed input type with no SDK major fails.
+      - name: SDK public surface drift
+        if: ${{ !cancelled() }}
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -n "$base" ]; then git fetch --no-tags --depth=1 origin "$base" 2>/dev/null || true; fi
+          git fetch --no-tags origin 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
+          python3 scripts/sdk/surface.py --diff "$base" --enforce
       - name: Format
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo fmt --check
@@ -147,11 +157,8 @@ jobs:
           # The deny-policy tests call the pinned cargo-deny.
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v
-          python3 scripts/sdk/generate.py --check
-          python3 -m unittest discover -s scripts/tests -p 'test_agent_sdk.py' -v
+          cargo run --locked -p oneiron-sdk-generator -- --check
           python3 scripts/code-sandbox/generate.py --check
-          python3 -m unittest discover -s scripts/tests -p 'test_sandbox_wit.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_microvm_artifacts.py' -v
       # Office oracle scripts are host tools CI never runs. These checks read only stored
       # inputs, synthetic packages and the archived-receipt pointer: no Office, network or receipt.

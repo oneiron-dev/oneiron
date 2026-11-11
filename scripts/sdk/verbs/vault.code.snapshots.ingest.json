@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.snapshots.ingest",
+  "description": "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership.",
+  "input": "crate::memory::codebase_doors::CodeSnapshotIngestRequest",
+  "output": "crate::memory::codebase_doors::CodeSnapshotView",
+  "call": "memory.code_snapshot_ingest_as(&memory.embedded_owner(\"vault.code.snapshots.ingest\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

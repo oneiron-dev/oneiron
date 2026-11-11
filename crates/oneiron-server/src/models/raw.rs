@@ -240,6 +240,22 @@ pub(crate) fn funded_run(
     receipts: Arc<dyn RunReceiptSink>,
     payer: Option<PayerPerson>,
 ) -> RunAdmission {
+    grant_funded_run(run, meter, host, receipts, payer, None)
+}
+
+/// [`funded_run`] for work an owner's agent Grant funds (FIX 7766): the run
+/// freezes `funding`, the binding the host read from the work's spend root
+/// or its unmetered dispatch input before the run began, and each host-paid
+/// call holds only on a live allocation of that Grant's wallet. `None` is
+/// [`funded_run`]'s run.
+pub(crate) fn grant_funded_run(
+    run: impl Into<String>,
+    meter: BudgetGuard,
+    host: Option<Arc<HostAccount>>,
+    receipts: Arc<dyn RunReceiptSink>,
+    payer: Option<PayerPerson>,
+    funding: Option<oneiron::agent_dispatch::GrantSpendBinding>,
+) -> RunAdmission {
     let line = BudgetLine {
         limit_units: meter.read().limit_units,
         reserve_units: meter.reserve_units(),
@@ -249,5 +265,5 @@ pub(crate) fn funded_run(
     // Inside a hook's verdict its settlements are also kept for its record
     // (FIX 10075); the host's sink gets every receipt unchanged either way.
     let receipts = oneiron::llm::run_admission::captured_sink(receipts);
-    RunAdmission::with_payer(run, declaration, meter, host, receipts, payer)
+    RunAdmission::with_funding(run, declaration, meter, host, receipts, payer, funding)
 }

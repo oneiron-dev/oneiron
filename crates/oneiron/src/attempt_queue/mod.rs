@@ -23,12 +23,16 @@ mod encoding;
 mod engine;
 mod executor;
 mod fanout_hold;
+mod hold_override;
+mod hold_override_receipt;
 mod hook_hold;
 mod index;
 mod kind_payload_erase;
+mod lifecycle;
 pub mod maintenance_predicate;
 mod observe;
 mod payload_erase;
+mod unserved_kinds;
 pub(crate) use payload_erase::ErasedByoaPayloads;
 mod payload_rebind;
 mod ports;
@@ -66,10 +70,19 @@ pub use cancel::{
 };
 pub use engine::{AttemptQueue, RequeueAttempt, RequeuedFailure};
 pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
+pub(crate) use hold_override::erase_hold_override_actor_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use hold_override::hold_override_actor_in_txn;
+pub(crate) use hold_override_receipt::{
+    erase_hold_override_receipt_actor_in_txn, hold_override_receipts,
+};
 pub(crate) use hook_hold::HoldAttemptForHook;
+pub(crate) use lifecycle::HoldSignal;
+pub use lifecycle::{PauseKind, RunState};
 pub use read_set::{AttemptReadSet, ReadSetProducer};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
+pub use types::AttemptLeaseExpiry;
 pub use types::AttemptTerminalExhaust;
 pub use types::{
     AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect,
@@ -88,6 +101,7 @@ pub(crate) use payload_erase::{
     erase_attempt_payload_actors_in_txn, erase_dispatch_payload_text_target,
     erase_model_step_failure_reasons_in_txn, scrub_hard_erased_payload_in_txn,
 };
+pub(crate) use unserved_kinds::drop_unserved_kinds;
 #[cfg(test)]
 pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {
     encoding::encode_record(record)
@@ -142,3 +156,4 @@ pub(crate) fn check_owner_retained_range(kind: &str, id: &AttemptId) -> crate::R
 pub mod companion_task;
 
 pub mod run_tree_view;
+pub(crate) mod tables;

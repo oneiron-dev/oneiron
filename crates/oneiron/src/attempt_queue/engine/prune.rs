@@ -86,6 +86,37 @@ impl AttemptQueue<'_> {
         Ok(pruned)
     }
 
+    /// Deletes only the selected cleanup-archived Completed attempt. The caller
+    /// revalidates authority and records the deletion in this same transaction.
+    pub(crate) fn delete_archived_completed_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+    ) -> Result<AttemptRecord> {
+        let raw = self
+            .store
+            .attempt_records
+            .get(wtxn, id.as_bytes())?
+            .ok_or_else(|| invalid_transition("archive_delete", "missing"))?
+            .into_owned();
+        let record = decode_record(&raw, id)?;
+        if record.state != crate::attempt_queue::AttemptState::Completed
+            || !crate::vault_cleanup::attempt_is_archived(self.store, wtxn, id, &raw)?
+        {
+            return Err(invalid_transition("archive_delete", record.state.as_str()));
+        }
+        self.delete_entries_naming(wtxn, &record)?;
+        crate::attempt_queue::index::delete_deleted_in_txn(self.store, wtxn, &record)?;
+        self.store.attempt_records.delete(wtxn, id.as_bytes())?;
+        self.store.delete_attempt_run_index_in_txn(
+            wtxn,
+            record.run_id.as_deref(),
+            id.as_bytes(),
+        )?;
+        crate::vault_cleanup::forget_archived_attempt_in_txn(self.store, wtxn, &record)?;
+        Ok(record)
+    }
+
     /// Compacts the lineage of the try `id` of an owner-retained kind in the
     /// caller's transaction, and returns how many rows went.
     ///
@@ -196,6 +227,30 @@ impl AttemptQueue<'_> {
             .attempt_records
             .put(wtxn, row.id.as_bytes(), &encoded)?;
         Ok(())
+    }
+
+    /// Deletes every row of `kind`, in any state, with each index entry that
+    /// still names it, its run's index row too, in the caller's transaction,
+    /// and returns how many went: the drop of a kind no executor serves (FIX
+    /// 12327). A row a task names goes too, with its task and archive
+    /// entries: no executor ever runs it, so its task reads no try of it.
+    pub(crate) fn drop_kind_in_txn(&self, wtxn: &mut heed::RwTxn<'_>, kind: &str) -> Result<usize> {
+        let mut dropped = 0;
+        for record in self.kind_rows_in_txn(wtxn, kind)? {
+            self.delete_entries_naming(wtxn, &record)?;
+            crate::attempt_queue::index::delete_deleted_in_txn(self.store, wtxn, &record)?;
+            self.store.delete_attempt_run_index_in_txn(
+                wtxn,
+                record.run_id.as_deref(),
+                record.id.as_bytes(),
+            )?;
+            self.store
+                .attempt_records
+                .delete(wtxn, record.id.as_bytes())?;
+            crate::vault_cleanup::forget_archived_attempt_in_txn(self.store, wtxn, &record)?;
+            dropped += 1;
+        }
+        Ok(dropped)
     }
 
     /// Deletes the ready and dedupe entries that name `record`. A settled row

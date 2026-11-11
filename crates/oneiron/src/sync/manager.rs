@@ -50,10 +50,13 @@ mod document_api;
 mod live_mirror;
 mod pending_mirror;
 mod promotion;
+mod ready;
 mod recovery_commits;
 mod replacement;
 
 pub(crate) use self::live_mirror::import_scope;
+// FIX 19634: each connection asks for the windows a policy wake readied.
+pub use self::ready::{READY_WINDOWS_PER_PASS, ReadyProgress};
 // FIX 14534: a world eviction waits for, or on the owner's word discards, the
 // rows a local write still owes a window.
 pub(crate) use self::pending_mirror::{discard_window_mirrors_in_txn, window_owes_mirror_in_txn};

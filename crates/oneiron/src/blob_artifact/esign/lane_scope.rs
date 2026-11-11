@@ -143,7 +143,7 @@ impl EsignScope<'_> {
 /// admission required of every caller before FIX 6220 and 6403
 /// (`require_unrestricted_record_scope`): no record or channel caveat, and
 /// every axis but its verbs at the top.
-pub(super) fn bounded_by_whole_vault(proof: &VerifiedSlip) -> bool {
+pub(crate) fn bounded_by_whole_vault(proof: &VerifiedSlip) -> bool {
     let mut required = Scope::top();
     required.verbs = proof.scope().verbs.clone();
     proof.claims().records.is_empty()
@@ -250,7 +250,7 @@ pub(super) fn write_artifact<T>(
     write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
 ) -> MemoryResult<T> {
     memory.with_actor_content_write_txn_as(memory.write_actor(), |content| {
-        content.update_artifact(document, |txn| {
+        content.update_artifact(document, |txn, _lane| {
             reaches_in(lane, txn, document)?;
             write(txn)
         })

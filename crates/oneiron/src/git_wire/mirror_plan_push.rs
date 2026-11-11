@@ -16,6 +16,12 @@
 //! guessed absence. Each child inherits the caller's per-mirror hold and
 //! never the repository's coordinator, so a child that outlives its parent
 //! keeps the mirror held until it exits and no inbound push waits on it.
+//!
+//! On a served host both go instead to its loopback mirror relay
+//! (`*_via_relay`, FIX 19083) with the same argv but the relay's URL, which
+//! sends each exchange through the credential broker: the child carries the
+//! relay's ticket in its environment and no credential at all, and the
+//! push's child runs with no wall-clock bound, as an exact publish's does.
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
@@ -27,9 +33,10 @@ use super::failure::{classify_failure, invalid};
 use super::mirror_push::{
     MIRROR_PUSH_MAX_OUTPUT_BYTES, MIRROR_PUSH_REFSPECS, MIRROR_PUSH_TIMEOUT, MirrorEgress,
 };
+use super::origin_relay::OriginRelayEgress;
 use super::process::spawn_git;
-use super::publish_push::REMOTE_READ_TIMEOUT;
-use super::{GitOid, GitRefName, GitWire, GitWireOperation, GitWireRepo};
+use super::publish_push::{PUBLISH_OUTPUT_BYTES, REMOTE_READ_TIMEOUT};
+use super::{GitOid, GitRefName, GitWire, GitWireOperation, GitWireProcessEnv, GitWireRepo};
 use crate::error::Result;
 
 /// One ref of a frozen plan batch, as it goes out.
@@ -77,35 +84,39 @@ impl GitWire<'_> {
         names: &[GitRefName],
         authorization: &str,
     ) -> Result<BTreeMap<GitRefName, GitOid>> {
-        let mut tips = BTreeMap::new();
         if names.is_empty() {
-            return Ok(tips);
+            return Ok(BTreeMap::new());
         }
         validate_argv_token(url)?;
         let env = self.egress_env(repo, url, authorization, REMOTE_READ_TIMEOUT)?;
-        for chunk in names.chunks(MIRROR_PUSH_REFSPECS) {
-            let mut tail = os_args(&["ls-remote", "--refs", "--"]);
-            tail.push(OsString::from(url));
-            tail.extend(chunk.iter().map(|name| OsString::from(name.as_str())));
-            let argv = FrozenGitArgv::frozen(GitWireOperation::RemoteRefs, tail);
-            let output = spawn_git(&env, &GitCommandSpec::wire(&repo.repo_root, &argv))?;
-            if !output.success {
-                return Err(classify_failure(&output).error(GitWireOperation::RemoteRefs));
-            }
-            let text = std::str::from_utf8(&output.stdout)
-                .map_err(|_| invalid("git remote listing must be UTF-8"))?;
-            for line in text.lines() {
-                let mut fields = line.split('\t');
-                let (Some(oid), Some(listed)) = (fields.next(), fields.next()) else {
-                    return Err(invalid("git remote listing line is malformed"));
-                };
-                // A pattern matches a ref's tail; only the exact name counts.
-                if let Some(name) = chunk.iter().find(|name| name.as_str() == listed) {
-                    tips.insert(name.clone(), GitOid::parse_hex(oid)?);
-                }
-            }
+        list_remote_refs(&env, repo, url, names)
+    }
+
+    /// Reads `names` as [`Self::read_remote_refs`] does, the same reads of
+    /// the same names, from the served host's loopback mirror relay
+    /// `relay_url` (FIX 19083), each request carrying the relay's `ticket`
+    /// in a header the child's environment holds, never its argv. The relay
+    /// sends each exchange through the credential broker, which alone
+    /// installs the mirror's credential, so the child carries none.
+    ///
+    /// # Errors
+    /// A URL that is not a loopback relay, a malformed ticket, a changed
+    /// repository binding, or a read that cannot prove what the mirror
+    /// holds, naming its class and exit.
+    pub fn read_remote_refs_via_relay(
+        &self,
+        repo: &GitWireRepo,
+        relay_url: &str,
+        ticket: &str,
+        names: &[GitRefName],
+    ) -> Result<BTreeMap<GitRefName, GitOid>> {
+        if names.is_empty() {
+            return Ok(BTreeMap::new());
         }
-        Ok(tips)
+        validate_argv_token(relay_url)?;
+        let egress = OriginRelayEgress::read(relay_url, ticket)?;
+        let env = self.relay_env(repo, egress, REMOTE_READ_TIMEOUT, PUBLISH_OUTPUT_BYTES)?;
+        list_remote_refs(&env, repo, relay_url, names)
     }
 
     /// Pushes one frozen batch to the https mirror `url`, each ref as its
@@ -137,25 +148,107 @@ impl GitWire<'_> {
             .clone()
             .with_limits(MIRROR_PUSH_TIMEOUT, MIRROR_PUSH_MAX_OUTPUT_BYTES)?;
         env.mirror_egress = Some(MirrorEgress::with_authorization(authorization));
-        let argv = plan_push_argv(url, refs);
-        let command = GitCommandSpec::wire(&repo.repo_root, &argv).holding(hold);
-        let output = spawn_git(&env, &command)?;
-        let flags = porcelain_flags(&output.stdout);
-        // A ref the mirror already held prints no line without `--verbose`;
-        // a child that exited zero, untruncated, took or held every ref.
-        let outcomes = refs
-            .iter()
-            .map(|plan_ref| match flags.get(plan_ref.name.as_str()) {
-                Some(' ' | '+' | '*' | '-' | '=') => GitPlanRefOutcome::Applied,
-                Some('!') => GitPlanRefOutcome::Rejected,
-                None if output.success => GitPlanRefOutcome::Applied,
-                _ => GitPlanRefOutcome::Unknown,
-            })
-            .collect();
-        let failure = (!output.success)
-            .then(|| classify_failure(&output).message(GitWireOperation::MirrorPush));
-        Ok(GitPlanPushReport { outcomes, failure })
+        push_plan_batch(&env, repo, url, refs, hold)
     }
+
+    /// Pushes one frozen batch as [`Self::push_mirror_plan_batch`] does, the
+    /// same refspecs and leases in one child that inherits the hold this
+    /// thread took on `hold`, to the served host's loopback mirror relay
+    /// `relay_url` (FIX 19083), each request carrying the relay's `ticket`
+    /// in a header the child's environment holds, never its argv. The relay
+    /// sends each exchange through the credential broker, which alone
+    /// installs the mirror's credential, so the child carries none; the
+    /// child runs with no wall-clock bound (Rule 5). Never `--mirror`, and
+    /// never a ref beyond the batch.
+    ///
+    /// # Errors
+    /// A batch of no refs or more than [`MIRROR_PUSH_REFSPECS`], a URL that
+    /// is not a loopback relay, a malformed ticket, a changed repository
+    /// binding, or a process failure.
+    pub fn push_mirror_plan_batch_via_relay(
+        &self,
+        repo: &GitWireRepo,
+        relay_url: &str,
+        ticket: &str,
+        refs: &[GitPlanRef],
+        hold: &Path,
+    ) -> Result<GitPlanPushReport> {
+        if refs.is_empty() || refs.len() > MIRROR_PUSH_REFSPECS {
+            return Err(invalid("a mirror plan batch holds 1 to 256 refs"));
+        }
+        validate_argv_token(relay_url)?;
+        let egress = OriginRelayEgress::push(relay_url, ticket)?;
+        let env = self.relay_env(
+            repo,
+            egress,
+            MIRROR_PUSH_TIMEOUT,
+            MIRROR_PUSH_MAX_OUTPUT_BYTES,
+        )?;
+        push_plan_batch(&env, repo, relay_url, refs, hold)
+    }
+}
+
+/// What the mirror at `url` holds at each of `names`, one `ls-remote` child
+/// under `env` for each [`MIRROR_PUSH_REFSPECS`] names.
+fn list_remote_refs(
+    env: &GitWireProcessEnv,
+    repo: &GitWireRepo,
+    url: &str,
+    names: &[GitRefName],
+) -> Result<BTreeMap<GitRefName, GitOid>> {
+    let mut tips = BTreeMap::new();
+    for chunk in names.chunks(MIRROR_PUSH_REFSPECS) {
+        let mut tail = os_args(&["ls-remote", "--refs", "--"]);
+        tail.push(OsString::from(url));
+        tail.extend(chunk.iter().map(|name| OsString::from(name.as_str())));
+        let argv = FrozenGitArgv::frozen(GitWireOperation::RemoteRefs, tail);
+        let output = spawn_git(env, &GitCommandSpec::wire(&repo.repo_root, &argv))?;
+        if !output.success {
+            return Err(classify_failure(&output).error(GitWireOperation::RemoteRefs));
+        }
+        let text = std::str::from_utf8(&output.stdout)
+            .map_err(|_| invalid("git remote listing must be UTF-8"))?;
+        for line in text.lines() {
+            let mut fields = line.split('\t');
+            let (Some(oid), Some(listed)) = (fields.next(), fields.next()) else {
+                return Err(invalid("git remote listing line is malformed"));
+            };
+            // A pattern matches a ref's tail; only the exact name counts.
+            if let Some(name) = chunk.iter().find(|name| name.as_str() == listed) {
+                tips.insert(name.clone(), GitOid::parse_hex(oid)?);
+            }
+        }
+    }
+    Ok(tips)
+}
+
+/// One frozen batch pushed to `url` in one child under `env` that inherits
+/// the hold on `hold`, and what its porcelain reported for each ref.
+fn push_plan_batch(
+    env: &GitWireProcessEnv,
+    repo: &GitWireRepo,
+    url: &str,
+    refs: &[GitPlanRef],
+    hold: &Path,
+) -> Result<GitPlanPushReport> {
+    let argv = plan_push_argv(url, refs);
+    let command = GitCommandSpec::wire(&repo.repo_root, &argv).holding(hold);
+    let output = spawn_git(env, &command)?;
+    let flags = porcelain_flags(&output.stdout);
+    // A ref the mirror already held prints no line without `--verbose`;
+    // a child that exited zero, untruncated, took or held every ref.
+    let outcomes = refs
+        .iter()
+        .map(|plan_ref| match flags.get(plan_ref.name.as_str()) {
+            Some(' ' | '+' | '*' | '-' | '=') => GitPlanRefOutcome::Applied,
+            Some('!') => GitPlanRefOutcome::Rejected,
+            None if output.success => GitPlanRefOutcome::Applied,
+            _ => GitPlanRefOutcome::Unknown,
+        })
+        .collect();
+    let failure =
+        (!output.success).then(|| classify_failure(&output).message(GitWireOperation::MirrorPush));
+    Ok(GitPlanPushReport { outcomes, failure })
 }
 
 /// `push --porcelain --no-verify --no-recurse-submodules

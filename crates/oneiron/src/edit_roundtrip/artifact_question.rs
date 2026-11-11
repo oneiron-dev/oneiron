@@ -322,12 +322,21 @@ pub use crate::blob_artifact::unit_refusal::UnitRefusal;
 #[derive(Debug, Clone)]
 pub struct ArtifactAskRun {
     pub proposal: Option<super::EditProposal>,
+    /// Completed sheet decisions whose owning caller must retain before staging.
+    pub sheet_answers: Option<super::SheetAnswerWork>,
+    /// A later intake floor stopped this run after paid answers completed.
+    /// Retain those answers and the cursor before returning this refusal.
+    pub deferred_floor: Option<oneiron_docedit::resource::ResourceRefusal>,
     pub abstained: Vec<UnitAbstention>,
     pub refused: Vec<UnitRefusal>,
     /// The rows the ask's own reads picked (FIX 5455): each version it read,
     /// as its version CLAIM and ASSET, the asked artifact's head and every
     /// folder file's head alike. Ids only.
     pub read_rows: Vec<EntityId>,
+    /// First selected sheet row not completed when the run yielded at its
+    /// deadline or at a later intake floor (`deferred_floor`). The suffix has no fabricated
+    /// decisions or receipts. Other adapters currently return `None`.
+    pub next_sheet_row: Option<u32>,
 }
 
 /// The cell a decided answer writes: a yes/no as a boolean, a pick as its

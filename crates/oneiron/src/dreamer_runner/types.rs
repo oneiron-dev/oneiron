@@ -616,6 +616,7 @@ pub struct DreamerAdmittedAttempt {
     pub status: DreamerAttemptStatus,
     pub budget: DreamerBudgetRecord,
     pub reservation: DreamerBudgetReservation,
+    pub(super) admitted_budget_line: super::AdmittedBudgetLine,
 }
 
 /// Private run-tree row keyed by attempt id.
@@ -626,114 +627,70 @@ pub struct DreamerRunTreeRecord {
     pub created_at: u64,
 }
 
-/// Why a Dreamer attempt parked. The reason text is for people; this is
-/// what code reads. Only a [`Self::ProviderUnavailable`] park resumes when a
-/// model offer recovers (OF-305).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DreamerParkCause {
-    /// Its model call failed because the provider is down: a server error,
-    /// a timeout, a cut stream or an empty answer.
-    ProviderUnavailable,
-    /// Its executor returned an error or panicked.
-    ExecutorError,
-    /// The wake pass hit its deadline and the attempt kept its progress.
-    Checkpoint,
-    /// A refusal or error park: resumed as the same try, like Checkpoint,
-    /// once its retry delay has passed.
-    Retry,
-    /// The host's pause (a managed reap freeze, FIX 6909) stopped the pass
-    /// before the attempt dispatched: resumed like Checkpoint.
-    Paused,
-    /// The pass was cancelled.
-    Cancelled,
-    /// It waits on a signal: a budget approval, a seat login, a peer.
-    Signal,
-    /// Anything else: a missing route, a refused config, a failed step only
-    /// an owner act clears.
-    Other,
+#[doc(hidden)]
+pub use oneiron_wake_contract::dreamer_runner::types::DreamerParkCause;
+
+/// The cause of a park a failed model call made (FIX 7382, Engine
+/// 10-21): a provider outage when its provider is down; a private park
+/// for a failure only an owner act clears (the wake driver's owner-act
+/// check names them); and a Retry, resumed after its delay, for any other.
+#[must_use]
+pub fn dreamer_park_cause_of_llm(error: &oneiron_model::llm::LlmError) -> DreamerParkCause {
+    if error.is_provider_unavailable() {
+        DreamerParkCause::ProviderUnavailable
+    } else if crate::dreamer_wake::llm_waits_on_owner_act(error) {
+        DreamerParkCause::Other
+    } else {
+        DreamerParkCause::Retry
+    }
 }
 
-impl DreamerParkCause {
-    /// Stable string stored in the private parked row.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ProviderUnavailable => "provider_unavailable",
-            Self::ExecutorError => "executor_error",
-            Self::Checkpoint => "checkpoint",
-            Self::Retry => "retry",
-            Self::Paused => "paused",
-            Self::Cancelled => "cancelled",
-            Self::Signal => "signal",
-            Self::Other => "other",
+/// The cause of a park a deterministic fallback's answer made: that of
+/// the provider failure it stood in for ([`Self::of_llm`]), else other.
+/// A fallback for an outage parks as one, so the offer's recovery
+/// resumes it.
+#[must_use]
+pub fn dreamer_park_cause_of_response(
+    response: &oneiron_model::llm::LlmResponse,
+) -> DreamerParkCause {
+    oneiron_model::llm::FallbackRegistry::source_of(response).map_or(
+        DreamerParkCause::Other,
+        |source| {
+            crate::dreamer_runner::dreamer_park_cause_of_llm(&oneiron_model::llm::LlmError::Fatal(
+                source,
+            ))
+        },
+    )
+}
+
+/// The cause of a park a failed durable step made (FIX 7382, Engine
+/// 10-21): a checkpoint at the wake-pass deadline; a provider outage for
+/// a model call whose provider is down; a private park for a failure
+/// only an owner act clears (the model failures and engine error kinds
+/// the wake driver's owner-act checks name); and a Retry, resumed after
+/// its delay, for any other.
+#[must_use]
+pub fn dreamer_park_cause_of_step(
+    error: &crate::model_step_error::DurableStepError,
+) -> DreamerParkCause {
+    use crate::model_step_error::DurableStepError;
+    match error {
+        DurableStepError::Llm(source)
+        | DurableStepError::ClassifiedLlm { source, .. }
+        | DurableStepError::SpentLlm { source, .. } => {
+            crate::dreamer_runner::dreamer_park_cause_of_llm(source)
         }
-    }
-
-    pub(super) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "provider_unavailable" => Some(Self::ProviderUnavailable),
-            "executor_error" => Some(Self::ExecutorError),
-            "checkpoint" => Some(Self::Checkpoint),
-            "retry" => Some(Self::Retry),
-            "paused" => Some(Self::Paused),
-            "cancelled" => Some(Self::Cancelled),
-            "signal" => Some(Self::Signal),
-            "other" => Some(Self::Other),
-            _ => None,
-        }
-    }
-
-    /// The cause of a park a failed model call made (FIX 7382, Engine
-    /// 10-21): a provider outage when its provider is down; a private park
-    /// for a failure only an owner act clears (the wake driver's owner-act
-    /// check names them); and a Retry, resumed after its delay, for any other.
-    #[must_use]
-    pub fn of_llm(error: &oneiron_model::llm::LlmError) -> Self {
-        if error.is_provider_unavailable() {
-            Self::ProviderUnavailable
-        } else if crate::dreamer_wake::llm_waits_on_owner_act(error) {
-            Self::Other
-        } else {
-            Self::Retry
-        }
-    }
-
-    /// The cause of a park a deterministic fallback's answer made: that of
-    /// the provider failure it stood in for ([`Self::of_llm`]), else other.
-    /// A fallback for an outage parks as one, so the offer's recovery
-    /// resumes it.
-    #[must_use]
-    pub fn of_response(response: &oneiron_model::llm::LlmResponse) -> Self {
-        oneiron_model::llm::FallbackRegistry::source_of(response).map_or(Self::Other, |source| {
-            Self::of_llm(&oneiron_model::llm::LlmError::Fatal(source))
-        })
-    }
-
-    /// The cause of a park a failed durable step made (FIX 7382, Engine
-    /// 10-21): a checkpoint at the wake-pass deadline; a provider outage for
-    /// a model call whose provider is down; a private park for a failure
-    /// only an owner act clears (the model failures and engine error kinds
-    /// the wake driver's owner-act checks name); and a Retry, resumed after
-    /// its delay, for any other.
-    #[must_use]
-    pub fn of_step(error: &crate::model_step_error::DurableStepError) -> Self {
-        use crate::model_step_error::DurableStepError;
-        match error {
-            DurableStepError::Llm(source)
-            | DurableStepError::ClassifiedLlm { source, .. }
-            | DurableStepError::SpentLlm { source, .. } => Self::of_llm(source),
-            DurableStepError::Engine(engine) => {
-                if crate::dreamer_wake::waits_on_owner_act(engine.kind()) {
-                    Self::Other
-                } else {
-                    Self::Retry
-                }
+        DurableStepError::Engine(engine) => {
+            if crate::dreamer_wake::waits_on_owner_act(engine.kind()) {
+                DreamerParkCause::Other
+            } else {
+                DreamerParkCause::Retry
             }
-            DurableStepError::DeadlineHardCut
-            | DurableStepError::FinalizeRefused
-            | DurableStepError::SpentFinalizeRefused { .. } => Self::Checkpoint,
-            _ => Self::Retry,
         }
+        DurableStepError::DeadlineHardCut
+        | DurableStepError::FinalizeRefused
+        | DurableStepError::SpentFinalizeRefused { .. } => DreamerParkCause::Checkpoint,
+        _ => DreamerParkCause::Retry,
     }
 }
 

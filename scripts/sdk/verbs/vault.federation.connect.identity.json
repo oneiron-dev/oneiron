@@ -1,0 +1,17 @@
+{
+  "name": "vault.federation.connect.identity",
+  "description": "The owner reads this vault identity and the host key used for reciprocal Connect consent.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::task_verb::sdk::ConnectIdentity",
+  "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.identity\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "mcp_fields": {},
+  "host_door_proof": "owner"
+}

@@ -124,6 +124,17 @@ pub fn git_path_os_str(text: &str) -> Result<Cow<'_, OsStr>> {
     }
 }
 
+/// Whether the Git path whose text is `text` holds a control char, read from
+/// the path's own bytes: an escape's NUL is never one.
+///
+/// # Errors
+/// Text [`git_path_bytes`] refuses.
+pub fn git_path_has_control(text: &str) -> Result<bool> {
+    Ok(git_path_bytes(text)?
+        .utf8_chunks()
+        .any(|chunk| chunk.valid().chars().any(char::is_control)))
+}
+
 /// The byte two lowercase hex digits name.
 fn escaped_byte(digits: &[u8]) -> Option<u8> {
     let nibble = |digit: u8| match digit {

@@ -1,6 +1,7 @@
 //! Durable spend scopes and their typed reads (OF-532). Records confer no
 //! authority; they bound spend.
 
+use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
@@ -34,6 +35,38 @@ pub struct SpendPayer {
     pub at_ms: u64,
 }
 
+/// The owner's agent Grant a root's work is funded by (FIX 7766, Engine
+/// 19:59 W-B/W-E): chosen once when the root opens, validated in that
+/// writer against the live Grant row and the owner's counted signed mint,
+/// and frozen here. Children, retries, reservations and top-ups read it by
+/// walking to their root; it is never copied onto a child and never
+/// rebound. Every host-paid call the tree admits draws on `wallet_ref`'s
+/// allocation, or is refused. It confers no authority and is no permission
+/// axis: the cap stays the root's, the payer's consent stays the payer's.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GrantSpendBinding {
+    /// The owner's agent Grant (its FEDERATION_GRANT row) that funds the work.
+    pub grant_ref: EntityId,
+    /// The authority entry of the owner's counted signed mint of that Grant
+    /// (64 lowercase hex), which names the wallet.
+    pub mint_act: String,
+    /// The host wallet the Grant and its signed mint name.
+    pub wallet_ref: crate::federation::WalletRef,
+}
+
+impl GrantSpendBinding {
+    /// The binding the owner's selected funding Grant, proved in the root's
+    /// writer, freezes.
+    pub(crate) fn from_proof(proof: &crate::federation::SelectedOwnerAgentFundingGrant) -> Self {
+        Self {
+            grant_ref: proof.grant_ref(),
+            mint_act: crate::entity_id::bytes_to_hex_lower(proof.mint_act()),
+            wallet_ref: proof.wallet_ref().clone(),
+        }
+    }
+}
+
 /// The local calibration state before one scope's sample was folded.
 /// The wrapper distinguishes the first sample (`before: None`) from a scope
 /// that never contributed a sample on this vault.
@@ -52,7 +85,8 @@ impl SpendCalibrationSample {
 /// One node of a launch's lease tree.
 ///
 /// `cap_units` is a hard scope's cap, or what a soft scope holds from its
-/// parent (it grows when the scope tops up). `held_units` is what this scope's
+/// parent (it grows when the scope tops up). `ceiling_units`, when present,
+/// independently bounds that subtree without reserving it all. `held_units` is what this scope's
 /// open children hold from it. What the scope may spend itself, before any top
 /// up, is `cap_units - spent_units - held_units`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -62,6 +96,9 @@ pub struct SpendScope {
     pub parent: Option<SpendScopeId>,
     pub unit: LeaseUnit,
     pub cap_units: u64,
+    /// An admitted task's own subtree ceiling, separate from the amount
+    /// currently held from its parent. It does not grant funds or consent.
+    pub ceiling_units: Option<u64>,
     /// A root, or a child spawned with `budget`: it never draws past its cap.
     /// A soft child tops up from its parent chain to the nearest hard ancestor.
     pub hard: bool,
@@ -89,6 +126,12 @@ pub struct SpendScope {
     /// root's, and on a root no payer accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<SpendPayer>,
+    /// The owner's agent Grant a root's tree is funded by (FIX 7766), frozen
+    /// when the root opened; `None` on every child, which reads its root's,
+    /// and on a root no Grant funds, which draws on the host's live
+    /// allocation as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub funding: Option<GrantSpendBinding>,
 }
 
 impl SpendScope {
@@ -97,6 +140,33 @@ impl SpendScope {
     pub fn local_available(&self) -> u64 {
         self.cap_units
             .saturating_sub(self.spent_units.saturating_add(self.held_units))
+    }
+
+    pub(super) fn is_boundary(&self) -> bool {
+        self.hard || self.ceiling_units.is_some()
+    }
+
+    pub(super) fn limit_units(&self) -> u64 {
+        self.ceiling_units.map_or(self.cap_units, |ceiling| {
+            if self.hard {
+                ceiling.min(self.cap_units)
+            } else {
+                ceiling
+            }
+        })
+    }
+
+    /// A closed boundary retains its ceiling, not the hold already released
+    /// into its parent at settlement.
+    pub(super) fn boundary_available(&self) -> u64 {
+        self.limit_units()
+            .saturating_sub(self.spent_units.saturating_add(self.held_units))
+    }
+
+    pub(super) fn clamp_available(&self, available: u64) -> u64 {
+        self.ceiling_units.map_or(available, |ceiling| {
+            available.min(ceiling.saturating_sub(self.spent_units.saturating_add(self.held_units)))
+        })
     }
 }
 
@@ -160,7 +230,7 @@ pub struct SpendRead {
     /// What the scope may still spend, walking soft scopes up to the nearest
     /// hard ancestor.
     pub available_units: u64,
-    /// The nearest hard scope and its cap.
+    /// The nearest hard scope or admitted task ceiling and its limit.
     pub cap_scope: SpendScopeId,
     pub cap_units: u64,
     pub signal: Option<SpendSignal>,
@@ -178,4 +248,55 @@ pub struct SpendSettlement {
     pub released_units: u64,
     /// The child was already settled; nothing moved.
     pub already_settled: bool,
+}
+
+/// Forgets `actor` in every local spend scope, in its erase's transaction
+/// (FIX 11777): an erased agent or payer party leaves `None`, and an erased
+/// grantor leaves `granted_by` as `None` with the party kept, its spend still
+/// on the party's standing. A row that does not read is passed over with a
+/// WARN and never fails the erase.
+pub(crate) fn erase_spend_scope_actor_in_txn(
+    vault: &crate::Vault,
+    txn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::error::Result<()> {
+    let mut scrubbed = Vec::new();
+    for row in SCOPE.iter_raw_from(&vault.store, txn, &[])? {
+        let (key, value) = row?;
+        let scope = <String as crate::side_table::SideKey>::decode_key(&key)
+            .ok_or_else(|| crate::error::Error::InvalidConfig("unreadable key".to_owned()))
+            .and_then(|id| SCOPE.decode_value(&value).map(|scope| (id, scope)));
+        let (id, mut scope) = match scope {
+            Ok(row) => row,
+            Err(error) => {
+                tracing::warn!(%error, "an actor erase passed over a spend scope that does not read");
+                continue;
+            }
+        };
+        let mut hit = false;
+        if scope.agent == Some(*actor) {
+            scope.agent = None;
+            hit = true;
+        }
+        if scope
+            .payer
+            .as_ref()
+            .is_some_and(|payer| payer.party == *actor)
+        {
+            scope.payer = None;
+            hit = true;
+        } else if let Some(payer) = &mut scope.payer
+            && payer.granted_by == Some(*actor)
+        {
+            payer.granted_by = None;
+            hit = true;
+        }
+        if hit {
+            scrubbed.push((id, scope));
+        }
+    }
+    for (id, scope) in &scrubbed {
+        SCOPE.put(&vault.store, txn, id, scope)?;
+    }
+    Ok(())
 }

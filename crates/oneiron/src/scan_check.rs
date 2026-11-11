@@ -180,6 +180,7 @@ impl Vault {
 
 #[cfg(test)]
 mod table_tests;
+pub(crate) mod tables;
 
 #[cfg(test)]
 mod tests {

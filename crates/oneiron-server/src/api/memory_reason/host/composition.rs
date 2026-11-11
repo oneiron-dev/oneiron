@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::frame::FrameEstimate;
-use super::sources::{self, Pin};
+use super::sources::{self, Pin, PinCohort};
 use super::{Backend, MemoryReasonComposeRequest, MemoryReasonComposition, call, invalid};
 
 #[derive(Deserialize, Serialize)]
@@ -29,7 +29,8 @@ pub(super) fn compose(
     backend: &Backend,
     request: &MemoryReasonComposeRequest<'_>,
 ) -> RetrievalResult<BackendSpend<MemoryReasonComposition>> {
-    let pins = sources::compose_pins(backend, request.evidence)?;
+    let pin_cohort = sources::compose_pins(backend, request.evidence)?;
+    let pins = pin_cohort.as_slice();
     let schema = schema();
     let rows: Vec<_> = request
         .evidence
@@ -42,7 +43,7 @@ pub(super) fn compose(
         .collect();
     let whole = map_data(request, &rows);
     let Some(frame) = FrameEstimate::sample(backend) else {
-        let mut answered = single(backend, request, whole, schema, &pins)?;
+        let mut answered = single(backend, request, whole, schema, pins)?;
         answered
             .value
             .gaps
@@ -50,7 +51,7 @@ pub(super) fn compose(
         return Ok(answered);
     };
     if frame.fits(&whole, &schema) {
-        return single(backend, request, whole, schema, &pins);
+        return single(backend, request, whole, schema, pins);
     }
 
     let mut spent = 0_u64;
@@ -119,8 +120,18 @@ pub(super) fn compose(
             .union(&units[right].producers)
             .copied()
             .collect();
-        let pass_pins: Vec<_> = producers.iter().map(|&index| pins[index].clone()).collect();
-        let parsed = pass(backend, request, data, &schema, &pass_pins, &mut spent)?;
+        let mut pass_pins = PinCohort::with_capacity(&backend.server.memory, producers.len());
+        for &index in &producers {
+            pass_pins.push(pins[index].clone());
+        }
+        let parsed = pass(
+            backend,
+            request,
+            data,
+            &schema,
+            pass_pins.as_slice(),
+            &mut spent,
+        )?;
         units.remove(right);
         units.remove(left);
         match parsed.and_then(|draft| valid(draft, &allowed)) {

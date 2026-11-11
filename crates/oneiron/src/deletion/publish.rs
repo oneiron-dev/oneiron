@@ -420,8 +420,12 @@ impl Vault {
         // stock in its own transaction; the serving host now drops the
         // plaintext and restarts its worker with stock.
         if !ids.is_empty() {
+            self.verb_hook_bindings_changed();
             self.notify_drafter_serving();
         }
+        // No writer held: room code runs (FIX 7366), kept hook runs (FIX 22240) of erased ids go.
+        crate::code_run::erase_gone_actors_in_live_overlays(self, ids);
+        crate::runtime_hooks::scrub_erased_in_session_stores(self, ids);
         #[cfg(feature = "sync")]
         {
             let manager = self

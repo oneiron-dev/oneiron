@@ -1,21 +1,11 @@
-use std::io::Cursor;
-
 use rmpv::Value;
 
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::side_table::{self, SideTable};
-use crate::store::GateDecisionId;
 
-use super::bound::{
-    ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
-    BoundSubject, ConsentDomain, DisclosureClass, DisclosureEnvelope, GrantBound,
-};
-use super::grant::{ConsentGrantRow, ConsentGrantStatus, ConsentOwnerStamp, StandingConsentGrant};
-use super::support::{
-    SUBJECT_KIND_ACTOR, SUBJECT_KIND_AUDIENCE, hex_to_16_bytes, invalid_row, normalized_ref,
-    required_value, validate_keys,
-};
+use super::bound::{ActionClass, BoundClass, ConsentDomain, DisclosureClass, GrantBound};
+use super::grant::ConsentGrantRow;
+use super::support::{invalid_row, required_value, validate_keys};
 
 /// Standing consent-grant rows, keyed by the grant's own hex64 digest
 /// reference — an arbitrary caller-supplied string at the API boundary
@@ -24,394 +14,27 @@ use super::support::{
 pub(super) const GRANTS: SideTable<String, ConsentGrantRow, side_table::Raw> =
     SideTable::new(&side_table::CONSENT_STANDING_GRANT);
 
-/// The row is its own pinned MessagePack layout: the side table stores
-/// exactly the bytes [`encode_consent_grant_row`] spells, and any decode
-/// failure surfaces through the SAME `GateError::InvalidConsentGrantRow`
-/// this codec has always returned (a crate [`Error`] round-trips through
-/// [`side_table::CodecError::Value`] unchanged).
-impl crate::side_table::RawValue for ConsentGrantRow {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
-        Ok(encode_consent_grant_row(self)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
-        Ok(decode_consent_grant_row(bytes)?)
-    }
-}
-
-/// Body schema version of a persisted standing consent-grant row.
-pub const CONSENT_GRANT_SCHEMA_VERSION: u64 = 1;
-
-/// Pinned on-disk MessagePack key set for standing consent-grant rows.
-///
-/// There is deliberately **no** `expires_at`, `duration`, `ttl`, or any other
-/// lifetime field: invariant 9 replaces expiry-guessing with the registry.
-pub const CONSENT_GRANT_BODY_KEYS: [&str; 8] = [
-    "schema_version",
-    "domain",
-    "subject",
-    "class",
-    "envelope",
-    "status",
-    "owner_stamp",
-    "created_at",
-];
-
-pub(super) const KEY_SCHEMA_VERSION: &str = CONSENT_GRANT_BODY_KEYS[0];
-pub(super) const KEY_DOMAIN: &str = CONSENT_GRANT_BODY_KEYS[1];
-pub(super) const KEY_SUBJECT: &str = CONSENT_GRANT_BODY_KEYS[2];
-pub(super) const KEY_CLASS: &str = CONSENT_GRANT_BODY_KEYS[3];
-pub(super) const KEY_ENVELOPE: &str = CONSENT_GRANT_BODY_KEYS[4];
-pub(super) const KEY_STATUS: &str = CONSENT_GRANT_BODY_KEYS[5];
-pub(super) const KEY_OWNER_STAMP: &str = CONSENT_GRANT_BODY_KEYS[6];
-pub(super) const KEY_CREATED_AT: &str = CONSENT_GRANT_BODY_KEYS[7];
-
-/// A bypass grant row carries every standing-grant key plus `bypass`. An
-/// ordinary row never has it, so its bytes are unchanged.
-const CONSENT_BYPASS_GRANT_BODY_KEYS: [&str; 9] = [
-    "schema_version",
-    "domain",
-    "subject",
-    "class",
-    "envelope",
-    "status",
-    "owner_stamp",
-    "created_at",
-    "bypass",
-];
-const KEY_BYPASS: &str = CONSENT_BYPASS_GRANT_BODY_KEYS[8];
-
-pub(super) const OWNER_STAMP_KEYS: [&str; 3] = ["actor", "principal_ref", "decision_id"];
-pub(super) const SUBJECT_KEYS: [&str; 2] = ["kind", "refs"];
-pub(super) const ENVELOPE_KEYS: [&str; 5] =
-    ["selectors", "target", "budget", "receipt_required", "scope"];
-
-// ---------------------------------------------------------------------------
-// Persistence codec
-// ---------------------------------------------------------------------------
-
-/// Encodes a standing consent-grant row in canonical MessagePack key order.
-pub fn encode_consent_grant_row(row: &ConsentGrantRow) -> Result<Vec<u8>> {
-    let bound = row.grant.bound();
-    let mut fields = vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(CONSENT_GRANT_SCHEMA_VERSION),
-        ),
-        (
-            Value::from(KEY_DOMAIN),
-            Value::from(bound.domain().as_str()),
-        ),
-        (Value::from(KEY_SUBJECT), encode_subject(bound.subject())),
-        (Value::from(KEY_CLASS), Value::from(bound.class().as_str())),
-        (
-            Value::from(KEY_ENVELOPE),
-            encode_envelope(bound.envelope())?,
-        ),
-        (Value::from(KEY_STATUS), Value::from(row.status.as_str())),
-        (
-            Value::from(KEY_OWNER_STAMP),
-            encode_owner_stamp(&row.owner_stamp),
-        ),
-        (Value::from(KEY_CREATED_AT), Value::from(row.created_at)),
-    ];
-    if let Some(extent) = &row.bypass {
-        fields.push((Value::from(KEY_BYPASS), extent.encode_value()));
-    }
-    let value = Value::Map(fields);
-
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &value)
-        .map_err(|_| Error::InvariantViolation("consent grant row MessagePack encode failed"))?;
-    Ok(out)
-}
-
-/// Decodes and validates a standing consent-grant row.
-///
-/// Strict: unknown keys, duplicate keys, a wrong schema version, a crossed
-/// domain triple, or a malformed ref are all rejected fail-closed.
-pub fn decode_consent_grant_row(bytes: &[u8]) -> Result<ConsentGrantRow> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_row())?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_row());
-    }
-    let Value::Map(entries) = &value else {
-        return Err(invalid_row());
-    };
-    let bypass = entries
-        .iter()
-        .find_map(|(key, value)| (key.as_str() == Some(KEY_BYPASS)).then_some(value));
-    if bypass.is_some() {
-        validate_keys(entries, &CONSENT_BYPASS_GRANT_BODY_KEYS)?;
-    } else {
-        validate_keys(entries, &CONSENT_GRANT_BODY_KEYS)?;
-    }
-    let bypass = bypass
-        .map(|value| super::bypass::BypassExtent::decode_value(value).ok_or_else(invalid_row))
-        .transpose()?;
-
-    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(CONSENT_GRANT_SCHEMA_VERSION) {
-        return Err(invalid_row());
-    }
-    let domain = required_value(entries, KEY_DOMAIN)?
-        .as_str()
-        .and_then(ConsentDomain::parse)
-        .ok_or_else(invalid_row)?;
-    let subject = decode_subject(required_value(entries, KEY_SUBJECT)?, domain)?;
-    let class_str = required_value(entries, KEY_CLASS)?
-        .as_str()
-        .ok_or_else(invalid_row)?;
-    let class = match domain {
-        ConsentDomain::Disclosure => {
-            BoundClass::Disclosure(DisclosureClass::new(class_str).map_err(|_| invalid_row())?)
-        }
-        ConsentDomain::Action => {
-            BoundClass::Action(ActionClass::new(class_str).map_err(|_| invalid_row())?)
-        }
-    };
-    let envelope = decode_envelope(required_value(entries, KEY_ENVELOPE)?, domain)?;
-    let status = required_value(entries, KEY_STATUS)?
-        .as_str()
-        .and_then(ConsentGrantStatus::parse)
-        .ok_or_else(invalid_row)?;
-    let owner_stamp = decode_owner_stamp(required_value(entries, KEY_OWNER_STAMP)?)?;
-    let created_at = required_value(entries, KEY_CREATED_AT)?
-        .as_u64()
-        .ok_or_else(invalid_row)?;
-
-    let bound = GrantBound::new(subject, class, envelope).map_err(|_| invalid_row())?;
-    let grant = StandingConsentGrant::from_bound(bound).map_err(|_| invalid_row())?;
-    Ok(ConsentGrantRow {
-        grant,
-        status,
-        owner_stamp,
-        created_at,
-        bypass,
-    })
-}
-
-fn encode_subject(subject: &BoundSubject) -> Value {
-    let (kind, refs) = match subject {
-        BoundSubject::Actor(actor) => (
-            SUBJECT_KIND_ACTOR,
-            vec![
-                Value::from(actor.actor_ref.as_str()),
-                actor.actor_class.as_deref().map_or(Value::Nil, Value::from),
-            ],
-        ),
-        BoundSubject::Audience(audience) => (
-            SUBJECT_KIND_AUDIENCE,
-            audience
-                .members
-                .iter()
-                .map(|member| Value::from(member.as_str()))
-                .collect(),
-        ),
-    };
-    Value::Map(vec![
-        (Value::from(SUBJECT_KEYS[0]), Value::from(kind)),
-        (Value::from(SUBJECT_KEYS[1]), Value::Array(refs)),
-    ])
-}
-
-fn decode_subject(value: &Value, domain: ConsentDomain) -> Result<BoundSubject> {
-    let Value::Map(entries) = value else {
-        return Err(invalid_row());
-    };
-    validate_keys(entries, &SUBJECT_KEYS)?;
-    let kind = required_value(entries, SUBJECT_KEYS[0])?
-        .as_str()
-        .ok_or_else(invalid_row)?;
-    let Value::Array(refs) = required_value(entries, SUBJECT_KEYS[1])? else {
-        return Err(invalid_row());
-    };
-
-    match (kind, domain) {
-        (SUBJECT_KIND_ACTOR, ConsentDomain::Action) => {
-            let [actor_ref, actor_class] = refs.as_slice() else {
-                return Err(invalid_row());
-            };
-            let actor = ActorBound::new(actor_ref.as_str().ok_or_else(invalid_row)?)
-                .map_err(|_| invalid_row())?;
-            let actor = match actor_class {
-                Value::Nil => actor,
-                other => actor
-                    .with_actor_class(other.as_str().ok_or_else(invalid_row)?)
-                    .map_err(|_| invalid_row())?,
-            };
-            Ok(BoundSubject::Actor(actor))
-        }
-        (SUBJECT_KIND_AUDIENCE, ConsentDomain::Disclosure) => {
-            let members = refs
-                .iter()
-                .map(|member| member.as_str().map(str::to_owned).ok_or_else(invalid_row))
-                .collect::<Result<Vec<_>>>()?;
-            Ok(BoundSubject::Audience(
-                AudienceBound::new(members).map_err(|_| invalid_row())?,
-            ))
-        }
-        // A stored subject kind that disagrees with the stored domain is a
-        // crossed triple on disk: reject rather than reinterpret.
-        _ => Err(invalid_row()),
-    }
-}
-
-fn encode_envelope(envelope: &BoundEnvelope) -> Result<Value> {
-    let (selectors, target, budget, receipt_required, scope) = match envelope {
-        BoundEnvelope::Disclosure(envelope) => (
-            &envelope.selectors,
-            None,
-            None,
-            false,
-            envelope
-                .scope
-                .as_deref()
-                .map(oneiron_authority::federation::scope_codec::encode_scope_value)
-                .transpose()?,
-        ),
-        BoundEnvelope::Action(envelope) => (
-            &envelope.selectors,
-            envelope.target.as_deref(),
-            envelope.budget,
-            envelope.receipt_required,
-            None,
-        ),
-    };
-    Ok(Value::Map(vec![
-        (
-            Value::from(ENVELOPE_KEYS[0]),
-            Value::Array(selectors.iter().map(|s| Value::from(s.as_str())).collect()),
-        ),
-        (
-            Value::from(ENVELOPE_KEYS[1]),
-            target.map_or(Value::Nil, Value::from),
-        ),
-        (
-            Value::from(ENVELOPE_KEYS[2]),
-            budget.map_or(Value::Nil, Value::from),
-        ),
-        (Value::from(ENVELOPE_KEYS[3]), Value::from(receipt_required)),
-        (Value::from(ENVELOPE_KEYS[4]), scope.unwrap_or(Value::Nil)),
-    ]))
-}
-
-fn decode_envelope(value: &Value, domain: ConsentDomain) -> Result<BoundEnvelope> {
-    let Value::Map(entries) = value else {
-        return Err(invalid_row());
-    };
-    validate_keys(entries, &ENVELOPE_KEYS)?;
-    let Value::Array(raw_selectors) = required_value(entries, ENVELOPE_KEYS[0])? else {
-        return Err(invalid_row());
-    };
-    let selectors = raw_selectors
-        .iter()
-        .map(|selector| selector.as_str().map(str::to_owned).ok_or_else(invalid_row))
-        .collect::<Result<Vec<_>>>()?;
-    let target_value = required_value(entries, ENVELOPE_KEYS[1])?;
-    let budget_value = required_value(entries, ENVELOPE_KEYS[2])?;
-    let receipt_required = required_value(entries, ENVELOPE_KEYS[3])?
-        .as_bool()
-        .ok_or_else(invalid_row)?;
-    let scope_value = required_value(entries, ENVELOPE_KEYS[4])?;
-
-    match domain {
-        ConsentDomain::Disclosure => {
-            // A disclosure envelope has no target, budget, or receipt
-            // obligation; a row carrying one is an action envelope mislabeled.
-            if !matches!(target_value, Value::Nil)
-                || !matches!(budget_value, Value::Nil)
-                || receipt_required
-            {
-                return Err(invalid_row());
-            }
-            let envelope = if matches!(scope_value, Value::Nil) {
-                DisclosureEnvelope::new(selectors).map_err(|_| invalid_row())?
-            } else {
-                let scope =
-                    oneiron_authority::federation::scope_codec::decode_scope_value(scope_value)
-                        .map_err(|_| invalid_row())?;
-                let envelope = DisclosureEnvelope::from_scope(scope).map_err(|_| invalid_row())?;
-                if envelope.selectors != selectors
-                    || oneiron_authority::federation::scope_codec::encode_scope_value(
-                        envelope.scope.as_deref().ok_or_else(invalid_row)?,
-                    )
-                    .map_err(|_| invalid_row())?
-                        != *scope_value
-                {
-                    return Err(invalid_row());
-                }
-                envelope
-            };
-            Ok(BoundEnvelope::Disclosure(envelope))
-        }
-        ConsentDomain::Action => {
-            if !matches!(scope_value, Value::Nil) {
-                return Err(invalid_row());
-            }
-            let mut envelope = ActionEnvelope::new(selectors).map_err(|_| invalid_row())?;
-            if !matches!(target_value, Value::Nil) {
-                envelope = envelope
-                    .with_target(target_value.as_str().ok_or_else(invalid_row)?)
-                    .map_err(|_| invalid_row())?;
-            }
-            if !matches!(budget_value, Value::Nil) {
-                envelope = envelope.with_budget(budget_value.as_u64().ok_or_else(invalid_row)?);
-            }
-            Ok(BoundEnvelope::Action(
-                envelope.with_receipt_required(receipt_required),
-            ))
-        }
-    }
-}
-
-fn encode_owner_stamp(stamp: &ConsentOwnerStamp) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(OWNER_STAMP_KEYS[0]),
-            Value::from(stamp.actor.to_hex()),
-        ),
-        (
-            Value::from(OWNER_STAMP_KEYS[1]),
-            Value::from(stamp.principal_ref.as_str()),
-        ),
-        (
-            Value::from(OWNER_STAMP_KEYS[2]),
-            Value::from(stamp.decision_id.to_hex()),
-        ),
-    ])
-}
-
-fn decode_owner_stamp(value: &Value) -> Result<ConsentOwnerStamp> {
-    let Value::Map(entries) = value else {
-        return Err(invalid_row());
-    };
-    validate_keys(entries, &OWNER_STAMP_KEYS)?;
-    let actor = EntityId::from_hex(
-        required_value(entries, OWNER_STAMP_KEYS[0])?
-            .as_str()
-            .ok_or_else(invalid_row)?,
-    )
-    .map_err(|_| invalid_row())?;
-    let principal_ref = normalized_ref(
-        "principal_ref",
-        required_value(entries, OWNER_STAMP_KEYS[1])?
-            .as_str()
-            .ok_or_else(invalid_row)?
-            .to_owned(),
-    )
-    .map_err(|_| invalid_row())?;
-    let decision_hex = required_value(entries, OWNER_STAMP_KEYS[2])?
-        .as_str()
-        .ok_or_else(invalid_row)?;
-    let decision_id =
-        GateDecisionId::from_bytes(hex_to_16_bytes(decision_hex).ok_or_else(invalid_row)?);
-    Ok(ConsentOwnerStamp {
-        actor,
-        principal_ref,
-        decision_id,
-    })
-}
+#[doc(hidden)]
+pub use oneiron_consent_state::consent::codec::{
+    CONSENT_GRANT_BODY_KEYS, CONSENT_GRANT_SCHEMA_VERSION, decode_consent_grant_row,
+    encode_consent_grant_row,
+};
+#[doc(hidden)]
+pub(super) use oneiron_consent_state::consent::codec::{
+    KEY_CLASS, KEY_DOMAIN, KEY_ENVELOPE, KEY_SUBJECT,
+};
+#[doc(hidden)]
+use oneiron_consent_state::consent::codec::{
+    decode_envelope, decode_subject, encode_envelope, encode_subject,
+};
+// The consent tests read these key names through `super::codec` (consent/mod.rs, cfg(test)); the moved codec
+// was their only other user.
+#[cfg(test)]
+#[doc(hidden)]
+pub(super) use oneiron_consent_state::consent::codec::{
+    ENVELOPE_KEYS, KEY_CREATED_AT, KEY_OWNER_STAMP, KEY_SCHEMA_VERSION, KEY_STATUS,
+    OWNER_STAMP_KEYS, SUBJECT_KEYS,
+};
 
 /// Canonical bound-only value used by propose-only widen deltas.
 pub(super) fn encode_bound_value(bound: &GrantBound) -> Result<Value> {
@@ -464,13 +87,13 @@ impl crate::Vault {
     ) -> Result<String> {
         self.with_write_txn(|wtxn| {
             let row = ConsentGrantRow {
-                grant: StandingConsentGrant::from_bound(bound)?,
-                status: ConsentGrantStatus::Active,
+                grant: super::grant::StandingConsentGrant::from_bound(bound)?,
+                status: super::grant::ConsentGrantStatus::Active,
                 owner_stamp: stamper.stamp(),
                 created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
                 bypass: None,
             };
-            let grant_ref = row.grant_ref();
+            let grant_ref = super::grant::consent_grant_row_grant_ref(&row);
             GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
             Ok(grant_ref)
         })

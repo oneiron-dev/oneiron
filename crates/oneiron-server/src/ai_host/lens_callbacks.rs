@@ -49,7 +49,8 @@ pub(crate) enum LensCallback {
 /// Queues `callback` for the agent that rendered its card, `rendered_by`,
 /// naming `author`, the principal that clicked. `credential` is the sending
 /// credential's idempotency principal; it, the card and `idempotency_key`
-/// dedupe the run.
+/// dedupe the run. `caller_origin` is the host's explicit provenance for the
+/// new root (FIX 4973), from the served door's admitted locality.
 pub(crate) fn queue_lens_callback(
     vault: &Vault,
     credential: &str,
@@ -57,6 +58,7 @@ pub(crate) fn queue_lens_callback(
     author: &LensPrincipalBinding,
     callback: &GeneratedUiAgentCallback,
     idempotency_key: &str,
+    caller_origin: oneiron::agent_dispatch::CallerOrigin,
 ) -> Result<LensCallback> {
     if rendered_by.kind() != LensActingPrincipalKind::AgentTask {
         return Ok(LensCallback::NoAgent);
@@ -104,6 +106,7 @@ pub(crate) fn queue_lens_callback(
         },
         AgentSpawnContext {
             context_spec: Some(spec),
+            caller_origin: Some(caller_origin),
             ..AgentSpawnContext::default()
         },
     )?;

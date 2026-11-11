@@ -57,7 +57,7 @@ pub(crate) fn session_row_call(
             .map(|turn| VerbCallScope::Named(format!("room:{}", turn.room.to_hex()))),
         board_epoch: None,
         turn: None,
-        domain: row_domain(verb),
+        domain: row_domain(&crate::verbs::VERB_TABLE, verb),
         reader: Some(key),
     }
 }

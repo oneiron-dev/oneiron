@@ -161,9 +161,9 @@ impl Vault {
     }
 
     /// [`Self::export_engine_commit_judged`], with `check` judged again as
-    /// the first act of each writer the export makes before its publication,
-    /// the projection's and the publication intent's (FIX 7179): a refusal
-    /// there records and publishes nothing.
+    /// the first act of the projection, intent, permit and publication staging
+    /// writers (FIX 7179). A refusal writes no rows in that writer and prevents
+    /// the new publication.
     pub(crate) fn export_engine_commit_checked<R>(
         &self,
         git: &GitWire<'_>,
@@ -318,9 +318,15 @@ impl Vault {
             return Ok(Err(refused));
         }
         let receipt = match authority {
-            Some(lease) => self.publish_origin_ref_authorized(git, publication, lease),
-            None => self.publish_origin_ref(git, publication),
+            Some(lease) => {
+                self.publish_origin_ref_authorized_checked(git, publication, lease, &check)
+            }
+            None => self.publish_origin_ref_checked(git, publication, &check),
         }?;
+        let receipt = match receipt {
+            Ok(receipt) => receipt,
+            Err(refused) => return Ok(Err(refused)),
+        };
         Ok(Ok(receipt))
     }
 }

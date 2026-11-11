@@ -49,7 +49,7 @@ async fn vault_questions_outcome_windows_answer(
     let auth = auth.clone();
     crate::api::facade::clock_ingress::run_blocking(
         move || -> MemoryResult<Vec<OutcomeWindowClose>> {
-            let lane = asker_lane(server.vault(), &auth, principal, VERB)?;
+            let lane = asker_lane(server.vault(), &auth, VERB)?;
             Ok(closed_outcome_windows_in_lane(
                 server.vault(),
                 &lane,
@@ -105,7 +105,7 @@ async fn vault_questions_outcomes_answer(
     let auth = auth.clone();
     crate::api::facade::clock_ingress::run_blocking(move || -> MemoryResult<QuestionOutcomes> {
         let vault = server.vault();
-        let lane = asker_lane(vault, &auth, principal, VERB)?;
+        let lane = asker_lane(vault, &auth, VERB)?;
         Ok(QuestionOutcomes {
             labels: outcome_labels_in_lane(vault, &lane, principal, input.id, &destination)?,
             calibration: calibration_pairs_in_lane(
@@ -150,7 +150,7 @@ async fn vault_questions_outcomes_project_answer(
     crate::api::facade::clock_ingress::run_blocking(
         move || -> MemoryResult<QuestionOutcomesProjected> {
             let vault = server.vault();
-            let lane = asker_lane(vault, &auth, principal, VERB)?;
+            let lane = asker_lane(vault, &auth, VERB)?;
             Ok(QuestionOutcomesProjected {
                 id: input.id,
                 projected: project_bound_outcomes_in_lane(vault, &lane, principal, input.id)?,

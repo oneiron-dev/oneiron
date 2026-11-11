@@ -146,7 +146,7 @@ impl Vault {
                 reveal: *reveal,
                 answer,
                 decision: receipt.decision_id(),
-                grant_ref: receipt.grant_ref(),
+                grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
                 scope: row.scope,
             })
         })

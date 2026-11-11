@@ -160,7 +160,7 @@ async fn complete_as(
     };
     let query = chat.messages[newest].text();
     let completion_id = format!("chatcmpl-{}", EntityId::now().to_hex());
-    let landing = admit_connector(&actor, server)?;
+    let admission = admit_connector(&actor, server)?;
 
     let mut request = model_request(server, &chat)?;
     let (ladder, run) =
@@ -169,7 +169,13 @@ async fn complete_as(
     // they are read for both, on this device only when both are.
     let reads_for =
         crate::device_local::prompt_destination(actor.destination(), request.envelope.locality);
-    let recalled = recall(server, &actor, &reads_for, query.clone(), clock, listed).await?;
+    // A recall the owner set to always ask does not run: a buffered call
+    // cannot ask, so the call goes on with no memory (FIX 4843).
+    let recalled = if admission.recall_asks {
+        None
+    } else {
+        recall(server, &actor, &reads_for, query.clone(), clock, listed).await?
+    };
     let injected = recalled.is_some();
     // The rows the prompt carried, and its memory block as the model read it
     // (FIX 8191, 8192): none when nothing went in.
@@ -189,8 +195,8 @@ async fn complete_as(
         .await
         .map_err(wire::upstream_error)?;
     // A credential revoked while the model answered gets nothing back, and
-    // proposes nothing.
-    admit_connector(&actor, server)?;
+    // proposes nothing; a remember set to always ask writes nothing.
+    let settled = admit_connector(&actor, server)?;
     let answers = choices::answer_texts(&first, &rest);
     release::completed_answers(server, &actor, producers)?;
     let read = memory_text.as_deref().map(str::as_bytes);
@@ -201,7 +207,11 @@ async fn complete_as(
         producers,
         read: read.as_slice(),
     };
-    let remembered = remember(server, &actor, landing, &exchange);
+    let remembered = if admission.remember_asks || settled.remember_asks {
+        remember_withheld()
+    } else {
+        remember(server, &actor, admission.landing, &exchange)
+    };
     Ok(choices::completion(
         &completion_id,
         super::params::unix_seconds_now(),
@@ -210,6 +220,9 @@ async fn complete_as(
         ChatCompletionMemory {
             injected,
             remembered,
+            recall_skipped: admission
+                .recall_asks
+                .then(|| ALWAYS_ASK_SKIP_CODE.to_owned()),
         },
     ))
 }
@@ -227,7 +240,7 @@ async fn complete_as(
 fn admit_connector(
     actor: &McpCallContext,
     server: &SyncServer,
-) -> Result<Option<EntityId>, Response> {
+) -> Result<ProxyAdmission, Response> {
     let auth = actor.auth.as_ref().ok_or_else(unauthorized)?;
     if !auth.credential_is_live(&server.vault) {
         return Err(unauthorized());
@@ -267,7 +280,11 @@ fn admit_connector(
         ));
     }
     if owner {
-        return Ok(landing);
+        return Ok(ProxyAdmission {
+            landing,
+            recall_asks: false,
+            remember_asks: false,
+        });
     }
     // An Active key bound to this actor, whose slate's owner stamp holds at
     // the revision the key admitted. A read that fails admits nothing.
@@ -286,7 +303,38 @@ fn admit_connector(
             "the proxy needs both its read and remember grants",
         ));
     }
-    Ok(landing)
+    let asks = |tool: &str| {
+        registration.slate.tool_setting(tool) == oneiron::connector_key::SlateDisposition::AlwaysAsk
+    };
+    Ok(ProxyAdmission {
+        landing,
+        recall_asks: asks("vault.recall"),
+        remember_asks: asks("vault.remember"),
+    })
+}
+
+/// The reason code a tool the owner set to `always ask` carries when the
+/// proxy does not run it: a buffered call has no way to ask the owner per call
+/// (FIX 4843, Engine 16:42).
+const ALWAYS_ASK_SKIP_CODE: &str = "always_ask";
+
+/// What admission found: the facet the exchange lands in, and which of the
+/// proxy's two tools the owner set to `always ask` (FIX 4843).
+struct ProxyAdmission {
+    landing: Option<EntityId>,
+    recall_asks: bool,
+    remember_asks: bool,
+}
+
+/// The remembered outcome of an exchange whose `vault.remember` the owner
+/// set to `always ask`: nothing is written (FIX 4843).
+fn remember_withheld() -> ChatCompletionRemembered {
+    ChatCompletionRemembered::Refused {
+        error: ChatCompletionRememberError {
+            code: ALWAYS_ASK_SKIP_CODE.to_owned(),
+            message: "the owner set vault.remember to always ask, and a buffered call cannot ask, so the exchange was not written".to_owned(),
+        },
+    }
 }
 
 /// Whether `actor` is a managed vault's attested owner, calling as himself.
@@ -345,6 +393,7 @@ fn model_request(
             response_format: ResponseFormat::Text,
             locality: served_at,
             host_keyless: false,
+            host_paid: false,
             seat_effort: None,
         },
         messages: chat.messages.iter().map(ChatMessage::to_llm).collect(),
@@ -383,6 +432,7 @@ async fn recall(
         media: None,
         query_affect: None,
         telemetry: None,
+        filter: None,
     };
     // Home references carry no local row to judge for an onward model or
     // caller. Keep that path local-only until it carries destination proof.
@@ -453,7 +503,10 @@ async fn recall(
     }
     Ok(Some(LlmMessage {
         role: LlmMessageRole::User,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }))
 }
 

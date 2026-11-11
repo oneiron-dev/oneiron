@@ -71,7 +71,7 @@ pub(crate) fn execute(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 
@@ -127,7 +127,7 @@ fn continuous(
             return Ok(Some(DreamerAttemptExecution::Deferred {
                 completed_units: 0,
                 retry_at: now.saturating_add(1),
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             }));
         }
     }

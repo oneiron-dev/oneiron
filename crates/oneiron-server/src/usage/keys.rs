@@ -6,6 +6,7 @@ pub(super) const MAX_IDEMPOTENCY_KEY_LEN: usize = 256;
 /// What every stored usage event's key starts with, before its billing
 /// owner's, vault's and idempotency key's parts.
 pub(super) const USAGE_EVENT_ROOT: &str = "usage:event:";
+const USAGE_PENDING_ROOT: &str = "usage:retry:";
 pub(super) fn usage_event_prefix(owner: &str, vault: &str) -> String {
     format!("{USAGE_EVENT_ROOT}{}:{}:", key_part(owner), key_part(vault))
 }
@@ -15,7 +16,7 @@ pub(super) fn usage_event_key(owner: &str, vault: &str, id: &str) -> String {
 /// Pending settlements share the event envelope and key length, but put the
 /// vault first so one bounded scan includes every frozen billing owner.
 pub(super) fn settlement_pending_prefix(vault: &str) -> String {
-    format!("usage:retry:{}:", key_part(vault))
+    format!("{USAGE_PENDING_ROOT}{}:", key_part(vault))
 }
 pub(super) fn settlement_pending_key(owner: &str, vault: &str, id: &str) -> String {
     format!(
@@ -32,6 +33,12 @@ pub(super) fn usage_event_parts(key: &str) -> Option<(&str, &str, &str)> {
     let (owner, rest) = key.strip_prefix(USAGE_EVENT_ROOT)?.split_once(':')?;
     let (vault, id) = rest.split_once(':')?;
     Some((owner, vault, id))
+}
+/// A pending key's vault and owner parts, then the idempotency-key part.
+pub(super) fn settlement_pending_parts(key: &str) -> Option<(&str, &str, &str)> {
+    let (vault, rest) = key.strip_prefix(USAGE_PENDING_ROOT)?.split_once(':')?;
+    let (owner, id) = rest.split_once(':')?;
+    Some((vault, owner, id))
 }
 /// `vault` as its part of a stored event's key.
 pub(super) fn vault_key_part(vault: &str) -> String {

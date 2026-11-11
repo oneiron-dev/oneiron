@@ -2,39 +2,37 @@
 
 use super::LiveLeaseBackend;
 use super::actors::McpResolvedActor;
-use super::run_seats::RunSeats;
-use crate::admission::Admission;
 use crate::ai_host::live_lease::{LeaseLine, LiveLeaseState};
 use crate::ai_host::payer_funding::{PayerFault, scope_funding};
-use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::agent_def::AgentModel;
 use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
-use oneiron::code_run::{
-    CompactionHostBinding, GatedActorWrite, SpawnHostSeat, bind_compaction_caller,
-};
+use oneiron::code_run::{CompactionHostBinding, GatedActorWrite, ScopedChildProfile};
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
-    JsCodeModeRuntime, RunCompaction,
+    EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
+    RunCompaction, SelfBriefPort,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatLearningContext, SeatTask};
 use oneiron::task_type::TaskTypeRef;
-use oneiron::{
-    BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelId, ModelLocality, Vault, WriteActor,
-};
+use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelId, ModelLocality, Vault};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 mod active_run;
+mod compaction_home;
 mod description_route;
+mod native_run;
 mod off_record_run;
-use self::active_run::ActiveRuns;
+mod resume_condition;
+mod served;
 pub(crate) use self::off_record_run::{OffRecordRunSession, off_record_run_id};
+pub use self::resume_condition::{McpCodeRunResumeCondition, McpCodeRunResumed};
+pub use self::served::{CodeRunLimits, McpEngineNativeCodeHost};
 
 /// The ONE place an MCP-derived durable id is minted (ONE-1704 M3).
 ///
@@ -128,6 +126,34 @@ pub struct McpCodeExecutionRequest<'a> {
     /// The door each code-mode verb call takes: the SDK verb table under this
     /// call's connector, with its admission and gate.
     pub verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
+    /// The admitted caller the host binds on the run (FIX 4606): a code
+    /// consent wait the run mints keeps it, so the parked run can be entered
+    /// again for that caller after a restart. `None` binds none.
+    pub consent_origin: Option<oneiron::code_run::CodeConsentRunOrigin>,
+    /// The durable run's self brief, when the door lends one (FIX 17594
+    /// D5): keyed by [`Self::run_id`], never the stream or a session label.
+    pub brief: Option<Arc<dyn McpCodeRunSelfBrief>>,
+}
+
+/// A code-mode durable run's self brief (FIX 17594 delivery slice D5), lent
+/// with one `execute_code` call by the door it arrived at: the port the
+/// run's executor carries the brief through, and what the host does with
+/// the brief around one entry.
+///
+/// The brief lives with the durable run, keyed by its trusted run id, never
+/// with the call or its waiter: an entry installs it, or installs it again
+/// at the epoch it holds, under the run's single flight; a resumable outcome
+/// keeps it; the run's completion closes it (Engine call RESUME C). Both
+/// calls block: the host makes them on the run's own worker thread.
+pub trait McpCodeRunSelfBrief: SelfBriefPort {
+    /// Installs the run's brief for the entry about to run, as the run
+    /// resolves now: afresh with none installed, else again at the epoch it
+    /// holds, its delivered prefix kept. `false`, logged, when it does not
+    /// install: the entry runs without it, as before.
+    fn install(&self) -> bool;
+
+    /// Closes the run's brief: the run completed.
+    fn close(&self);
 }
 
 impl fmt::Debug for McpCodeExecutionRequest<'_> {
@@ -194,6 +220,23 @@ pub trait McpCodeExecutionHost: Send + Sync {
         Box<dyn Future<Output = Result<EngineExecutorOutcome, McpCodeExecutionError>> + Send + 'a>,
     >;
 
+    /// [`Self::execute`] for the automatic re-entry of a run parked on a
+    /// durable wait (FIX 4606). The host takes the run's single flight and
+    /// its run permit as for any entry. Then it reads the run's record
+    /// again: a run that left the wait or the generation in `condition`
+    /// runs no batch and answers [`McpCodeRunResumed::Superseded`]. A
+    /// caller's own call goes through [`Self::execute`] and carries no
+    /// condition. The default host cannot read the record under its single
+    /// flight, so it enters nothing; the caller's next call enters the run.
+    fn execute_resumed<'a>(
+        &'a self,
+        _request: McpCodeExecutionRequest<'a>,
+        _condition: McpCodeRunResumeCondition,
+    ) -> Pin<Box<dyn Future<Output = Result<McpCodeRunResumed, McpCodeExecutionError>> + Send + 'a>>
+    {
+        Box::pin(std::future::ready(Ok(McpCodeRunResumed::Superseded)))
+    }
+
     /// The engine-native host behind this seam, for a host worker that runs
     /// on the same provider and run permits; `None` for any other host.
     fn engine_native(&self) -> Option<&McpEngineNativeCodeHost> {
@@ -249,6 +292,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         &self,
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
+        _caller: Option<(EntityId, Option<String>)>,
         _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
@@ -263,7 +307,22 @@ pub trait McpCodeModeProvider: Send + Sync {
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
         _lease: Option<LiveLeaseState>,
+        _caller: Option<(EntityId, Option<String>)>,
         _listed: Vec<AgentModel>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
+    /// The native backend with a host observer at each finalized physical
+    /// send, on the same per-rung lease and inherited model list. A provider
+    /// that cannot observe that boundary supplies none; it never substitutes
+    /// a caller's pre-route request as evidence.
+    fn reader_backend_observed(
+        &self,
+        _meter: BudgetGuard,
+        _payer: Option<PayerPerson>,
+        _lease: Option<LiveLeaseState>,
+        _listed: Vec<AgentModel>,
+        _observer: ReaderRequestObserver,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -337,6 +396,16 @@ pub trait McpCodeModeProvider: Send + Sync {
         _host: CompactionHostBinding,
         _credential: &str,
         _spend: Option<&SpendScopeId>,
+    ) -> Option<RunCompaction> {
+        None
+    }
+    /// A host-profiled child's compaction, on its original generation and
+    /// parent guard. An absent factory keeps the existing raw window.
+    fn profiled_compaction(
+        &self,
+        _host: CompactionHostBinding,
+        _credential: &str,
+        _profile: &ScopedChildProfile,
     ) -> Option<RunCompaction> {
         None
     }
@@ -469,6 +538,11 @@ pub type PlannedMeter = Arc<
 pub type RunCompactionSeat =
     Arc<dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
 
+/// Builds a scoped child's compaction on the generation its host supplied.
+pub type RunProfiledCompactionSeat = Arc<
+    dyn Fn(CompactionHostBinding, &str, &ScopedChildProfile) -> Option<RunCompaction> + Send + Sync,
+>;
+
 /// Copies the ordinary backend with one run's actual frozen model list.
 pub(crate) type ModelListBackend =
     Arc<dyn Fn(Vec<AgentModel>) -> Arc<dyn LlmBackend> + Send + Sync>;
@@ -477,6 +551,9 @@ pub(crate) type ModelListBackend =
 pub(crate) type ModelCallBackend =
     Arc<dyn Fn(EntityId, Option<String>) -> Arc<dyn LlmBackend> + Send + Sync>;
 
+/// A host check and observation of the finalized request at its physical send.
+pub type ReaderRequestObserver = Arc<dyn Fn(&oneiron::LlmRequest) -> bool + Send + Sync>;
+
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given and billed to the payer, when one is given.
 pub type ReaderMeter = Arc<
@@ -484,269 +561,13 @@ pub type ReaderMeter = Arc<
             BudgetGuard,
             Option<PayerPerson>,
             Option<LiveLeaseState>,
+            Option<(EntityId, Option<String>)>,
             Vec<AgentModel>,
+            Option<ReaderRequestObserver>,
         ) -> Arc<dyn LlmBackend>
         + Send
         + Sync,
 >;
-
-/// How many `execute_code` runs one server works on at once.
-///
-/// Each run is an OS thread with its own reactor and sandbox runtime, so the
-/// bound is on runs, not calls: a run holds its place until its worker ends,
-/// whether or not its caller is still waiting. Past the bound a run waits its
-/// turn, round-robin across credentials; it is never refused for count.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CodeRunLimits {
-    /// Runs at once, across every credential.
-    pub total: usize,
-    /// How long a run waits for its turn.
-    pub wait: Duration,
-}
-
-/// What one run may come to in memory: its sandbox store's ceiling eight
-/// times over, for the interpreter, the reactor and the run's own state.
-const RUN_MEMORY_BYTES: u64 = 512 * 1024 * 1024;
-
-impl CodeRunLimits {
-    /// The runs this machine has room for: four a core, as runs mostly wait
-    /// on model calls, and no more than its memory holds.
-    #[must_use]
-    pub fn runs_for_this_machine() -> usize {
-        let by_cores = crate::machine::cores().saturating_mul(4);
-        let by_memory = crate::machine::memory_bytes().map_or(by_cores, |bytes| {
-            usize::try_from(bytes / RUN_MEMORY_BYTES).unwrap_or(usize::MAX)
-        });
-        by_cores.min(by_memory).max(1)
-    }
-}
-
-impl Default for CodeRunLimits {
-    fn default() -> Self {
-        Self {
-            total: Self::runs_for_this_machine(),
-            wait: crate::config::LimitsConfig::default().queue_wait(),
-        }
-    }
-}
-
-/// The PRODUCTION adapter: the injected provider, entered through the engine's
-/// own durable executor.
-pub struct McpEngineNativeCodeHost {
-    provider: Arc<dyn McpCodeModeProvider>,
-    /// Each run's single flight: one entry at a time, the next in arrival
-    /// order (FIX 9505).
-    active: ActiveRuns,
-    seats: Arc<Mutex<RunSeats>>,
-    /// Keyed by the credential's stream connection, its registered
-    /// fingerprint.
-    runs: Admission<String>,
-    /// Where each run's seat to spawn reader children comes from; none
-    /// binds no seat, and `self.spawn` answers `reader_spawn_unbound`.
-    reader_seats: Option<Arc<crate::server::ReaderSeats>>,
-    /// The operator's own Git door base each run's checkouts point at (FIX
-    /// 7181); `None` keeps a run's own base.
-    git_door_base: Option<String>,
-}
-
-impl fmt::Debug for McpEngineNativeCodeHost {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("McpEngineNativeCodeHost").finish()
-    }
-}
-
-impl McpEngineNativeCodeHost {
-    /// A host running at most `limits.total` runs at once; past it a run
-    /// waits, and the crossing asks in `questions`.
-    #[must_use]
-    pub fn new(
-        provider: Arc<dyn McpCodeModeProvider>,
-        limits: CodeRunLimits,
-        questions: Arc<LimitQuestions>,
-    ) -> Self {
-        Self {
-            provider,
-            active: ActiveRuns::new(limits.wait),
-            seats: Arc::default(),
-            runs: Admission::new(LimitRow::CodeRuns, questions, limits.total, limits.wait),
-            reader_seats: None,
-            git_door_base: None,
-        }
-    }
-
-    /// Lends each run a seat to spawn reader children under, from `seats`,
-    /// which notes where the run's caller sits for its children's reads.
-    #[must_use]
-    pub(crate) fn with_reader_seats(mut self, seats: Arc<crate::server::ReaderSeats>) -> Self {
-        self.reader_seats = Some(seats);
-        self
-    }
-
-    /// The operator's own Git door base for each run's checkouts (FIX 7181).
-    #[must_use]
-    pub(crate) fn with_git_door_base(mut self, base: Option<String>) -> Self {
-        self.git_door_base = base;
-        self
-    }
-
-    /// The provider every run of this host executes on.
-    pub(crate) fn provider(&self) -> &Arc<dyn McpCodeModeProvider> {
-        &self.provider
-    }
-
-    /// The permits every run of this host waits its turn for, an
-    /// `execute_code` run's and a host worker's alike.
-    pub(crate) fn runs(&self) -> &Admission<String> {
-        &self.runs
-    }
-}
-
-impl McpCodeExecutionHost for McpEngineNativeCodeHost {
-    fn production_runtime_available(&self) -> bool {
-        self.provider.production_runtime_available()
-    }
-
-    fn engine_native(&self) -> Option<&McpEngineNativeCodeHost> {
-        Some(self)
-    }
-
-    fn execute<'a>(
-        &'a self,
-        request: McpCodeExecutionRequest<'a>,
-    ) -> Pin<
-        Box<dyn Future<Output = Result<EngineExecutorOutcome, McpCodeExecutionError>> + Send + 'a>,
-    > {
-        let vault = Arc::clone(&request.vault);
-        let provider = Arc::clone(&self.provider);
-        let active = &self.active;
-        let seats = Arc::clone(&self.seats);
-        let write_actor = request.actor.write_actor();
-        let model_call_context = request
-            .actor
-            .auth
-            .as_ref()
-            .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
-        let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
-        let verbs = Arc::clone(&request.verbs);
-        // The gated run source is HOST-derived: the caller's handle is a label
-        // inside it, never the WHO.
-        let run_ref = format!("mcp.execute_code:{}", request.run_ref);
-        let reader_seats = self.reader_seats.clone();
-        let git_door_base = self.git_door_base.clone();
-        let runs = &self.runs;
-        Box::pin(async move {
-            let changed =
-                || McpCodeExecutionError::RunBinding("provider changed scoped run identity".into());
-            if request.run_id != mcp_code_run_id(request.run_ref, request.actor) {
-                return Err(changed());
-            }
-            // A second entry of a run still running waits behind it, in
-            // arrival order, holding no permit while it waits (FIX 9505).
-            let guard = active.acquire(request.run_id).await?;
-            // The run spends under no scope, so its children spend on the
-            // host's meter, as its own calls do, on a clock one window from
-            // its first spawn.
-            let reader_seat = reader_seats.as_ref().map(|lent| {
-                lent.seat(
-                    request.run_id,
-                    None,
-                    request.actor.destination(),
-                    provider.reader_window_tokens(),
-                )
-            });
-            // Past the bound the run waits its credential's turn. The permit
-            // moves into the worker below, so a caller who hangs up frees
-            // nothing its run still holds.
-            let permit = runs
-                .admit(request.actor.stream_connection.0.clone())
-                .await
-                .map_err(|_| McpCodeExecutionError::RunWaitedOut)?;
-            // Read under single-flight: what the provider derives from the
-            // run's record is not raced by another attempt making it.
-            let config = provider
-                .executor_config(&vault, request.run_id, request.task)
-                .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?;
-            if config.run_id != request.run_id || config.task != request.task {
-                return Err(changed());
-            }
-            let run_id = request.run_id;
-            // The slip the caller's credential proved at admission: it and
-            // its parent are the run's own lineage (FIX 4705). Never a tool
-            // argument.
-            let opener = request
-                .actor
-                .auth
-                .as_ref()
-                .and_then(|auth| auth.verified_slip())
-                .cloned();
-            // The run's read scope (FIX 11768): its seat is born under it.
-            // A scope the vault cannot read is not born.
-            let worlds = run_read_worlds(&vault, opener.as_ref(), placement.0)
-                .map_err(McpCodeExecutionError::RunBinding)?;
-            let mut seat = seats
-                .lock()
-                .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
-                .take(run_id)
-                .or_else(|| {
-                    // The host's own binding of the caller: the actor its
-                    // credential writes as, where its connection sits and
-                    // the slip it proved. Never a tool argument.
-                    let host = bind_compaction_caller(
-                        write_actor,
-                        request.actor.locality(),
-                        opener.clone(),
-                    );
-                    provider.compaction(host, &request.actor.stream_connection.0, None)
-                });
-            if let Some(seat) = seat.as_mut() {
-                // Its summaries are born where the run's credential writes.
-                seat.place(placement.0, placement.1);
-            }
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            // The engine REPL driver holds `&mut dyn JsCodeModeRuntime` across
-            // its own awaits, so its future is deliberately not `Send`. It runs
-            // on its OWN thread with its OWN current-thread reactor; the
-            // gateway task holds no lock and only awaits the answer, so a
-            // durable wait never becomes a held connection.
-            let worker = crate::engine_thread("mcp-execute-code".to_owned())
-                .spawn(move || {
-                    let outcome = run_engine_native_code_mode(
-                        &vault,
-                        provider.as_ref(),
-                        write_actor,
-                        model_call_context,
-                        &run_ref,
-                        &config,
-                        verbs,
-                        opener.as_ref(),
-                        worlds,
-                        reader_seat,
-                        seat.as_mut(),
-                        git_door_base,
-                    );
-                    if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
-                        let ended = outcome.as_ref().is_ok_and(|outcome| {
-                            matches!(outcome.status, EngineExecutorStatus::Complete)
-                        });
-                        seats.put(run_id, seat, ended);
-                    }
-                    // Completion must release single-flight and the run's
-                    // permit before waking an awaiter that may immediately
-                    // re-enter this persisted run or start another.
-                    drop(guard);
-                    drop(permit);
-                    let _ = sender.send(outcome);
-                })
-                .map_err(|error| McpCodeExecutionError::Run(error.to_string()))?;
-            // Detached on purpose: the caller awaits the answer instead of
-            // blocking a runtime worker to join it.
-            drop(worker);
-            receiver.await.map_err(|_| {
-                McpCodeExecutionError::Run("execute_code worker ended without a result".to_owned())
-            })?
-        })
-    }
-}
 
 /// The worlds a run — `execute`'s, or a turn program's seat — may read
 /// (FIX 11768): the opener slip's worlds axis — its named set, every world
@@ -786,96 +607,6 @@ pub(crate) fn run_read_worlds(
         worlds.push(world);
     }
     Ok(worlds)
-}
-
-/// Enters the EXISTING sandbox/REPL substrate for one durable run.
-///
-/// This is the whole of what `execute_code` means now: bind the gated write at
-/// the host boundary, hand the engine its own runtime, and let
-/// `EngineNativeExecutor` own every step, replay row, and terminal marker. The
-/// server evaluates nothing and opens no second vault-write path. A run with
-/// a seat may spawn reader children under it. A run its caller's credential
-/// admitted binds that slip's lineage as its own (FIX 4705).
-#[expect(
-    clippy::too_many_arguments,
-    reason = "each argument is one axis of the run's host binding"
-)]
-fn run_engine_native_code_mode(
-    vault: &Vault,
-    provider: &dyn McpCodeModeProvider,
-    write_actor: WriteActor,
-    model_call_context: Option<(EntityId, Option<String>)>,
-    run_ref: &str,
-    config: &EngineExecutorConfig,
-    verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
-    opener: Option<&oneiron::authority::VerifiedSlip>,
-    worlds: Vec<EntityId>,
-    reader_seat: Option<SpawnHostSeat>,
-    compaction: Option<&mut RunCompaction>,
-    git_door_base: Option<String>,
-) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
-    let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
-        .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
-        .with_agent_verb_door(verbs)
-        .with_bound_run(config.run_id)
-        .with_git_door_base(git_door_base);
-    if let Some(opener) = opener {
-        gated_write = gated_write.with_opener_credential(opener);
-    }
-    if let Some(seat) = reader_seat {
-        gated_write = gated_write.with_reader_spawn(seat);
-    }
-    let reactor = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| McpCodeExecutionError::Run(error.to_string()))?;
-    let seat = engine_run_seat(
-        vault,
-        provider,
-        config,
-        format!("mcp-execute-code:{}", config.run_id.to_hex()),
-        None,
-        Vec::new(),
-        worlds,
-    )
-    .map_err(McpCodeExecutionError::RunBinding)?;
-    let model_call_backend = model_call_context.and_then(|(principal, session)| {
-        provider.backend_with_model_call_context(principal, session)
-    });
-    match model_call_backend.as_ref() {
-        Some(backend) => enter_on(
-            vault,
-            provider,
-            backend.as_ref(),
-            &gated_write,
-            config,
-            compaction,
-            &reactor,
-            seat.as_ref(),
-        ),
-        None => enter_engine_native_run(
-            vault,
-            provider,
-            &gated_write,
-            config,
-            compaction,
-            &reactor,
-            None,
-            seat.as_ref(),
-            // An `execute_code` run is no planned child.
-            None,
-            // Keep this caller's existing unconstrained routing.
-            Vec::new(),
-        ),
-    }
-    .map_err(|error| match error.provider_outage() {
-        Some(retry_after) => McpCodeExecutionError::ProviderUnavailable { retry_after },
-        None => match error {
-            EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
-            EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
-            EngineRunError::Payer(fault) => McpCodeExecutionError::RunBinding(fault.to_string()),
-        },
-    })
 }
 
 /// Why one entry of an engine-native run did not end: its seat could not be
@@ -976,6 +707,10 @@ impl<'a> ScopeMeter<'a> {
 /// through the provider's planned backend on that same meter and payer,
 /// bound to its plan; with a provider that has none, through the backend it
 /// takes today.
+///
+/// A run its host lends a self-brief port (`brief`, FIX 17594) carries the
+/// brief it prepares on every backend this entry takes; with none, its
+/// requests carry no brief.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
@@ -988,6 +723,7 @@ pub(crate) fn enter_engine_native_run(
     seat: Option<&ModelSeat>,
     planned: Option<&PlannedModel>,
     listed: Vec<AgentModel>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let Some(ScopeMeter {
         guard,
@@ -1012,7 +748,7 @@ pub(crate) fn enter_engine_native_run(
             None => provider.backend(),
         };
         return enter_on(
-            vault, provider, backend, bound, config, compaction, reactor, seat,
+            vault, provider, backend, bound, config, compaction, reactor, seat, brief,
         );
     };
     // The lease the entry's door and planner runner were lent: one ledger.
@@ -1033,6 +769,7 @@ pub(crate) fn enter_engine_native_run(
                 guard.clone(),
                 payer.clone(),
                 Some(scoped.clone()),
+                None,
                 listed.clone(),
             )
         });
@@ -1045,7 +782,7 @@ pub(crate) fn enter_engine_native_run(
             .and_then(|planned| {
                 provider.planned_backend(guard.clone(), payer.clone(), planned, listed.clone())
             })
-            .or_else(|| provider.reader_backend(guard.clone(), payer, listed)),
+            .or_else(|| provider.reader_backend(guard.clone(), payer, None, listed)),
     };
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
@@ -1060,6 +797,7 @@ pub(crate) fn enter_engine_native_run(
             compaction,
             reactor,
             seat,
+            brief,
         )
     } else {
         enter_on(
@@ -1071,6 +809,7 @@ pub(crate) fn enter_engine_native_run(
             compaction,
             reactor,
             seat,
+            brief,
         )
     };
     live.book_rest()
@@ -1343,6 +1082,7 @@ fn enter_on(
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
     seat: Option<&ModelSeat>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut runtime = provider.runtime();
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
@@ -1359,6 +1099,11 @@ fn enter_on(
     }
     if let Some(feedback) = provider.code_check() {
         executor = executor.with_code_check(feedback);
+    }
+    // FIX 17594 (delivery slice D2): the host's self-brief port, when it
+    // lends one.
+    if let Some(port) = brief {
+        executor = executor.with_self_brief(port);
     }
     reactor
         .block_on(executor.run(&routed_config))

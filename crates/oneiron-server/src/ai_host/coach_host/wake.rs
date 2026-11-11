@@ -49,7 +49,7 @@ impl WakeExecutor {
             // Model calls already paid on their original Coach lines.
             Ok(Ok(None)) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             }),
             Ok(Err(error)) => Ok(DreamerAttemptExecution::Failed {
                 reason: format!("{facet} failed: {:?}", error.kind()),

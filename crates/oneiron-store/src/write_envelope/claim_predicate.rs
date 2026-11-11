@@ -36,6 +36,12 @@ const RESERVED_ACTOR_PREDICATE_NAMESPACE: &str = "actor";
 /// rematerialize; reads always allow reserved predicates so stored
 /// provenance Claims stay decodable. `allow_reserved` skips ONLY this
 /// reserved-namespace arm — the grammar checks above run unconditionally.
+///
+/// `pub`, flag included: the store's codecs and core both call it across the
+/// crate boundary. Passing `true` only loosens this check; the reserved WRITE
+/// doors that pass it stay crate-private in core
+/// (`Vault::put_reserved_claim_in_txn`, the replicated put), so another crate
+/// cannot store a reserved predicate through it.
 pub fn validate_predicate(predicate: &str, allow_reserved: bool) -> Result<()> {
     if predicate.len() > MAX_PREDICATE_BYTES {
         return Err(Error::Claim(ClaimError::InvalidPredicate {

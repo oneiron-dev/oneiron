@@ -1,0 +1,32 @@
+{
+  "name": "vault.kv.put",
+  "description": "Synchronous gated write of one key; a write that needs review fails without changing the key.",
+  "input": "crate::memory::KeyValuePut",
+  "output": "crate::memory::KeyValuePutReceipt",
+  "call": "memory.key_value_put(&input)?",
+  "scope": "Write",
+  "admission": {},
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "input_fields": {
+      "requestId": "request_id"
+    },
+    "output_fields": {
+      "item": "crate::memory::KeyValueItem",
+      "replayed": "bool",
+      "receipt_ref": "String"
+    },
+    "docs": {
+      "remote": "    /// Actor-owned worldless keyed memory; identical embedded/remote semantics.\n",
+      "ts": "/** Synchronous gated write. Review-required writes fail without changing the key. */",
+      "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
+    }
+  }
+}
