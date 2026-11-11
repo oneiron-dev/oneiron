@@ -180,6 +180,65 @@ pub fn grant_core_read_of_kinds(vault: &Vault, reader: EntityId, kinds: &[u8]) -
     super::consolidation::shipped_policy_with_read_scope(vault, &reader.to_hex(), &scope)
 }
 
+/// Writes the shipped policy with `reader`'s `core:read` grant and
+/// `agent`'s derivation rows. The reader receives no landing rows.
+///
+/// # Errors
+///
+/// The vault's, or a missing policy manifest.
+pub fn grant_core_read_beside_derive_rows(
+    vault: &Vault,
+    reader: EntityId,
+    agent: EntityId,
+) -> Result<()> {
+    grant_core_read(vault, reader)?;
+    let policy = crate::gate::default_policy_manifest_id()?;
+    let body = vault.get(&policy)?.ok_or(crate::Error::EntityNotFound)?;
+    let body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
+    crate::test_support::put_policy_manifest_bytes(vault, policy, &body)
+}
+
+/// Whether `reader` of `class` reads `row` on the recorded lane the record
+/// verbs use, with the same actor key a derivation reads under.
+///
+/// # Errors
+///
+/// The vault's, or an actor with no read key.
+pub fn reader_reads_row(
+    vault: &Vault,
+    reader: EntityId,
+    class: EdgeActorClass,
+    row: EntityId,
+) -> Result<bool> {
+    let key = crate::claim::ScopedReadActorKey::for_engine_actor(WriteActor::new(reader, class))
+        .ok_or(crate::error::Error::InvalidClaimBody(
+            "an actor with no read",
+        ))?;
+    vault
+        .scoped_read(key)
+        .recorded_lane()?
+        .is_entity_readable(&row)
+}
+
+/// The live CLAIM rows `reader` of `class` reads through the native record
+/// listing, whose lane admits recorded claims.
+///
+/// # Errors
+///
+/// The vault's, or an actor with no read key.
+pub fn reader_claim_rows(
+    vault: &Vault,
+    reader: EntityId,
+    class: EdgeActorClass,
+) -> Result<Vec<EntityId>> {
+    let key = crate::claim::ScopedReadActorKey::for_engine_actor(WriteActor::new(reader, class))
+        .ok_or(crate::error::Error::InvalidClaimBody(
+            "an actor with no read",
+        ))?;
+    crate::claim::NativeRawRead::new(vault.scoped_read(key), None)
+        .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)
+}
+
 /// The version of `id` as `actor` of `class` reads it now, as a caller's
 /// read serves a source it cites; `None` when the actor does not read it.
 ///

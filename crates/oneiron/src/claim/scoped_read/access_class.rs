@@ -370,9 +370,10 @@ impl ScopedRead<'_> {
     /// a row whose class view does not build. `header` is the row's, a
     /// CLAIM's, whose type, band and filter the row admission met before
     /// this; `grant` and `filter` are as `Self::own_row_readable_in` takes
-    /// them. An admitted row still meets the two per-row trailing conjuncts,
-    /// [`Self::provenance_cited_readable_in`] and
-    /// [`Self::esign_document_readable_in`], judged last and never held as
+    /// them. An admitted row still meets the three per-row trailing conjuncts,
+    /// [`Self::provenance_cited_readable_in`],
+    /// [`Self::esign_document_readable_in`] and
+    /// [`Self::coreference_endpoints_readable_in`], judged last and never held as
     /// the class's.
     #[expect(
         clippy::too_many_arguments,
@@ -439,13 +440,15 @@ impl ScopedRead<'_> {
                 verdict
             }
         };
-        // A provenance Claim's named records, and an e-sign Claim's signing
-        // document and originals, are the row's own, never its class's:
-        // judged last, for an admitted row only (FIX 3959, FIX 6945 A).
+        // A provenance Claim's named records, an e-sign Claim's signing
+        // document and originals, and a coreference status Claim's endpoints
+        // are the row's own, never its class's: judged last, for an admitted
+        // row only.
         Ok(Some(
             verdict
                 && self.provenance_cited_readable_in(rtxn, policy, &body, authority)?
-                && self.esign_document_readable_in(rtxn, policy, &body)?,
+                && self.esign_document_readable_in(rtxn, policy, &body)?
+                && self.coreference_endpoints_readable_in(rtxn, policy, &body, authority)?,
         ))
     }
 

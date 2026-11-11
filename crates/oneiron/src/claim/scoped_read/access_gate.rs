@@ -48,8 +48,8 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// admission refuses it, and what the read asked of its rows (FIX 7462).
 /// The fourth holds, for the same serving txn, each reader's verdict on each
 /// CLAIM access class it judged (FIX 11915). The fifth is set on the row
-/// checks of a record an `edge.provenance` Claim names beside its edge
-/// ([`Self::judge_cited`], FIX 3959): they do not re-enter that rule.
+/// checks of a record an `edge.provenance` or `core.coreference.status`
+/// Claim names ([`Self::judge_cited`]): they do not re-enter those rules.
 #[derive(Default)]
 pub(super) struct HeldAuthority(
     RefCell<Option<AccessContextSnapshot>>,
@@ -114,11 +114,11 @@ impl HeldAuthority {
         )
     }
 
-    /// `judge` over the row checks of a record an `edge.provenance` Claim
-    /// names beside its edge (FIX 3959), in this serving txn: this read's
+    /// `judge` over the row checks of a record an `edge.provenance` or
+    /// `core.coreference.status` Claim names, in this serving txn: this read's
     /// relationship authority, Grants and class verdicts, under the key's own
-    /// floor alone, with no row's legal non-use conjunct asked, and with that
-    /// Claim's rule not re-entered, so a Claim citing another such Claim is
+    /// floor alone, with no row's legal non-use conjunct asked, and with the
+    /// cited-record rules not re-entered, so a Claim citing another such Claim is
     /// judged one level deep. The relationship authority is lent to `judge`
     /// and taken back after it, whatever it answers.
     pub(super) fn judge_cited<T>(&self, judge: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
@@ -134,8 +134,8 @@ impl HeldAuthority {
         judged
     }
 
-    /// Whether these row checks judge a record an `edge.provenance` Claim
-    /// names ([`Self::judge_cited`]).
+    /// Whether these row checks judge a record an `edge.provenance` or
+    /// `core.coreference.status` Claim names ([`Self::judge_cited`]).
     pub(super) fn judges_cited(&self) -> bool {
         self.4
     }

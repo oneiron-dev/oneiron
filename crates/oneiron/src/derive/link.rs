@@ -3,7 +3,8 @@
 //! identity-topology judgment as a parked proposal event; an edge is applied,
 //! or a topology event takes effect, only where a grant of today already
 //! allows it: the owner's standing nightly-link grant for a SameAs, the
-//! agent's own `topology_seal` Grant for a judgment.
+//! agent's own `topology_seal` Grant for a judgment. The status claim takes
+//! the source's exposure, and a reader is served it only beside both claims.
 
 use rmpv::Value;
 
@@ -42,7 +43,8 @@ const TOPOLOGY_ALLOWED: &str = "gate.allow.derive.topology";
 /// proposed coreference status claim goes through the claim gate as the
 /// caller. When the owner's standing nightly-link grant names this actor,
 /// the SameAs edge is applied in a savepoint of its own; an edge the writer
-/// refuses leaves the link proposed.
+/// refuses leaves the link proposed. The status claim takes the source's
+/// exposure, and a reader is served it only beside both claims.
 ///
 /// # Errors
 ///
