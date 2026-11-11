@@ -4,7 +4,7 @@
 > `oneiron_remote::OneironClient`, the same Rust client the `oneiron` npm and
 > PyPI packages hold. `open` binds an embedded, in-process vault (no server,
 > no Docker, no API key: the on-device Swift path); `connect` binds a remote
-> `oneiron-server`. Every facade row of `scripts/sdk/agent-verbs.json` is one
+> `oneiron-server`. Every facade row of `scripts/sdk/verbs/` is one
 > exported method that calls the client's typed method for that row on
 > either backend. `EmbeddedEngine` (the `engine` feature) runs the full
 > server inside the app's process over the same kind of handle. No Swift or Kotlin package is
@@ -23,8 +23,8 @@
   embedded calls go through its one dispatcher, writer lease and owner actor.
   The embedded engine's `oneiron-server` edge serves the API over
   in-process streams and binds no API socket.
-- **Generated, not hand-bound.** `scripts/sdk/generate.py` writes
-  `src/generated/facade_generated.rs` from the verb table: one `export_facade!` arm per
+- **Generated, not hand-bound.** The SDK generator (`crates/oneiron-sdk-generator`)
+  writes `src/generated/facade_generated.rs` from the verb table at build time: one `export_facade!` arm per
   facade row (host-door rows included). Each arm lowers its foreign
   arguments into the row's engine input, calls the row's typed
   `OneironClient` method, and lifts the engine output back through the
@@ -65,10 +65,10 @@ one, and on a `PENDING_ASK` the whole refusal as `pending`, for `retry`.
 
 Every facade row crosses typed. A row whose engine type has a hand-written
 record in `src/dto.rs` crosses through it; every other row crosses through the
-records and enums `scripts/sdk/generate.py` writes into
-`src/generated/facade_types_generated.rs` from the facade type inventory
-(`scripts/sdk/facade_types.py`, the one walker the TypeScript and Python
-declarations also read; `scripts/sdk/uniffi_types.py` projects it). That is
+records and enums the SDK generator writes into
+`src/generated/facade_types_generated.rs` from its facade type inventory
+(the one walker the TypeScript and Python declarations also read; its
+`uniffi_types` module projects it). That is
 one `uniffi::Record` or `uniffi::Enum` per engine struct or enum the rows
 reach, each deriving serde with the engine type's own wire shape: the same
 keys, the same enum tagging, the same optional fields. A row converts at its
@@ -97,7 +97,7 @@ no generic `call(name, json)`.
 - **`WireJson`** stays only where UniFFI cannot say the shape, as a field
   inside its record and never as the whole argument: each `serde_json::Value`
   (a claim's value, a task spec, an entity body, `ai.*` params and the
-  others `generate.py` lists). `ProjectWriteProof` crosses as an ordinary
+  others the generator lists). `ProjectWriteProof` crosses as an ordinary
   record: its anchor is a flat `Vec<ProjectAnchorLink>` (FIX 11119), so no
   by-value cycle remains. A tuple crosses
   as a generated record with positional fields (`item0`, ...) whose serde is
@@ -120,8 +120,14 @@ items with provenance, `assetRef`, every raw per-space `embeddingMatches`
 element, `reactions` and `citedMessages` (each with its typed `record` ref), scope honesty with
 `censusCapped`, retrieval accounting, `packVersion` (always
 `HEAD_MEMORY_PACK_SCHEMA_VERSION`) and the read's `narrowing` receipt. The
-read verbs return `{value, narrowing}`. Blob content crosses as bytes; an
-omitted write time is stamped with the current Unix second at the call.
+read verbs return `{value, narrowing}`. `ClaimView` also carries the stored
+four-axis `claimScope`, the typed `claim` ref and optional host-stamped `madeBy`;
+`EntityView` carries `madeBy` too. These use the existing generated `ClaimScope`,
+`RecordRef` and `MadeBy` records. Provenance preserves the engine's filtering of
+unreadable input refs; it does not grant access to those inputs. Ordinary claim
+inputs keep their optional placement fields and host-side defaults.
+Blob content crosses as bytes; an omitted write time is stamped with the current
+Unix second at the call.
 
 Host-door rows are exported like every other row. An embedded handle answers
 them with the row's own embedded `call`; the ones only a server's state can
@@ -187,8 +193,9 @@ mode into `swift/.generated/`, and runs `swift build` on the compile stub in
 `swift/Sources/OneironUniFFIStub/main.swift`. The stub is hand-maintained and
 lags the generated surface; it is a compile probe, not a consumer.
 
-A surface change edits the verb table or the engine types and reruns
-`python3 scripts/sdk/generate.py`, which regenerates both files. A
-hand-written record (one with foreign widths or call-time stamping) adds its
-codec in `src/codec.rs` and its engine type to the emitter's `UNIFFI_INPUTS`
-or `UNIFFI_RESULTS` table.
+A surface change edits the verb table or the engine types; the next build
+regenerates both files (`cargo run -p oneiron-sdk-generator -- --out-dir <dir>`
+writes them for reading). A hand-written record (one with foreign widths or
+call-time stamping) adds its codec in `src/codec.rs` and its engine type to the
+generator's `UNIFFI_INPUTS` or `UNIFFI_RESULTS` table
+(`crates/oneiron-sdk-generator/src/generate/uniffi.rs`).

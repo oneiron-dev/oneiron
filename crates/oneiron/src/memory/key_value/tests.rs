@@ -148,9 +148,9 @@ fn generic_claim_upsert_cannot_close_another_actors_key() {
         PREDICATE,
         &owner,
         "user_stated",
-        companion_value_to_json(&body.value),
+        msgpack_value_to_json(&body.value),
     );
-    forged.scope = body.scope.as_ref().map(companion_value_to_json);
+    forged.scope = body.scope.as_ref().map(msgpack_value_to_json);
     assert_eq!(
         vault
             .memory(other, EdgeActorClass::Human)
@@ -187,6 +187,7 @@ fn replay_keyed_body(vault: &crate::Vault, id: EntityId, body: &ClaimBody) {
                 end: 100,
             },
             100,
+            None,
             &bytes,
         )
         .commit()
@@ -381,6 +382,7 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
         min_confidence: 0.0,
         min_salience: 0.0,
         deny_all: false,
+        caller_excludes_stale: false,
         credential: None,
     };
     for include_stale in [false, true] {
@@ -923,6 +925,7 @@ fn shared_keyed_writes_recheck_current_role_and_both_claim_positions() {
                 ENTITY_TYPE_FEDERATION_GRANT,
                 crate::TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &encode_federation_grant_body(grant).unwrap(),
             )
             .commit()

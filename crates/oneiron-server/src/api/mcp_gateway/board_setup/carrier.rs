@@ -95,9 +95,11 @@ pub(in crate::api::mcp_gateway) async fn mcp_endpoint_result(
 
 /// The result data a client reads over the NEGOTIATED protocol.
 ///
-/// [`MCP_PROTOCOL_VERSION`] is what this server negotiates, and its
-/// `CallToolResult` carries `content` alone — `structuredContent` is a later
-/// protocol addition. A result that put its data ONLY there handed a conforming
+/// `2024-11-05`, the oldest version this server negotiates, carries
+/// `content` alone in its `CallToolResult` — `structuredContent` is a later
+/// protocol addition, and the later versions ask a tool that returns it to
+/// state the same JSON as text content too, so every version gets both (FIX
+/// 4902). A result that put its data ONLY there handed a conforming
 /// client one sentence of prose and no data at all (ONE-1704 repair). The same
 /// typed structured payload is therefore ALSO stated as protocol text content,
 /// serialized canonically so the bytes are stable, while `structuredContent`
@@ -190,7 +192,12 @@ pub(in crate::api::mcp_gateway) async fn mcp_preflight_page(
     };
     // A retained page derived from a row a device-local world keeps now
     // never leaves this device again: the caller starts over from page one.
-    if !mcp_snapshot_releases(server, actor, snapshot)? {
+    // A page of the owner's own whole-vault export, as the continued tool
+    // and his fresh proof name it, is released as his will (owner ruling
+    // 1-EXPORT = B).
+    let owner_whole_vault_export =
+        super::super::device_release::owner_whole_vault_export_call(server, actor, tool);
+    if !mcp_snapshot_releases(server, actor, snapshot, owner_whole_vault_export)? {
         return Err(mcp_page_cursor_error(
             crate::mcp::McpPageCursorError::SnapshotMismatch,
         ));

@@ -1,9 +1,16 @@
 //! Codebase snapshot index insertion, removal and lookup.
 //! The write entry is `put_scope_index_rows_for_snapshot`.
 //! `store` owns the tables and row types; this leaf forwards no definitions.
+//!
+//! FIX 4300 (CODE-CUSTODY-01): a snapshot's scope rows are its CODE, its
+//! ASSETs, its registered anchor and every symbol of its manifest
+//! ([`super::scope_members`]). They are put and deleted together here.
 
 use std::collections::BTreeSet;
 
+use super::scope_members::{
+    delete_scope_member_rows, put_scope_member_rows, visit_other_scope_snapshots,
+};
 use super::*;
 
 pub(super) fn fork_has_other_snapshot(
@@ -68,6 +75,9 @@ pub(super) fn delete_exact_index_rows_for_snapshot(
             },
         )?;
     }
+    // The anchor and the manifest's symbols, while no other retained
+    // snapshot of the scope holds them (FIX 4300).
+    delete_scope_member_rows(store, wtxn, id, snapshot)?;
     Ok(())
 }
 
@@ -85,28 +95,15 @@ fn unshared_assets(
         .iter()
         .map(|entry| entry.content_hash)
         .collect();
-    // A scope is one project and one repo_ref, so every snapshot that can
-    // share it is indexed under the repo_ref.
-    let prefix = text_index_scan_prefix(&snapshot.repo_ref.canonical());
-    for key in REPO_INDEX.scan_keys(store, wtxn, &prefix)? {
-        if unshared.is_empty() {
-            break;
-        }
-        if key.id == *id {
-            continue;
-        }
-        let other = match SNAPSHOTS.get(store, wtxn, &key.id) {
-            Ok(Some(other)) => other,
-            Ok(None) | Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(_))) => continue,
-            Err(err) => return Err(err),
-        };
-        if other.scope_key != snapshot.scope_key {
-            continue;
-        }
+    if unshared.is_empty() {
+        return Ok(unshared);
+    }
+    visit_other_scope_snapshots(store, wtxn, id, snapshot, |_, other| {
         for entry in &other.files {
             unshared.remove(&entry.content_hash);
         }
-    }
+        Ok(!unshared.is_empty())
+    })?;
     Ok(unshared)
 }
 
@@ -137,6 +134,8 @@ pub(super) fn put_scope_index_rows_for_snapshot(
             &(),
         )?;
     }
+    // The anchor and the manifest's symbols (FIX 4300).
+    put_scope_member_rows(store, wtxn, code_artifact_id, snapshot)?;
     Ok(())
 }
 

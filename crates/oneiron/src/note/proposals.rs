@@ -124,8 +124,18 @@ pub(crate) fn erase_fork_actor_in_txn(
                 wtxn,
                 &HexPair(HexId(fork.note), HexId(fork.fork)),
             )?;
+            // A replica's queued upload of the fork, and its mark when the
+            // authority sent it, go with it (FIX 12789).
+            let pair = HexPair(HexId(fork.note), HexId(fork.fork));
+            super::sync_rows::SYNC_QN_E.delete(&vault.store, wtxn, &pair)?;
+            super::sync_rows::NOTE_FORK_AUTHORITY.delete(&vault.store, wtxn, &pair)?;
         } else {
             NOTE_FORK.put(&vault.store, wtxn, &key, &fork)?;
+        }
+        // Once the erase commits, the NOTE's own devices read its pending
+        // forks again and drop the one that went (FIX 12790).
+        if !fork.decided {
+            vault.queue_note_document_update_in_txn(wtxn, fork.note);
         }
     }
     Ok(())
@@ -387,23 +397,66 @@ pub(super) fn purge_stored_history(
     Ok(())
 }
 
-/// One resolver for both direct edits and proposal routing. Owner authority
-/// comes from the authority log, not merely from an asserted actor class.
+/// One resolver for both direct edits and proposal routing. Whether an edit
+/// lands or waits is the Grant's answer for this actor and this NOTE, never
+/// the writer's authorship (DEC-0006 #10, ARCH-0032 #forks-proposals). The
+/// owner lands everywhere in his own vault; owner authority comes from the
+/// authority log, not merely from an asserted actor class. Anyone else, the
+/// NOTE's author included, lands only under an automatic grant and
+/// otherwise proposes.
 pub(super) fn grant_allows(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
     actor: WriteActor,
 ) -> Result<bool> {
-    let (_, core) = super::verbs::note_core(vault, txn, note)?;
-    if core.author_ref.is(actor.entity_ref())
-        || (actor.actor_class() == EdgeActorClass::Human
-            && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref())
-                .is_ok())
+    if actor.actor_class() == EdgeActorClass::Human
+        && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref()).is_ok()
     {
         return Ok(true);
     }
     automatic_edit_grant(vault, txn, note, actor)
+}
+
+/// Who answers whether a NOTE edit lands. Every agent-facing door asks the
+/// Grant. Two engine doors write a plane that is the writer's own by a proof
+/// the door holds, not by the NOTE's author field.
+#[derive(Clone, Copy)]
+pub(crate) enum NoteEditLanding<'a> {
+    /// The Grant's answer for (actor, NOTE): [`grant_allows`].
+    Grant,
+    /// The live pad the board bound to the actor's `session`: the actor's
+    /// own board block (ARCH-0032 #motivation, #scratchpad-one-store).
+    SessionPad { session: &'a str },
+    /// A changed file of a folder the owner attached, landing over the note
+    /// its ledger row names, under the owner's live proof: an edited file
+    /// supersedes its old version (ARCH-0027 #folder-source).
+    OwnerFolder {
+        owner: &'a crate::consent::AuthenticatedOwner,
+    },
+}
+
+/// Whether `actor`'s edit of `note` lands now, through `landing`.
+pub(super) fn edit_lands(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    actor: WriteActor,
+    landing: NoteEditLanding<'_>,
+) -> Result<bool> {
+    if grant_allows(vault, txn, note, actor)? {
+        return Ok(true);
+    }
+    match landing {
+        NoteEditLanding::Grant => Ok(false),
+        NoteEditLanding::SessionPad { session } => {
+            vault.is_session_pad_in_txn(txn, actor.entity_ref(), session, note)
+        }
+        NoteEditLanding::OwnerFolder { owner } => {
+            owner.revalidate_in_txn(vault, txn)?;
+            Ok(true)
+        }
+    }
 }
 
 /// True when the policy manifest gives `actor` an automatic `note.edit` grant
@@ -556,8 +609,21 @@ impl Vault {
     }
     fn notify_landed(&self, bundle: &NoteReviewBundle) {
         #[cfg(feature = "sync")]
-        for receipt in &bundle.landed {
-            self.notify_note_document(receipt.note);
+        {
+            for receipt in &bundle.landed {
+                self.notify_note_document(receipt.note);
+            }
+            // A bundle's members left the pending forks an own device holds
+            // outside one (FIX 12789).
+            let notes: std::collections::BTreeSet<EntityId> = bundle
+                .waiting
+                .iter()
+                .map(|fork| fork.note)
+                .chain(bundle.landed.iter().map(|receipt| receipt.note))
+                .collect();
+            for note in notes {
+                self.notify_note_forks(note);
+            }
         }
         #[cfg(not(feature = "sync"))]
         let _ = bundle;
@@ -579,9 +645,10 @@ impl Vault {
         edit: &NoteProgramEdit,
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
-        self.memory(actor.entity_ref(), actor.actor_class())
+        let fork = self
+            .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
-                content.update_note(note, |txn| {
+                content.update_note(note, |txn, _lane| {
                     // A sealed NOTE forks too: the fork leaves its seal intact.
                     super::verbs::note_core(self, txn, note)?;
                     let parent =
@@ -622,7 +689,11 @@ impl Vault {
                     )?;
                     Ok(fork.head)
                 })
-            })
+            })?;
+        // An authority's own devices hold its pending forks (FIX 12789).
+        #[cfg(feature = "sync")]
+        self.notify_note_forks(note);
+        Ok(fork)
     }
 }
 pub(super) fn land(
@@ -713,6 +784,15 @@ pub(super) fn land(
     };
     fork.decided = true;
     fork.recovery_merge = None;
+    // A decided fork is no longer uploaded: a replica's queued upload of it
+    // goes, and so does its mark, so no fork set takes the decided record
+    // (FIX 12789).
+    let pair = HexPair(HexId(fork.note), HexId(fork.fork));
+    super::sync_rows::SYNC_QN_E.delete(&vault.store, txn, &pair)?;
+    super::sync_rows::NOTE_FORK_AUTHORITY.delete(&vault.store, txn, &pair)?;
+    // Once it commits, the NOTE's subscribers read its text and pending
+    // forks again, whichever door decided it.
+    vault.queue_note_document_update_in_txn(txn, fork.note);
     NOTE_FORK.put(&vault.store, txn, &fork.fork, fork)?;
     let receipt = NoteLandingReceipt {
         id: vault.store.clock.entity_id()?,

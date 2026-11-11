@@ -47,6 +47,7 @@ impl BigModel {
                 response_format: ResponseFormat::Text,
                 locality: route.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, system.to_owned()),
@@ -89,7 +90,7 @@ impl BigModel {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();

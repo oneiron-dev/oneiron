@@ -32,6 +32,7 @@ pub(super) fn write_frame(
     put_bytes(&mut out, family.as_bytes())?;
     match slice {
         Slice::Snapshot => out.push(SNAPSHOT),
+        Slice::ShallowSnapshot => out.push(SHALLOW_SNAPSHOT),
         Slice::Updates(spans) => {
             out.push(UPDATES);
             put_len(&mut out, spans.len())?;
@@ -57,6 +58,7 @@ pub(super) fn read_frame(family: &str, bytes: &[u8]) -> Result<Frame> {
     }
     let slice = match reader.byte()? {
         SNAPSHOT => Slice::Snapshot,
+        SHALLOW_SNAPSHOT => Slice::ShallowSnapshot,
         UPDATES => {
             let count = reader.count()?;
             let mut spans = Vec::new();

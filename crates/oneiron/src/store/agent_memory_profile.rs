@@ -10,9 +10,9 @@ use crate::store::output_decay::OutputDecayPolicy;
 
 /// The per-agent context-window memory profile (RT-05, ONE-1687).
 ///
-/// Additive and optional: an `AgentDefinition` carrying `None` reproduces
-/// today's behavior byte-for-byte, so the record grew without moving any
-/// existing agent's assembly.
+/// Optional: an engine-run `AgentDefinition` carrying `None` compacts its
+/// window as itself on its host's profile (FIX 7744,
+/// [`MemoryProfile::as_self_writer`]).
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct MemoryProfile {

@@ -58,7 +58,7 @@ pub enum EngineScan {
     /// The sync rematerialization markers and quarantine rows a pack's
     /// exclusion index reads.
     PackQuarantineRows,
-    /// The legacy lexical-hint claims a target's hint lookup walks.
+    /// The CLAIM rows a target's lexical-hint lookup walks.
     LexicalHintRows,
     /// The graduation answer log a gate receipt query projects.
     AnswerReceiptRows,
@@ -144,6 +144,10 @@ pub enum EngineScan {
     /// One MACHINE claim's target index: the ids of its birth, transitions
     /// and handoffs.
     MachineHistoryTargetRows,
+    /// The prior-frontier tips one signed MACHINE claim transition names,
+    /// which its put door reads whole, per claim (once refused past 64;
+    /// FIX 8673).
+    MachineTransitionFrontier,
     /// One claim's incident edges of every kind, one way, which a claim-VAD
     /// consolidation or clear reads.
     ClaimVadIncidentEdges,
@@ -177,6 +181,11 @@ pub enum EngineScan {
     /// The records one private-thread walk reaches from one record: its
     /// places and the sources of its words.
     PrivateThreadAncestryRecords,
+    /// The records one room P7 decision's word-source walk judges from one
+    /// record: its messages, and every record and MESSAGE a summary it
+    /// copies came from (once withheld past four times the ancestor depth;
+    /// FIX 9787).
+    WordSourceRecords,
     /// One trusted policy manifest's room-policy rows, each fold.
     RoomPolicyRows,
     /// One trusted policy manifest's room-thread holder rows, each fold.
@@ -361,6 +370,8 @@ pub enum EngineScan {
     SyncPrefixRows,
     /// One source's withdrawn dependents, under its dependent-walk policy.
     DependentWalkRows,
+    /// The executed autoresearch roots one continuation sweep's page reads.
+    ResearchContinuationRoots,
 }
 
 /// Rows one engine scan reads past which it asks whether everything is

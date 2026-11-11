@@ -23,5 +23,6 @@ pub(super) fn remote_task_from_result(message: &Value) -> Option<RemoteTaskHandl
     Some(RemoteTaskHandle {
         id: id.to_owned(),
         poll_after_secs,
+        poll: None,
     })
 }

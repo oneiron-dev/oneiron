@@ -11,6 +11,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::typed_body::names_no_actor;
+#[cfg(feature = "sync")]
+use std::collections::BTreeSet;
 
 impl ForkState {
     /// Makes the one who settled the fork no one when it is `actor`; whether
@@ -105,6 +107,13 @@ pub(crate) fn erase_fork_actor_in_txn(
             forks.push((key, fork, opened));
         }
     }
+    // FIX 12470: each deck whose fork record changed takes the erased form
+    // into each live window that carries it once the erase commits.
+    #[cfg(feature = "sync")]
+    let artifacts: BTreeSet<EntityId> = forks
+        .iter()
+        .map(|((artifact, _), _, _)| *artifact)
+        .collect();
     for (key, fork, opened) in forks {
         if opened && fork.state == ForkState::Open {
             FORKS.delete(&vault.store, wtxn, &key)?;
@@ -112,6 +121,8 @@ pub(crate) fn erase_fork_actor_in_txn(
             FORKS.put(&vault.store, wtxn, &key, &fork)?;
         }
     }
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, wtxn, artifacts);
     Ok(())
 }
 
@@ -156,6 +167,8 @@ pub(crate) fn erase_proposal_actor_in_txn(
         }
     }
     let at = vault.now_recorded_at();
+    #[cfg(feature = "sync")]
+    let mut artifacts = BTreeSet::new();
     for (key, mut record, left) in proposals {
         for (artifact, fork) in left {
             MEMBERSHIP.delete(&vault.store, wtxn, &(artifact, fork))?;
@@ -166,7 +179,11 @@ pub(crate) fn erase_proposal_actor_in_txn(
             close_if_done(&mut record, at, None);
             PROPOSALS.put(&vault.store, wtxn, &key, &record)?;
         }
+        #[cfg(feature = "sync")]
+        artifacts.insert(record.header.artifact);
     }
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, wtxn, artifacts);
     Ok(())
 }
 

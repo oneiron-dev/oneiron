@@ -15,6 +15,8 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use super::producer_input::{EsignInputBudget, InputBytes, PoolAdmission};
+
 #[cfg(test)]
 #[path = "signature_revision_tests.rs"]
 mod tests;
@@ -57,6 +59,46 @@ impl EsignSealInput {
             .map(|&capacity| base.revision(pdf.len(), operation_id, now_ms, capacity))
             .collect::<Result<_>>()?;
         Ok((Self { pdf, revisions }, stream_bytes))
+    }
+}
+
+impl EsignSealInput {
+    pub(crate) fn producer_revisions(
+        pdf: &[u8],
+        operation_id: &str,
+        now_ms: u64,
+        codec_bytes: u64,
+        capacities: &[usize],
+        budget: &EsignInputBudget,
+    ) -> Result<(Vec<EsignSignatureRevision>, u64)> {
+        let codec = usize::try_from(codec_bytes).unwrap_or(usize::MAX);
+        let (base, stream_bytes) = Base::read_in(pdf, codec, budget)?;
+        let descriptor_bytes = capacities
+            .len()
+            .checked_mul(std::mem::size_of::<EsignSignatureRevision>())
+            .ok_or(PdfPreparationError::Limit)? as u64;
+        budget.take(descriptor_bytes)?;
+        let mut revisions = Vec::new();
+        revisions
+            .try_reserve_exact(capacities.len())
+            .map_err(|_| PdfPreparationError::Limit)?;
+        budget.allocated(
+            descriptor_bytes,
+            (revisions.capacity() * std::mem::size_of::<EsignSignatureRevision>()) as u64,
+        )?;
+        for &capacity in capacities {
+            revisions.push(base.revision_in(
+                pdf.len(),
+                operation_id,
+                now_ms,
+                capacity,
+                Some(budget),
+            )?);
+        }
+        // The native decoder, its table budget and temporary model are
+        // gone before any callback can consume the dispatch capability.
+        drop(base);
+        Ok((revisions, stream_bytes))
     }
 }
 
@@ -122,6 +164,7 @@ struct Base {
     first_page_dict: Dictionary,
     first_page_annots: Vec<Object>,
     root_dict: Dictionary,
+    producer_admission: Option<Arc<PoolAdmission>>,
 }
 
 fn malformed<T>(_: T) -> PdfPreparationError {
@@ -163,6 +206,10 @@ impl Base {
         let stream_bytes = admission
             .max_decoded()
             .max(uncompressed_xref_bytes(&doc, codec));
+        Ok((Self::from_document(pdf, &doc)?, stream_bytes))
+    }
+
+    fn from_document(pdf: &[u8], doc: &Document) -> Result<Self> {
         let prev_startxref = last_startxref(pdf)?;
         let at = usize::try_from(prev_startxref).map_err(malformed)?;
         if pdf.get(at..at.saturating_add(4)) != Some(b"xref".as_slice())
@@ -241,7 +288,45 @@ impl Base {
             first_page_dict,
             first_page_annots,
             root_dict,
+            producer_admission: None,
         };
+        Ok(base)
+    }
+
+    fn read_in(pdf: &[u8], codec: usize, budget: &EsignInputBudget) -> Result<(Self, u64)> {
+        let admission = Arc::new(PoolAdmission::new(budget));
+        let loaded = Document::load_mem_with_options(
+            pdf,
+            LoadOptions {
+                strict: true,
+                max_decompressed_size: Some(codec),
+                decode_admission: Some(Arc::clone(&admission) as Arc<dyn DecodeAdmission>),
+                ..LoadOptions::default()
+            },
+        );
+        // Consume only this parser's exact marker, BEFORE the ordinary
+        // cancelled/deadline mapping. No string or Cancelled inference.
+        if let Some(error) = admission.take_refusal() {
+            return Err(error);
+        }
+        let doc = loaded.map_err(|error| match error {
+            lopdf::Error::DecodeAdmission(DecodeAdmissionError::MemoryFloor {
+                needed,
+                available,
+            }) => PdfPreparationError::MemoryFloor { needed, available },
+            lopdf::Error::DecodeAdmission(_) => PdfPreparationError::Deadline,
+            other => match PdfPreparationError::from(other) {
+                PdfPreparationError::Limit => {
+                    PdfPreparationError::StreamPastCodecBound(STREAM_CODEC_ROW)
+                }
+                other => other,
+            },
+        })?;
+        let stream_bytes = admission
+            .max_decoded()
+            .max(uncompressed_xref_bytes(&doc, codec));
+        let mut base = Self::from_document(pdf, &doc)?;
+        base.producer_admission = Some(admission);
         Ok((base, stream_bytes))
     }
 
@@ -253,6 +338,17 @@ impl Base {
         operation_id: &str,
         now_ms: u64,
         capacity: usize,
+    ) -> Result<EsignSignatureRevision> {
+        self.revision_in(base_len, operation_id, now_ms, capacity, None)
+    }
+
+    fn revision_in(
+        &self,
+        base_len: usize,
+        operation_id: &str,
+        now_ms: u64,
+        capacity: usize,
+        budget: Option<&EsignInputBudget>,
     ) -> Result<EsignSignatureRevision> {
         let mut next = self
             .max_obj
@@ -267,9 +363,10 @@ impl Base {
         if u64::try_from(reserve).unwrap_or(u64::MAX) > MAX_CLASSIC_XREF_OFFSET {
             return Err(PdfPreparationError::Limit);
         }
-        let (sig_body, br_rel, lt_rel) = sig_dict_body(&pdf_date(now_ms), capacity)?;
-        let mut field = b"<< /FT /Sig /T ".to_vec();
-        write_literal_string(&field_name(operation_id), &mut field);
+        let (sig_body, br_rel, lt_rel) = sig_dict_body(&pdf_date(now_ms), capacity, budget)?;
+        let mut field = InputBytes::new(budget);
+        field.extend_from_slice(b"<< /FT /Sig /T ")?;
+        write_literal_string_admitted(&field_name(operation_id), &mut field)?;
         field.extend_from_slice(
             format!(
                 " /V {sig_num} 0 R /Type /Annot /Subtype /Widget \
@@ -277,7 +374,7 @@ impl Base {
                 self.first_page.0, self.first_page.1
             )
             .as_bytes(),
-        );
+        )?;
         let mut objects = vec![(sig_num, 0, sig_body), (field_num, 0, field)];
         let mut page = self.first_page_dict.clone();
         let mut annots = self.first_page_annots.clone();
@@ -286,26 +383,25 @@ impl Base {
         objects.push((
             self.first_page.0,
             self.first_page.1,
-            dictionary_bytes(page)?,
+            dictionary_bytes(page, budget)?,
         ));
-        self.register_field(&mut objects, &mut next, field_num)?;
+        self.register_field(&mut objects, &mut next, field_num, budget)?;
 
-        let mut out = Vec::new();
-        out.try_reserve_exact(reserve)
-            .map_err(|_| PdfPreparationError::Limit)?;
+        let mut out = InputBytes::new(budget);
+        out.reserve(reserve)?;
         if !self.pdf_ends_with_eol {
-            out.push(b'\n');
+            out.push(b'\n')?;
         }
         let mut written = Vec::with_capacity(objects.len());
         let mut patch = None;
         for (num, generation, body) in &objects {
             written.push((*num, *generation, (base_len + out.len()) as u64));
-            out.extend_from_slice(format!("{num} {generation} obj\n").as_bytes());
+            out.extend_from_slice(format!("{num} {generation} obj\n").as_bytes())?;
             if *num == sig_num {
                 patch = Some((out.len() + br_rel, base_len + out.len() + lt_rel));
             }
-            out.extend_from_slice(body);
-            out.extend_from_slice(b"\nendobj\n");
+            out.extend_from_slice(body)?;
+            out.extend_from_slice(b"\nendobj\n")?;
         }
         let (br_at, lt) = patch.ok_or(PdfPreparationError::Encoding)?;
         let max_used = written
@@ -314,8 +410,8 @@ impl Base {
             .max()
             .unwrap_or(self.max_obj);
         let xref_offset = (base_len + out.len()) as u64;
-        self.xref_table(&mut written, u64::from(max_used) + 1, &mut out);
-        out.extend_from_slice(format!("startxref\n{xref_offset}\n%%EOF").as_bytes());
+        self.xref_table(&mut written, u64::from(max_used) + 1, &mut out)?;
+        out.extend_from_slice(format!("startxref\n{xref_offset}\n%%EOF").as_bytes())?;
         let gt = lt
             .checked_add(1)
             .and_then(|value| value.checked_add(hole_digits))
@@ -339,7 +435,7 @@ impl Base {
             out[at..at + BYTERANGE_DIGITS].copy_from_slice(digits.as_bytes());
         }
         Ok(EsignSignatureRevision {
-            suffix: out,
+            suffix: out.finish(),
             byte_range,
         })
     }
@@ -348,9 +444,10 @@ impl Base {
     /// catalog) when it is absent, direct or dangling.
     fn register_field(
         &self,
-        objects: &mut Vec<(u32, u16, Vec<u8>)>,
+        objects: &mut Vec<(u32, u16, InputBytes)>,
         next: &mut u32,
         field_num: u32,
+        budget: Option<&EsignInputBudget>,
     ) -> Result<()> {
         if let (Some(id), Some(dict)) = (self.acroform, self.acroform_dict.clone()) {
             let mut form = dict;
@@ -358,7 +455,7 @@ impl Base {
             fields.push(Object::Reference((field_num, 0)));
             form.set(b"Fields", Object::Array(fields));
             form.set(b"SigFlags", Object::Integer(3));
-            objects.push((id.0, id.1, dictionary_bytes(form)?));
+            objects.push((id.0, id.1, dictionary_bytes(form, budget)?));
             return Ok(());
         }
         let form_num = next_obj(next)?;
@@ -371,39 +468,45 @@ impl Base {
         fields.push(Object::Reference((field_num, 0)));
         form.set(b"Fields", Object::Array(fields));
         form.set(b"SigFlags", Object::Integer(3));
-        objects.push((form_num, 0, dictionary_bytes(form)?));
+        objects.push((form_num, 0, dictionary_bytes(form, budget)?));
         let mut catalog = self.root_dict.clone();
         catalog.set(b"AcroForm", Object::Reference((form_num, 0)));
-        objects.push((self.root.0, self.root.1, dictionary_bytes(catalog)?));
+        objects.push((self.root.0, self.root.1, dictionary_bytes(catalog, budget)?));
         Ok(())
     }
 
-    fn xref_table(&self, written: &mut [(u32, u16, u64)], size: u64, out: &mut Vec<u8>) {
-        out.extend_from_slice(b"xref\n");
+    fn xref_table(
+        &self,
+        written: &mut [(u32, u16, u64)],
+        size: u64,
+        out: &mut InputBytes,
+    ) -> Result<()> {
+        out.extend_from_slice(b"xref\n")?;
         written.sort_by_key(|(num, _, _)| *num);
         for run in written.chunk_by(|a, b| b.0 == a.0 + 1) {
-            out.extend_from_slice(format!("{} {}\n", run[0].0, run.len()).as_bytes());
+            out.extend_from_slice(format!("{} {}\n", run[0].0, run.len()).as_bytes())?;
             for (_, generation, offset) in run {
-                out.extend_from_slice(format!("{offset:010} {generation:05} n\r\n").as_bytes());
+                out.extend_from_slice(format!("{offset:010} {generation:05} n\r\n").as_bytes())?;
             }
         }
-        out.extend_from_slice(b"trailer\n<< ");
-        out.extend_from_slice(format!("/Size {size} /Prev {} ", self.prev_startxref).as_bytes());
-        out.extend_from_slice(format!("/Root {} {} R ", self.root.0, self.root.1).as_bytes());
+        out.extend_from_slice(b"trailer\n<< ")?;
+        out.extend_from_slice(format!("/Size {size} /Prev {} ", self.prev_startxref).as_bytes())?;
+        out.extend_from_slice(format!("/Root {} {} R ", self.root.0, self.root.1).as_bytes())?;
         if let Some(info) = self.info {
-            out.extend_from_slice(format!("/Info {} {} R ", info.0, info.1).as_bytes());
+            out.extend_from_slice(format!("/Info {} {} R ", info.0, info.1).as_bytes())?;
         }
         if let Some(id) = &self.id {
-            out.extend_from_slice(b"/ID [");
+            out.extend_from_slice(b"/ID [")?;
             for item in id {
                 if let Object::String(bytes, _) = item {
-                    write_hex_string(bytes, out);
-                    out.push(b' ');
+                    write_hex_string_admitted(bytes, out)?;
+                    out.push(b' ')?;
                 }
             }
-            out.push(b']');
+            out.push(b']')?;
         }
-        out.extend_from_slice(b">>\n");
+        out.extend_from_slice(b">>\n")?;
+        Ok(())
     }
 }
 
@@ -415,22 +518,27 @@ fn next_obj(next: &mut u32) -> Result<u32> {
 
 /// The signature dictionary with a zero ByteRange and a `capacity`-byte
 /// hole, and the offsets of the ByteRange digits and the hole's `<`.
-fn sig_dict_body(date: &str, capacity: usize) -> Result<(Vec<u8>, usize, usize)> {
+fn sig_dict_body(
+    date: &str,
+    capacity: usize,
+    budget: Option<&EsignInputBudget>,
+) -> Result<(InputBytes, usize, usize)> {
     let digits = capacity.checked_mul(2).ok_or(PdfPreparationError::Limit)?;
     let reserve = digits.checked_add(256).ok_or(PdfPreparationError::Limit)?;
-    let mut body = Vec::new();
-    body.try_reserve_exact(reserve)
-        .map_err(|_| PdfPreparationError::Limit)?;
-    body.extend_from_slice(b"<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /ETSI.CAdES.detached");
-    body.extend_from_slice(b" /M ");
-    write_literal_string(date, &mut body);
-    body.extend_from_slice(b" /ByteRange [0 ");
+    let mut body = InputBytes::new(budget);
+    body.reserve(reserve)?;
+    body.extend_from_slice(
+        b"<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /ETSI.CAdES.detached",
+    )?;
+    body.extend_from_slice(b" /M ")?;
+    write_literal_string_admitted(date, &mut body)?;
+    body.extend_from_slice(b" /ByteRange [0 ")?;
     let br_rel = body.len();
-    body.extend_from_slice(b"00000000000000000000 00000000000000000000 00000000000000000000");
-    body.extend_from_slice(b"] /Contents <");
+    body.extend_from_slice(b"00000000000000000000 00000000000000000000 00000000000000000000")?;
+    body.extend_from_slice(b"] /Contents <")?;
     let lt_rel = body.len() - 1;
-    body.extend(std::iter::repeat_n(b'0', digits));
-    body.extend_from_slice(b"> >>");
+    body.zeros(digits)?;
+    body.extend_from_slice(b"> >>")?;
     Ok((body, br_rel, lt_rel))
 }
 
@@ -451,44 +559,46 @@ fn last_startxref(pdf: &[u8]) -> Result<u64> {
         .ok_or(PdfPreparationError::MalformedPdf)
 }
 
-fn dictionary_bytes(dict: Dictionary) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
+fn dictionary_bytes(dict: Dictionary, budget: Option<&EsignInputBudget>) -> Result<InputBytes> {
+    let mut out = InputBytes::new(budget);
     write_object(&Object::Dictionary(dict), &mut out)?;
     Ok(out)
 }
 
 /// The seal writer's serializer for the objects it re-emits. Streams are
 /// never re-emitted; they stay reachable by reference.
-fn write_object(object: &Object, out: &mut Vec<u8>) -> Result<()> {
+fn write_object(object: &Object, out: &mut InputBytes) -> Result<()> {
     match object {
-        Object::Null => out.extend_from_slice(b"null"),
-        Object::Boolean(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
-        Object::Integer(value) => out.extend_from_slice(value.to_string().as_bytes()),
+        Object::Null => out.extend_from_slice(b"null")?,
+        Object::Boolean(value) => out.extend_from_slice(if *value { b"true" } else { b"false" })?,
+        Object::Integer(value) => out.extend_from_slice(value.to_string().as_bytes())?,
         Object::Real(value) => write_real(*value, out)?,
-        Object::Name(name) => write_name(name, out),
-        Object::String(bytes, StringFormat::Literal) => write_literal_bytes(bytes, out),
-        Object::String(bytes, StringFormat::Hexadecimal) => write_hex_string(bytes, out),
+        Object::Name(name) => write_name_admitted(name, out)?,
+        Object::String(bytes, StringFormat::Literal) => write_literal_bytes_admitted(bytes, out)?,
+        Object::String(bytes, StringFormat::Hexadecimal) => write_hex_string_admitted(bytes, out)?,
         Object::Array(items) => {
-            out.push(b'[');
+            out.push(b'[')?;
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
-                    out.push(b' ');
+                    out.push(b' ')?;
                 }
                 write_object(item, out)?;
             }
-            out.push(b']');
+            out.push(b']')?;
         }
         Object::Dictionary(dict) => {
-            out.extend_from_slice(b"<< ");
+            out.extend_from_slice(b"<< ")?;
             for (key, value) in dict {
-                write_name(key, out);
-                out.push(b' ');
+                write_name_admitted(key, out)?;
+                out.push(b' ')?;
                 write_object(value, out)?;
-                out.push(b' ');
+                out.push(b' ')?;
             }
-            out.extend_from_slice(b">>");
+            out.extend_from_slice(b">>")?;
         }
-        Object::Reference(id) => out.extend_from_slice(format!("{} {} R", id.0, id.1).as_bytes()),
+        Object::Reference(id) => {
+            out.extend_from_slice(format!("{} {} R", id.0, id.1).as_bytes())?
+        }
         Object::Stream(_) => return Err(PdfPreparationError::UnsupportedPdf),
     }
     Ok(())
@@ -499,7 +609,7 @@ fn write_object(object: &Object, out: &mut Vec<u8>) -> Result<()> {
 /// integer. Six places would turn 0.0000004 into 0, and `0` would turn 0.0
 /// into an integer. An infinity, which lopdf reads from a decimal past f32,
 /// is written as such a decimal again.
-fn write_real(value: f32, out: &mut Vec<u8>) -> Result<()> {
+fn write_real(value: f32, out: &mut InputBytes) -> Result<()> {
     let text = if value.is_finite() {
         value.to_string()
     } else if value.is_infinite() {
@@ -508,9 +618,58 @@ fn write_real(value: f32, out: &mut Vec<u8>) -> Result<()> {
     } else {
         return Err(PdfPreparationError::MalformedPdf);
     };
-    out.extend_from_slice(text.as_bytes());
+    out.extend_from_slice(text.as_bytes())?;
     if !text.contains('.') {
-        out.extend_from_slice(b".0");
+        out.extend_from_slice(b".0")?;
     }
+    Ok(())
+}
+
+/// A literal string as the same literal string: `(`, `)` and `\` escaped,
+/// and every byte outside printable ASCII as a three-digit octal escape, so
+/// no raw end of line is read back as another.
+fn write_literal_bytes_admitted(bytes: &[u8], out: &mut InputBytes) -> Result<()> {
+    out.push(b'(')?;
+    for &byte in bytes {
+        match byte {
+            b'(' | b')' | b'\\' => out.extend_from_slice(&[b'\\', byte])?,
+            b' '..=b'~' => out.push(byte)?,
+            _ => out.extend_from_slice(format!("\\{byte:03o}").as_bytes())?,
+        }
+    }
+    out.push(b')')?;
+    Ok(())
+}
+
+fn write_name_admitted(name: &[u8], out: &mut InputBytes) -> Result<()> {
+    out.push(b'/')?;
+    for &byte in name {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'+' | b'*') {
+            out.push(byte)?;
+        } else {
+            out.extend_from_slice(format!("#{byte:02X}").as_bytes())?;
+        }
+    }
+    Ok(())
+}
+
+fn write_hex_string_admitted(bytes: &[u8], out: &mut InputBytes) -> Result<()> {
+    out.push(b'<')?;
+    for byte in bytes {
+        out.extend_from_slice(format!("{byte:02X}").as_bytes())?;
+    }
+    out.push(b'>')?;
+    Ok(())
+}
+
+fn write_literal_string_admitted(text: &str, out: &mut InputBytes) -> Result<()> {
+    out.push(b'(')?;
+    for &byte in text.as_bytes() {
+        if matches!(byte, b'(' | b')' | b'\\') {
+            out.push(b'\\')?;
+        }
+        out.push(byte)?;
+    }
+    out.push(b')')?;
     Ok(())
 }

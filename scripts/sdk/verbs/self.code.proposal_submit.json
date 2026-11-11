@@ -1,0 +1,8 @@
+{
+  "name": "self.code.proposal_submit",
+  "input": "crate::memory::repo_doors::RepoProposalSubmitInput",
+  "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "RepoProposalSubmit"
+}

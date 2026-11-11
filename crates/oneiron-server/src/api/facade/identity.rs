@@ -118,6 +118,68 @@ pub(super) fn facade_invocation<'v>(
     })
 }
 
+/// What a paced host door keeps of its call (FIX 8753): the invocation,
+/// the door the call came in by and, on the drain's run of a held call, the
+/// drain's permit. Owned, so the door's blocking hop carries it: a full
+/// budget window holds the call in its caller's paced line, and the drain's
+/// run of it runs there as its turn. A facade call keeps its facade door; a
+/// tool-first MCP call keeps its MCP door (FIX 22259).
+#[derive(Clone)]
+pub(crate) struct FacadePacedCall {
+    invocation: Option<InvocationId>,
+    door: VerbAskDoor,
+    drain: Option<VerbAskDrainPermit>,
+}
+
+impl FacadePacedCall {
+    /// The paced context of `call`.
+    pub(super) fn of(call: &FacadeCall<'_>) -> Result<Self, FacadeApiError> {
+        Ok(Self {
+            invocation: call.invocation()?,
+            door: VerbAskDoor::Facade {
+                room: call.room_turn()?,
+            },
+            drain: call.drain().cloned(),
+        })
+    }
+
+    /// The paced context of a tool-first MCP call under `invocation`, by
+    /// `door`, with the drain's permit on its run of that invocation (FIX
+    /// 22259).
+    pub(crate) fn mcp(
+        invocation: InvocationId,
+        door: VerbAskDoor,
+        drain: Option<VerbAskDrainPermit>,
+    ) -> Self {
+        Self {
+            invocation: Some(invocation),
+            door,
+            drain,
+        }
+    }
+
+    /// `memory` bound to this call's invocation and the door it came in by,
+    /// as [`facade_invocation`] binds a plain row's.
+    pub(in crate::api::facade) fn bind<'v>(
+        &self,
+        memory: oneiron::Memory<'v>,
+    ) -> oneiron::Memory<'v> {
+        let memory = memory.with_credential_door(self.door.clone());
+        match self.invocation {
+            Some(invocation) => memory.with_invocation(invocation),
+            None => memory,
+        }
+    }
+
+    /// The drain's scope on the thread that runs the call, when the drain
+    /// runs it: held until dropped.
+    pub(in crate::api::facade) fn enter_drain(
+        &self,
+    ) -> Option<oneiron::runtime_hooks::verb::VerbAskDrainScope> {
+        self.drain.as_ref().map(VerbAskDrainPermit::enter)
+    }
+}
+
 /// The proof a write carries when the vault's owner makes it in person, on the
 /// owner's own undelegated full slip: owner-authored writes carry their own
 /// confirmation. `None` for any other credential, which writes as itself. The

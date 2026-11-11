@@ -195,7 +195,7 @@ impl Vault {
             decision.answer = held.answer.clone();
             decision.probability = None;
             decision.in_band = false;
-            decision.receipt.bind_ask(&ask);
+            crate::llm::decision::decision_receipt_bind_ask(&mut decision.receipt, &ask);
             let answer = AnswerRecord {
                 claim: EntityId::now(),
                 unit: row.unit,

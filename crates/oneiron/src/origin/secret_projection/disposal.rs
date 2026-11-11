@@ -98,15 +98,24 @@ fn collect_unowned(vault: &Vault) -> Result<usize> {
     let retiring = {
         let txn = vault.store.env.read_txn()?;
         let facts = RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?;
+        let witness = vault.store.known_history_witness_in_txn(&txn)?;
         let mut retiring = Vec::new();
         for (_, graph, _) in copies {
             let Some(claim) = RepoProjectionClaim::load_graph_in_txn(vault, &txn, &graph)? else {
                 continue;
             };
-            let RepoProjectionRecord::Graph { store_id, .. } = &claim.record else {
+            let RepoProjectionRecord::Graph {
+                store_id,
+                known_history,
+                ..
+            } = &claim.record
+            else {
                 continue;
             };
+            // FIX 8966: a copy masked against values custody no longer
+            // knows exactly is never admitted again.
             let stale = repo_projection_store_erased_in_txn(vault, &txn, store_id)?
+                || *known_history != witness
                 || !closure_marks_stand_in_txn(vault, &txn, &claim, &facts)?;
             if stale && !owned_in_txn(vault, &txn, &graph)? {
                 retiring.push((graph, *store_id));

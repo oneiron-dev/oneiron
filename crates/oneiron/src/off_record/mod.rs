@@ -31,6 +31,7 @@ pub mod anonymous_chat;
 mod lifecycle;
 mod promote;
 mod run_view;
+pub(crate) mod tables;
 
 pub use lifecycle::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordCreator,
@@ -59,9 +60,15 @@ pub(crate) use lifecycle::SaverCheck;
 /// the recall host reach the room's telemetry handles through this path; the
 /// type stays crate-private, so no public surface gains a session channel.
 pub(crate) use lifecycle::SessionRetrievalTelemetry;
+#[cfg(unix)]
+pub(crate) use lifecycle::{
+    LiveSessionSpillIdentity, LiveSpillRetention, PublishedSessionSpill, WrittenSessionSpill,
+    WrittenSpillMetadata,
+};
 /// FIX 4280/4281: a room NOTE where its room holds it, and what a room
-/// write stages beside its row.
-pub(crate) use lifecycle::{RoomNote, RoomRowAttachments};
+/// write stages beside its row; FIX 4818: a room row prepared before the
+/// write segment that stages it.
+pub(crate) use lifecycle::{PreparedSessionRows, RoomNote, RoomRowAttachments};
 /// `FloorWrites` lives in `promote.rs` from ONE-1728 on; this re-export keeps
 /// the `crate::off_record::FloorWrites` path stable, so the `gate.rs` and
 /// `deletion.rs` call sites are diff-quiet across the move.

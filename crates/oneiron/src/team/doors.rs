@@ -191,16 +191,7 @@ pub struct PlannedSpawnRead {
 
 /// A coordination pattern by its word, as a plan, a team start or a team
 /// receipt stored it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CoordinationPatternView {
-    Solo,
-    CeoDecides,
-    Committee,
-    Vote,
-    Market,
-    Rotation,
-}
+pub use crate::code_run::SpawnPattern as CoordinationPatternView;
 
 impl From<CoordinationPattern> for CoordinationPatternView {
     fn from(pattern: CoordinationPattern) -> Self {
@@ -223,6 +214,7 @@ impl From<TeamPattern> for CoordinationPatternView {
             TeamPattern::Vote => Self::Vote,
             TeamPattern::Market => Self::Market,
             TeamPattern::Rotation => Self::Rotation,
+            TeamPattern::Solo => Self::Solo,
         }
     }
 }
@@ -308,6 +300,9 @@ pub struct LaunchedMember {
     /// The team its dispatch froze, which a leader's may predate.
     #[serde(default)]
     pub team_ref: Option<String>,
+    /// The caller origin the dispatch froze (FIX 4973): provenance only,
+    /// read from the attempt's own input, never the reading host's.
+    pub caller_origin: crate::agent_dispatch::CallerOrigin,
 }
 
 /// The team the frozen plan resolved to, given only when the one team the

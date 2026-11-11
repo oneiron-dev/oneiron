@@ -156,7 +156,10 @@ fn classify(
         (Some(ShapeRow::Member { role: was, .. }), Some(ShapeRow::Member { role: now, .. })) => {
             if *was == ShapeMemberRole::Owner || *now == ShapeMemberRole::Owner {
                 Authority
-            } else if now.reach() > was.reach() {
+            } else if now.reach() > was.reach()
+                // A Steward made a Member gains `write`, which no Steward holds.
+                || (*was == ShapeMemberRole::Steward && *now == ShapeMemberRole::Member)
+            {
                 Widening
             } else {
                 Receipted
@@ -384,12 +387,11 @@ impl Vault {
             .collect();
 
         let mut pending = Vec::new();
-        let read = self.store.env.read_txn()?;
         for (index, row) in seed.rows.iter().enumerate() {
             let target = row.target();
             // A declaration withheld from the caller is not missing
             // structure to create (FIX 10199): it plans as nothing.
-            if self.shape_target_withheld(&read, &target, &live.withheld, visible)? {
+            if self.shape_target_withheld(&target, &live.withheld, visible)? {
                 continue;
             }
             let before = by_target.get(&target).copied();
@@ -403,7 +405,6 @@ impl Vault {
             };
             pending.push((target, index, change, before, after));
         }
-        drop(read);
         // Retire lines land last; the rest go structure first, then seed order.
         pending.sort_by_key(|(target, index, change, ..)| {
             (*change == ShapeChange::Retire, target.rank(), *index)
@@ -444,6 +445,10 @@ impl Vault {
         let after = live
             .reach
             .with_plan(&items, sends.as_ref(), &mut unresolved);
+        // Both sides as the caller reads them, judged before the naming
+        // snapshot opens: `visible` opens its own (FIX 21880).
+        let before_reach = reach_projection(&live.reach).visible(visible)?;
+        let after_reach = reach_projection(&after).visible(visible)?;
         // Both sides named in one read, so a name reads the same on each.
         let txn = self.store.env.read_txn()?;
         let mut name = |reference: &str| -> Result<Option<String>> {
@@ -456,12 +461,8 @@ impl Vault {
             Ok(found)
         };
         let reach = ShapePlanReach::of(
-            reach_projection(&live.reach)
-                .visible(visible)?
-                .named(&mut name)?,
-            reach_projection(&after)
-                .visible(visible)?
-                .named(&mut name)?,
+            before_reach.named(&mut name)?,
+            after_reach.named(&mut name)?,
             unresolved,
         );
         let pin = approval_dependencies(&live);

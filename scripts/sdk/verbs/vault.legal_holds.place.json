@@ -1,0 +1,16 @@
+{
+  "name": "vault.legal_holds.place",
+  "description": "The owner places a customer legal hold on the named records or gate partitions.",
+  "input": "crate::task_verb::sdk::LegalHoldPlaceRequest",
+  "output": "crate::deletion::LegalHold",
+  "call": "crate::task_verb::sdk::place_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.place\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

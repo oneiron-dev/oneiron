@@ -24,9 +24,10 @@
 //! to the target in a live key session, and every holder's copy is retired
 //! after an erase ([`key_transit`]).
 //!
-//! The election records its move request and L07-A's six tables register
-//! ([`home_tables`]). C2a's delivery ([`delivery`]) carries the handoff: the
-//! target's engine doors on the residence RPC lane
+//! The election records its move request; L07-A's six tables and the
+//! Coach's topology-audit section (FIX 7817) register ([`home_tables`]).
+//! C2a's delivery ([`delivery`]) carries the handoff: the target's engine
+//! doors on the residence RPC lane
 //! (`sync::residence::home_handoff`) and the source's connection worker
 //! (`sync::connection::home_handoff`). C2b orders both ends and restore
 //! around it: the new home adopts a staged handoff, or records that none

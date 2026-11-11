@@ -34,6 +34,7 @@ pub fn txn_segment_installed() -> bool {
 pub(super) use self::held::PlanCharge;
 pub(super) use self::lifecycle::Lease;
 pub use self::lifecycle::SessionOverlay;
+pub use self::retrieval_erase::RecordMetaRows;
 pub use self::segment::TxnSegmentGuard;
 
 #[cfg(test)]

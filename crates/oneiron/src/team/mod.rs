@@ -15,6 +15,7 @@
 pub mod spawn_need;
 pub mod team_shape;
 pub(crate) use crate::claim::dispatch_input as widen_record;
+pub(crate) mod ballot;
 mod choice_learning;
 mod door_reads;
 pub mod doors;
@@ -26,9 +27,11 @@ pub mod payoff;
 pub mod receipt;
 pub mod run;
 pub mod run_binding;
+pub mod solo;
 mod spawn_intent;
 pub mod spawn_override;
 pub mod stack;
+pub(crate) mod tables;
 pub mod task_exposure;
 
 pub(crate) use choice_learning::{ChoiceLearning, LearnedChoice};
@@ -63,12 +66,13 @@ pub use receipt::{
 pub(crate) use receipt::{ReceiptScan, team_receipts_in_txn};
 pub use run::{
     SelfTeamCall, TeamCoverageInput, TeamDecisionInput, TeamMemberAnswer, TeamMemberInput,
-    TeamRecordInput, TeamRunAnswer, TeamStartInput,
+    TeamRecordInput, TeamRunAnswer, TeamStartInput, TeamVoteInput,
 };
 pub use run_binding::{
     TeamRunBinding, record_team_start, record_team_start_in_txn, team_run_binding,
     team_run_binding_in_txn, team_spawn_context_for_attempt, team_spawn_context_for_attempt_in_txn,
 };
+pub use solo::record_solo_receipt;
 pub use spawn_intent::{
     ErasedPackSpan, FrozenPackFile, FrozenPatternPack, LeasedSpawnRequest, PlannedIntentView,
     PlannedLeaderLaunch, PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure, SpawnPhase,

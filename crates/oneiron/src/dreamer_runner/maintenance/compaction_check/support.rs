@@ -12,7 +12,6 @@
 use std::time::{Duration, Instant};
 
 use super::{CompactionCheckModel, CompactionCheckVerdict, Judging, judge_shell};
-use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause, DreamerRunnerStore};
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
@@ -22,7 +21,7 @@ use crate::model_decision::catalogue::COMPACTION_SUPPORT;
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, ProviderPin, Reversibility,
 };
-use crate::model_step_context::DurableStepContext;
+use crate::model_step_context::{DurableStepContext, StepEffectBinding};
 use crate::model_step_error::DurableStepError;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result, Vault};
@@ -56,7 +55,7 @@ pub struct CompactionCheckDecisions<'a> {
 #[derive(Default)]
 pub(super) struct Spend {
     pub(super) units: u64,
-    step_hashes: Vec<[u8; 32]>,
+    step_bindings: Vec<StepEffectBinding>,
 }
 
 impl Spend {
@@ -65,10 +64,10 @@ impl Spend {
     pub(super) fn of(judging: &Judging) -> Self {
         Self {
             units: judging.units,
-            step_hashes: if judging.memoized {
+            step_bindings: if judging.memoized {
                 Vec::new()
             } else {
-                vec![judging.step_hash]
+                vec![judging.binding]
             },
         }
     }
@@ -76,7 +75,7 @@ impl Spend {
     /// Hands this spend to the meter before an `Err`, so the driver
     /// charges what the shared pass line lent (FIX 11558).
     pub(super) fn note_before_error(&self, ctx: &WakeAttemptContext<'_>) {
-        ctx.note_spend_before_error(self.units, &self.step_hashes);
+        ctx.note_spend_before_error(self.units, &self.step_bindings);
     }
 
     /// Books each generation in `spent` that neither this spend nor an
@@ -84,27 +83,31 @@ impl Spend {
     fn book(
         &mut self,
         vault: &Vault,
-        attempt: AttemptId,
-        spent: &[([u8; 32], LlmUsage, bool)],
+        spent: &[([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)],
     ) -> Result<()> {
         let store = DreamerRunnerStore::new(vault);
-        for (index, (hash, usage, _)) in spent.iter().enumerate() {
-            if self.step_hashes.contains(hash)
-                || match store.checkpoint_step_charged(attempt, hash) {
-                    Ok(charged) => charged,
-                    Err(error) => {
-                        for (_, usage, memoized) in &spent[index..] {
-                            if !*memoized {
-                                self.units = self.units.saturating_add(units(usage));
-                            }
-                        }
-                        return Err(error);
-                    }
+        for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
+            if let Some(binding) = binding {
+                if self.step_bindings.contains(binding) {
+                    continue;
                 }
-            {
-                continue;
+                let charged =
+                    match store.checkpoint_step_charged(binding.attempt_id, &binding.step_hash) {
+                        Ok(charged) => charged,
+                        Err(error) => {
+                            for (_, usage, _, memoized) in &spent[index..] {
+                                if !*memoized {
+                                    self.units = self.units.saturating_add(units(usage));
+                                }
+                            }
+                            return Err(error);
+                        }
+                    };
+                if charged {
+                    continue;
+                }
+                self.step_bindings.push(*binding);
             }
-            self.step_hashes.push(*hash);
             self.units = self.units.saturating_add(units(usage));
         }
         Ok(())
@@ -115,7 +118,7 @@ impl Spend {
     pub(super) fn completed(self) -> DreamerAttemptExecution {
         DreamerAttemptExecution::Completed {
             completed_units: self.units,
-            step_hashes: self.step_hashes,
+            step_bindings: self.step_bindings,
         }
     }
 
@@ -129,14 +132,14 @@ impl Spend {
             reason: reason.to_owned(),
             cause,
             completed_units: self.units,
-            step_hashes: self.step_hashes,
+            step_bindings: self.step_bindings,
         }
     }
 
     /// The attempt parked for `reason`; a plain park while nothing was
     /// spent.
     fn park(self, reason: &str, cause: DreamerParkCause) -> DreamerAttemptExecution {
-        if self.units == 0 && self.step_hashes.is_empty() {
+        if self.units == 0 && self.step_bindings.is_empty() {
             DreamerAttemptExecution::Park {
                 reason: reason.to_owned(),
                 cause,
@@ -171,7 +174,10 @@ impl Spend {
                 self.park("wake pass finalize window", DreamerParkCause::Checkpoint)
             }
             DurableStepError::Engine(error) => return Err(error),
-            other => self.park(&other.to_string(), DreamerParkCause::of_step(&other)),
+            other => self.park(
+                &other.to_string(),
+                crate::dreamer_runner::dreamer_park_cause_of_step(&other),
+            ),
         })
     }
 }
@@ -195,6 +201,8 @@ pub(super) struct Ask<'a> {
     pub(super) locality: ModelLocality,
     /// Host-attested keyless bit, read beside the locality stamp (FIX 10592).
     pub(super) keyless: bool,
+    /// Host-attested paid bit, read beside the keyless one (FIX 18407).
+    pub(super) paid: bool,
 }
 
 /// The verdict a check records, the typed decision behind it and what its
@@ -284,7 +292,13 @@ pub(super) async fn verdict(
             step: &step,
             guard: model.guard,
         },
-        request: judge_shell(model, serde_json::json!({}), ask.locality, ask.keyless),
+        request: judge_shell(
+            model,
+            serde_json::json!({}),
+            ask.locality,
+            ask.keyless,
+            ask.paid,
+        ),
         seal: &seal,
     };
     let deadline = RetrievalDeadline::hard(
@@ -309,7 +323,14 @@ pub(super) async fn verdict(
         )
         .await;
     // Every generation that finished is spent, whatever the pack's outcome.
-    spend.book(ctx.vault, attempt_id, &spent).map_err(|error| {
+    spend.book(ctx.vault, &spent).map_err(|error| {
+        if let Some(usage) = decided
+            .as_ref()
+            .err()
+            .and_then(DurableStepError::spent_usage)
+        {
+            spend.units = spend.units.saturating_add(units(usage));
+        }
         spend.note_before_error(ctx);
         error
     })?;

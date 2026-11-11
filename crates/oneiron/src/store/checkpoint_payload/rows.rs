@@ -22,15 +22,18 @@
 //! the actor. Nothing calls a getter yet: projection (KS7-2b) and capture and
 //! restore (KS7-5) do, once [`super::CHECKPOINT_PAYLOADS_ENABLED`] is on.
 
+mod class;
 mod frame;
 mod restore;
 mod typed;
 
 use std::collections::BTreeMap;
 
+pub(crate) use self::class::{Carrier, Class, Client, Getter};
 pub(crate) use self::frame::{frame_actor_parts, frame_owner, read_actor_parts};
 pub(crate) use self::restore::{
-    OpenedOwnerRows, Restored, no_join, restore_parts, restore_parts_keyed, restore_row_in_txn,
+    OpenedOwnerRows, Restored, actor_keyed_row, no_join, restore_parts, restore_parts_keyed,
+    restore_row_in_txn,
 };
 pub(crate) use self::typed::{
     ACTOR_KEYED_ROW, NOT_SPELLED_BACK, RoundTripPolicy, TypedRow, actor_keyed, admit_round_trip,

@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.origin.mirror.set",
+  "description": "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked.",
+  "input": "crate::memory::origin_doors::OriginMirrorSetRequest",
+  "output": "crate::origin::mirror::OriginMirrorTarget",
+  "call": "memory.origin_mirror_set_as(&memory.embedded_owner(\"vault.code.origin.mirror.set\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

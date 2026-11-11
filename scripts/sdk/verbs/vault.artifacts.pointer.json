@@ -1,0 +1,16 @@
+{
+  "name": "vault.artifacts.pointer",
+  "description": "Reads the current artifact channel pin and audience under the owner credential; null when absent or withheld.",
+  "input": "crate::artifact_hosting::door_types::ArtifactPointerRequest",
+  "output": "Option<crate::artifact_hosting::ArtifactPointer>",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.pointer\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

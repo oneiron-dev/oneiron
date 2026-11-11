@@ -77,6 +77,7 @@ pub enum SelfEffect {
     RepoSnapshotsGet,
     RepoSnapshotsRead,
     RepoSymbolsDefinitions,
+    RepoSymbolsNeighbors,
     RepoViewsGet,
     RepoViewsRead,
     RepoMergeQueueObserve,
@@ -88,6 +89,7 @@ pub enum SelfEffect {
     RepoSymbolsRenew,
     RepoSymbolsRelease,
     RepoProposalSubmit,
+    RepoProposalResolve,
     RepoMergeQueueEnqueue,
     /// The run's checkout binding and export (FIX 6867, G1 PR3b).
     RepoCheckoutBind,
@@ -138,6 +140,7 @@ impl SelfEffect {
             Self::RepoSnapshotsGet => "self.code.snapshots.get",
             Self::RepoSnapshotsRead => "self.code.snapshots.read",
             Self::RepoSymbolsDefinitions => "self.code.symbols.definitions",
+            Self::RepoSymbolsNeighbors => "self.code.symbols.neighbors",
             Self::RepoViewsGet => "self.code.views.get",
             Self::RepoViewsRead => "self.code.views.read",
             Self::RepoMergeQueueObserve => "self.code.merge_queue.observe",
@@ -147,6 +150,7 @@ impl SelfEffect {
             Self::RepoSymbolsRenew => "self.code.symbols.renew",
             Self::RepoSymbolsRelease => "self.code.symbols.release",
             Self::RepoProposalSubmit => "self.code.proposal_submit",
+            Self::RepoProposalResolve => "self.code.proposal_resolve",
             Self::RepoMergeQueueEnqueue => "self.code.merge_queue.enqueue",
             Self::RepoCheckoutBind => "self.code.checkout.bind",
             Self::RepoExport => "self.code.export",
@@ -196,6 +200,7 @@ impl SelfEffect {
             Self::RepoSnapshotsGet
             | Self::RepoSnapshotsRead
             | Self::RepoSymbolsDefinitions
+            | Self::RepoSymbolsNeighbors
             | Self::RepoViewsGet
             | Self::RepoViewsRead
             | Self::RepoMergeQueueObserve
@@ -205,6 +210,7 @@ impl SelfEffect {
             | Self::RepoSymbolsRenew
             | Self::RepoSymbolsRelease
             | Self::RepoProposalSubmit
+            | Self::RepoProposalResolve
             | Self::RepoMergeQueueEnqueue
             | Self::RepoCheckoutBind
             | Self::RepoExport => None,

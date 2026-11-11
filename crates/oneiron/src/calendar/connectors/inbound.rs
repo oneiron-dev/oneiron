@@ -1,7 +1,9 @@
 //! Pull orchestration: apply, admit, enqueue, and reconcile.
 
 use super::door::CalendarConnectorOperation;
-use super::outbound::{CalendarRemoteObjectRow, ingest_error, write_remote_object};
+use super::outbound::{
+    CalendarRemoteObjectRow, ingest_error, omission_observed, write_remote_object,
+};
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
     RemoteCalendarObject, classify_remote_change, parse_remote_object,
@@ -14,9 +16,12 @@ use super::seat::{
 use crate::attempt_queue::EnqueueAttempt;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::CalendarPassportPresence;
-use crate::calendar::ingest::{admit_calendar_import_claim, admit_calendar_import_claim_in_txn};
+use crate::calendar::ingest::{
+    ConnectorAdmissionSource, ConnectorScreen, admit_calendar_import_claim,
+    admit_calendar_import_claim_in_txn,
+};
 use crate::calendar::passport::live_passport_for;
-use crate::calendar::safeguard::{CalendarInboundBody, screen_then_claim};
+use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::entity_id::EntityId;
 use crate::vault::Vault;
 
@@ -29,6 +34,10 @@ use crate::vault::Vault;
 /// Gate-backed imported-evidence door, and re-enqueues one attempt inside the
 /// configured jitter window.
 ///
+/// The safeguard dial is off and no screener runs. An owner's pull
+/// ([`run_calendar_connector_sync_with_screener`]) runs under the owner's
+/// CAL-09 dial instead.
+///
 /// # Errors
 ///
 /// [`CalendarConnectorError`] for seat, transport, parse, timezone, and store
@@ -37,6 +46,35 @@ pub fn run_calendar_connector_sync(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
+    now: u64,
+    jitter_seed: u64,
+) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
+    run_calendar_connector_sync_with_screener(
+        vault,
+        operation,
+        transport,
+        None,
+        false,
+        now,
+        jitter_seed,
+    )
+}
+
+/// [`run_calendar_connector_sync`] with CAL-09's safeguard wired, as a feed
+/// poll wires it: when `safeguard_enabled`, `screener` (or its recorded
+/// absence) produces a verdict immediately before every imported-claim
+/// admission the pull makes, its absence sweeps and remote deletions
+/// included.
+///
+/// # Errors
+///
+/// Same contract as [`run_calendar_connector_sync`].
+pub fn run_calendar_connector_sync_with_screener(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    transport: &dyn CalendarRemoteTransport,
+    screener: Option<&dyn CalendarBodyScreener>,
+    safeguard_enabled: bool,
     now: u64,
     jitter_seed: u64,
 ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
@@ -54,6 +92,10 @@ pub fn run_calendar_connector_sync(
         seat.cursor.as_deref(),
     )?;
 
+    let screen = ConnectorScreen {
+        screener,
+        safeguard_enabled,
+    };
     let mut counters = SyncCounters::default();
     for change in &batch.changes {
         apply_remote_change(
@@ -62,23 +104,34 @@ pub fn run_calendar_connector_sync(
             seat,
             transport.provider_key(),
             change,
+            screen,
             now,
             &mut counters,
         )?;
     }
 
+    // An omission a write in flight or a moved row holds back stays owed:
+    // every other change of this pull stands, and the next pull lists the
+    // calendar whole again, so the omission is read again, never dropped
+    // (fix list row 19192).
+    let next_cursor = match batch.next_cursor {
+        Some(cursor) if counters.owed_omissions > 0 => {
+            Some(transport.cursor_owing_full_listing(&cursor))
+        }
+        cursor => cursor,
+    };
     let next_not_before = seat.jittered_next_poll_at(now, jitter_seed)?;
     enqueue_next_sync(
         vault,
         seat,
         transport.provider_key(),
-        batch.next_cursor.clone(),
+        next_cursor.clone(),
         next_not_before,
         now,
     )?;
 
     Ok(CalendarSyncOutcome::Reenqueued {
-        next_cursor: batch.next_cursor,
+        next_cursor,
         next_not_before,
         applied: counters.applied,
         acknowledged: counters.acknowledged,
@@ -94,15 +147,20 @@ struct SyncCounters {
     acknowledged: u32,
     source_absences: u32,
     status_cancellations: u32,
+    /// Omissions a write in flight or a moved row held back (fix list row
+    /// 19192).
+    owed_omissions: u32,
 }
 
-/// Applies one pulled change under the echo law.
+/// Applies one pulled change under the echo law, each admission under
+/// `screen`.
 fn apply_remote_change(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     seat: &CalendarConnectorSeatState,
     provider: &'static str,
     change: &RemoteCalendarChange,
+    screen: ConnectorScreen<'_>,
     now: u64,
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
@@ -120,7 +178,7 @@ fn apply_remote_change(
             let source = pull_source_record_id(provider, seat, &primary.uid);
             // Archived before any semantic write, once the bytes are known to
             // parse: a later write renders over exactly this copy.
-            let source_blob_ref = super::resource::archive_remote_source(
+            let archived = super::resource::archive_remote_source(
                 vault,
                 system,
                 &seat.config.calendar_ref,
@@ -128,7 +186,14 @@ fn apply_remote_change(
                 &object.ics,
                 now,
             )?;
+            let source_blob_ref = archived.blob_ref();
             crate::calendar::ingest::preflight_connector_feed(vault, system, &source, &feed, now)?;
+            let admission_source = ConnectorAdmissionSource {
+                record: source.as_str(),
+                source_version: Some(source_blob_ref.as_str()),
+                screen,
+                source: Some(archived),
+            };
             for parsed in &feed.events {
                 let normalized = RemoteCalendarChange::Upsert(RemoteCalendarObject {
                     href: object.href.clone(),
@@ -151,10 +216,7 @@ fn apply_remote_change(
                         crate::calendar::ingest::admit_connector_event(
                             vault,
                             system,
-                            crate::calendar::ingest::ConnectorAdmissionSource {
-                                record: source.as_str(),
-                                source_version: Some(source_blob_ref.as_str()),
-                            },
+                            admission_source,
                             parsed,
                             now,
                         )?;
@@ -168,7 +230,7 @@ fn apply_remote_change(
             crate::calendar::ingest::sweep_connector_resource(
                 vault,
                 system,
-                &source,
+                admission_source,
                 &feed,
                 &primary.uid,
                 now,
@@ -197,9 +259,50 @@ fn apply_remote_change(
                 classify_remote_change(None, change),
                 EchoDisposition::ApplyRemoteDeletion
             );
-            apply_remote_deletion(vault, seat, provider, uid, now, counters)
+            apply_remote_deletion(
+                vault,
+                seat,
+                provider,
+                uid,
+                RemovalEvidence::Tombstone,
+                screen,
+                now,
+                counters,
+            )
+        }
+        RemoteCalendarChange::Omitted {
+            uid, observation, ..
+        } => {
+            // Fix list row 19192: checked inside this turn, which a write's
+            // prepared row is published in too, so the row and the outbox
+            // are the ones the absence lands against.
+            operation.revalidate(vault)?;
+            if !omission_observed(vault, operation, uid, *observation)? {
+                counters.owed_omissions += 1;
+                return Ok(());
+            }
+            apply_remote_deletion(
+                vault,
+                seat,
+                provider,
+                uid,
+                RemovalEvidence::Omission,
+                screen,
+                now,
+                counters,
+            )
         }
     }
+}
+
+/// What says a remote resource is gone.
+#[derive(Clone, Copy)]
+enum RemovalEvidence {
+    /// The provider's own tombstone: an explicit cancellation.
+    Tombstone,
+    /// A full listing that no longer carries it (fix list row 19192): an
+    /// absence, as an omitted feed item is.
+    Omission,
 }
 
 /// A remote deletion marks exactly one source's passport absent, once.
@@ -209,11 +312,17 @@ fn apply_remote_change(
 /// supersedes only that passport, never the EVENT status. The EVENT is never
 /// deleted, CAL-07's outcome predicate is never written, and no delete is bounced
 /// back to any provider.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a removal's evidence and its pull's screen meet the one passport sweep"
+)]
 fn apply_remote_deletion(
     vault: &Vault,
     seat: &CalendarConnectorSeatState,
     provider: &'static str,
     uid: &str,
+    evidence: RemovalEvidence,
+    screen: ConnectorScreen<'_>,
     now: u64,
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
@@ -242,13 +351,29 @@ fn apply_remote_deletion(
         }
         after = ids.last().copied();
     }
-    crate::calendar::ingest::delete_connector_resource(
-        vault,
-        &seat.config.system,
-        &pull_source_record_id(provider, seat, uid),
-        uid,
-        now,
-    )?;
+    let record = pull_source_record_id(provider, seat, uid);
+    let source = ConnectorAdmissionSource {
+        record: &record,
+        source_version: None,
+        screen,
+        source: None,
+    };
+    match evidence {
+        RemovalEvidence::Tombstone => crate::calendar::ingest::delete_connector_resource(
+            vault,
+            &seat.config.system,
+            source,
+            uid,
+            now,
+        )?,
+        RemovalEvidence::Omission => crate::calendar::ingest::sweep_connector_uids(
+            vault,
+            &seat.config.system,
+            source,
+            &std::collections::BTreeSet::from([uid]),
+            now,
+        )?,
+    }
     counters.source_absences += absent_count;
     for (event, was_cancelled) in newly_absent {
         if !was_cancelled && imported_cancellation(vault, event)? {
@@ -389,6 +514,11 @@ pub(super) fn reconcile_remote_object(
         let Ok(parsed) = parse_remote_object(object) else {
             continue;
         };
+        // The whole resource's hash, as a pull stores it, so a full
+        // listing's omission sweep reads this row as the archived copy.
+        let Ok(content_hash) = super::remote::ics_content_hash(&object.ics, uid) else {
+            continue;
+        };
         // The refreshed copy is the base a rebased write renders over.
         let source_blob_ref = super::resource::archive_remote_source(
             vault,
@@ -398,7 +528,8 @@ pub(super) fn reconcile_remote_object(
             &object.ics,
             now,
         )
-        .ok();
+        .ok()
+        .map(|source| source.blob_ref());
         let _ = write_remote_object(
             vault,
             operation,
@@ -409,7 +540,7 @@ pub(super) fn reconcile_remote_object(
                 href: Some(object.href.clone()),
                 etag: object.etag.clone(),
                 last_sequence: parsed.sequence,
-                content_hash: parsed.content_hash,
+                content_hash,
                 last_seen_at: now,
                 source_blob_ref,
                 carrier: None,

@@ -200,6 +200,8 @@ pub fn run_ics_property_continuation(
         preserve_direction: true,
         now: vault.now_recorded_at(),
         blob_ref: &payload.blob_ref,
+        // Continuations admit properties only; they never mint a passport.
+        source: None,
         verdict_fold: VerdictFold::default(),
         continuations: Some(Vec::new()),
     };

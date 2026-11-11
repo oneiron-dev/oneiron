@@ -1,0 +1,15 @@
+{
+  "name": "ai.embed",
+  "description": "One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. The owner calls it, or an agent whose Grant names ai.embed, as his call.",
+  "input": "AiCallRequest",
+  "output": "crate::task_verb::sdk::AiAnswer",
+  "call": "crate::task_verb::sdk::host_only(memory, \"ai.embed\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "media_owner_grade"
+}

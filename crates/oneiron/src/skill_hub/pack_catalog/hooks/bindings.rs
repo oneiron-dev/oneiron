@@ -109,10 +109,22 @@ pub(crate) fn is_hook_binding(body: &crate::ClaimBody) -> bool {
 impl Vault {
     /// Every live hook binding, enabled or not. The hook runner reads these.
     /// A hub hook whose publisher's Grant was revoked is not live, nor is a
-    /// binding whose owner has not yet answered its critical confirm.
+    /// binding whose owner has not yet answered its critical confirm, nor one
+    /// whose pack source does not read here (FIX 12430).
     pub fn pack_hook_bindings(&self) -> Result<Vec<(EntityId, PackHookBinding)>> {
         let txn = self.store.env.read_txn()?;
         self.pack_hook_bindings_in_txn(&txn)
+    }
+
+    /// Every hook binding in the caller's snapshot, held back or not: the
+    /// live checks of [`Self::pack_hook_bindings_in_txn`] are not applied,
+    /// so the hook feed prune counts a binding they hold back for now (FIX
+    /// 22121).
+    pub(crate) fn pack_hook_binding_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(EntityId, PackHookBinding)>> {
+        bindings_in_txn(&self.store, txn)
     }
 
     /// Live bindings in the caller's snapshot, including publisher Grant checks.
@@ -130,9 +142,26 @@ impl Vault {
             {
                 continue;
             }
+            // A replica whose source never arrived, or is gone, has no body
+            // to run: it is not listed or scheduled only to fail (FIX 12430).
+            if self.pack_source_in_txn(txn, &row.source)?.is_none() {
+                continue;
+            }
             live.push((id, row));
         }
         Ok(live)
+    }
+
+    /// The approved binding claim at `id`, enabled or not, in the caller's
+    /// snapshot; `None` when none stands there. It reads that one claim and
+    /// none of the checks [`Self::pack_hook_bindings_in_txn`] adds: a binding
+    /// they hold back keeps its cursors, and runs from them once it is live.
+    pub(crate) fn pack_hook_binding_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<PackHookBinding>> {
+        binding_in_txn(&self.store, txn, id)
     }
 
     /// The body a binding names, read from its exact pack source and checked

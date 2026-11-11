@@ -127,8 +127,9 @@ pub(crate) async fn vault_weave_owner_item_wrong(
 }
 
 /// A live person's own proof and principal, for a label `act` in their own
-/// lens. An agent's credential carries no person proof.
-fn person_lens(
+/// lens. An agent's credential carries no person proof. The facade runs it
+/// before these doors' pre chain too (FIX 1817).
+pub(in crate::api::facade) fn person_lens(
     server: &SyncServer,
     auth: &CoreAuth,
     verb: &str,
@@ -143,6 +144,25 @@ fn person_lens(
         )
     })?;
     Ok((proof, caller))
+}
+
+/// The check the weave lens and digest doors run first, which `verb` `does`
+/// for: the host preflight, then the bound person or agent. The facade runs
+/// it before their pre chain (FIX 1817).
+pub(in crate::api::facade) fn own_caller(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+    does: &str,
+) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    super::owner_binding::host_preflight(server, auth)?;
+    super::facade_actor(server, auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} {does}"),
+            &["Present a person's or an agent's own credential."],
+        )
+    })
 }
 
 /// The owner's live proof, for a label `act` in the owner lens.

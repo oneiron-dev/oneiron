@@ -1,0 +1,16 @@
+{
+  "name": "vault.sieve.lease.refill",
+  "description": "The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice.",
+  "input": "crate::dreamer_wake::sieve_doors::SieveLeaseRefillRequest",
+  "output": "crate::dreamer_wake::sieve_doors::SieveLeaseView",
+  "call": "crate::dreamer_wake::sieve_doors::sieve_lease_refill_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.lease.refill\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

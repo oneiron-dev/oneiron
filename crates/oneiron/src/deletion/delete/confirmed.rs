@@ -1,10 +1,10 @@
 //! The pending-confirmed-delete gate of a due owner-confirmed erase (FIX 6337).
 //!
-//! An erase the owner confirmed while a host order kept its record runs from
-//! the legal-hold pass once nothing holds it. Its row may go before then, so
-//! the writer that would first publish or tear the record re-proves that the
-//! erase still waits, and a hold's refusal there names the owner the row
-//! records as confirming it. None waiting cancels the erase: nothing is
+//! An erase the owner confirmed in a shared vault runs from the legal-hold
+//! pass once its veto act cleared and nothing holds it. Its row may go before
+//! then, so the writer that would first publish or tear the record re-proves
+//! that the erase still waits, and a hold's refusal there names the owner the
+//! row records as confirming it. None waiting cancels the erase: nothing is
 //! published or torn. Once its tombstone has published, the erase is decided
 //! and finishes, whatever a later writer reads. The proof is of the one
 //! request the run read: a newer request for the record, under another

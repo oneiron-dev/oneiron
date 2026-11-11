@@ -17,6 +17,7 @@
 //! the same commit signs it as a `PolicySettingSet` every machine the owner
 //! admits folds and checks (FIX 4624), last and best effort: a record that
 //! cannot be signed leaves the setting and this index as before.
+pub(crate) mod tables;
 
 use serde::{Deserialize, Serialize};
 
@@ -168,15 +169,46 @@ fn run_embedded(
     Ok(PolicyActionOutcome::from_dispatch(&dispatch)?)
 }
 
-/// `vault.settings.wake_policy.set` on an embedded handle: the owner's own.
+/// `vault.settings.wake_policy.set` on an embedded handle: the owner's own
+/// action, or, for any other caller, the holder door of `engine.controls`
+/// ([`wake_policy_set_as_holder`]).
 /// # Errors
-/// A handle that is not the owner's, or the action's refusal.
+/// The action's refusal, or the holder door's.
 pub fn wake_policy_set_embedded(
     memory: &Memory<'_>,
     input: WakePolicySetRequest,
 ) -> MemoryResult<PolicyActionOutcome> {
-    let owner = memory.embedded_owner("vault.settings.wake_policy.set")?;
-    run_embedded(memory, input.into_action()?, Some(&owner))
+    match memory.embedded_owner("vault.settings.wake_policy.set") {
+        Ok(owner) => run_embedded(memory, input.into_action()?, Some(&owner)),
+        Err(_) => wake_policy_set_as_holder(memory.vault(), memory.write_actor(), input),
+    }
+}
+
+/// `vault.settings.wake_policy.set` for a holder of `engine.controls`
+/// (untangle 6.6d; the wake cadence class): the Dreamer's wake policy is set
+/// through the one check, which the writer makes, with the engine-control
+/// receipt naming the holder. The owner's act record stays the owner
+/// action's alone, so the idempotency key is not recorded here: a repeat
+/// sets the same policy again and writes one more receipt. The outcome
+/// names the receipt (32 hex) and the policy now in force.
+/// # Errors
+/// A policy that does not read or that its validation refuses; no live
+/// `engine.controls`; store failures.
+pub fn wake_policy_set_as_holder(
+    vault: &Vault,
+    holder: WriteActor,
+    input: WakePolicySetRequest,
+) -> MemoryResult<PolicyActionOutcome> {
+    let policy: crate::store::dreamer_wake_policy::DreamerWakePolicy =
+        serde_json::from_value(input.policy)
+            .map_err(|_| Error::InvalidConfig("the wake policy does not read".to_owned()))?;
+    let receipt = vault.set_dreamer_wake_policy_as_holder(holder.entity_ref(), policy)?;
+    Ok(PolicyActionOutcome {
+        outcome: serde_json::json!({
+            "receipt": receipt.to_hex(),
+            "policy": policy,
+        }),
+    })
 }
 
 /// `vault.settings.inference_defaults` on an embedded handle.

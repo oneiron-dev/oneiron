@@ -58,7 +58,8 @@ pub enum RunEvent {
     Settled {
         lease: String,
         dispatched: bool,
-        /// Provider token counts only; raw provider payloads never enter a receipt.
+        /// Normalized token counters and typed provider measurements only;
+        /// raw provider payloads never enter a receipt.
         #[serde(skip_serializing_if = "Option::is_none")]
         usage: Option<RunTokenUsage>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -126,13 +127,17 @@ pub struct RunStreamUsage {
     pub bound_ms: u64,
 }
 
-/// Token facts reported by one physical model call: its billing counters.
-/// Its cache passes and identity are on the settlement's `inference_calls`,
-/// never a second copy here.
+/// One answered call's normalized billing counters, which can contain default
+/// zeros. Provider measurement presence is recorded separately. Cache passes
+/// and identity remain on the settlement's `inference_calls`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RunTokenUsage {
     pub input: LlmInputUsage,
     pub output: LlmOutputUsage,
+    /// Parse-time provider measurements, independent of normalized counters
+    /// and budget charges. No complete physical-call or scope coverage implied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_token_measurement: Option<super::super::ProviderTokenMeasurement>,
 }
 
 /// What a settled call ran past its reservation (FIX 11481), in the
@@ -204,6 +209,11 @@ pub struct PermitFacts {
     /// before the run began (FIX 4453); `None` on every unbound run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attribution: Option<RunAttribution>,
+    /// The owner's agent Grant the call's work is funded by and the wallet
+    /// whose allocation (`allocation`) it held on (FIX 7766); `None` when no
+    /// Grant funds the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub funding: Option<crate::agent_dispatch::GrantSpendBinding>,
     /// The seat the call was admitted on (its metered seat), so the meter
     /// can attribute the call to one seat. `None` for a paid connector.
     #[serde(skip_serializing_if = "Option::is_none")]

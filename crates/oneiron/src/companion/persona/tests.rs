@@ -39,6 +39,7 @@ fn change(
             inputs: vec![person],
             process: "test.change".to_owned(),
             at,
+            bases: Vec::new(),
         },
     };
     let body = ClaimBody::new(
@@ -106,6 +107,7 @@ fn persona_rebase_replays_changes_on_person_without_minting_masks() -> Result<()
             inputs: vec![person],
             process: "test.pending".to_owned(),
             at: 40,
+            bases: Vec::new(),
         },
     }
     .to_claim_value()?;
@@ -192,6 +194,7 @@ fn persona_scenario_is_a_scoped_owned_mask_and_malformed_changes_fail_closed() -
                 inputs: vec![person],
                 process: "test.mask".to_owned(),
                 at: 4,
+                bases: Vec::new(),
             },
         }
         .to_claim_value()?,
@@ -216,6 +219,7 @@ fn persona_scenario_is_a_scoped_owned_mask_and_malformed_changes_fail_closed() -
             inputs: vec![person],
             process: "test.change".to_owned(),
             at: 4,
+            bases: Vec::new(),
         },
     }
     .to_claim_value()?;

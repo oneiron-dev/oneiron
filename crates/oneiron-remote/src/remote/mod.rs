@@ -28,7 +28,9 @@ use reqwest::{Method, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::caps::{MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES};
+use crate::caps::MAX_REMOTE_REQUEST_BYTES;
+#[cfg(test)]
+use crate::caps::MAX_REMOTE_RESPONSE_BYTES;
 use crate::error::{bad_request, forbidden, transport_error};
 
 // OF-469: a pinned authority checkpoint, fetched for adoption.
@@ -49,8 +51,8 @@ mod wire;
 use self::origin::{bearer_header, normalize_origin};
 pub(crate) use self::pairing::{pair, parse_credential};
 use self::response::{
-    ReadFailure, describe_send_failure, encode_request, read_capped, read_error_envelope,
-    read_export, serialize_request, serialize_whole, within_ceiling,
+    describe_send_failure, encode_request, read_error_envelope, read_export, read_reply,
+    serialize_request, serialize_whole, within_ceiling,
 };
 use self::wire::Wire;
 
@@ -82,7 +84,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// query cross the in-process transport; nothing dials this.
 const IN_PROCESS_ORIGIN: &str = "http://localhost/";
 
-/// Total request timeout, sized for a 32 MiB blob round trip.
+/// Total request timeout for one ordinary call, a blob version's upload
+/// included.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Full-vault exports can be much larger than one ordinary verb response.
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -102,6 +105,8 @@ pub(crate) struct RemoteClient {
     /// The call receipt the last verb's reply stated, success or refusal
     /// (OF-538). Per handle: a clone starts with none.
     last_receipt_ref: std::sync::Mutex<Option<String>>,
+    /// Content-free hook notice beside the last facade reply; never a receipt.
+    last_hook_notice: std::sync::Mutex<Option<String>>,
 }
 
 /// Hand-written so the bearer cannot reach a log through a derive.
@@ -127,6 +132,7 @@ impl Clone for RemoteClient {
             room_turn: self.room_turn,
             off_record_session: self.off_record_session.clone(),
             last_receipt_ref: std::sync::Mutex::new(None),
+            last_hook_notice: std::sync::Mutex::new(None),
         }
     }
 }
@@ -172,6 +178,7 @@ impl RemoteClient {
             room_turn: None,
             off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
+            last_hook_notice: std::sync::Mutex::new(None),
         })
     }
 
@@ -193,6 +200,7 @@ impl RemoteClient {
             room_turn: None,
             off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
+            last_hook_notice: std::sync::Mutex::new(None),
         })
     }
 
@@ -273,6 +281,32 @@ impl RemoteClient {
             .clone()
     }
 
+    pub(crate) fn last_hook_notice(&self) -> Option<String> {
+        self.last_hook_notice
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn note_hook_notice(&self, notice: Option<String>) {
+        *self
+            .last_hook_notice
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = notice;
+    }
+
+    fn note_reply_hook_notice(&self, headers: &HeaderMap) {
+        use oneiron::task_verb::revoke_lands::{CALLER_NOTICE_HEADER, CALLER_NOTICE_SUMMARY};
+
+        self.note_hook_notice(
+            headers
+                .get(CALLER_NOTICE_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .filter(|value| *value == CALLER_NOTICE_SUMMARY)
+                .map(str::to_owned),
+        );
+    }
+
     fn note_receipt_ref(&self, receipt_ref: Option<String>) {
         *self
             .last_receipt_ref
@@ -311,6 +345,7 @@ impl RemoteClient {
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> Result<R, MemoryError> {
         self.note_receipt_ref(None);
+        self.note_hook_notice(None);
         let body = if verb == custody_submit::CUSTODY_SUBMIT_VERB {
             let body = serialize_whole(request)?;
             // The owner route spools sealed custody changes past the ceiling.
@@ -351,6 +386,7 @@ impl RemoteClient {
                 .map(str::to_owned),
         );
 
+        self.note_reply_hook_notice(&reply.headers);
         let status = reply.status;
         // A 202 is a verb hook's pending ask: the verb did not run, and the
         // body is the refusal naming the ask and this call's invocation
@@ -477,23 +513,26 @@ impl RemoteClient {
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
         let bytes = encode_request(bytes, &mut credential);
-        self.stream_agent()?
+        let request = self
+            .stream_agent()?
             .post(url)
             .timeout(REQUEST_TIMEOUT)
             .headers(credential)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .header("x-oneiron-budget-lease", lease.id())
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    oneiron::RetryableLlmError::Timeout.into()
-                } else {
-                    oneiron::RetryableLlmError::StreamCut.into()
-                }
-            })
+            .body(bytes);
+        if lease.has_dispatch_release() {
+            lease.check_dispatch_release()?;
+            lease.begin_physical_attempt();
+        }
+        request.send().await.map_err(|e| {
+            if e.is_timeout() {
+                oneiron::RetryableLlmError::Timeout.into()
+            } else {
+                oneiron::RetryableLlmError::StreamCut.into()
+            }
+        })
     }
 
     pub(crate) async fn llm_stream(
@@ -511,22 +550,25 @@ impl RemoteClient {
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
         let bytes = encode_request(bytes, &mut credential);
-        self.stream_agent()?
+        let request = self
+            .stream_agent()?
             .post(url)
             .headers(credential)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/x-ndjson")
             .header("x-oneiron-budget-lease", lease.id())
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    oneiron::RetryableLlmError::Timeout.into()
-                } else {
-                    oneiron::RetryableLlmError::StreamCut.into()
-                }
-            })
+            .body(bytes);
+        if lease.has_dispatch_release() {
+            lease.check_dispatch_release()?;
+            lease.begin_physical_attempt();
+        }
+        request.send().await.map_err(|e| {
+            if e.is_timeout() {
+                oneiron::RetryableLlmError::Timeout.into()
+            } else {
+                oneiron::RetryableLlmError::StreamCut.into()
+            }
+        })
     }
 
     /// The streaming agent the own-server LLM transport posts on. A served
@@ -582,26 +624,14 @@ fn long_running(verb: &str) -> bool {
     matches!(verb, "vault.export" | "vault.embedding_spaces.move_check")
 }
 
-/// Decodes a success body read under the ordinary response ceiling; `what`
-/// names the call in a refusal.
+/// Decodes a success body straight from the wire, whatever its length
+/// ([`read_reply`]); `what` names the call in a refusal.
 fn read_json<R: DeserializeOwned, B: Read>(
     body: B,
     status: StatusCode,
     what: &str,
 ) -> Result<R, MemoryError> {
-    let bytes = read_capped(body, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| match failure {
-        ReadFailure::TooLarge => transport_error(format!(
-            "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
-        )),
-        ReadFailure::Io(message) => {
-            transport_error(format!("the server's response was truncated: {message}"))
-        }
-    })?;
-    serde_json::from_slice(&bytes).map_err(|error| {
-        transport_error(format!(
-            "the server answered {status} for {what} with a body this call could not decode: {error}"
-        ))
-    })
+    read_reply(body, status, what)
 }
 
 /// The blocking client every facade verb and `pair` share.

@@ -3,8 +3,9 @@
 //! read, then the value the message decodes into before that is built, the
 //! frames' room given back once only the value is left; and each call or
 //! answer the host sends before its buffer is made, with the organ's own
-//! read of it reserved in the call's room first ([`reserve_read`]). Each
-//! books the budget, and the machine's floor when the host has one.
+//! read of it reserved in the call's room first ([`reserve_read`]), its
+//! frames' part until the organ asks again. Each books the budget, and the
+//! machine's floor when the host has one.
 
 use std::io;
 use std::os::fd::BorrowedFd;
@@ -169,22 +170,28 @@ pub(super) fn book_send(
 /// The organ's own read of a call or answer the host is about to send it:
 /// the message's frames and the value they decode into, at once, plus the
 /// descriptors' room ([`fd_read_cost`]), held in the call's room as the
-/// organ's own memory (the class `memory.grow` holds) until the call ends
-/// (FIX 6195, 12434). So the organ runtime, which can ask nothing before a
-/// call exists, never decodes a message into memory the machine does not
-/// have, and a first-party organ's kernel limits rise by it as by a grant.
-/// A host with no machine floor reserves nothing here, as it grants no
-/// `memory.grow`; the floor itself refuses the message before a byte of it
-/// leaves.
+/// organ's own memory, the class `memory.grow` holds (FIX 6195, 12434).
+/// So the organ runtime, which can ask nothing before a call exists, never
+/// decodes a message into memory the machine does not have, and a
+/// first-party organ's kernel limits rise by it as by a grant. The frames'
+/// `len` encoded bytes and the descriptors' room go back when the organ
+/// next asks for the call, which it does only once it has decoded the
+/// message; the value stays until the call ends, as the organ may keep it
+/// ([`CallRoom::reads_decoded`], FIX 12437). A host with no machine floor
+/// reserves nothing here, as it grants no `memory.grow`; the floor itself
+/// refuses the message before a byte of it leaves.
 pub(super) fn reserve_read(
     room: &CallRoom,
     msg: &ToOrgan,
+    len: u64,
     fds: &[BorrowedFd<'_>],
     deadline: Instant,
     stopped: &dyn Fn() -> bool,
 ) -> Result<(), FrameError> {
-    let cost = frame_read_cost(msg)?.saturating_add(fd_read_cost(fds.len()));
-    match room.grow_native(cost, deadline, stopped) {
+    let descriptors = fd_read_cost(fds.len());
+    let cost = frame_read_cost(msg)?.saturating_add(descriptors);
+    let frames = len.saturating_add(descriptors);
+    match room.grow_read(cost, frames, deadline, stopped) {
         Ok(()) | Err(NativeRefusal::NoFloor) => Ok(()),
         Err(NativeRefusal::Floor { .. }) => Err(FrameError::Refused(
             "the machine's memory floor cannot hold the organ's read of the frame",

@@ -116,6 +116,13 @@ pub(super) const KEY_WINDOW: usize = max_key_len(&PROVIDER_RULES);
 /// The bytes some provider rule's prefix starts with.
 static PREFIX_HEADS: [bool; 256] = prefix_heads(&PROVIDER_RULES);
 
+/// Whether some provider rule's prefix starts with `byte` (FIX 12207): the
+/// one table a reader of a key's first byte asks, so a new rule's head is
+/// read wherever keys are found.
+pub(crate) fn provider_prefix_head(byte: u8) -> bool {
+    PREFIX_HEADS[usize::from(byte)]
+}
+
 /// One provider rule: a key that starts with `prefix`, its bytes read by
 /// `shape`, named by `reason`.
 struct ProviderRule {

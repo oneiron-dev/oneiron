@@ -22,9 +22,13 @@ impl WindowManager {
     pub(crate) fn notify_note(&self, id: crate::EntityId) {
         self.documents.notify_note(id);
     }
+
+    pub(crate) fn notify_note_forks(&self, id: crate::EntityId) {
+        self.documents.notify_note_forks(id);
+    }
     /// The owner lane's text-plane export for an own device: NOTE documents
-    /// only, with no selector, under the state-copy and resync rule of the
-    /// selector export.
+    /// and typed bodies (FIX 2458), with no selector, under the state-copy
+    /// and resync rule of the selector export.
     pub fn export_owner_document(
         self: &Arc<Self>,
         id: crate::EntityId,
@@ -33,6 +37,24 @@ impl WindowManager {
         self.documents
             .open(id)?
             .export_owner(remote_vv, crate::sync::window::Withhold::Unknown)
+    }
+
+    /// Whether the owner lane exports `id`'s document now: a NOTE's, or a
+    /// typed body this vault holds (FIX 2458). An own device's REQUEST for an
+    /// office artifact with no body here yet waits.
+    pub fn owner_document_held(&self, id: crate::EntityId) -> Result<bool> {
+        use crate::typed_body::sync_frame::has_typed_body_in_txn;
+        let txn = self.vault.store.env.read_txn()?;
+        let note = self.vault.get_entity_type_in_txn(&txn, &id)?
+            == Some(crate::registry::ENTITY_TYPE_NOTE);
+        Ok(note || has_typed_body_in_txn(&self.vault.store, &txn, &id)?)
+    }
+
+    /// The owner REQUEST a home sends an own device for `id`, whose typed
+    /// body the home does not hold yet (FIX 2458): the device answers with
+    /// its own body's frame.
+    pub fn owner_document_request(self: &Arc<Self>, id: crate::EntityId) -> Result<Vec<u8>> {
+        self.documents.owner_body_request(id)
     }
 
     /// [`Self::export_owner_document`] judged for the machine `peer` the lane
@@ -46,6 +68,22 @@ impl WindowManager {
         self.documents
             .open(id)?
             .export_owner(remote_vv, crate::sync::window::Withhold::Peer(peer))
+    }
+
+    /// The pending forks of the NOTE `id` for an own device, judged for the
+    /// machine `peer` the lane proved (FIX 12789): each fork's state, then
+    /// their set. None from a replica, which is no authority.
+    ///
+    /// # Errors
+    ///
+    /// An owner admission denial for that machine, or a storage error.
+    pub fn export_owner_note_forks_for(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        peer: crate::authority::PeerMachine,
+    ) -> Result<Vec<Vec<u8>>> {
+        self.documents
+            .export_owner_note_forks(id, crate::sync::window::Withhold::Peer(peer))
     }
 
     /// Grant-backed text-plane export for a caller-selected window. The
@@ -92,6 +130,34 @@ impl WindowManager {
             selector,
             withhold,
             remote_vv,
+        )
+    }
+
+    /// A thin read's document and its optional source-world evidence. The
+    /// evidence is captured in the document's own exporting transaction;
+    /// projected copies or a different stored row leave it unknown.
+    pub fn export_read_cache_document_in_window_with(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        window: &WindowKey,
+        scope: crate::FederationGrantScope,
+        selector: &selector::SyncSelector,
+        withhold: crate::sync::window::Withhold<'_>,
+        remote_vv: &[u8],
+        blob: &[u8],
+    ) -> Result<(Vec<u8>, Option<crate::sync::residence::CachedItemWorlds>)> {
+        selector::authorize_sync_selector(&self.vault, scope, selector)?;
+        let source_id = selector::repo_document_source(&self.vault, id)?;
+        let source = self.open_window(window)?;
+        self.documents.export_selected_with_cache(
+            source_id,
+            &source.doc,
+            window,
+            scope,
+            selector,
+            withhold,
+            remote_vv,
+            Some((id, blob)),
         )
     }
 

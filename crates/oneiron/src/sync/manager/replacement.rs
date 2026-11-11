@@ -9,7 +9,9 @@ use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::sync::WindowKey;
 use crate::sync::client::OwnDeviceImport;
 use crate::sync::schema::create_window_doc;
-use crate::sync::window::{self, LoadedWindow, ReplacementByteBound, ReplacementConflict};
+use crate::sync::window::{
+    self, LoadedWindow, QueuedSends, ReplacementByteBound, ReplacementConflict,
+};
 
 impl WindowManager {
     /// Replaces window `key` with a peer's history-free `snapshot`
@@ -48,15 +50,21 @@ impl WindowManager {
             evidence,
             admitted,
             ReplacementByteBound::NetworkFrame,
+            QueuedSends::Retire,
             None,
         )
     }
 
     /// [`Self::replace_window_admitted`] for a snapshot up to `bound`
-    /// ([`window::prepare_bounded_replacement`]). Under `own_device`, the
+    /// ([`window::prepare_bounded_replacement`]), the queued sends it takes in
+    /// retired or kept as `queued` says (FIX 4748). Under `own_device`, the
     /// proof an own machine's proven connection sent `snapshot`, each MESSAGE
     /// row the snapshot holds takes the own-device lane as the replacement's
     /// forward pass lands it (FIX 12111); with none, no row takes one.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the install's window, snapshot, admission, bound, queue handling and proof"
+    )]
     pub(in crate::sync) fn replace_window_bounded(
         self: &Arc<Self>,
         key: &WindowKey,
@@ -64,6 +72,7 @@ impl WindowManager {
         evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
         admitted: impl FnOnce() -> bool,
         bound: ReplacementByteBound,
+        queued: QueuedSends,
         own_device: Option<&OwnDeviceImport>,
     ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
         self.attach_to_vault();
@@ -117,6 +126,7 @@ impl WindowManager {
                     snapshot,
                     evidence,
                     bound,
+                    queued,
                     positions,
                 )
             },

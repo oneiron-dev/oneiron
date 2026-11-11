@@ -74,8 +74,10 @@ pub(super) fn evaluate_envelope(
     is_last: bool,
 ) -> Result<EnvelopeEvidence, SealMemoryRefusal> {
     use super::super::pdf;
-    use super::verify_sig_pipeline::{Checks, check_byte_range, verify_cades_sig, verify_doc_ts};
-    use crate::api::{DigestAlgorithm, SignedRangeDigest};
+    use super::verify_sig_pipeline::{
+        Checks, SigHandler, check_byte_range, verify_cades_sig, verify_doc_ts,
+    };
+    use crate::api::{DigestAlgorithm, SignedRangeDigest, VerifyCheckKind, VerifyFindingCode};
     let memory = ctx.limits.memory.ledger()?;
     let br_ok = check_byte_range(bytes, entry);
     let end = entry.byte_range[2].checked_add(entry.byte_range[3]);
@@ -101,15 +103,14 @@ pub(super) fn evaluate_envelope(
             })
         })
     };
-    let kind = if entry.is_doc_ts {
-        SignatureKind::DocumentTimestamp
-    } else {
-        SignatureKind::Signature
+    let kind = match entry.handler {
+        SigHandler::DocTs => SignatureKind::DocumentTimestamp,
+        SigHandler::Cades | SigHandler::UnsupportedAdbe => SignatureKind::Signature,
     };
     let mut checks = Checks::new(ctx.limits);
     let mut covered = Vec::new();
-    let (signer_chain, token) = if entry.is_doc_ts {
-        (
+    let (signer_chain, token) = match entry.handler {
+        SigHandler::DocTs => (
             None,
             verify_doc_ts(
                 bytes,
@@ -121,22 +122,49 @@ pub(super) fn evaluate_envelope(
                 ctx.clock_ms,
                 &memory,
             )?,
-        )
-    } else {
-        let cades = verify_cades_sig(
-            bytes,
-            entry,
-            ctx,
-            anchors,
-            &mut checks,
-            &mut covered,
-            &memory,
-        )?;
-        (cades.signer_chain, cades.timestamp)
+        ),
+        SigHandler::Cades => {
+            let cades = verify_cades_sig(
+                bytes,
+                entry,
+                ctx,
+                anchors,
+                &mut checks,
+                &mut covered,
+                &memory,
+            )?;
+            (cades.signer_chain, cades.timestamp)
+        }
+        SigHandler::UnsupportedAdbe => {
+            checks.record(
+                VerifyCheckKind::ByteRange,
+                br_ok,
+                VerifyFindingCode::InvalidByteRange,
+            )?;
+            checks.record(
+                VerifyCheckKind::UnsignedGap,
+                br_ok,
+                VerifyFindingCode::InvalidUnsignedGap,
+            )?;
+            for kind in [
+                VerifyCheckKind::CmsEnvelope,
+                VerifyCheckKind::SignedAttributes,
+                VerifyCheckKind::ContentDigest,
+                VerifyCheckKind::SignatureValue,
+                VerifyCheckKind::SigningCertificateBinding,
+                VerifyCheckKind::CertificatePath,
+            ] {
+                checks.not_run_with_reason(
+                    kind,
+                    Some(VerifyFindingCode::UnsupportedSignatureHandler),
+                )?;
+            }
+            (None, TimestampResult::none())
+        }
     };
     let untrusted_time = token.untrusted_time.filter(|_| revision.is_some());
     let time_proof = token.trusted.and_then(|token| {
-        let source = if entry.is_doc_ts {
+        let source = if entry.handler == SigHandler::DocTs {
             TimeSource::DocumentTimestamp {
                 envelope: index,
                 revision: revision?,

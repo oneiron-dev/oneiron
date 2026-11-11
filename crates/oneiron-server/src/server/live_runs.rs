@@ -16,7 +16,8 @@
 //! unless it parks on a durable wait, which keeps its lease; a parked run
 //! whose lease then goes (a cancel) leaves at the next registration or
 //! housekeeping pass. A run that leaves closes the live lens cards it
-//! created ([`crate::lens_frames`]); a parked run keeps them.
+//! created ([`crate::lens_frames`]) and the self brief its entries
+//! installed (FIX 17594 D3, Engine call RESUME C); a parked run keeps them.
 //! An unattached run has no handle, and a handle never falls back to an
 //! actor's latest run or to plain dispatch.
 //!
@@ -27,6 +28,7 @@
 //! An action's planned team writes its start on the run's own seat and
 //! line, as an entry's does, from what the run registered (DOOR-111 S4c-4,
 //! `pattern_action`).
+mod model_request;
 mod pattern_action;
 
 use std::collections::HashMap;
@@ -46,6 +48,7 @@ use oneiron::team::PatternLaunchRunner;
 use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 use tokio::sync::OwnedMutexGuard;
 
+use super::self_brief_custody::{BriefKey, BriefOwner, SelfBriefCustody};
 use crate::config::models::PlannerSettings;
 use crate::lens_frames::LensFrameStore;
 
@@ -162,6 +165,9 @@ pub(crate) struct LiveRuns {
     /// The close a run's board sessions take when it leaves (FIX 8143), set
     /// once by the server that holds them.
     sessions: OnceLock<Box<dyn Fn(EntityId) + Send + Sync>>,
+    /// The self briefs a run's installation is closed in when it leaves
+    /// (FIX 17594 D3), set once by the server that holds them.
+    briefs: OnceLock<Arc<SelfBriefCustody>>,
 }
 
 /// One registered run: its executor run, the agent it runs as, the leased
@@ -185,9 +191,17 @@ pub(crate) struct LiveRunEntry {
     definition: AgentDefinition,
     spend_scope: Option<SpendScopeId>,
     attached: Mutex<Option<CodeRunLiveRunBinding>>,
+    /// Minimal request provenance belongs to one exact credential attachment,
+    /// never to a later rebind or a different lease of this run.
+    repo_request: Mutex<Option<(CodeRunLiveRunBinding, oneiron::code_run::RepoRequestWitness)>>,
     /// Public browser calls share one door so a new HTTP request does not
     /// refill a reviewed batch. Dropped with this registered lease.
     browser: OnceLock<Arc<crate::api::RunGuests>>,
+    /// The self brief this live run's entries install (FIX 17594 D3): its
+    /// key and the installation its first entry made, which each later entry
+    /// installs again and which closes as the run leaves (Engine call RESUME
+    /// C). `None` before its first entry installs.
+    self_brief: Mutex<Option<(BriefKey, BriefOwner)>>,
     serial: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -196,6 +210,19 @@ impl LiveRunEntry {
     /// while an action holds it. Blocking; never call it on the runtime.
     pub(crate) fn enter(&self) -> OwnedMutexGuard<()> {
         Arc::clone(&self.serial).blocking_lock_owned()
+    }
+
+    /// The owner of the self-brief installation this live run's entries
+    /// install; `None` before its first entry installs one.
+    pub(crate) fn self_brief_owner(&self) -> Option<BriefOwner> {
+        lock(&self.self_brief).as_ref().map(|(_, owner)| *owner)
+    }
+
+    /// Holds the installation of the run's self brief under `key` that an
+    /// entry made or installed again, `owner`'s, for the run's later entries
+    /// and its close as it leaves.
+    pub(crate) fn hold_self_brief(&self, installation: (BriefKey, BriefOwner)) {
+        *lock(&self.self_brief) = Some(installation);
     }
 
     fn is_lease(&self, actor: WriteActor, leased: &AttemptRecord) -> bool {
@@ -225,6 +252,13 @@ impl LiveRuns {
     /// with `close` (FIX 8143). Set once; a later call is ignored.
     pub(crate) fn close_sessions_with(&self, close: Box<dyn Fn(EntityId) + Send + Sync>) {
         let _ = self.sessions.set(close);
+    }
+
+    /// Has each run that leaves because it ended close the self brief its
+    /// entries installed in `briefs` (FIX 17594 D3). Set once; a later call
+    /// is ignored.
+    pub(crate) fn close_briefs_with(&self, briefs: Arc<SelfBriefCustody>) {
+        let _ = self.briefs.set(briefs);
     }
 
     /// Registers run `run`, which its runner enters as `actor` under the
@@ -270,7 +304,9 @@ impl LiveRuns {
             definition,
             spend_scope,
             attached: Mutex::new(attached),
+            repo_request: Mutex::new(None),
             browser: OnceLock::new(),
+            self_brief: Mutex::new(None),
             serial: Arc::default(),
         });
         self.map().insert(run, Arc::clone(&entry));
@@ -292,10 +328,14 @@ impl LiveRuns {
         };
         let serial = self.get(run).map(|entry| entry.enter());
         let settled = settlement();
-        let left = !(waits && settled.is_ok()) && self.map().remove(&run).is_some();
+        let left = if waits && settled.is_ok() {
+            None
+        } else {
+            self.map().remove(&run)
+        };
         drop(serial);
-        if left {
-            self.retired(run);
+        if let Some(entry) = left {
+            self.retired(&entry);
         }
         settled
     }
@@ -327,7 +367,7 @@ impl LiveRuns {
         }
         drop(runs);
         for entry in &gone {
-            self.retired(entry.run);
+            self.retired(entry);
         }
     }
 
@@ -390,6 +430,7 @@ impl LiveRuns {
         };
         let handle = handle_text(run, &binding);
         *attached = Some(binding);
+        *lock(&entry.repo_request) = None;
         Ok(Ok(handle))
     }
 
@@ -434,6 +475,34 @@ impl LiveRuns {
             .then(|| (entry.leased.clone(), entry.executor.clone())))
     }
 
+    /// The registered skill-load lease of this bound call's actual actor
+    /// and origin. The origin's token must name that same leased try; the
+    /// registered proof is then checked live, as for site skills.
+    pub(crate) fn skill_lease_for_origin(
+        &self,
+        vault: &Vault,
+        run: EntityId,
+        actor: WriteActor,
+        origin: &oneiron::memory::HostWriteOrigin,
+    ) -> oneiron::Result<Option<(AttemptRecord, String)>> {
+        let Some(token) = oneiron::skill_attribution::run_write_token_of_origin(origin) else {
+            return Ok(None);
+        };
+        let Some(entry) = self.get(run) else {
+            return Ok(None);
+        };
+        if !is_actor(entry.actor, actor)
+            || token.attempt() != entry.leased.id
+            || entry.leased.lease_owner.as_deref() != Some(token.owner())
+            || entry.leased.attempt_count != token.generation()
+        {
+            return Ok(None);
+        }
+        Ok(self
+            .holds(vault, &entry)?
+            .then(|| (entry.leased.clone(), entry.executor.clone())))
+    }
+
     /// The run `run` for `caller`, its own agent, while `caller`'s credential
     /// holds its attachment, of the issue `issued` when one is named.
     fn attached_for(
@@ -473,20 +542,28 @@ impl LiveRuns {
         let left = is_current(&runs, entry) && runs.remove(&entry.run).is_some();
         drop(runs);
         if left {
-            self.retired(entry.run);
+            self.retired(entry);
         }
         Ok(false)
     }
 
-    /// Run `run` ended and left the map: closes the live lens cards it
-    /// created, once the map's lock is released. A card names its creating
-    /// run by the run's `EntityId::to_hex()`.
-    fn retired(&self, run: EntityId) {
+    /// The run of `entry` ended and left the map: closes the live lens cards
+    /// it created, its board sessions and the self brief its entries
+    /// installed, once the map's lock is released. A card names its creating
+    /// run by the run's `EntityId::to_hex()`. The brief closes only while the
+    /// installation the run holds still owns its key, so a close that comes
+    /// late never removes a newer installation's.
+    fn retired(&self, entry: &LiveRunEntry) {
+        let run = entry.run;
         if let Some(lens) = self.lens.get() {
             lens.close_run(&run.to_hex());
         }
         if let Some(close) = self.sessions.get() {
             close(run);
+        }
+        let installation = lock(&entry.self_brief).take();
+        if let (Some(briefs), Some((key, owner))) = (self.briefs.get(), installation) {
+            close_brief(Arc::clone(briefs), key, owner);
         }
     }
 
@@ -588,6 +665,8 @@ impl ResolvedLiveRun {
         crate::api::call_receipt::witness_attempt(self.entry.proof.call_attempt_witness());
         Ok(Ok(HeldLiveRun {
             proof: self.entry.proof.clone(),
+            entry: Arc::clone(&self.entry),
+            binding: self.binding.clone(),
             _serial: serial,
         }))
     }
@@ -596,6 +675,8 @@ impl ResolvedLiveRun {
 /// A live run held for one action: its lease proof, under its guard.
 pub(crate) struct HeldLiveRun {
     proof: HostBinding,
+    entry: Arc<LiveRunEntry>,
+    binding: CodeRunLiveRunBinding,
     _serial: OwnedMutexGuard<()>,
 }
 
@@ -603,6 +684,21 @@ impl HeldLiveRun {
     /// The run's lease proof, for the action's host binding.
     pub(crate) fn proof(&self) -> HostBinding {
         self.proof.clone()
+    }
+}
+
+/// Closes `owner`'s installation under `key` in `briefs`: on the runtime
+/// when called on one, as a run's board sessions close, else on this thread.
+fn close_brief(briefs: Arc<SelfBriefCustody>, key: BriefKey, owner: BriefOwner) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => {
+            runtime.spawn(async move {
+                briefs.lock().await.close(&key, owner);
+            });
+        }
+        Err(_) => {
+            briefs.blocking_lock().close(&key, owner);
+        }
     }
 }
 

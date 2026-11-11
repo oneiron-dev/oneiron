@@ -38,6 +38,19 @@ pub struct PackKindRegistration {
     pub active: bool,
 }
 
+/// Where an allocated compiled-in kind lives: its own compiled-product slot,
+/// or, once its family and that zone's overflow are full, the pack half
+/// through PackByteMap (ARCH-0058 `#fail-soft`), name-bearing: its
+/// instances are written by name (`Vault::put_pack_instance`), so a shared
+/// overflow handle never stands for the kind alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StructuralKindAllocation {
+    /// A compiled-product slot of its own.
+    Compiled(crate::registry::StructuralKindRegistration),
+    /// A PackByteMap registration under the kind's name-bearing identity.
+    Pack(PackKindRegistration),
+}
+
 /// Sync/export carrier. This is DATA, never permission to execute a pack.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

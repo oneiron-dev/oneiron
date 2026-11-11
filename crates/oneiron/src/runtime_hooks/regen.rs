@@ -8,6 +8,29 @@
 //! history waits for the owner's stamp; a failure rolls back, never to a blank body. Only a
 //! vault's own packs regen: a hub pack's hooks change through their hub,
 //! under the update rule.
+//!
+//! Every decision keeps its golden manifest (the case vector and both
+//! bodies' fingerprints), and every decision and enactment lands one
+//! regen receipt in the hook's history ([`history`]). The owner may
+//! cancel a waiting decision or roll an adopted body back to the one it
+//! replaced, and a hook an agent authored takes every new body through
+//! that agent's own put ([`enact`]). The regenerator reads the contract as
+//! text ([`contract`]), and the engine's own pass runs due regens after a
+//! contract change ([`pass`]).
+
+mod contract;
+mod enact;
+mod history;
+mod pass;
+
+pub use contract::{HookContractText, MAX_HOOK_CONTRACT_DECLARATIONS};
+pub(crate) use enact::HookPut;
+pub use enact::HookRegenCancel;
+pub(crate) use history::hooks_regen_receipt_accepts_masked;
+pub use history::{
+    HookRegenActor, HookRegenDecision, HookRegenEvent, HookRegenReceipt, MAX_HOOK_REGEN_HISTORY,
+};
+pub use pass::HookRegenPassReport;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,8 +39,10 @@ use serde::{Deserialize, Serialize};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::HubFile;
-use crate::skill_hub::pack_catalog::{HookSelector, PackInstallDisposition};
-use crate::{EntityId, Error, Result, Vault};
+use crate::skill_hub::pack_catalog::{
+    HookSelector, PackHookBinding, PackInstallDisposition, PackSource,
+};
+use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 use super::body::HookBodyRuntime;
 use super::replay::{self, HookReplayEntry, HookReplayResult};
@@ -50,10 +75,10 @@ impl HookContractStamp {
     #[must_use]
     pub fn current() -> Self {
         Self {
-            verb_table: blake3::hash(include_bytes!("../verbs/generated/code-mode.d.ts"))
+            verb_table: blake3::hash(contract::VERB_TABLE.as_bytes())
                 .to_hex()
                 .to_string(),
-            sandbox: blake3::hash(include_bytes!("../../wit/hook/hook.wit"))
+            sandbox: blake3::hash(contract::HOOK_WORLD.as_bytes())
                 .to_hex()
                 .to_string(),
         }
@@ -90,6 +115,9 @@ impl HookRegenFailure {
     }
 }
 
+/// The call purpose a served regenerator meters its model calls under.
+pub const HOOK_REGEN_CALL_PURPOSE_NAME: &str = "coach_hook_regen";
+
 /// One regen's ask: the hook, the live contract it targets, and the intent
 /// read from the hook's own pack, never a cached prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +128,9 @@ pub struct HookRegenRequest {
     pub selector: HookSelector,
     pub intent: String,
     pub target: HookContractStamp,
+    /// The contract `target` hashes, as text: the hook world and the
+    /// declarations of the verbs the selector names (FIX 4688).
+    pub contract: HookContractText,
     /// The last good body, for the regenerator to read.
     pub last_good: String,
 }
@@ -116,17 +147,33 @@ pub trait HookRegenerator {
 }
 
 /// What one body returned on each golden run, by run key. A run the body ran
-/// without failing records its outcome token and JSON in `cases`, whatever
-/// `compare` says against the live record: the compare stands to the live run,
-/// not to a failure category. A run the body failed records its replay reason
-/// in `execution_failed`. A run the current grant withholds records its key in
-/// `withheld`; a run whose inputs are gone records its key in `missing_history`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// without failing records the BLAKE3 of its outcome token and JSON in
+/// `cases`, whatever `compare` says against the live record: the compare
+/// stands to the live run, not to a failure category. Two bodies returned
+/// the same outcome on a run exactly when their `cases` entries match. A run
+/// the body failed records its replay reason in `execution_failed`. A run the
+/// current grant withholds records its key in `withheld`; a run whose inputs
+/// are gone records its key in `missing_history`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HookGoldenFingerprint {
     pub cases: BTreeMap<String, String>,
     pub execution_failed: BTreeMap<String, String>,
     pub withheld: BTreeSet<String>,
     pub missing_history: BTreeSet<String>,
+}
+
+/// One regen's golden manifest (ARCH-0080 §8, FIX 4691): the case vector it
+/// replayed and both bodies' fingerprints over it. It rides the decision
+/// while it waits and stays in the hook's regen history after, so a later
+/// reader sees exactly which runs a decision stood on.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HookGoldenManifest {
+    /// The saved runs replayed, by run key (64 hex), newest first.
+    pub runs: Vec<String>,
+    /// The last good body's pass over `runs`.
+    pub last_good: HookGoldenFingerprint,
+    /// The candidate's pass over `runs`.
+    pub candidate: HookGoldenFingerprint,
 }
 
 impl HookGoldenFingerprint {
@@ -153,10 +200,8 @@ impl HookGoldenFingerprint {
                     outcome_json,
                     ..
                 } => {
-                    fingerprint.cases.insert(
-                        run.clone(),
-                        format!("{outcome}:{}", outcome_json.as_deref().unwrap_or("")),
-                    );
+                    let token = format!("{outcome}:{}", outcome_json.as_deref().unwrap_or(""));
+                    fingerprint.cases.insert(run.clone(), body_hash(&token));
                 }
                 HookReplayResult::Withheld { .. } => {
                     fingerprint.withheld.insert(run.clone());
@@ -269,6 +314,7 @@ pub enum HookRegenOutcome {
         candidate: String,
         target: HookContractStamp,
         diff: HookGoldenDiff,
+        golden: HookGoldenManifest,
     },
     /// The golden replay differs, execution-failed, withheld, or lost history,
     /// or there is none: the owner stamps it.
@@ -276,9 +322,14 @@ pub enum HookRegenOutcome {
         candidate: String,
         target: HookContractStamp,
         diff: HookGoldenDiff,
+        golden: HookGoldenManifest,
     },
-    /// The last good body stands.
-    RolledBack { failure: HookRegenFailure },
+    /// The last good body stands. `target` is the contract the regen ran
+    /// against, so the engine's own pass tries each contract once.
+    RolledBack {
+        failure: HookRegenFailure,
+        target: HookContractStamp,
+    },
 }
 
 impl HookRegenOutcome {
@@ -294,6 +345,26 @@ impl HookRegenOutcome {
             Self::RolledBack { .. } => None,
         }
     }
+
+    /// The contract this decision ran against.
+    #[must_use]
+    pub fn target(&self) -> &HookContractStamp {
+        match self {
+            Self::AutoAdopt { target, .. }
+            | Self::NeedsHumanStamp { target, .. }
+            | Self::RolledBack { target, .. } => target,
+        }
+    }
+}
+
+/// The body an adoption replaced, kept so the owner can roll the adoption
+/// back (FIX 4690): its exact text, hash and the contract it passed under.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HookRegenPrior {
+    pub body: String,
+    /// BLAKE3 of `body`, lowercase hex.
+    pub body_hash: String,
+    pub stamp: HookContractStamp,
 }
 
 /// One hook's regen record.
@@ -307,6 +378,16 @@ pub struct HookRegenRecord {
     pub intent: Option<String>,
     /// The last regen's decision, until it is enacted.
     pub pending: Option<HookRegenOutcome>,
+    /// The body the last adoption replaced, until it is rolled back or
+    /// another adoption replaces this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<HookRegenPrior>,
+    /// The contract the owner declined a regen under, by a cancel or a
+    /// rollback. The due list and the engine's own pass leave the hook on
+    /// its body until the contract moves again; the owner may still run a
+    /// regen by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declined: Option<HookContractStamp>,
 }
 
 impl HookRegenRecord {
@@ -322,6 +403,30 @@ impl HookRegenRecord {
 /// A hook body's hash as its binding records it: BLAKE3, lowercase hex.
 fn body_hash(body: &str) -> String {
     blake3::hash(body.as_bytes()).to_hex().to_string()
+}
+
+/// `source`'s files with `hook`'s `body.js` set to `body`, and the body it
+/// held there.
+fn files_with_hook_body(
+    source: &PackSource,
+    hook: &str,
+    body: &[u8],
+) -> (Vec<HubFile>, Option<Vec<u8>>) {
+    let body_path = format!("hooks/{hook}/body.js");
+    let mut replaced = None;
+    let files = source
+        .files()
+        .iter()
+        .map(|file| {
+            if file.path == body_path {
+                replaced = Some(file.content.clone());
+                HubFile::new(file.path.clone(), body.to_vec())
+            } else {
+                file.clone()
+            }
+        })
+        .collect();
+    (files, replaced)
 }
 
 /// The CALL behind the candidate-hash fence (DOOR-077): the candidate a
@@ -383,13 +488,16 @@ pub(crate) fn note_bound_hook_in_txn(
             stamp: HookContractStamp::current(),
             intent: intent.map(str::to_owned),
             pending: None,
+            previous: None,
+            declined: None,
         },
     )
 }
 
 impl Vault {
     /// Each binding of a vault's own pack whose last good body passed under
-    /// another contract than this engine's, and has no regen waiting.
+    /// another contract than this engine's, and has no regen waiting. A hook
+    /// whose owner declined a regen under this contract is not due.
     ///
     /// # Errors
     ///
@@ -403,6 +511,7 @@ impl Vault {
             }
             if self.hook_regen_record(id)?.is_some_and(|record| {
                 record.stamp != current
+                    && record.declined.as_ref() != Some(&current)
                     && !matches!(
                         &record.pending,
                         Some(
@@ -441,6 +550,23 @@ impl Vault {
         regenerator: &dyn HookRegenerator,
         binding: EntityId,
     ) -> Result<HookRegenOutcome> {
+        self.regenerate_hook_as(runtime, regenerator, binding, &HookRegenActor::Engine)
+    }
+
+    /// [`Self::regenerate_hook`], with the regen receipt naming `actor` as
+    /// the one who ran it: the owner's or an agent's own run, or the
+    /// engine's pass after a contract change.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::regenerate_hook`].
+    pub fn regenerate_hook_as(
+        &self,
+        runtime: &dyn HookBodyRuntime,
+        regenerator: &dyn HookRegenerator,
+        binding: EntityId,
+        actor: &HookRegenActor,
+    ) -> Result<HookRegenOutcome> {
         let (_, row) = self
             .pack_hook_bindings()?
             .into_iter()
@@ -456,6 +582,8 @@ impl Vault {
             stamp: HookContractStamp::current(),
             intent: None,
             pending: None,
+            previous: None,
+            declined: None,
         });
         let intent = match self.get_pack_source(&row.source)? {
             Some(source) => source
@@ -470,7 +598,11 @@ impl Vault {
             self.decide_hook_regen(runtime, regenerator, binding, &row, intent.clone())?;
         record.intent = intent;
         record.pending = Some(outcome.clone());
-        self.with_write_txn_grouped(|txn| REGEN.put(self, txn, &binding, &record))?;
+        let event = HookRegenEvent::decided(&outcome);
+        self.with_write_txn_grouped(|txn| {
+            REGEN.put(self, txn, &binding, &record)?;
+            history::append_in_txn(self, txn, binding, &row, &record.body_hash, actor, event)
+        })?;
         Ok(outcome)
     }
 
@@ -479,11 +611,13 @@ impl Vault {
         runtime: &dyn HookBodyRuntime,
         regenerator: &dyn HookRegenerator,
         binding: EntityId,
-        row: &crate::skill_hub::pack_catalog::PackHookBinding,
+        row: &PackHookBinding,
         intent: Option<String>,
     ) -> Result<HookRegenOutcome> {
+        let target = HookContractStamp::current();
         let rolled_back = |phase, message: &str| HookRegenOutcome::RolledBack {
             failure: HookRegenFailure::new(phase, message),
+            target: target.clone(),
         };
         let Some(intent) = intent.filter(|intent| !intent.trim().is_empty()) else {
             return Ok(rolled_back(
@@ -500,7 +634,6 @@ impl Vault {
                 ));
             }
         };
-        let target = HookContractStamp::current();
         let request = HookRegenRequest {
             binding,
             pack: row.pack.clone(),
@@ -508,6 +641,7 @@ impl Vault {
             selector: row.selector.clone(),
             intent,
             target: target.clone(),
+            contract: HookContractText::for_selector(&row.selector),
             last_good,
         };
         let candidate = match regenerator.regenerate(&request) {
@@ -518,17 +652,32 @@ impl Vault {
                 ));
             }
             Ok(candidate) => candidate,
-            Err(failure) => return Ok(HookRegenOutcome::RolledBack { failure }),
+            Err(failure) => {
+                return Ok(HookRegenOutcome::RolledBack {
+                    failure,
+                    target: target.clone(),
+                });
+            }
         };
         // One case vector, the hook's newest saved runs, for both bodies.
         let golden = replay::saved_runs(self, binding, GOLDEN_ENTRIES).and_then(|runs| {
             let pass = |body: &str| {
                 self.hooks_replay_runs(runtime, binding, row, body, &runs)
-                    .map(|entries| HookGoldenFingerprint::of(&entries))
+                    .map(|entries| {
+                        let keys: Vec<String> =
+                            entries.iter().map(|(run, _)| run.clone()).collect();
+                        (keys, HookGoldenFingerprint::of(&entries))
+                    })
             };
-            Ok((pass(request.last_good.as_str())?, pass(candidate.as_str())?))
+            let (keys, last_good) = pass(request.last_good.as_str())?;
+            let (_, next) = pass(candidate.as_str())?;
+            Ok(HookGoldenManifest {
+                runs: keys,
+                last_good,
+                candidate: next,
+            })
         });
-        let (old, new) = match golden {
+        let golden = match golden {
             Ok(golden) => golden,
             Err(error) => {
                 return Ok(rolled_back(
@@ -537,31 +686,35 @@ impl Vault {
                 ));
             }
         };
-        let diff = HookGoldenDiff::between(&old, &new);
+        let diff = HookGoldenDiff::between(&golden.last_good, &golden.candidate);
         Ok(if diff.identical() {
             HookRegenOutcome::AutoAdopt {
                 candidate,
                 target,
                 diff,
+                golden,
             }
         } else {
             HookRegenOutcome::NeedsHumanStamp {
                 candidate,
                 target,
                 diff,
+                golden,
             }
         })
     }
 
-    /// Enacts `binding`'s pending regen: the candidate replaces the hook's
-    /// body in its pack, through the owner's own put. `candidate_hash` names
-    /// the candidate its caller read ([`HookRegenRecord::candidate_hash`]);
-    /// only that pending candidate enacts. An AutoAdopt needs no question; a
-    /// NeedsHumanStamp adopts only with `stamped`, the owner's stamp. Only a
-    /// put that installs the candidate advances the record, to the new body
-    /// under the target contract. A Candidate or Blocked put leaves the last
-    /// good body and the pending decision as they were, and is answered as
-    /// it is.
+    /// Enacts `binding`'s pending regen as the owner: the candidate replaces
+    /// the hook's body in its pack, through the owner's own put, or, for a
+    /// hook an agent authored, through that agent's own put of the `local`
+    /// pack, so the hook stays the agent's, at its ceiling, its grant carried
+    /// (FIX 4692). `candidate_hash` names the candidate its caller read
+    /// ([`HookRegenRecord::candidate_hash`]); only that pending candidate
+    /// enacts. An AutoAdopt needs no question; a NeedsHumanStamp adopts only
+    /// with `stamped`, the owner's stamp. Only a put that installs the
+    /// candidate advances the record, to the new body under the target
+    /// contract. A Candidate or Blocked put leaves the last good body and the
+    /// pending decision as they were, and is answered as it is.
     ///
     /// # Errors
     ///
@@ -574,70 +727,44 @@ impl Vault {
         candidate_hash: &str,
         stamped: bool,
     ) -> Result<PackInstallDisposition> {
-        let (_, row) = self
-            .pack_hook_bindings()?
-            .into_iter()
-            .find(|(id, _)| *id == binding)
-            .ok_or(Error::EntityNotFound)?;
-        let record = self.hook_regen_record(binding)?;
-        let (candidate, _) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
-        let source = self
-            .get_pack_source(&row.source)?
-            .ok_or(Error::EntityNotFound)?;
-        let body_path = format!("hooks/{}/body.js", row.hook);
-        let files = source
-            .files()
-            .iter()
-            .map(|file| {
-                if file.path == body_path {
-                    HubFile::new(file.path.clone(), candidate.as_bytes().to_vec())
-                } else {
-                    file.clone()
-                }
-            })
-            .collect();
-        let prepared = self.prepare_owner_pack_put(files)?;
-        let disposition = self.with_write_txn_grouped(|txn| {
-            let (_, current) = self
-                .pack_hook_bindings_in_txn(txn)?
-                .into_iter()
-                .find(|(id, _)| *id == binding)
-                .ok_or(Error::EntityNotFound)?;
-            let record = REGEN.get(&self.store, txn, &binding)?;
-            let (_, target) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
-            let disposition = self.put_owner_pack_prepared_in_txn(txn, owner, &prepared)?;
-            // A Candidate or Blocked put keeps the pending decision and the
-            // native proposal records, without advancing the last good body.
-            if !matches!(disposition, PackInstallDisposition::Installed(_)) {
-                return Ok(disposition);
-            }
-            // The new body binds under a new id; resolve it in this writer,
-            // before any other regen decision or pack install can intervene.
-            let rebound = self
-                .pack_hook_bindings_in_txn(txn)?
-                .into_iter()
-                .find(|(_, bound)| {
-                    bound.pack == current.pack
-                        && bound.hook == current.hook
-                        && bound.body_hash == candidate_hash
-                })
-                .map(|(id, _)| id)
-                .filter(|id| *id != binding);
-            let adopted = HookRegenRecord {
-                body_hash: candidate_hash.to_owned(),
-                stamp: target,
-                intent: record.and_then(|record| record.intent),
-                pending: None,
-            };
-            for id in std::iter::once(binding).chain(rebound) {
-                REGEN.put(self, txn, &id, &adopted)?;
-            }
-            Ok(disposition)
-        })?;
-        if matches!(disposition, PackInstallDisposition::Installed(_)) {
-            self.verb_hook_bindings_changed();
-        }
-        Ok(disposition)
+        let actor = owner.revalidate(self)?;
+        self.enact_hook_regen(
+            HookPut::Owner(owner),
+            &HookRegenActor::Owner { actor },
+            binding,
+            candidate_hash,
+            stamped,
+        )
+    }
+
+    /// Enacts the regen pending on a hook `agent` authored, as that agent,
+    /// through its own put of the `local` pack (FIX 4692): the hook stays the
+    /// agent's, at its ceiling, its grant carried. An agent carries no
+    /// owner's stamp, so only an AutoAdopt enacts; a candidate whose golden
+    /// replay differs waits for the owner.
+    ///
+    /// # Errors
+    ///
+    /// A hook the agent did not author, no AutoAdopt pending or not the one
+    /// named, and the put's own refusals.
+    pub fn adopt_hook_regen_as_agent(
+        &self,
+        agent: &WriteActor,
+        binding: EntityId,
+        candidate_hash: &str,
+    ) -> Result<PackInstallDisposition> {
+        self.enact_hook_regen(
+            HookPut::Agent {
+                agent: *agent,
+                owner: None,
+            },
+            &HookRegenActor::Agent {
+                agent: agent.entity_ref(),
+            },
+            binding,
+            candidate_hash,
+            false,
+        )
     }
 
     /// Whether `pack` is installed as a vault's own pack.

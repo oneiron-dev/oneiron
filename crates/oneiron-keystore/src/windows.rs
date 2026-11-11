@@ -57,6 +57,36 @@ impl WindowsDpapiKeystore {
     fn path(&self, slot: &KeystoreSlot) -> PathBuf {
         self.dir.join(format!("{}.dpapi", slot.name()))
     }
+
+    /// Seals and syncs one temporary slot file, removing it if any step fails.
+    fn write_temp(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<PathBuf> {
+        let tmp = self.dir.join(format!(
+            ".{}.{}.{nanos}.tmp",
+            slot.name(),
+            std::process::id(),
+            nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        let written = protect(secret, slot.name().as_bytes()).and_then(|sealed| {
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)
+                .and_then(|mut file| {
+                    file.write_all(&sealed)?;
+                    file.sync_all()
+                })
+                .map_err(io)
+        });
+        match written {
+            Ok(()) => Ok(tmp),
+            Err(error) => {
+                let _ = fs::remove_file(&tmp);
+                Err(error)
+            }
+        }
+    }
 }
 
 impl DeviceKeystore for WindowsDpapiKeystore {
@@ -82,25 +112,9 @@ impl DeviceKeystore for WindowsDpapiKeystore {
     /// Writes a temporary file, then links it into place. A crash leaves either
     /// no slot or a whole one, and the link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
-        let sealed = protect(secret, slot.name().as_bytes())?;
         let path = self.path(slot);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let tmp = self.dir.join(format!(
-            ".{}.{}.{nanos}.tmp",
-            slot.name(),
-            std::process::id()
-        ));
-        let written = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .and_then(|mut file| {
-                file.write_all(&sealed)?;
-                file.sync_all()
-            });
-        let linked = written.and_then(|()| fs::hard_link(&tmp, &path));
+        let tmp = self.write_temp(slot, secret)?;
+        let linked = fs::hard_link(&tmp, &path);
         let _ = fs::remove_file(&tmp);
         match linked {
             Ok(()) => Ok(()),
@@ -115,6 +129,25 @@ impl DeviceKeystore for WindowsDpapiKeystore {
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
             Err(e) => Err(io(e)),
         }
+    }
+
+    /// Writes a sealed temporary file, then renames it over the filled slot:
+    /// one rename, so a reader opens the old slot or the new one, never none.
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
+        let path = self.path(slot);
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => return Err(KeystoreError::Corrupt("the slot is not a file")),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(io(e)),
+        }
+        let tmp = self.write_temp(slot, secret)?;
+        let renamed = fs::rename(&tmp, &path);
+        if renamed.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        renamed.map_err(io)?;
+        Ok(true)
     }
 
     fn locality(&self) -> KeystoreLocality {

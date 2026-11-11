@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.click_at",
+  "description": "Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor.",
+  "input": "crate::task_verb::sdk::BrowserPointInput",
+  "output": "crate::task_verb::sdk::BrowserObservationPage",
+  "call": "oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| driver.click_at(input))?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserPointInput>",
+    "description": "Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

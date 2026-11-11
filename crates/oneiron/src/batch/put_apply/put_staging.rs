@@ -179,6 +179,7 @@ pub(crate) fn delete_entity_index_rows(
 /// overlay's edge readers asymmetric and promote a half-edge.
 pub(in crate::batch) fn stage_edge_rows(
     store: &impl ManifestDbs,
+    authority: &Store,
     wtxn: &mut RwTxn<'_>,
     src: &EntityId,
     kind: EdgeKind,
@@ -188,7 +189,7 @@ pub(in crate::batch) fn stage_edge_rows(
     let weight = crate::edge::decode_edge_value_for_kind(kind, value)?.weight;
     crate::workspace_roster::validate_project_edge_put(store, wtxn, *src, kind, *tgt, weight)?;
     store.port_stage_edge_rows(wtxn, src, kind, tgt, value)?;
-    crate::conversation_dag::pin_membership(store, wtxn, src, kind, tgt)?;
+    crate::conversation_dag::pin_membership(store, authority, wtxn, src, kind, tgt)?;
     if kind == EdgeKind::DerivedFrom {
         crate::ports::record_derived_edge_in_txn(store, wtxn, src, tgt)?;
     }
@@ -593,6 +594,11 @@ pub(super) fn stage_task_and_turn(
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {
             crate::store::linear_task_revision::note_task_write(store, wtxn, id, data)?;
+            // FIX 4749: the watcher due index follows every TASK body that
+            // lands, a peer's synced copy too, so the vault's home ticks it
+            // wherever the TASK was made.
+            let due_at = crate::task_verb::watcher_due_at(data)?;
+            crate::runtime_hooks::index_task_due_in_txn(store, wtxn, id, due_at)?;
         }
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {

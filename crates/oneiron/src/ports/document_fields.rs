@@ -7,6 +7,14 @@ use crate::{Error, Result};
 use rmpv::Value;
 
 pub(crate) fn validate_metadata(field: &str, value: &Value) -> Result<()> {
+    validate_metadata_shape(field, value)?;
+    scan_value(value)
+}
+
+/// The shared field rules without the secret scan. A NOTE loads and stores
+/// its fields by these: its writes are scanned and masked under the owner's
+/// scan switch when they persist, so a load reads back what was stored.
+pub(crate) fn validate_metadata_shape(field: &str, value: &Value) -> Result<()> {
     let valid = match field {
         "tags" => value
             .as_array()
@@ -17,7 +25,7 @@ pub(crate) fn validate_metadata(field: &str, value: &Value) -> Result<()> {
     if !valid {
         return Err(invalid("invalid editable metadata field or value"));
     }
-    scan_value(value)
+    Ok(())
 }
 
 fn scan_value(value: &Value) -> Result<()> {

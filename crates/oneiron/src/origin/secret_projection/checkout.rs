@@ -1,7 +1,8 @@
 //! A checkout lease's masked copy (FIX 7608 slice 2b-ii-B2).
 //!
-//! A masked recipient's lease on a store that holds readable marks checks
-//! out the masked copy of its pinned ORIGINAL: the copy made for the
+//! A masked recipient's lease on a store that holds readable marks, or in a
+//! vault whose custody knows a value (FIX 8966), checks out the masked copy
+//! of its pinned ORIGINAL: the copy made for the
 //! store's Published roots with the lease's pin as its private root. Which
 //! copy is decided once, when the lease is first materialized, and kept as
 //! a value-free `repo.secret_projection` record about that copy, found
@@ -20,7 +21,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::origin::lfs::lfs_repo_id;
-use crate::origin::smart_http::store_holds_readable_marks_in_txn;
+use crate::origin::smart_http::store_may_need_masked_copy_in_txn;
 use crate::store::checkout_lease::CheckoutLeaseAct;
 
 /// The bare store's directory inside a copy's own directory.
@@ -87,7 +88,8 @@ pub(crate) fn retained_projected_checkout(
 /// once: the standing binding when there is one, else the copy made now
 /// for the store's Published roots and the lease's pin, recorded before
 /// any byte of it is checked out. `None` when the store holds no readable
-/// mark or no mark touches the closure: the canonical checkout stands.
+/// mark and custody knows no value, or neither touches the closure (FIX
+/// 8966): the canonical checkout stands.
 ///
 /// # Errors
 /// A store or git failure, or another binding for the lease.
@@ -103,7 +105,7 @@ pub(crate) fn bind_projected_checkout(
     }
     {
         let txn = vault.store.env.read_txn()?;
-        if !store_holds_readable_marks_in_txn(vault, &txn, &store)? {
+        if !store_may_need_masked_copy_in_txn(vault, &txn, &store)? {
             return Ok(None);
         }
     }

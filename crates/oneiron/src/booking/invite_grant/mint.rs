@@ -4,42 +4,33 @@ use super::codec::{engine_failure, refused};
 use super::types::PublishBookingPageGrantRequest;
 use crate::Vault;
 use crate::booking::constraint::BookingError;
+use crate::consent::{DerivedGrantOrigin, DerivedGrantSetting};
 use crate::entity_id::EntityId;
-use crate::error::{Error, RecordError};
+use crate::error::Error;
 use crate::outbound_grant::{
-    BookingPageInviteGrantMintIntent, StandingOutboundGrant, StandingOutboundGrantScope,
-    StandingOutboundGrantStatus, standing_outbound_grant_principal_index_entity_id,
-    standing_outbound_grant_principal_index_prefix,
+    StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grant_in_txn,
+    standing_outbound_grants_for_principal_in_txn,
 };
-use crate::ports::EntityStoreRead;
-use crate::side_table::{self, Raw, SideTable};
 
-/// Bound to the same declaration `outbound_grant::index` binds privately for
-/// its own reads/writes; its own doc names `booking` as one of the
-/// cross-module scanners expected to bind their own table over the shared
-/// declaration (two typed tables, one declaration). Key: everything after the
-/// declared prefix (`principal_len(2) ++ principal ++ id16`), exactly the
-/// bytes [`standing_outbound_grant_principal_index_prefix`]/
-/// `standing_outbound_grant_principal_index_key` already build.
-const PRINCIPAL_INDEX: SideTable<Vec<u8>, (), Raw> =
-    SideTable::new(&side_table::OUTBOUND_GRANT_PRINCIPAL_INDEX);
-
-/// Domain tag for the deterministic page-grant entity id. Deriving the id from
-/// the page is what makes a second publish land on
-/// [`RecordError::OutboundGrantAlreadyExists`](crate::error::RecordError::OutboundGrantAlreadyExists) instead of on a second live grant.
+/// Domain tag for the deterministic page-grant id. Deriving the id from the
+/// page is what makes a second publish find the grant the first one minted
+/// instead of minting a second live grant.
 pub(super) const PAGE_INVITE_GRANT_ID_DOMAIN: &[u8] = b"oneiron.booking.page_invite_grant.v1\0";
 
-/// Mints — or returns — the ONE live invite grant for a published page.
+/// Mints — or returns — the ONE invite grant for a published page.
 ///
-/// Idempotent by construction, twice over: the principal index is read before
-/// anything is written, and the grant id is DERIVED from the page, so a
-/// concurrent second publish loses the `entities.get` race and is answered
-/// with the grant that already exists. Equivalent grants never accumulate.
+/// Idempotent by construction: the grant id is DERIVED from the page, and a
+/// page that already holds a grant under that id, live or revoked, is
+/// answered with it. Equivalent grants never accumulate, and a grant the
+/// owner revoked stays revoked. The grant carries out the page's
+/// publication, whose indexed claim its receipt names when one is indexed,
+/// else the page itself.
 ///
 /// # Errors
 ///
 /// [`BookingError::SlotOracle`] when the grant cannot be read or written;
-/// [`BookingError::InvalidConstraint`] when a minted grant cannot be read back.
+/// [`BookingError::InvalidConstraint`] when the vault records no owner to
+/// stamp it.
 pub fn mint_publish_page_invite_grant(
     vault: &Vault,
     request: &PublishBookingPageGrantRequest,
@@ -49,25 +40,38 @@ pub fn mint_publish_page_invite_grant(
         return Ok(grant);
     }
     let id = page_invite_grant_id(&request.page_ref)?;
-    let intent = BookingPageInviteGrantMintIntent {
-        page_ref: request.page_ref,
-        publisher_principal: request.publisher_principal,
-    };
-    match vault.mint_booking_page_invite_outbound_grant(&id, &intent, request.issued_at) {
-        Ok(grant) => Ok(grant),
-        Err(Error::Record(RecordError::OutboundGrantAlreadyExists)) => vault
-            .get_standing_outbound_grant(&id)
-            .map_err(|error| engine_failure("page invite grant read", error))?
-            .ok_or_else(|| refused("the existing booking page invite grant did not read back")),
-        Err(error) => Err(engine_failure("page invite grant mint", error)),
-    }
+    vault
+        .with_write_txn_grouped(|txn| {
+            if let Some(grant) = standing_outbound_grant_in_txn(&vault.store, txn, &id)? {
+                return Ok(Some(grant));
+            }
+            let setting = crate::booking::publication::publication_setting_in_txn(
+                vault,
+                txn,
+                request.page_ref,
+            )?
+            .unwrap_or_else(|| DerivedGrantSetting {
+                receipt_ref: format!("page:{}", request.page_ref.to_hex()),
+                setter: None,
+            });
+            mint_derived_page_invite_grant_in_txn(
+                vault,
+                txn,
+                id,
+                request.page_ref,
+                request.publisher_principal,
+                &setting,
+            )
+        })
+        .map_err(|error| engine_failure("page invite grant mint", error))?
+        .ok_or_else(|| refused("the vault records no owner to stamp the page invite grant"))
 }
 
 /// Mints the page's invite grant inside the owner's publication write (FIX
 /// 7849): publishing a page is the owner act that lets its confirmed
-/// bookings carry invites. The grant id is derived from the page, so a
-/// republish finds the grant already stored and writes nothing, and a grant
-/// the owner revoked stays revoked.
+/// bookings carry invites, and `setting` names that publication. The grant id
+/// is derived from the page, so a republish finds the grant already stored
+/// and writes nothing, and a grant the owner revoked stays revoked.
 ///
 /// # Errors
 ///
@@ -77,19 +81,35 @@ pub(crate) fn mint_page_invite_grant_in_txn(
     txn: &mut heed::RwTxn<'_>,
     page_ref: EntityId,
     publisher_principal: EntityId,
-    issued_at: u64,
+    setting: &DerivedGrantSetting,
 ) -> crate::Result<()> {
     let id = page_invite_grant_id(&page_ref)
         .map_err(|_| Error::CorruptedIndex("booking page invite grant id"))?;
-    if vault.store.port_entity_record(&*txn, &id)?.is_some() {
+    if standing_outbound_grant_in_txn(&vault.store, txn, &id)?.is_some() {
         return Ok(());
     }
-    let intent = BookingPageInviteGrantMintIntent {
-        page_ref,
-        publisher_principal,
-    };
-    vault.mint_booking_page_invite_outbound_grant_in_txn(txn, &id, &intent, issued_at)?;
+    mint_derived_page_invite_grant_in_txn(vault, txn, id, page_ref, publisher_principal, setting)?;
     Ok(())
+}
+
+/// The page's invite grant under `id`, minted through the derived consent
+/// door for the publisher. `None`: the vault records no owner to stamp it.
+fn mint_derived_page_invite_grant_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    page_ref: EntityId,
+    publisher_principal: EntityId,
+    setting: &DerivedGrantSetting,
+) -> crate::Result<Option<StandingOutboundGrant>> {
+    vault.mint_derived_outbound_grant_in_txn(
+        txn,
+        DerivedGrantOrigin::BookingInvite,
+        setting,
+        id,
+        &publisher_principal.to_hex(),
+        StandingOutboundGrantScope::BookingPageInvites { page_ref },
+    )
 }
 
 /// The live `BookingPageInvites` grant this principal holds for `page_ref`.
@@ -101,58 +121,23 @@ pub(super) fn live_page_invite_grant(
     principal_ref: &str,
     page_ref: &EntityId,
 ) -> Result<Option<(EntityId, StandingOutboundGrant)>, BookingError> {
-    // The index scan closes its read transaction before any grant is read:
-    // LMDB gives a thread one read transaction at a time, and each grant read
-    // opens its own.
-    let ids = {
-        let prefix = standing_outbound_grant_principal_index_prefix(principal_ref)
-            .map_err(|error| engine_failure("grant principal prefix", error))?;
-        let tail = prefix
-            .strip_prefix(PRINCIPAL_INDEX.decl().prefix)
-            .expect("grant principal prefix always carries its declared prefix");
-        let rtxn = vault
-            .store
-            .env
-            .read_txn()
-            .map_err(|error| engine_failure("read transaction", error))?;
-        let mut ids = Vec::new();
-        for table_key in PRINCIPAL_INDEX
-            .scan_keys(&vault.store, &rtxn, tail)
-            .map_err(|error| engine_failure("grant principal scan", error))?
-        {
-            let full_key = PRINCIPAL_INDEX.key_bytes(&table_key);
-            ids.push(
-                standing_outbound_grant_principal_index_entity_id(&full_key, principal_ref)
-                    .map_err(|error| engine_failure("grant principal key", error))?,
-            );
-        }
-        ids
-    };
+    let rtxn = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(|error| engine_failure("read transaction", error))?;
     let wanted = StandingOutboundGrantScope::BookingPageInvites {
         page_ref: *page_ref,
     };
-    let mut matched: Option<(EntityId, StandingOutboundGrant)> = None;
-    for id in ids {
-        let Some(grant) = vault
-            .get_standing_outbound_grant(&id)
+    // The principal's grants come in id order, so the first live match is
+    // the deterministic one.
+    Ok(
+        standing_outbound_grants_for_principal_in_txn(&vault.store, &rtxn, principal_ref)
             .map_err(|error| engine_failure("standing grant read", error))?
-        else {
-            continue;
-        };
-        if grant.status != StandingOutboundGrantStatus::Active
-            || grant.revoked_at.is_some()
-            || grant.scope != wanted
-        {
-            continue;
-        }
-        if matched
-            .as_ref()
-            .is_none_or(|(current, _)| id.as_bytes() < current.as_bytes())
-        {
-            matched = Some((id, grant));
-        }
-    }
-    Ok(matched)
+            .into_iter()
+            .find(|grant| grant.is_active() && grant.scope == wanted)
+            .map(|grant| (grant.id, grant)),
+    )
 }
 
 /// The deterministic grant id one page's invite grant lives at.

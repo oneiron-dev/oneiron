@@ -2,6 +2,12 @@
 //! FIX 6867 G1 PR2a): the owner's and trusted callers' import, unchanged,
 //! and a run's import of the paths its Grant reads, admitted again in the
 //! final writer.
+//!
+//! FIX 4299 (CODE-CUSTODY-01): a capture of a registered repository names
+//! its stable anchor ([`CaptureRepository`]); the final writer judges that
+//! anchor again, and the capture's scope derives from it. No caller's
+//! whitelist is read: a capture names no editable policy, and an
+//! unregistered one names no anchor.
 
 use std::convert::Infallible;
 use std::path::Path;
@@ -9,9 +15,10 @@ use std::path::Path;
 use heed::RoTxn;
 
 use super::super::ingest::{
-    HostedMediaHashMatchProvider, NoopHostedMediaHashMatchProvider, RepoIngestBlob,
-    RepoIngestConfig, RepoIngestResult, check_hosted_media_hash_matches, collect_repo_blobs,
-    scan_codebase_snapshot_metadata, validate_project_id,
+    CODE_SNAPSHOT_CAPTURE_CONTENT_KIND, HostedMediaHashMatchProvider,
+    NoopHostedMediaHashMatchProvider, RepoIngestBlob, RepoIngestConfig, RepoIngestResult,
+    check_hosted_media_hash_matches, collect_repo_blobs, scan_codebase_snapshot_metadata,
+    validate_project_id,
 };
 use super::super::repo_ref::RepoRef;
 use super::super::residue::reclaimable_asset_hashes;
@@ -23,16 +30,50 @@ use crate::code_symbol::{
     CodeSymbolSource, code_symbol_document_in_txn, masked_repo_symbol_texts_in_txn,
     prepare_code_symbol_graph,
 };
+use crate::codebase::CaptureRepository;
+use crate::consent::AuthenticatedOwner;
 use crate::error::{CodeError, Error, Result};
 use crate::origin::secret_projection::index::RepoIndexMarks;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
+use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::temporal::TimeRange;
 
-/// A run's import claims no editable policy, as the owner door's does not.
+/// A run's import claims no editable policy, as the owner door's does not:
+/// a registered repository's whitelist is its own (FIX 4299).
 const NO_EDITABLE_WHITELIST: [&str; 0] = [];
 
 impl Vault {
+    /// Imports an owner's committed tree and retains its capture receipt in
+    /// the same transaction as the filtered snapshot and symbols.
+    pub fn ingest_local_repo_at_commit_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        project_id: impl Into<String>,
+        config: &RepoIngestConfig,
+        commit_ref: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<RepoIngestResult> {
+        owner.revalidate(self)?;
+        let imported = self.ingest_local_repo_checked(
+            project_id,
+            config,
+            commit_ref,
+            (occurred, learned_at),
+            &NoopHostedMediaHashMatchProvider,
+            || Ok(()),
+            None,
+            None,
+            Some(owner),
+            |_| Ok(Ok::<(), Infallible>(())),
+        )?;
+        match imported {
+            Ok(imported) => Ok(imported),
+            Err(never) => match never {},
+        }
+    }
+
     /// The owner's and trusted callers' import, as it was: every path, no
     /// admission beyond the importer's own custody writer.
     pub(in crate::codebase) fn ingest_local_repo_with_after_first_pass(
@@ -52,6 +93,8 @@ impl Vault {
             hash_match_provider,
             after_first_pass,
             None,
+            None,
+            None,
             |_| Ok(Ok::<(), Infallible>(())),
         )?;
         match imported {
@@ -64,13 +107,19 @@ impl Vault {
     /// `repo_path` (FIX 6867): only the paths `select` keeps reach the
     /// snapshot, its blobs and its symbols, and `admit` judges the run again
     /// in the final writer. A refusal there is the run's, and nothing is
-    /// written.
+    /// written. The capture belongs to the run's admitted anchor
+    /// `repository` (FIX 4299).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the run's import names its anchor beside its selection and admission"
+    )]
     pub(crate) fn ingest_local_repo_for_run<R>(
         &self,
         project_id: String,
         repo_path: &Path,
         commit: &str,
         timing: (TimeRange, u64),
+        repository: CaptureRepository,
         select: &dyn Fn(&str) -> bool,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
@@ -83,20 +132,25 @@ impl Vault {
             &NoopHostedMediaHashMatchProvider,
             || Ok(()),
             Some(select),
+            Some(repository),
+            None,
             admit,
         )
     }
 
-    /// The owner's import of one exact commit of a served repository (FIX
-    /// 6869, G4 PR1): every path, through the same checked writer, with no
-    /// editable policy. `admit` judges the owner, the anchor and the admitted
-    /// source again in the final writer; a refusal there writes nothing.
+    /// The owner's import of one exact commit of a served or registered
+    /// repository (FIX 6869, G4 PR1; FIX 4299): every path, through the same
+    /// checked writer, with no editable policy, as a capture of its anchor
+    /// `repository`. `admit` judges the owner, and for a served import the
+    /// admitted source, again in the final writer, beside the anchor; a
+    /// refusal there writes nothing.
     pub(crate) fn ingest_served_repo_as_owner<R>(
         &self,
         project_id: String,
         repo_path: &Path,
         commit: &str,
         timing: (TimeRange, u64),
+        repository: CaptureRepository,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
         let config = RepoIngestConfig::new(repo_path, NO_EDITABLE_WHITELIST)?;
@@ -108,16 +162,19 @@ impl Vault {
             &NoopHostedMediaHashMatchProvider,
             || Ok(()),
             None,
+            Some(repository),
+            None,
             admit,
         )
     }
 
-    /// The one import body both callers share. `select`, when given, keeps
-    /// the paths a run's import may read; `admit` runs first in the final
+    /// The one import body every caller shares. `select`, when given, keeps
+    /// the paths a run's import may read; `repository`, when given, is the
+    /// anchor the capture belongs to; `admit` runs first in the final
     /// writer.
     #[allow(
         clippy::too_many_arguments,
-        reason = "the moved import body keeps its own arguments beside the run's two"
+        reason = "the shared import carries the selection, the anchor, caller admission and optional owner capture"
     )]
     fn ingest_local_repo_checked<R>(
         &self,
@@ -128,6 +185,8 @@ impl Vault {
         hash_match_provider: &(impl HostedMediaHashMatchProvider + ?Sized),
         after_first_pass: impl FnOnce() -> Result<()>,
         select: Option<&dyn Fn(&str) -> bool>,
+        repository: Option<CaptureRepository>,
+        owner: Option<&AuthenticatedOwner>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
         let (occurred, learned_at) = timing;
@@ -165,19 +224,24 @@ impl Vault {
                 "commit tree could not be read",
             ))
         })?;
-        // A run keeps the namespace its existing repository admission names.
-        let repo_path = if select.is_some() {
-            std::fs::canonicalize(&config.repo_path)
-        } else {
-            // Commit-only imports also work when the checkout is unavailable.
-            std::fs::canonicalize(repo.workdir().unwrap_or_else(|| repo.path()))
-                .or_else(|_| std::fs::canonicalize(repo.path()))
-        }
-        .map_err(|_| {
+        let invalid_repo_path = |_| {
             Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "repo_path must be a canonicalizable local path",
             ))
-        })?;
+        };
+        // Absolute custody declarations follow the commit tree's actual root.
+        // Commit-only imports also work when the checkout is unavailable.
+        let custody_path = std::fs::canonicalize(repo.workdir().unwrap_or_else(|| repo.path()))
+            .or_else(|_| std::fs::canonicalize(repo.path()))
+            .map_err(invalid_repo_path)?;
+        // A run keeps the namespace its existing repository admission names.
+        let repo_path = if select.is_some() {
+            std::fs::canonicalize(&config.repo_path).map_err(invalid_repo_path)?
+        } else {
+            custody_path.clone()
+        };
+        let custody_path = custody_path.to_string_lossy();
+        let custody_root = Some(custody_path.trim_end_matches('/'));
         let repo_ref = RepoRef::LocalFolder {
             path: repo_path.to_string_lossy().into_owned(),
             commit: commit_hash.clone(),
@@ -193,7 +257,9 @@ impl Vault {
         }
         check_hosted_media_hash_matches(&project_id, &blobs, hash_match_provider)?;
 
-        let snapshot = Self::build_ingest_snapshot(project_id, &repo_ref, &commit_hash, &blobs)?;
+        let snapshot =
+            Self::build_ingest_snapshot(project_id, &repo_ref, Some(&commit_hash), &blobs)?
+                .with_repository(repository.map(|capture| capture.anchor))?;
         // The read pass is useful for early quarantine but does not authorize
         // any writes: a declaration can arrive after it releases its snapshot.
         scan_codebase_snapshot_metadata(&snapshot)?;
@@ -204,7 +270,7 @@ impl Vault {
                 .map(|index| blobs[index].data.clone())
         };
         let rtxn = self.store.env.read_txn()?;
-        self.apply_custody_to_snapshot(&rtxn, &snapshot, &contents)?;
+        self.apply_custody_to_snapshot(&rtxn, &snapshot, custody_root, &contents)?;
         drop(rtxn);
         after_first_pass()?;
         // Keep main's vault-scoped, test-only writer rendezvous: a registration
@@ -226,20 +292,20 @@ impl Vault {
         self.commit_ingest_snapshot(
             &snapshot,
             &blobs,
-            &repo_ref,
-            &commit_hash,
-            occurred,
-            learned_at,
+            (occurred, learned_at),
+            repository.as_ref(),
+            custody_root,
             &contents,
+            owner,
             admit,
         )
     }
 
     /// The first-pass snapshot of the import: an entry for every kept blob.
-    fn build_ingest_snapshot(
+    pub(super) fn build_ingest_snapshot(
         project_id: String,
         repo_ref: &RepoRef,
-        commit_hash: &str,
+        commit_hash: Option<&str>,
         blobs: &[RepoIngestBlob],
     ) -> Result<CodebaseSnapshot> {
         let files = blobs
@@ -254,7 +320,7 @@ impl Vault {
         let snapshot = CodebaseSnapshot::new(
             project_id,
             repo_ref.clone(),
-            Some(commit_hash.to_owned()),
+            commit_hash.map(str::to_owned),
             files,
         )?;
         Ok(snapshot)
@@ -266,15 +332,15 @@ impl Vault {
         clippy::too_many_arguments,
         reason = "the final writer takes the first pass as it stood"
     )]
-    fn commit_ingest_snapshot<R>(
+    pub(super) fn commit_ingest_snapshot<R>(
         &self,
         snapshot: &CodebaseSnapshot,
         blobs: &[RepoIngestBlob],
-        repo_ref: &RepoRef,
-        commit_hash: &str,
-        occurred: TimeRange,
-        learned_at: u64,
+        (occurred, learned_at): (TimeRange, u64),
+        repository: Option<&CaptureRepository>,
+        custody_root: Option<&str>,
         contents: &dyn Fn(&str) -> Option<Vec<u8>>,
+        owner: Option<&AuthenticatedOwner>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
         let written = self.with_write_txn_grouped(|wtxn| {
@@ -283,17 +349,25 @@ impl Vault {
             if let Err(refused) = admit(wtxn)? {
                 return Ok(Err(refused));
             }
+            // The anchor the capture belongs to stands, with the folder this
+            // import read (FIX 4299).
+            if let Some(capture) = repository {
+                self.require_capture_repository_in_txn(wtxn, capture, &snapshot.repo_ref)?;
+            }
+            let capture_actor = owner
+                .map(|owner| owner.revalidate_in_txn(self, wtxn))
+                .transpose()?;
             // Repo-marked files stay in the snapshot; their index copies
             // are masked (FIX 7608 slice 3).
             let repo_marks = RepoIndexMarks::read_in_txn(self, wtxn)?;
-            let (files, custody_report) =
-                self.repo_snapshot_inputs_in_txn(wtxn, &repo_marks, snapshot, contents)?;
-            let filtered_snapshot = CodebaseSnapshot::new(
-                snapshot.project_id.clone(),
-                snapshot.repo_ref.clone(),
-                snapshot.commit_hash.clone(),
-                files,
+            let (files, custody_report) = self.repo_snapshot_inputs_in_txn(
+                wtxn,
+                &repo_marks,
+                snapshot,
+                custody_root,
+                contents,
             )?;
+            let filtered_snapshot = snapshot.rebuilt_with_files(files)?;
             let retained_paths = filtered_snapshot
                 .files
                 .iter()
@@ -321,7 +395,7 @@ impl Vault {
             let code_body = CodeArtifactBody::new(
                 "Summarize the repository snapshot.",
                 filtered_snapshot.fork_hash,
-                repo_ref.canonical(),
+                snapshot.repo_ref.canonical(),
             );
             let code_body = crate::code_artifact::encode_code_artifact_body(&code_body)?;
 
@@ -379,7 +453,8 @@ impl Vault {
             // as this writer reads it (FIX 7809), under the repository
             // identity resolved once in this snapshot (FIX 12761).
             let read: &RoTxn<'_> = wtxn;
-            let identity = crate::codebase::resolve_repo_identity_in_txn(self, read, repo_ref)?;
+            let identity =
+                crate::codebase::resolve_repo_identity_in_txn(self, read, &snapshot.repo_ref)?;
             let symbol_sources = symbol_texts
                 .iter()
                 .map(|(path, text)| {
@@ -390,9 +465,9 @@ impl Vault {
                 .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
             let mut symbol_graph = prepare_code_symbol_graph(
-                repo_ref.clone(),
+                snapshot.repo_ref.clone(),
                 identity,
-                Some(commit_hash.to_owned()),
+                snapshot.commit_hash.clone(),
                 symbol_sources,
             )?;
             // Each symbol names the operations that wrote it, read from its
@@ -405,9 +480,20 @@ impl Vault {
                 occurred,
                 learned_at,
             )?;
+            let capture_receipt_ref = capture_actor
+                .map(|actor| {
+                    self.record_code_snapshot_capture_in_txn(
+                        wtxn,
+                        actor,
+                        code_artifact_id,
+                        &filtered_snapshot,
+                    )
+                })
+                .transpose()?;
             Ok(Ok(RepoIngestResult {
                 code_artifact_id,
                 snapshot: filtered_snapshot,
+                capture_receipt_ref,
             }))
         })?;
         // A file custody now withholds leaves the queue's source copies at
@@ -416,5 +502,36 @@ impl Vault {
             tracing::warn!(%error, "withheld queue sources were not erased after an ingest");
         }
         Ok(written)
+    }
+
+    fn record_code_snapshot_capture_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: crate::EntityId,
+        artifact: crate::EntityId,
+        snapshot: &CodebaseSnapshot,
+    ) -> Result<String> {
+        let mut record = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id: GateDecisionId::now(),
+            created_at: self.store.clock.now_recorded_at(),
+            outcome: "imported".to_owned(),
+            reason_codes: vec!["gate.code.capture.imported".to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: crate::EdgeActorClass::Human.gate_actor_class().to_owned(),
+            actor_ref: Some(actor.to_hex()),
+            content_kind: CODE_SNAPSHOT_CAPTURE_CONTENT_KIND.to_owned(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            claim_id: Some(*artifact.as_bytes()),
+            grant_ref: None,
+            diff_handle: snapshot.fork_hash.to_vec(),
+            read_frontier_hash: [0; 32],
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store
+            .append_fresh_gate_decision_in_txn(txn, &mut record)?;
+        Ok(format!("gate:{}", record.decision_id.to_hex()))
     }
 }

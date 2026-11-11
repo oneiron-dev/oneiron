@@ -25,7 +25,7 @@ pub(super) async fn vault_search_bm25(
     input: QueryBm25Request,
 ) -> (MemoryResult<Bm25Search>, Vec<EntityId>) {
     let producers = ProducerRows::default();
-    let (query, limit) = (input.query.clone(), input.limit);
+    let (query, limit, filter) = (input.query.clone(), input.limit, input.filter.clone());
     let page = crate::server::blocking(|| read_page(server, call, actor, class, input, &producers));
     let mut rows = producers.take();
     let answer = match page {
@@ -36,6 +36,7 @@ pub(super) async fn vault_search_bm25(
                 page,
                 &query,
                 limit,
+                filter.as_ref(),
                 &home,
             )
             .await;
@@ -73,7 +74,10 @@ fn read_page(
     {
         Some(room) => {
             let value = serde_json::to_value(&input).map_err(|_| undecoded())?;
-            let output = memory.for_room_turn(room)?.invoke(VERB, value)?;
+            let output =
+                memory
+                    .for_room_turn(room)?
+                    .invoke(&oneiron::verbs::VERB_TABLE, VERB, value)?;
             serde_json::from_value(output).map_err(|_| undecoded())
         }
         None => oneiron::task_verb::sdk::vault_search_bm25(&memory, input),

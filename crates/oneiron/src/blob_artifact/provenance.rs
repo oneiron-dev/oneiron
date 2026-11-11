@@ -35,6 +35,10 @@ pub enum BlobVersionProvenance {
     AgentRun {
         run_ref: String,
     },
+    /// Verified native seal output. Auto requires its private producer guard.
+    SealJob {
+        job_ref: String,
+    },
     /// Actual queue-check exhaust bytes, completed in the finish writer.
     /// `check_ref` reuses the existing `run_ref` record key (no new key).
     QueueCheck {
@@ -49,6 +53,7 @@ impl BlobVersionProvenance {
             Self::UserUpload => PROVENANCE_USER_UPLOAD,
             Self::CapabilityUpload => "capability_upload",
             Self::AgentRun { .. } => PROVENANCE_AGENT_RUN,
+            Self::SealJob { .. } => "seal_job",
             Self::QueueCheck { .. } => PROVENANCE_QUEUE_CHECK,
         }
     }
@@ -58,6 +63,7 @@ impl BlobVersionProvenance {
         match self {
             Self::UserUpload | Self::CapabilityUpload => None,
             Self::AgentRun { run_ref } => Some(run_ref),
+            Self::SealJob { job_ref } => Some(job_ref),
             Self::QueueCheck { check_ref } => Some(check_ref),
         }
     }
@@ -67,9 +73,10 @@ impl BlobVersionProvenance {
             (PROVENANCE_USER_UPLOAD, None) => Ok(Self::UserUpload),
             ("capability_upload", None) => Ok(Self::CapabilityUpload),
             (PROVENANCE_AGENT_RUN, Some(run_ref)) => Ok(Self::AgentRun { run_ref }),
+            ("seal_job", Some(job_ref)) => Ok(Self::SealJob { job_ref }),
             (PROVENANCE_QUEUE_CHECK, Some(check_ref)) => Ok(Self::QueueCheck { check_ref }),
             _ => Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "provenance must be user_upload without run_ref or agent_run/queue_check with run_ref",
+                "provenance must be user_upload/capability_upload without run_ref or agent_run/seal_job/queue_check with run_ref",
             ))),
         }
     }
@@ -77,7 +84,9 @@ impl BlobVersionProvenance {
     pub(super) fn claim_source(&self) -> ClaimSource {
         match self {
             Self::UserUpload | Self::CapabilityUpload => ClaimSource::UserStated,
-            Self::AgentRun { .. } | Self::QueueCheck { .. } => ClaimSource::Generated,
+            Self::AgentRun { .. } | Self::SealJob { .. } | Self::QueueCheck { .. } => {
+                ClaimSource::Generated
+            }
         }
     }
 
@@ -87,7 +96,7 @@ impl BlobVersionProvenance {
     /// Queue-check exhaust parks the same way (no invented Auto).
     pub(super) fn approval_status(&self) -> ClaimApprovalStatus {
         match self {
-            Self::UserUpload => ClaimApprovalStatus::Auto,
+            Self::UserUpload | Self::SealJob { .. } => ClaimApprovalStatus::Auto,
             Self::CapabilityUpload | Self::AgentRun { .. } | Self::QueueCheck { .. } => {
                 ClaimApprovalStatus::Proposed
             }
@@ -98,6 +107,7 @@ impl BlobVersionProvenance {
 pub(super) fn validate_provenance(provenance: &BlobVersionProvenance) -> Result<()> {
     let check_ref = match provenance {
         BlobVersionProvenance::AgentRun { run_ref } => Some(run_ref),
+        BlobVersionProvenance::SealJob { job_ref } => Some(job_ref),
         BlobVersionProvenance::QueueCheck { check_ref } => Some(check_ref),
         _ => None,
     };

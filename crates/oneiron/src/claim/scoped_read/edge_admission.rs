@@ -1,6 +1,5 @@
 //! The one scoped graph projection: exact relation + both endpoints, then limits.
-use super::access_gate::HeldAuthority;
-use super::{ScopedRead, ScopedReadResult, admission::ReadAdmission};
+use super::{ScopedRead, ScopedReadResult, access_gate::HeldAuthority, admission::ReadAdmission};
 use crate::edge::{EdgeInfo, EdgeKind};
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
@@ -97,7 +96,46 @@ impl ScopedRead<'_> {
         scan_limit: usize,
         unique_targets: bool,
     ) -> Result<AdmittedEdgeScan> {
-        let source = self.admit_entity_in(txn, policy, filter, center)?;
+        self.admitted_edges_held_in(
+            txn,
+            policy,
+            filter,
+            center,
+            direction,
+            kind,
+            limit,
+            scan_limit,
+            unique_targets,
+            &HeldAuthority::default(),
+        )
+    }
+
+    /// The centre and peers use the walk's held authority, so its Grant and own-owner
+    /// alternatives see the request it asked (STANDING-GRAPH-OWNER-CENTRE-READ).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "snapshot, policy, direction, visible budgets and authority are distinct axes"
+    )]
+    pub(super) fn admitted_edges_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        center: &EntityId,
+        direction: EdgeDirection,
+        kind: Option<EdgeKind>,
+        limit: usize,
+        scan_limit: usize,
+        unique_targets: bool,
+        authority: &HeldAuthority,
+    ) -> Result<AdmittedEdgeScan> {
+        let admit = |id: &EntityId| {
+            self.admit_in(txn, id, || {
+                self.is_entity_retrievable_held_in(txn, policy, filter, id, authority)
+                    .map(|allowed| allowed.then_some(()))
+            })
+        };
+        let source = admit(center)?;
         let mut result = AdmittedEdgeScan {
             source,
             edges: Vec::new(),
@@ -146,7 +184,7 @@ impl ScopedRead<'_> {
                 tgt,
                 edge,
                 || Ok(ReadAdmission::Visible(())),
-                || self.admit_entity_in(txn, policy, filter, &peer),
+                || admit(&peer),
             )?;
             result.suppressed += admitted.suppression();
             if let Some(edge) = admitted.into_option() {
@@ -252,7 +290,7 @@ impl ScopedRead<'_> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         // One held authority for the tree's node reads in this txn (FIX 7462).
-        let held = HeldAuthority::for_request(None);
+        let held = self.held_for(None);
         let anchor = self.admit_entity_in(&txn, &policy, &filter, root)?;
         let mut tree = None;
         if anchor.visible()

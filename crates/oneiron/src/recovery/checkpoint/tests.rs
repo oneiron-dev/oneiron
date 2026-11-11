@@ -1,6 +1,6 @@
-use super::test_hooks::arm_restore_failure;
 #[cfg(target_os = "linux")]
 use super::test_hooks::arm_restore_panic;
+use super::test_hooks::{RestoreStep, arm_restore_failure};
 use super::*;
 use crate::{EntityId, temporal::TimeRange};
 
@@ -1341,7 +1341,7 @@ fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
             source
                 .store
                 .vault_meta
-                .put(txn, b"retr_run:test", b"runtime")?;
+                .put(txn, b"retr_run:v0:test", b"runtime")?;
             source.store.ppr_cache.put(txn, b"derived", b"cache")?;
             Ok(())
         })
@@ -1426,7 +1426,7 @@ fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
             restored
                 .store
                 .vault_meta
-                .get(&txn, b"retr_run:test")
+                .get(&txn, b"retr_run:v0:test")
                 .unwrap()
                 .is_none()
         );
@@ -1509,8 +1509,8 @@ fn restore_rebuilds_pending_consent_indexes_and_preserves_insertion_order() {
     source
         .with_write_txn(|txn| {
             for prefix in [
-                b"gate_pending:run_index:v1:".as_slice(),
-                b"gate_pending:group_index:v1:",
+                b"gate_pending:run_index:v2:".as_slice(),
+                b"gate_pending:group_index:v2:",
                 b"gate_pending:hash_index:v1:",
                 b"gate_pending:sequence_index:v1:",
                 b"gate_pending:critical_confirm_by_id:v1:",

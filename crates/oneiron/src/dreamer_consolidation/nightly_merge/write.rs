@@ -12,6 +12,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedRead as ClaimRead, claim_evidence_taint,
 };
 use crate::dreamer_runner::{DreamerAttemptStatus, DreamerRunnerStore};
+use crate::model_step_context::StepEffectBinding;
 use crate::write_envelope::WriteActor;
 use crate::{
     ClaimCandidate, EntityId, Error, Result, SourceLineage, TimeRange, Vault, WriteEnvelope,
@@ -136,18 +137,19 @@ pub(in crate::dreamer_consolidation) fn landed_units_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: AttemptId,
-) -> Result<Option<(u64, Vec<[u8; 32]>)>> {
+) -> Result<Option<(u64, Vec<StepEffectBinding>)>> {
     let Some(result) = MERGED.get(&vault.store, txn, &attempt)? else {
         return Ok(None);
     };
-    let mut paid = !result.step_hashes.is_empty();
-    for hash in &result.step_hashes {
-        paid &= DreamerRunnerStore::new(vault).checkpoint_step_charged(attempt, hash)?;
+    let mut paid = !result.step_bindings.is_empty();
+    for binding in &result.step_bindings {
+        paid &= DreamerRunnerStore::new(vault)
+            .checkpoint_step_charged(binding.attempt_id, &binding.step_hash)?;
     }
     Ok(Some(if paid {
         (0, Vec::new())
     } else {
-        (result.completed_units, result.step_hashes.clone())
+        (result.completed_units, result.step_bindings.clone())
     }))
 }
 

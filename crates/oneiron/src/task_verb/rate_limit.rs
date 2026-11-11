@@ -10,7 +10,6 @@ use crate::gate::{
 };
 use crate::memory::MemoryResult;
 use crate::side_table::{self, RawValue, SideTable};
-use crate::task_verb::sdk::AgentVerb;
 use crate::write_envelope::WriteActor;
 
 use super::create_spec::TaskCreateRateLimit;
@@ -47,10 +46,6 @@ impl RawValue for RateWindow {
             count: u64::from_le_bytes(count.try_into().expect("split at 8")),
         })
     }
-}
-
-pub(super) fn task_verb_contract(verb: AgentVerb) -> &'static str {
-    verb.as_str()
 }
 
 pub(super) fn task_actor_ceiling(

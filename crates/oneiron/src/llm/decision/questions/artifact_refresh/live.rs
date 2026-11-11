@@ -3,6 +3,7 @@
 //! asks again the units an edit to it changed since.
 
 use super::{Asking, Changed, Selection};
+use crate::edit_roundtrip::SheetRowSelection;
 use crate::office_body::LivePin;
 use crate::{EntityId, Result};
 
@@ -10,7 +11,7 @@ impl Changed {
     /// Adds the units `more` names that this does not.
     pub(super) fn merge(&mut self, more: Changed) {
         match (self, more) {
-            (Self::Rows(rows), Self::Rows(more)) => rows.extend(more),
+            (Self::Rows(rows), Self::Rows(more)) => rows.merge(more),
             (Self::Blocks(blocks), Self::Blocks(more)) => {
                 for block in more {
                     if !blocks.contains(&block) {
@@ -60,19 +61,28 @@ impl Asking<'_> {
                 let Some(live) = vault.live_sheet(&artifact, pin(artifact), sheet)? else {
                     return Ok(None);
                 };
-                let cols: Vec<u32> = (rows.start.col..=rows.end.col)
-                    .filter(|col| col != answer_col)
-                    .collect();
-                let moved = |row: u32| cols.iter().any(|col| live.differs(*col, row));
-                let all = live.whole().is_some() || header_row.is_some_and(|row| moved(row));
-                Some(Changed::Rows(
-                    (rows.start.row..=rows.end.row)
-                        .filter(|row| all || moved(*row))
-                        .collect(),
-                ))
+                let read_col =
+                    |col: u32| col != *answer_col && (rows.start.col..=rows.end.col).contains(&col);
+                let header_moved = header_row.is_some_and(|header| {
+                    live.changed_cells()
+                        .any(|(row, col)| row == header && read_col(col))
+                });
+                let selected = if live.whole().is_some() || header_moved {
+                    SheetRowSelection::range(rows.start.row, rows.end.row)
+                } else {
+                    live.changed_cells()
+                        .filter(|(row, col)| {
+                            read_col(*col) && (rows.start.row..=rows.end.row).contains(row)
+                        })
+                        .map(|(row, _)| row)
+                        .collect()
+                };
+                Some(Changed::Rows(selected))
             }
-            Selection::Paragraphs { blocks, .. } => {
-                let Some(live) = vault.live_paragraphs(&artifact, pin(artifact))? else {
+            Selection::Paragraphs { blocks, scope, .. } => {
+                let Some(live) =
+                    vault.live_scoped_paragraphs_until(&artifact, pin(artifact), *scope, None)?
+                else {
                     return Ok(None);
                 };
                 Some(Changed::Blocks(

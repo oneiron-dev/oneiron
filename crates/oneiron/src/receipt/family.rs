@@ -253,8 +253,8 @@ impl Vault {
     /// registry — invariant 9 allows exactly two human surfaces, so a lens
     /// that recomputed its own view would BE the forbidden third one.
     /// [`Vault::standing_outbound_grants_lens`] above is likewise a
-    /// COMPATIBILITY projection over the outbound grant family, kept for its
-    /// existing callers rather than promoted to a separate consent surface.
+    /// projection of the outbound grants' own rows in this registry, kept
+    /// for its callers rather than promoted to a separate consent surface.
     pub fn consent_registry_lens(
         &self,
         query: crate::consent::ConsentRegistryQuery,
@@ -381,12 +381,30 @@ pub(super) fn collect_receipt_records(
     if query.includes_kind(ReceiptKind::TaskLifecycle) {
         records.extend(crate::task_verb::task_lifecycle_receipts(vault, query)?);
     }
+    // Engine call S65-B-R3: each override of an engine hold, kept in the
+    // override's own transaction. Its own kind and store; its own read txn,
+    // so it runs before the shared `rtxn` below.
+    if query.includes_kind(ReceiptKind::RunHoldOverride) {
+        records.extend(crate::attempt_queue::hold_override_receipts(vault, query)?);
+    }
 
     // The settle projection opens its own read txn, so it runs before the shared
     // `rtxn` below to avoid a nested read transaction on this thread. It applies
     // the query filter itself (the settlement key is not time-ordered).
     if query.includes_kind(ReceiptKind::ArtifactSettle) {
         records.extend(crate::edit_settle::settle_receipts(vault, query)?);
+    }
+    // FIX 4727: each reviewed run's settlement, in its own read txn.
+    if query.includes_kind(ReceiptKind::ProposalOutcome) {
+        records.extend(crate::memory::run_review::run_settlement_receipts(
+            vault, query,
+        )?);
+    }
+
+    // The outbound grant projection reads each grant's consent receipts on
+    // snapshots of its own, so it too runs before the shared `rtxn`.
+    if query.includes_kind(ReceiptKind::ScopedRead) {
+        records.extend(outbound_grant_receipts(vault, query)?);
     }
 
     let rtxn = vault.store.env.read_txn()?;
@@ -397,10 +415,19 @@ pub(super) fn collect_receipt_records(
     {
         records.extend(identity_topology_receipts(vault, &rtxn, query)?);
     }
+    // FIX 7817: the SIXTH Gate projector: each topology-audit candidate's
+    // post-hoc review, the rung that replaces the pre-check for reversible
+    // automatic classes. Same kind, own store, own field class, as the
+    // skill-edit verdicts; local review evidence from its own three tables,
+    // read in the shared txn.
+    if query.includes_kind(ReceiptKind::Gate) {
+        records.extend(crate::identity_topology::topology_audit_receipts(
+            vault, &rtxn, query,
+        )?);
+    }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
         records.extend(access_grant_owner_act_receipts(vault, &rtxn, query)?);
-        records.extend(outbound_grant_receipts(vault, &rtxn, query)?);
         // ED-09 (ONE-1765): the reservoir export. Same kind, own store, own
         // field class — an export IS a scoped read that left the vault, so it
         // mints no kind of its own, exactly as ONE-1762's escalations project

@@ -39,9 +39,10 @@ pub use self::predicates::{
 };
 pub use self::values::{
     CalendarAttendeeValue, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection,
-    CalendarPassportPresence, CalendarPassportValue, CalendarSeriesExceptionValue,
-    CalendarSeriesMasterValue, CalendarStatus, CalendarStatusBasis, CalendarStatusValue,
-    CalendarSuccessorValue, CalendarTimeKind, CalendarTimeKindValue, CalendarWallTimeValue,
+    CalendarPassportPresence, CalendarPassportSource, CalendarPassportValue,
+    CalendarSeriesExceptionValue, CalendarSeriesMasterValue, CalendarStatus, CalendarStatusBasis,
+    CalendarStatusValue, CalendarSuccessorValue, CalendarTimeKind, CalendarTimeKindValue,
+    CalendarWallTimeValue,
 };
 
 pub(crate) use self::codec::decode_status_value;

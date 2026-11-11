@@ -15,7 +15,7 @@ fn rejected_client_enrollment_does_not_strand_independent_actor_revocation() {
     let owner = ed_key(231);
     let owner_key = authority_key_from_ed(&owner);
     let actor = scope_entity(232);
-    let genesis = genesis_entry(231, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(231, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let bind = sign_ed(
         unsigned_entry(
@@ -94,7 +94,7 @@ fn rejected_client_enrollment_does_not_strand_independent_actor_revocation() {
 #[test]
 fn host_signed_agent_enrollment_is_not_a_retired_device_op() {
     let owner = ed_key(236);
-    let genesis = genesis_entry(236, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(236, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     for (roles, retired) in [(ROLE_AGENT, false), (ROLE_AGENT | ROLE_ADMIN, true)] {
         let enroll = enroll_device_entry(

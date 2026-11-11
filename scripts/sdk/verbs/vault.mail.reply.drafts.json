@@ -1,0 +1,13 @@
+{
+  "name": "vault.mail.reply.drafts",
+  "description": "The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, frozen plan and state.",
+  "input": "crate::mail_pack::MailReplyDraftsRequest",
+  "output": "crate::mail_pack::MailReplyDraftPage",
+  "call": "memory.mail_reply_drafts(&input)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

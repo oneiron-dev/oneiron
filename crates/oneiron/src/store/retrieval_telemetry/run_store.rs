@@ -154,7 +154,7 @@ impl SessionStoreView<'_> {
         record: &RetrievalRunRecord,
     ) -> Result<()> {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
-        stage_retrieval_run_with_visibility(self, wtxn, record, true)
+        stage_retrieval_run_with_visibility(self, wtxn, record, true, None)
     }
 
     /// Session sibling of `Store::record_context_pack_provisional_retrieval_run`.
@@ -163,7 +163,7 @@ impl SessionStoreView<'_> {
         wtxn: &mut RwTxn<'_>,
         record: &RetrievalRunRecord,
     ) -> Result<()> {
-        stage_retrieval_run_with_visibility(self, wtxn, record, false)
+        stage_retrieval_run_with_visibility(self, wtxn, record, false, None)
     }
 
     /// Session sibling of `Store::finalize_context_pack_retrieval_run`.
@@ -200,6 +200,28 @@ impl SessionStoreView<'_> {
     }
 }
 
+struct ProvisionalRetrievalRun {
+    record: RetrievalRunRecord,
+    _replay_inputs_memory: Option<crate::host_memory::MemoryLease>,
+}
+
+impl ProvisionalRetrievalRun {
+    fn stage(mut self, core: &StoreCore, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        let staged = stage_retrieval_run_with_visibility(
+            &core.canonical_dbs(),
+            wtxn,
+            &self.record,
+            false,
+            self._replay_inputs_memory.as_mut(),
+        );
+        if staged.is_err() {
+            core.retrieval_writes_disabled
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        staged
+    }
+}
+
 impl Store {
     /// Runtime capture opt-in, separate from the write-failure fuse below.
     pub(crate) fn retrieval_telemetry_capture_enabled(&self) -> bool {
@@ -226,24 +248,93 @@ impl Store {
     pub(crate) fn record_context_pack_provisional_retrieval_run(
         &self,
         record: &RetrievalRunRecord,
+        memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<()> {
         self.admit_retrieval_run_write(record)?;
+        let mut replay_inputs_memory = memory.map(crate::host_memory::MachineMemory::empty_lease);
         let record = record.clone();
+        if let (Some(memory), Some(inputs)) =
+            (replay_inputs_memory.as_mut(), record.replay_inputs.as_ref())
+        {
+            let bytes = [
+                inputs.query_ref.as_ref(),
+                inputs.corpus_snapshot_ref.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .fold(inputs.known_config_backing_bytes(), |bytes, value| {
+                bytes.saturating_add(value.capacity() as u64)
+            });
+            memory.materialized(0, bytes);
+        }
+        if let Some(memory) = replay_inputs_memory.as_mut() {
+            let score_breakdown_bytes = |entries: &Vec<super::types::RetrievalScoreBreakdown>| {
+                entries.iter().fold(
+                    (entries.capacity() as u64).saturating_mul(std::mem::size_of::<
+                        super::types::RetrievalScoreBreakdown,
+                    >() as u64),
+                    |bytes, entry| {
+                        bytes.saturating_add((entry.components.capacity() as u64).saturating_mul(
+                            std::mem::size_of::<super::types::RetrievalScoreComponent>() as u64,
+                        ))
+                    },
+                )
+            };
+            let bytes = (record.signals.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<super::types::RetrievalSignal>() as u64)
+                .saturating_add(
+                    (record.result_ids.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+                )
+                .saturating_add(score_breakdown_bytes(&record.score_breakdown))
+                .saturating_add((record.degradation.capacity() as u64).saturating_mul(
+                    std::mem::size_of::<crate::retrieval_quality::RetrievalDegradation>() as u64,
+                ));
+            let bytes = [
+                record.query_expander_id.as_ref(),
+                record.empty_reason.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .fold(bytes, |bytes, value| {
+                bytes.saturating_add(value.capacity() as u64)
+            });
+            let bytes = record.trace.as_ref().map_or(bytes, |trace| {
+                let bytes =
+                    bytes.saturating_add((trace.per_channel.capacity() as u64).saturating_mul(
+                        std::mem::size_of::<super::types::RetrievalTraceChannelRecord>() as u64,
+                    ));
+                let bytes = trace.per_channel.iter().fold(bytes, |bytes, channel| {
+                    bytes.saturating_add(score_breakdown_bytes(&channel.candidates))
+                });
+                [
+                    &trace.fused,
+                    &trace.blended,
+                    &trace.reranked,
+                    &trace.final_stage,
+                ]
+                .into_iter()
+                .fold(bytes, |bytes, stage| {
+                    bytes.saturating_add(score_breakdown_bytes(&stage.candidates))
+                })
+            });
+            let bytes = record.policy_trace.as_ref().map_or(bytes, |trace| {
+                bytes.saturating_add(
+                    (trace.decisions.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<
+                            crate::store::retrieval_policy::RetrievalPolicyDecision,
+                        >() as u64),
+                )
+            });
+            memory.materialized(0, bytes);
+        }
+        let record = ProvisionalRetrievalRun {
+            record,
+            _replay_inputs_memory: replay_inputs_memory,
+        };
         self.group_write_detached(DetachedWrite::of_core(
             "context-pack retrieval run, provisional",
-            move |core: &StoreCore, wtxn: &mut RwTxn<'_>| {
-                let staged = stage_retrieval_run_with_visibility(
-                    &core.canonical_dbs(),
-                    wtxn,
-                    &record,
-                    false,
-                );
-                if staged.is_err() {
-                    core.retrieval_writes_disabled
-                        .store(true, std::sync::atomic::Ordering::Release);
-                }
-                staged
-            },
+            move |core: &StoreCore, wtxn: &mut RwTxn<'_>| record.stage(core, wtxn),
         ));
         Ok(())
     }
@@ -298,7 +389,7 @@ impl Store {
             if published {
                 super::retention::require_prune_retrieval_runs(self, wtxn, 1)?;
             }
-            stage_retrieval_run_with_visibility(self, wtxn, record, published)?;
+            stage_retrieval_run_with_visibility(self, wtxn, record, published, None)?;
             if published {
                 super::retention::put_retrieval_age(
                     self,
@@ -597,6 +688,7 @@ fn stage_retrieval_run_with_visibility(
     wtxn: &mut RwTxn<'_>,
     record: &RetrievalRunRecord,
     published: bool,
+    memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     record.state.validate()?;
     if let Some(trace) = &record.policy_trace {
@@ -606,7 +698,17 @@ fn stage_retrieval_run_with_visibility(
         super::turn_index::delete(target, wtxn, &existing)?;
         delete_retrieval_trace_fork_indexes_for_run(target, wtxn, record.run_id)?;
     }
-    RETRIEVAL_RUN.put(target, wtxn, &record.run_id, record)?;
+    if let Some(memory) = memory {
+        let row = RETRIEVAL_RUN.stage(&record.run_id, record)?;
+        memory.materialized(
+            0,
+            row.value_capacity_bytes()
+                .saturating_add(row.key_capacity_bytes()),
+        );
+        row.put(target, wtxn)?;
+    } else {
+        RETRIEVAL_RUN.put(target, wtxn, &record.run_id, record)?;
+    }
     if published {
         super::turn_index::put(target, wtxn, record)?;
         RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &record.run_id)?;

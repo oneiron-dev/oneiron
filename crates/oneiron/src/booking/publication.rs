@@ -114,13 +114,6 @@ impl BookingPagePublication {
         if self.owner_display.trim().is_empty() || self.event_types.is_empty() {
             return Err("public booking requires owner display and event cards");
         }
-        crate::booking::public_lens::validate_presentation_fields(
-            &self.owner_display,
-            &self.event_types,
-            &self.constraint_field,
-            &self.theme,
-        )
-        .map_err(|_| "public booking presentation exceeds lens bounds")?;
         if let Some(front) = &self.constraint_front {
             front
                 .validate()
@@ -146,7 +139,6 @@ impl BookingPagePublication {
                 return Err("public booking configuration hash must be a BLAKE3 digest");
             }
             if event.key.0.trim().is_empty()
-                || event.key.0.len() > 64
                 || event.title.trim().is_empty()
                 || event.duration_min == 0
                 || self.event_types[..index]
@@ -410,7 +402,9 @@ pub use mutation::PublicBookingAuthority;
 mod write_index;
 use write_index::indexed_publication;
 pub use write_index::{booking_config_hash, resolve_public_booking_token};
-pub(crate) use write_index::{guard_publication_put, index_publication_in_txn};
+pub(crate) use write_index::{
+    guard_publication_put, index_publication_in_txn, publication_setting_in_txn,
+};
 
 #[cfg(test)]
 mod tests;

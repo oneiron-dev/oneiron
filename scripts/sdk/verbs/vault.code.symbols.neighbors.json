@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.symbols.neighbors",
+  "description": "Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes.",
+  "input": "crate::memory::codebase_doors::CodeSnapshotNeighborsRequest",
+  "output": "crate::memory::codebase_doors::CodeSnapshotNeighborsView",
+  "call": "memory.code_snapshot_neighbors_as(&memory.embedded_owner(\"vault.code.symbols.neighbors\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_precheck": false
+}

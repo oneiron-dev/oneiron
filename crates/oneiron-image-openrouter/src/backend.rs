@@ -185,8 +185,14 @@ impl<T: OpenRouterImageTransport> ImageBackend for OpenRouterImageBackend<T> {
         &'a self,
         intent: ImageIntent,
         references: Vec<oneiron::llm::image::ImageBytes>,
+        mask: Option<oneiron::llm::image::ImageBytes>,
         lease: &'a BudgetLease,
     ) -> ImageFuture<'a> {
-        Box::pin(async move { self.send(intent, references, true, lease).await })
+        Box::pin(async move {
+            if mask.is_some() {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
+            self.send(intent, references, true, lease).await
+        })
     }
 }

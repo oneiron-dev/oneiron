@@ -7,11 +7,10 @@ use sha2::{Digest, Sha256};
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::limit_ask::EngineLimit;
-use crate::skill_optimize::{EvalSeat, SufficiencyCard};
+use crate::skill_optimize::{EvalSeat, SufficiencyCard, SwitchOwner};
 use crate::{EntityId, Error, Result, Vault};
 
 const MAX_REF_BYTES: usize = 256;
-const MAX_ALTERNATIVES: usize = 16;
 
 /// A model asset as offered: identity, revision and, for a download, the
 /// content hash it must load at.
@@ -99,6 +98,10 @@ pub struct OfferEvidence {
     pub rubric_revision: Option<String>,
     /// `None` reads as unknown: nothing was measured yet.
     pub card: Option<SufficiencyCard>,
+    /// The native Final paired measurement that supplied this card, when its
+    /// model/revision arms, exposures and card were verified in the offer's writer.
+    /// This is historical provenance, not current auto-approval authority.
+    pub paired_measurement: Option<[u8; 32]>,
     /// Losses shown beside the gains (a general skill, a language, calibration).
     pub losses: Vec<String>,
     pub risk: Option<String>,
@@ -192,13 +195,18 @@ pub enum OfferIntent {
     },
 }
 
+/// The vault owner's one answer to an offer. An erase of the actor who gave
+/// it keeps the answer and leaves it naming no one (FIX 20774).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfferAnswerRecord {
     pub offer: EntityId,
     pub answer: OfferAnswer,
-    pub owner: EntityId,
-    pub authentication: String,
+    /// Who answered, or no one once that actor was erased.
+    pub owner: SwitchOwner,
+    /// The owner decision the answer was authenticated under; `None` once
+    /// its owner was erased.
+    pub authentication: Option<String>,
     pub offer_digest: String,
     pub intent: Option<OfferIntent>,
     pub at: u64,
@@ -392,9 +400,6 @@ impl TrainingOfferDraft {
         self.baseline.validate()?;
         if self.baseline.model != self.incumbent {
             return Err(invalid("the baseline is today's incumbent"));
-        }
-        if self.alternatives.len() > MAX_ALTERNATIVES {
-            return Err(invalid("an offer compares at most 16 alternatives"));
         }
         for option in &self.alternatives {
             option.validate()?;

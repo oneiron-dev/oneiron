@@ -12,6 +12,8 @@ mod ask;
 mod call_scope;
 mod chain;
 mod credential;
+mod golden;
+mod held_member;
 mod paced;
 mod plain_resume;
 mod record;
@@ -36,16 +38,24 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 use super::block::HookTurnTarget;
 pub(crate) use ask::VERB_HOOK_INTENT;
-pub use ask::{HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
+pub(super) use ask::scrub_erased_asks_in_txn;
+pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
 pub use call_scope::VerbCallScope;
+pub(super) use chain::admit_verb_outcome;
+pub(super) use chain::projection::merge_withheld;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
-    VerbAskInstrument, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
+    VerbAskInstrument, VerbAskMcpCeiling, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
+    verb_ask_instrument_slip,
 };
-pub use paced::PACED_VERB_WAIT_DEFAULT_SECS;
+pub(crate) use held_member::hold_member;
+pub use held_member::with_held_member;
+pub(super) use paced::scrub_erased_paced_in_txn;
+pub use paced::{PACED_VERB_WAIT_DEFAULT_SECS, is_paced_verb};
 pub(crate) use paced::{
-    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_verb_reply, runs_paced_turn,
+    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_turn_again, paced_verb_reply_listed,
+    runs_paced_turn,
 };
 pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
@@ -127,6 +137,8 @@ impl VerbCall {
     /// credential that carries no read) carries one that reads nothing
     /// ([`ScopedReadActorKey::read_nothing`]) while no hook may run on
     /// `verb`, so a hook bound meanwhile never reads on the actor's own lane.
+    /// A verified share-only renderer carries a read-nothing hook key even
+    /// when hooks run; its share credential stays confined to the renderer.
     ///
     /// # Errors
     ///
@@ -136,7 +148,7 @@ impl VerbCall {
         memory: &crate::Memory<'_>,
         verb: &str,
     ) -> MemoryResult<Option<ScopedReadActorKey>> {
-        match memory.read_key() {
+        match memory.verb_hook_read_key(verb) {
             Ok(key) => Ok(Some(key)),
             Err(error) if Self::may_run(memory.vault(), verb) => Err(error),
             Err(error) => ScopedReadActorKey::read_nothing(
@@ -195,6 +207,13 @@ impl VerbHookPre {
         &self.call
     }
 
+    /// Whether the call passed its chain with no hook live on it: its args
+    /// are its caller's own, untouched, and no post chain runs on it.
+    #[must_use]
+    pub fn passed_through(&self) -> bool {
+        self.carry.is_none()
+    }
+
     /// The consumed ask this resumed call runs on, if it resumed one.
     #[must_use]
     pub(crate) fn resumed(&self) -> Option<&ask::AskToken> {
@@ -221,7 +240,8 @@ impl Vault {
     ///
     /// Reading the saved calls.
     pub(crate) fn verb_hook_invocation_saved(&self, invocation: InvocationId) -> Result<bool> {
-        Ok(self.verb_hook_state.drain_holds(invocation) || ask::saved(self, invocation)?)
+        Ok(self.runtime().verb_hook_state().drain_holds(invocation)
+            || ask::saved(self, invocation)?)
     }
 
     /// Observes a retained call's hook wait without consuming its answer.
@@ -242,7 +262,36 @@ impl Vault {
         class: HookActorClass,
         ask: EntityId,
     ) -> Result<VerbHookWaitStatus> {
-        ask::wait_status(self, invocation, verb, actor, class, ask)
+        ask::wait_status(self, invocation, verb, actor, class, ask, None)
+    }
+
+    /// Observes the same wait using the calling operation's held task-work
+    /// turn. Only the turn is shared; the ask still uses its saved author.
+    pub(crate) fn verb_hook_wait_status_on_turn(
+        &self,
+        invocation: InvocationId,
+        verb: &str,
+        actor: EntityId,
+        class: HookActorClass,
+        ask: EntityId,
+        turn: Option<Arc<TaskWorkTurn>>,
+    ) -> Result<VerbHookWaitStatus> {
+        ask::wait_status(self, invocation, verb, actor, class, ask, turn.as_ref())
+    }
+
+    /// The rows the result settlement's drain saved under `invocation` was
+    /// derived from, as its door listed them (FIX 1435). The door that
+    /// answers the caller's retry with that result releases it by them.
+    /// `None` when no result is saved there, or its door listed none.
+    ///
+    /// # Errors
+    ///
+    /// Reading the saved call.
+    pub fn verb_hook_saved_producers(
+        &self,
+        invocation: InvocationId,
+    ) -> Result<Option<Vec<EntityId>>> {
+        ask::saved_producers(self, invocation)
     }
 
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in
@@ -269,6 +318,34 @@ impl Vault {
             None,
             None,
         )
+    }
+
+    /// Whether the pre chain runs hooks now: they are not suppressed for
+    /// this process (`--no-hooks`) and `hooks.enabled` is on. While they are
+    /// not, a retained call answered proceed stays parked (FIX 1765).
+    ///
+    /// # Errors
+    ///
+    /// Reading the binding list.
+    pub fn verb_hooks_running(&self) -> Result<bool> {
+        Ok(!self.runtime().verb_hook_state().suppressed()
+            && self.runtime().verb_hook_state().bindings(self)?.enabled)
+    }
+
+    /// [`Self::pre_verb_hooks`] for a host's retry of a call it retained on
+    /// an ask (FIX 1765): a saved call that is gone is a skip, never a fresh
+    /// call.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors as they occur; a hook's own failure is never one.
+    pub fn pre_verb_hooks_retained(
+        &self,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        self.pre_verb_hooks_retained_in(VerbHookStorage::Canonical, call, args, check, None)
     }
 
     /// [`Self::pre_verb_hooks`] for a call settlement can run again without
@@ -320,7 +397,12 @@ impl Vault {
         credential: Option<VerbAskCredential>,
         turn: Option<Arc<TaskWorkTurn>>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        let credential = credential.filter(|_| self.verb_hook_state.credential_check().is_some());
+        let credential = credential.filter(|_| {
+            self.runtime()
+                .verb_hook_state()
+                .credential_check()
+                .is_some()
+        });
         let resume = credential
             .as_ref()
             .map(|credential| VerbResume::Credential {
@@ -389,10 +471,11 @@ impl Vault {
             return false;
         };
         if let Some(key) = pre.session() {
-            return self
-                .verb_hook_state
-                .session
-                .unuse_ask(key, token.key(), token.ask());
+            return self.runtime().verb_hook_state().session.unuse_ask(
+                key,
+                token.key(),
+                token.ask(),
+            );
         }
         self.with_write_txn_grouped(|txn| ask::reopen_in_txn(self, txn, token))
             .inspect_err(|error| {

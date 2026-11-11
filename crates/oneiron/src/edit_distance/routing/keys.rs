@@ -27,6 +27,10 @@ pub(super) const AGGREGATE: SideTable<AggregateKey, StoredAggregate, Raw> =
 pub(super) const MEMBER: SideTable<String, StoredExecutor, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_ROUTING_MEMBER);
 
+/// Owner-anchored rework outcome, keyed by delta receipt id (FIX 11706).
+pub(super) const OUTCOME: SideTable<String, StoredOutcome, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_ROUTING_OUTCOME);
+
 /// Per-task-class rollout rung.
 pub(super) const RUNG: SideTable<String, StoredRung, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_ROUTING_RUNG);
@@ -84,6 +88,8 @@ pub(super) const MEMBER_ROW_LABEL: &str = "routing membership row";
 pub(super) const RUNG_ROW_LABEL: &str = "routing rollout rung row";
 
 pub(super) const SERVING_MODEL_ROW_LABEL: &str = "routing serving model row";
+
+pub(super) const OUTCOME_ROW_LABEL: &str = "routing outcome row";
 
 /// Separator between a key's parts. No part may contain it, which the key
 /// builder enforces rather than assumes.
@@ -225,6 +231,16 @@ pub(super) struct StoredRung {
     pub(super) rung: String,
 }
 
+/// One rework outcome anchored to its judged amendment (FIX 11706): the
+/// token the undo/merge door wrote, and when. No actor is stored: the
+/// writer gates on a live owner at write time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct StoredOutcome {
+    pub(super) v: u8,
+    pub(super) outcome: String,
+    pub(super) at: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Keys + rows
 // ---------------------------------------------------------------------------
@@ -298,6 +314,8 @@ impl RawValue for ServingExecutor {
 }
 
 row_codec!(StoredRung, RUNG_ROW_LABEL);
+
+row_codec!(StoredOutcome, OUTCOME_ROW_LABEL);
 
 /// The bytes after [`AGGREGATE`]'s prefix that scope every executor under
 /// one task class, measurement version and task type — the peer scan's

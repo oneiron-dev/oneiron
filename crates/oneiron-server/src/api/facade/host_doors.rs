@@ -58,11 +58,25 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::agent_definition_doors::*;
 // The owner's agent grant doors (FIX 5628) too.
 pub(crate) use super::agent_grant_doors::*;
+// The Steward doors: member asks, the system-agent grant narrowing and the
+// engine-control receipts (untangle 6.3, 6.6).
+pub(crate) use super::steward_doors::*;
+// The engine-control knob doors, for the owner or a holder of
+// `engine.controls` (untangle 6.6d).
+pub(crate) use super::engine_control_doors::*;
+// The owner's answer to an OAuth sign-in request (FIX 4902) too.
+pub(crate) use super::oauth_authorization_doors::*;
+// The owner's answer to a send that may have gone out (FIX 4747) too.
+pub(crate) use super::uncertain_send_doors::*;
+// The owner's answer to a call a moved agent run replays (FIX 4747) too.
+pub(crate) use super::agent_run_effect_doors::*;
 // The owner's git_push Grant doors (FIX 6867, G1-PUSH) too.
 pub(crate) use super::git_push_doors::*;
 // The public run repo doors (FIX 6867, G1 PR3b): no owner proof, so none is
 // in the owner preflight below.
 pub(crate) use super::repo_doors::*;
+// Manifest-conflict decisions take the owner proof in their own doors.
+pub(crate) use super::repo_manifest_conflict_doors::*;
 pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_admin_doors::*;
 // The shared-vault invitation doors (OF-531) too.
@@ -86,9 +100,12 @@ pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
+pub(crate) use super::model_pack_doors::*;
+pub(crate) use super::model_setting_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::outbox_diverged_doors::*;
+pub(crate) use super::snapshot_read_settings_doors::*;
 pub(crate) use super::web_connector_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
@@ -108,6 +125,7 @@ pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::feedback_doors::*;
 // The owner's Files world source doors (FIX 6942), likewise.
 pub(crate) use super::files_doors::*;
+pub(crate) use super::follower_keyframe_doors::*;
 pub(crate) use super::goal_optimize_doors::*;
 pub(crate) use super::guest_document_doors::*;
 pub(crate) use super::guest_doors::*;
@@ -124,15 +142,29 @@ pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::off_record_room_doors::*;
+// The owner's Mail & Calendar pack install door (FIX 12559), likewise.
+pub(crate) use super::mail_pack_doors::*;
 // The owner's pack preview door (FIX 5493), likewise.
 pub(crate) use super::pack_preview_doors::*;
 pub(crate) use super::persona_doors::*;
+pub(crate) use super::proactivity_digest_doors::*;
 // The general access request answer (FIX 1379), likewise.
 pub(crate) use super::grants_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The owner's retained document-copy edit doors (FIX 13274).
+pub(crate) use super::repo_copy_edit_doors::{
+    vault_sync_documents_copy_edit_review, vault_sync_documents_copy_edit_settle,
+};
+// The owner's reset of a person's step-up passkeys (FIX 17553).
+pub(crate) use super::step_up_doors::{vault_step_up_passkeys_reset, vault_step_up_totp_reset};
+// The weave Admin's served rows, on the passkey step-up (FIX 11694).
+pub(crate) use super::weave_admin_doors::{
+    vault_weave_admin_digest, vault_weave_admin_item_wrong, vault_weave_admin_lens,
+    vault_weave_admin_link_wrong, vault_weave_admin_report,
+};
 // The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
 pub(crate) use super::inbox_group_doors::*;
 pub(crate) use super::web_fetch_doors::*;
@@ -189,6 +221,7 @@ pub(crate) use super::graduation_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::checkout_doors::*;
+pub(crate) use super::device_succession_doors::*;
 pub(crate) use super::origin_doors::*;
 // The exact publish doors (FIX 6866): the owner, or one Grant's holder.
 pub(crate) use super::origin_publish_doors::*;
@@ -205,6 +238,7 @@ pub(crate) use super::comm_widen_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
+pub(crate) use super::connector_reply_doors::*;
 pub(crate) use super::connector_revision_doors::*;
 pub(crate) use super::connector_slate_doors::*;
 // The owner's witness-read grant revoke (FIX 10895), likewise.
@@ -227,6 +261,7 @@ pub(crate) use super::core_write_doors::*;
 pub(crate) use super::critic_review_doors::*;
 // The owner's campaign split evaluation door (FIX 655), likewise.
 pub(crate) use super::affect_doors::*;
+pub(crate) use super::agent_verb_class_doors::*;
 pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
@@ -256,11 +291,13 @@ pub(crate) use super::free_time_doors::*;
 pub(crate) use super::standing_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
+pub(crate) use super::code_secret_doors::*;
 // The owner's per-model code-run heal count door (DOOR-093), likewise.
 pub(crate) use super::code_run_doors::*;
 // The owner's code consent wait answer and receipt doors (DOOR-079), likewise.
 pub(crate) use super::code_wait_doors::*;
 // The owner's hook regeneration due, record and adopt doors (DOOR-077), likewise.
+pub(crate) use super::hook_check_doors::*;
 pub(crate) use super::hook_regen_doors::*;
 pub(crate) use super::host_trigger_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.

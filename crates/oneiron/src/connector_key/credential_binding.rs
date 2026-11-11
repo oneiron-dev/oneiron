@@ -91,6 +91,18 @@ impl ConnectorIssuerTransition {
     }
 }
 
+/// One connector's open issuer transition, as the steady-state views
+/// surface it: the issuers, when it was detected, and the catalog slate
+/// rows it holds. Value-less: no witness or credential pointers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConnectorIssuerHaltView {
+    pub old_issuer: String,
+    pub new_issuer: String,
+    pub detected_at: u64,
+    /// Catalog slate rows the halt holds, by tool name.
+    pub dependent_rows: Vec<String>,
+}
+
 /// One catalog connector credential slot's durable binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -339,6 +351,43 @@ pub(super) fn open_issuer_revisions_in_txn(
     Ok(open)
 }
 
+/// One connector's open issuer transition, if any halts its rows: the
+/// earliest detected one across the connector's bindings. `None` when no
+/// binding holds an open transition for it.
+pub(in crate::connector_key) fn open_issuer_halt_for_connector_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    connector: &str,
+) -> Result<Option<ConnectorIssuerHaltView>> {
+    let wanted = normalize_connector_key(connector);
+    let mut best: Option<ConnectorIssuerHaltView> = None;
+    for (_, binding) in BINDINGS.scan(store, txn)? {
+        if normalize_connector_key(&binding.connector) != wanted {
+            continue;
+        }
+        let Some(transition) = binding.transition.as_ref().filter(|open| open.halts()) else {
+            continue;
+        };
+        let Some(catalog) = read_connector_key_in_txn(store, txn, &binding.catalog_key)? else {
+            continue;
+        };
+        let rows = dependent_rows_in_txn(store, txn, &binding, &catalog, &transition.dependents)?;
+        let view = ConnectorIssuerHaltView {
+            old_issuer: transition.old_issuer.clone(),
+            new_issuer: transition.new_issuer.clone(),
+            detected_at: transition.detected_at,
+            dependent_rows: rows.into_iter().collect(),
+        };
+        let earlier = best
+            .as_ref()
+            .is_none_or(|current| view.detected_at < current.detected_at);
+        if earlier {
+            best = Some(view);
+        }
+    }
+    Ok(best)
+}
+
 /// An issuer revision's acceptance, in the stamping writer: the binding's
 /// drafted revision must be this slate at the expected generation. The
 /// binding then answers for the new issuer at the next generation, and the
@@ -349,7 +398,7 @@ pub(super) fn accept_issuer_in_txn(
     slate_id: EntityId,
     binding_ref: EntityId,
     expected_generation: u64,
-) -> Result<()> {
+) -> Result<EntityId> {
     let mut binding = BINDINGS
         .get(store, txn, &binding_ref)?
         .ok_or_else(|| invalid_body("the revision's credential binding is gone"))?;
@@ -386,7 +435,7 @@ pub(super) fn accept_issuer_in_txn(
             crate::unix_seconds_now(),
         )?;
     }
-    Ok(())
+    Ok(binding.catalog_key)
 }
 
 impl Vault {
@@ -614,5 +663,16 @@ impl Vault {
     ) -> Result<Option<ConnectorCredentialBinding>> {
         let txn = self.store.env.read_txn()?;
         BINDINGS.get(&self.store, &txn, binding_ref)
+    }
+
+    /// One connector's open issuer transition, if any halts its rows (FIX
+    /// 9305): the read the steady-state views surface. `None` when no
+    /// binding holds an open transition for it.
+    pub fn open_issuer_halt_for_connector(
+        &self,
+        connector: &str,
+    ) -> Result<Option<ConnectorIssuerHaltView>> {
+        let txn = self.store.env.read_txn()?;
+        open_issuer_halt_for_connector_in_txn(&self.store, &txn, connector)
     }
 }

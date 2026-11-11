@@ -65,7 +65,7 @@ pub(crate) fn carry_repo_secret_marks_in_txn(
     let path = prior.marks().iter().find_map(|mark| mark.path.clone());
     let known = KnownValues::load_in_writer(&vault.store, wtxn)?;
     let plan = plan_retained_repo_blob(
-        path.as_deref().unwrap_or_default(),
+        path.as_deref().unwrap_or_default().as_bytes(),
         landed,
         known.as_ref(),
         SYNC_LANDING_REASON,

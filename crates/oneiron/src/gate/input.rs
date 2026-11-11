@@ -17,6 +17,8 @@ pub(crate) enum GateContentKind {
     Claim,
     EdgeProvenanceClaim,
     PolicyManifest,
+    /// Creating a reusable agent definition through a credential-bound setup door.
+    AgentDefinitionSetup,
     ExternalEffect,
     /// ONE-1395: an unexecuted repair intent, evaluated with engine-stamped authority.
     Repair,
@@ -33,6 +35,7 @@ impl GateContentKind {
             Self::Claim => "claim",
             Self::EdgeProvenanceClaim => "edge_provenance_claim",
             Self::PolicyManifest => "policy_manifest",
+            Self::AgentDefinitionSetup => "agent_definition_setup",
             Self::ExternalEffect => "external_effect",
             Self::Repair => "repair",
             Self::WitnessMessage => "witness_message",
@@ -50,11 +53,22 @@ pub(crate) struct GateProvenanceHandles {
     /// Native-mail one-shot content handle, supplied by the frozen intent
     /// and hashed into the owner-approved effect. Never an authority source.
     pub(crate) mail_content_ref: Option<String>,
+    /// Fix list row 17645: every recipient of one mail message sent to more
+    /// than one, roles and order kept, supplied by the frozen intent; empty
+    /// for a send to its counterparty alone. The external-effect door judges
+    /// each recipient on its own and the message's one-shot digest pins them
+    /// all. Never an authority source.
+    pub(crate) mail_recipients: Vec<crate::outbound::OutboundRecipient>,
     /// FIX 6424: the one send a non-mail approve-once press on this effect
     /// approves, supplied by its canonical producer and hashed into that
     /// one-shot digest only. Never an authority source; no Grant reads it.
     pub(crate) approval_target: Option<super::effect::ApprovalTarget>,
     pub(crate) dreamer_run_id: Option<String>,
+    /// Whether the write is a `vault.derive` commit's (untangle 6.7a): the
+    /// import floor that holds a Dreamer run's write holds it too, since its
+    /// source is the trust of the rows it cites. Read off the write's own
+    /// provenance where the claim door builds this. Never an authority source.
+    pub(crate) derive_commit: bool,
     /// FIX 11921: the agent-dispatch attempt whose run makes this effect, by
     /// its 16 id bytes ([`crate::WriteActor::run_attempt`]), filled where a
     /// run's actor builds the effect. The external-effect door meets that

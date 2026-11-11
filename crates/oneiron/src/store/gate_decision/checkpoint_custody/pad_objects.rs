@@ -25,6 +25,7 @@ use heed::types::Bytes;
 
 use crate::error::{Error, Result};
 use crate::side_table;
+#[cfg(feature = "sync")]
 use crate::store::pad_object_membership::PadObjectMembership;
 use crate::store::{PairedIdentityRows, PairedSourceAsk, PairedSyncRows, Store};
 #[cfg(feature = "sync")]
@@ -204,6 +205,9 @@ pub(crate) enum UncapturedPadObjects {
     /// paired source identity): a vault read off its disk, or one open in
     /// this process with no genesis yet (FIX 11826).
     SourceVaultUnfolded,
+    /// A legal read of one of the vault's own checkpoints (a HOST order's
+    /// artifact capture), which restores nothing and so carries no object.
+    LegalRead,
 }
 
 impl UncapturedPadObjects {
@@ -215,6 +219,7 @@ impl UncapturedPadObjects {
             Self::RowsUnread => "the source's pad object rows did not read",
             Self::IdentityUnread => "the source's vault and home did not read",
             Self::SourceVaultUnfolded => "the source folds to no one vault",
+            Self::LegalRead => "a legal read of a checkpoint carries no pad object",
         }
     }
 }

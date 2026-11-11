@@ -28,14 +28,17 @@ use crate::write_envelope::WriteActor;
 
 mod actor_erase;
 mod fit;
+mod holder;
 mod resolution;
 mod scope_erase;
 mod sourced;
 mod subject;
+pub(crate) mod tables;
 mod witness;
 pub(crate) use actor_erase::{erase_setting_actor_in_txn, names_no_actor};
 pub use fit::{SettingCheck, global_setting_subject, record_setting_check};
 pub(crate) use fit::{owner_seed_in_txn, record_setting_check_in_txn, setting_fit_key};
+pub use holder::ENGINE_CONTROL_SETTINGS;
 pub(crate) use resolution::{setting_value_in_scope_in_txn, setting_value_scoped_in_txn};
 pub(crate) use scope_erase::{erase_setting_scope_in_txn, project_row_keys};
 pub(crate) use sourced::setting_value_in_scope_sourced_in_txn;
@@ -101,6 +104,7 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     crate::dreamer_runner::maintenance::agent_health::HEALTH_COST_MIN_RUNS,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_TREND_PERIOD_DAYS,
     crate::dreamer_runner::maintenance::coach::TRADEOFF_REMINDER_HOURS,
+    crate::dreamer_runner::maintenance::attribution_labels::ATTRIBUTION_LABEL_RECEIPTS,
     crate::skill::EXPLORATION_ASK_CLIMB_HOURS,
     crate::skill::EXPLORATION_ASK_LAPSE_HOURS,
     crate::blob_artifact::esign::ESIGN_ASK_CLIMB_HOURS,
@@ -190,6 +194,21 @@ struct StoredSettingRow {
     witness: Option<crate::entity_id::EntityId>,
     at: u64,
     why: String,
+    /// Whether a holder of `engine.controls` set this row through the
+    /// holder's door, not the owner through the owner's: an owner's pin
+    /// stands over a holder's at every scope a read walks
+    /// ([`resolution::resolve_in_txn`]). Not written on an owner's row,
+    /// whose bytes stay as they were before a holder set any row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    by_holder: bool,
+}
+
+/// Who sets a row: the owner through the owner's door, or a holder of
+/// `engine.controls` through the holder's.
+#[derive(Clone, Copy)]
+enum Setter {
+    Owner(crate::entity_id::EntityId),
+    Holder(crate::entity_id::EntityId),
 }
 
 impl RawValue for StoredSettingRow {
@@ -305,6 +324,18 @@ pub fn put_scoped_setting_row(
     scope: &SettingScope,
     row: &SettingRow,
 ) -> Result<()> {
+    let spec = checked_spec(scope, row)?;
+    vault.with_write_txn_grouped(|wtxn| {
+        vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
+        let witness = witness::put_in_txn(vault, wtxn, owner, scope, row)?;
+        let setter = Setter::Owner(owner.entity_ref());
+        put_row_in_txn(vault, wtxn, spec, scope, row, setter, witness)
+    })
+}
+
+/// Checks `row` against its catalog row and the row terms every setter
+/// keeps; the catalog row.
+fn checked_spec(scope: &SettingScope, row: &SettingRow) -> Result<&'static SettingSpec> {
     if let SettingScope::Type(type_ref) = scope {
         type_ref.validate()?;
     }
@@ -315,32 +346,46 @@ pub fn put_scoped_setting_row(
             "a setting value must lie within its catalog bounds",
         ));
     }
-    vault.with_write_txn_grouped(|wtxn| {
-        vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
-        let witness = witness::put_in_txn(vault, wtxn, owner, scope, row)?;
-        let stored = StoredSettingRow {
-            v: ROW_VERSION,
-            value: row.value,
-            weight_runs: row.weight_runs,
-            by: owner.entity_ref().to_hex(),
-            witness: Some(witness),
-            at: row.at,
-            why: row.why.clone(),
-        };
-        SETTING.put(
-            &vault.store,
-            wtxn,
-            &scoped_row_key(spec.key, row.mode, scope),
-            &stored,
-        )?;
-        // A seed is the fit's prior: every fit over this knob refolds from it.
-        if *scope == SettingScope::Vault || row.mode == SettingMode::Seed {
-            crate::learning::project::reproject_setting_cells_in_txn(
-                vault, wtxn, spec.key, row.at,
-            )?;
-        }
-        Ok(())
-    })
+    Ok(spec)
+}
+
+/// Stores `row` over `scope` as `setter` set it, its act witnessed by
+/// `witness`, and refolds the knob's fits when the row moves them. The
+/// caller has checked the setter and the row in this writer.
+fn put_row_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    spec: &SettingSpec,
+    scope: &SettingScope,
+    row: &SettingRow,
+    setter: Setter,
+    witness: crate::entity_id::EntityId,
+) -> Result<()> {
+    let (by, by_holder) = match setter {
+        Setter::Owner(owner) => (owner, false),
+        Setter::Holder(holder) => (holder, true),
+    };
+    let stored = StoredSettingRow {
+        v: ROW_VERSION,
+        value: row.value,
+        weight_runs: row.weight_runs,
+        by: by.to_hex(),
+        witness: Some(witness),
+        at: row.at,
+        why: row.why.clone(),
+        by_holder,
+    };
+    SETTING.put(
+        &vault.store,
+        wtxn,
+        &scoped_row_key(spec.key, row.mode, scope),
+        &stored,
+    )?;
+    // A seed is the fit's prior: every fit over this knob refolds from it.
+    if *scope == SettingScope::Vault || row.mode == SettingMode::Seed {
+        crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, spec.key, row.at)?;
+    }
+    Ok(())
 }
 
 /// Withdraws the owner's seed or pin over `key`, returning the setting to
@@ -373,13 +418,25 @@ pub fn clear_scoped_setting_row(
 ) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
         vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
-        SETTING.delete(&vault.store, wtxn, &scoped_row_key(key, mode, scope))?;
-        if mode == SettingMode::Seed {
-            let now = crate::unix_seconds_now();
-            crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, key, now)?;
-        }
-        Ok(())
+        clear_row_in_txn(vault, wtxn, scope, key, mode)
     })
+}
+
+/// Deletes the row over `key`, `mode` and `scope`, and refolds the knob's
+/// fits when a seed goes. The caller has checked the setter in this writer.
+fn clear_row_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: &SettingScope,
+    key: &str,
+    mode: SettingMode,
+) -> Result<()> {
+    SETTING.delete(&vault.store, wtxn, &scoped_row_key(key, mode, scope))?;
+    if mode == SettingMode::Seed {
+        let now = crate::unix_seconds_now();
+        crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, key, now)?;
+    }
+    Ok(())
 }
 
 /// The value in force for `spec`: the owner's pin, else the vault-scope fit
@@ -420,7 +477,8 @@ pub(crate) fn setting_override_in_txn(
 
 /// The value in force for `spec` where `project` and `type_ref` apply: the
 /// narrowest pin (the project's goal's, then the project's, then the
-/// type's, then the vault's); else the goal's fit, else the goal's seed;
+/// type's, then the vault's), the owner's pins before any pin a holder of
+/// `engine.controls` set; else the goal's fit, else the goal's seed;
 /// else the project's fit at this type, then its own fit, once either has
 /// own runs, else the project's seed; else the type's fit, else the type's
 /// seed; else the vault-scope fit, else the vault's seed, else the catalog

@@ -177,6 +177,15 @@ the named executor, pending work, or relay behavior. Full failure details stay i
 the existing operator logs; this reply carries only closed reasons, not paths,
 URLs or credentials.
 
+On the executor, a publication's reply also carries `unmerged_upload`, pending or
+answered, when the last upload this install assembled for that home carries a
+world section it may read unchanged because the section did not open, decode or
+merge here: the generation, and per section the world, the window whose merge
+failed, the stage and the error's kind. It is the same record the upkeep's
+`unmerged_uploads` shows (`GET /v1/owner/recovery-kit/upkeep`), so the request's
+result does not hide it. The upload keeps the section and still publishes; the
+section is yours to repair. The field is left out when no such section rides.
+
 ## What the log shows
 
 - `device sync started` with this machine's id, the home's, and `over` (`mesh` or `url`).
@@ -223,10 +232,13 @@ connection syncs and then every 30 seconds while it stays synced: no mesh signal
 node's offer changed. Each model a node serves on its own compute becomes an own-server row in
 the vault registry, routed to that node. A row the vault already holds another way is kept, and
 the node's offer is skipped. A node that does not answer keeps the rows it had. Nothing is
-deleted when a node stops offering a model.
+deleted when a node stops offering a model: its row is kept and marked stale, and nothing routes
+to it.
 
-The rows feed the own-server backend. The configured model router is built from `[models]` at
-start, so serve does not route a discovered model by itself yet.
+Serve routes each live row to its node, beside the configured models, also with no `[models]`. A
+serve with the mesh off marks every such row stale at its start, since no refresh keeps them
+current there; `oneiron maintain` after it counts none of them. The next serve with the mesh on
+writes each row its node still offers live again at its first refresh.
 
 ## Shared environments
 

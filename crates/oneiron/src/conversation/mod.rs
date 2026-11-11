@@ -18,10 +18,14 @@ mod visibility;
 pub use attendee::{ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent};
 pub use body::{ConversationBody, ConversationKind, RoomRole};
 pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
-pub(crate) use chat_breakpoint::erase_chat_breakpoints_in_txn;
 pub use chat_breakpoint::{
-    ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, chat_breakpoint,
-    chat_breakpoint_stands, keep_chat_breakpoint,
+    ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, ChatBreakpointUserTurn,
+    chat_breakpoint, chat_breakpoint_stands, forget_chat_breakpoint,
+    forget_superseded_chat_breakpoints, keep_chat_breakpoint,
+};
+pub(crate) use chat_breakpoint::{
+    erase_chat_breakpoints_in_txn, forget_chat_breakpoint_in_txn,
+    forget_withdrawn_summary_breakpoints_in_txn, scrub_chat_breakpoint_actor_in_txn,
 };
 pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{
@@ -41,7 +45,7 @@ pub use speaker_handoff::{SpeakerHandoff, SpeakerHandoffBoundary, SpeakerHandoff
 pub use turn_actions::{
     TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionAuthority,
     TurnActionContext, TurnActionLine, TurnActionRebindReceipt, TurnActionRebindRequest,
-    TurnActionReceipt, TurnActionRequest,
+    TurnActionReceipt, TurnActionRequest, turn_action_hook_parent, turn_action_resumed_from_hook,
 };
 pub(crate) use visibility::{
     AudienceCache, anchors_own_windows_admit_in, conversation_summary_covers,
@@ -92,4 +96,5 @@ mod tests;
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::chat_breakpoint::chat_breakpoint_accepts_masked;
 
+pub(crate) mod tables;
 pub mod voice_roster;

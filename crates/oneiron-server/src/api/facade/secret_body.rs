@@ -28,19 +28,16 @@ use std::future::Future;
 use axum::body::{Body, Bytes, HttpBody as _};
 use axum::http::Extensions;
 use futures_util::StreamExt as _;
-use oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_json::value::RawValue;
 use zeroize::{Zeroize, Zeroizing};
 
-/// The verbs whose body carries a wiped encoding: `value_base64` in plaintext
-/// on register and rotate, `input_base64` (sealed ciphertext) on custody submit.
+/// The verbs whose body carries a wiped encoding: the custody rows, whose `custody` member
+/// (`value_base64` in plaintext on register and rotate, `input_base64`, sealed ciphertext, on custody
+/// submit) the verb table names.
 fn needs_wipe(verb: &str) -> bool {
-    matches!(
-        verb,
-        "vault.secrets.register" | "vault.secrets.rotate" | "vault.secrets.custody.submit"
-    )
+    oneiron::task_verb::sdk::CUSTODY_VALUE_ROWS.contains(&verb)
 }
 
 /// The real wiped encoding (`value_base64` or submit's `input_base64`) a
@@ -55,15 +52,23 @@ impl FacadeSecret {
     }
 }
 
-/// The arrival's own digest, for the invocation claim: a redacted body
-/// digests differently, but a retry naming another value is still another
-/// call.
+/// The original request's digest for the invocation claim. A wiped custody
+/// arrival includes its secret's hash: a redacted body digests differently,
+/// but a retry naming another value is still another call.
 #[derive(Clone)]
 pub(super) struct FacadeOriginalDigest(String);
 
 impl FacadeOriginalDigest {
     pub(super) fn digest(&self) -> &str {
         &self.0
+    }
+}
+
+/// Keeps a request digest already read by the receipt layer, without replacing
+/// the original arrival digest of a wiped custody value.
+pub(super) fn retain_request_digest(extensions: &mut Extensions, digest: &str) {
+    if extensions.get::<FacadeOriginalDigest>().is_none() {
+        extensions.insert(FacadeOriginalDigest(digest.to_owned()));
     }
 }
 
@@ -92,11 +97,7 @@ pub(crate) fn lift_custody_secret(verb: &str, input: &mut Value) -> Option<Zeroi
     if !needs_wipe(verb) {
         return None;
     }
-    let key = if verb == "vault.secrets.custody.submit" {
-        "input_base64"
-    } else {
-        "value_base64"
-    };
+    let key = oneiron::task_verb::sdk::AgentVerb::from_name(verb)?.custody_member()?;
     let Some(Value::String(held)) = input.get_mut(key) else {
         return None;
     };
@@ -126,16 +127,16 @@ pub(super) async fn read_middleware_body(
     body: Body,
     verb: &str,
     extensions: &mut Extensions,
+    limit: usize,
 ) -> (Bytes, Option<Value>) {
-    // `MAX_REMOTE_REQUEST_BYTES` is the facade's own `FACADE_MAX_BODY_BYTES`.
+    // `limit` is the facade's own: the API's request floor
+    // (`limits.request_body_bytes`, ABC transport row T2).
     if !needs_wipe(verb) || extensions.get::<FacadeSecret>().is_some() {
-        let bytes = axum::body::to_bytes(body, MAX_REMOTE_REQUEST_BYTES)
-            .await
-            .unwrap_or_default();
+        let bytes = axum::body::to_bytes(body, limit).await.unwrap_or_default();
         let value = serde_json::from_slice(&bytes).ok();
         return (bytes, value);
     }
-    let Ok(owned) = OwnedBody::read(body).await else {
+    let Ok(owned) = OwnedBody::read(body, limit).await else {
         // Past the limit, or unreadable: empty, as `to_bytes` failing reads today.
         return (Bytes::new(), None);
     };
@@ -375,12 +376,12 @@ fn submit_redacted(fields: SubmitFields<'_>) -> Option<Value> {
 struct OwnedBody(Vec<u8>);
 
 impl OwnedBody {
-    async fn read(body: Body) -> Result<Self, ()> {
+    async fn read(body: Body, limit: usize) -> Result<Self, ()> {
         let room = match body.size_hint().upper() {
-            None => MAX_REMOTE_REQUEST_BYTES,
+            None => limit,
             Some(declared) => usize::try_from(declared)
                 .ok()
-                .filter(|declared| *declared <= MAX_REMOTE_REQUEST_BYTES)
+                .filter(|declared| *declared <= limit)
                 .ok_or(())?,
         };
         let mut owned = Self(Vec::with_capacity(room));

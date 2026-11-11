@@ -16,6 +16,7 @@ use super::types::{
     PreparedAuthorization, PreparedEffect,
 };
 use crate::Vault;
+use crate::agent_dispatch::{AgentRunEffectAdmission, AgentRunEffectCall, AgentRunEffectStop};
 use crate::attempt_queue::AttemptId;
 use crate::connector_key;
 use crate::error::Error;
@@ -26,8 +27,8 @@ use crate::outbound_intent_ledger::{
     BudgetChargeMarker, IntentEscalationReason, IntentLedgerError, IntentState,
     LedgerPayloadContext, OutboundCallRequest, RecordedOutboundOutcome, force_sync,
     insert_pending_in_txn, insert_suppressed_in_txn, payload_recipient_in_txn,
-    read_intent_for_attempt_in_txn, read_intent_record_in_txn, reserve_budget_in_txn,
-    stored_admission_in_txn,
+    payload_recipients_in_txn, read_intent_for_attempt_in_txn, read_intent_record_in_txn,
+    reserve_budget_in_txn, stored_admission_in_txn,
 };
 use crate::ports::TombstoneStore;
 
@@ -130,6 +131,172 @@ pub(super) fn aged_admission_ceiling(
     Ok(None)
 }
 
+/// Whether the sibling route `sibling` still holds its send: its call 0 is
+/// admitted and not stopped definitely unsent. A pending call may go on a
+/// later attempt, and a remote task that failed after its provider accepted
+/// it may have done its work; only one route of a send is ever admitted
+/// while the other can still go.
+fn sibling_route_holds_send_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    sibling: crate::attempt_queue::AttemptId,
+) -> Result<bool, IntentLedgerError> {
+    use crate::outbound_intent_ledger::{
+        IntentEscalationReason, IntentResolution, UnconfirmedDelivery,
+    };
+    let Some(record) = read_intent_for_attempt_in_txn(vault, txn, sibling, 0)? else {
+        return Ok(false);
+    };
+    Ok(!matches!(
+        IntentResolution::from_record(&record)?,
+        IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+            reason,
+        } if reason != IntentEscalationReason::RemoteTaskFailed
+    ))
+}
+
+/// What a `New` or `Park` command proves on `txn` before its ledger read:
+/// the owner its proof names, revalidated, its verified actor's binding, and
+/// its booking effect. Returns that owner, which the Pending row keeps
+/// (FIX 11591). Reads only.
+fn admit_prepared_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prepared: &PreparedEffect,
+) -> Result<Option<crate::entity_id::EntityId>, IntentLedgerError> {
+    let mut authorizing_owner = None;
+    if let Some(owner) = &prepared.owner_proof {
+        authorizing_owner = Some(owner.revalidate_in_txn(vault, txn)?);
+    }
+    if let Some((actor, actor_class)) = prepared.verified_actor {
+        if vault.port_tombstone_is_deleted(txn, &actor)? {
+            return Err(IntentLedgerError::InvalidBoundActor);
+        }
+        let entity_type = vault
+            .get_entity_type_in_txn(txn, &actor)?
+            .ok_or(IntentLedgerError::InvalidBoundActor)?;
+        crate::provenance::validate_actor_class(entity_type, actor_class)?;
+        if prepared.gate.provenance.actor_entity_ref != Some(actor)
+            || prepared.gate.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
+            || prepared.gate.actor.actor_class != actor_class.gate_actor_class()
+        {
+            return Err(IntentLedgerError::InvalidBoundActor);
+        }
+    }
+    verify_booking_effect(vault, txn, prepared.attempt_id, &prepared.payload)?;
+    Ok(authorizing_owner)
+}
+
+/// What a fresh `New` admission settles on its snapshot before its
+/// external-effect judgment: the resident policy, the grant the effect must
+/// run under, the effect as its space posting check frames it, and the code
+/// consent wait that owns it, if one does.
+struct FreshAdmission {
+    policy: gate::PolicyManifestResolution,
+    required_grant_id: Option<crate::entity_id::EntityId>,
+    posting_gate: gate::ExternalEffectGateInput,
+    code_wait: Option<(crate::entity_id::EntityId, [u8; 32])>,
+}
+
+impl FreshAdmission {
+    /// The phase the judgment runs in: the answer of the code consent wait
+    /// that owns the effect, else a first admission.
+    fn approval_context(&self) -> gate::ApprovalContext {
+        self.code_wait.map_or(
+            gate::ApprovalContext::FirstAdmission,
+            |(_, binding_digest)| gate::ApprovalContext::CodeWait(binding_digest),
+        )
+    }
+}
+
+/// The checks a fresh `New` admission of `prepared` runs on `txn` between its
+/// calendar admission and its external-effect judgment, in their order: the
+/// campaign leg, the policy, the step-failure policy, the required grant
+/// (`invite_admission`'s page grant, else the scoped one), the space posting
+/// check and the code consent wait. Reads only.
+fn fresh_admission_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prepared: &PreparedEffect,
+    invite_admission: Option<&crate::calendar::CalendarInviteAdmission>,
+) -> Result<FreshAdmission, IntentLedgerError> {
+    // P1-2 #4499: a prepared campaign leg re-proves its lifecycle under
+    // this writer before any decision is recorded; other effects pass through.
+    crate::campaign::enrollment::admit_campaign_leg_in_txn(vault, txn, &prepared.gate)?;
+
+    let policy = gate::resolve_policy_manifest(&vault.store, txn)?;
+    enforce_step_failure_policy(
+        vault,
+        txn,
+        &policy,
+        &prepared.payload,
+        prepared.gate.provenance.actor_entity_ref,
+    )?;
+    let required_grant_id = invite_admission
+        .and_then(crate::calendar::CalendarInviteAdmission::page_grant)
+        .or_else(|| required_grant_id(&prepared.authorization));
+    let posting_gate = vault.space_posting_gate_in_txn(txn, &prepared.payload, &prepared.gate)?;
+    // DOOR-079 1a: a held connector call a code consent wait owns is
+    // admitted under that wait's answer, proved from the rows under this
+    // writer: its code-bound approval, its bound bytes, its original
+    // caller's own credential. Any other effect admits as before.
+    let code_wait = crate::outbound_consent::code_wait_admission_in_txn(vault, txn, prepared)?;
+    Ok(FreshAdmission {
+        policy,
+        required_grant_id,
+        posting_gate,
+        code_wait,
+    })
+}
+
+/// The prepared tool call a scoped effect's judgment reads; `None` for any
+/// other authorization.
+fn prepared_tool_call(
+    authorization: &PreparedAuthorization,
+) -> Option<&crate::outbound_consent::tool_call::PreparedToolCall> {
+    match authorization {
+        PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
+        PreparedAuthorization::None | PreparedAuthorization::PublisherSignature(_) => None,
+    }
+}
+
+/// The judgment a fresh `New` admission of `prepared` would make on `txn`,
+/// dated `at`, read-only (FIX 22102): its owner-proof, actor and booking
+/// checks, its sibling-route hold, its calendar admission, the fresh
+/// admission's checks, then the external-effect judgment. A fresh call has no
+/// intent row, so no replay is read. `transport.admit_in` belongs to a
+/// sending transport, and a preflight has none (the scoped transport's is a
+/// no-op). Nothing is recorded, debited or committed.
+pub(crate) fn judge_new_effect_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prepared: &PreparedEffect,
+    at: u64,
+) -> Result<gate::ExternalEffectJudgment, IntentLedgerError> {
+    admit_prepared_in_txn(vault, txn, prepared)?;
+    if let Some(sibling) = prepared.exclusive_route
+        && sibling_route_holds_send_in_txn(vault, txn, sibling)?
+    {
+        return Err(IntentLedgerError::InvalidInput(
+            "a sibling route of this send holds it",
+        ));
+    }
+    let invite_admission = calendar_admission_at_in_txn(vault, txn, prepared, at)?;
+    let fresh = fresh_admission_in_txn(vault, txn, prepared, invite_admission.as_ref())?;
+    Ok(gate::judge_external_effect_in_txn(
+        &vault.store,
+        txn,
+        &fresh.posting_gate,
+        &fresh.policy,
+        fresh.required_grant_id,
+        prepared_tool_call(&prepared.authorization),
+        fresh.approval_context(),
+        at,
+        Some(at),
+    )?)
+}
+
 pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -153,26 +320,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         });
     }
     let mut wtxn = vault.store.env.write_txn()?;
+    // The owner the proof names, revalidated under this writer: the Pending
+    // row keeps it, and every later send of the row rechecks it (FIX 11591).
+    let mut authorizing_owner = None;
     if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command {
-        if let Some(owner) = &prepared.owner_proof {
-            owner.revalidate_in_txn(vault, &wtxn)?;
-        }
-        if let Some((actor, actor_class)) = prepared.verified_actor {
-            if vault.port_tombstone_is_deleted(&wtxn, &actor)? {
-                return Err(IntentLedgerError::InvalidBoundActor);
-            }
-            let entity_type = vault
-                .get_entity_type_in_txn(&wtxn, &actor)?
-                .ok_or(IntentLedgerError::InvalidBoundActor)?;
-            crate::provenance::validate_actor_class(entity_type, actor_class)?;
-            if prepared.gate.provenance.actor_entity_ref != Some(actor)
-                || prepared.gate.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
-                || prepared.gate.actor.actor_class != actor_class.gate_actor_class()
-            {
-                return Err(IntentLedgerError::InvalidBoundActor);
-            }
-        }
-        verify_booking_effect(vault, &wtxn, prepared.attempt_id, &prepared.payload)?;
+        authorizing_owner = admit_prepared_in_txn(vault, &wtxn, prepared)?;
     }
     // Payload-derived ids alone are not unique logical calls. Resolve the
     // attempt under the SAME writer lock as the gate, debit, and Pending insert.
@@ -216,9 +368,48 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         drop(wtxn);
         return Ok(result);
     }
+    // FIX 11029: a send is not admitted, nor parked, while its sibling
+    // route (an interrupt and its ambient alternative) holds the send, under
+    // this writer: at most one route of a send is ever live.
+    if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command
+        && let Some(sibling) = prepared.exclusive_route
+        && sibling_route_holds_send_in_txn(vault, &wtxn, sibling)?
+    {
+        return Err(IntentLedgerError::InvalidInput(
+            "a sibling route of this send holds it",
+        ));
+    }
     // FIX 6404: the transport's own target judges the new call again under
     // this writer; a refusal records no decision.
     transport.admit_in(&wtxn)?;
+    // FIX 4747 slice 7: an agent run's new effect meets its run TASK's
+    // marks under this writer, before any decision is recorded or budget
+    // charged: it goes only while this machine holds the run, and one an
+    // earlier executor of the run marked goes as its mark and the owner's
+    // answer rule. The Pending insert below marks it in this same writer.
+    let run_effect = match &command {
+        OutboundEffectCommand::New(prepared) => match agent_run_effect_call(prepared) {
+            Some(call) => match crate::agent_dispatch::admit_agent_run_effect_in_txn(
+                vault,
+                &mut wtxn,
+                call,
+                &intent_id,
+                &prepared.server,
+                &prepared.tool,
+            )? {
+                AgentRunEffectAdmission::Unmarked => None,
+                AgentRunEffectAdmission::Marked(holding) => Some(holding),
+                AgentRunEffectAdmission::Stopped { stop, commit } => {
+                    if commit {
+                        wtxn.commit().map_err(Error::from)?;
+                    }
+                    return Ok(agent_run_effect_stopped(intent_id, stop));
+                }
+            },
+            None => None,
+        },
+        OutboundEffectCommand::Park(_) | OutboundEffectCommand::Resume(_) => None,
+    };
 
     let invite_admission = match &command {
         OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) => {
@@ -232,12 +423,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             let effect =
                 vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
             let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-            let (decision_id, decision, _) = gate::check_external_effect_policy(
+            // A parked send admits nothing, so its decision stays evidence
+            // only: its one-shot approval, standing grant and envelope slot
+            // are kept for the send that is admitted later (FIX 8754).
+            let (decision_id, decision) = gate::record_held_external_effect_policy(
                 &vault.store,
                 &mut wtxn,
                 &effect,
                 &policy,
-                false,
             )?;
             wtxn.commit().map_err(Error::from)?;
             vault.store.notify_attempt_observers();
@@ -250,42 +443,22 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
     };
 
-    // P1-2 #4499: a prepared campaign leg re-proves its lifecycle under
-    // this writer before any decision is recorded; other effects pass through.
-    crate::campaign::enrollment::admit_campaign_leg_in_txn(vault, &wtxn, &prepared.gate)?;
-
-    let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-    enforce_step_failure_policy(
-        vault,
-        &wtxn,
-        &policy,
-        &prepared.payload,
-        prepared.gate.provenance.actor_entity_ref,
-    )?;
-    let required_grant_id = invite_admission
-        .as_ref()
-        .and_then(crate::calendar::CalendarInviteAdmission::page_grant)
-        .or_else(|| required_grant_id(&prepared.authorization));
-    let posting_gate = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
-    // DOOR-079 1a: a held connector call a code consent wait owns is
-    // admitted under that wait's answer, proved from the rows under this
-    // writer: its code-bound approval, its bound bytes, its original
-    // caller's own credential. Any other effect admits as before.
-    let code_wait = crate::outbound_consent::code_wait_admission_in_txn(vault, &wtxn, &prepared)?;
+    let fresh = fresh_admission_in_txn(vault, &wtxn, &prepared, invite_admission.as_ref())?;
+    let approval_context = fresh.approval_context();
+    let FreshAdmission {
+        policy,
+        required_grant_id,
+        posting_gate,
+        code_wait,
+    } = fresh;
     let mut governance = gate::evaluate_external_effect_policy(
         &vault.store,
         &mut wtxn,
         &posting_gate,
         &policy,
         required_grant_id,
-        match &prepared.authorization {
-            PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
-            PreparedAuthorization::None | PreparedAuthorization::PublisherSignature(_) => None,
-        },
-        code_wait.map_or(
-            gate::ApprovalContext::FirstAdmission,
-            |(_, binding_digest)| gate::ApprovalContext::CodeWait(binding_digest),
-        ),
+        prepared_tool_call(&prepared.authorization),
+        approval_context,
     )?;
     if governance.outcome() != GateOutcome::Allow {
         let ask_consent = governance.ask_consent().cloned();
@@ -333,16 +506,20 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
 
     // FIX 9283, 9372: the actor the Gate verified and whether the caller keeps
     // no record, kept with the row's payload; never read from the request.
-    // FIX 10953: and the person the engine's own frozen send names as its
-    // counterparty, as the comm index resolves it now.
+    // FIX 10953: and the persons the engine's own frozen send names as its
+    // recipients (its counterparty, and each recipient of one message to
+    // several, fix list row 17645), as the comm index resolves them now.
     let payload_context = LedgerPayloadContext {
         actor: prepared.gate.provenance.actor_entity_ref,
         off_record: matches!(
             &prepared.authorization,
             PreparedAuthorization::ScopedMcp { prepared, .. } if prepared.keeps_no_record()
         ),
-        recipient: payload_recipient_in_txn(vault, &wtxn, &prepared.payload),
+        recipients: payload_recipients_in_txn(vault, &wtxn, &prepared.payload),
     };
+    // FIX 11030 keeps the party of a counterparty that resolved to no
+    // PERSON, whatever the send's other recipients resolved to.
+    let counterparty = payload_recipient_in_txn(vault, &wtxn, &prepared.payload);
     let dedupe_key = dedupe::dedupe_key(&prepared)?;
     // `now_ms` is supplied by the dispatch caller; semantic suppression must
     // use the vault's own clock, not a caller-selected future timestamp.
@@ -392,6 +569,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         ));
         let stored = stored_admission_in_txn(vault, &mut wtxn, &suppressed, &payload_context)?;
         insert_suppressed_in_txn(vault, &mut wtxn, &stored)?;
+        // FIX 11030: a party with no PERSON yet is kept for a later erase.
+        crate::outbound_intent_ledger::record_unresolved_party_in_txn(
+            vault,
+            &mut wtxn,
+            &suppressed.id,
+            suppressed.payload(),
+            counterparty,
+        )?;
         crate::receipt::put_suppression_in_txn(vault, &mut wtxn, &intent_id, &receipt, dedupe_now)?;
         wtxn.commit().map_err(Error::from)?;
         force_sync(vault)?;
@@ -506,7 +691,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         wtxn.commit().map_err(Error::from)?;
         return Ok(gate_rejection(intent_id, decision_id, decision));
     }
-    let (budget_accounting, budget_charge, exhausted) = charge_once(
+    let (budget_accounting, mut budget_charge, exhausted) = charge_once(
         vault,
         &mut wtxn,
         &mut governance,
@@ -626,6 +811,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     );
     request.authorization_binding = authorization_binding;
     request.resolved_endpoint = prepared.resolved_endpoint;
+    request = request.with_authorizing_owner(authorizing_owner);
     if let Some(capability) = capability_provenance {
         request = request.with_capability_provenance(capability);
     }
@@ -638,7 +824,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // not an availability observation from dispatch preparation. Spend,
     // decision, typed proof, budget marker and Pending insert commit together.
     pending.admitted_approval = governance.admitted_send_approval(pending.id);
-    let pinned_approval = governance.pinned_send_approval(pending.id);
+    pending.pinned_approval = governance.pinned_send_approval(pending.id);
     let spent = governance.spent_press_digest();
     if pending.id != intent_id {
         return Err(IntentLedgerError::InvalidRecord(
@@ -654,24 +840,29 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
     insert_pending_in_txn(vault, &mut wtxn, &stored)?;
-    let ordinary_press = match pinned_approval {
-        Some(approval)
-            if approval.family
-                == crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate =>
-        {
-            Some(approval)
-        }
-        Some(approval)
-            if approval.family
-                == crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch
-                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &pending)?.is_some() =>
-        {
-            Some(approval)
-        }
-        _ => None,
-    };
-    crate::outbound_intent_ledger::keep_pinned_approval_in_txn(vault, &mut wtxn, ordinary_press)?;
+    // FIX 11030: a party with no PERSON yet is kept for a later erase.
+    crate::outbound_intent_ledger::record_unresolved_party_in_txn(
+        vault,
+        &mut wtxn,
+        &pending.id,
+        pending.payload(),
+        counterparty,
+    )?;
+    // FIX 4747 slice 7: an agent run's effect is marked on its run TASK by
+    // its intent id in the writer that commits its Pending row, at the
+    // generation the admission read, before its transport can start.
+    if let Some(holding) = run_effect {
+        crate::agent_dispatch::record_agent_run_effect_mark_in_txn(
+            vault,
+            &mut wtxn,
+            holding,
+            &pending.id,
+        )?;
+    }
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
+    if let Some(charge) = budget_charge.as_mut() {
+        charge.refresh_read_in_txn(&vault.store, &wtxn, vault.store.clock.now_recorded_at())?;
+    }
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
     if let Some((wait_id, _)) = code_wait {
@@ -693,13 +884,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
-    // FIX 6424 part 2a: the presses it spent, kept for its retry once it stands.
-    super::types::keep_spent_presses(
-        vault,
-        pending.id,
-        pinned_approval.filter(|_| ordinary_press.is_none()),
-        co_spent,
-    )?;
+    // The primary proof committed in Pending. The co-actor keeps its existing
+    // best-effort post-commit writer and first-send failure policy.
+    super::types::keep_spent_presses(vault, pending.id, co_spent)?;
 
     let mut result = send_admitted(vault, authority, pending, spent, now_ms, transport)?;
     result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));
@@ -726,6 +913,58 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     Ok(result)
 }
 
+/// The agent run call a new effect is, when its scoped preparation names the
+/// run try whose step makes it (FIX 4747 slice 7): its read-only class and
+/// whether its frozen idempotency key reaches the provider. `None` for every
+/// other effect, which no run's marks govern.
+fn agent_run_effect_call(prepared: &PreparedEffect) -> Option<AgentRunEffectCall> {
+    let PreparedAuthorization::ScopedMcp {
+        prepared: tool_call,
+        ..
+    } = &prepared.authorization
+    else {
+        return None;
+    };
+    Some(AgentRunEffectCall {
+        run: tool_call.agent_run()?,
+        read_only: tool_call.is_read_only(),
+        idempotent: prepared.idempotency_supported,
+    })
+}
+
+/// An agent run's effect that did not go at its admission, for `stop` (FIX 4747 slice 7):
+/// nothing was decided, charged, settled, written to the ledger or sent.
+fn agent_run_effect_stopped(
+    intent_id: crate::outbound_intent_ledger::IntentId,
+    stop: AgentRunEffectStop,
+) -> OutboundEffectResult {
+    OutboundEffectResult {
+        resolution: None,
+        dispatch: crate::outbound_intent_ledger::IntentDispatchResult {
+            class: crate::outbound_intent_ledger::OutboundCallClass::Effectful,
+            intent_id: Some(intent_id),
+            state: None,
+            send_outcome: None,
+            replayed: false,
+            escalation: None,
+        },
+        gate_decision_id: None,
+        gate_outcome: None,
+        gate_reason_codes: Vec::new(),
+        gate_receipt_reasons: Vec::new(),
+        budget_charge: None,
+        budget_settlement_events: Vec::new(),
+        dedupe_suppressed: false,
+        suppression_receipt: None,
+        ceiling_count: None,
+        approval_digest: None,
+        ask_consent: None,
+        approval_actor: None,
+        paced_until: None,
+        agent_run_effect: Some(stop),
+    }
+}
+
 /// Reads all calendar state under the same writer that publishes Pending.
 /// An exact ledger replay never calls commit_in_txn again.
 pub(super) fn calendar_admission_in_txn(
@@ -733,13 +972,25 @@ pub(super) fn calendar_admission_in_txn(
     txn: &heed::RoTxn<'_>,
     prepared: &PreparedEffect,
 ) -> Result<Option<crate::calendar::CalendarInviteAdmission>, IntentLedgerError> {
+    calendar_admission_at_in_txn(vault, txn, prepared, vault.store.clock.now_recorded_at())
+}
+
+/// [`calendar_admission_in_txn`] judged at `now`, recording-time seconds: the
+/// writer passes the store clock's reading, a preflight the recording time
+/// its judgment is dated by.
+fn calendar_admission_at_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prepared: &PreparedEffect,
+    now: u64,
+) -> Result<Option<crate::calendar::CalendarInviteAdmission>, IntentLedgerError> {
     crate::calendar::invite::admit_frozen_calendar_invite_in_txn(
         vault,
         txn,
         &prepared.tool,
         prepared.gate.provenance.actor_entity_ref,
         &prepared.payload,
-        vault.store.clock.now_recorded_at(),
+        now,
     )
     .map_err(|_| IntentLedgerError::InvalidInput("calendar.invite failed calendar admission"))
 }

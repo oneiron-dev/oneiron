@@ -57,7 +57,14 @@ async fn on_repo_run<I, O, F>(
 where
     I: Send + 'static,
     O: Send + 'static,
-    F: FnOnce(&Memory<'_>, &RepoRunBinding, I) -> MemoryResult<RepoRunAnswer<O>> + Send + 'static,
+    F: FnOnce(
+            &Memory<'_>,
+            &RepoRunBinding,
+            I,
+            Option<oneiron::code_run::RepoRequestWitness>,
+        ) -> MemoryResult<RepoRunAnswer<O>>
+        + Send
+        + 'static,
 {
     let answer = async {
         // MCP's filtered gate judges no channel caveat; the facade's lane
@@ -95,7 +102,8 @@ where
                 Some(invocation) => memory.with_invocation(invocation),
                 None => memory,
             };
-            let answer = call(&memory, &binding, input.spec)?;
+            let request = held.repo_request();
+            let answer = call(&memory, &binding, input.spec, request)?;
             // Release no answer to a credential revoked while the run acted.
             vault.credential_read_key(&proof)?.ok_or_else(refused)?;
             drop(held);
@@ -132,7 +140,7 @@ pub(crate) async fn vault_repo_snapshots_get(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_snapshots_get_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_snapshots_get_for_run(binding, spec),
     )
     .await
 }
@@ -154,7 +162,7 @@ pub(crate) async fn vault_repo_snapshots_read(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_snapshots_read_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_snapshots_read_for_run(binding, spec),
     )
     .await
 }
@@ -176,7 +184,28 @@ pub(crate) async fn vault_repo_symbols_definitions(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_symbols_definitions_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_symbols_definitions_for_run(binding, spec),
+    )
+    .await
+}
+
+/// `vault.repo.symbols.neighbors`.
+pub(crate) async fn vault_repo_symbols_neighbors(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: Caller,
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<oneiron::memory::repo_doors::RepoSymbolsNeighborsInput>,
+) -> Listed<oneiron::memory::repo_doors::RepoSymbolsNeighborsOutput> {
+    on_repo_run(
+        server,
+        auth,
+        session,
+        invocation,
+        "vault.repo.symbols.neighbors",
+        input,
+        |memory, binding, spec, _request| memory.repo_symbols_neighbors_for_run(binding, spec),
     )
     .await
 }
@@ -198,7 +227,7 @@ pub(crate) async fn vault_repo_views_get(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_views_get_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_views_get_for_run(binding, spec),
     )
     .await
 }
@@ -220,7 +249,7 @@ pub(crate) async fn vault_repo_views_read(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_views_read_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_views_read_for_run(binding, spec),
     )
     .await
 }
@@ -242,7 +271,7 @@ pub(crate) async fn vault_repo_merge_queue_observe(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_merge_queue_observe_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_merge_queue_observe_for_run(binding, spec),
     )
     .await
 }
@@ -264,7 +293,7 @@ pub(crate) async fn vault_repo_snapshots_ingest(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_snapshots_ingest_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_snapshots_ingest_for_run(binding, spec),
     )
     .await
 }
@@ -286,7 +315,7 @@ pub(crate) async fn vault_repo_work_open(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_work_open_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_work_open_for_run(binding, spec),
     )
     .await
 }
@@ -308,7 +337,7 @@ pub(crate) async fn vault_repo_symbols_declare(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_symbols_declare_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_symbols_declare_for_run(binding, spec),
     )
     .await
 }
@@ -330,7 +359,7 @@ pub(crate) async fn vault_repo_symbols_renew(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_symbols_renew_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_symbols_renew_for_run(binding, spec),
     )
     .await
 }
@@ -352,15 +381,48 @@ pub(crate) async fn vault_repo_symbols_release(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_symbols_release_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_symbols_release_for_run(binding, spec),
     )
     .await
 }
 
+/// `vault.repo.model.generate`: serves a real request on the attached run's
+/// native seat and line. No record bytes are read into the generated reply.
+pub(crate) async fn vault_repo_model_generate(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: Caller,
+    _invocation: Option<InvocationId>,
+    input: LiveRunRequest<oneiron::code_run::RepoModelGenerateInput>,
+) -> Listed<oneiron::LlmResponse> {
+    let answer = async {
+        auth.require_lane_record_scope().map_err(|_| {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "a channel-bound credential reaches no repo run door",
+                &[],
+            )
+        })?;
+        let (_writer, _run, held) = hold_live_run(server, auth, session, &input.live_run).await?;
+        let credential = auth.verified_slip().cloned().ok_or_else(|| {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "a model call requires the attached run's own live credential",
+                &[],
+            )
+        })?;
+        held.generate_repo_model(server, credential, input.spec)
+            .await
+    }
+    .await;
+    (answer, Vec::new())
+}
+
 /// `vault.repo.proposal_submit`: held to the vault's own review policy
 /// (FIX 8268; none set, the same checked queue lands it on green). The host
-/// holds no witness of an external agent's model request, so the proposal
-/// holds as `repo_provenance_required`, its work kept: no author is made up.
+/// uses only a request actually served on this exact attachment; without
+/// one the proposal holds as `repo_provenance_required`, its work kept.
 pub(crate) async fn vault_repo_proposal_submit(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -371,6 +433,8 @@ pub(crate) async fn vault_repo_proposal_submit(
 ) -> Listed<RepoProposalSubmitOutput> {
     let verb = "vault.repo.proposal_submit";
     let policy = OwnerProposalReviewPolicy::new(Arc::clone(&server.vault));
+    // The host witnesses the request against the vault this door serves.
+    let vault = Arc::clone(&server.vault);
     on_repo_run(
         server,
         auth,
@@ -378,12 +442,19 @@ pub(crate) async fn vault_repo_proposal_submit(
         invocation,
         verb,
         input,
-        move |memory, binding, spec| {
+        move |memory, binding, spec, request| {
+            let path = spec.path.clone();
+            let content_hash = *blake3::hash(&spec.content).as_bytes();
             memory.repo_proposal_submit_for_run(
                 binding,
                 spec,
                 Some(&policy as &dyn RepoReviewPolicy),
-                |_| Err(repo_provenance_unwitnessed()),
+                |stamp| match request {
+                    Some(request) => {
+                        binding.sources_from_host(&vault, stamp, path, content_hash, &request)
+                    }
+                    None => Err(repo_provenance_unwitnessed()),
+                },
             )
         },
     )
@@ -407,7 +478,7 @@ pub(crate) async fn vault_repo_merge_queue_enqueue(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_merge_queue_enqueue_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_merge_queue_enqueue_for_run(binding, spec),
     )
     .await
 }
@@ -431,7 +502,7 @@ pub(crate) async fn vault_repo_checkout_bind(
         invocation,
         verb,
         input,
-        move |memory, binding, spec| {
+        move |memory, binding, spec, _request| {
             memory.repo_checkout_bind_for_run(
                 binding,
                 oneiron::memory::repo_doors::with_host_door_base(spec, host_base.as_deref()),
@@ -459,7 +530,7 @@ pub(crate) async fn vault_repo_export(
         invocation,
         verb,
         input,
-        |memory, binding, spec| memory.repo_export_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_export_for_run(binding, spec),
     )
     .await
 }

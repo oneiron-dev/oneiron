@@ -180,14 +180,6 @@ pub(super) fn rebuild(
                         body,
                     )?;
                 }
-                crate::registry::ENTITY_TYPE_OUTBOUND_GRANT => {
-                    crate::outbound_grant::rebuild_checkpoint_grant_index(
-                        &vault.store,
-                        txn,
-                        *id,
-                        body,
-                    )?;
-                }
                 _ => {}
             }
             if has_embedding_source(raw)? {
@@ -264,6 +256,8 @@ pub(super) fn rebuild(
 /// Backfills that own their transactions run after the base index transaction.
 pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<()> {
     crate::skill_hub::backfill_content_hash_index_if_needed(vault)?;
+    // Restored authority-log rows bypassed the Grant member index's writer.
+    crate::federation::backfill_agent_grant_member_index(vault, true)?;
     // Restored proposals and contact claims bypassed their index writers.
     vault.backfill_widen_contact_verdict_index(true)?;
     crate::counterparty_contact::backfill_counterparty_identity_index(vault, true)?;

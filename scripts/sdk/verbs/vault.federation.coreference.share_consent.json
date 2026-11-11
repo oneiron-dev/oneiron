@@ -1,0 +1,17 @@
+{
+  "name": "vault.federation.coreference.share_consent",
+  "description": "The owner consents to exporting an existing identity link into exactly one named federation pact.",
+  "input": "crate::task_verb::sdk::CoreferenceShareConsentRequest",
+  "output": "crate::task_verb::sdk::CoreferenceShareConsentReceipt",
+  "call": "crate::task_verb::sdk::share_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.share_consent\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "validate": "input.pact_id()?;"
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

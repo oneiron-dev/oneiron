@@ -15,9 +15,11 @@
 //!   [`OpAttribution`] names who made it. The stamp rides the Loro commit
 //!   MESSAGE (durable in the `Change` record) rather than the commit ORIGIN
 //!   (local event metadata that does not survive snapshot/reopen).
-//! * **Retention** — [`put_finalized_proposal_text`] keeps the record's refs
-//!   and the proposal document they point into, keyed by the artifact ref;
-//!   [`RetainedProposal`] reads every text back through them (FIX 7818).
+//! * **Retention** — [`put_finalized_proposal_text`] keeps the record's refs,
+//!   keyed by the artifact ref, and the proposal document they point into as
+//!   the artifact's own headed document on the entity-document plane (FIX
+//!   11535); [`RetainedProposal`] reads every text back through them (FIX
+//!   7818).
 //! * **Peer→actor registration** — [`register_peer_actor`] binds a device peer
 //!   id to a [`WriteActor`], which is how an unstamped op (an out-of-band edit)
 //!   still resolves to an actor, and how a stamped op is checked against the
@@ -54,7 +56,9 @@ pub mod reservoir;
 pub mod routing;
 mod text_ref;
 
-pub(crate) use text_ref::joined_in_txn;
+pub(crate) use text_ref::{
+    JoinedProposal, artifact_head_incarnation_in_txn, artifact_window_refs_in_txn, joined_in_txn,
+};
 pub use text_ref::{
     RetainedProposal, TextRead, TextUnavailable, finalized_proposal_text,
     put_finalized_proposal_text, retained_proposal,
@@ -78,7 +82,8 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
-/// Finalized proposal-text artifact and its retained document, keyed by artifact ref.
+/// Finalized proposal-text artifact and the head of its retained document, keyed by artifact
+/// ref.
 const PROPOSAL_ARTIFACT: SideTable<EntityId, StoredProposal, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_PROPOSAL_ARTIFACT);
 /// Whether a masked copy of a `EDIT_DISTANCE_PROPOSAL_ARTIFACT` row still decodes as its typed value,
@@ -88,7 +93,7 @@ pub(crate) fn edit_distance_proposal_artifact_accepts_masked(bytes: &[u8]) -> bo
 }
 
 /// Schema version of the persisted proposal-artifact record.
-pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 4;
+pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 5;
 
 /// Pinned MessagePack key set for a persisted proposal-artifact record.
 pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 10] = [
@@ -96,7 +101,7 @@ pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 10] = [
     "artifact",
     "proposed_ref",
     "final_ref",
-    "document",
+    "head",
     "source_turn",
     "spans",
     "lifted",
@@ -113,7 +118,7 @@ const KEY_SCHEMA_VERSION: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[0];
 const KEY_ARTIFACT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[1];
 const KEY_PROPOSED_REF: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[2];
 const KEY_FINAL_REF: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[3];
-const KEY_DOCUMENT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[4];
+const KEY_HEAD: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[4];
 const KEY_SOURCE_TURN: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[5];
 const KEY_SPANS: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[6];
 const KEY_LIFTED: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[7];
@@ -602,11 +607,8 @@ fn encode_stored_proposal(stored: &StoredProposal) -> Result<Vec<u8>> {
             Value::Binary(record.final_ref.as_bytes().to_vec()),
         ),
         (
-            Value::from(KEY_DOCUMENT),
-            stored
-                .document
-                .as_ref()
-                .map_or(Value::Nil, |bytes| Value::Binary(bytes.clone())),
+            Value::from(KEY_HEAD),
+            text_ref::encode_head(stored.head.as_ref()),
         ),
         (
             Value::from(KEY_SOURCE_TURN),
@@ -691,10 +693,7 @@ fn decode_stored_proposal(bytes: &[u8]) -> Result<StoredProposal> {
         Value::Array(items) => items.iter().map(decode_span).collect::<Result<Vec<_>>>()?,
         _ => return Err(corrupt()),
     };
-    let document = match field(&entries, KEY_DOCUMENT).ok_or_else(corrupt)? {
-        Value::Nil => None,
-        _ => Some(field_binary(&entries, KEY_DOCUMENT)?),
-    };
+    let head = text_ref::decode_head(field(&entries, KEY_HEAD).ok_or_else(corrupt)?)?;
     let record = FinalizedProposalText {
         artifact_ref: ProposalArtifactRef::new(field_entity_id(&entries, KEY_ARTIFACT)?),
         proposed_ref: LoroOpRef::from_bytes(field_binary(&entries, KEY_PROPOSED_REF)?),
@@ -711,7 +710,7 @@ fn decode_stored_proposal(bytes: &[u8]) -> Result<StoredProposal> {
     let lifted = text_ref::decode_lifted(field(&entries, KEY_LIFTED).ok_or_else(corrupt)?)?;
     Ok(StoredProposal {
         record,
-        document,
+        head,
         lifted,
     })
 }
@@ -839,5 +838,6 @@ impl RawValue for StoredProposal {
     }
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

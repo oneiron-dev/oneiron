@@ -561,6 +561,8 @@ impl Vault {
             custody,
             &BTreeSet::new(),
             &write_budget::Unfloored,
+            None,
+            None,
         )?;
         finish(&vault, artifact_holds.as_ref())?;
         if let Some(landing) = &landing {

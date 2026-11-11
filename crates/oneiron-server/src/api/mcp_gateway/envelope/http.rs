@@ -1,8 +1,22 @@
-//! The MCP gateway's HTTP side: its routes, its connection stamp and each POST's JSON-RPC reply.
-//! `mcp_gateway` and `mcp_tool_first_gateway` are its call surface.
+//! The MCP gateway's Streamable HTTP side: its routes, its connection stamp and each POST's reply.
+//! `mcp_gateway`, `mcp_tool_first_gateway` and `mcp_method_not_allowed` are its call surface.
 //! The envelope root defines `McpCallContext` and `McpGatewayError`, the records forwarded here.
 
 use super::*;
+use axum::http::StatusCode;
+use axum::http::header::{ALLOW, ORIGIN};
+
+/// The header a POST after `initialize` names its MCP protocol version in.
+const MCP_PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
+
+/// The methods an MCP endpoint serves, as its 405's `Allow` header states
+/// them.
+const MCP_ALLOWED_METHODS: &str = "POST";
+
+/// The HTTP status a notification or response this server cannot accept
+/// answers with. The transport asks for an HTTP error status and names 400
+/// as one; which one is an engine call (CALLS, FIX 4902).
+const MCP_REFUSED_MESSAGE_STATUS: StatusCode = StatusCode::BAD_REQUEST;
 
 /// The PRIMARY endpoint: the truthful `setup_oneiron` catalog. `execute_code`
 /// is not registered in this release; direct requests receive its typed
@@ -26,7 +40,7 @@ pub(crate) async fn mcp_gateway(
         locality,
         connection,
         server,
-        body,
+        super::blob_body::McpArrived::whole(body),
     )))
     .await
 }
@@ -35,25 +49,112 @@ pub(crate) async fn mcp_gateway(
 ///
 /// A separately registered host endpoint, not a mode switch: nothing on the
 /// wire moves a connection between this router entry and the primary one.
+///
+/// An artifact write's content is read onto a spool and held as a file
+/// (FIX 22074, [`super::blob_body`]); every other body is read as the
+/// `Bytes` extractor read it.
 pub(crate) async fn mcp_tool_first_gateway(
+    Locality(locality): Locality,
+    State(server): State<Arc<SyncServer>>,
+    request: axum::extract::Request,
+) -> impl IntoResponse {
+    // What a tool's answer holds (a deck preview's renderer) is kept until
+    // the reply is encoded (FIX 8238); the endpoint's future on the heap
+    // (FIX 12072).
+    crate::api::answer_hold::until_encoded(Box::pin(async move {
+        let (parts, body) = request.into_parts();
+        let arrived = match super::blob_body::read_tool_first(&server, &parts, locality, body).await
+        {
+            Ok(arrived) => arrived,
+            Err(refused) => return refused,
+        };
+        mcp_endpoint(
+            McpSurfaceMode::ToolFirst,
+            parts.headers,
+            locality,
+            parts.extensions,
+            server,
+            arrived,
+        )
+        .await
+    }))
+    .await
+}
+
+/// [`mcp_tool_first_gateway`] for a held MCP socket's request, whose body
+/// the socket already holds whole: read as the `Bytes` extractor reads it,
+/// under the socket router's own bound, as before (FIX 22074).
+pub(crate) async fn mcp_tool_first_socket_gateway(
     headers: HeaderMap,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     connection: Extensions,
     body: Bytes,
 ) -> impl IntoResponse {
-    // What a tool's answer holds (a deck preview's renderer) is kept until
-    // the reply is encoded (FIX 8238); the endpoint's future on the heap
-    // (FIX 12072).
     crate::api::answer_hold::until_encoded(Box::pin(mcp_endpoint(
         McpSurfaceMode::ToolFirst,
         headers,
         locality,
         connection,
         server,
-        body,
+        super::blob_body::McpArrived::whole(body),
     )))
     .await
+}
+
+/// `GET` and `DELETE` on an MCP endpoint: 405 Method Not Allowed, with
+/// `Allow: POST`. An engine call (CALLS, FIX 4902): this server opens no
+/// server-initiated SSE stream, which the transport lets a GET answer 405
+/// for, and holds no session (it mints no `Mcp-Session-Id`), so a DELETE
+/// has none to end. A present `Origin` this server does not admit is
+/// refused first, as on a POST.
+pub(crate) async fn mcp_method_not_allowed(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+) -> Response {
+    if let Some(refused) = mcp_origin_refusal(&server, &headers, Arrival::of(&[])) {
+        return refused;
+    }
+    let mut response = StatusCode::METHOD_NOT_ALLOWED.into_response();
+    response
+        .headers_mut()
+        .insert(ALLOW, HeaderValue::from_static(MCP_ALLOWED_METHODS));
+    response
+}
+
+/// The body a POST arrived with, as a connection receipt digests it.
+#[derive(Clone, Copy)]
+pub(super) struct Arrival<'a> {
+    bytes: &'a [u8],
+    /// The digest of a body the endpoint read as a spool (FIX 22074), whose
+    /// `bytes` are not the body as it arrived.
+    digest: Option<&'a str>,
+}
+
+impl<'a> Arrival<'a> {
+    /// A body as it arrived.
+    pub(super) const fn of(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            digest: None,
+        }
+    }
+
+    /// A body the endpoint read as a spool, by its digest as it arrived.
+    pub(super) const fn spooled(digest: &'a str) -> Self {
+        Self {
+            bytes: &[],
+            digest: Some(digest),
+        }
+    }
+
+    /// The digest of the body as it arrived.
+    fn digest(self) -> String {
+        self.digest.map_or_else(
+            || oneiron::receipt::call_bytes_digest(self.bytes),
+            str::to_owned,
+        )
+    }
 }
 
 /// A reply no `tools/call` receipt covers is its connection's (FIX 811): a
@@ -67,7 +168,7 @@ pub(super) fn mcp_connection_stamp(
     server: &SyncServer,
     headers: &HeaderMap,
     method: &str,
-    body: &[u8],
+    body: Arrival<'_>,
     answered: &mut Result<Value, McpGatewayError>,
 ) -> crate::api::call_receipt::CallStamp {
     let (outcome, result_digest) = match &*answered {
@@ -93,7 +194,7 @@ pub(super) fn mcp_connection_stamp(
             oneiron::receipt::CallTransport::Mcp,
             method.to_owned(),
             outcome,
-            oneiron::receipt::call_bytes_digest(body),
+            body.digest(),
             result_digest,
         ),
     );
@@ -141,7 +242,7 @@ pub(super) fn mcp_connection_refusal(
     server: &SyncServer,
     headers: &HeaderMap,
     method: &str,
-    body: &[u8],
+    body: Arrival<'_>,
     id: Value,
     error: McpGatewayError,
 ) -> Response {
@@ -150,14 +251,277 @@ pub(super) fn mcp_connection_refusal(
     mcp_http_reply(mcp_envelope(id, refused), Some(&stamp))
 }
 
+/// An envelope refused before any method ran, as its connection's reply,
+/// under the HTTP status the transport answers it with.
+fn mcp_status_refusal(
+    status: StatusCode,
+    server: &SyncServer,
+    headers: &HeaderMap,
+    method: &str,
+    body: Arrival<'_>,
+    id: Value,
+    error: McpGatewayError,
+) -> Response {
+    let mut response = mcp_connection_refusal(server, headers, method, body, id, error);
+    *response.status_mut() = status;
+    response
+}
+
+/// The refusal of a request whose `Origin` this server does not admit (MCP
+/// Streamable HTTP: a present, invalid `Origin` answers 403 Forbidden,
+/// against DNS rebinding; canon ARCH-0028 "Origin-validated"). An engine
+/// call (CALLS, FIX 4902): an origin is admitted when `allowed_origins`
+/// names it exactly, when it is this host's own public origin
+/// (`oauth_resource_indicator`), or when its host is a loopback name or
+/// address, which a rebinding page never carries. A request with no
+/// `Origin`, as every client outside a browser sends, is not judged.
+fn mcp_origin_refusal(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    body: Arrival<'_>,
+) -> Option<Response> {
+    if origin_admitted(server, headers) {
+        return None;
+    }
+    let origin = headers.get(ORIGIN)?;
+    let error = McpGatewayError::new(
+        -32600,
+        "origin_not_allowed",
+        format!(
+            "Origin {} is not one this server admits",
+            String::from_utf8_lossy(origin.as_bytes())
+        ),
+    )
+    .with_field("Origin");
+    Some(mcp_status_refusal(
+        StatusCode::FORBIDDEN,
+        server,
+        headers,
+        "mcp",
+        body,
+        Value::Null,
+        error,
+    ))
+}
+
+/// Whether this server admits the request's `Origin`: none, one
+/// `allowed_origins` names, its own public origin, or a loopback one.
+pub(super) fn origin_admitted(server: &SyncServer, headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(ORIGIN) else {
+        return true;
+    };
+    let listed = crate::web_client::parse_allowed_origins(&server.config.allowed_origins)
+        .is_ok_and(|allowed| allowed.contains(origin));
+    let own = crate::builtin_host::public_origin(server.config.oauth_resource_indicator.as_deref())
+        .is_some_and(|own| origin.as_bytes() == own.as_bytes());
+    listed || own || origin.to_str().is_ok_and(loopback_origin)
+}
+
+/// Whether `origin` (`scheme://host[:port]`) names a loopback host:
+/// `localhost`, `127.0.0.1` or `[::1]`.
+fn loopback_origin(origin: &str) -> bool {
+    let Some((scheme, rest)) = origin.split_once("://") else {
+        return false;
+    };
+    if !matches!(scheme, "http" | "https") {
+        return false;
+    }
+    let host = match rest.strip_prefix('[') {
+        Some(bracketed) => bracketed.split_once(']').map(|(host, _)| host),
+        None => Some(rest.split(':').next().unwrap_or(rest)),
+    };
+    host.is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+    })
+}
+
+/// The refusal of a POST whose `MCP-Protocol-Version` header names a
+/// version this server does not speak, which the transport answers with
+/// 400. `None` when it names one of [`MCP_PROTOCOL_VERSIONS`], or names
+/// none: the transport then assumes `2025-03-26`, which this server serves
+/// as it serves every version it speaks.
+pub(super) fn mcp_protocol_header_refusal(headers: &HeaderMap) -> Option<McpGatewayError> {
+    let named = headers.get(MCP_PROTOCOL_VERSION_HEADER)?;
+    if named
+        .to_str()
+        .is_ok_and(|version| MCP_PROTOCOL_VERSIONS.contains(&version))
+    {
+        return None;
+    }
+    Some(
+        McpGatewayError::new(
+            -32600,
+            "unsupported_protocol_version",
+            format!(
+                "MCP-Protocol-Version {} is not one this server speaks; it speaks {}",
+                String::from_utf8_lossy(named.as_bytes()),
+                MCP_PROTOCOL_VERSIONS.join(", ")
+            ),
+        )
+        .with_field("MCP-Protocol-Version"),
+    )
+}
+
+/// What MCP Streamable HTTP answers for a POSTed message before any request
+/// runs: a version header this server does not speak is refused with 400
+/// (`initialize` is not judged by it), and a notification or a response is
+/// accepted with 202 or refused with an HTTP error status, never answered as
+/// a request is. `None` for a request, which is answered as before.
+async fn mcp_transport_answer(
+    mode: McpSurfaceMode,
+    headers: &HeaderMap,
+    locality: CallerLocality,
+    connection: &Extensions,
+    server: &Arc<SyncServer>,
+    body: Arrival<'_>,
+    raw: &Value,
+) -> Option<Response> {
+    let method = raw.get("method").and_then(Value::as_str);
+    if method != Some("initialize")
+        && let Some(error) = mcp_protocol_header_refusal(headers)
+    {
+        return Some(mcp_status_refusal(
+            StatusCode::BAD_REQUEST,
+            server,
+            headers,
+            method.unwrap_or("mcp"),
+            body,
+            raw.get("id").cloned().unwrap_or(Value::Null),
+            error,
+        ));
+    }
+    if !mcp_is_notification_or_response(raw) {
+        return None;
+    }
+    Some(mcp_accept_message(mode, headers, locality, connection, server, body, raw).await)
+}
+
+/// Whether a POSTed body is a JSON-RPC notification (a `method` and no `id`
+/// member) or a response (an `id`, a `result` or an `error`, and no
+/// `method`). Neither is answered as a request is. A request, a batch and
+/// any other body are not.
+fn mcp_is_notification_or_response(raw: &Value) -> bool {
+    let Some(message) = raw.as_object() else {
+        return false;
+    };
+    match message.get("method") {
+        Some(Value::String(_)) => !message.contains_key("id"),
+        Some(_) => false,
+        None => {
+            message.contains_key("id")
+                && (message.contains_key("result") || message.contains_key("error"))
+        }
+    }
+}
+
+/// Whether this server accepts a notification of `method`. An engine call
+/// (CALLS, FIX 4902): every `notifications/*` is accepted and ignored,
+/// `initialized`, `cancelled`, `progress` and `roots/list_changed` among
+/// them, since the endpoint holds no session, cancels no call it is
+/// running, and asks for no roots. A message with no `id` that names any
+/// other method is a request no reply can answer, so it is refused.
+fn mcp_notification_accepted(method: &str) -> bool {
+    method.starts_with("notifications/")
+}
+
+/// One POSTed notification or response (MCP Streamable HTTP): accepted, it
+/// answers 202 Accepted with no body, under its connection's receipt; else
+/// [`MCP_REFUSED_MESSAGE_STATUS`] with the JSON-RPC error and no id. Its
+/// caller is required, as for every method, and is resolved as a
+/// handshake's is.
+async fn mcp_accept_message(
+    mode: McpSurfaceMode,
+    headers: &HeaderMap,
+    locality: CallerLocality,
+    connection: &Extensions,
+    server: &Arc<SyncServer>,
+    body: Arrival<'_>,
+    raw: &Value,
+) -> Response {
+    let method = raw.get("method").and_then(Value::as_str);
+    let label = method.unwrap_or("mcp");
+    let refusal = if raw.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+        Some(
+            McpGatewayError::new(-32600, "invalid_request", "jsonrpc must be \"2.0\"")
+                .with_field("jsonrpc"),
+        )
+    } else if let Some(method) = method
+        && !mcp_notification_accepted(method)
+    {
+        Some(
+            McpGatewayError::new(
+                -32600,
+                "invalid_request",
+                format!(
+                    "{method} is a request and needs an id; only a notifications/* method omits one"
+                ),
+            )
+            .with_field("id"),
+        )
+    } else {
+        None
+    };
+    let caller = match refusal {
+        Some(error) => Err(error),
+        None => resolve_handshake_caller(
+            mode,
+            &mcp_request_id(&Value::Null),
+            headers,
+            connection,
+            locality,
+            server,
+        )
+        .await
+        .map(drop),
+    };
+    if let Err(error) = caller {
+        return mcp_status_refusal(
+            MCP_REFUSED_MESSAGE_STATUS,
+            server,
+            headers,
+            label,
+            body,
+            Value::Null,
+            error,
+        );
+    }
+    let anonymous = crate::api::call_receipt::in_anonymous_session(server, headers, None);
+    let stamp = crate::api::call_receipt::record(
+        server,
+        anonymous,
+        crate::api::call_receipt::connection_call(
+            oneiron::receipt::CallTransport::Mcp,
+            label.to_owned(),
+            oneiron::receipt::CallOutcome::Ok,
+            body.digest(),
+            None,
+        ),
+    );
+    let mut response = StatusCode::ACCEPTED.into_response();
+    stamp.stamp_header(&mut response);
+    response
+}
+
 pub(super) async fn mcp_endpoint(
     mode: McpSurfaceMode,
     headers: HeaderMap,
     locality: CallerLocality,
     connection: Extensions,
     server: Arc<SyncServer>,
-    body: Bytes,
+    arrived: super::blob_body::McpArrived,
 ) -> Response {
+    let super::blob_body::McpArrived { bytes: body, held } = arrived;
+    // A body whose content is held as a file digests as it arrived (FIX 22074).
+    let body_digest = held.as_ref().map(|held| held.body_digest().to_owned());
+    let arrival = Arrival {
+        bytes: &body,
+        digest: body_digest.as_deref(),
+    };
+    // A present Origin this server does not admit is refused before the
+    // body is read (FIX 4902).
+    if let Some(refused) = mcp_origin_refusal(&server, &headers, arrival) {
+        return refused;
+    }
     let raw: Value = match serde_json::from_slice(&body) {
         Ok(raw) => raw,
         Err(error) => {
@@ -165,12 +529,28 @@ pub(super) async fn mcp_endpoint(
                 &server,
                 &headers,
                 "mcp",
-                &body,
+                arrival,
                 Value::Null,
                 McpGatewayError::new(-32700, "parse_error", error.to_string()),
             );
         }
     };
+    // The version header and a notification or response are answered
+    // before any request runs (FIX 4902); that answer's future on the heap
+    // (FIX 12072).
+    if let Some(answered) = Box::pin(mcp_transport_answer(
+        mode,
+        &headers,
+        locality,
+        &connection,
+        &server,
+        arrival,
+        &raw,
+    ))
+    .await
+    {
+        return answered;
+    }
     let id = raw.get("id").cloned().unwrap_or(Value::Null);
     let request = match serde_json::from_value::<McpJsonRpcRequest>(raw) {
         Ok(request) => request,
@@ -179,7 +559,7 @@ pub(super) async fn mcp_endpoint(
                 &server,
                 &headers,
                 "mcp",
-                &body,
+                arrival,
                 id,
                 McpGatewayError::new(-32600, "invalid_request", error.to_string()),
             );
@@ -223,20 +603,33 @@ pub(super) async fn mcp_endpoint(
                         &server,
                         &headers,
                         &request.method,
-                        &body,
+                        arrival,
                         id,
                         error,
                     );
                 }
             };
-            let call = mcp_invocation_body(
+            let call = match mcp_invocation_body(
                 mode,
                 locality,
                 &headers,
                 &owner,
                 &request,
                 raw_arguments.as_deref(),
-            );
+                held.as_ref(),
+            ) {
+                Ok(call) => call,
+                Err(error) => {
+                    return mcp_connection_refusal(
+                        &server,
+                        &headers,
+                        &request.method,
+                        arrival,
+                        id,
+                        McpGatewayError::new(-32603, "engine_error", error.to_string()),
+                    );
+                }
+            };
             match facade::claim_door_invocation(
                 &server,
                 invocation,
@@ -253,7 +646,7 @@ pub(super) async fn mcp_endpoint(
                             &server,
                             &headers,
                             &request.method,
-                            &body,
+                            arrival,
                             id,
                             error,
                         );
@@ -289,13 +682,24 @@ pub(super) async fn mcp_endpoint(
                     let waiter = match waiter {
                         Ok(waiter) => waiter,
                         Err(error) => {
-                            return mcp_connection_refusal(
+                            // A waiter no cohort admits is told to sign in
+                            // (FIX 4902 slice C).
+                            let challenge = super::super::oauth_call::auth_challenge(
                                 &server,
                                 &headers,
-                                &request.method,
-                                &body,
-                                id,
-                                error,
+                                &connection,
+                                &error,
+                            );
+                            return super::super::oauth_call::challenged(
+                                mcp_connection_refusal(
+                                    &server,
+                                    &headers,
+                                    &request.method,
+                                    arrival,
+                                    id,
+                                    error,
+                                ),
+                                challenge,
                             );
                         }
                     };
@@ -312,7 +716,7 @@ pub(super) async fn mcp_endpoint(
                         &server,
                         &headers,
                         &request.method,
-                        &body,
+                        arrival,
                         id,
                         McpGatewayError::new(
                             -32020,
@@ -326,7 +730,7 @@ pub(super) async fn mcp_endpoint(
                         &server,
                         &headers,
                         &request.method,
-                        &body,
+                        arrival,
                         id,
                         McpGatewayError::new(
                             -32020,
@@ -340,7 +744,7 @@ pub(super) async fn mcp_endpoint(
                         &server,
                         &headers,
                         &request.method,
-                        &body,
+                        arrival,
                         id,
                         McpGatewayError::new(
                             -32020,
@@ -356,7 +760,7 @@ pub(super) async fn mcp_endpoint(
                         &server,
                         &headers,
                         &request.method,
-                        &body,
+                        arrival,
                         id,
                         McpGatewayError::new(
                             -32020,
@@ -370,7 +774,7 @@ pub(super) async fn mcp_endpoint(
                         &server,
                         &headers,
                         &request.method,
-                        &body,
+                        arrival,
                         id,
                         McpGatewayError::new(
                             -32603,
@@ -393,6 +797,7 @@ pub(super) async fn mcp_endpoint(
         &server,
         request,
         raw_arguments.as_deref(),
+        held,
     ));
     // A claimed call keeps the answer its release judged, for the calls
     // waiting on it (FIX 7914).
@@ -408,9 +813,18 @@ pub(super) async fn mcp_endpoint(
         Err(error) => error.call_receipt.is_some(),
     };
     let stamp =
-        (!covered).then(|| mcp_connection_stamp(&server, &headers, &method, &body, &mut result));
+        (!covered).then(|| mcp_connection_stamp(&server, &headers, &method, arrival, &mut result));
     let failed = result.is_err();
+    // An anonymous request no cohort admitted answers 401 with its challenge
+    // (FIX 4902 slice C). An OAuth token that does not resolve never gets
+    // here: the binding door refuses it (`oauth_call::swap_oauth_access_token`).
+    let challenge = result.as_ref().err().and_then(|error| {
+        super::super::oauth_call::auth_challenge(&server, &headers, &connection, error)
+    });
     let reply = mcp_envelope(id, result);
+    // A verb hook's ask holds the call: no answer is kept for its
+    // invocation, so a same-id retry reaches the held call again (FIX 1435).
+    let held = mcp_held_by_ask(&reply);
     if let Some(claim) = claim {
         let mut saved = reply.clone();
         if let Some(saved) = saved.as_object_mut() {
@@ -422,14 +836,27 @@ pub(super) async fn mcp_endpoint(
             status: 200,
             body: saved,
             release,
+            refusal_hook_notice: None,
         };
-        if failed {
+        if failed || held {
             claim.finish_failed(outcome);
         } else {
             claim.finish(outcome);
         }
     }
-    mcp_http_reply(reply, stamp.as_ref())
+    super::super::oauth_call::challenged(mcp_http_reply(reply, stamp.as_ref()), challenge)
+}
+
+/// Whether `reply` is a tool result a verb hook's pending ask holds (FIX
+/// 1435): the call has no answer yet, as a held facade call has none
+/// (`FacadeApiError::is_held_call`).
+fn mcp_held_by_ask(reply: &Value) -> bool {
+    reply
+        .pointer("/result/structuredContent/hook")
+        .and_then(|stop| {
+            serde_json::from_value::<oneiron::runtime_hooks::VerbHookStop>(stop.clone()).ok()
+        })
+        .is_some_and(|stop| matches!(stop, oneiron::runtime_hooks::VerbHookStop::Pending { .. }))
 }
 
 /// The invocation a `tools/call` names in `_meta`, when it names a valid
@@ -450,7 +877,13 @@ pub(super) fn mcp_named_invocation(request: &McpJsonRpcRequest) -> Option<Invoca
 /// The call a claimed MCP invocation names: the endpoint, the credential
 /// headers and session the actor resolves from, the owner a managed vault's
 /// supervisor attested for it or for the held socket it came on (empty for
-/// none), where the caller sits, and the call itself.
+/// none), where the caller sits, and the call itself. A body whose content
+/// is held as a file (FIX 22074) names the call as it arrived: its params'
+/// digest and its exact `params.arguments` text, read from its spool.
+///
+/// # Errors
+///
+/// The held body's spool read errors.
 pub(super) fn mcp_invocation_body(
     mode: McpSurfaceMode,
     locality: CallerLocality,
@@ -458,23 +891,30 @@ pub(super) fn mcp_invocation_body(
     owner: &str,
     request: &McpJsonRpcRequest,
     raw_arguments: Option<&str>,
-) -> [u8; 32] {
+    held: Option<&super::blob_body::McpHeld>,
+) -> std::io::Result<[u8; 32]> {
     let header = |name: &str| headers.get(name).map_or(&[][..], HeaderValue::as_bytes);
-    let params =
-        oneiron::receipt::call_json_digest(request.params.as_ref().unwrap_or(&Value::Null));
-    facade::invocation_body(
-        None,
-        locality,
-        &[
-            b"mcp".as_slice(),
-            mode.as_str().as_bytes(),
-            header(MCP_CREDENTIAL_HEADER),
-            header(AUTHORIZATION.as_str()),
-            owner.as_bytes(),
-            header(crate::api::write_facet::SESSION_HEADER),
-            request.method.as_bytes(),
-            params.as_bytes(),
-            raw_arguments.unwrap_or_default().as_bytes(),
-        ],
-    )
+    let params = match held {
+        Some(held) => held.params_digest().to_owned(),
+        None => oneiron::receipt::call_json_digest(request.params.as_ref().unwrap_or(&Value::Null)),
+    };
+    let parts = [
+        b"mcp".as_slice(),
+        mode.as_str().as_bytes(),
+        header(MCP_CREDENTIAL_HEADER),
+        header(AUTHORIZATION.as_str()),
+        owner.as_bytes(),
+        header(crate::api::write_facet::SESSION_HEADER),
+        request.method.as_bytes(),
+        params.as_bytes(),
+    ];
+    match held {
+        Some(held) => held.invocation_body(locality, &parts),
+        None => {
+            let raw = raw_arguments.unwrap_or_default().as_bytes();
+            let mut parts = parts.to_vec();
+            parts.push(raw);
+            Ok(facade::invocation_body(None, locality, &parts))
+        }
+    }
 }

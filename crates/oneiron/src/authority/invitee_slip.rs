@@ -1,11 +1,16 @@
-//! FIX 1925: an invitee's own credential. When an `add_member` holder invites
-//! a person and names the public key that person generated on their own
-//! device, the invitation's writer mints them a human slip under the host's
-//! issuer. Its signed claims name the invitation (`invitation_ref`); the host
-//! admits it only at that invitation's list, accept and decline doors, and
-//! every slip door reads the invitation beside the fold's revocation check,
-//! so the slip stands only while the invitation is pending and unexpired.
-//! Once they have joined, the member pairs an ordinary credential.
+//! FIX 1925: an invitee's own credential. The invitee binds their pending
+//! invitation to a key of their own (FIX 8745): the key of an independent
+//! live human slip of theirs, or the key they redeem an owner's invitation
+//! pairing code with; an `add_member` holder names none. The binding writer
+//! mints them a human slip to that key under the host's issuer. Its signed
+//! claims name the invitation (`invitation_ref`); the host admits it only at
+//! that invitation's list, accept and decline doors, and every slip door
+//! reads the invitation beside the fold's revocation check, so the slip
+//! stands only while the invitation is pending and unexpired, while its key
+//! is the one the invitation records and while the credential that bound it
+//! is live. Explicit acceptance may return a regular member credential from
+//! the same writer, bound to that device key; plain acceptance stays issuer-free
+//! and the member may pair an ordinary credential afterwards.
 
 use std::collections::BTreeSet;
 
@@ -17,10 +22,10 @@ use crate::error::{Error, RecordError, Result};
 use oneiron_authority::federation::{Scope, ScopeAxis};
 
 impl Vault {
-    /// Mints, in the invitation's writer, the human slip of `invitee` for
-    /// their invitation `invitation` (entity id hex), under the host's
-    /// `issuer`. It binds `holder_key`, the public key the invitee generated
-    /// on their own device; no private key is delivered anywhere. It holds
+    /// Mints, in the binding writer, the human slip of `invitee` for their
+    /// invitation `invitation` (entity id hex), under the host's `issuer`. It
+    /// binds `holder_key`, the key the invitee bound the invitation to
+    /// (FIX 8745); no private key is delivered anywhere. It holds
     /// for the invitee PERSON, carries no verb (the host grants it its
     /// invitation's doors alone), and ends at `expires_at`, the invitation's
     /// own expiry.
@@ -59,6 +64,50 @@ impl Vault {
             org_ref: None,
             grant_ref: None,
             invitation_ref: Some(invitation.to_owned()),
+            share_ref: None,
+            delegation: None,
+            comm: None,
+            trusted_contact: None,
+            seat_claim: None,
+        };
+        self.mint_slip_in_txn(txn, issuer, claims)
+    }
+
+    /// Mints the regular human credential for the actual grant selected by
+    /// the acceptance writer. The caller supplies that same writer's decoded
+    /// grant and its id; normal minting still checks the host and authority log.
+    pub(crate) fn mint_accepted_member_slip_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        grant_ref: EntityId,
+        grant: &crate::federation::FederationGrant,
+        holder_key: [u8; 32],
+        expires_at: u64,
+    ) -> Result<CapabilitySlip> {
+        let vault_id = self
+            .authority_view_readonly_in_txn(txn)?
+            .vault_id
+            .ok_or_else(invalid_authority)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let claims = SlipClaims {
+            slip_id: random_slip_id(),
+            vault_id,
+            parent_id: None,
+            holder_ref: grant.member_ref.to_hex(),
+            binding_key: holder_key,
+            scope: grant.authority_scope.clone(),
+            issued_at: now,
+            expires_at,
+            ttl_secs: expires_at.checked_sub(now).ok_or_else(invalid_authority)?,
+            single_use: false,
+            records: BTreeSet::new(),
+            channels: BTreeSet::new(),
+            actor_class: Some(ACTOR_CLASS_HUMAN.to_owned()),
+            org_ref: None,
+            grant_ref: Some(grant_ref.to_hex()),
+            invitation_ref: None,
+            share_ref: None,
             delegation: None,
             comm: None,
             trusted_contact: None,
@@ -69,7 +118,9 @@ impl Vault {
 
     /// An invitation-bound slip stands only while its invitation does: the
     /// invitation its claims name, its holder's own, is pending and unexpired
-    /// at `now`. A slip that names no invitation passes.
+    /// at `now`, its binding key is the one the invitation records, and the
+    /// credential that bound it is live (FIX 8745). A slip that names no
+    /// invitation passes.
     fn require_live_slip_invitation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -80,7 +131,7 @@ impl Vault {
             return Ok(());
         };
         let invitee = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
-        if !self.shared_invitation_pending_in_txn(txn, invitee, invitation, now) {
+        if !self.invitation_slip_stands_in_txn(txn, invitee, invitation, &claims.binding_key, now) {
             return Err(invalid_authority());
         }
         Ok(())
@@ -123,6 +174,12 @@ impl Vault {
     ) -> Result<()> {
         self.require_live_slip_grant_in_txn(txn, claims, now)?;
         self.require_live_slip_invitation_in_txn(txn, claims, now)?;
+        if let Some(share) = &claims.share_ref {
+            let share = EntityId::from_hex(share).map_err(|_| invalid_authority())?;
+            let holder = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
+            crate::share::live_share_for_holder_in_txn(self, txn, &share, &holder, now)?
+                .ok_or_else(invalid_authority)?;
+        }
         self.require_live_delegation_in_txn(txn, claims)?;
         self.require_live_trusted_contact_binding_in_txn(txn, claims, now)?;
         self.require_live_seat_claim_in_txn(txn, claims)

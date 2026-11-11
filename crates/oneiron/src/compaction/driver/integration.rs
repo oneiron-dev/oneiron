@@ -119,7 +119,7 @@ impl CompactionDriver {
                 run: Some(named), ..
             } => named == run,
             WindowLog::Host { run: None, .. } => true,
-            WindowLog::Conversation => false,
+            WindowLog::Conversation(_) => false,
         };
         let bound = packet.host_log().is_some_and(|log| {
             log.run_id == run && log.first == request.turn_start && log.last == last

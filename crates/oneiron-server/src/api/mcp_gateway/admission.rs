@@ -500,7 +500,8 @@ pub(super) fn mcp_scoped_task_rows(
 /// the registered world/facet ceiling and the verified slip's worlds and
 /// facets: only such a withheld row may be counted. A credential that
 /// narrows neither excludes no TASK. Any other row cannot prove it, so it is
-/// not counted.
+/// not counted. A C6 use-limited TASK also adds no omission while its
+/// retaining hold stands.
 fn mcp_row_position_inside(
     vault: &oneiron::Vault,
     actor: &McpResolvedActor,
@@ -526,28 +527,34 @@ fn mcp_row_position_inside(
     let whole = |axis: &oneiron::federation::ScopeAxis<_>| {
         matches!(axis, oneiron::federation::ScopeAxis::All)
     };
-    if !actor.scope.is_narrow()
+    let inside = if !actor.scope.is_narrow()
         && granted.is_none_or(|granted| whole(&granted.worlds) && whole(&granted.facets))
     {
-        return Ok(true);
-    }
-    let Some(position) = vault
-        .record_scope(&id)
-        .map_err(|error| mcp_engine_error("mcp board row scope read failed", error))?
-    else {
-        return Ok(false);
+        true
+    } else {
+        let Some(position) = vault
+            .record_scope(&id)
+            .map_err(|error| mcp_engine_error("mcp board row scope read failed", error))?
+        else {
+            return Ok(false);
+        };
+        // Positional: the row's world/facet stamp against the slip's world/facet
+        // projection, never the slip's other bounds.
+        let projection = |worlds, facets| oneiron::federation::Scope {
+            worlds,
+            facets,
+            ..oneiron::federation::Scope::top()
+        };
+        let stamped = projection(position.worlds, position.facets);
+        granted.is_none_or(|granted| {
+            stamped.is_narrowing_of(&projection(granted.worlds.clone(), granted.facets.clone()))
+        })
     };
-    // Positional: the row's world/facet stamp against the slip's world/facet
-    // projection, never the slip's other bounds.
-    let projection = |worlds, facets| oneiron::federation::Scope {
-        worlds,
-        facets,
-        ..oneiron::federation::Scope::top()
-    };
-    let stamped = projection(position.worlds, position.facets);
-    Ok(granted.is_none_or(|granted| {
-        stamped.is_narrowing_of(&projection(granted.worlds.clone(), granted.facets.clone()))
-    }))
+    Ok(inside
+        && vault
+            .legal_hold_use_limit(&id)
+            .map_err(|error| mcp_engine_error("mcp board row use-limit read failed", error))?
+            .is_none())
 }
 
 /// Resolves one `tools/call` name against THIS endpoint's registration.

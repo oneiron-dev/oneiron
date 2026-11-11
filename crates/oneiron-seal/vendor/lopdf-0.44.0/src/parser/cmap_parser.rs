@@ -1,7 +1,7 @@
 use crate::cmap_section::{
     ArrayOfTargetStrings, CMapParseError, CMapSection, CodeLen, SourceCode, SourceRangeMapping,
 };
-use crate::parser::{NomResult, ParserInput, comment, dict_dup, dictionary, eol, hex_char, name};
+use crate::parser::{NomResult, ParserInput, comment, dict_dup, dictionary, eol, hex_char, name_skip};
 use nom::Parser;
 use nom::branch::alt;
 pub use nom::bytes::complete::tag;
@@ -144,7 +144,7 @@ fn cmap_name(input: ParserInput) -> NomResult<()> {
     (
         tag(&b"/CMapName"[..]),
         space0,
-        name,
+        name_skip,
         space1,
         tag(&b"def"[..]),
         multispace1,
@@ -245,9 +245,13 @@ fn codespace_range_section(input: ParserInput) -> NomResult<CMapSection> {
     );
     let end_section = (tag(&b"endcodespacerange"[..]), multispace1);
     let parse_range = delimited(space0, code_range_pair, multispace1);
-    let (rest_of_input, ranges_result) =
-        delimited(begin_section, many1(parse_range), end_section).parse(input)?;
-    Ok((rest_of_input, CMapSection::CsRange(ranges_result)))
+    let (rest_of_input, ()) = delimited(
+        begin_section,
+        fold_many1(parse_range, || (), |_, _| ()),
+        end_section,
+    )
+    .parse(input)?;
+    Ok((rest_of_input, CMapSection::CsRange(Vec::new())))
 }
 
 fn code_range_pair(input: ParserInput) -> NomResult<(SourceCode, SourceCode, CodeLen)> {

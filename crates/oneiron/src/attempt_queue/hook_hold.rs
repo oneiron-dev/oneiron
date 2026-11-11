@@ -1,12 +1,10 @@
-//! Lease-fenced workflow verb-hook pauses. The transcript is retained by
-//! the workflow checkpoint writer in the same transaction as this pause.
+//! Lease-fenced verb-hook pauses: a workflow's, whose transcript its
+//! checkpoint writer retains in the same transaction as this pause, and a
+//! turn action's, whose resume point names its wait (FIX 1765).
 
 use super::encoding::decode_record;
-use super::telemetry::invalid_transition;
+use super::lifecycle::{EngineHold, HoldWrite};
 use super::types::{AttemptId, AttemptInterventionKind, AttemptPause, AttemptRecord, AttemptState};
-use super::validate::{
-    append_attempt_event, validate_lease_owner, validate_resume_point, validate_transition_lease,
-};
 use super::{ATTEMPT_RUNTIME_ACTOR, AttemptQueue, AttemptResumePoint, InterveneAttempt};
 use crate::Result;
 
@@ -36,46 +34,22 @@ impl AttemptQueue<'_> {
         txn: &mut heed::RwTxn<'_>,
         input: HoldAttemptForHook,
     ) -> Result<AttemptRecord> {
-        validate_lease_owner(&input.lease_owner)?;
-        validate_resume_point(&input.resume_point)?;
-        let Some(raw) = self.store.attempt_records.get(txn, input.id.as_bytes())? else {
-            return Err(invalid_transition("hook_hold", "missing"));
-        };
-        let mut record = decode_record(&raw, input.id)?;
-        if record.hook_wait_for(input.invocation) && record.attempt_count == input.attempt_count {
-            return Ok(record);
-        }
-        if record.state != AttemptState::Leased {
-            return Err(invalid_transition("hook_hold", record.state.as_str()));
-        }
-        validate_transition_lease(
-            &record,
-            &input.lease_owner,
-            input.attempt_count,
-            "hook_hold",
-        )?;
-        self.delete_ready_entry_for_record(txn, &record)?;
-        record.cancel_state.landing = None;
-        record.cancel_state.pressure.pending = 0;
-        record.cancel_state.resume_point = Some(input.resume_point);
-        append_attempt_event(
-            &mut record,
-            AttemptInterventionKind::Pause,
-            ATTEMPT_RUNTIME_ACTOR.to_owned(),
-            Some("workflow waits on its verb hook".to_owned()),
-            input.now,
-        )?;
-        record.state = AttemptState::Paused;
-        record.active_pause = Some(AttemptPause::Hook {
-            invocation: input.invocation,
-        });
-        record.lease_owner = None;
-        record.updated_at = input.now;
-        let encoded = self.encode_in_txn(txn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(txn, record.id.as_bytes(), &encoded)?;
-        Ok(record)
+        self.hold_in_txn(
+            txn,
+            HoldWrite {
+                id: input.id,
+                lease_owner: input.lease_owner,
+                attempt_count: input.attempt_count,
+                resume_point: input.resume_point,
+                hold: EngineHold::Hook {
+                    invocation: input.invocation,
+                    attempt_count: input.attempt_count,
+                },
+                actor: ATTEMPT_RUNTIME_ACTOR,
+                note: "waits on its verb hook".to_owned(),
+                now: input.now,
+            },
+        )
     }
 
     /// Resume only this invocation's own pause at its recorded generation.
@@ -96,13 +70,13 @@ impl AttemptQueue<'_> {
         if !record.hook_wait_for(invocation) || record.attempt_count != attempt_count {
             return Ok(false);
         }
-        self.intervene_in_txn(
+        self.release_hold_in_txn(
             txn,
             InterveneAttempt {
                 id,
                 kind: AttemptInterventionKind::Resume,
                 actor: ATTEMPT_RUNTIME_ACTOR.to_owned(),
-                note: Some("workflow verb hook answered".to_owned()),
+                note: Some("its verb hook answered".to_owned()),
                 now,
             },
         )?;

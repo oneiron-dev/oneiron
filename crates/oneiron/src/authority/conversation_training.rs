@@ -30,6 +30,7 @@ use super::*;
 mod door;
 
 pub use door::ConversationTrainingView;
+pub(super) use door::opt_out_view;
 
 /// Every person's opt-out choices in one fold state, each keyed by the
 /// acting PERSON.

@@ -393,6 +393,10 @@ pub(super) fn compact_window_with(
     // and an erased message's document.
     crate::sync::document_pins::scrub_document_pins(vault, &doc, None)?;
     crate::sync::message_docs::scrub_message_docs(vault, &doc, None)?;
+    // FIX 2691: and the office proposals of an erased artifact.
+    crate::sync::office_proposals::scrub_office_proposals(vault, &doc, None)?;
+    // FIX 12470: and the typed body receipts of an erased body.
+    crate::sync::typed_body_rows::scrub_typed_body_rows(vault, &doc, None)?;
     // FIX 6870: and an erased repo's portable manifest.
     crate::sync::repo_manifests::scrub_repo_manifests(vault, &doc, None)?;
     // FIX 3877: an origin claim carrier names no erased actor.
@@ -404,6 +408,9 @@ pub(super) fn compact_window_with(
     crate::workspace_roster::scrub_audience_edits(vault, &doc, None)?;
     // A removed session's epoch floor leaves the window too.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, &doc, None)?;
+    // Last of the removals: the source audiences the rows left carried need,
+    // none naming an erased actor; the shallow cut drops the old revisions.
+    crate::sync::source_audiences::refresh_and_scrub(vault, &doc, None)?;
 
     // OF-013: a withdrawn generation's live carrier becomes its keyframe
     // envelope before the shallow export drops the history that held its
@@ -743,11 +750,26 @@ fn scrub_erased_ids_from_doc(
         })
         .collect();
     let mut source_ids = BTreeSet::new();
+    // A carrier the window moves by reference is a body file's manifest:
+    // what the scrub reads in it was kept when the file was admitted, and
+    // its bytes may be gone (FIX 22091).
+    let bound: std::collections::HashMap<
+        String,
+        crate::sync::asset_body::references::AssetBodyRef,
+    > = crate::sync::asset_body::references::bound_refs(doc)
+        .into_iter()
+        .map(|reference| (reference.key(), reference))
+        .collect();
+    let mut filed = Vec::new();
     map_for_each_bytes(&entities, |key, bytes| {
         let Some(header) = crate::batch::EntityMetadataHeader::parse(bytes) else {
             return;
         };
         if header.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+            return;
+        }
+        if let Some(reference) = bound.get(key) {
+            filed.push((key.to_owned(), reference.clone()));
             return;
         }
         let body = &bytes[crate::batch::ENTITY_METADATA_HEADER_LEN..];
@@ -784,6 +806,31 @@ fn scrub_erased_ids_from_doc(
             }
         }
     });
+    if !filed.is_empty() {
+        // A carrier admitted with no facts kept is read from its file while
+        // its live row names it: under the custody guard, every body pinned,
+        // before the snapshot opens.
+        let _custody = vault.store.gate_custody_read_guard()?;
+        let _bodies = vault.pin_all_result_bodies();
+        let rtxn = vault.store.env.read_txn()?;
+        let erased_copied = super::carrier_facts::erased_fingerprints(erased);
+        for (key, reference) in filed {
+            // An erased id's row is residue whatever it holds: the pass
+            // below removes it, and no body is read to prove it.
+            if erased.contains(&reference.id) || source_ids.contains(&reference.id) {
+                continue;
+            }
+            let facts =
+                super::carrier_facts::historical_carrier_facts_in_txn(vault, &rtxn, &reference)?;
+            let (removed, owned) = facts.verdict(erased, &erased_copied);
+            if removed {
+                doomed_entities.insert(key);
+                if owned {
+                    source_ids.insert(reference.id);
+                }
+            }
+        }
+    }
     let erased = erased.union(&source_ids).copied().collect::<BTreeSet<_>>();
     entities.for_each(|key, _| {
         // ANY value shape under an erased id's key is residue (fail
@@ -818,8 +865,13 @@ fn scrub_erased_ids_from_doc(
         })
         .collect();
     mark_removed_carriers_first(vault, CarrierRemoval::HardEraseSweep, &carriers)?;
+    // A removed carrier's body reference goes with it: none stands alone.
+    let references = doc.get_map(crate::sync::schema::ASSET_BODY_REFS_MAP);
     for key in &doomed_entities {
         map_delete(&entities, key)?;
+        if bound.contains_key(key) {
+            map_delete(&references, key)?;
+        }
     }
     for key in &doomed_edges {
         map_delete(&edges, key)?;

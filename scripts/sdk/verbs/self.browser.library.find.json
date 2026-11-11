@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.library.find",
+  "description": "The replay library's programs for a site, url or the open page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed.",
+  "input": "crate::task_verb::sdk::BrowserLibraryFindInput",
+  "output": "crate::task_verb::sdk::BrowserLibraryFindOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.library_find(input)?)",
+  "scope": "Read",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>",
+    "description": "The replay library's programs for a site, url or run's page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

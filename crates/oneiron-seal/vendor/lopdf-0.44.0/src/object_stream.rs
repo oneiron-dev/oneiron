@@ -132,7 +132,7 @@ impl ObjectStream {
     ///
     /// The objects parsed out of the decoded content use the same admission
     /// for their names, strings, arrays and dictionaries.
-    pub(crate) fn new_admitted(
+    pub fn new_admitted(
         stream: &mut Stream, max_decompressed_size: Option<usize>, admission: Option<&dyn DecodeAdmission>,
     ) -> Result<ObjectStream> {
         let Some(admission) = admission else {

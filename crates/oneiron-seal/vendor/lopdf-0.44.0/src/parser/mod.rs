@@ -133,21 +133,26 @@ fn oct_char(input: ParserInput) -> NomResult<u8> {
     .parse(input)
 }
 
-pub(crate) fn name(input: ParserInput) -> NomResult<Vec<u8>> {
-    preceded(
-        tag(&b"/"[..]),
-        many0(alt((
-            preceded(tag(&b"#"[..]), hex_char),
-            map_opt(take(1usize), |c: ParserInput| {
-                if c[0] != b'#' && is_regular(c[0]) {
-                    Some(c[0])
-                } else {
-                    None
-                }
-            }),
-        ))),
-    )
+fn name_byte(input: ParserInput) -> NomResult<u8> {
+    alt((
+        preceded(tag(&b"#"[..]), hex_char),
+        map_opt(take(1usize), |c: ParserInput| {
+            if c[0] != b'#' && is_regular(c[0]) {
+                Some(c[0])
+            } else {
+                None
+            }
+        }),
+    ))
     .parse(input)
+}
+
+pub(crate) fn name(input: ParserInput) -> NomResult<Vec<u8>> {
+    preceded(tag(&b"/"[..]), many0(name_byte)).parse(input)
+}
+
+pub(crate) fn name_skip(input: ParserInput) -> NomResult<()> {
+    map(preceded(tag(&b"/"[..]), many0_count(name_byte)), |_| ()).parse(input)
 }
 
 fn escape_sequence(input: ParserInput) -> NomResult<Option<u8>> {
@@ -390,12 +395,14 @@ fn _indirect_object<'a>(
     Ok((object_id, object))
 }
 
-pub fn header(input: ParserInput, strict: bool) -> Option<String> {
+pub fn header(
+    input: ParserInput, strict: bool, admission: Option<&dyn DecodeAdmission>,
+) -> crate::Result<Option<String>> {
     // Parse version digits (e.g. "1.7") separately from any trailing bytes
     // before the newline.  Some PDF generators (e.g. ImageMill) place binary
     // marker bytes on the header line which would fail UTF-8 validation.
     // In strict mode we reject such trailing bytes; in lenient mode we skip them.
-    let (_, (version_raw, trailing)) = delimited(
+    let Ok((_, (version_raw, trailing))) = delimited(
         tag(&b"%PDF-"[..]),
         pair(
             take_while(|c: u8| c.is_ascii_digit() || c == b'.'),
@@ -403,29 +410,43 @@ pub fn header(input: ParserInput, strict: bool) -> Option<String> {
         ),
         pair(eol, many0_count(comment)),
     )
-    .parse(input)
-    .ok()?;
+    .parse(input) else {
+        return Ok(None);
+    };
 
     if strict && !trailing.is_empty() {
-        return None;
+        return Ok(None);
     }
 
-    let version = str::from_utf8(version_raw).ok()?.to_string();
-    Some(version)
+    let Ok(version) = str::from_utf8(version_raw) else {
+        return Ok(None);
+    };
+    let version = if let Some(admission) = admission {
+        String::from_utf8(decode_admission::copy(admission, version.as_bytes())?)
+            .expect("the parsed PDF version is valid UTF-8")
+    } else {
+        version.to_string()
+    };
+    Ok(Some(version))
 }
 
-pub fn binary_mark(input: ParserInput) -> Option<Vec<u8>> {
-    strip_nom(
-        map_res(
-            delimited(
-                tag(&b"%"[..]),
-                take_while(|c: u8| !b"\r\n".contains(&c)),
-                pair(eol, many0_count(comment)),
-            ),
-            |v: ParserInput| Ok::<Vec<u8>, ()>(v.to_vec()),
+pub fn binary_mark(input: ParserInput, admission: Option<&dyn DecodeAdmission>) -> crate::Result<Option<Vec<u8>>> {
+    let Some(mark) = strip_nom(
+        delimited(
+            tag(&b"%"[..]),
+            take_while(|c: u8| !b"\r\n".contains(&c)),
+            pair(eol, many0_count(comment)),
         )
         .parse(input),
-    )
+    ) else {
+        return Ok(None);
+    };
+    let mark = if let Some(admission) = admission {
+        decode_admission::copy(admission, mark)?
+    } else {
+        mark.to_vec()
+    };
+    Ok(Some(mark))
 }
 
 /// Decode CrossReferenceTable
@@ -581,56 +602,158 @@ fn content_space(input: ParserInput) -> NomResult<()> {
     map(take_while(|c| b" \t\r\n".contains(&c)), |_| ()).parse(input)
 }
 
-fn operator(input: ParserInput) -> NomResult<String> {
-    map_res(
-        take_while1(|c: u8| c.is_ascii_alphabetic() || b"*'\"".contains(&c)),
-        |op: ParserInput| str::from_utf8(op).map(Into::into),
-    )
-    .parse(input)
+fn content_failure<'a>(
+    input: ParserInput<'a>, refused: &Cell<Option<DecodeAdmissionError>>, err: DecodeAdmissionError,
+) -> nom::Err<NomError<'a>> {
+    refused.set(Some(err));
+    nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::Fail))
 }
 
-fn operand(input: ParserInput) -> NomResult<Object> {
+fn content_reserve<'a, T>(
+    admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>, input: ParserInput<'a>,
+    output: &mut Vec<T>, additional: usize,
+) -> Result<(), nom::Err<NomError<'a>>> {
+    if let Some(admission) = admission {
+        decode_admission::reserve(admission, output, additional)
+            .map_err(|err| content_failure(input, refused, err))?;
+    }
+    Ok(())
+}
+
+fn content_bi_string<'a>(
+    admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>, input: ParserInput<'a>,
+) -> Result<String, nom::Err<NomError<'a>>> {
+    match admission {
+        Some(admission) => {
+            let bytes =
+                decode_admission::copy(admission, b"BI").map_err(|err| content_failure(input, refused, err))?;
+            String::from_utf8(bytes).map_err(|_| nom::Err::Error(NomError::from_error_kind(input, ErrorKind::MapRes)))
+        }
+        None => Ok(String::from("BI")),
+    }
+}
+
+fn operator_adm<'a>(
+    input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, String> {
+    let (rest, op) = take_while1(|c: u8| c.is_ascii_alphabetic() || b"*'\"".contains(&c)).parse(input)?;
+    match admission {
+        Some(admission) => {
+            let bytes =
+                decode_admission::copy(admission, op).map_err(|err| content_failure(input, refused, err))?;
+            let text = String::from_utf8(bytes)
+                .map_err(|_| nom::Err::Error(NomError::from_error_kind(input, ErrorKind::MapRes)))?;
+            Ok((rest, text))
+        }
+        None => {
+            let text = str::from_utf8(op)
+                .map(Into::into)
+                .map_err(|_| nom::Err::Error(NomError::from_error_kind(input, ErrorKind::MapRes)))?;
+            Ok((rest, text))
+        }
+    }
+}
+
+fn operand_adm<'a>(
+    input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, Object> {
     terminated(
         alt((
             null,
             boolean,
             map(real, Object::Real),
             map(integer, Object::Integer),
-            map(name, Object::Name),
-            map(literal_string, Object::string_literal),
-            hexadecimal_string,
-            map(array(), Object::Array),
-            map(dictionary, Object::Dictionary),
+            map(|input| iterative::name(input, admission, refused), Object::Name),
+            map(
+                |input| iterative::literal_string(input, admission, refused),
+                Object::string_literal,
+            ),
+            |input| iterative::hexadecimal_string(input, admission, refused),
+            map(|input| iterative::array(input, admission, refused), Object::Array),
+            map(
+                |input| iterative::dictionary(input, admission, refused),
+                Object::Dictionary,
+            ),
         )),
         content_space,
     )
     .parse(input)
 }
 
-fn operation(input: ParserInput) -> NomResult<Operation> {
-    map(
-        preceded(
-            many0(comment),
-            alt((inline_image, terminated(pair(many0(operand), operator), content_space))),
-        ),
-        |(operands, operator)| Operation { operator, operands },
+fn operands_adm<'a>(
+    input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, Vec<Object>> {
+    let mut rest = input;
+    let mut out = Vec::new();
+    loop {
+        match operand_adm(rest, admission, refused) {
+            Ok((next, object)) => {
+                if next.len() == rest.len() {
+                    return Err(nom::Err::Error(NomError::from_error_kind(rest, ErrorKind::Many0)));
+                }
+                content_reserve(admission, refused, rest, &mut out, 1)?;
+                out.push(object);
+                rest = next;
+            }
+            Err(nom::Err::Error(_)) => break,
+            Err(err) => return Err(err),
+        }
+    }
+    Ok((rest, out))
+}
+
+fn operation_adm<'a>(
+    input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, Operation> {
+    let (rest, _) = many0(comment).parse(input)?;
+    let (rest, (operands, operator)) = alt((
+        |input| inline_image_adm(input, admission, refused),
+        |input| {
+            terminated(
+                |input| {
+                    let (rest, operands) = operands_adm(input, admission, refused)?;
+                    let (rest, operator) = operator_adm(rest, admission, refused)?;
+                    Ok((rest, (operands, operator)))
+                },
+                content_space,
+            )
+            .parse(input)
+        },
+    ))
+    .parse(rest)?;
+    Ok((rest, Operation { operator, operands }))
+}
+
+fn inline_image_adm<'a>(
+    input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, (Vec<Object>, String)> {
+    preceded(
+        pair(tag(&b"BI"[..]), content_space),
+        cut(|input| inline_image_impl_adm(input, admission, refused)),
     )
     .parse(input)
 }
 
-fn inline_image(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
-    preceded(pair(tag(&b"BI"[..]), content_space), cut(inline_image_impl)).parse(input)
-}
-
-fn inline_image_impl(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
-    let (input, stream_dict) = inner_dictionary().parse(input)?;
+fn inline_image_impl_adm<'a>(
+    input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, (Vec<Object>, String)> {
+    let (input, stream_dict) = iterative::inner_dictionary(input, admission, refused)?;
     let (input, _) = pair(tag(&b"ID"[..]), content_space).parse(input)?;
-    match image_data_stream(input, stream_dict) {
+    match image_data_stream_adm(input, stream_dict, admission, refused) {
         Ok((input, stream)) => {
             let (input, _) = (content_space, tag(&b"EI"[..]), content_space).parse(input)?;
-            Ok((input, (vec![Object::Stream(stream)], String::from("BI"))))
+            let mut operands = Vec::new();
+            content_reserve(admission, refused, input, &mut operands, 1)?;
+            operands.push(Object::Stream(stream));
+            let bi = content_bi_string(admission, refused, input)?;
+            Ok((input, (operands, bi)))
         }
         Err(e) => {
+            // A refused admission is the error, never a skipped image.
+            if let Some(err) = refused.take() {
+                refused.set(Some(err));
+                return Err(nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::Fail)));
+            }
             // Skip to EI marker so the rest of the content stream can still be parsed.
             log::warn!("Skipping unparseable inline image: {e}");
             let bytes = input;
@@ -652,12 +775,16 @@ fn inline_image_impl(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
                 nom::Err::Failure(err)
             })?;
             let (input, _) = content_space(input)?;
-            Ok((input, (vec![], String::from("BI"))))
+            let bi = content_bi_string(admission, refused, input)?;
+            Ok((input, (vec![], bi)))
         }
     }
 }
 
-fn image_data_stream(input: ParserInput, stream_dict: Dictionary) -> crate::Result<(ParserInput, Stream)> {
+fn image_data_stream_adm<'a>(
+    input: ParserInput<'a>, mut stream_dict: Dictionary, admission: Option<&dyn DecodeAdmission>,
+    refused: &Cell<Option<DecodeAdmissionError>>,
+) -> crate::Result<(ParserInput<'a>, Stream)> {
     let get_abbr = |key_abbr: &[u8], key: &[u8]| stream_dict.get(key_abbr).or_else(|_| stream_dict.get(key));
     let width = get_abbr(b"W", b"Width")?.as_i64()? as usize;
     let height = get_abbr(b"H", b"Height")?.as_i64()? as usize;
@@ -713,28 +840,118 @@ fn image_data_stream(input: ParserInput, stream_dict: Dictionary) -> crate::Resu
             });
         }
     };
-    Ok((input, Stream::new(stream_dict, content.to_vec())))
+    let content = match admission {
+        Some(admission) => decode_admission::copy(admission, content).map_err(|err| {
+            refused.set(Some(err.clone()));
+            Error::DecodeAdmission(err)
+        })?,
+        None => content.to_vec(),
+    };
+    let length_value = content.len() as i64;
+    match admission {
+        Some(admission) => {
+            if let Ok(previous) = stream_dict.get_mut(b"Length") {
+                *previous = Object::Integer(length_value);
+            } else {
+                let key = decode_admission::copy(admission, b"Length").map_err(|err| {
+                    refused.set(Some(err.clone()));
+                    Error::DecodeAdmission(err)
+                })?;
+                crate::admitted::parser_ctx::insert(
+                    Some(admission),
+                    &mut stream_dict,
+                    key,
+                    Object::Integer(length_value),
+                )
+                .map_err(|err| {
+                    refused.set(Some(err.clone()));
+                    Error::DecodeAdmission(err)
+                })?;
+            }
+            Ok((
+                input,
+                Stream {
+                    dict: stream_dict,
+                    content,
+                    allows_compression: true,
+                    start_position: None,
+                },
+            ))
+        }
+        None => Ok((input, Stream::new(stream_dict, content))),
+    }
+}
+
+fn content_inner<'a>(
+    input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, Content<Vec<Operation>>> {
+    let (mut rest, _) = content_space(input)?;
+    let mut operations = Vec::new();
+    loop {
+        match operation_adm(rest, admission, refused) {
+            Ok((next, operation)) => {
+                if next.len() == rest.len() {
+                    return Err(nom::Err::Error(NomError::from_error_kind(rest, ErrorKind::Many0)));
+                }
+                content_reserve(admission, refused, rest, &mut operations, 1)?;
+                operations.push(operation);
+                rest = next;
+            }
+            Err(nom::Err::Error(_)) => break,
+            Err(err) => return Err(err),
+        }
+    }
+    let (rest, _) = many0(terminated(comment, content_space)).parse(rest)?;
+    Ok((rest, Content { operations }))
 }
 
 fn _content(input: ParserInput) -> NomResult<Content<Vec<Operation>>> {
-    delimited(
-        content_space,
-        map(many0(operation), |operations| Content { operations }),
-        many0(terminated(comment, content_space)),
-    )
-    .parse(input)
+    let refused = Cell::new(None);
+    content_inner(input, None, &refused)
+}
+
+fn inline_image(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
+    let refused = Cell::new(None);
+    inline_image_adm(input, None, &refused)
 }
 
 pub fn content(input: ParserInput) -> Option<Content<Vec<Operation>>> {
-    strip_nom(_content.parse(input))
+    let refused = Cell::new(None);
+    strip_nom(content_inner(input, None, &refused))
 }
 
 pub fn content_strict(input: ParserInput) -> Result<Content<Vec<Operation>>, error::ParseError> {
-    let (rest, content) = _content
-        .parse(input)
+    let refused = Cell::new(None);
+    let (rest, content) = content_inner(input, None, &refused)
         .map_err(|_| error::ParseError::InvalidContentStream)?;
     if !rest.is_empty() {
         return Err(error::ParseError::InvalidContentStream);
+    }
+    Ok(content)
+}
+
+pub fn content_admitted(
+    input: ParserInput, admission: &dyn DecodeAdmission,
+) -> crate::Result<Option<Content<Vec<Operation>>>> {
+    let refused = Cell::new(None);
+    let parsed = content_inner(input, Some(admission), &refused);
+    if let Some(err) = refused.take() {
+        return Err(err.into());
+    }
+    Ok(strip_nom(parsed))
+}
+
+pub fn content_strict_admitted(
+    input: ParserInput, admission: &dyn DecodeAdmission,
+) -> crate::Result<Content<Vec<Operation>>> {
+    let refused = Cell::new(None);
+    let parsed = content_inner(input, Some(admission), &refused);
+    if let Some(err) = refused.take() {
+        return Err(err.into());
+    }
+    let (rest, content) = parsed.map_err(|_| error::ParseError::InvalidContentStream)?;
+    if !rest.is_empty() {
+        return Err(error::ParseError::InvalidContentStream.into());
     }
     Ok(content)
 }

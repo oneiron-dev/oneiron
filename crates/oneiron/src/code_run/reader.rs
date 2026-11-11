@@ -10,6 +10,9 @@
 //! Every time here is unix milliseconds on one clock: the parent's cutoff,
 //! fixed in its parent row at its first spawn.
 
+mod coverage;
+mod origins;
+
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +23,11 @@ use crate::agent_dispatch::SpendScopeId;
 use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::vault::VaultId;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
+
+pub use self::coverage::SourceDeliveryWitness;
+pub(crate) use self::coverage::{merge_ranges, subtract_ranges};
+pub(crate) use self::origins::OriginsUnion;
+pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 
 /// What the parent keeps back of its own window for the fold that reads its
 /// children's findings: the fold's code-first dedupe plus two staged
@@ -128,10 +136,10 @@ pub const SUMMARY_GROUP_EXCEEDS_WINDOW: &str = "group_exceeds_window";
 /// in this many.
 pub const SUMMARY_WINDOW_DIVISOR: u64 = 2;
 
-/// The bytes a token is taken to stand for when a summary's group is sized
-/// before it is read: a group whose bytes pass its window share at this
-/// many bytes a token is refused unread, as too big for it.
-pub const SUMMARY_READ_BYTES_PER_TOKEN: u64 = 8;
+/// The most bytes one counted token stands for, the longest ordinary token of
+/// every `count_context_pack_tokens` tokenizer: a group past its budget at this
+/// rate cannot fit and is refused unread; any other is counted (FIX 2260).
+pub const SUMMARY_READ_BYTES_PER_TOKEN: u64 = 128;
 
 /// The tokens one summary's input may take on a model of `window_tokens`.
 #[must_use]
@@ -147,10 +155,14 @@ pub fn summary_exceeds_window(tokens: u64, window_tokens: u64) -> String {
 }
 
 /// The reason a summary whose members hold `bytes`, past the `max_bytes`
-/// its window reads before any token is counted, settles with.
+/// its `window_tokens` window reads before any token is counted, settles
+/// with (FIX 2260): the bytes, their cap, and the window the cap was
+/// sized from, beside the counted reason's tokens and window.
 #[must_use]
-pub fn summary_exceeds_window_bytes(bytes: u64, max_bytes: u64) -> String {
-    format!("{SUMMARY_GROUP_EXCEEDS_WINDOW} bytes={bytes} max_bytes={max_bytes}")
+pub fn summary_exceeds_window_bytes(bytes: u64, max_bytes: u64, window_tokens: u64) -> String {
+    format!(
+        "{SUMMARY_GROUP_EXCEEDS_WINDOW} bytes={bytes} max_bytes={max_bytes} window_tokens={window_tokens}"
+    )
 }
 
 /// How hard one `summarize` works.
@@ -174,12 +186,13 @@ impl SummarizeEffort {
     }
 }
 
-/// What one summary is made by: its prompt's version and its effort. Two
-/// summaries of the same members by the same recipe are one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What one summary is made by: its prompt's version, effort and frozen
+/// words. Two summaries of the same members by the same recipe are one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummarizeRecipe {
     pub version: u32,
     pub effort: SummarizeEffort,
+    pub prompt: String,
 }
 
 impl SummarizeRecipe {
@@ -187,11 +200,36 @@ impl SummarizeRecipe {
     pub const VERSION: u32 = 1;
 
     #[must_use]
-    pub const fn new(effort: SummarizeEffort) -> Self {
+    pub fn new(effort: SummarizeEffort) -> Self {
         Self {
             version: Self::VERSION,
             effort,
+            prompt: super::reader_fold::default_summarize_prompt(Self::VERSION, effort),
         }
+    }
+
+    /// Freezes the package's optional summary block, or the shipped default
+    /// when the package does not override it. Includes resolve before the
+    /// version, effort and length placeholders are filled.
+    pub fn from_prompt_package(
+        effort: SummarizeEffort,
+        package_root: impl AsRef<std::path::Path>,
+    ) -> std::io::Result<Self> {
+        let package_root = package_root.as_ref();
+        let path = package_root.join(super::reader_fold::SUMMARIZE_PROMPT_RELATIVE_PATH);
+        if !path.try_exists()? {
+            return Ok(Self::new(effort));
+        }
+        let resolved = crate::prompt::resolve_prompt(&path, package_root)?;
+        Ok(Self {
+            version: Self::VERSION,
+            effort,
+            prompt: super::reader_fold::render_summarize_prompt(
+                Self::VERSION,
+                effort,
+                &resolved.text,
+            ),
+        })
     }
 
     /// The recipe's bytes, as its memo key hashes them: its version, its
@@ -239,6 +277,8 @@ pub struct SelfSummarizeCall {
     pub group: Option<Vec<String>>,
     pub defer: bool,
     pub bound: Option<Vec<DelegatedSource>>,
+    /// The recording host's frozen prompt, never decoded from guest input.
+    pub recipe: Option<SummarizeRecipe>,
 }
 
 impl SelfSummarizeCall {
@@ -319,39 +359,6 @@ pub(crate) fn summary_task_id(parent_run: EntityId, memo: &[u8; 32]) -> Result<E
     )
 }
 
-/// The result one child reads, as its parent's spawn resolved it: the
-/// parent's occurrence of it (`owner` and `path`), its handle, the range of
-/// its body the child may read, in the parent's offsets, and the rows the
-/// parent's results were served from (`None` when one answer kept no set).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DelegatedSource {
-    pub owner: EntityId,
-    pub path: String,
-    pub handle: String,
-    pub range: (u64, u64),
-    pub rows: Option<Vec<EntityId>>,
-}
-
-/// A child's finding: one of its own stored JSON results, by its occurrence
-/// in the child run and its handle, its size, and the rows the child's
-/// results were served from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReaderFindingRef {
-    pub owner: EntityId,
-    pub path: String,
-    pub handle: String,
-    pub bytes: u64,
-    pub rows: Option<Vec<EntityId>>,
-}
-
-impl ReaderFindingRef {
-    /// The exact child occurrence the parent reads, independent of shared bytes.
-    pub(crate) fn reference(&self) -> Result<String> {
-        let occurrence = super::ResultOccurrence::owned(self.owner, &self.path)?;
-        Ok(format!("occurrence:{}", occurrence.id().to_hex()))
-    }
-}
-
 /// `self.spawn(...)`: the guest's source, ask and key. `bound` is the source
 /// as the host resolved it in the parent run; it is the host's, never the
 /// guest's, and the run's record keeps the guest's call without it.
@@ -375,7 +382,8 @@ pub struct SelfReaderReportCall {
 
 /// `tasks.wait({tasks, all?, n_of?, until?, step_key})`, as the guest wrote
 /// it; the dispatcher normalises it against the run's children. One naming
-/// `request` waits on that world-privacy request instead (FIX 4706).
+/// `request` waits on that world-privacy request instead (FIX 4706), and one
+/// naming `agents` waits on those AGENT children of the run (slice 6.5b).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWaitSetCall {
@@ -389,6 +397,10 @@ pub struct TaskWaitSetCall {
     pub step_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
+    /// The AGENT children's attempt ids, hex, as `self.agents.spawn`
+    /// answered them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents: Option<Vec<String>>,
 }
 
 /// What a spawn answers: the child's task, the attempt its spend is keyed
@@ -541,7 +553,8 @@ pub struct SpawnParentBinding {
 }
 
 /// Where a child stands. A settled one (`Done`, `Partial`, `Failed`) never
-/// moves again.
+/// moves again. `Done` is completed with a committed finding: it proves no
+/// read of any input (FIX 7735).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ReaderJobState {
@@ -589,6 +602,10 @@ pub struct ReaderJob {
     pub finding: Option<ReaderFindingRef>,
     pub enqueued_at_ms: u64,
     pub settled_at_ms: Option<u64>,
+    /// What a scoped child's reads were shown of its primary source in its
+    /// latest claim, frozen when it settles (FIX 7735).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_witness: Option<SourceDeliveryWitness>,
 }
 
 impl ReaderJob {
@@ -658,6 +675,35 @@ pub enum ClaimOutcome {
     SourceNotReady,
     /// It is settled, or its cutoff settled it now.
     Settled,
+}
+
+/// A place in a store's claim queue, just after one queued child: where a
+/// walk of the queue goes on from (FIX 9708). Cursors order as the queue
+/// does, by enqueue time, then task id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ReaderQueueCursor {
+    pub(crate) enqueued_at_ms: u64,
+    pub(crate) task: EntityId,
+}
+
+impl ReaderQueueCursor {
+    /// Just after `job` in its store's queue.
+    #[must_use]
+    pub const fn after(job: &ReaderJob) -> Self {
+        Self {
+            enqueued_at_ms: job.enqueued_at_ms,
+            task: job.task,
+        }
+    }
+}
+
+/// One page of a store's claim queue, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReaderQueuePage {
+    pub jobs: Vec<ReaderJob>,
+    /// Where the next page starts while queue rows follow this one; `None`
+    /// once the page reached the queue's end.
+    pub next: Option<ReaderQueueCursor>,
 }
 
 /// What the runner is told when a child is queued. It must not block or

@@ -30,8 +30,9 @@ pub enum SelfDispatchOutcome {
     WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),
     /// The verb's answer: its JSON output and the rows that produced it.
     AgentVerb(AgentVerbAnswer),
-    /// A fold verb's answer, as JSON.
-    Fold(String),
+    /// A fold verb's answer: its JSON, and the folds whose words it copies
+    /// (FIX 18924).
+    Fold(FoldAnswer),
     /// What the agent's dial made of her refusal.
     TaskRefusal(SelfTaskRefusalResult),
     /// What one callable skill returned.
@@ -56,6 +57,77 @@ pub enum SelfDispatchOutcome {
     StoredReply(SelfStoredReply),
 }
 
+impl SelfDispatchOutcome {
+    /// This outcome as a host reply spells it: a fold answer without the
+    /// folds it names, which are host-only (FIX 18924); any other outcome as
+    /// it is.
+    pub(crate) fn host_reply(&self) -> std::borrow::Cow<'_, Self> {
+        match self {
+            Self::Fold(answer) if !answer.words.is_empty() => std::borrow::Cow::Owned(Self::Fold(
+                FoldAnswer::new(answer.json.clone(), Vec::new()),
+            )),
+            outcome => std::borrow::Cow::Borrowed(outcome),
+        }
+    }
+}
+
+/// A fold verb's answer (FIX 18924). The guest, a verb hook and the HTTP
+/// door read `json` alone. `words` is host-only: it names each fold whose
+/// accepted summary `json` copies, as the ledger that answered held it. A
+/// withdrawal of those words finds the recorded answer by it, never by the
+/// text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldAnswer {
+    pub json: String,
+    pub(crate) words: Vec<FoldWordRef>,
+}
+
+/// One fold whose accepted summary a fold answer copies (FIX 18924): the
+/// run whose ledger holds the fold, the fold's number, and the records the
+/// summary was written from. It holds no words. A capsule keeps the same
+/// references for the bodies it holds (FIX 18924).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct FoldWordRef {
+    pub(crate) source_run: EntityId,
+    pub(crate) fold: u64,
+    pub(crate) sources: Vec<EntityId>,
+}
+
+/// A fold answer reads as the JSON its guest saw (FIX 18924), so a reader
+/// that wants only that JSON borrows it the same way whether the recorded
+/// answer carries word references or not.
+impl AsRef<str> for FoldAnswer {
+    fn as_ref(&self) -> &str {
+        &self.json
+    }
+}
+
+impl FoldAnswer {
+    /// The answer `json`, which copies the words of the folds `words` names.
+    pub(crate) const fn new(json: String, words: Vec<FoldWordRef>) -> Self {
+        Self { json, words }
+    }
+
+    /// What the guest reads under `output`: the answer's JSON value, or its
+    /// text when the text is no JSON.
+    pub(crate) fn guest_output(&self) -> serde_json::Value {
+        serde_json::from_str(&self.json)
+            .unwrap_or_else(|_| serde_json::Value::String(self.json.clone()))
+    }
+
+    /// Every record the answer's words were written from, each once.
+    pub(crate) fn word_sources(&self) -> Vec<EntityId> {
+        let mut sources: Vec<EntityId> = self
+            .words
+            .iter()
+            .flat_map(|word| word.sources.iter().copied())
+            .collect();
+        sources.sort_unstable();
+        sources.dedup();
+        sources
+    }
+}
+
 /// A typed reply too large for one message, already spilled as a body of
 /// the run (FIX449): `output` is the SAME already-spilled guest JSON card
 /// `store_reply` returned (tainted, with facets), NOT a reconstructed
@@ -75,6 +147,8 @@ pub enum SelfStoredReplyKind {
     InferenceDefaults,
     TaskAskSettled,
     TaskAskWorldPrivacy,
+    /// A wait-set reply with no program feedback to release separately.
+    TaskWaitSet,
     /// A direct team start's native receipt, not reply content.
     TeamStartReceipt,
 }
@@ -186,6 +260,8 @@ pub struct SelfDeniedResult {
     pub effect: SelfEffect,
     pub outcome: String,
     pub reason_codes: Vec<String>,
+    /// A supplied hook notice beside the refusal, never authority to run it.
+    pub hook_notice: Option<serde_json::Value>,
 }
 
 /// Measured facts from a native proposal-spool disk-floor failure.
@@ -266,4 +342,30 @@ pub enum SelfAgentSpawnResult {
     /// An erase took the AGENT_DEF the planned spawn's plan seats (Engine
     /// 10-22): the intent records it, and nothing launched.
     TargetErased,
+    /// An erase of its asker took the planned spawn's intent (FIX 9183):
+    /// the intent records that cause, and nothing launched.
+    AskerErased,
+}
+
+impl SelfAgentSpawnResult {
+    /// Whose erase this answer names (FIX 9183); `None` for an answer that
+    /// is not erased.
+    #[must_use]
+    pub const fn erasure(&self) -> Option<crate::team::SpawnErasure> {
+        match self {
+            Self::TargetErased => Some(crate::team::SpawnErasure::TargetErased),
+            Self::AskerErased => Some(crate::team::SpawnErasure::AskerErased),
+            Self::Queued { .. } | Self::ProposedWiden { .. } => None,
+        }
+    }
+}
+
+/// FIX 9183: an erased planned spawn answers the cause its intent stored.
+impl From<crate::team::SpawnErasure> for SelfAgentSpawnResult {
+    fn from(erasure: crate::team::SpawnErasure) -> Self {
+        match erasure {
+            crate::team::SpawnErasure::TargetErased => Self::TargetErased,
+            crate::team::SpawnErasure::AskerErased => Self::AskerErased,
+        }
+    }
 }

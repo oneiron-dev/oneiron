@@ -37,7 +37,7 @@ pub enum VoiceLane {
 
 /// A host-advertised backend candidate. The selector never relabels a model:
 /// its tier and locality travel with its concrete backend identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VoiceBackendBinding {
     pub model: ModelId,
     pub tier: ModelTierRef,

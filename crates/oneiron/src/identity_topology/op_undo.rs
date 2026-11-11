@@ -9,12 +9,16 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::vault::Vault;
+use crate::write_envelope::WriteActor;
 
 use super::act_admission::{EngineCause, ResolvedSeal, TopologySeal, resolve_seal_in_txn};
 use super::ledger_fold::fold_identity_topology_log;
 use super::lifecycle_state::EntityLifecycleState;
 use super::op_apply::{IdentityOpOutcome, IdentityOpWrite, facet_fork_id, facet_fork_writer};
-use super::reassignment_map::{ReassignmentTarget, clear_reassignment_rows_in_txn};
+use super::reassignment_map::{
+    ReassignmentTarget, clear_reassignment_rows_in_txn,
+    maintain_split_reassignment_projection_in_txn, merge_survivors_in_txn,
+};
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::IdentityTopologyRejection;
 use crate::error::SyncError;
@@ -121,6 +125,14 @@ impl Vault {
                 }
                 return self.undo_facet_event_in_txn(wtxn, event, &record, write, &seal, now);
             }
+            // A parked facet applied nothing, so no counter-event reverts it
+            // (FIX 7814): the fold never made it current, as for a parked
+            // split. The resolution door rules the park.
+            StoredIdentityOpAction::ParkedFacet { .. } => {
+                return Err(Error::Sync(SyncError::IdentityTopologyRejected(
+                    IdentityTopologyRejection::NotCurrent { event: *event },
+                )));
+            }
             // An assert_distinct event is not undoable: its retraction door
             // already exists. The assertion lives in a public CLAIM whose own
             // lifecycle (supersede / retract) lifts suppression. Unwinding it
@@ -175,7 +187,7 @@ impl Vault {
             .into_iter()
             .map(|entity| (entity, EntityLifecycleState::Active))
             .collect();
-        self.write_identity_event_in_txn(
+        let outcome = self.write_identity_event_in_txn(
             wtxn,
             self.store.clock.entity_id()?,
             write,
@@ -185,7 +197,22 @@ impl Vault {
             None,
             effects,
             transitions,
-        )
+        )?;
+        // A merge read its sources' claims through the survivor, so a split
+        // of the survivor, or of an entity it is merged into, may have
+        // assigned them. With the shell edges gone they are the sources'
+        // again: those splits' rows are re-derived from the fold, after the
+        // edges went, as a replica's reconcile re-derives them (#6924 review).
+        if write.is_effective()
+            && let StoredIdentityOpAction::Merge { survivor, .. } = &record.action
+        {
+            let survivors = merge_survivors_in_txn(&self.store, &*wtxn, survivor)?;
+            let fold = fold_identity_topology_log(
+                &self.fold_effective_identity_topology_events_in_txn(&*wtxn)?,
+            );
+            maintain_split_reassignment_projection_in_txn(&self.store, wtxn, &survivors, &fold)?;
+        }
+        Ok(outcome)
     }
 
     /// Undoes one applied FACET event (ARCH-0055 trio, r9). The facet op
@@ -231,12 +258,20 @@ impl Vault {
             )));
         };
         // A local event keeps its deciding actor in the attribution sidecar,
-        // not its immutable core. A redacted one re-derives no actor, so its
-        // forks read as touched: undo fails closed.
-        let fork_writer = facet_fork_writer(
-            super::effective_author_in_txn(&self.store, &*wtxn, *event)?,
-            record.source,
-        );
+        // not its immutable core. The forks are judged against each actor a
+        // carrier names, this vault's own first, and the one that re-derives
+        // them exactly is their writer (FIX 9869): an unsigned peer carrier
+        // cannot veto the undo. Unattributed is always the last candidate,
+        // so carriers naming actors never veto an event born with none; a
+        // redacted one re-derives no actor its forks carry, so its forks read
+        // as touched: undo fails closed.
+        let candidates: Vec<Option<WriteActor>> =
+            super::attribution::carrier_authors_in_txn(&self.store, &*wtxn, *event)?
+                .into_iter()
+                .map(Some)
+                .chain(std::iter::once(None))
+                .collect();
+        let mut fork_writer: Option<SuccessionWriter> = None;
         // Only an event the effective ledger admitted and applied, and no
         // counter-event has reverted, undoes. A stored row still waiting for
         // its signed admission fact (or refused one) never applied, so it has
@@ -283,7 +318,22 @@ impl Vault {
             let origin_body = self
                 .get_claim_in_txn(&*wtxn, origin)?
                 .ok_or_else(not_current)?;
-            if !fork_untouched(origin, &origin_body, &fork_body, mask, fork_writer)?
+            // Every fork of one event was born by the same writer: the first
+            // fork settles which candidate it is, and the rest must match it.
+            let untouched = match fork_writer {
+                Some(writer) => fork_untouched(origin, &origin_body, &fork_body, mask, writer)?,
+                None => {
+                    for actor in &candidates {
+                        let writer = facet_fork_writer(*actor, record.source);
+                        if fork_untouched(origin, &origin_body, &fork_body, mask, writer)? {
+                            fork_writer = Some(writer);
+                            break;
+                        }
+                    }
+                    fork_writer.is_some()
+                }
+            };
+            if !untouched
                 || self.claim_of_weight_in_txn(&*wtxn, origin, &origin_body)?
                     != self.claim_of_weight_in_txn(&*wtxn, &fork, &fork_body)?
                 || !self.fork_links_intact_in_txn(&*wtxn, &fork, origin, mask)?

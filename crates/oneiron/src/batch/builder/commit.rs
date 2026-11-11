@@ -54,9 +54,11 @@ impl BatchBuilder<'_> {
     /// agent definition back on, moves its approval up, makes it active again
     /// or brings a deleted one back on is the owner's
     /// ([`Vault::update_agent_definition_as`](crate::Vault::update_agent_definition_as)),
-    /// so it is refused, judged in the transaction the batch writes in. Every
-    /// other put commits as it does through [`Self::commit`], turning a
-    /// definition off included.
+    /// so it is refused, judged in the transaction the batch writes in. So is
+    /// a put that changes or drops the source audience a stored identity row
+    /// names (a confirmed provisional entity's; review of #7006): widening an
+    /// exposure is the owner's act. Every other put commits as it does
+    /// through [`Self::commit`], turning a definition off included.
     ///
     /// # Errors
     ///
@@ -155,6 +157,19 @@ impl BatchBuilder<'_> {
                 _ => None,
             })
             .collect();
+        let identity_puts: Vec<(crate::entity_id::EntityId, Vec<u8>)> = self
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                BatchOp::Put {
+                    id,
+                    entity_type,
+                    data,
+                    ..
+                } if crate::tagging::label_kind_admitted(*entity_type) => Some((*id, data.clone())),
+                _ => None,
+            })
+            .collect();
         let guard = move |txn: &heed::RoTxn<'_>| -> Result<()> {
             guard(txn)?;
             for (id, body) in &agent_puts {
@@ -169,6 +184,24 @@ impl BatchBuilder<'_> {
                             "only the vault owner turns an agent definition back on or changes its models",
                         ),
                     ));
+                }
+            }
+            for (id, body) in &identity_puts {
+                // A row the bound reader does not read is refused as missing
+                // by the read admission after this guard: this refusal must
+                // not tell it apart first.
+                if let Some(reader) = reader
+                    && !crate::batch::put_target_admitted_in(reader, txn, id)?
+                {
+                    continue;
+                }
+                if crate::claim::identity_put_moves_source_audience_in_txn(
+                    &vault.store,
+                    txn,
+                    id,
+                    body,
+                )? {
+                    return Err(crate::claim::owner_only_audience_change());
                 }
             }
             Ok(())
@@ -287,10 +320,14 @@ impl BatchBuilder<'_> {
         let (origin, birth_mask) = (self.origin, self.birth_mask);
         let text_births = std::mem::take(&mut self.text_births);
         let births = std::mem::take(&mut self.births);
+        let note_births = std::mem::take(&mut self.note_births);
         let asset_files = std::mem::take(&mut self.asset_files);
+        let asset_file_bodies = std::mem::take(&mut self.asset_file_bodies);
         let replicated_puts = std::mem::take(&mut self.replicated_puts);
         let marked_carriers = std::mem::take(&mut self.marked_carriers);
         let caller_envelopes = std::mem::take(&mut self.caller_envelopes);
+        let prepared_person_substrate = self.prepared_person_substrate.take();
+        let prepared_agent_birth = self.prepared_agent_birth.take();
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
@@ -398,6 +435,7 @@ impl BatchBuilder<'_> {
             let batch = AdmittedBatch {
                 routed,
                 bound_inputs: reader.is_some(),
+                note_births,
                 ops,
                 text_index_trusted,
                 gate_mode: ApplyOpsGateMode::new(false, true)
@@ -407,9 +445,12 @@ impl BatchBuilder<'_> {
                     .with_text_births(text_births)
                     .with_births(births)
                     .with_asset_files(asset_files)
+                    .with_asset_file_bodies(asset_file_bodies)
                     .with_replicated_puts(replicated_puts)
                     .with_marked_carriers(marked_carriers)
                     .with_caller_envelopes(caller_envelopes)
+                    .with_prepared_person_substrate(prepared_person_substrate)
+                    .with_prepared_agent_birth(prepared_agent_birth)
                     .with_prepared(prepared),
                 origin,
             };
@@ -528,6 +569,8 @@ impl BatchBuilder<'_> {
 struct AdmittedBatch<'a> {
     routed: Option<crate::comm::RoutedBatchPuts>,
     bound_inputs: bool,
+    /// Each NOTE the batch births, with its explicit birth text (FIX 7783).
+    note_births: Vec<(crate::entity_id::EntityId, String)>,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,
@@ -543,10 +586,12 @@ fn apply_admitted(
     wtxn: &mut RwTxn<'_>,
     mut batch: AdmittedBatch<'_>,
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
-    admission: Option<&mut dyn crate::comm::ProjectedHeadAdmission>,
+    mut admission: Option<&mut dyn crate::comm::ProjectedHeadAdmission>,
 ) -> Result<Applied> {
-    let routed_rows = match batch.routed {
-        Some(routed) => {
+    let mut born_touches = crate::comm::DeferredBornTouches::default();
+    let mut routed_rows = match batch.routed {
+        Some(mut routed) => {
+            born_touches = routed.take_born_touches();
             if batch.bound_inputs {
                 super::comm_input::admit_routed_inputs(
                     vault,
@@ -555,7 +600,13 @@ fn apply_admitted(
                     &mut batch.gate_mode,
                 )?;
             }
-            routed.record_with_admission_in_txn(vault, wtxn, admission)?
+            routed.record_with_admission_in_txn(
+                vault,
+                wtxn,
+                admission
+                    .as_mut()
+                    .map(|bound| &mut **bound as &mut dyn crate::comm::ProjectedHeadAdmission),
+            )?
         }
         None => BTreeSet::new(),
     };
@@ -595,6 +646,12 @@ fn apply_admitted(
         batch.gate_mode,
         batch.origin,
     )?;
+    // Each NOTE's document is born with its core row (FIX 7783).
+    for (id, markdown) in &batch.note_births {
+        crate::note::birth_document_in_txn(vault, wtxn, *id, markdown)?;
+    }
+    routed_rows.extend(born_touches.record_with_admission_in_txn(vault, wtxn, admission)?);
+    let changes_claims = changes_claims || !routed_rows.is_empty();
     let pad_windows = pad_scope.finish().pad_windows;
     after_apply(wtxn)?;
     derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;

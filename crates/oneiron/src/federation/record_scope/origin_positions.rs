@@ -167,9 +167,15 @@ fn sources_in_txn(
         }
         sources.push(source);
     }
-    // A text born under a source facet cannot lose its final source and
-    // become an unbound caption. This is the native asset_text read rule.
-    if sources.is_empty() && birth_facet(&vault.store, txn, row.id)?.is_some() {
+    // A text born beside its sources cannot lose its final source and
+    // become an unbound caption: the native asset_text read rule, under which
+    // a text born source-free reads with none (FIX 8741). A text this vault
+    // holds no position for yet, a receiver's replicated row, is judged by
+    // the capture its verified origin made under that rule.
+    if sources.is_empty()
+        && SCOPE_RECORD.get(&vault.store, txn, &row.id)?.is_some()
+        && !super::asset_text::born_source_free(&vault.store, txn, row.id)?
+    {
         return Ok(None);
     }
     Ok(Some(sources))
@@ -286,5 +292,14 @@ pub(crate) fn install_in_txn(
             scope: position.scope.clone(),
         },
     )?;
+    // A text its origin stamped at a source-free birth carries no source
+    // under a facet not its own substrate: its birth record goes beside the
+    // stamp, as the origin's did (FIX 8741).
+    if row.kind == ENTITY_TYPE_ASSET_TEXT
+        && position.sources.is_empty()
+        && row.facet != crate::claim::substrate_facet_id(row.id)?
+    {
+        super::asset_text::stamp_source_free_birth(&vault.store, txn, row.id, row.facet)?;
+    }
     super::bump_scope_revision(&vault.store, txn)
 }

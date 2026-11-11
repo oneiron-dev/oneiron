@@ -9,17 +9,19 @@
 //! summaries (FIX 4465): the same cheap route, wearing its home, on its own
 //! compaction model when its definition names one, else the row's cheap
 //! model (FIX 6029); or, when the vault's row reads the live context, a fork
-//! of its live request on the rung that admitted it (FIX 4465 C). The
-//! shipped row, `auto`, forks while the live prefix is still warm in its
-//! provider's prompt cache and writes on the cheap model otherwise. The same
-//! factory serves a self agent's chat turn (FIX 4465 D), with or without the
-//! code sandbox.
+//! of its latest completed call on the rung that answered it (FIX 4465 C,
+//! FIX 4933). The shipped row, `auto`, forks while the live prefix is still
+//! warm in its provider's prompt cache and writes on the cheap model
+//! otherwise. The same factory serves a self agent's chat turn (FIX 4465
+//! D), with or without the code sandbox. Its words come from the package's
+//! self-writer block (FIX 4575); without that block only self-written
+//! summaries are off.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::agent_dispatch::SpendScopeId;
-use oneiron::code_run::CompactionHostBinding;
+use oneiron::code_run::{CompactionHostBinding, ScopedChildGeneration, ScopedChildProfile};
 use oneiron::compaction::{
     CompactionBackend, CompactionBackendRegistry, CompactionDriver, CompactionGatePolicy,
     CompactionOff, CompactionRefusal, CompactionSuppression, EpochEmbedder,
@@ -41,21 +43,33 @@ use crate::config::models::{ModelsConfig, Rung, role_key};
 use crate::embedder::EmbedderSlot;
 #[cfg(feature = "code-sandbox-wasmtime")]
 use crate::mcp::McpQuickJsProvider;
-use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
+use crate::models::{AnsweringRung, ModelRuntime, RoleCall, RoleRefusal};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 mod chat;
+mod chat_flights;
 mod live_fork;
+mod profiled;
 mod self_writer;
 mod serve;
 
 pub(crate) use chat::{ChatBreakpointCall, ChatSelfMode};
+pub(super) use live_fork::{AnsweringRungSlot, AnsweringRungSlots};
 
-/// How a run's own compaction writer reads the rung its live request is
-/// admitted on (FIX 4465 C): the step's call admitted exactly as its host
-/// admits it, at the breakpoint, before it is sent.
+/// How a run's own compaction writer reads its live request (FIX 4465 C):
+/// the step's call admitted exactly as its host admits it, at the
+/// breakpoint, before it is sent; and the rung that answered the run's
+/// latest completed call, which a live fork binds (FIX 4933).
 pub(super) trait LiveAdmission: Send + Sync {
     fn admit_live(&self, request: LlmRequest) -> Result<RoleCall, RoleRefusal>;
+    /// The slot the answering rungs of the run `live` belongs to fill, for
+    /// that run's compaction writer to hold (FIX 4933): each of the run's
+    /// calls that answers keeps its rung there. `None` where the admission
+    /// holds its one answer itself.
+    fn hold_answering_rungs(&self, live: &LlmRequest) -> Option<Arc<AnsweringRungSlot>>;
+    /// The latest completed call of the run `live` belongs to, as its
+    /// answering rung sent it (FIX 4933). `None` until one answered.
+    fn answering_rung(&self, live: &LlmRequest) -> Option<AnsweringRung>;
 }
 
 /// The registry key a run's memory profile names.
@@ -103,6 +117,9 @@ pub(super) struct LiveCompaction {
     passes: Arc<Admission<String>>,
     /// Where a pass waits for its turn: a task, never a thread of its own.
     runtime: tokio::runtime::Handle,
+    /// The conversations whose chat flight is held now (FIX 5030): one
+    /// flight per conversation of this vault, in memory only.
+    chat_flights: chat_flights::ChatFlightClaims,
 }
 
 impl CodeModeCompaction {
@@ -211,7 +228,10 @@ impl CodeModeCompaction {
             }
         };
         let prompt_tokens = oneiron::count_context_pack_tokens(&prompt) as u64;
+        // The self-writer frame, once, beside the prompt (FIX 4575).
+        let self_writer_frame = self_writer::SelfWriterFrame::resolve(prompt_package);
         let allowances = input_allowances(models, runtime);
+        let rung_contexts = rung_contexts(models);
         let served = |key: String, role: ModelRole, seat: &crate::models::Seat| {
             Arc::new(ServedCompactionBackend {
                 key,
@@ -223,7 +243,9 @@ impl CodeModeCompaction {
                 locality: seat.locality,
                 prompt: prompt.clone(),
                 prompt_tokens,
+                self_writer_frame: self_writer_frame.clone(),
                 allowances: allowances.clone(),
+                rung_contexts: rung_contexts.clone(),
                 handle: tokio::runtime::Handle::current(),
             })
         };
@@ -274,6 +296,7 @@ impl CodeModeCompaction {
                 wait,
             )),
             runtime: tokio::runtime::Handle::current(),
+            chat_flights: chat_flights::ChatFlightClaims::default(),
         }))
     }
 
@@ -332,6 +355,32 @@ impl CodeModeCompaction {
         spend: Option<&SpendScopeId>,
         admission: &Arc<dyn LiveAdmission>,
     ) -> RunCompaction {
+        self.for_meter(
+            host,
+            credential,
+            spend.map(|scope| CompactionMeter::Scope(scope.clone())),
+            admission,
+        )
+    }
+
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    pub(super) fn for_profiled_run(
+        &self,
+        host: CompactionHostBinding,
+        credential: &str,
+        profile: &ScopedChildProfile,
+    ) -> Option<RunCompaction> {
+        profiled::seat(self, host, credential, profile)
+    }
+
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    fn for_meter(
+        &self,
+        host: CompactionHostBinding,
+        credential: &str,
+        meter: Option<CompactionMeter>,
+        admission: &Arc<dyn LiveAdmission>,
+    ) -> RunCompaction {
         let live = match self {
             Self::Off(why) => return RunCompaction::off(*why),
             Self::Live(live) => live,
@@ -341,22 +390,18 @@ impl CodeModeCompaction {
         // Docs Q13: the agent's own hot window, when its profile names one.
         let hot_steps = profile.hot_steps.unwrap_or(live.hot_steps);
         let scoped;
-        let registry = match (definition, spend) {
-            (Some(definition), _) => {
-                let meter = spend.map(|scope| CompactionMeter::Scope(scope.clone()));
+        let registry = match (definition, meter) {
+            (Some(definition), meter) => {
                 match live.self_registry(&profile, definition, host, meter, admission) {
                     Ok(registry) => {
                         scoped = registry;
                         &scoped
                     }
-                    Err(error) => {
-                        tracing::error!(kind = ?error.kind(), "a run's own compaction writer did not register");
-                        return RunCompaction::off(CompactionOff::BackendFailed);
-                    }
+                    Err(why) => return RunCompaction::off(why),
                 }
             }
             (None, None) => &live.registry,
-            (None, Some(scope)) => match live.scoped_registry(scope) {
+            (None, Some(meter)) => match live.metered_registry(meter) {
                 Ok(registry) => {
                     scoped = registry;
                     &scoped
@@ -389,14 +434,16 @@ impl CodeModeCompaction {
 }
 
 impl LiveCompaction {
-    /// The registry a run that spends under `scope` compacts on: each served
-    /// backend, its calls metered on `scope` in place of code mode's.
+    /// Each served backend on this run's meter, in place of code mode's.
     #[cfg(feature = "code-sandbox-wasmtime")]
-    fn scoped_registry(&self, scope: &SpendScopeId) -> oneiron::Result<CompactionBackendRegistry> {
+    fn metered_registry(
+        &self,
+        meter: CompactionMeter,
+    ) -> oneiron::Result<CompactionBackendRegistry> {
         let mut registry = CompactionBackendRegistry::new();
         for backend in &self.served {
             registry.register(Arc::new(ServedCompactionBackend {
-                meter: CompactionMeter::Scope(scope.clone()),
+                meter: meter.clone(),
                 ..ServedCompactionBackend::clone(backend)
             }))?;
         }
@@ -410,7 +457,10 @@ impl LiveCompaction {
     /// its own compaction model. It reads its run's live rung through
     /// `admission` for a flight whose row selects the live fork (C) or
     /// resolves `auto` to it (FIX 6029). Its calls spend on `meter`, else on
-    /// the house route's (a chat turn's names its own, FIX 4465 D).
+    /// the house route's (a chat turn's names its own, FIX 4465 D). Every
+    /// call wears the frame the house route resolved; a package without one
+    /// leaves this writer off with `NoPrompt` (FIX 4575), and the house
+    /// route still compacts every other run.
     fn self_registry(
         &self,
         profile: &MemoryProfile,
@@ -418,25 +468,33 @@ impl LiveCompaction {
         host: CompactionHostBinding,
         meter: Option<CompactionMeter>,
         admission: &Arc<dyn LiveAdmission>,
-    ) -> oneiron::Result<CompactionBackendRegistry> {
-        let house = self
-            .served
-            .first()
-            .ok_or(oneiron::Error::InvariantViolation(
-                "code mode's compaction serves no house seat",
-            ))?;
+    ) -> Result<CompactionBackendRegistry, CompactionOff> {
+        let Some(house) = self.served.first() else {
+            tracing::error!("code mode's compaction serves no house seat");
+            return Err(CompactionOff::BackendFailed);
+        };
+        let frame = house
+            .self_writer_frame
+            .clone()
+            .ok_or(CompactionOff::NoPrompt)?;
         let route = ServedCompactionBackend {
             meter: meter.unwrap_or_else(|| house.meter.clone()),
             ..ServedCompactionBackend::clone(house)
         };
         let mut registry = CompactionBackendRegistry::new();
-        registry.register(Arc::new(self_writer::SelfCompactionBackend::new(
-            profile.compaction_backend.as_str().to_owned(),
-            route,
-            definition,
-            host,
-            Arc::clone(admission),
-        )))?;
+        registry
+            .register(Arc::new(self_writer::SelfCompactionBackend::new(
+                profile.compaction_backend.as_str().to_owned(),
+                route,
+                frame,
+                definition,
+                host,
+                Arc::clone(admission),
+            )))
+            .map_err(|error| {
+                tracing::error!(kind = ?error.kind(), "an agent's own compaction writer did not register");
+                CompactionOff::BackendFailed
+            })?;
         Ok(registry)
     }
 
@@ -446,7 +504,8 @@ impl LiveCompaction {
     /// a backend this host does not serve falls back to the host's own seat,
     /// so the run still compacts. A profile naming `self` (FIX 4465) is
     /// recognized first and never falls back: its definition comes back with
-    /// it, for the run's own writer.
+    /// it, for the run's own writer. A definition that carries no profile
+    /// writes as itself on the host's window (FIX 7744).
     fn run_profile(
         &self,
         byline: WriteActor,
@@ -465,7 +524,7 @@ impl LiveCompaction {
             return (self.profile.clone(), None);
         };
         let Some(mut profile) = definition.memory_profile.clone() else {
-            return (self.profile.clone(), None);
+            return (self.profile.clone().as_self_writer(), Some(definition));
         };
         if profile.compaction == CompactionOwnership::Engine && profile.writes_as_self() {
             return (profile, Some(definition));
@@ -539,6 +598,32 @@ fn input_allowances(models: &ModelsConfig, runtime: &ModelRuntime) -> BTreeMap<M
     allowances
 }
 
+/// The raw configured context a live fork's rung is held to, by provider and
+/// then by the model its offer binds (FIX 4932). See [`rung_contexts`].
+type RungContexts = BTreeMap<String, BTreeMap<ModelId, u64>>;
+
+/// The raw configured context of each provider, for each model one of its
+/// configured rungs names (FIX 4932): the provider's whole context, with no
+/// rung's prompt taken out. A live fork's captured prefix already holds its
+/// rung's prompt, so the fork is held to this and counts that prompt once,
+/// in its own input. Every other call keeps [`input_allowances`].
+fn rung_contexts(models: &ModelsConfig) -> RungContexts {
+    let mut contexts = RungContexts::new();
+    for rung in models.roles.values().flatten() {
+        let Some(provider) = models.providers.get(&rung.model.provider) else {
+            continue;
+        };
+        let Ok(model) = rung.model.engine_id(&provider.revision) else {
+            continue;
+        };
+        contexts
+            .entry(rung.model.provider.clone())
+            .or_default()
+            .insert(model, provider.context_tokens);
+    }
+    contexts
+}
+
 /// Each pass runs on its own thread; the run never waits for it. A pass
 /// takes its place in line when it is spawned and waits its credential's
 /// turn past the bound (round-robin across credentials, so one credential's
@@ -598,6 +683,11 @@ enum CompactionMeter {
     /// books what it used once it returns, paid or failed, so a pass that
     /// outlives its run still books.
     Scope(SpendScopeId),
+    /// A profiled child's actual parent guard and original generation count.
+    Profiled {
+        guard: BudgetGuard,
+        generation: Arc<dyn ScopedChildGeneration>,
+    },
     /// `chat_compaction_meter` (FIX 4465 D): a chat turn's flight spends on
     /// its own guard on the chat actor's budget line and bills the payer the
     /// turn resolved (`None` is the vault owner, as a turn's is). Each call
@@ -627,9 +717,16 @@ struct ServedCompactionBackend {
     locality: ModelLocality,
     prompt: String,
     prompt_tokens: u64,
+    /// The self-writer frame resolved beside `prompt` (FIX 4575). `None`
+    /// when the package holds none: then only self-written summaries are
+    /// off.
+    self_writer_frame: Option<self_writer::SelfWriterFrame>,
     /// See [`input_allowances`]. A model id not here is trusted with no
     /// window.
     allowances: BTreeMap<ModelId, u64>,
+    /// See [`rung_contexts`]: what a live fork's call is held to, chosen by
+    /// its captured rung's provider and offer binding (FIX 4932).
+    rung_contexts: RungContexts,
     handle: tokio::runtime::Handle,
 }
 

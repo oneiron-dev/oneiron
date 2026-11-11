@@ -2,7 +2,7 @@
 
 use super::__path_core_reject_widen;
 use super::__path_restore_quarantined_booking;
-use super::run_tree::CoreAttemptPlacement;
+use super::run_tree::{CoreAttemptPlacement, CoreRunTreeDeletion};
 use super::{
     __path_annotate_turn_vad, __path_append_core_record, __path_booking_agent_instructions,
     __path_booking_availability, __path_booking_book, __path_booking_cancel,
@@ -304,6 +304,7 @@ use utoipa::OpenApi;
         CoreRunTreeEvent,
         CoreRunTreeEventKind,
         CoreRunTreeRepair,
+        CoreRunTreeDeletion,
         SurfaceEventSubmitRequest,
         super::SurfaceEmailThreadPayload,
         SurfaceEventSourcePayload,

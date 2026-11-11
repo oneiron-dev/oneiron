@@ -20,6 +20,10 @@
 //! request on the rung that admitted it, the prefix unchanged, and lands,
 //! files and is checked as any other self-written pass. A flight that cannot
 //! fork it keeps its window and names why.
+//!
+//! FIX 4817: each worn home part keeps the revision its words were read at.
+//! The summary lands, serves and keeps its words only while every one still
+//! reads at that revision ([`super::home_pins`]).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -34,7 +38,7 @@ use super::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::row_birth::RowBirth;
-use crate::vault::Vault;
+use crate::vault::{RevisionRef, Vault};
 use oneiron_model::llm::SelfCompactionSource;
 
 /// Why a flight could not be written as its agent. The flight keeps its raw
@@ -55,6 +59,11 @@ pub enum SelfCompactionUnavailable {
     /// The live request and the reply's reserve leave the live model no
     /// room for the window: the prefix is never cut to make room.
     LivePrefixTooLong,
+    /// The live request was read from rows its host did not witness whole
+    /// (a code-run step's host-built task, today), so a summary forked from
+    /// it could not derive from each (FIX 9463). A row on `auto` is written
+    /// by the cheap writer instead.
+    LivePrefixUnwitnessed,
     /// The run's driver did not admit the capture: the profile's writer is
     /// not `self`, or it was captured for another actor.
     LiveForkNotAdmitted,
@@ -86,6 +95,7 @@ impl SelfCompactionUnavailable {
             Self::LiveForkNotCaptured => "live_fork_not_captured",
             Self::LiveRungUnbound => "live_rung_unbound",
             Self::LivePrefixTooLong => "live_prefix_too_long",
+            Self::LivePrefixUnwitnessed => "live_prefix_unwitnessed",
             Self::LiveForkNotAdmitted => "live_fork_not_admitted",
             Self::LiveForkStale => "live_fork_stale",
             Self::NoIdentity => "no_identity",
@@ -180,15 +190,26 @@ pub struct CompactionHomeRef {
     /// `present`, `truncated` (it did not fit the call's room), or
     /// `absent:<why>`.
     pub state: String,
+    /// The row's live revision in the snapshot its words were read in (FIX
+    /// 4817). A worn part's summary stands only while the row still reads
+    /// at it: an edit that publishes another revision withdraws the summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<RevisionRef>,
 }
 
 /// Every home row a call wore whole. A cut or absent part is not an input.
 pub fn compaction_home_worn_rows(
     home: &[CompactionHomeRef],
 ) -> impl Iterator<Item = EntityId> + '_ {
-    home.iter()
-        .filter(|part| part.state == HOME_PART_WORN)
-        .filter_map(|part| part.row)
+    compaction_home_worn_parts(home).filter_map(|part| part.row)
+}
+
+/// Every home part a call wore whole, each with the revision its words were
+/// read at (FIX 4817). A cut or absent part pins nothing.
+pub fn compaction_home_worn_parts(
+    home: &[CompactionHomeRef],
+) -> impl Iterator<Item = &CompactionHomeRef> + '_ {
+    home.iter().filter(|part| part.state == HOME_PART_WORN)
 }
 
 /// What ran one self-written epoch or fold call: the host's record, beside
@@ -197,6 +218,9 @@ pub fn compaction_home_worn_rows(
 pub struct CompactionExecution {
     /// The agent the summary is written as: the run's authenticated actor.
     pub writer: EntityId,
+    /// The actual dispatch's frozen caller provenance, supplied by its
+    /// flight's host. Unknown for a genuinely unbound runtime constructor.
+    pub caller_origin: crate::agent_dispatch::CallerOrigin,
     /// The context the call read as it ran: the retained turns or the live
     /// fork, never `auto`, which a flight resolves before its first call
     /// (FIX 6029).
@@ -218,6 +242,10 @@ pub struct CompactionExecution {
     pub step_hash: Option<String>,
     /// The home the call wore.
     pub home: Vec<CompactionHomeRef>,
+    /// On the live fork, every row its captured request was read from
+    /// (FIX 9463); empty on the retained turns.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prefix_sources: Vec<EntityId>,
     /// The accepted summary's snapshot, stamped when the gate accepted it:
     /// the hex BLAKE3 of its bytes and their length.
     pub snapshot_hash: Option<String>,
@@ -323,6 +351,7 @@ pub struct CompactionLandingReceipt {
     /// The summary's words while they stand. Only the check reads them.
     #[serde(skip)]
     pub summary: Option<String>,
+    /// What ran this summary, including its frozen caller provenance.
     pub execution: CompactionExecution,
 }
 
@@ -365,6 +394,34 @@ impl CompactionExecution {
     /// A part cut for room never reached the call.
     pub fn home_dependencies(&self) -> impl Iterator<Item = EntityId> + '_ {
         compaction_home_worn_rows(&self.home)
+    }
+
+    /// Whether the call wore `source` whole at a revision it no longer reads
+    /// at through `dbs` (FIX 4817): an edit, not an erasure, changed words
+    /// this summary was written wearing.
+    pub(crate) fn wore_changed_source_in(
+        &self,
+        dbs: &impl crate::store::ManifestDbs,
+        txn: &heed::RoTxn<'_>,
+        source: &EntityId,
+    ) -> Result<bool> {
+        for part in compaction_home_worn_parts(&self.home) {
+            if part.row == Some(*source)
+                && !super::home_pins::worn_part_stands_in(dbs, txn, self.writer, part)?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Every row the call read beyond its request's sources: each home part
+    /// it wore whole, then, on the live fork, each row its captured prefix
+    /// was read from (FIX 9463). Its summary depends on each for withdrawal,
+    /// so erasing a row only the live context held withdraws what it shaped.
+    pub fn input_dependencies(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.home_dependencies()
+            .chain(self.prefix_sources.iter().copied())
     }
 
     /// The accepted snapshot, when the gate accepted this pass.

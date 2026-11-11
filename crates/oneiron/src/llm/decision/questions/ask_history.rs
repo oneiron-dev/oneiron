@@ -111,6 +111,8 @@ pub(super) struct ArtifactAskEvent {
     /// Every unit the ask left without an answer, with its receipt (FIX 9913).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) units: Vec<super::ArtifactUnitReceipt>,
+    /// First selected sheet row left unfinished by this actual run.
+    pub(super) next_sheet_row: Option<u32>,
 }
 
 impl ArtifactAskEvent {
@@ -257,6 +259,7 @@ pub(crate) struct StandingReask<'a> {
     /// Every unit the re-ask left without an answer, with its receipt, as the
     /// first ask keeps them.
     pub(crate) units: &'a [super::ArtifactUnitReceipt],
+    pub(crate) next_sheet_row: Option<u32>,
 }
 
 /// Logs one real re-ask in the transaction that commits its proposal and its wake's
@@ -298,6 +301,7 @@ pub(crate) fn record_standing_reask_in_txn(
         parent_proposal_ref: Some(reask.parent_proposal_ref.to_owned()),
         details_omitted: false,
         units: reask.units.to_vec(),
+        next_sheet_row: reask.next_sheet_row,
     };
     let entry = |event: ArtifactAskEvent| QuestionAskHistoryEntry {
         principal: reask.principal,

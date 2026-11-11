@@ -49,7 +49,10 @@ use serde::{Deserialize, Serialize};
 
 pub(super) use self::actors::{opened_content, unavailable};
 pub(super) use self::capture::{project_image, seal_image};
-pub(super) use self::restore::{OpenedPayload, open_image_payload, restore_opened_in_txn};
+pub(super) use self::restore::{
+    OpenedPayload, SelectedPayload, open_image_payload, open_selected_payload,
+    restore_opened_in_txn,
+};
 use self::rows::{Class, DbClass, Families};
 use self::seal::Bundle;
 pub(super) use self::seal::open_bundle;
@@ -76,28 +79,22 @@ pub(super) const NOT_COMPARTMENTED: &str =
 /// The family a receipt names a row by when no declaration covers its key.
 const UNDECLARED: &str = "undeclared rows";
 
-/// The owner getters, each beside its own store's codecs (KS7-2a), with
-/// the tag a bundle's binding names it by; a tag is never reused.
-macro_rules! getters {
-    ($($(#[$doc:meta])* $name:ident = $tag:literal => $($module:ident)::+;)+) => {
-        #[derive(
-            Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-        )]
-        #[serde(rename_all = "snake_case")]
-        pub(in crate::recovery::checkpoint) enum Getter {
-            $($(#[$doc])* $name,)+
-        }
+/// The payload registry's gaps that hold a side table out of the
+/// compartments, as a capture receipt names each
+/// (`tests/checkpoint_registry_rows.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn side_table_registry_gaps() -> Vec<String> {
+    preflight::preflight().side_table_gaps()
+}
 
+pub(in crate::recovery::checkpoint) use crate::store::checkpoint_payload::rows::{Carrier, Getter};
+
+/// Each owner getter's store module, beside its own codecs (KS7-2a): it reads the getter's
+/// families and puts an opened compartment's rows back. The getters, their tags and their order
+/// sit with the rows they place ([`Getter`]).
+macro_rules! getter_modules {
+    ($($name:ident => $($module:ident)::+;)+) => {
         impl Getter {
-            /// Every getter: a capture calls each once.
-            pub(super) const ALL: &[Self] = &[$(Self::$name),+];
-
-            pub(super) const fn tag(self) -> u8 {
-                match self {
-                    $(Self::$name => $tag,)+
-                }
-            }
-
             /// Every row of this getter's families in `txn`, by owner. It
             /// reads its whole families: nothing here filters them.
             pub(super) fn capture(
@@ -134,75 +131,26 @@ macro_rules! getters {
     };
 }
 
-getters! {
-    /// Entity rows by kind, and edges.
-    Entities = 1 => crate::ports::checkpoint;
-    /// NOTE heads, forks, receipts, bundles, pins and titles.
-    Note = 2 => crate::note::checkpoint;
-    /// Entity documents: heads, forks, pins, receipts and the document rows.
-    EntityDoc = 3 => crate::entity_doc::checkpoint;
-    /// Typed bodies, their forks and receipts.
-    TypedBody = 4 => crate::typed_body::checkpoint;
-    /// Entity revisions and their staged index and phonetic inputs.
-    EntityRevision = 5 => crate::vault::entity_revision::checkpoint;
-    /// The text index's source text.
-    TextSource = 6 => crate::bm25::checkpoint;
-    /// The phonetic index's source codes.
-    PhoneticSource = 7 => crate::batch::checkpoint;
-    /// Body descriptors and their digest holders; KS-2 carries the bytes.
-    ProvenanceBody = 8 => crate::provenance::body::checkpoint;
-    /// Row births and the born-from index.
-    ProvenanceBirth = 9 => crate::provenance::birth::checkpoint;
-    /// Code documents.
-    CodeDocument = 10 => crate::code_document::checkpoint;
-    /// Code revisions, proposals and promotions.
-    CodeRevision = 11 => crate::code_revision::checkpoint;
-    /// Codebase snapshots and their indexes.
-    Codebase = 12 => crate::codebase::checkpoint;
-    /// Office bodies: heads, forks, exports and proposals.
-    OfficeBody = 13 => crate::office_body::checkpoint;
-    /// Blob artifact heads and versions.
-    BlobArtifact = 14 => crate::blob_artifact::checkpoint;
-    /// Outbound calls' frozen input.
-    OutboundCall = 15 => crate::outbound_intent_ledger::checkpoint;
-    /// Independent owners of blocked step captures.
-    BlockedSourceOwner = 16 => crate::self_heal::blocked_reports::checkpoint;
-    /// Media vectors and device provenance, by source document.
-    EmbedMedia = 17 => crate::embed::checkpoint;
-    /// Workflow leaves' retained tool transcripts and settled meters.
-    WorkflowTool = 18 => crate::agent_dispatch::workflow_tool_checkpoint;
-}
-
-/// The mixed sync carriers KS7-3's port splits, with the tag a bundle's
-/// binding names each by; a tag is never reused.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(in crate::recovery::checkpoint) enum Carrier {
-    /// A sync window's document snapshot.
-    WindowSnapshot,
-    /// A window's pending CRDT update.
-    WindowUpdate,
-    /// A thin-residence item's opened blob or document.
-    ResidenceItem,
-    /// An unacknowledged local text-document edit.
-    PendingEdit,
-    /// A pending NOTE-operation request.
-    PendingNoteOperation,
-    /// The sync queue's update carriers and quarantine.
-    SyncQueue,
-}
-
-impl Carrier {
-    pub(super) const fn tag(self) -> u8 {
-        match self {
-            Self::WindowSnapshot => 1,
-            Self::WindowUpdate => 2,
-            Self::ResidenceItem => 3,
-            Self::PendingEdit => 4,
-            Self::PendingNoteOperation => 5,
-            Self::SyncQueue => 6,
-        }
-    }
+getter_modules! {
+    Entities => crate::ports::checkpoint;
+    Note => crate::note::checkpoint;
+    EntityDoc => crate::entity_doc::checkpoint;
+    TypedBody => crate::typed_body::checkpoint;
+    EntityRevision => crate::vault::entity_revision::checkpoint;
+    TextSource => crate::bm25::checkpoint;
+    PhoneticSource => crate::batch::checkpoint;
+    ProvenanceBody => crate::provenance::body::checkpoint;
+    ProvenanceBirth => crate::provenance::birth::checkpoint;
+    CodeDocument => crate::code_document::checkpoint;
+    CodeRevision => crate::code_revision::checkpoint;
+    Codebase => crate::codebase::checkpoint;
+    OfficeBody => crate::office_body::checkpoint;
+    BlobArtifact => crate::blob_artifact::checkpoint;
+    OutboundCall => crate::outbound_intent_ledger::checkpoint;
+    BlockedSourceOwner => crate::self_heal::blocked_reports::checkpoint;
+    EmbedMedia => crate::embed::checkpoint;
+    WorkflowTool => crate::agent_dispatch::workflow_tool_checkpoint;
+    SourceAudience => crate::source_audience::checkpoint;
 }
 
 /// KS7-3's port: splits a mixed sync carrier's row into the fragments its
@@ -608,6 +556,31 @@ impl Projected {
                 .map(|actor| OwnerRef::entity(&actor)),
         );
         owners
+    }
+
+    /// Keeps the body descriptor getter's parts only where `databases`, the
+    /// image's rows once the snapshot wrote them, hold the row as it rests:
+    /// a carried step start's descriptor travels in no row, and its replay
+    /// landing writes it again (FIX 9180, `replay::note_start`), so no
+    /// compartment carries it either. A restore puts the rest back among the
+    /// image's rows as they rested (`restore::open_image_payload`), so it
+    /// reads the rows it read while they stayed in the image (FIX
+    /// [PROVENANCE-BODY-OWNER-FAMILY-READ-BEFORE-LANDING]).
+    pub(super) fn keep_imaged_body_descriptors(
+        &mut self,
+        databases: &BTreeMap<String, super::CanonicalRows>,
+    ) {
+        let imaged = |db: RowDb, key: &[u8], value: &[u8]| {
+            databases.get(db_name(db)).is_some_and(|rows| {
+                rows.binary_search_by(|(row, _)| row.as_slice().cmp(key))
+                    .is_ok_and(|at| rows[at].1 == value)
+            })
+        };
+        for (role, captured) in &mut self.captures {
+            if *role == BundleRole::Content(Getter::ProvenanceBody) {
+                *captured = keep_owner_parts(std::mem::take(captured), &imaged, &|_| true);
+            }
+        }
     }
 
     /// Seals every bundle for `vault`, each under its owner's compartment

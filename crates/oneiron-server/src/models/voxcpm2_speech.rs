@@ -47,7 +47,9 @@ use oneiron::{
 };
 use serde_json::{Value as JsonValue, json};
 
-use super::http::{BytesReply, MediaSend, ProviderHttp, StreamedReply, UploadAdmission};
+use super::http::{
+    BytesReply, HttpReleaseError, MediaSend, ProviderHttp, StreamedReply, UploadAdmission,
+};
 use super::media::{AdmittedReference, VoiceReferenceUploadGuard};
 use super::rerank::transport;
 
@@ -351,6 +353,7 @@ impl VoxCpm2Speech {
     async fn speak(
         &self,
         mut request: MediaRequest,
+        dispatch: Option<(oneiron::llm::DispatchRelease<'_>, &BudgetLease)>,
     ) -> Result<MediaResponse, InterruptedMediaCall> {
         let text = request.text();
         if !self.models.contains_key(&request.model)
@@ -384,6 +387,9 @@ impl VoxCpm2Speech {
         };
         if media_type != "audio/wav" || transcript.trim().is_empty() {
             return Err(FatalLlmError::InvalidRequest.into());
+        }
+        if let Some((release, _)) = dispatch {
+            release()?;
         }
         let (warm, takes_frame) = self.warm().await?;
         // The vault's policy for the voice's holder, narrowed to the worker's
@@ -420,8 +426,10 @@ impl VoxCpm2Speech {
         let mut spoken = 0u64;
         for piece in pieces {
             let rendered = if admits() {
-                self.render(&warm, limits, &target, piece, transcript, &audio, &admits)
-                    .await
+                self.render(
+                    &warm, limits, &target, piece, transcript, &audio, &admits, dispatch,
+                )
+                .await
             } else {
                 Err(FatalLlmError::InvalidRequest.into())
             };
@@ -479,6 +487,7 @@ impl VoxCpm2Speech {
         transcript: Transcript<'_>,
         audio: &[u8],
         admits: &UploadAdmission,
+        dispatch: Option<(oneiron::llm::DispatchRelease<'_>, &BudgetLease)>,
     ) -> LlmResult<VoxCpm2PcmBody> {
         // Bound whenever `admits` let the clip go: the runtime's own vault.
         let vault = self
@@ -501,12 +510,22 @@ impl VoxCpm2Speech {
         body.extend_from_slice(&header);
         body.extend_from_slice(framed);
         body.extend_from_slice(audio);
-        let mut reply = match self
-            .http
-            .send_media_streamed("/render", MediaSend::Octets(body, Arc::clone(admits)))
-            .await
-            .map_err(transport)?
-        {
+        let reply = match dispatch {
+            Some((release, lease)) => self
+                .http
+                .send_octets_streamed_released("/render", body, admits, release, lease)
+                .await
+                .map_err(|error| match error {
+                    HttpReleaseError::Transport(error) => transport(error),
+                    HttpReleaseError::Release(error) => error,
+                })?,
+            None => self
+                .http
+                .send_media_streamed("/render", MediaSend::Octets(body, Arc::clone(admits)))
+                .await
+                .map_err(transport)?,
+        };
+        let mut reply = match reply {
             StreamedReply::Body(reply) => reply,
             StreamedReply::Refused(reply) => return Err(refused(&reply)),
         };
@@ -531,7 +550,7 @@ impl MediaBackend for VoxCpm2Speech {
         request: MediaRequest,
         _lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse> {
-        Box::pin(async move { self.speak(request).await.map_err(LlmError::from) })
+        Box::pin(async move { self.speak(request, None).await.map_err(LlmError::from) })
     }
 
     fn run_progress<'a>(
@@ -539,6 +558,15 @@ impl MediaBackend for VoxCpm2Speech {
         request: MediaRequest,
         _lease: &'a BudgetLease,
     ) -> MediaProgressFuture<'a> {
-        Box::pin(self.speak(request))
+        Box::pin(self.speak(request, None))
+    }
+
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        Box::pin(self.speak(request, release.map(|release| (release, lease))))
     }
 }

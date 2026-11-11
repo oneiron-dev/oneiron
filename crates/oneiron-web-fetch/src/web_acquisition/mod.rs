@@ -7,7 +7,8 @@ mod result;
 mod url;
 pub use door::{WebCrawlRequest, WebFetchRequest};
 pub use refusal::{
-    HOSTED_INFRASTRUCTURE_REASON, HOSTED_PRIVATE_NETWORK_REASON, HostedEgressRefusal,
+    CROSS_SITE_REDIRECT_REASON, HOSTED_INFRASTRUCTURE_REASON, HOSTED_PRIVATE_NETWORK_REASON,
+    HostedEgressRefusal,
 };
 use result::FetchResultWire;
 pub(crate) use url::*;
@@ -48,6 +49,16 @@ impl RendererKind {
             Self::Headless => "headless",
             Self::Firecrawl => "firecrawl",
         }
+    }
+
+    /// Whether this rung's redirects run on a remote service, out of the
+    /// engine's reach: Firecrawl's scrape service follows the target's
+    /// redirects itself, so no hop of it can be held to a same-site crawl's
+    /// pinned origin before contact, and no page of a same-site crawl goes to
+    /// it (FIX 4734).
+    #[must_use]
+    pub const fn follows_redirects_remotely(self) -> bool {
+        matches!(self, Self::Firecrawl)
     }
 }
 
@@ -95,6 +106,15 @@ pub enum RendererErrorKind {
     /// A managed node's egress guard refused a private-network address no
     /// operator origin admits (FIX 7657). The ladder ends on it typed.
     HostedPrivateNetwork,
+    /// The rung refused a URL outside a same-site crawl's pinned origin (a
+    /// redirect hop, a navigation) before contacting it (FIX 4734). The
+    /// ladder ends on it typed.
+    CrossSiteRedirect,
+    /// The rung refused a redirect hop that is not credential-free absolute
+    /// http(s) (credentials in it, another scheme, a `Location` that does
+    /// not resolve) before sending it (FIX 4734). The ladder ends on it
+    /// typed, so no other rung is sent after the same target.
+    UnsafeRedirect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -148,6 +168,14 @@ pub enum RendererAttemptFailure {
         extracted_bytes: usize,
         minimum_bytes: usize,
     },
+    /// A configured rung this page's acquisition does not use: a rung whose
+    /// redirects run on a remote service
+    /// ([`RendererKind::follows_redirects_remotely`]) is never sent a page
+    /// of a same-site crawl, its seed's included (FIX 4734). Recorded before
+    /// the target reaches the service.
+    ScopeUnsupported {
+        renderer: RendererKind,
+    },
 }
 
 impl RendererAttemptFailure {
@@ -166,6 +194,10 @@ impl RendererAttemptFailure {
                 minimum_bytes,
             } => format!(
                 "{}: empty extraction ({extracted_bytes} bytes < {minimum_bytes} minimum)",
+                renderer.as_str()
+            ),
+            Self::ScopeUnsupported { renderer } => format!(
+                "{}: not used for a same-site crawl: its service follows redirects the crawl cannot hold to the pinned origin",
                 renderer.as_str()
             ),
         }
@@ -231,6 +263,27 @@ pub enum WebFetchError {
         "web fetch refused (hosted_private_network): on a hosted node, {url} resolves or redirects to a private-network address outside the hosting operator's allowed origins, and hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its named private origin"
     )]
     HostedPrivateNetwork { url: String },
+
+    /// A same-site crawl's page that a rung would have taken outside the
+    /// walk's pinned origin: the page itself, or a redirect hop or a
+    /// navigation of it, refused before anything resolved or sent it
+    /// (FIX 4734), which ends the page's ladder. A crawl records it as
+    /// [`CROSS_SITE_REDIRECT_REASON`]; `url` is the requested page,
+    /// credential-redacted.
+    #[error(
+        "web fetch refused (cross_site_redirect): {url} leads outside the same-site crawl's pinned origin"
+    )]
+    CrossSiteRedirect { url: String },
+
+    /// A page whose redirect hop a rung refused unsent because it is not
+    /// credential-free absolute http(s): credentials in it, another scheme,
+    /// or a `Location` that does not resolve (FIX 4734). The page's ladder
+    /// ends, so no other rung, a remote service above all, is sent after the
+    /// same target. `url` is the requested page, credential-redacted.
+    #[error(
+        "web fetch refused (unsafe_redirect): {url} redirects to a URL that is not credential-free absolute http(s)"
+    )]
+    UnsafeRedirect { url: String },
 }
 
 pub type WebFetchResult<T> = std::result::Result<T, WebFetchError>;

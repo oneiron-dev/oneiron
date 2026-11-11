@@ -84,7 +84,7 @@ pub(crate) fn resume_answered(
         && let Err(refusal) = kept_instrument_auth(server, instrument, Some(&saved.witness), None)
     {
         vault
-            .refuse_answered_code_consent_wait(wait_id, refusal)
+            .refuse_answered_code_consent_wait(wait_id, &saved, refusal)
             .map_err(ledger_error)?;
         return Ok(());
     }
@@ -160,7 +160,9 @@ pub(crate) fn kept_instrument_auth(
 /// vault it was minted for; a renewed or re-minted credential of the same
 /// actor never stands in.
 fn same_instrument(saved: &VerbAskInstrument, verified: &VerifiedSlip) -> bool {
-    saved.slip() == Some(verified.claims().slip_id) && verified.claims().vault_id == saved.vault
+    oneiron::runtime_hooks::verb::verb_ask_instrument_slip(&saved)
+        == Some(verified.claims().slip_id)
+        && verified.claims().vault_id == saved.vault
 }
 
 /// The attested owner `holder` a kept instrument names, as he stands now
@@ -210,7 +212,9 @@ pub(crate) fn ceiling_holds(saved: &[u8; 32], now: &[u8; 32]) -> bool {
 /// (OF-580 defaults, each terminal): its mint gone, it or an ancestor
 /// revoked, its lifetime past. Anything else is a changed credential, never
 /// called revoked; a fold that does not read is unavailable (fail closed).
-fn standing(vault: &oneiron::Vault, slip: &[u8; 32]) -> VerbAskRefusal {
+/// A self-hosted root's recorded host action reads its root's the same way
+/// (FIX 4744).
+pub(crate) fn standing(vault: &oneiron::Vault, slip: &[u8; 32]) -> VerbAskRefusal {
     let (Ok(fold), Ok(now)) = (vault.authority_fold(), vault.capability_slip_now()) else {
         return VerbAskRefusal::CredentialUnavailable;
     };

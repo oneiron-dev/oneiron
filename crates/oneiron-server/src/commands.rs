@@ -128,6 +128,8 @@ mod account;
 pub use account::account;
 mod device;
 pub use device::device_enrol;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(crate) mod hook_regen;
 mod serve;
 pub(crate) use self::serve::hook_sandbox;
 pub(crate) use self::serve::open_served_vault_anchored;
@@ -157,6 +159,7 @@ pub use owner::legal_holds;
 pub(crate) use owner::page_seal_at;
 pub use owner::reminder_route;
 pub use owner::widen_proposals;
+pub use owner::{MeetingTranscriptArgs, meeting_transcript};
 pub use owner::{
     backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, recovery_kit,
     restore, runs, secret_scan, secrets, vault_key, whoami,
@@ -169,6 +172,8 @@ pub use self::seat::{
     seat_login_plan, seat_routes, seat_runner_policy, seat_runners, seat_siwc_clear,
     seat_siwc_login, seat_siwc_revoke,
 };
+mod model_workers;
+pub use model_workers::model_workers;
 mod registry;
 pub use self::registry::registry;
 
@@ -327,11 +332,24 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
                 )
             })?;
     let principal = principal.to_hex();
+    // An agent's link is the owner's, so a named agent's pairing mints its
+    // default read Grant under the owner's proof (PAIR-GRANT-DESIGN Q3/Q4);
+    // any other class pairs on the host's link alone, as before.
+    let link_owner = if args.actor_class == "agent" {
+        Some(crate::owner::local_owner(&vault)?)
+    } else {
+        None
+    };
     vault.ensure_host_root_slip(&issuer)?;
+    if link_owner.is_some() {
+        // The default Grant is an owner act, carried by this install's machine
+        // profile as `serve` ensures it (FIX 4648).
+        vault.ensure_serving_install_profile_at_start(Some(&issuer), "token read");
+    }
     let credential = mint_paired_credential(
         &vault,
         &issuer,
-        None,
+        link_owner.as_ref(),
         &principal,
         &args.actor_class,
         [CoreScope::Read.as_str().to_owned()].into_iter().collect(),
@@ -426,33 +444,26 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
 }
 
 /// ARCH-0028's tiers as stored authority: the verbs the slip carries and the
-/// agent's ceiling. Propose-only writes with `core:propose`, which only doors
-/// that hold a write for review honour: `/v1/core/propose`, and the MCP verbs
-/// whose write lands at the agent's `proposed` ceiling (`AgentVerb::proposes`).
-/// `core:write`, which every unbound write door and every MCP write that takes
-/// effect at once requires, is full-access's alone. Nothing else —
-/// `core:auth`, an organization power, a companion scope — is ever an agent's.
+/// agent's ceiling, as the engine's [`oneiron::authority::AgentTier`] maps
+/// them for every door that admits an agent, the vault's OAuth sign-in too
+/// (FIX 4902).
 fn agent_tier_authority(
     tier: AgentTier,
 ) -> (
     std::collections::BTreeSet<String>,
     oneiron::agent_def::AgentCeiling,
 ) {
-    use oneiron::agent_def::AgentCeiling;
-    let (verbs, ceiling): (&[CoreScope], _) = match tier {
-        AgentTier::ReadOnly => (&[CoreScope::Read], AgentCeiling::Proposed),
-        AgentTier::ProposeOnly => (
-            &[CoreScope::Read, CoreScope::Propose],
-            AgentCeiling::Proposed,
-        ),
-        AgentTier::FullAccess => (
-            &[CoreScope::Read, CoreScope::Propose, CoreScope::Write],
-            AgentCeiling::Auto,
-        ),
+    let tier = match tier {
+        AgentTier::ReadOnly => oneiron::authority::AgentTier::ReadOnly,
+        AgentTier::ProposeOnly => oneiron::authority::AgentTier::ProposeOnly,
+        AgentTier::FullAccess => oneiron::authority::AgentTier::FullAccess,
     };
     (
-        verbs.iter().map(|verb| verb.as_str().to_owned()).collect(),
-        ceiling,
+        tier.core_scopes()
+            .iter()
+            .map(|scope| (*scope).to_owned())
+            .collect(),
+        tier.ceiling(),
     )
 }
 
@@ -492,6 +503,9 @@ fn mint_agent_credential(
         )
     })?;
     vault.ensure_host_root_slip(&issuer)?;
+    // The agent's default Grant, minted with its link, is an owner act carried
+    // by this install's machine profile, as `serve` ensures it (FIX 4648).
+    vault.ensure_serving_install_profile_at_start(Some(&issuer), "token agent");
     let (verbs, ceiling) = agent_tier_authority(args.tier);
     // The slip, its delivery, the revocation of the agent's earlier slips,
     // then the grant: the latest mint is the agent's one credential, so no
@@ -521,8 +535,13 @@ fn mint_agent_credential(
                 .map_err(anyhow::Error::from)
         })
         .and_then(|replaced| {
+            // ARCH-0028: one name is one agent principal, of class `agent`.
+            // The binding makes the PERSON one of this vault's own agents,
+            // so a credential that carries the vault's write grant holds
+            // the off-record save grant too (ARCH-0052 d5, PRIVACY-07). It
+            // lands with the grant, in one writer.
             vault
-                .grant_agent_principal(&owner, &principal, ceiling)
+                .bind_and_grant_agent_principal(&issuer, &owner, agent, ceiling)
                 .map_err(anyhow::Error::from)?;
             Ok(replaced)
         });

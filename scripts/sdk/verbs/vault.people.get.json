@@ -1,0 +1,12 @@
+{
+  "name": "vault.people.get",
+  "description": "One person the vault knows, by their pr handle.",
+  "input": "crate::memory::PersonRequest",
+  "output": "crate::context_board::PersonRow",
+  "call": "memory.people_get(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

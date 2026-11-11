@@ -33,19 +33,16 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         )
         // Owner-grade credentials can hand an agent a real read/replace tool;
         // scoped core tokens cannot edit vault policy.
-        .route(
-            "/defaults",
-            get(read_defaults)
-                .put(replace_defaults)
-                .layer(DefaultBodyLimit::max(16 * 1024)),
-        )
+        // The defaults table and the generate and stream bodies read up to
+        // the API's request floor (`limits.request_body_bytes`, ABC transport
+        // rows T3, T4), set once on the API router.
+        .route("/defaults", get(read_defaults).put(replace_defaults))
         // FIX 8211: the kept proposals, and a holder's answer to one.
         .route("/defaults/proposals", get(defaults_submit::list_proposals))
         .route(
             "/defaults/proposals/{proposal}",
             post(defaults_submit::rule_proposal),
         )
-        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
 /// A refusal's wire code and its other wire field (empty for a code-only
 /// body), kept on the response for the OpenAI proxy's call receipt
@@ -205,6 +202,18 @@ pub(super) fn admit_proxied(
     admit_owner(server, request)
 }
 
+/// [`admit_owner`] for a live run's own actor at the step door (slice
+/// 6.5c): the door has already held the caller's attached run, and the
+/// run's definition holds the model. This binds the named model under the
+/// vault's inference policy, as configured here or registered in the
+/// catalog.
+pub(super) fn admit_live_run(
+    server: &SyncServer,
+    request: &mut LlmRequest,
+) -> Result<(Arc<OfferLadder>, RunAdmission), Box<Response>> {
+    admit_owner(server, request)
+}
+
 /// [`admit`] past the owner check: the call is the owner's.
 fn admit_owner(
     server: &SyncServer,
@@ -308,7 +317,7 @@ pub(crate) fn record_raw_response(
         schema: MODEL_CALL_SCHEMA,
         attempt: run.instance(),
         lease_generation: u64::from(run.revision()),
-        call_index: 1,
+        call_index: run.next_model_call_index(),
         kind: ModelCallKind::Generate {
             digests,
             usage: response.usage.clone(),

@@ -77,7 +77,12 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// (FIX 11730). 26: the fold counts a removal-archive consume's slip consumed (FIX 11862).
 /// 27: the fold admits carrier-signed membership execution records, an image carries their
 /// bodies, and its revoke facts carry their Grant withdrawals (FIX 12335).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 27;
+/// 28: a root request's basis carries its bound anchor and its anchor heads' parents (FIX 6556).
+/// 29: an owner's agent Grant mint an image carries may name verb classes (FIX 8735).
+/// 30: an owner's agent Grant mint an image carries may name a host wallet (FIX 7766).
+/// 31: the fold keeps each world an agent edited with all of its edits and their judged strengths,
+/// for a view that holds any of those edits' Grants refused (FIX 22381).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 31;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

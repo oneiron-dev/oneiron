@@ -6,6 +6,7 @@
 mod ask_band;
 mod ask_effect;
 mod ask_facade;
+mod ask_forward;
 mod ask_guest;
 mod ask_limits;
 mod ask_option_link;
@@ -69,11 +70,15 @@ mod highway_report;
 pub(crate) mod highway_runner;
 mod highway_status;
 mod highway_types;
+mod host_done_confession;
+pub use host_done_confession::HostDoneConfessionContext;
+pub(crate) use host_done_confession::host_done_confession_in_txn;
 mod lifecycle_facade;
 mod lifecycle_receipt;
 pub(crate) use lifecycle_receipt::{
+    discard_payload_in_txn as discard_lifecycle_receipt_payload_in_txn,
     erase_in_txn as erase_lifecycle_receipts_in_txn, erase_lifecycle_actor_in_txn,
-    settled_receipt_in, task_lifecycle_receipts,
+    lifecycle_field_holds_words, settled_receipt_in, task_lifecycle_receipts,
 };
 mod linear_store;
 mod mirror_edit;
@@ -96,6 +101,7 @@ mod refusal;
 pub(crate) use highway_runner::workflow_try::workflow_done_judge_in_txn;
 mod report_journal;
 pub(crate) use report_journal::{
+    discard_payload_in_txn as discard_report_journal_payload_in_txn,
     erase_in_txn as erase_report_journal_in_txn, erase_report_actor_in_txn,
 };
 pub mod revoke_lands;
@@ -104,6 +110,7 @@ mod route_receipts;
 pub mod run_cancel;
 pub mod run_control;
 pub mod run_doors;
+pub(crate) mod run_rows;
 mod runner_done;
 mod scheduling;
 pub(crate) mod settlement_anchor;
@@ -118,6 +125,8 @@ mod terminal_state;
 mod training_offer_ask;
 mod training_swap_ask;
 mod verb_kind;
+mod watch_task;
+pub(crate) use watch_task::{settle_watch_task_in_txn, tick_due_at_in_txn};
 mod wave_port;
 mod wire_decode;
 pub(crate) use contribution_pair::{
@@ -138,8 +147,8 @@ pub(crate) use training_swap_ask::{
 pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
 pub(crate) use wire_decode::{
     TaskBinding, decode_task_realization_input, done_task_evidence_in, leader_task_body_in,
-    leader_task_brief_in, task_binding, task_is_blocked_in, task_stored_brief_in,
-    task_text_with_source_in,
+    leader_task_brief_in, task_binding, task_is_blocked_in, task_is_blocked_with_source_in,
+    task_stored_brief_in, task_text_with_source_in,
 };
 mod wire_encode;
 mod world_privacy_wait;
@@ -149,7 +158,7 @@ pub(crate) use world_privacy_wait::{
 };
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
 pub use consult_fanout_types::{
@@ -213,9 +222,9 @@ pub use runner_done::{
 };
 
 pub(crate) use create_validation::{
-    completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
-    settled_task_result_binding, settled_task_result_binding_in_txn, task_human_assignee,
-    task_is_terminal,
+    completed_task_at_in_txn, open_task_due_at_in_txn, reject_born_expired_task_deadline,
+    reject_incoherent_task_terminal, settled_task_result_binding,
+    settled_task_result_binding_in_txn, task_human_assignee, task_is_terminal, watcher_due_at,
 };
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{
@@ -388,6 +397,7 @@ pub(crate) use symbol_lease::{acquire_symbols, symbols_ready};
 pub(crate) use symbol_lease::{
     declaration_holds_in_txn, declare_symbols_for_run_in_txn, release_symbols_for_run_in_txn,
     renew_symbols_for_run_in_txn, run_declaration_in_txn, symbol_blockers_in_txn,
+    task_declaration_holds_in_txn,
 };
 
 #[cfg(test)]
@@ -397,6 +407,9 @@ pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_
 #[cfg(test)]
 mod symbol_lease_tests;
 
+pub(crate) use fanout_launch::follow_fanout_hold_override_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use fanout_launch::launch_override_actors_in_txn;
 pub use fanout_launch::{FanoutCheckChoice, FanoutLaunchReceipt};
 pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage};
 
@@ -431,8 +444,16 @@ pub mod verb_hook_boundary;
 mod ask_outcome_tests;
 #[cfg(test)]
 mod ask_tests;
+pub(crate) mod tables;
 
 pub(crate) use ask_facade::settle_waiting_asks;
+pub use ask_forward::{
+    AskForwardAct, AskForwardHolderProof, AskForwardReceipt, ask_forward_challenge,
+};
+pub(crate) use ask_forward::{
+    AskForwardArrivals, drain_ask_forward_intents, retire_holder_ask_forward_rows_in_txn,
+    settle_held_ask_forward_rows_in_txn,
+};
 pub(crate) use ask_guest::{ask_guest_grant_in, ask_member_task_in};
 pub(crate) use ask_option_link::deliver_ask_change_in_txn;
 pub(crate) use ask_option_link::{
@@ -464,10 +485,10 @@ pub use ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
     TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskGuest,
     TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskLaunchHold, TaskAskNeed,
-    TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,
-    TaskAskPreflightRecipient, TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult,
-    TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
-    TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
+    TaskAskOption, TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,
+    TaskAskPreflightRecipient, TaskAskProvisional, TaskAskQuestion, TaskAskRec, TaskAskReceipt,
+    TaskAskResult, TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
+    TaskAskStatus, TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
 
 use crate::memory::{MemoryError, MemoryResult};

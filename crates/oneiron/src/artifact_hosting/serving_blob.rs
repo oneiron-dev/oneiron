@@ -238,13 +238,34 @@ impl Vault {
         serving: &ServingBlobDescriptor,
         sight: SecretSight,
     ) -> Result<Option<Vec<u8>>> {
+        self.read_serving_blob_in_txn_with_reader(
+            rtxn,
+            artifact_id,
+            serving,
+            sight,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(super) fn read_serving_blob_in_txn_with_reader(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        serving: &ServingBlobDescriptor,
+        sight: SecretSight,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<Option<Vec<u8>>> {
         if !self.blob_artifact_bytes_readable_in_txn(rtxn, artifact_id)? {
             return Ok(None);
         }
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&serving.content_hash)?;
-        if let Some(bytes) =
-            self.sighted_body_file_in_txn(rtxn, &asset, &serving.content_hash, sight)?
-        {
+        if let Some(bytes) = self.sighted_body_file_in_txn_with_reader(
+            rtxn,
+            &asset,
+            &serving.content_hash,
+            sight,
+            reader,
+        )? {
             return Ok(Some(bytes));
         }
         let bytes = crate::ports::BlobStore::port_blob_get(self, rtxn, &serving.content_hash)?
@@ -252,12 +273,13 @@ impl Vault {
         if blake3::hash(&bytes).as_bytes() != &serving.content_hash {
             return Err(Error::CorruptedIndex("blob export content hash"));
         }
-        crate::store::file_key_masks::sighted_bytes_in_txn(
+        crate::store::file_key_masks::sighted_bytes_in_txn_with_reader(
             &self.store,
             rtxn,
             bytes,
             Some(&serving.content_hash),
             sight,
+            reader,
         )
         .map(Some)
     }

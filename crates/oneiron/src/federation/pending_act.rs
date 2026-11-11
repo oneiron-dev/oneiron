@@ -292,6 +292,7 @@ pub struct PendingActStarted {
 struct ActPolicies {
     stored: BTreeMap<String, SharedActPolicy>,
     shipped: BTreeMap<String, SharedActPolicy>,
+    common_wait_secs: Option<u64>,
 }
 impl ActPolicies {
     /// An absent row uses the shipped row for the vault kind, then the default row.
@@ -374,7 +375,10 @@ impl Vault {
                 continue;
             }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            // An owner's `engine.controls` grant confers no membership
+            // standing: its holder acts as a member only by a membership row.
             if grant.scope == FederationGrantScope::vault(vault_id)
+                && !super::is_engine_controls_grant(&grant)
                 && grant.confers_at(now)
                 && matches!(
                     federation_grant_activation(&fold, &id),
@@ -417,6 +421,7 @@ impl Vault {
         Ok(ActPolicies {
             stored: resolution.shared_act_policies.unwrap_or_default(),
             shipped: shipped_rows(creation.preset)?,
+            common_wait_secs: resolution.owner_change_wait_secs,
         })
     }
     /// The row stored in the vault's manifest; `None` when the act has none.
@@ -547,8 +552,20 @@ impl Vault {
             starter.revalidate_person_in_txn(self, &txn)?
         };
         let creation = check_vault(self, &txn, vault_id)?;
-        let base = self.act_policies_in_txn(&txn, &creation)?.effective(act)?;
+        let policies = self.act_policies_in_txn(&txn, &creation)?;
+        let base = policies.effective(act)?;
         let stored_row = matches!(selection, SettingChoice::Stored);
+        // The common owner-change wait applies only to membership acts; the
+        // parse runs once, before the chosen setting is consumed below.
+        let holder_selected = matches!(selection, SettingChoice::Holder(_));
+        let owner_change_act = matches!(
+            super::shared_act::SharedActKind::parse(act),
+            Some(
+                super::shared_act::SharedActKind::AddOwner
+                    | super::shared_act::SharedActKind::TransferOwnership
+                    | super::shared_act::SharedActKind::RemoveOwner
+            )
+        );
         let policy = match selection {
             SettingChoice::Stored => base,
             SettingChoice::Host(Some(setting)) => setting,
@@ -588,11 +605,17 @@ impl Vault {
             .filter(|holder| holder.role == Role::Owner)
             .map(|holder| holder.member)
             .collect::<BTreeSet<_>>();
-        let wait = if stored_row && owners.len() < 2 {
-            0
-        } else {
-            policy.wait_secs
-        };
+        // The common owner-change wait overrides the setting's wait for
+        // membership acts only; an absent common keeps the wait above byte
+        // for byte.
+        let wait = owner_change_wait::resolve_start_wait_secs(
+            policies.common_wait_secs,
+            owner_change_act,
+            stored_row,
+            owners.len() < 2,
+            holder_selected,
+            policy.wait_secs,
+        );
         let deadline = now.checked_add(wait).ok_or_else(invalid)?;
         let id = self.store.clock.entity_id()?.to_hex();
         let record = PendingAuthorityAct {
@@ -893,6 +916,7 @@ fn reconcile(record: &mut PendingAuthorityAct, holders: &[LiveActHolder], now: u
 }
 
 mod matured;
+mod owner_change_wait;
 mod policy_change;
 pub use matured::PendingActMatured;
 pub use policy_change::{

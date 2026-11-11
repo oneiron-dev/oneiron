@@ -10,10 +10,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{MadeByReader, SettleConsent};
 use super::codec::{RECORD, settlement_key_parts};
 use super::pending::{PENDING, validate_pending_ref};
 use super::receipts::already_settled;
+use super::{MadeByReader, SettleConsent};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;

@@ -27,11 +27,12 @@
 use oneiron::connector_key::CONNECTOR_ISSUER_HOLD_REASON;
 use oneiron::outbound_consent::{
     ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress,
-    OutboundBindingAuthority, OutboundBindingValidation, zeroize_json,
+    OutboundBindingAuthority, OutboundBindingValidation, SentGeneration, zeroize_json,
 };
 use oneiron::outbound_intent_ledger::IntentLedgerError;
 use zeroize::Zeroizing;
 
+use super::presenting::{Both, Clears};
 use super::reply_read::{EventStream, read_retry_reply, terminal};
 use super::stream_pump::{Pump, Waited};
 use super::*;
@@ -47,7 +48,7 @@ pub(super) fn hand_over(
     round: KeptRound,
     mut continuation: Continuation,
     live: &mut Option<LiveSession>,
-    body: Vec<u8>,
+    body: RawOutboundBody,
     kept: Option<KeptSentValue>,
 ) -> Sent {
     let KeptRound {
@@ -98,6 +99,7 @@ pub(super) fn hand_over(
         generation: 0,
         asked: awaiting.questions.len(),
         kept,
+        history: Vec::new(),
         aliases,
         receipts,
     };
@@ -241,16 +243,45 @@ impl LiveSession {
         }
     }
 
-    /// Refuses one server request this client does not serve. The request is
-    /// wiped as it drops (FIX 11861).
+    /// Answers the server request `id` of the remote task `task_id` with
+    /// `result` (FIX 16029): the result carries the task's related-task
+    /// metadata (MCP 2025-11-25 tasks), and its POST counts as taken only
+    /// on a 2xx, as [`Self::respond`] reads it.
+    pub(super) fn respond_in_task(
+        &self,
+        id: Value,
+        task_id: &str,
+        mut result: Map<String, Value>,
+    ) -> Posted {
+        let mut related = Map::new();
+        related.insert(wire::TASK_ID.to_owned(), Value::from(task_id));
+        let mut meta = Map::new();
+        meta.insert(wire::RELATED_TASK.to_owned(), Value::Object(related));
+        result.insert(wire::META.to_owned(), Value::Object(meta));
+        self.respond(id, "result", Value::Object(result))
+    }
+
+    /// Refuses one server request this client does not serve (`-32601`).
+    /// The request is wiped as it drops (FIX 11861).
     pub(super) fn refuse(&self, request: Value) {
+        self.refuse_as(request, METHOD_NOT_FOUND);
+    }
+
+    /// Refuses one server request whose params this client does not serve
+    /// (`-32602`, FIX 16029): an elicitation in a mode the session did not
+    /// declare, as MCP asks, or a question this client cannot take. The
+    /// request is wiped as it drops.
+    pub(super) fn refuse_params(&self, request: Value) {
+        self.refuse_as(request, INVALID_PARAMS);
+    }
+
+    fn refuse_as(&self, request: Value, code: i64) {
         let id = request.get("id").cloned();
         zeroize_json(request);
         let Some(id) = id else {
             return;
         };
-        let refusal =
-            json!({ "code": -32601, "message": "this client does not serve this request" });
+        let refusal = json!({ "code": code, "message": "this client does not serve this request" });
         let _ = self.respond(id, "error", refusal);
     }
 
@@ -333,6 +364,12 @@ impl LiveSession {
     }
 }
 
+/// JSON-RPC "Method not found": a request this client serves no method of.
+const METHOD_NOT_FOUND: i64 = -32601;
+/// JSON-RPC "Invalid params": a request whose params this client does not
+/// serve.
+const INVALID_PARAMS: i64 = -32602;
+
 /// The reason an answer gets when the original call's grant no longer
 /// admits the re-send it would make (FIX 8226): the ledger's own word for a
 /// frozen binding its grant no longer admits.
@@ -414,6 +451,10 @@ pub(super) struct Worker {
     /// The value the send presented, kept as the session keeps its header:
     /// each later question and the terminal reply are cleared of it.
     pub(super) kept: Option<KeptSentValue>,
+    /// What a resumed exchange presented before its restart, value-free
+    /// (fix list row 10550): each later question and the terminal reply are
+    /// cleared of those too, through their records' known-value histories.
+    pub(super) history: Vec<SentGeneration>,
     /// The current round's aliases: its answer goes on the wire under the
     /// connector's own keys (FIX 8051).
     pub(super) aliases: KeyAliases,
@@ -421,7 +462,33 @@ pub(super) struct Worker {
     pub(super) receipts: AnswerReceipts,
 }
 
+/// Why a resumed exchange's words were withheld: the known-value history of
+/// a value it presented before its restart did not read whole (fix list
+/// row 10550).
+const CREDENTIAL_HISTORY_UNREAD: &str = "connector_credential_history_unread";
+
 impl Worker {
+    /// Runs `clear` with what clears this exchange's words: the value kept
+    /// now, and each presentation made before a restart through its
+    /// record's known-value history (fix list row 10550). `None` when that
+    /// history did not read whole: nothing is cleared of the value now
+    /// alone.
+    fn clear<R>(&self, clear: impl FnOnce(&dyn Clears) -> R) -> Option<R> {
+        let now = self.kept.as_ref().map(KeptSentValue::sent);
+        if self.history.is_empty() {
+            return Some(clear(&Both { now, before: None }));
+        }
+        let vault = self.receipts.vault.upgrade()?;
+        vault
+            .with_connector_sent_clearer(&self.history, |before| {
+                clear(&Both {
+                    now,
+                    before: Some(before),
+                })
+            })
+            .ok()
+    }
+
     /// Runs the worker on its own thread; `false` when it could not start.
     pub(super) fn start(self) -> bool {
         crate::engine_thread("connector-elicitation".to_owned())
@@ -464,11 +531,19 @@ impl Worker {
             match self.answer(&command.responses) {
                 Next::Asked(mut questions) => {
                     // Cleared before the registry or the caller sees them;
-                    // this round's aliases replace the last round's.
-                    self.aliases = match &self.kept {
-                        Some(kept) => clear_questions(&mut questions, &kept.sent()),
-                        None => KeyAliases::default(),
+                    // this round's aliases replace the last round's. Words
+                    // that cannot be cleared whole are never shown.
+                    let Some(aliases) =
+                        self.clear(|clears| clear_questions(&mut questions, clears))
+                    else {
+                        let _ = command.reply.send(WorkerEvent::Failed {
+                            sent: true,
+                            reason: CREDENTIAL_HISTORY_UNREAD,
+                        });
+                        self.cancel(ElicitationDisposition::Cancel);
+                        break;
                     };
+                    self.aliases = aliases;
                     self.generation += 1;
                     self.asked = questions.len();
                     let advanced = self.registry.upgrade().and_then(|registry| {
@@ -501,8 +576,21 @@ impl Worker {
                     });
                 }
                 Next::Over(mut event) => {
-                    if let Some(kept) = &self.kept {
-                        clear_event(&mut event, &kept.sent());
+                    // A reply that cannot be cleared whole is withheld; the
+                    // round stays uncertain.
+                    if self
+                        .clear(|clears| clear_event(&mut event, clears))
+                        .is_none()
+                    {
+                        event = WorkerEvent::Failed {
+                            sent: true,
+                            reason: CREDENTIAL_HISTORY_UNREAD,
+                        };
+                    }
+                    if let WorkerEvent::Result(result) = &event
+                        && let Some(registry) = self.registry.upgrade()
+                    {
+                        registry.publish_observed_result(&self.handle, result);
                     }
                     let (call_ref, handle) = (self.bound_call(), self.handle.as_str());
                     if matches!(event, WorkerEvent::Result(_)) {
@@ -722,17 +810,14 @@ impl Worker {
                     Ok(message) => message,
                     Err(event) => return Next::Over(event),
                 };
-                let next = match retry_questions(&message) {
+                match retry_questions(&message) {
                     Some((questions, state)) => {
                         *request_state = state;
+                        zeroize_json(message);
                         Next::Asked(questions)
                     }
-                    None => Next::Over(terminal(&message)),
-                };
-                // The round's questions are read out; the reply is wiped
-                // (FIX 11861).
-                zeroize_json(message);
-                next
+                    None => Next::Over(terminal(message)),
+                }
             }
         }
     }

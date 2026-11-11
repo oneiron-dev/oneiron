@@ -2,6 +2,14 @@
 //!
 //! This module does not publish pages, solve availability, or mint credentials.
 //! Callers supply the final disclosure projection and host-owned presentation.
+//!
+//! No field is refused for its length (FIX 20663). Each named field is one
+//! node, `booking-<name>`. Its JSON is a meta line's value when it fits one
+//! lens text. A longer field becomes a dossier section titled with the field
+//! name: its lines are the JSON's lens-text frames, in order, and the field
+//! is those lines joined with nothing between. The owner display is the
+//! sheet title. When it does not fit one lens text, the title is its first
+//! frame, and a `booking-owner_display` section carries the frames after it.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -14,8 +22,8 @@ use crate::booking::{
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
     GeneratedUiActionTier, GeneratedUiCard, LensAtom, LensAtomId, LensNode, LensRenderId, LensText,
-    MetaLineAtom, SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiOptionValue,
-    SelfUiValue,
+    MetaLineAtom, SectionAtom, SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId,
+    SelfUiOptionValue, SelfUiValue,
 };
 use crate::{Error, Result};
 
@@ -62,7 +70,6 @@ pub enum BookingPageModelError {
     EmptyOwnerDisplay,
     EmptyEventTypes,
     UnlistedEventType,
-    FieldTooLarge,
     InvalidLanding,
     InvalidPreview,
     InvalidTimeZone,
@@ -107,25 +114,14 @@ pub fn validate_booking_page_model(
     // Reuse the seam's half-open-mask validator. Never coerce another rung.
     project_at_rung(&[], DisclosureRung::Slots, SurfaceClass::Public, Some(mask))
         .map_err(|_| BookingPageModelError::InvalidSlotMask)?;
-    validate_presentation_fields(
-        &model.owner_display,
-        &model.event_types,
-        &model.constraint_field,
-        &model.theme,
-    )?;
-    validate_model_field(&model.slots)?;
     model
         .landing
         .validate()
         .map_err(|_| BookingPageModelError::InvalidLanding)?;
-    validate_model_field(&model.landing)?;
-    validate_model_field(&model.preview)?;
     if model.preview != booking_slot_preview(mask) {
         return Err(BookingPageModelError::InvalidPreview);
     }
-    if model.visitor_tz.len() > 64
-        || crate::calendar::tz::utc_to_wall(mask.window_start_utc, &model.visitor_tz).is_err()
-    {
+    if crate::calendar::tz::utc_to_wall(mask.window_start_utc, &model.visitor_tz).is_err() {
         return Err(BookingPageModelError::InvalidTimeZone);
     }
     if model.owner_display.trim().is_empty() {
@@ -144,46 +140,20 @@ pub fn validate_booking_page_model(
     Ok(())
 }
 
-fn validate_model_field(value: &impl Serialize) -> core::result::Result<(), BookingPageModelError> {
-    let json = serde_json::to_string(value).map_err(|_| BookingPageModelError::FieldTooLarge)?;
-    LensText::new(json).map_err(|_| BookingPageModelError::FieldTooLarge)?;
-    Ok(())
-}
-
-pub(super) fn validate_presentation_fields(
-    owner: &str,
-    events: &[EventTypeCard],
-    constraint: &ConstraintFieldConfig,
-    theme: &ThemeTokens,
-) -> core::result::Result<(), BookingPageModelError> {
-    validate_model_field(&owner)?;
-    validate_model_field(&events)?;
-    validate_model_field(constraint)?;
-    validate_model_field(theme)
-}
-
-/// Bounded ranked prefix for the public lens. Query a narrower window for more
-/// choices. Never truncate a serialized JSON string or change a slot interval.
+/// Bounded ranked prefix for the public lens: the first 128 ranked slots.
+/// Query a narrower window for more choices. Never truncate a serialized JSON
+/// string or change a slot interval; the lens frames the projection whole,
+/// whatever its length (FIX 20663).
 pub fn bounded_public_slots(
     mut mask: crate::booking::SlotMask,
 ) -> core::result::Result<RungProjection, BookingError> {
     mask.slots.truncate(128);
-    loop {
-        let projection = RungProjection::Slots(mask.clone());
-        if validate_model_field(&projection).is_ok() {
-            return project_at_rung(
-                &[],
-                DisclosureRung::Slots,
-                SurfaceClass::Public,
-                Some(&mask),
-            );
-        }
-        if mask.slots.pop().is_none() {
-            return Err(BookingError::Surface(
-                "public booking slot metadata exceeds lens bounds".to_owned(),
-            ));
-        }
-    }
+    project_at_rung(
+        &[],
+        DisclosureRung::Slots,
+        SurfaceClass::Public,
+        Some(&mask),
+    )
 }
 
 /// A handle supplied by the published-page capability resolver, never an entity id.
@@ -306,15 +276,48 @@ impl BookingPageLens {
             tracing::error!(?defect, "public booking page assembly invariant failed");
             Error::InvalidConfig(format!("public booking page invariant: {defect:?}"))
         })?;
-        let mut root = LensNode::new(
+        // The owner display past one lens text: its first frame is the
+        // title, and the frames after it follow in their own section.
+        let mut owner = LensText::frames(&model.owner_display).into_iter();
+        let title = match owner.next() {
+            Some(title) => title,
+            None => LensText::new("")?,
+        };
+        let rest = owner.collect::<Vec<_>>();
+        // The fallback is the title, as for any sheet, unless the first frame
+        // is only whitespace: then it is the trimmed owner display's first
+        // frame, so the fallback still names the owner.
+        let fallback = if title.as_str().trim().is_empty() {
+            match LensText::frames(model.owner_display.trim())
+                .into_iter()
+                .next()
+            {
+                Some(fallback) => fallback,
+                None => LensText::new("public booking")?,
+            }
+        } else {
+            title.clone()
+        };
+        let mut root = LensNode::with_fallback_text(
             LensAtomId::new("booking-page")?,
             LensAtom::Sheet(CollectionAtom {
-                title: LensText::new(&model.owner_display)?,
+                title,
                 rows: Vec::new(),
             }),
+            fallback,
         );
-        // Named seam data stays structured JSON in existing meta-line atoms.
-        // In particular, theme serialization is the only operation on its bag.
+        if !rest.is_empty() {
+            root.children.push(LensNode::new(
+                LensAtomId::new("booking-owner_display")?,
+                LensAtom::DossierSection(SectionAtom {
+                    title: LensText::new("owner_display")?,
+                    lines: rest,
+                }),
+            ));
+        }
+        // Named seam data stays structured JSON, each field whole in its
+        // node. In particular, theme serialization is the only operation on
+        // its bag.
         root.children
             .push(model_field("event_types", &model.event_types)?);
         root.children.push(model_field("slots", &model.slots)?);
@@ -336,15 +339,27 @@ fn opaque_hex(value: &str, width: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+/// One named field as its node: a meta line whose value is the field's JSON
+/// when that fits one lens text, else a dossier section whose lines are the
+/// JSON's frames in order (FIX 20663). Nothing is cut or dropped.
 fn model_field(name: &str, value: &impl Serialize) -> Result<LensNode> {
     let json = serde_json::to_string(value)
         .map_err(|error| Error::InvalidConfig(format!("booking model serialization: {error}")))?;
+    let label = LensText::new(name)?;
+    let mut frames = LensText::frames(&json);
+    let atom = if frames.len() == 1
+        && let Some(value) = frames.pop()
+    {
+        LensAtom::MetaLine(MetaLineAtom { label, value })
+    } else {
+        LensAtom::DossierSection(SectionAtom {
+            title: label,
+            lines: frames,
+        })
+    };
     Ok(LensNode::new(
         LensAtomId::new(format!("booking-{name}"))?,
-        LensAtom::MetaLine(MetaLineAtom {
-            label: LensText::new(name)?,
-            value: LensText::new(json)?,
-        }),
+        atom,
     ))
 }
 

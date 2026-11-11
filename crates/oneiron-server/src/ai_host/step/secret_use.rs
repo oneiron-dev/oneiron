@@ -195,7 +195,7 @@ impl<'a> StepSecretUse<'a> {
         run: &RunAdmission,
         lease: &LiveLease<'_>,
         mut request: LlmRequest,
-        capture: impl FnOnce(&LlmRequest) -> Option<oneiron::code_run::WorkflowCaptureHandle>,
+        mut capture: impl FnMut(&LlmRequest, u64) -> Option<oneiron::code_run::WorkflowCaptureHandle>,
         continuation: Option<(WorkflowToolCursor, Option<WorkflowToolWait>)>,
         mut save: impl FnMut(
             &LlmRequest,
@@ -222,7 +222,6 @@ impl<'a> StepSecretUse<'a> {
             None,
         ));
         let mut rounds = retained;
-        let mut capture = Some(capture);
         let mut refreshed_sources = Vec::new();
         loop {
             if !retained {
@@ -234,10 +233,12 @@ impl<'a> StepSecretUse<'a> {
                         refreshed_sources.push(source);
                     }
                 }
+                // Each round is its own replay capsule (FIX 7013): the
+                // cursor's flag says whether this round's call has one.
                 let staged = if cursor.capture_completed {
                     None
                 } else {
-                    capture.take().and_then(|capture| capture(&request))
+                    capture(&request, cursor.round)
                 };
                 let generated = runtime.block_on(ladder.generate_recorded_while(
                     run,
@@ -294,6 +295,7 @@ impl<'a> StepSecretUse<'a> {
                     .round
                     .checked_add(1)
                     .ok_or(oneiron::Error::ArithmeticOverflow("workflow tool round"))?;
+                cursor.capture_completed = false;
                 request.messages.push(LlmMessage {
                     role: LlmMessageRole::Assistant,
                     content,
@@ -316,6 +318,7 @@ impl<'a> StepSecretUse<'a> {
                         call_id,
                         name,
                         input,
+                        ..
                     } => Some((call_id.clone(), name.clone(), input.clone())),
                     _ => None,
                 })
@@ -501,9 +504,9 @@ impl<'a> StepSecretUse<'a> {
             })
         };
         let answered = if retained.is_some() {
-            verb_hook_boundary::row_retained(&memory, verb, input, run)
+            verb_hook_boundary::row_retained(&memory, &oneiron::verbs::VERB_TABLE, verb, input, run)
         } else {
-            verb_hook_boundary::row(&memory, verb, input, run)
+            verb_hook_boundary::row(&memory, &oneiron::verbs::VERB_TABLE, verb, input, run)
         };
         match answered {
             Ok(output) => StepToolOutcome::Answered(output, false),

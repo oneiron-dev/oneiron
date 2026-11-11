@@ -17,6 +17,7 @@ use super::{
     task_run_seat, text, unix_now,
 };
 use crate::mcp::LiveLeaseRunner;
+use oneiron::engine_executor::SelfBriefPort;
 use oneiron::llm::seat::SeatLearningContext;
 
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
@@ -63,7 +64,9 @@ pub(super) fn run_bound(
         tracing::warn!(kind = ?error.kind(), "a resident run's input producers were not declared");
     }
     // One door for the whole run, so its browser lives as long as the run.
-    let door = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
+    // Its self brief lives longer, with its live run (FIX 17594 D3).
+    let door =
+        Arc::new(RunHostDoor::new(server, actor, runtime, run_id).with_live_run_brief_lifetime());
     let template = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
@@ -282,21 +285,38 @@ pub(super) fn run_bound(
     if status.input.room.is_some() {
         scope_funding(vault, metered.as_ref(), true).map_err(EngineRunError::Payer)?;
     }
+    // FIX 7766: this path's runs bind no owner's agent Grant wallet, so work
+    // one funds stops here, typed, before any call: never billed to the
+    // host's default allocation.
+    if crate::ai_host::payer_funding::attempt_grant_funding(vault, status.attempt.id)
+        .map_err(EngineRunError::Payer)?
+        .is_some()
+    {
+        return Err(EngineRunError::Payer(
+            crate::ai_host::payer_funding::PayerFault::GrantWalletUnbound {
+                scope: metered.clone(),
+            },
+        ));
+    }
     // The run's caller, as this host leased it: its reader children and its
     // compaction read under that one binding.
-    let caller = pump_caller(actor);
+    let caller = pump_caller(actor).with_caller_origin(status.input.caller_origin);
     // A scoped child queued under the run borrows the lease of the attempt
     // it is (FIX 7507): it lives only while this host holds that lease. No
     // clock is lent, so its children keep one window from its first spawn,
     // and its ordinary readers outlive it as before.
     let parent = crate::ai_host::scoped_child::ReaderParentHost::for_attempt(&status.attempt);
-    let mut seat = seats.seat_with_parent(
-        run_id,
-        metered.clone(),
-        caller.locality(),
-        provider.reader_window_tokens(),
-        parent.as_ref(),
-    );
+    let mut seat = seats
+        .seat_with_parent(
+            &oneiron::code_run::ReaderJobs::canonical(vault),
+            oneiron::code_run::ReaderActor::of(actor),
+            run_id,
+            metered.clone(),
+            caller.locality(),
+            provider.reader_window_tokens(),
+            parent.as_ref(),
+        )
+        .map_err(text)?;
     // FIX 4539: its reader and summary children are held to the list its
     // frozen definition names, as its own seat is.
     seat.listed = definition.models.clone();
@@ -533,7 +553,9 @@ fn hold_seatless_to_list(
 /// `[models.planner]` seats, its spawns are planned on `decisions`' ladder
 /// and its leader calls answer, and its planned team's start is written on
 /// `model_seat` and the entry's line (DOOR-111 S4c-4); `issuer` signs its
-/// leader's subproject spawn.
+/// leader's subproject spawn. Its requests carry the run's self brief,
+/// installed for its live run once its entry's facts are bound (FIX 17594
+/// D3).
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -604,7 +626,7 @@ fn enter_run(
     // attaches, and its guard, held through the whole entry: an action
     // through that handle runs only between entries.
     let proof = bound.live_run_host_binding(config.run_id).map_err(text)?;
-    let _serial = live_runs
+    let live = live_runs
         .register(
             vault,
             config.run_id,
@@ -617,10 +639,17 @@ fn enter_run(
             status.input.definition.clone(),
             spend.cloned(),
         )
-        .map_err(text)?
-        .enter();
+        .map_err(text)?;
+    let _serial = live.enter();
     door.bind_meter(line);
     door.bind_lease(lease);
+    // FIX 17594: the run ceiling its `describe(self)` states, from the
+    // admitted dispatch this entry serves.
+    door.bind_run_ceiling(Some(oneiron::context_board::brief_run_ceiling(
+        config.run_id,
+        status.attempt.id,
+        &status.input,
+    )));
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
@@ -630,6 +659,26 @@ fn enter_run(
         actor,
         config.run_id,
     ));
+    // FIX 17594 D3: the run's self brief, resolved from what this entry
+    // bound and installed under the run's connection, and the port its
+    // requests carry it through. The live run keeps the installation across
+    // its entries and its durable waits, and closes it as it retires (Engine
+    // call RESUME C).
+    // A brief that does not install leaves the run as it ran before it had
+    // one: it enters with no brief, and the miss is logged.
+    let brief = door
+        .install_self_brief(live.self_brief_owner())
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                agent = %actor.entity_ref().to_hex(),
+                "a resident run's self brief did not install; the run enters without one"
+            );
+            None
+        });
+    if let Some(brief) = &brief {
+        live.hold_self_brief(brief.installation());
+    }
     let entered = enter_engine_native_run(
         vault,
         provider,
@@ -641,9 +690,11 @@ fn enter_run(
         model_seat,
         planned,
         status.input.definition.models.clone(),
+        brief.as_ref().map(|brief| brief as &dyn SelfBriefPort),
     );
     door.bind_meter(None);
     door.bind_lease(None);
+    door.bind_run_ceiling(None);
     door.bind_attempt(None);
     entered
 }
