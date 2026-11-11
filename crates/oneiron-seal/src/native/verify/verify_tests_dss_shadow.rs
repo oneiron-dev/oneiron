@@ -266,10 +266,11 @@ mod tests {
         // that key that adds cRLSign, then the issuer's certificate for it;
         // the key's CRL lists the leaf. cRLSign must come from the
         // certificate the issuer gave the key (RFC 5280 §6.3.3(f)), not from
-        // the key holder's own copy, so the key has no revocation authority
-        // and its CRL claims nothing about the leaf. The issuer still vouches
-        // for the key, so it is no shadow: missing material, not forged
-        // (review round 1 of #6944, P1b).
+        // the key holder's own copy, so the key may not sign CRLs and its CRL
+        // claims nothing about the leaf (review round 1 of #6944, P1b). The
+        // CRL is unverifiable, as for any issuer whose key usage lacks
+        // cRLSign: possible tampering, the same result as without the copy
+        // (review round 2 reads cRLSign before authority).
         let issuer = test_ca("issuer");
         let leaf_der = leaf_under(&issuer, "leaf");
         let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
@@ -303,7 +304,10 @@ mod tests {
             &[],
         );
         let checks = material_check(&doc, &[&issuer], &[&leaf_der]);
-        assert_material_unresolved(&checks, VerifyFindingCode::ValidationMaterialUnavailable);
+        assert_material_unresolved(
+            &checks,
+            VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
     }
 
     /// An unauthenticated copy cannot withhold an anchor key's cRLSign or
