@@ -3,8 +3,11 @@ import { Figure } from '../primitives/Figure'
 import { Icon, type IconName } from '../primitives/Icon'
 import { IconAction } from '../primitives/IconAction'
 import { Unfold } from '../primitives/Unfold'
+import { ProgressDonut } from '../marks/ProgressDonut'
+import type { DonutArc } from '../marks/donut-segments'
 import { soundPress } from '../lib/press'
 import { cx } from '../lib/react-utils'
+import { taskCountWords } from './task-group'
 
 export interface MessageRowProps extends React.ComponentPropsWithRef<'article'> {
   /* Who wrote it: a Glyph. */
@@ -129,6 +132,50 @@ function MessageRowThreadLine({
   )
 }
 
+export interface MessageRowTaskLineProps extends React.ComponentPropsWithRef<'button'> {
+  /* One entry per task the work was split into, for the donut. */
+  arcs: readonly DonutArc[]
+  /* A task waits on the person: a dot in the donut. */
+  needsYou?: boolean
+  /* Who has the work. */
+  who?: React.ReactNode
+  /* How many tasks, said in words after the name: `3 tasks`. */
+  count?: number
+  /* Opens the task list. */
+  onOpen?: () => void
+}
+
+/* The line under a message whose work was split into tasks: the donut,
+   who has it, how many tasks. The whole line is one button that opens the
+   list. A message shows this line or a thread line, never both. */
+function MessageRowTaskLine({
+  arcs,
+  needsYou = false,
+  who,
+  count,
+  onOpen,
+  className,
+  type = 'button',
+  onClick,
+  ...props
+}: MessageRowTaskLineProps) {
+  return (
+    <button
+      type={type}
+      className={cx('sl-task-line', className)}
+      onClick={(event) => {
+        onClick?.(event)
+        if (!event.defaultPrevented) onOpen?.()
+      }}
+      {...props}
+    >
+      <ProgressDonut arcs={arcs} needsYou={needsYou} />
+      {who !== undefined ? <span className="sl-task-line-who">{who}</span> : null}
+      {count !== undefined ? <span className="sl-task-line-count">{taskCountWords(count)}</span> : null}
+    </button>
+  )
+}
+
 export interface MessageRowReactionsProps extends React.ComponentPropsWithRef<'div'> {
   /* Shows the add icon after the reactions. */
   onAdd?: (event: React.MouseEvent<HTMLButtonElement>) => void
@@ -182,13 +229,14 @@ function MessageRowReaction({ emoji, count, pressed = false, who, className, typ
 }
 
 /* Compound parts: MessageRow, .Text, .Attachments, .Attachment, .Fold,
-   .ThreadLine, .Reactions, .Reaction. */
+   .ThreadLine, .TaskLine, .Reactions, .Reaction. */
 export const MessageRow = Object.assign(MessageRowRoot, {
   Text: MessageRowText,
   Attachments: MessageRowAttachments,
   Attachment: MessageRowAttachment,
   Fold: MessageRowFold,
   ThreadLine: MessageRowThreadLine,
+  TaskLine: MessageRowTaskLine,
   Reactions: MessageRowReactions,
   Reaction: MessageRowReaction,
 })
