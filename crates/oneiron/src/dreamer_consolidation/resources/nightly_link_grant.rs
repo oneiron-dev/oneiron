@@ -52,7 +52,7 @@ pub fn mint_nightly_link_grant(
 /// active grant whose bound contains [`nightly_link_bound`] and whose
 /// minting owner is a live owner of the vault now. `None` when there is
 /// none: the links stay proposed, with no refusal or hold.
-pub(in crate::dreamer_consolidation) fn require_nightly_link_write(
+pub(crate) fn require_nightly_link_write(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: WriteActor,

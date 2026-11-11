@@ -369,12 +369,14 @@ pub fn courtesy_delete_incoming_ask(
         .map(|state| format!("{:?}", state.status));
     // The records the pact delivered that the ask covers (FIX 321). A named
     // world that does not parse matches nothing: it never widens the ask to
-    // every world.
+    // every world. A build without sync holds no delivery, so it names none.
+    #[cfg(feature = "sync")]
     let named: Vec<EntityId> = filed
         .worlds
         .iter()
         .filter_map(|world| EntityId::from_hex(world).ok())
         .collect();
+    #[cfg(feature = "sync")]
     let candidates = match pact {
         Some(pact) if named.len() == filed.worlds.len() => vault
             .cooperative_deletion_candidates(&pact, &named, filed.epoch_cutoff)?
@@ -383,6 +385,8 @@ pub fn courtesy_delete_incoming_ask(
             .collect(),
         _ => Vec::new(),
     };
+    #[cfg(not(feature = "sync"))]
+    let candidates: Vec<String> = Vec::new();
     // The ask names the requester's own world ids; a named world's stale stamp
     // is the one on the foreign WORLD it lands in here (FIX 3497). The signed
     // ask is never rewritten.
