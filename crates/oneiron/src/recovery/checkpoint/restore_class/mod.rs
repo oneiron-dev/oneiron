@@ -49,8 +49,9 @@ pub(super) enum Class {
     Live,
     /// Authority entangled with content, which cannot be carried without it:
     /// the restore refuses before publication when the target's rows differ
-    /// from the live vault's. Whole families are checked before creation;
-    /// image-entity scopes wait for opened compartments. `what` names it.
+    /// from the live vault's. Whole families are checked once compartments
+    /// open, before creation; image-entity scopes wait for the restored
+    /// target. `what` names it.
     Refuse { what: &'static str, scope: Scope },
 }
 
