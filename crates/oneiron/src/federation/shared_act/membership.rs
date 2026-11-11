@@ -159,15 +159,50 @@ impl Vault {
         }
         Ok(grants)
     }
+    /// Every live membership grant record over `vault_id`, delegates
+    /// included: [`Self::vault_grants_in_txn`] without the rows that were
+    /// never minted as a membership. A base agent's Steward grant is the
+    /// engine's actor's reach (untangle 6.3; review of #6913): the host
+    /// mints it by default, and only the owner moves it, through its own
+    /// door, which shows what breaks and waits for his confirm. An owner's
+    /// `engine.controls` grant to a principal that is no Steward member is
+    /// his grant to that principal (6.6), taken back through its own door.
+    /// So no membership door reads either as a role, lists it on the
+    /// roster, re-roles it or drops it.
+    fn member_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+    ) -> Result<Vec<(EntityId, FederationGrant)>> {
+        let mut grants = self.vault_grants_in_txn(txn, vault_id)?;
+        grants.retain(|(_, grant)| !crate::federation::holds_system_agent_grant(grant.member_ref));
+        // An owner's `engine.controls` grant goes with a Steward's
+        // membership and is none on its own (ruling on FIX
+        // ENGINE-CONTROLS-GRANT-READS-AS-MEMBERSHIP, Engine 11 Nov): beside
+        // a Steward membership row it is read with it, so a demotion or a
+        // removal takes it too; for anyone else it is skipped.
+        let stewards: BTreeSet<EntityId> = grants
+            .iter()
+            .filter(|(_, grant)| {
+                grant.role == Role::Steward && !crate::federation::is_engine_controls_grant(grant)
+            })
+            .map(|(_, grant)| grant.member_ref)
+            .collect();
+        grants.retain(|(_, grant)| {
+            !crate::federation::is_engine_controls_grant(grant)
+                || stewards.contains(&grant.member_ref)
+        });
+        Ok(grants)
+    }
     /// `member`'s one membership role in the vault, delegate grants aside.
-    fn member_role_in_txn(
+    pub(super) fn member_role_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
         member: EntityId,
     ) -> Result<Option<Role>> {
         let mut roles = self
-            .vault_grants_in_txn(txn, vault_id)?
+            .member_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| grant.member_ref == member && grant.role != Role::Delegate)
             .map(|(_, grant)| grant.role);
@@ -185,7 +220,7 @@ impl Vault {
         vault_id: u64,
     ) -> Result<Vec<(EntityId, Role)>> {
         let mut members = std::collections::BTreeMap::new();
-        for (_, grant) in self.vault_grants_in_txn(txn, vault_id)? {
+        for (_, grant) in self.member_grants_in_txn(txn, vault_id)? {
             if !matches!(grant.role, Role::Delegate | Role::Guest) {
                 members.insert(grant.member_ref, grant.role);
             }
@@ -216,8 +251,12 @@ impl Vault {
         role: Role,
         now: u64,
     ) -> Result<Vec<EntityId>> {
+        // A base agent's grant is no membership: no role is set on it here.
+        if crate::federation::holds_system_agent_grant(member) {
+            return Err(invalid());
+        }
         let mut ids: Vec<EntityId> = self
-            .vault_grants_in_txn(txn, vault_id)?
+            .member_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| grant.member_ref == member && grant.role != Role::Delegate)
             .map(|(id, _)| id)
@@ -277,7 +316,7 @@ impl Vault {
         receipt: &str,
     ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
         let dropped: Vec<(EntityId, bool)> = self
-            .vault_grants_in_txn(txn, vault_id)?
+            .member_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| {
                 (leaves && grant.member_ref == member) || grant.delegated_by == Some(member)
@@ -522,6 +561,26 @@ impl Vault {
             &str,
         ) -> Result<(Effect, Option<UnsignedExecution>)>,
     ) -> Result<SharedActExecutionReceipt> {
+        self.move_shared_member_for_ask(actor, vault_id, power, None, apply)
+    }
+
+    /// [`Self::move_shared_member`] applying a Steward's member ask `ask`
+    /// when one is named (untangle 6.3d): in the same writer the ask closes
+    /// as applied, and the receipt names its Steward as `proposer` beside
+    /// the applier as `actor`.
+    fn move_shared_member_for_ask(
+        &self,
+        actor: &AuthenticatedOwner,
+        vault_id: u64,
+        power: Option<OrgAdminPower>,
+        ask: Option<&str>,
+        apply: impl FnOnce(
+            &mut heed::RwTxn<'_>,
+            EntityId,
+            u64,
+            &str,
+        ) -> Result<(Effect, Option<UnsignedExecution>)>,
+    ) -> Result<SharedActExecutionReceipt> {
         let mut txn = self.store.env.write_txn()?;
         // Person tier; the named power is checked against the live roster.
         let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
@@ -535,7 +594,13 @@ impl Vault {
             )?;
         }
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
-        let owners = live_owners(&self.live_act_holders(&txn, vault_id, now)?, None);
+        let holders = self.live_act_holders(&txn, vault_id, now)?;
+        // An ask stands while its Steward does: judged in this writer,
+        // before the change.
+        if let Some(ask) = ask {
+            self.member_ask_steward_stands_in_txn(&txn, ask, vault_id, &holders)?;
+        }
+        let owners = live_owners(&holders, None);
         let id = self.store.clock.entity_id()?.to_hex();
         let (effect, unsigned) = apply(&mut txn, actor_id, now, &id)?;
         let record = match unsigned {
@@ -544,9 +609,12 @@ impl Vault {
             )?,
             None => ChangeRecord::Unnamed,
         };
-        let receipt = self.record_shared_change_in_txn(
+        let mut receipt = self.record_shared_change_in_txn(
             &mut txn, id, vault_id, None, actor_id, owners, effect, None, record, None, now,
         )?;
+        if let Some(ask) = ask {
+            self.apply_member_ask_in_txn(&mut txn, ask, actor_id, &mut receipt, now)?;
+        }
         txn.commit()?;
         self.store.notify_credential_revocations();
         Ok(receipt)
@@ -603,11 +671,22 @@ impl Vault {
         member: EntityId,
         role: Option<Role>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.change_shared_membership(
+        self.add_shared_member_for_ask(admin, vault_id, member, role, None)
+    }
+    pub(super) fn add_shared_member_for_ask(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        role: Option<Role>,
+        ask: Option<&str>,
+    ) -> Result<SharedActExecutionReceipt> {
+        self.move_shared_member_for_ask(
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
-            |txn, inviter, now| {
+            ask,
+            |txn, inviter, now, _receipt| {
                 let preset = self
                     .shared_vault_creation_in_txn(txn)?
                     .and_then(|row| row.preset);
@@ -622,7 +701,9 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
-                self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, false, now)
+                let effect =
+                    self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, false, now)?;
+                Ok((effect, None))
             },
         )
     }
@@ -636,11 +717,23 @@ impl Vault {
         role: Role,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
+        self.change_shared_member_role_for_ask(admin, vault_id, member, role, slips, None)
+    }
+    pub(super) fn change_shared_member_role_for_ask(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        role: Role,
+        slips: Option<&HostSlipIssuer>,
+        ask: Option<&str>,
+    ) -> Result<SharedActExecutionReceipt> {
         let own_issuer = self.membership_issuer(slips);
-        self.move_shared_member(
+        self.move_shared_member_for_ask(
             admin,
             vault_id,
             Some(OrgAdminPower::AssignRole),
+            ask,
             |txn, _, now, receipt| {
                 non_root(Some(role))?;
                 let from = self
@@ -697,11 +790,22 @@ impl Vault {
         member: EntityId,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
+        self.remove_shared_member_for_ask(admin, vault_id, member, slips, None)
+    }
+    pub(super) fn remove_shared_member_for_ask(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        slips: Option<&HostSlipIssuer>,
+        ask: Option<&str>,
+    ) -> Result<SharedActExecutionReceipt> {
         let own_issuer = self.membership_issuer(slips);
-        self.move_shared_member(
+        self.move_shared_member_for_ask(
             admin,
             vault_id,
             Some(OrgAdminPower::RemoveMember),
+            ask,
             |txn, _, now, receipt| {
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?

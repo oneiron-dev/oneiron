@@ -1,0 +1,78 @@
+/* The role as a word: plain serif; a chevron when it can be changed. */
+.sl-role-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+  transition:
+    color 120ms ease,
+    transform 120ms var(--sl-ease-out);
+}
+
+.sl-role-word:hover,
+.sl-role-word:focus-visible,
+.sl-role-word[aria-expanded="true"] {
+  color: var(--sl-ink-1);
+  text-decoration: underline;
+  text-decoration-color: var(--sl-ink-4);
+  text-underline-offset: 4px;
+}
+
+.sl-role-word:active {
+  transform: scale(0.96);
+}
+
+.sl-role-word-chevron {
+  display: block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  color: var(--sl-ink-2);
+  transition: transform 160ms var(--sl-ease-out);
+}
+
+.sl-role-word-chevron path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+
+.sl-role-word[aria-expanded="true"] .sl-role-word-chevron {
+  transform: rotate(180deg);
+}
+
+/* The layer sits in the DOM where the word is (often a table cell that
+   keeps to one line); its text wraps. */
+.sl-role-pop {
+  white-space: normal;
+}
+
+/* The read-only card: the role's name, then what it may do. */
+.sl-role-card {
+  width: 320px;
+}
+
+.sl-role-card-name {
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  color: var(--sl-ink-1);
+}
+
+.sl-role-card-job {
+  padding-top: 2px;
+  font-size: var(--sl-t-say);
+  line-height: 1.45;
+  color: var(--sl-ink-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-role-word,
+  .sl-role-word-chevron {
+    transition: none;
+  }
+  .sl-role-word:active {
+    transform: none;
+  }
+}
