@@ -29,6 +29,8 @@ fn yes(p: f64) -> ProviderDecision {
         probability: Some(p),
         paired: None,
         person: None,
+        served: None,
+        cost_per_thousand: None,
     }
 }
 fn pin(rung: DecisionRung, version: &str) -> ProviderPin {
@@ -47,12 +49,7 @@ impl DecisionProvider for Scripted {
     fn pin(&self) -> ProviderPin {
         self.pin.clone()
     }
-    fn decide(
-        &self,
-        _: &DecisionQuestion,
-        _: &[EntityId],
-        _: &RetrievalDeadline,
-    ) -> Result<ProviderDecision> {
+    fn decide(&self, _: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(self.result.clone())
     }
@@ -90,6 +87,11 @@ fn provenance_and_invalid_provider_output_fail_before_queue_or_receipt() {
         big: None,
         human: &queue,
         human_pin: pin(DecisionRung::Human, "q1"),
+        ask_to: None,
+        paired: None,
+        person: None,
+        presence: None,
+        correlation: None,
     };
     assert!(
         ladder
@@ -97,6 +99,7 @@ fn provenance_and_invalid_provider_output_fail_before_queue_or_receipt() {
                 &q,
                 EntityId::now(),
                 &[],
+                &serde_json::json!({}),
                 dial(DecisionRung::Rule, DecisionRung::Human),
                 &DecisionBandPolicy::default(),
                 Reversibility::OutboundEffect,
@@ -123,6 +126,7 @@ fn provenance_and_invalid_provider_output_fail_before_queue_or_receipt() {
                 &q,
                 EntityId::now(),
                 &[],
+                &serde_json::json!({}),
                 dial(DecisionRung::Rule, DecisionRung::Human),
                 &DecisionBandPolicy::default(),
                 Reversibility::OutboundEffect,
@@ -161,29 +165,54 @@ impl LabelReadModel for Reader {
     fn revision(&self) -> &str {
         &self.revision
     }
+    /// One read is a pack (f3d1f50f41f): the asked question jointly with the paired
+    /// question, and the person question, when asked, alone.
     fn read(
         &self,
         request: &LabelReadRequest<'_>,
         _: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
-        let labels = match request.primary.labels {
+        let primary = request
+            .questions
+            .iter()
+            .find(|question| question.paired.is_some())
+            .expect("the asked question reads with the paired question");
+        let person = request
+            .questions
+            .iter()
+            .find(|question| question.paired.is_none());
+        let labels = match primary.labels {
             LabelSet::Noul => vec!["yes".into(), "no".into()],
             LabelSet::Choice(options) => options.to_vec(),
         };
         self.seen.lock().unwrap().push((
-            request.primary.text.to_owned(),
+            primary.text.to_owned(),
             labels,
-            request.paired.to_owned(),
-            request.person.map(str::to_owned),
+            primary.paired.unwrap_or_default().to_owned(),
+            person.map(|person| person.text.to_owned()),
         ));
+        // A joint readout reports row 2i as (label i, no) and row 2i + 1 as (label i, yes);
+        // its marginals are `primary` and `paired_yes`. A person readout is yes, then no. A
+        // reader without a person reading drops that readout.
+        let readouts = request
+            .questions
+            .iter()
+            .filter_map(|question| match question.paired {
+                Some(_) => Some(
+                    self.primary
+                        .iter()
+                        .flat_map(|label| {
+                            let yes = label * self.paired_yes;
+                            [label - yes, yes]
+                        })
+                        .collect(),
+                ),
+                None => self.person_yes.map(|yes| vec![yes, 1.0 - yes]),
+            })
+            .collect();
         let mut usage = LlmUsage::zero();
         usage.input.total = 3;
-        Ok(LabelReadResponse {
-            primary: self.primary.clone(),
-            paired_yes: self.paired_yes,
-            person_yes: self.person_yes,
-            usage,
-        })
+        Ok(LabelReadResponse { readouts, usage })
     }
 }
 fn choice_question() -> DecisionQuestion {
@@ -203,6 +232,98 @@ fn paired_question() -> DecisionQuestion {
 }
 fn read_guard(limit: u64) -> BudgetGuard {
     BudgetGuard::with_reserve_units("read-test", limit, 4, BudgetExhaustionPolicy::Suspend)
+}
+
+/// The house read before its person question is bound. Since f3d1f50f41f (#1568) the person
+/// question is `DecisionReadProvider::new`'s last argument, and the read's call (question,
+/// evidence and bounded state) goes to each read instead of to `new`.
+struct HouseRead<'a> {
+    pin: ProviderPin,
+    reader: &'a dyn LabelReadModel,
+    gate: &'a dyn DecisionReadGate,
+    paired: &'a DecisionQuestion,
+    call: DecisionCall<'a>,
+}
+impl<'a> HouseRead<'a> {
+    /// Refuses what `DecisionReadProvider::new` refuses with no person question bound.
+    fn new(
+        pin: ProviderPin,
+        reader: &'a dyn LabelReadModel,
+        gate: &'a dyn DecisionReadGate,
+        paired: &'a DecisionQuestion,
+        call: DecisionCall<'a>,
+    ) -> Result<Self> {
+        DecisionReadProvider::new(pin.clone(), reader, gate, paired, None)?;
+        Ok(Self {
+            pin,
+            reader,
+            gate,
+            paired,
+            call,
+        })
+    }
+
+    /// Binds the ladder's person question, as `new`'s `person` argument binds it.
+    fn with_person(self, person: &'a DecisionQuestion) -> Result<PersonRead<'a>> {
+        Ok(PersonRead {
+            read: DecisionReadProvider::new(
+                self.pin,
+                self.reader,
+                self.gate,
+                self.paired,
+                Some(person),
+            )?,
+            person,
+            state: self.call.state,
+        })
+    }
+}
+
+/// The house read with its person question bound: the escalation slot as the ladder sees it.
+/// It keeps the bounded state of the call it was built with.
+struct PersonRead<'a> {
+    read: DecisionReadProvider<'a>,
+    person: &'a DecisionQuestion,
+    state: &'a serde_json::Value,
+}
+impl PersonRead<'_> {
+    /// The read a ladder that reaches the person asks: `question` with the person question
+    /// beside it in one pack over the call's state. The answer to `question`.
+    fn decide(
+        &self,
+        question: &DecisionQuestion,
+        evidence: &[EntityId],
+        deadline: &RetrievalDeadline,
+    ) -> Result<ProviderDecision> {
+        let mut answers = self.read.decide_pack(&DecisionPack {
+            questions: &[question, self.person],
+            evidence,
+            images: &[],
+            audio: &[],
+            state: self.state,
+            deadline,
+            run: None,
+            labels: None,
+        })?;
+        Ok(answers.remove(0))
+    }
+}
+impl DecisionProvider for PersonRead<'_> {
+    fn pin(&self) -> ProviderPin {
+        self.read.pin()
+    }
+    fn capability(&self) -> ProviderCapability {
+        self.read.capability()
+    }
+    fn cost_per_thousand(&self) -> Option<f64> {
+        self.read.cost_per_thousand()
+    }
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        self.read.decide(call)
+    }
+    fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
+        self.read.decide_pack(pack)
+    }
 }
 
 /// PR B1 acceptance: an in-band System One answer under an enforced band steps to the
@@ -229,6 +350,8 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
             probability: Some(0.5),
             paired: None,
             person: None,
+            served: None,
+            cost_per_thousand: None,
         },
         calls: AtomicUsize::new(0),
     };
@@ -239,24 +362,22 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
             probability: Some(0.95),
             paired: None,
             person: None,
+            served: None,
+            cost_per_thousand: None,
         },
         calls: AtomicUsize::new(0),
     };
     let reader = Reader::new(vec![0.1, 0.2, 0.7], 0.8);
     let guard = read_guard(100);
     let evidence = vec![EntityId::now()];
+    // The bounded state every provider of the call reads (f3d1f50f41f).
     let state = serde_json::json!({"unit": "bounded"});
-    let call = DecisionReadCall {
-        question: &q,
-        evidence: &evidence,
-        state: &state,
-    };
     let escalation = DecisionReadProvider::new(
         pin(DecisionRung::Escalation, "r1"),
         &reader,
         &guard,
         &paired,
-        call,
+        None,
     )
     .unwrap();
     let queue = Queue::default();
@@ -268,12 +389,18 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
         big: Some(&big),
         human: &queue,
         human_pin: pin(DecisionRung::Human, "q1"),
+        ask_to: None,
+        paired: None,
+        person: None,
+        presence: None,
+        correlation: None,
     };
     let run = |ladder: &DecisionLadder<'_>| {
         ladder.run(
             &q,
             EntityId::now(),
             &evidence,
+            &state,
             dial(DecisionRung::SystemOne, DecisionRung::Big),
             &policy,
             Reversibility::ReversibleRead,
@@ -347,6 +474,7 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
             &q,
             EntityId::now(),
             &evidence,
+            &state,
             dial(DecisionRung::SystemOne, DecisionRung::Human),
             &policy,
             Reversibility::ReversibleRead,
@@ -383,13 +511,19 @@ fn person_reading_at_the_threshold_routes_to_the_person_rung_at_the_start() {
     let guard = read_guard(100);
     let evidence = vec![EntityId::now()];
     let state = serde_json::json!({"unit": "bounded"});
-    let call = DecisionReadCall {
+    let deadline = time();
+    let call = DecisionCall {
         question: &q,
         evidence: &evidence,
+        images: &[],
+        audio: &[],
         state: &state,
+        deadline: &deadline,
+        run: None,
+        labels: None,
     };
     let provider = || {
-        DecisionReadProvider::new(
+        HouseRead::new(
             pin(DecisionRung::Escalation, "r1"),
             &reader,
             &guard,
@@ -411,6 +545,12 @@ fn person_reading_at_the_threshold_routes_to_the_person_rung_at_the_start() {
         big: None,
         human: &queue,
         human_pin: pin(DecisionRung::Human, "q1"),
+        ask_to: None,
+        paired: None,
+        // The ladder asks its person question beside the call's (f3d1f50f41f).
+        person: Some(&person),
+        presence: None,
+        correlation: None,
     };
     let run = |ceiling: DecisionRung, policy: &DecisionBandPolicy| {
         ladder
@@ -418,6 +558,7 @@ fn person_reading_at_the_threshold_routes_to_the_person_rung_at_the_start() {
                 &q,
                 EntityId::now(),
                 &evidence,
+                &state,
                 dial(DecisionRung::Escalation, ceiling),
                 policy,
                 Reversibility::ReversibleRead,
@@ -495,7 +636,7 @@ fn person_reading_at_the_threshold_routes_to_the_person_rung_at_the_start() {
     // never taken as P(yes) = 0.
     assert!(policy.set_person_threshold(0.9, 1).is_err());
     let silent = Reader::new(vec![0.1, 0.2, 0.7], 0.3);
-    let dropped = DecisionReadProvider::new(
+    let dropped = HouseRead::new(
         pin(DecisionRung::Escalation, "r1"),
         &silent,
         &guard,
@@ -514,11 +655,9 @@ fn decision_read_refuses_another_model_a_malformed_read_and_a_refused_budget() {
     let paired = paired_question();
     let evidence = vec![EntityId::now()];
     let state = serde_json::json!({"unit": "bounded"});
-    let call = DecisionReadCall {
-        question: &q,
-        evidence: &evidence,
-        state: &state,
-    };
+    // Since f3d1f50f41f `new`'s last argument binds the person question where the read's
+    // call stood, and the call goes to `decide`. These reads bind no person question.
+    let call: Option<&DecisionQuestion> = None;
     let guard = read_guard(100);
     let reader = Reader::new(vec![0.1, 0.2, 0.7], 0.8);
 
@@ -539,7 +678,16 @@ fn decision_read_refuses_another_model_a_malformed_read_and_a_refused_budget() {
             call,
         )
         .unwrap()
-        .decide(&q, &evidence, &time())
+        .decide(&DecisionCall {
+            question: &q,
+            evidence: &evidence,
+            images: &[],
+            audio: &[],
+            state: &state,
+            deadline: &time(),
+            run: None,
+            labels: None,
+        })
     };
     // A paired reading outside [0, 1], a missing label, or labels that are no distribution.
     for (primary, paired_yes) in [

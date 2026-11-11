@@ -456,6 +456,15 @@ pub trait JsCodeModeRuntime {
     ) {
     }
 
+    /// Lends the isolating backends the run's vault carries (F1-6): the
+    /// set its isolated lane selects a backend from. A runtime with no
+    /// isolated lane selects none, so it keeps none.
+    fn bind_sandbox_backends(
+        &mut self,
+        _backends: std::sync::Arc<dyn crate::code_sandbox::microvm::SandboxBackends>,
+    ) {
+    }
+
     /// Executes one generated JS REPL step inside the sandbox boundary.
     fn run_step(
         &mut self,

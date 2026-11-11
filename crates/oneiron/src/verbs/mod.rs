@@ -52,6 +52,8 @@ mod host;
 mod hub;
 mod identity_topology;
 mod legal_hold;
+// The build-time closure of the verb table over linked `self.*` operations.
+mod linked_self_surface;
 mod live_run;
 mod live_voice;
 mod mesh;

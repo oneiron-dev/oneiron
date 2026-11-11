@@ -20,13 +20,15 @@ use crate::channel_identity_lifecycle::{
 };
 use crate::channel_identity_selection::RelationshipContext;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::error::{ErrorKind, RecordError};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::test_util::entity;
+
+/// The retired static COMPANION_REGISTER kind byte (OF-274, 7d892007139, #1940 deleted the constant).
+const ENTITY_TYPE_COMPANION_REGISTER: u8 = 115;
 
 const VAULT_ID: u64 = 7;
 const AT: u64 = 1_700_000_000;

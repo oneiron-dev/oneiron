@@ -58,6 +58,12 @@ def assert_quickstart(result):
         assert isinstance(row["reason_codes"], list)
 
 
+def test_installed_quickstarts():
+    results = Path(os.environ["WIRE_RESULTS"])
+    for language in ("node", "python"):
+        assert_quickstart(json.loads((results / f"{language}.json").read_text()))
+
+
 def node_result(mode, *, occurred_at=None):
     project = Path(os.environ["WIRE_NODE_PROJECT"])
     env = os.environ.copy()
@@ -186,3 +192,29 @@ def test_remote_sdk_parity():
     assert older in short_ids
     assert newer in short_ids
     assert short_ids.index(newer) < short_ids.index(older)
+
+
+def test_installed_remote_quickstarts():
+    """Pair, then connect, with the complete README snippets on installed SDKs."""
+    import shutil
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    quickstart = root / "packages/oneiron/quickstart"
+    project = Path(os.environ["WIRE_NODE_PROJECT"])
+    for name in ("node-pair.mjs", "node-connect.mjs"):
+        shutil.copyfile(quickstart / name, project / name)
+    env = os.environ.copy()
+    env["ONEIRON_URL"] = env["ONEIRON_WIRE_URL"]
+    for pair, connect, link in (
+        (["node", str(project / "node-pair.mjs")], ["node", str(project / "node-connect.mjs")],
+         env["ONEIRON_WIRE_README_NODE_LINK"]),
+        ([sys.executable, str(quickstart / "python-pair.py")],
+         [sys.executable, str(quickstart / "python-connect.py")],
+         env["ONEIRON_WIRE_README_PYTHON_LINK"]),
+    ):
+        paired = subprocess.run(pair, env=env | {"ONEIRON_LINK": link}, text=True,
+                                capture_output=True, check=True, timeout=180)
+        result = subprocess.run(connect, env=env | {"ONEIRON_KEY": paired.stdout.strip()},
+                                text=True, capture_output=True, check=True, timeout=180)
+        assert_quickstart(json.loads(result.stdout))

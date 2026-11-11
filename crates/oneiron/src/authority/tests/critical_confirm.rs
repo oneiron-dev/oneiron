@@ -47,7 +47,7 @@ fn critical_confirm_entry(
 #[test]
 fn critical_write_confirm_owner_methods_fold_and_replay_keeps_first_confirmation() {
     let owner = ed_key(240);
-    let genesis = genesis_entry(240, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(240, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let clear = critical_confirm_entry(
         vault_id,
@@ -101,7 +101,7 @@ fn critical_write_confirm_owner_methods_fold_and_replay_keeps_first_confirmation
 fn critical_write_confirm_agent_cannot_self_clear() {
     let owner = ed_key(241);
     let agent = ed_key(242);
-    let genesis = genesis_entry(241, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(241, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enroll = enroll_device_entry(
         vault_id,
@@ -267,7 +267,7 @@ fn critical_write_confirm_three_sibling_nonce_collision_keeps_provenance_associa
 #[test]
 fn critical_write_confirm_three_siblings_replay_reopen_poison_every_contender() {
     let owner = ed_key(209);
-    let genesis = genesis_entry(209, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(209, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let pending = |claim: u8, decision: u8, diff: u8| crate::store::PendingGateConsentRecord {
         version: 0,
@@ -278,6 +278,8 @@ fn critical_write_confirm_three_siblings_replay_reopen_poison_every_contender() 
         read_frontier_hash: [diff; 32],
         reason_codes: vec!["gate.pending.critical_confirm_attached".to_owned()],
         dreamer_run_id: None,
+        predicate: None,
+        expires_at: None,
     };
     let w_pending = pending(30, 50, 1);
     let w_action = raw_critical_confirm_action(
@@ -384,7 +386,7 @@ fn critical_write_confirm_revoked_signer_is_fold_invalid() {
     let owner = ed_key(200);
     let second = ed_key(201);
     let peer = ed_key(202);
-    let genesis = genesis_entry(200, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(200, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enroll_second = enroll_device_entry(
         vault_id,
@@ -467,7 +469,7 @@ fn critical_write_confirm_revoked_signer_is_fold_invalid() {
 fn critical_write_confirm_admin_only_signer_is_fold_invalid() {
     let owner = ed_key(202);
     let admin = ed_key(203);
-    let genesis = genesis_entry(202, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(202, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enroll = enroll_device_entry(
         vault_id,
@@ -515,7 +517,7 @@ fn critical_write_confirm_admin_only_signer_is_fold_invalid() {
 #[test]
 fn critical_write_confirm_ancestry_nonce_reuse_distinct_id_is_fold_invalid() {
     let owner = ed_key(206);
-    let genesis = genesis_entry(206, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(206, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let first = critical_confirm_entry(
         vault_id,
@@ -606,6 +608,7 @@ fn put_critical_confirm_claim(vault: &crate::Vault, id: EntityId) {
         crate::registry::ENTITY_TYPE_CLAIM,
         TimeRange { start: 1, end: 1 },
         1,
+        1, // row_version of a fresh claim row (29ac7734ec8)
         &data,
     );
     vault

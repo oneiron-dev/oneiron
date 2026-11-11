@@ -200,7 +200,7 @@ pub(crate) fn check_source_bound_witness_message_ceiling<'a>(
 /// every turn a vault ever records), and no consent context is composed. What
 /// is left is exactly the actor identity, the actor's ceiling, and the
 /// fail-closed manifest checks — the ceiling question this door asks.
-fn witness_message_gate_input(
+pub(super) fn witness_message_gate_input(
     actor: WriteActor,
     agent_definition_ceiling: Option<PolicyApprovalCeiling>,
 ) -> GateEvaluatorInput {
