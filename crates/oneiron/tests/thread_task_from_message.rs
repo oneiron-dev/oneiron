@@ -4,27 +4,32 @@
 //! assignee. A spec that routes through approval, and a trunk message, are
 //! refused with nothing written.
 //!
-//! Fixture: a project whose roster seats owen and agent A; a trunk witness
-//! turn (the anchor) and a private thread on it, rooted on a witness turn
-//! whose audience is owen and A. owen makes each TASK, assigned to A.
+//! Fixture: a project whose roster seats owen, the vault's owner, and agent
+//! A, which holds a grant over the room's messages; a trunk witness turn (the
+//! anchor) and a private thread on it, rooted on a witness turn whose
+//! audience is owen and A. owen makes each TASK, assigned to A. owen is the
+//! owner because a PERSON with no contact clearance reads only public rows,
+//! and a room's TURNs and MESSAGEs are born Sensitive.
 //!
 //! Public paths only; no test door.
 //! `cargo test --locked -p oneiron --all-features --test thread_task_from_message`.
 
 use std::collections::BTreeSet;
 
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use oneiron::claim::ClaimApprovalStatus;
-use oneiron::federation::Scope;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::policy_manifest_doors::{
     ActorCeiling, PolicyCeiling, PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow,
     policy_manifests_as_owner, put_policy_manifest_as_owner,
 };
-use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::workspace_roster::ProjectRecord;
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 /// The label this file's TASKs carry.
 const FIXTURE_PATH: &str = "crates/oneiron/tests/thread_task_from_message.rs";
@@ -33,7 +38,6 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 struct Fixture {
     vault: Vault,
-    owner: EntityId,
     owen: EntityId,
     agent_a: EntityId,
     room: EntityId,
@@ -99,18 +103,7 @@ fn open_fixture() -> TestResult<Fixture> {
     let proof = vault
         .memory(owner, EdgeActorClass::Human)
         .embedded_owner("vault.agents.create")?;
-    let owen = EntityId::now();
-    let now = vault.now_recorded_at();
-    vault.put_entity(
-        &owen,
-        ENTITY_TYPE_PERSON,
-        TimeRange {
-            start: now,
-            end: now,
-        },
-        now,
-        b"owen",
-    )?;
+    let owen = owner;
     let agent_a = EntityId::now();
     let definition: AgentDefinitionSpec = serde_json::from_value(serde_json::json!({
         "agent_id": "yuki",
@@ -171,6 +164,28 @@ fn open_fixture() -> TestResult<Fixture> {
     project.roster.extend([agent_a.to_hex()]);
     vault.put_project(project_id, &project, vault.now_recorded_at())?;
     let room = EntityId::from_hex(&project.home_room)?;
+    // A room read admits a row only when every reader of its audience may:
+    // A reads the room's MESSAGEs under a grant.
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    vault.create_access_grant(
+        &EntityId::now(),
+        &AccessGrant {
+            authority_scope,
+            principal_ref: agent_a,
+            scope: AccessGrantScope::ConversationMessages {
+                conversation_ref: room,
+            },
+            capability: AccessGrantCapability::MessagesRead,
+            status: AccessGrantStatus::Active,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+            revoked_at: None,
+            expires_at: None,
+            companion_bounds: None,
+        },
+    )?;
     let anchor = EntityId::now();
     let trunk_message = speak_turn(&vault, owen, room, anchor, None, None, None)?;
     let thread = EntityId::now();
@@ -183,9 +198,18 @@ fn open_fixture() -> TestResult<Fixture> {
         None,
         Some(BTreeSet::from([owen, agent_a])),
     )?;
+    // owen reads the thread's root row and its MESSAGE before any create, so
+    // a reader that cannot see the thread never passes for a refusal.
+    let rows = vault
+        .memory(owen, EdgeActorClass::Human)
+        .rooms_messages(room)?;
+    if !rows.iter().any(|row| {
+        row.turn_id == thread.to_hex() && row.message_ids.contains(&root_message.to_hex())
+    }) {
+        return Err("fixture: owen reads no room row for the thread's root".into());
+    }
     Ok(Fixture {
         vault,
-        owner,
         owen,
         agent_a,
         room,
@@ -312,7 +336,7 @@ fn approval_routed_spec_is_refused_and_writes_no_task() -> TestResult {
     let fixture = open_fixture()?;
     let proof = fixture
         .vault
-        .memory(fixture.owner, EdgeActorClass::Human)
+        .memory(fixture.owen, EdgeActorClass::Human)
         .embedded_owner("vault.gate.policy.put")?;
     let view = policy_manifests_as_owner(
         &fixture.vault,
