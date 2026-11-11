@@ -1,5 +1,6 @@
 #![cfg(oneiron_test_support)]
 
+use oneiron::blob_artifact::esign::esign_seal_verify_reasons::append_event;
 use oneiron::blob_artifact::esign::{
     DocumentKind, ESIGN_SEAL_ATTEMPT_KIND, EsignAuditActor, EsignDocument, EsignEvent,
     EsignField, EsignItem, EsignRecipient, EsignSealError, EsignSealGetRequest,
@@ -7,7 +8,6 @@ use oneiron::blob_artifact::esign::{
     EsignSealerError, EsignState, EsignVerdict, FieldGeometry, FieldMeta, RecipientRole,
     SealActiveContentFacts, SealProfile, SealVerdict, render,
 };
-use oneiron::test_doors::esign_seal_verify_reasons::append_event;
 use oneiron::{EntityId, Result, TimeRange, Vault, VaultConfig};
 
 fn actor() -> EsignAuditActor {
