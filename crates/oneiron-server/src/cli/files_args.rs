@@ -14,6 +14,9 @@ pub enum FilesCommand {
     /// one, and read it; `oneiron serve` rescans it every few minutes from
     /// then on. The world stays on this install: no sealed copy, never synced.
     Attach(Box<FilesAttachArgs>),
+    /// Convert an attached notes folder to Files and read it. The old notes
+    /// stay; the rescan ledger starts again under the Files source's identity.
+    Convert(Box<FilesConvertArgs>),
     /// Rescan one Files folder now, or every one.
     Rescan(Box<FilesRescanArgs>),
     /// Detach a Files folder: no rescan reads it again. Its notes stay.
@@ -54,6 +57,23 @@ pub struct FilesAttachArgs {
     /// vault knows; `observation` when absent.
     #[arg(long)]
     pub kind: Option<String>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct FilesConvertArgs {
+    /// The folder already attached as notes.
+    pub path: PathBuf,
+
+    /// Extra exclusions, added to the Files defaults. Repeatable.
+    #[arg(long)]
+    pub exclude: Vec<String>,
+
+    /// Drop the Files defaults: only `--exclude` is passed over.
+    #[arg(long)]
+    pub no_default_exclude: bool,
 
     #[command(flatten)]
     pub serve: ServeArgs,

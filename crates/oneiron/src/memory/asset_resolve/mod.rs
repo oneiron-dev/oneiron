@@ -52,7 +52,10 @@ mod image_mask;
 mod reads;
 mod serving;
 mod types;
-pub(crate) use blob::{asset_media_in, land_asset_blob_in_txn, release_asset_blob_in_txn};
+pub(crate) use blob::{
+    asset_media_in, discard_asset_blob_reference_in_txn, land_asset_blob_in_txn,
+    release_asset_blob_in_txn,
+};
 pub(super) use generation::asset_body;
 #[cfg(test)]
 pub(crate) use generation::generated_asset_body;

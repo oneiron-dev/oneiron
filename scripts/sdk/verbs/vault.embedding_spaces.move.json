@@ -1,0 +1,16 @@
+{
+  "name": "vault.embedding_spaces.move",
+  "description": "Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space.",
+  "input": "crate::task_verb::sdk::EmbeddingSpaceMoveRequest",
+  "output": "crate::embed::SpaceMove",
+  "call": "crate::task_verb::sdk::begin_embedding_space_move_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.move\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

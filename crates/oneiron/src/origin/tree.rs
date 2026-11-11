@@ -1,6 +1,6 @@
 //! Byte-preserving projection of complete Git trees. No worktree IO or ref writes.
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitWire, GitWireRepo};
+use crate::git_wire::{GitOid, GitWire, GitWireRepo, git_path_string};
 use crate::store::EngineScan;
 use crate::store::scan_count::ScanCount;
 use std::collections::BTreeMap;
@@ -30,8 +30,9 @@ pub fn read_tree_files(
     while let Some((prefix, oid)) = pending.pop() {
         for entry in git.read_tree(repo, &oid)? {
             count.row();
-            let name = String::from_utf8(entry.name)
-                .map_err(|_| Error::InvariantViolation("code paths must be UTF-8"))?;
+            // A name outside UTF-8 keeps its exact bytes as a Git path's
+            // text (FIX 21326): never a lossy label or a skipped file.
+            let name = git_path_string(entry.name)?;
             if name.is_empty() || name.contains('/') || matches!(name.as_str(), "." | ".." | ".git")
             {
                 return Err(Error::InvariantViolation("unsafe code tree path"));

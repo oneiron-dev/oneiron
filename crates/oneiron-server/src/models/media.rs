@@ -51,6 +51,7 @@ use super::voxcpm2_speech::VoxCpm2Speech;
 use super::walk::provider_down;
 use super::{LoggedReceipts, ladder_locality, undeclared_run};
 
+mod agent;
 // FIX 3208: the video jobs an agent asked for under the owner's ai.video Grant.
 mod asked_jobs;
 mod bindings;
@@ -71,6 +72,8 @@ mod run_line;
 mod video_length;
 // FIX 9517: every reference upload under the bank's current reference.
 mod voice_reference;
+
+pub(crate) use agent::AgentMediaCall;
 
 use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
 use run_line::{JobLine, ProgramLine};
@@ -412,7 +415,7 @@ impl MediaRuntime {
         release: MediaDispatchRelease<'_>,
     ) -> LlmResult<MediaResponse> {
         let run = self.media_run(payer, sources)?;
-        self.run_admitted_released(&run, request, voices, None, release)
+        self.run_admitted_released(&run, request, voices, None, release, None)
             .await
     }
 
@@ -790,12 +793,7 @@ impl MediaRuntime {
         payer: Option<PayerPerson>,
         sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<oneiron::llm::run_admission::MediaStreamLease> {
-        if request.operation != AiOperation::Transcribe || bound_ms == 0 {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let ladder = self.ladder(&request)?;
-        let run = self.media_run(payer, sources)?;
-        ladder.open_media_stream(&run, request, bound_ms)
+        self.open_stream_with_agent(request, bound_ms, payer, sources, None)
     }
 }
 

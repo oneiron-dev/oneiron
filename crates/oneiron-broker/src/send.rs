@@ -8,6 +8,7 @@
 //! follow or reply guard (OF-603).
 
 use std::io;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -16,15 +17,16 @@ use reqwest::header::{
     ACCEPT_ENCODING, CONTENT_ENCODING, HeaderMap, HeaderValue, LOCATION, TRANSFER_ENCODING,
 };
 use reqwest::{Certificate, Client, Method, Url};
-use tokio::io::AsyncWrite;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+
+use crate::frame::dispatch::{DispatchPoint, request_dispatch};
 use zeroize::Zeroizing;
 
 use crate::deadline::{CallDeadline, within};
 use crate::frame::{STREAM_CHUNK, write_chunk, write_reply, write_stream_end, write_stream_header};
 use crate::strip::{KeyWatch, admits, contains_key, strip};
 use crate::{
-    CallHeader, Failure, MAX_BODY, MAX_SECRET, MAX_STREAM, Outcome, PROTOCOL_VERSION, Refusal,
-    ReplyHeader,
+    CallHeader, Failure, MAX_BODY, MAX_SECRET, Outcome, PROTOCOL_VERSION, Refusal, ReplyHeader,
 };
 
 /// The shortest key the broker injects. Stripping a shorter one would redact
@@ -51,6 +53,15 @@ pub struct SendPolicy {
 /// The client every call of one broker sends through.
 pub(crate) struct Sender {
     client: Client,
+    /// The client a git exchange and an LFS batch send through: the same
+    /// verified TLS and the same no-redirect, no-retry, no-proxy,
+    /// no-decoding rules, and no timer of its own, so each exchange's idle
+    /// bound times its connect and its send (OSH-3), never a model send's
+    /// timeout.
+    exchange: Client,
+    /// The policy's private-CA roots, parsed once: an LFS action's client,
+    /// built for the addresses its host was admitted at, trusts them too.
+    roots: Vec<Certificate>,
     ws_tls: Arc<rustls::ClientConfig>,
     /// [`SendPolicy::timeout`].
     timeout: Duration,
@@ -63,28 +74,18 @@ pub(crate) struct Sender {
 
 impl Sender {
     pub(crate) fn new(policy: &SendPolicy) -> io::Result<Self> {
-        let mut builder = Client::builder()
-            .use_rustls_tls()
-            .https_only(true)
-            .tls_built_in_root_certs(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .no_proxy()
-            .no_gzip()
-            .no_brotli()
-            .no_deflate()
-            .no_zstd()
+        let roots = extra_roots(policy)?;
+        let client = client_builder(&roots)
             .connect_timeout(policy.timeout.min(Duration::from_secs(30)))
-            .timeout(policy.timeout);
-        for pem in &policy.extra_roots {
-            for root in Certificate::from_pem_bundle(pem).map_err(io::Error::other)? {
-                builder = builder.add_root_certificate(root);
-            }
-        }
-        let client = builder.build().map_err(io::Error::other)?;
+            .timeout(policy.timeout)
+            .build()
+            .map_err(io::Error::other)?;
+        let exchange = client_builder(&roots).build().map_err(io::Error::other)?;
         let ws_tls = ws_client_config(&policy.extra_roots)?;
         Ok(Self {
             client,
+            exchange,
+            roots,
             ws_tls,
             timeout: policy.timeout,
             gzip: AtomicBool::new(true),
@@ -96,21 +97,62 @@ impl Sender {
         CallDeadline::start(self.timeout)
     }
 
+    /// The verified client a git exchange and an LFS batch send through,
+    /// under the exchange's own idle bound, never this policy's timeout.
+    pub(crate) fn exchange_client(&self) -> &Client {
+        &self.exchange
+    }
+
+    /// A verified client like [`Self::exchange_client`] that reaches `host`
+    /// at `addresses` alone, never resolving it again: an LFS action's,
+    /// whose host was admitted at those addresses.
+    pub(crate) fn pinned_exchange_client(
+        &self,
+        host: &str,
+        addresses: &[SocketAddr],
+    ) -> io::Result<Client> {
+        client_builder(&self.roots)
+            .resolve_to_addrs(host, addresses)
+            .build()
+            .map_err(io::Error::other)
+    }
+
     /// Sends `body` to `url` once with the key in the shape's auth header,
     /// then strips the key from what came back. `call` has passed
     /// [`CallHeader::check`] on `body`. The send ends by `deadline`'s send
     /// limit.
-    pub(crate) async fn send(
+    pub(crate) async fn send<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
         url: Url,
         body: Zeroizing<Vec<u8>>,
         secret: &[u8],
+        writer: &mut W,
+        released: bool,
         deadline: CallDeadline,
     ) -> (Outcome, Zeroizing<Vec<u8>>) {
         let empty = Zeroizing::new(Vec::new());
-        let mut response = match self.reach(call, url, body, secret, deadline).await {
-            Ok(response) => response,
+        let mut response = match self
+            .reach(
+                call,
+                url,
+                body,
+                secret,
+                released.then_some(&mut *writer),
+                released,
+                deadline,
+            )
+            .await
+        {
+            Ok(Some(response)) => response,
+            Ok(None) => {
+                return (
+                    Outcome::Failed {
+                        reason: Failure::Send,
+                    },
+                    empty,
+                );
+            }
             Err(outcome) => return (outcome, empty),
         };
         let mut raw = Zeroizing::new(Vec::new());
@@ -153,27 +195,31 @@ impl Sender {
     /// [`CallHeader::check`]. The send ends by `deadline`'s send limit, and
     /// each write within its frame allowance and the deadline; a daemon that
     /// takes longer is gone, and the reply is dropped.
-    pub(crate) async fn stream<W: AsyncWrite + Unpin>(
+    pub(crate) async fn stream<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
         whole: Option<Zeroizing<Vec<u8>>>,
+        released: bool,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
     ) {
         let _ = self
-            .stream_to(call, checked, body, whole, secret, writer, deadline)
+            .stream_to(
+                call, checked, body, whole, released, secret, writer, deadline,
+            )
             .await;
     }
 
-    async fn stream_to<W: AsyncWrite + Unpin>(
+    async fn stream_to<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
         whole: Option<Zeroizing<Vec<u8>>>,
+        released: bool,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
@@ -185,6 +231,7 @@ impl Sender {
                 checked,
                 body,
                 whole,
+                released,
                 secret,
                 writer,
                 deadline,
@@ -192,56 +239,37 @@ impl Sender {
             .await;
         }
         let reached = match checked {
-            Ok(url) => self.reach(call, url, body, secret, deadline).await,
+            Ok(url) => {
+                self.reach(
+                    call,
+                    url,
+                    body,
+                    secret,
+                    Some(&mut *writer),
+                    released,
+                    deadline,
+                )
+                .await
+            }
             Err(reason) => Err(Outcome::Refused { reason }),
         };
-        let mut response = match reached {
-            Ok(response) => response,
+        let response = match reached {
+            Ok(Some(response)) => response,
+            Ok(None) => return Ok(()),
             Err(outcome) => return answer(writer, call, outcome, deadline).await,
         };
-        let answered = Outcome::Answered {
-            status: response.status().as_u16(),
-            headers: reply_headers(response.headers(), secret),
-        };
-        let header = reply(call, answered);
-        within(deadline, write_stream_header(writer, &header)).await?;
-        let mut watch = KeyWatch::new(secret);
-        let mut cleared = Zeroizing::new(Vec::new());
-        let mut read = 0_usize;
-        let cut = loop {
-            let (passed, last) = match response.chunk().await {
-                Ok(Some(chunk)) if read + chunk.len() > MAX_STREAM => {
-                    break Some(Failure::ReplyTooLarge);
-                }
-                Ok(Some(chunk)) => {
-                    read += chunk.len();
-                    (watch.push(&chunk), false)
-                }
-                Ok(None) => (watch.finish(), true),
-                Err(error) => break Some(failure(&error)),
-            };
-            if push_wiped(&mut cleared, &passed).is_err() {
-                break Some(Failure::Send);
-            }
-            // Whole chunks as they fill; at the end, the rest too.
-            let mut sent = 0;
-            while cleared.len() - sent >= STREAM_CHUNK || (last && sent < cleared.len()) {
-                let end = cleared.len().min(sent + STREAM_CHUNK);
-                within(deadline, write_chunk(writer, &cleared[sent..end])).await?;
-                sent = end;
-            }
-            if last {
-                break None;
-            }
-            if sent > 0 {
-                let mut remainder = Zeroizing::new(Vec::new());
-                if push_wiped(&mut remainder, &cleared[sent..]).is_err() {
-                    break Some(Failure::Send);
-                }
-                cleared = remainder;
-            }
-        };
-        within(deadline, write_stream_end(writer, cut)).await
+        if call.shape.relays_events() {
+            // HTTP release checks finish before this header/body phase.
+            let (mut reading, mut writing) = tokio::io::split(writer);
+            while_daemon_waits(
+                Some(&mut reading),
+                stream_reply_to(&mut writing, call, response, secret, deadline),
+            )
+            .await
+            .unwrap_or(Ok(()))
+        } else {
+            stream_reply_to(writer, call, response, secret, deadline).await
+        }
     }
 
     /// Sends the request once with the key, and for a shape that follows one
@@ -254,22 +282,40 @@ impl Sender {
     /// body is the reply, or the outcome that ends the call before one. Each
     /// request gets only the send's time left, to the last reply byte; a call
     /// with none left is not sent (FIX 8559).
-    async fn reach(
+    async fn reach<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
         url: Url,
         body: Zeroizing<Vec<u8>>,
         secret: &[u8],
+        mut release: Option<&mut W>,
+        released: bool,
         deadline: CallDeadline,
-    ) -> Result<reqwest::Response, Outcome> {
+    ) -> Result<Option<reqwest::Response>, Outcome> {
         let timed_out = || Outcome::Failed {
             reason: Failure::Timeout,
         };
         let left = deadline.send_left().ok_or_else(timed_out)?;
-        let (request, plain) = self
+        let (mut request, plain) = self
             .request(call, url.clone(), body, secret, left)
             .map_err(|reason| Outcome::Refused { reason })?;
-        let mut response = match self.client.execute(request).await {
+        if released && let Some(stream) = release.as_deref_mut() {
+            release_http_send(stream, call, DispatchPoint::Initial, deadline).await?;
+            *request.timeout_mut() = Some(deadline.send_left().ok_or_else(timed_out)?);
+        }
+        let Some(executed) = while_daemon_waits(
+            if call.shape.relays_events() {
+                release.as_deref_mut()
+            } else {
+                None
+            },
+            self.client.execute(request),
+        )
+        .await
+        else {
+            return Ok(None);
+        };
+        let mut response = match executed {
             Ok(response) => response,
             // A connect error comes before any request byte is written.
             Err(error) if error.is_connect() => {
@@ -288,18 +334,30 @@ impl Sender {
             let refused = response.status();
             drop(response);
             let left = deadline.send_left().ok_or_else(timed_out)?;
-            let resend = self
+            let mut resend = self
                 .request_plain(call, url.clone(), plain, secret, left)
                 .map_err(|_| Outcome::Failed {
                     reason: Failure::Send,
                 })?;
+            if released && let Some(stream) = release.as_deref_mut() {
+                release_http_send(stream, call, DispatchPoint::PlainRetry, deadline).await?;
+                *resend.timeout_mut() = Some(deadline.send_left().ok_or_else(timed_out)?);
+            }
             // The first 400 or 415 proves bytes reached the provider, so a
             // resend that fails is `Failed`, never `Refused{Connect}`.
-            response = self
-                .client
-                .execute(resend)
-                .await
-                .map_err(|error| failed(&error))?;
+            let Some(executed) = while_daemon_waits(
+                if call.shape.relays_events() {
+                    release.as_deref_mut()
+                } else {
+                    None
+                },
+                self.client.execute(resend),
+            )
+            .await
+            else {
+                return Ok(None);
+            };
+            response = executed.map_err(|error| failed(&error))?;
             if response.status() != refused {
                 self.gzip.store(false, Ordering::Relaxed);
                 eprintln!(
@@ -327,7 +385,7 @@ impl Sender {
             // the key goes along: the provider's download hop asks for it.
             let auth = auth_value(call, secret).map_err(|reason| Outcome::Refused { reason })?;
             let left = deadline.send_left().ok_or_else(timed_out)?;
-            let follow = self
+            let mut follow = self
                 .client
                 .get(target)
                 .header(ACCEPT_ENCODING, "identity")
@@ -335,11 +393,23 @@ impl Sender {
                 .timeout(left)
                 .build()
                 .map_err(|_| redirected.clone())?;
-            response = self
-                .client
-                .execute(follow)
-                .await
-                .map_err(|error| failed(&error))?;
+            if released && let Some(stream) = release.as_deref_mut() {
+                release_http_send(stream, call, DispatchPoint::Redirect, deadline).await?;
+                *follow.timeout_mut() = Some(deadline.send_left().ok_or_else(timed_out)?);
+            }
+            let Some(executed) = while_daemon_waits(
+                if call.shape.relays_events() {
+                    release.as_deref_mut()
+                } else {
+                    None
+                },
+                self.client.execute(follow),
+            )
+            .await
+            else {
+                return Ok(None);
+            };
+            response = executed.map_err(|error| failed(&error))?;
             if response.status().is_redirection() {
                 return Err(redirected);
             }
@@ -349,7 +419,7 @@ impl Sender {
                 reason: Failure::ReplyEncoded,
             });
         }
-        Ok(response)
+        Ok(Some(response))
     }
 
     /// Builds the request, and the checked plain body when it goes gzip-sent:
@@ -378,8 +448,8 @@ impl Sender {
                 .build()
                 .map(|request| (request, Some(body)))
                 .map_err(|_| Refusal::Header),
-            // The checked bytes themselves, moved, not copied: a body
-            // can run to `MAX_STREAM` (FIX 1895).
+            // The checked bytes themselves, moved, not copied, however
+            // large the chunked body was (FIX 1895).
             None => builder
                 .body(std::mem::take(&mut *body))
                 .build()
@@ -457,6 +527,126 @@ impl Sender {
     }
 }
 
+async fn stream_reply_to<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    call: &CallHeader,
+    mut response: reqwest::Response,
+    secret: &[u8],
+    deadline: CallDeadline,
+) -> io::Result<()> {
+    let answered = Outcome::Answered {
+        status: response.status().as_u16(),
+        headers: reply_headers(response.headers(), secret),
+    };
+    let header = reply(call, answered);
+    within(deadline, write_stream_header(writer, &header)).await?;
+    let mut watch = KeyWatch::new(secret);
+    let mut cleared = Zeroizing::new(Vec::new());
+    // Relayed events go on as soon as the watch clears them, a frame at
+    // most at a time; other streamed bodies go in whole frames (FIX
+    // 15702). The watch still holds back any bytes that could begin a
+    // form of the key.
+    let eager = call.shape.relays_events();
+    let cut = loop {
+        let (passed, last) = match response.chunk().await {
+            Ok(Some(chunk)) => (watch.push(&chunk), false),
+            Ok(None) => (watch.finish(), true),
+            Err(error) => break Some(failure(&error)),
+        };
+        if push_wiped(&mut cleared, &passed).is_err() {
+            break Some(Failure::Send);
+        }
+        // Whole chunks as they fill; at the end, the rest too.
+        let mut sent = 0;
+        while cleared.len() - sent >= STREAM_CHUNK || ((last || eager) && sent < cleared.len()) {
+            let end = cleared.len().min(sent + STREAM_CHUNK);
+            within(deadline, write_chunk(writer, &cleared[sent..end])).await?;
+            sent = end;
+        }
+        if last {
+            break None;
+        }
+        if sent > 0 {
+            let mut remainder = Zeroizing::new(Vec::new());
+            if push_wiped(&mut remainder, &cleared[sent..]).is_err() {
+                break Some(Failure::Send);
+            }
+            cleared = remainder;
+        }
+    };
+    within(deadline, write_stream_end(writer, cut)).await
+}
+
+/// Watches the existing close/input signal only between release handshakes.
+async fn while_daemon_waits<R, F>(reading: Option<&mut R>, work: F) -> Option<F::Output>
+where
+    R: AsyncRead + Unpin,
+    F: std::future::Future,
+{
+    let Some(reading) = reading else {
+        return Some(work.await);
+    };
+    let mut byte = [0_u8; 1];
+    tokio::select! {
+        biased;
+        result = work => Some(result),
+        _ = reading.read(&mut byte) => None,
+    }
+}
+
+async fn release_http_send<W: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut W,
+    call: &CallHeader,
+    point: DispatchPoint,
+    deadline: CallDeadline,
+) -> Result<(), Outcome> {
+    let failure = |reason| Outcome::Failed { reason };
+    tokio::time::timeout_at(deadline.send_by(), request_dispatch(stream, call, point))
+        .await
+        .map_err(|_| failure(Failure::Timeout))?
+        .map_err(|error| {
+            failure(if error.kind() == io::ErrorKind::TimedOut {
+                Failure::Timeout
+            } else {
+                Failure::Send
+            })
+        })?;
+    deadline
+        .send_left()
+        .ok_or_else(|| failure(Failure::Timeout))?;
+    Ok(())
+}
+
+/// The rules every client of the broker shares: rustls with the WebPKI, the
+/// platform and the policy's private-CA roots (`roots`), `https` only, no
+/// redirect, no retry, no proxy and no automatic decoding.
+fn client_builder(roots: &[Certificate]) -> reqwest::ClientBuilder {
+    let mut builder = Client::builder()
+        .use_rustls_tls()
+        .https_only(true)
+        .tls_built_in_root_certs(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .no_proxy()
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd();
+    for root in roots {
+        builder = builder.add_root_certificate(root.clone());
+    }
+    builder
+}
+
+/// The policy's private-CA roots, each PEM bundle parsed.
+fn extra_roots(policy: &SendPolicy) -> io::Result<Vec<Certificate>> {
+    let mut roots = Vec::new();
+    for pem in &policy.extra_roots {
+        roots.extend(Certificate::from_pem_bundle(pem).map_err(io::Error::other)?);
+    }
+    Ok(roots)
+}
+
 /// Uses the HTTPS sender's WebPKI, platform and configured private-CA trust.
 /// The HTTPS client has already validated every configured PEM bundle.
 fn ws_client_config(extra_roots: &[Vec<u8>]) -> io::Result<Arc<rustls::ClientConfig>> {
@@ -488,11 +678,79 @@ const GZIP_ORIGIN: &str = "https://api.anthropic.com";
 /// The smallest request body worth compressing.
 const MIN_COMPRESSED_BODY: usize = 16 << 10;
 
+/// Whether `secret` is a key the strip rule is sure to find in a reply:
+/// long enough, short enough, ASCII in the rule's own alphabet.
+pub(crate) fn watchable(secret: &[u8]) -> bool {
+    secret.len() >= MIN_SECRET && secret.len() <= MAX_SECRET && admits(secret)
+}
+
+/// Whether a git or LFS-batch credential's watched token is one the broker
+/// sends: any bytes, up to [`MAX_SECRET`]. The reply's echo watch searches
+/// the token's literal forms and never rewrites a reply, which every byte
+/// supports, so a Basic password with a `%`, or one shorter than a model
+/// key, goes as it did before the broker ([`git_echo_form`] says which
+/// forms a short one is watched by).
+pub(crate) fn git_watchable(token: &[u8]) -> bool {
+    !token.is_empty() && token.len() <= MAX_SECRET
+}
+
+/// The literal forms of a git or LFS-batch credential's `token` the reply
+/// watch searches for, in its headers and its body: each of at least
+/// [`git_echo_form`]'s length.
+pub(crate) fn git_echo_forms(token: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
+    let mut forms = crate::strip::forms(token);
+    forms.extend(crate::strip::base64_forms(token));
+    forms.retain(|form| git_echo_form(form));
+    forms
+}
+
+/// A git or LFS reply's headers as the daemon gets them: each one whose
+/// name or value holds one of `forms` ([`git_echo_forms`]; none when no
+/// credential was installed) is left out whole, and every other passes
+/// byte for byte, under the model reply's count and byte bounds. Nothing is
+/// rewritten: the model strip would redact a short token's text inside
+/// git's own values (a password `git` in
+/// `application/x-git-upload-pack-advertisement`), and Git would not know
+/// the reply.
+pub(crate) fn git_reply_headers(
+    headers: &reqwest::header::HeaderMap,
+    forms: &[Zeroizing<Vec<u8>>],
+) -> Vec<(String, String)> {
+    let holds = |bytes: &[u8]| {
+        forms
+            .iter()
+            .any(|form| memchr::memmem::find(bytes, form).is_some())
+    };
+    let mut kept = Vec::new();
+    let mut size = 0;
+    for (name, value) in headers {
+        if holds(name.as_str().as_bytes()) || holds(value.as_bytes()) {
+            continue;
+        }
+        let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
+        size += name.as_str().len() + value.len();
+        if kept.len() == MAX_REPLY_HEADERS || size > MAX_REPLY_HEADER_BYTES {
+            break;
+        }
+        kept.push((name.as_str().to_owned(), value));
+    }
+    kept
+}
+
+/// Whether the git echo watch searches a reply for `form`, one literal form
+/// of a git credential's token: one of at least a model key's least length.
+/// A shorter one would be found among a pack's bytes by chance and cut a
+/// clean reply, so a short token is watched by its longer forms alone (its
+/// `Bearer`, percent and base64 forms).
+pub(crate) fn git_echo_form(form: &[u8]) -> bool {
+    form.len() >= MIN_SECRET
+}
+
 /// The shape's key header value for `secret`, marked sensitive.
 pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
     // Only a key the strip rule is sure to find in a reply: ASCII, so no key
     // byte hides inside a multibyte one, in the rule's own alphabet.
-    if secret.len() < MIN_SECRET || secret.len() > MAX_SECRET || !admits(secret) {
+    if !watchable(secret) {
         return Err(Refusal::Secret);
     }
     let mut auth = Zeroizing::new(call.shape.auth_prefix().as_bytes().to_vec());
@@ -505,7 +763,7 @@ pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue
 /// Whether the body arrives under a coding the HTTP stack did not undo, so
 /// the strip would read encoded bytes: any content coding but `identity`, or
 /// any transfer coding but `chunked`, in any value of either header.
-fn encoded(headers: &HeaderMap) -> bool {
+pub(crate) fn encoded(headers: &HeaderMap) -> bool {
     let other = |name: reqwest::header::HeaderName, plain: &[&str]| {
         headers.get_all(name).iter().any(|value| {
             !value.to_str().is_ok_and(|codings| {

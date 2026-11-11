@@ -73,11 +73,34 @@ pub(crate) struct RunnerLease<'a> {
 /// [`Vault::admit_ask_guest_grant`] builds one; a dispatch the guest's
 /// request queued keeps its serde form as its requester's standing (FIX
 /// 11688), which grants nothing: every read judges the grant again.
+///
+/// It keeps the ask and the guest it was admitted from (FIX 4743), so
+/// `Vault::prove_admitted_task_grant_in_txn` can prove that exact ask's
+/// grant again. These ids are provenance, not authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdmittedTaskGrant {
+    /// The ask group whose record names the grant for `person`.
+    ask: EntityId,
+    /// The guest PERSON the ask recorded the grant for.
+    person: EntityId,
     grant: EntityId,
     member: EntityId,
+}
+
+/// Where an [`AdmittedTaskGrant`] stands for one call in one snapshot (FIX
+/// 4743).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TaskGrantStanding {
+    /// The exact grant its ask recorded for its guest still proves the
+    /// call's actor: live, not withdrawn, naming it and conferring now.
+    Proven(AdmittedTaskGrant),
+    /// The grant names another member than the call's actor.
+    OtherActor,
+    /// The ask now records another grant for its guest, or none.
+    AskChanged,
+    /// The grant is withdrawn, past its lifetime or gone.
+    Lapsed,
 }
 
 impl AdmittedTaskGrant {
@@ -107,12 +130,78 @@ impl Vault {
         member: EntityId,
     ) -> Result<AdmittedTaskGrant> {
         let txn = self.store.env.read_txn()?;
-        let grant = crate::task_verb::ask_guest_grant_in(self, &txn, ask.group_ref, person)?
+        self.admit_ask_guest_grant_in_txn(&txn, ask.group_ref, person, member)
+    }
+
+    /// [`Vault::admit_ask_guest_grant`] in the caller's `txn`, for the ask
+    /// group `ask` (FIX 4743). A storage failure is an error, not a refusal.
+    pub(crate) fn admit_ask_guest_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ask: EntityId,
+        person: EntityId,
+        member: EntityId,
+    ) -> Result<AdmittedTaskGrant> {
+        let grant = crate::task_verb::ask_guest_grant_in(self, txn, ask, person)?
             .ok_or_else(|| refused("the ask recorded no grant for this guest"))?;
-        let now = self.instant_in_txn(&txn)?.secs();
-        self.require_live_guest_grant_in_txn(&txn, grant, &member.to_hex(), now)
-            .map_err(|_| refused("the guest's grant does not prove this actor"))?;
-        Ok(AdmittedTaskGrant { grant, member })
+        let admitted = AdmittedTaskGrant {
+            ask,
+            person,
+            grant,
+            member,
+        };
+        if !self.task_grant_confers_in_txn(txn, &admitted)? {
+            return Err(refused("the guest's grant does not prove this actor"));
+        }
+        Ok(admitted)
+    }
+
+    /// Proves `admitted` again for a call by `actor` in the caller's `txn`
+    /// (FIX 4743). Its member must be `actor`. Its ask must still record
+    /// this grant for its guest, never a newer one. The grant must be live,
+    /// not withdrawn, name `actor` and confer now. It answers that same
+    /// grant when it stands and never looks for another grant `actor`
+    /// holds. A storage failure is an error, not a lapse.
+    pub(crate) fn prove_admitted_task_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        admitted: &AdmittedTaskGrant,
+        actor: EntityId,
+    ) -> Result<TaskGrantStanding> {
+        if admitted.member != actor {
+            return Ok(TaskGrantStanding::OtherActor);
+        }
+        let recorded =
+            crate::task_verb::ask_guest_grant_in(self, txn, admitted.ask, admitted.person)?;
+        if recorded != Some(admitted.grant) {
+            return Ok(TaskGrantStanding::AskChanged);
+        }
+        Ok(if self.task_grant_confers_in_txn(txn, admitted)? {
+            TaskGrantStanding::Proven(*admitted)
+        } else {
+            TaskGrantStanding::Lapsed
+        })
+    }
+
+    /// Whether `admitted`'s grant is live, not withdrawn, names its member
+    /// and confers at this snapshot's instant. Only a storage failure is an
+    /// error; any other failed check is a grant that does not confer.
+    fn task_grant_confers_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        admitted: &AdmittedTaskGrant,
+    ) -> Result<bool> {
+        let now = self.instant_in_txn(txn)?.secs();
+        match self.require_live_guest_grant_in_txn(
+            txn,
+            admitted.grant,
+            &admitted.member.to_hex(),
+            now,
+        ) {
+            Ok(()) => Ok(true),
+            Err(error @ (Error::Storage(_) | Error::Io(_) | Error::MapFull)) => Err(error),
+            Err(_) => Ok(false),
+        }
     }
 }
 

@@ -188,13 +188,24 @@ impl ExportBody {
             // The NOTE codec has one validated binary revision reference.
             // Treating it as arbitrary opaque bytes would null it and make a live
             // edited NOTE's JSON archive impossible to decode on import.
+            // A NOTE goes out as its logical value, its core and text; a
+            // stored row is its core alone (FIX 7783). Each carries the one
+            // reference.
             if entity_type == crate::registry::ENTITY_TYPE_NOTE
-                && let Ok(note) = crate::store::note_body::decode_note_body_using(
+                && let Ok(source_revision_ref) = crate::store::note_body::decode_note_body_using(
                     bytes,
                     crate::store::note_body::NoteKind::wire,
                 )
+                .map(|note| note.source_revision_ref)
+                .or_else(|_| {
+                    crate::store::note_body::decode_note_core_using(
+                        bytes,
+                        crate::store::note_body::NoteKind::wire,
+                    )
+                    .map(|core| core.source_revision_ref)
+                })
             {
-                export_note_references(&note, &mut exported);
+                export_note_references(&source_revision_ref, &mut exported);
             }
             // An id slot is required where it sits (a CLAIM's subject), so a
             // body with one nulled is no body its codec reads: none goes out.
@@ -393,8 +404,8 @@ fn export_scope_references(
 
 // The NOTE codec proves this one top-level binary revision is a reference,
 // not arbitrary payload. The author ref is a hex STRING and stays one.
-fn export_note_references(body: &crate::store::note_body::NoteBody, exported: &mut ExportValue) {
-    if scan_file_content("", &body.source_revision_ref).is_some() {
+fn export_note_references(source_revision_ref: &[u8; 16], exported: &mut ExportValue) {
+    if scan_file_content("", source_revision_ref).is_some() {
         return;
     }
     let ExportValue::Map(entries) = exported else {
@@ -403,7 +414,7 @@ fn export_note_references(body: &crate::store::note_body::NoteBody, exported: &m
     if let Some(value) = entries.iter_mut().find_map(|(key, value)| {
         matches!(key, ExportValue::String(key) if key == "source_revision_ref").then_some(value)
     }) {
-        *value = ExportValue::EntityReference(body.source_revision_ref.to_vec());
+        *value = ExportValue::EntityReference(source_revision_ref.to_vec());
     }
 }
 

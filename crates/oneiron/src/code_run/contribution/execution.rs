@@ -31,21 +31,37 @@
 //! once. A reason a retry may clear waits for one retry first. Neither is a
 //! loss. A call the live guest read through a hook's view the context kept
 //! runs as it ran, and its fork is evidence like any other.
+//!
+//! A callable's pair (FIX 3608, [`callable`]) runs its caller's own
+//! program twice instead, its load present and absent, through the same
+//! lent runtime and scratch stores, before either fork is generated.
+//!
+//! The step is prepared, and each program's bodies are read back, under
+//! the Coach's admission to the step, held as the step's witness (FIX
+//! 20607). Each body is released through the shadow runner's model release
+//! ([`WitnessedRelease`]). A lapsed admission stops the pair. It is never
+//! kept as a program's outcome, so the pair never falls back to the `Text`
+//! mode for it. The writer that keeps a program's outcome admits the Coach
+//! again first, so a lapse after the read-back keeps nothing.
+
+mod callable;
 
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use super::super::replay_capsule::{CapsuleHost, StepReplayCapsule};
-use super::super::storage::{fork_execution_outputs, fork_response, store_fork_execution};
+use super::super::storage::{fork_execution_outputs, store_fork_execution};
 use super::owner::OwnerJudgment;
+use super::source_admission::ContributionSourceAdmission;
 use super::{
-    ContributionForkReceipt, ContributionReplayUnavailable as Unavailable, Outcome, Prepared,
-    Runner,
+    ContributionForkReceipt, ContributionReplayUnavailable as Unavailable, Outcome, PairReader,
+    Prepared, Runner,
 };
 use crate::code_run::shadow_runner::{
-    PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowDeterminism, ShadowStatus,
-    ShadowUnavailable, ShadowUnavailableReason as Reason, prepare_shadow_step_source,
+    PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowDeterminism, ShadowSourceWitness,
+    ShadowStatus, ShadowStepRun, ShadowUnavailable, ShadowUnavailableReason as Reason,
+    WitnessedRelease, admission_lapsed, prepare_witnessed_shadow_step_source,
 };
 use crate::code_sandbox::SANDBOX_WIT_WORLD_NAME;
 use crate::compaction::output::OutputRef;
@@ -55,6 +71,9 @@ use crate::engine_executor::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, LlmResponse, Result, Vault};
+
+pub use self::callable::{CallableBranch, execute_callable_branch};
+pub(super) use self::callable::{CallerTarget, caller_target_in_txn};
 
 /// A program run's part, or the shadow runner's reason it has none.
 type Ran<T> = Result<std::result::Result<T, ShadowUnavailable>>;
@@ -337,7 +356,8 @@ pub trait ContributionForkProgram {
     /// `response`'s program run for `step`'s captured step through
     /// [`execute_contribution_fork`], on a fresh runtime of that component
     /// and in a scratch store of its own that the host releases before this
-    /// returns.
+    /// returns. Its bodies are read back under `witness`, the Coach's
+    /// admission to the step (FIX 20607).
     ///
     /// # Errors
     ///
@@ -346,18 +366,36 @@ pub trait ContributionForkProgram {
         &self,
         step: &PreparedShadowStep,
         response: &LlmResponse,
+        witness: &ShadowSourceWitness,
+    ) -> Result<std::result::Result<ExecutedFork, ShadowUnavailable>>;
+
+    /// `branch`'s run of `step`'s captured caller step (FIX 3608) through
+    /// [`execute_callable_branch`], as [`Self::execute`] runs a fork's
+    /// answer: on a fresh runtime of that component and in a scratch store
+    /// of its own that the host releases before this returns, its bodies
+    /// read back under `witness` (FIX 20607).
+    ///
+    /// # Errors
+    ///
+    /// The scratch store failing, and a step the executor cannot set up.
+    fn execute_branch(
+        &self,
+        step: &PreparedShadowStep,
+        branch: &CallableBranch,
+        witness: &ShadowSourceWitness,
     ) -> Result<std::result::Result<ExecutedFork, ShadowUnavailable>>;
 }
 
 /// Runs `response`'s program for `step`'s captured step on `runtime`, a
 /// fresh runtime of the component pinned at `runtime_pin`, its bodies in
-/// `store`, a scratch store of its own, and reads back whole what it left.
+/// `store`, a scratch store of its own, and reads back whole what it left,
+/// each body released under `release` (FIX 20607).
 /// Its program is not type-checked: no reader of a fork's feedback exists.
 /// Unavailable for the shadow runner's own reason, and also for a recorded
 /// call it matched whose guest response the step's replay context does not
 /// hold (`guest_view_capture_missing`, the bridge's own check, FIX 6351), a
-/// step that parked on a recorded wait (`captured_outcome_missing`), and a
-/// body the secret scan marked (`source_withheld`).
+/// step that parked on a recorded wait (`captured_outcome_missing`), a body
+/// the secret scan marked or the release withholds (`source_withheld`).
 ///
 /// # Errors
 ///
@@ -365,6 +403,7 @@ pub trait ContributionForkProgram {
 pub fn execute_contribution_fork(
     step: &PreparedShadowStep,
     response: &LlmResponse,
+    release: WitnessedRelease<'_>,
     runtime: &mut dyn JsCodeModeRuntime,
     runtime_pin: [u8; 32],
     store: &ShadowBodyStore,
@@ -376,6 +415,21 @@ pub fn execute_contribution_fork(
         live: Arc::new(|| false),
     };
     let run = run_shadow_step(step, response, runtime, store, cancel, &feedback)?;
+    executed_run(step, run, runtime_pin, store, release)
+}
+
+/// What `run`, a program run of `step` on the component pinned at
+/// `runtime_pin`, left, read back whole from `store` under `release`:
+/// unavailable for the shadow runner's own reason, a recorded call answered
+/// without the response its live guest read, a step left open, or a body
+/// marked, withheld or gone.
+fn executed_run(
+    step: &PreparedShadowStep,
+    run: ShadowStepRun,
+    runtime_pin: [u8; 32],
+    store: &ShadowBodyStore,
+    release: WitnessedRelease<'_>,
+) -> Ran<ExecutedFork> {
     let status = match run.status {
         ShadowStatus::Unavailable { unavailable } => return Ok(Err(unavailable)),
         ShadowStatus::StepComplete { done } => Some(ExecutedStepStatus::StepComplete { done }),
@@ -401,16 +455,16 @@ pub fn execute_contribution_fork(
         if !is_result_output_path(&body.path) {
             continue;
         }
-        match read_whole(store, body)? {
+        match read_whole(release, store, step, body)? {
             Ok(read) => outputs.push(read),
             Err(unavailable) => return Ok(Err(unavailable)),
         }
     }
-    let effect_trace = match read_whole(store, run.effect_trace)? {
+    let effect_trace = match read_whole(release, store, step, run.effect_trace)? {
         Ok(read) => read,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
-    let bridge_trace = match read_whole(store, run.bridge_trace)? {
+    let bridge_trace = match read_whole(release, store, step, run.bridge_trace)? {
         Ok(read) => read,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
@@ -429,45 +483,56 @@ pub fn execute_contribution_fork(
     }))
 }
 
-/// `body`, read whole from `store`: unavailable when the secret scan marked
-/// it, which no read shows, or the store no longer holds it.
-fn read_whole(store: &ShadowBodyStore, body: ShadowBodyRef) -> Ran<(ShadowBodyRef, Vec<u8>)> {
-    if let Some(reason) = body.secret.as_deref() {
-        return Ok(Err(ShadowUnavailable::new(Reason::SourceWithheld, reason)));
-    }
-    Ok(match store.read(body.body)? {
-        Some(bytes) => Ok((body, bytes)),
-        None => Err(ShadowUnavailable::new(Reason::SourceMissing, "arm_body")),
-    })
+/// `body` of an arm run from `step`, read whole from `store` and released
+/// to the scorer's model under `release` (FIX 20607): withheld while the
+/// secret scan marked it, once the step's source hold or the Coach's
+/// admission lapsed, and while a source it was seeded with reads tainted;
+/// `SourceMissing` when the store no longer holds it.
+fn read_whole(
+    release: WitnessedRelease<'_>,
+    store: &ShadowBodyStore,
+    step: &PreparedShadowStep,
+    body: ShadowBodyRef,
+) -> Ran<(ShadowBodyRef, Vec<u8>)> {
+    Ok(release
+        .read_for_model(store, step, &body)?
+        .map(|bytes| (body, bytes)))
 }
 
 /// An engine step's frozen window and the pin both forks' programs run
-/// under, prepared once before either fork is generated.
+/// under, prepared once before either fork is generated, and the Coach's
+/// admission to the step, held as its witness (FIX 20607).
 pub(super) struct ProgramStep {
     pub(super) step: PreparedShadowStep,
     pub(super) pin: ForkExecutionPin,
+    pub(super) witness: ShadowSourceWitness,
 }
 
 /// `capsule`'s frozen program step: `None` for a workflow step, which has
 /// no program. An engine step's window is frozen now under the host's
-/// runtime pin. A window or runtime that is unavailable now is that reason,
-/// which each fork keeps as its program's outcome; the pair then falls back
-/// to the `Text` mode, never to a loss.
+/// runtime pin, read under `admission`'s witness (FIX 20607). A window or
+/// runtime that is unavailable now is that reason, which each fork keeps as
+/// its program's outcome; the pair then falls back to the `Text` mode,
+/// never to a loss. A lapsed admission is that lapse, which the caller
+/// stops the pair on.
 pub(super) fn freeze_program_step(
     vault: &Vault,
     capsule: &StepReplayCapsule,
     program: &dyn ContributionForkProgram,
+    admission: &Arc<ContributionSourceAdmission>,
 ) -> Result<Option<std::result::Result<ProgramStep, ShadowUnavailable>>> {
     if capsule.host == CapsuleHost::WorkflowStep {
         return Ok(None);
     }
-    let step = match prepare_shadow_step_source(vault, capsule)? {
+    let witness = ContributionSourceAdmission::witness(admission);
+    let step = match prepare_witnessed_shadow_step_source(vault, capsule, &witness)? {
         Ok(step) => step,
         Err(unavailable) => return Ok(Some(Err(unavailable))),
     };
     Ok(Some(program.runtime_pin()?.map(|runtime| ProgramStep {
         pin: ForkExecutionPin::of(&step, runtime),
         step,
+        witness,
     })))
 }
 
@@ -543,7 +608,9 @@ impl Runner<'_> {
     /// kept before either fork is scored: as kept when it is settled, else
     /// its kept answer's program run now. A workflow step's fork as it is.
     /// An outcome its writer does not keep is unavailable for that writer's
-    /// own reason (FIX 6256).
+    /// own reason (FIX 6256). The answer is read, its program run and its
+    /// outcome kept, each under the Coach's admission; a lapse stops the
+    /// pair and is never kept (FIX 20607).
     pub(super) fn executed(
         &self,
         prepared: &Prepared,
@@ -566,15 +633,18 @@ impl Runner<'_> {
         if !self.clock.decision_may_start() {
             return Ok(Err(Unavailable::Unfinished));
         }
-        let Some(response) = fork_response(self.vault, prepared.capsule.run, &fork)? else {
-            return Ok(Err(if fork.response_erased {
-                Unavailable::Erased
-            } else {
-                Unavailable::Unreadable
-            }));
+        let response = match self.read_response(prepared, &fork, PairReader::Coach)? {
+            Ok(response) => response,
+            Err(reason) => return Ok(Err(reason)),
         };
-        let executed = match self.program.execute(&frozen.step, &response)? {
+        let executed = match self
+            .program
+            .execute(&frozen.step, &response, &frozen.witness)?
+        {
             Ok(executed) => executed,
+            Err(unavailable) if admission_lapsed(&unavailable) => {
+                return Ok(Err(Unavailable::Unfinished));
+            }
             Err(unavailable) => return self.unexecuted(prepared, fork, unavailable),
         };
         if executed.runtime != frozen.pin.runtime {
@@ -591,10 +661,12 @@ impl Runner<'_> {
             .map(String::as_str)
             .zip(executed.bodies().map(|(_, bytes)| bytes.as_slice()))
             .collect();
-        let (answer, pin) = (fork.response, frozen.pin);
-        let capsule = &prepared.capsule;
-        // Its bodies, its execution and their erase ownership commit together.
-        store_fork_execution(self.vault, capsule, &self.pair, &fork, &bodies, |refs| {
+        let (answer, pin, pair) = (fork.response, frozen.pin, &self.pair);
+        let (vault, capsule, source) = (self.vault, &prepared.capsule, &prepared.source);
+        let admits = |txn: &heed::RoTxn<'_>| source.admits_in(vault, txn, PairReader::Coach);
+        // Its bodies, its execution and their erase ownership commit together,
+        // in a writer that admits the Coach again first (FIX 20607).
+        store_fork_execution(vault, capsule, pair, &fork, &bodies, &admits, |refs| {
             executed
                 .record(answer, pin, &paths, refs)
                 .map(ForkExecutionOutcome::Executed)
@@ -603,7 +675,8 @@ impl Runner<'_> {
 
     /// `fork` with its program kept unavailable for `unavailable`: pending
     /// one retry when a retry may clear it and the fork has not waited yet,
-    /// else for good.
+    /// else for good. It is kept only while the Coach is still admitted in
+    /// the writer that keeps it, else the fork is `Unfinished` (FIX 20607).
     fn unexecuted(
         &self,
         prepared: &Prepared,
@@ -615,19 +688,23 @@ impl Runner<'_> {
         } else {
             ForkExecutionOutcome::Unavailable(unavailable)
         };
-        let (vault, capsule) = (self.vault, &prepared.capsule);
-        store_fork_execution(vault, capsule, &self.pair, &fork, &[], |_| {
+        let (vault, capsule, source) = (self.vault, &prepared.capsule, &prepared.source);
+        let admits = |txn: &heed::RoTxn<'_>| source.admits_in(vault, txn, PairReader::Coach);
+        store_fork_execution(vault, capsule, &self.pair, &fork, &[], &admits, |_| {
             Some(outcome.clone())
         })
     }
 
     /// A fork's executed program, as its scorer reads it in `mode`: `None`
-    /// in the `Text` mode. Unreadable once a body of it is gone.
+    /// in the `Text` mode. Unreadable once a body of it is gone. Its bodies
+    /// are read while `reader` is admitted, and `Unfinished` while it is not
+    /// (FIX 20607).
     pub(super) fn executed_view(
         &self,
         prepared: &Prepared,
         fork: &ContributionForkReceipt,
         mode: ForkEvidenceMode,
+        reader: PairReader,
     ) -> Outcome<Option<ExecutedForkView>> {
         if mode == ForkEvidenceMode::Text {
             return Ok(Ok(None));
@@ -639,9 +716,14 @@ impl Runner<'_> {
         let Some(execution) = execution else {
             return Ok(Err(Unavailable::ForksDiverged));
         };
-        let run = prepared.capsule.run;
-        let Some(outputs) = fork_execution_outputs(self.vault, run, execution)? else {
-            return Ok(Err(Unavailable::Unreadable));
+        let (run, source) = (prepared.capsule.run, &prepared.source);
+        let admits = |txn: &heed::RoTxn<'_>| source.admits_in(self.vault, txn, reader);
+        let Some(outputs) = fork_execution_outputs(self.vault, run, execution, &admits)? else {
+            return Ok(Err(self.unread(
+                prepared,
+                reader,
+                Unavailable::Unreadable,
+            )?));
         };
         Ok(Ok(Some(ExecutedForkView {
             status: execution.status.clone(),

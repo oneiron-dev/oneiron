@@ -32,7 +32,10 @@ pub(crate) use oneiron_store::batch::phonetic_codes;
 pub(crate) use phonetic_apply::checkpoint;
 mod prepared_index;
 mod put_apply;
-pub(crate) use person_substrate::sweep_scope_stamps;
+pub(crate) use person_substrate::{
+    PreparedPersonSubstrate, prepare_person_substrate, prepare_person_substrate_after_puts,
+    sweep_scope_stamps,
+};
 #[cfg(feature = "sync")]
 mod recovery_shell;
 pub(crate) use oneiron_store::batch::row_put;
@@ -45,6 +48,7 @@ mod types;
 mod vad_postcommit;
 mod vector_apply;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 
@@ -55,6 +59,7 @@ pub(crate) use self::vad_postcommit::queue_committed_rows;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_committed_rows_in_txn;
 pub(crate) use self::vad_postcommit::queue_consent_answer;
+pub(crate) use self::vad_postcommit::queue_decision_answer;
 pub(crate) use self::vad_postcommit::queue_notification_change;
 pub(crate) use self::vad_postcommit::queue_pad_tombstone_window;
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
@@ -63,6 +68,7 @@ pub(crate) use self::vad_postcommit::queue_room_join;
 pub(crate) use self::vad_postcommit::queue_settled_tasks;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_task_updates;
+pub(crate) use self::vad_postcommit::queue_verb_hook_ask_change;
 
 pub(crate) use self::authority_log::{
     validate_replicated_authority_log_beside_for_local_vault,
@@ -71,6 +77,7 @@ pub(crate) use self::authority_log::{
 use self::base_apply::{apply_ops_with_authority_beside, apply_ops_with_origin};
 pub(crate) use self::base_apply::{
     apply_session_bundle_claim_puts, apply_session_bundle_claim_puts_with_transitions,
+    setup_birth_stamp_target,
 };
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::claim_materialization::{
@@ -84,8 +91,6 @@ pub(crate) use self::deindex::{
     delete_door_protected, drop_seeded_actor_row, stage_cascade_tombstone_in_txn,
 };
 pub(crate) use self::facet_validation::{validate_facet_of_edge, validate_replayed_facet_of_edge};
-#[cfg(test)]
-pub(crate) use self::lexical_query_hints::legacy_lexical_query_hint_claim_ids_for_target;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 pub(crate) use self::lexical_query_hints::validate_staged_raw_put;
 #[cfg(test)]
@@ -130,6 +135,8 @@ use self::child_of_overlay::*;
 use self::claim_candidate_apply::*;
 use self::deindex::*;
 use self::edge_apply::*;
+#[cfg(test)]
+pub(crate) use self::lexical_query_hints::lexical_query_hint_claim_ids_for_target;
 use self::lexical_query_hints::*;
 use self::ops_pipeline::*;
 pub(crate) use self::phonetic_apply::apply_phonetic;

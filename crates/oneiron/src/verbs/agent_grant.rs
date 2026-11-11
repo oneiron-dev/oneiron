@@ -20,6 +20,23 @@
 //! components). Omitted, the grant delegates no repo access of its own and
 //! behaves exactly as before; with no editable globs it edits nothing, and
 //! reading a path never lets the agent edit it.
+//!
+//! A mint may also name verb classes beside the exact verbs (FIX 8735):
+//! `verb_classes: ["send"]` lets the agent do each verb the class admits,
+//! by the class's own spelling, the built-in outbound classes, or the
+//! owner's verb-class row for it (`vault.agents.verb_classes.configure`),
+//! resolved each time a door judges a verb. The verbs axis may then be
+//! empty (`{"kind":"bottom"}`); it is never every verb. A grant without
+//! classes behaves exactly as before.
+//!
+//! A mint may also name the host wallet the work the grant funds draws on
+//! (FIX 7766): `wallet_ref: {"issuer": "...", "id": "..."}`, an opaque host
+//! reference, signed in the owner's act. A spend lease the owner opens with
+//! the grant as its `funding_grant_ref` freezes it, and every call that
+//! lease's tree admits draws on that wallet's allocation or is refused. A
+//! grant without one behaves exactly as before.
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::revision_shape;
@@ -27,7 +44,9 @@ use crate::Vault;
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::federation::{AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, RepoAccessBounds, Scope};
+use crate::federation::{
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, RepoAccessBounds, Scope, WalletRef,
+};
 use crate::memory::MemoryResult;
 
 /// `vault.agents.grants.mint`'s input: the agent, the owner's exact scope
@@ -36,12 +55,14 @@ use crate::memory::MemoryResult;
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentGrantMintRequest {
-    /// The agent principal granted (32 hex): a live agent definition, or a
-    /// base agent such as the Coach. Never a person or a device.
+    /// The agent principal granted (32 hex): a live agent definition, a base
+    /// agent such as the Coach, or a named agent's principal. Never another
+    /// person or a device.
     pub agent: EntityId,
     /// The owner's complete six-axis scope, stored exactly as given. Its
-    /// verbs axis is the explicit verb list, a nonempty `some` set; the
-    /// grant confers only with `read` among them.
+    /// verbs axis is the explicit verb list, a nonempty `some` set, or
+    /// empty beside a nonempty `verb_classes`; the grant confers only with
+    /// `read` among them or admitted by a class it names.
     pub authority_scope: Scope,
     /// When the grant stops conferring (Unix seconds, later than now).
     /// Omitted: it stands until revoked.
@@ -53,6 +74,17 @@ pub struct AgentGrantMintRequest {
     /// delegation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_bounds: Option<RepoAccessBounds>,
+    /// The verb classes the agent may act under beside the exact verbs, by
+    /// class name: each admits its own spelling, its built-in outbound
+    /// members, and the owner's verb-class row for it. Never `git_push`.
+    /// Omitted: none.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub verb_classes: BTreeSet<String>,
+    /// The host wallet the work this grant funds draws on: the host's
+    /// issuer namespace and the wallet's id there, both nonempty. Omitted:
+    /// none, and the grant funds no launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ref: Option<WalletRef>,
 }
 
 /// One owner's agent grant.
@@ -73,8 +105,17 @@ pub struct AgentGrantView {
     /// The repo bounds the owner gave; absent on a general grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_bounds: Option<RepoAccessBounds>,
-    /// Whether it confers now: unexpired, with `read` among its verbs and no
-    /// empty world, band, audience or sensitivity axis.
+    /// The verb classes the owner named beside the exact verbs; absent
+    /// when it names none.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub verb_classes: BTreeSet<String>,
+    /// The host wallet the owner named for the work it funds; absent when
+    /// it names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ref: Option<WalletRef>,
+    /// Whether it confers now: unexpired, with `read` among its verbs (or
+    /// admitted by a class it names) and no empty world, band, audience or
+    /// sensitivity axis.
     pub confers: bool,
     /// The one-tap revoke command: `vault.agents.grants.revoke`.
     pub revoke_command: String,
@@ -168,9 +209,11 @@ pub fn mint_agent_grant_as(
         input.authority_scope,
         input.expires_at,
         input.repo_bounds,
+        input.verb_classes,
+        input.wallet_ref,
     )?;
     Ok(AgentGrantMinted {
-        grant: agent_grant_view(&minted.standing, minted.standing.created_at),
+        grant: agent_grant_view(&minted.standing, minted.confers),
         act_ref: minted.act.to_hex(),
     })
 }
@@ -196,7 +239,9 @@ pub fn revoke_agent_grant_as(
     })
 }
 
-fn agent_grant_view(standing: &AgentGrantStanding, now: u64) -> AgentGrantView {
+/// The view of `standing` as minted; `confers` was judged in the minting
+/// writer, the grant's classes resolved there.
+fn agent_grant_view(standing: &AgentGrantStanding, confers: bool) -> AgentGrantView {
     AgentGrantView {
         grant_ref: standing.id,
         agent: standing.grant.member_ref,
@@ -204,7 +249,9 @@ fn agent_grant_view(standing: &AgentGrantStanding, now: u64) -> AgentGrantView {
         delegated_by: standing.delegated_by,
         expires_at: standing.grant.expires_at,
         repo_bounds: standing.grant.repo_bounds.clone(),
-        confers: standing.grant.confers_at(now),
+        verb_classes: standing.grant.verb_classes.clone(),
+        wallet_ref: standing.grant.wallet_ref.clone(),
+        confers,
         revoke_command: AGENT_GRANT_REVOKE_COMMAND.to_owned(),
     }
 }

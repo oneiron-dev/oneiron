@@ -41,8 +41,8 @@ pub(crate) fn custody_from_home<'a>(
     // The command runs on the CLI's runtime, so the fetch gets a thread and a
     // runtime of its own.
     let fetched = std::thread::scope(|scope| {
-        scope
-            .spawn(|| -> anyhow::Result<_> {
+        crate::engine_thread("backup-custody-fetch".into())
+            .spawn_scoped(scope, || -> anyhow::Result<_> {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()?;
@@ -51,6 +51,7 @@ pub(crate) fn custody_from_home<'a>(
                     .block_on(fetch)
                     .map_err(|error| anyhow::anyhow!("fetch custody from {home}: {error}"))
             })
+            .expect("failed to spawn thread")
             .join()
             .map_err(|_| anyhow::anyhow!("the custody fetch stopped"))?
     })?;

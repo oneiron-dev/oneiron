@@ -161,7 +161,7 @@ impl ServeReplayJudge {
     /// evidence as its response; never the outcome, who set it or its label.
     /// `None` when no card holds it.
     fn health_review_texts(&self, receipt: &str) -> Result<Option<(String, String, String)>> {
-        let Some((card, held)) = self.vault.health_review_receipt(receipt)? else {
+        let Some((card, held, state)) = self.vault.health_review_receipt(receipt)? else {
             return Ok(None);
         };
         let hex = |ids: &[EntityId]| ids.iter().map(EntityId::to_hex).collect::<Vec<_>>();
@@ -171,8 +171,8 @@ impl ServeReplayJudge {
             "task": card.task.as_ref().map(EntityId::to_hex),
             "dial": held.dial,
             "measured": held.measured,
-            "diagnostics": hex(&held.diagnostics),
-            "evidence": hex(&held.evidence),
+            "diagnostics": hex(&state.diagnostics),
+            "evidence": hex(&state.evidence),
             "observed_brief": held.observed_brief,
         });
         let response = json!({

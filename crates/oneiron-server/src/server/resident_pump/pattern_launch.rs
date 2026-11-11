@@ -136,7 +136,7 @@ pub(in crate::server) fn agent_runner_for_attempt(
     let seat = seat?.clone();
     let lease_owner = attempt.lease_owner.clone()?;
     let (guard, payer) = line?;
-    let backend = provider.reader_backend(guard, payer, definition.models.clone())?;
+    let backend = provider.reader_backend(guard, payer, None, definition.models.clone())?;
     Some(Arc::new(AgentPatternLaunchRunner {
         vault: Arc::clone(vault),
         agent: actor.entity_ref(),
@@ -227,8 +227,8 @@ impl AgentPatternLaunchRunner {
         // until the capture returns on any path (FIX 4639).
         let _turn = self.ai.enter_turn();
         std::thread::scope(|scope| {
-            scope
-                .spawn(move || -> Result<LlmResponse> {
+            crate::engine_thread("resident-pattern".into())
+                .spawn_scoped(scope, move || -> Result<LlmResponse> {
                     let reactor = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
@@ -242,6 +242,7 @@ impl AgentPatternLaunchRunner {
                         .block_on(self.backend.generate(request, &self.lease))
                         .map_err(unanswered)
                 })
+                .expect("failed to spawn thread")
                 .join()
         })
         .unwrap_or_else(|_| Err(fault(STOPPED)))

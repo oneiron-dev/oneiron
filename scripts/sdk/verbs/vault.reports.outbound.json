@@ -1,0 +1,16 @@
+{
+  "name": "vault.reports.outbound",
+  "description": "The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it.",
+  "input": "crate::task_verb::sdk::ReportOutboundRequest",
+  "output": "crate::task_verb::sdk::ReportOutboundView",
+  "call": "crate::task_verb::sdk::report_outbound_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.outbound\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

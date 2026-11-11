@@ -11,7 +11,7 @@ pub(crate) trait ClaimReadStatusExt {
     fn admits_status(
         self,
         filter: &ResolvedRetrievalFilter,
-        generic_readable: bool,
+        predicate_class: (bool, bool),
         approval: ClaimApprovalStatus,
         lifecycle: ClaimLifecycleStatus,
         stale: bool,
@@ -23,7 +23,10 @@ impl ClaimReadStatusExt for ClaimReadStatus {
     fn admits(self, filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
         self.admits_status(
             filter,
-            crate::claim::claim_generic_readable(body),
+            (
+                crate::claim::claim_generic_readable(body),
+                crate::claim::claim_exact_store(body),
+            ),
             body.approval,
             body.lifecycle,
             body.stale,
@@ -31,27 +34,33 @@ impl ClaimReadStatusExt for ClaimReadStatus {
     }
 
     /// [`Self::admits`] over the status a claim's access class carries
-    /// (FIX 11915): whether its predicate reads generically, its approval,
-    /// its lifecycle and its staleness.
+    /// (FIX 11915): its predicate class (whether it reads generically, and
+    /// whether it is an exact-store claim), its approval, its lifecycle and
+    /// its staleness.
     fn admits_status(
         self,
         filter: &ResolvedRetrievalFilter,
-        generic_readable: bool,
+        (generic_readable, exact_store): (bool, bool),
         approval: ClaimApprovalStatus,
         lifecycle: ClaimLifecycleStatus,
         stale: bool,
     ) -> bool {
-        generic_readable
-            && match self {
-                Self::Surfaceable => {
-                    matches!(
-                        approval,
-                        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                    ) && lifecycle == ClaimLifecycleStatus::Active
-                        && (filter.include_stale || !stale)
-                }
-                Self::Recorded => true,
+        let surfaceable = matches!(
+            approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) && lifecycle == ClaimLifecycleStatus::Active;
+        match self {
+            Self::Surfaceable => {
+                generic_readable && surfaceable && (filter.include_stale || !stale)
             }
+            // Every approval and lifecycle status, and stale claims
+            // whatever the floor says; the caller's own exclusion of
+            // stale claims binds here too (FIX 3977).
+            Self::Recorded => generic_readable && !(stale && filter.caller_excludes_stale),
+            // The keyed reader takes the heads its own scan takes: active,
+            // auto or approved, and not stale ([E2E-KV-GET-PREFILTER]).
+            Self::ExactStore => exact_store && surfaceable && !stale,
+        }
     }
 }
 
@@ -82,6 +91,7 @@ impl<'v> ScopedRead<'v> {
         lane.own_owner_authority = self.own_owner_authority;
         lane.records_cover = self.records_cover.clone();
         lane.judged_at = self.judged_at;
+        lane.read_filter.clone_from(&self.read_filter);
         Ok(lane)
     }
 }
@@ -206,7 +216,7 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let claim_facets = self.claim_facet_refs_in(rtxn, id)?;
-        Ok(match grant {
+        let allowed = match grant {
             None => {
                 crate::gate::scoped_read_claim_allowed(policy, &self.actor_key, body, &claim_facets)
             }
@@ -217,7 +227,100 @@ impl ScopedRead<'_> {
                 &claim_facets,
                 Some(grant),
             ),
-        })
+        };
+        Ok(allowed && self.provenance_cited_readable_in(rtxn, policy, body, authority)?)
+    }
+
+    /// Whether this lane reads every record the claim `body` names when it is
+    /// an `edge.provenance` Claim (FIX 3959): its edge, under the endpoint and
+    /// exact-pair admission the typed audit gives it, its actor, and the
+    /// record its `source_revision_ref` cites, at that revision. The last
+    /// conjunct of every CLAIM's admission, on the row path and the class
+    /// path alike, and never a class's: what it reads is the row's own. One
+    /// named record this lane may not read withholds the Claim whole, as any
+    /// withheld row is, and a body that does not decode as a provenance
+    /// record is withheld too. A cited revision no record retains (an opaque
+    /// legacy value, such as a Dreamer evidence hash) names no record and
+    /// is shown as stored. Every other predicate passes, and so do the vault
+    /// owner and a record judged as one such Claim names: the named records
+    /// are judged under this lane's ordinary admission at its own floor,
+    /// with this rule not re-entered (`HeldAuthority::judge_cited`), so the
+    /// rule runs one level deep. A sealed secret custody row reads as absent
+    /// here, as a ref to it does.
+    pub(super) fn provenance_cited_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        body: &ClaimBody,
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        if body.predicate != crate::provenance::PREDICATE_EDGE_PROVENANCE
+            || self.actor_key.vault_owner_ref().is_some()
+            || authority.judges_cited()
+        {
+            return Ok(true);
+        }
+        let Ok(record) = crate::provenance::decode_edge_provenance_body(&body.value) else {
+            return Ok(false);
+        };
+        let floor = self.actor_retrieval_floor(policy)?;
+        // The Claim names its edge, so the edge passes first, as the typed
+        // audit admits it (`edge_claims_projected`): it is stored, whatever
+        // its stamp, and its endpoints and exact pair pass the admission a
+        // neighbourhood row does. A missing or withheld edge withholds the
+        // Claim, so its subject never names a record this lane may not read.
+        let crate::claim::ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } = body.subject
+        else {
+            return Ok(false);
+        };
+        let stored = match self.session_view {
+            Some(view) => view.port_edge_get(rtxn, &source, kind, &target)?,
+            None => self.vault.port_edge_get(rtxn, &source, kind, &target)?,
+        };
+        let Some(stored) = stored else {
+            return Ok(false);
+        };
+        if !self
+            .admit_stored_edge_in(rtxn, policy, &floor, source, stored)?
+            .visible()
+        {
+            return Ok(false);
+        }
+        let readable = authority.judge_cited(|cited| {
+            if !self.is_entity_readable_held_in(
+                rtxn,
+                policy,
+                &record.actor_entity_ref,
+                &floor,
+                cited,
+            )? {
+                return Ok(false);
+            }
+            let Some(revision) = record.source_revision_ref.map(crate::vault::RevisionRef) else {
+                return Ok(true);
+            };
+            let Some(document) = self.vault.revision_record_in(rtxn, revision)? else {
+                return Ok(true);
+            };
+            Ok(self
+                .admitted_raw_in(
+                    rtxn,
+                    policy,
+                    &floor,
+                    &document,
+                    crate::vault::ReadMode::Pinned(revision),
+                    cited,
+                )?
+                .is_some())
+        });
+        match readable {
+            Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
+            readable => readable,
+        }
     }
 
     /// Whether the mined preference `body` of `id` stands at this lane's

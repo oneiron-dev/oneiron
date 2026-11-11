@@ -15,8 +15,8 @@ use crate::lens::{
     TextBlockAtom,
 };
 use crate::vault_shape::{
-    ShapeApplyReceipt, ShapeApplyRun, ShapeChange, ShapeItemClass, ShapeItemState, ShapePlan,
-    ShapePlanSummary,
+    ShapeApplyReceipt, ShapeApplyRun, ShapeChange, ShapeItemClass, ShapeItemState,
+    ShapeLearningOutcome, ShapePlan, ShapePlanSummary,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,9 @@ pub struct ShapePlanCard {
     /// The apply's run tree, whose root is its inbox group, once an apply
     /// of this plan has opened.
     pub run: Option<ShapeApplyRun>,
+    /// What the matched apply did with its conversation-learning answer.
+    /// This is a receipt, not the setting's current state.
+    pub conversation_learning: Option<ShapeLearningOutcome>,
 }
 
 /// One row of the plan card's diff.
@@ -97,6 +100,7 @@ impl ShapePlanCard {
             items,
             undeclared: u32::try_from(plan.undeclared.len()).unwrap_or(u32::MAX),
             run: apply.map(|apply| apply.run.clone()),
+            conversation_learning: apply.and_then(|apply| apply.conversation_learning.clone()),
         }
     }
 
@@ -107,6 +111,10 @@ impl ShapePlanCard {
         for item in &self.items {
             let (_, stands) = standing(item);
             out.push_str(&format!("- {}: {stands}\n", item.line));
+        }
+        if let Some(outcome) = &self.conversation_learning {
+            out.push_str(&conversation_learning_text(outcome));
+            out.push('\n');
         }
         if self.undeclared > 0 {
             out.push_str(&format!(
@@ -145,12 +153,41 @@ impl ShapePlanCard {
             root.children
                 .push(sheet("shape-plan-items", "Every change", rows, &fallback)?);
         }
+        if let Some(outcome) = &self.conversation_learning {
+            root.children.push(text_block(
+                "shape-plan-conversation-learning",
+                &conversation_learning_text(outcome),
+            )?);
+        }
         let frontier = self.frontier.get(..16).unwrap_or(&self.frontier);
         GeneratedUiCard::new(
             LensRenderId::new(format!("vault-shape.plan.{frontier}"))?,
             GeneratedLens::new(root)?,
         )
     }
+}
+
+fn conversation_learning_text(outcome: &ShapeLearningOutcome) -> String {
+    let on_off = |on| if on { "on" } else { "off" };
+    let mut text = format!(
+        "Conversation learning in this apply: requested {}; written {}; ignored {}.",
+        on_off(outcome.requested),
+        outcome.written,
+        outcome.ignored,
+    );
+    match &outcome.resulting {
+        Some(setting) => text.push_str(&format!(
+            " Setting after the apply: {} (revision {}; act {}).",
+            on_off(setting.on),
+            setting.revision,
+            setting.act.as_deref().unwrap_or("none"),
+        )),
+        None => text.push_str(" Setting after the apply: unknown."),
+    }
+    if let Some(reason) = &outcome.reason {
+        text.push_str(&format!(" Reason: {reason}"));
+    }
+    text
 }
 
 const fn change_word(change: ShapeChange) -> &'static str {

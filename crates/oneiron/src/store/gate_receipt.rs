@@ -56,6 +56,10 @@ pub(crate) fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecor
         }
     }
 
+    fields.extend(crate::codebase::code_snapshot_capture_receipt_fields(
+        record,
+    ));
+
     let mut policy_trace = record.reason_codes.clone();
     policy_trace.extend(record.receipt_reasons.clone());
     policy_trace.extend(
@@ -86,7 +90,15 @@ pub(crate) fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecor
             .map(|attempt| hex_lower(&attempt)),
         trigger_ref: record
             .claim_id
-            .map(|id| format!("claim:{}", hex_lower(&id)))
+            .map(|id| {
+                let prefix =
+                    if record.content_kind == crate::codebase::CODE_SNAPSHOT_CAPTURE_CONTENT_KIND {
+                        "entity"
+                    } else {
+                        "claim"
+                    };
+                format!("{prefix}:{}", hex_lower(&id))
+            })
             .or_else(|| {
                 // A bundle-level row (no claim id) opens its dreamer run: the
                 // RS3 door on the bundle receipt reopens the inbox group.

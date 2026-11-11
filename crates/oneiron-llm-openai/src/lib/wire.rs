@@ -216,6 +216,7 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
     {
         content.push(ContentPart::Text {
             text: text.to_owned(),
+            signature: None,
         });
     }
     if let Some(reasoning) = message
@@ -324,7 +325,7 @@ fn openai_message(message: &LlmMessage, reasoning_history: bool) -> JsonValue {
                     | oneiron::ReasoningPartKind::Count,
                 ..
             } => {}
-            ContentPart::Text { text }
+            ContentPart::Text { text, .. }
             | ContentPart::Reasoning {
                 text,
                 reasoning_kind: oneiron::ReasoningPartKind::Full,
@@ -342,6 +343,7 @@ fn openai_message(message: &LlmMessage, reasoning_history: bool) -> JsonValue {
                 call_id,
                 name,
                 input,
+                ..
             } => {
                 tool_calls.push(json!({
                     "id": call_id,
@@ -443,10 +445,15 @@ fn parse_openai_tool_call(call: &JsonValue) -> Option<ContentPart> {
         call_id,
         name,
         input,
+        signature: None,
     })
 }
 
-pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
+/// The usage an OpenAI chat reply's `usage` object reports: prompt tokens,
+/// of them the cached, and completion tokens, of them the reasoning. A
+/// relayed reply's own body is read through it too (FIX 15702).
+#[must_use]
+pub fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
     let prompt_tokens = u64_field(usage, "prompt_tokens");
     let completion_tokens = u64_field(usage, "completion_tokens");
     let cached_tokens = usage
@@ -455,7 +462,7 @@ pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
     let reasoning_tokens = usage
         .get("completion_tokens_details")
         .map_or(0, |details| u64_field(details, "reasoning_tokens"));
-    LlmUsage {
+    let mut measured = LlmUsage {
         input: LlmInputUsage {
             total: prompt_tokens,
             cache_read: cached_tokens,
@@ -468,7 +475,12 @@ pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
         },
         raw_provider: usage.clone(),
         call_metadata: None,
-    }
+    };
+    measured.set_provider_token_measurement(oneiron::llm::ProviderTokenMeasurement {
+        input: usage.get("prompt_tokens").and_then(JsonValue::as_u64),
+        output: usage.get("completion_tokens").and_then(JsonValue::as_u64),
+    });
+    measured
 }
 
 /// The finish of a reply whose provider reported none.
@@ -506,6 +518,14 @@ pub fn classify_openai_status(
         408 | 504 => RetryableLlmError::Timeout.into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         401 | 403 => FatalLlmError::Auth.into(),
+        400 if body.pointer("/error/code").and_then(JsonValue::as_str)
+            == Some("context_length_exceeded") =>
+        {
+            FatalLlmError::ContextWindowExceeded {
+                message: refusal_message(body).unwrap_or_default(),
+            }
+            .into()
+        }
         400 => refusal_message(body).map_or_else(
             || FatalLlmError::InvalidRequest.into(),
             |message| {

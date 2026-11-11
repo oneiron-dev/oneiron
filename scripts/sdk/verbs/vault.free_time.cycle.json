@@ -1,0 +1,16 @@
+{
+  "name": "vault.free_time.cycle",
+  "description": "The owner reads one free-time cycle: its state, the floor and whether every item receipt read, the agent's short note, each item's receipt, and the spend records by label with their own completeness. Never the agent's diary.",
+  "input": "crate::dreamer_runner::FreeTimeCycleRequest",
+  "output": "Option<crate::dreamer_runner::FreeTimeCycleView>",
+  "call": "crate::dreamer_runner::free_time_cycle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.cycle\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

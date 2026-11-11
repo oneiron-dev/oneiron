@@ -6,20 +6,24 @@
 //! to come. A run's waiter and delivery rows go once it resumed, so they are
 //! no membership; these rows are, and they outlive them.
 //!
-//! An erase of an actor ([`erase_actor_wait_holds_in_txn`], from the same
-//! actor scrub as its runs' replay replies, so a soft delete runs it too and
-//! it only releases) marks its runs' memberships erased and leaves each
-//! delivery its runs were given its erased form; a code consent wait bound to
-//! one of its runs, which that run alone holds, keeps its settled row in its
-//! erased form too. Every other holder's membership and delivery, a shared
-//! settled reply, and a consent wait's digests and receipts stay. Nothing is
-//! deleted for want of a waiter.
+//! The actor scrub of an actor's runs' replay replies reaches their waits
+//! too ([`erase_actor_wait_holds_in_txn`]), release only. A soft delete's
+//! scrub (FIX 15532) marks its runs' memberships Deleted, keeping the actor
+//! only so its later erase still selects them (FIX 6591); an erase's marks
+//! them Erased. Either leaves each delivery its runs were given its erased
+//! form; a code consent wait bound to one of its runs, which that run alone
+//! holds, keeps its settled row in its erased form too. Every other holder's
+//! membership and delivery, a shared settled reply, and a consent wait's
+//! digests and receipts stay. Nothing is deleted for want of a waiter.
 //!
 //! The erase fences every later delivery and read of the actor's runs
 //! ([`holder_erased_in_txn`]): a run whose membership is erased, whose
 //! replies are erased or whose actor is gone is delivered the reply's erased
 //! form, parks on nothing and reads a typed unavailable, so no membership
-//! written after the erase brings the reply back.
+//! written after the erase brings the reply back. Such a late membership
+//! says Erased once the actor's hard erasure is complete (its hard-delete
+//! marker), since no later erase reaches it, and Deleted for any other gone
+//! actor, a soft-deleted one or one a pending delete removed (FIX 6591).
 //!
 //! A connector call's caller holds its own call's settled reply too (part 3,
 //! Engine 10-20 19:5x): `connector.call_status` reads it by the call's ref
@@ -28,7 +32,9 @@
 //! names the caller, under [`CALLER_GENERATION`]; the caller's erase marks
 //! it Erased, and once no membership of the wait keeps the reply, its
 //! settled row takes its erased form. A settle after that erase lands
-//! erased.
+//! erased. The call's erase records that release before it drops the call
+//! row ([`release_settled_for_caller_in_txn`], FIX 19257). A settle that
+//! finds no call row then applies the recorded release.
 //!
 //! Each delivery and settled reply is a row-held response in checkpoint
 //! images (`response`, FIX 6588): a settled row's erased form is its final
@@ -41,7 +47,8 @@ use std::collections::BTreeSet;
 
 use super::super::consent_wait::code_consent_waits_bound_to_in_txn;
 use super::records::REPLAY_RECORDS;
-use super::replay_capsule::{actor_gone_in_store, actor_gone_in_txn};
+use super::replay_capsule::{actor_gone_in_store, actor_gone_in_txn, actor_hard_erased_in_store};
+use super::response_erase::ResponseScrub;
 use super::response_owners::response_owner_in_txn;
 use super::wait_delivery::{DELIVERIES, SETTLED, SETTLED_TAG, WaitDelivery, WaitKey};
 use crate::side_table::{Erased, SideKey, SideTableDbs};
@@ -74,9 +81,12 @@ const fn holder_key(key: &WaitKey) -> (EntityId, EntityId, u64) {
 }
 
 /// What run `run` holds as its writes stamped it: Erased once an erase took
-/// its replies (its owner row says so, or the actor it names is gone), else
-/// the actor its owner row names, or, for a run with none, the actor its
-/// turn program runs as or its live run binding names.
+/// its replies, Deleted for the actor once a soft delete took them (its
+/// owner row says so, or the actor its stamps name is gone: FIX 6591) and
+/// Erased once that actor's hard erasure is complete
+/// ([`drop_hard_erased_actor`]), else the actor its owner row names, or,
+/// for a run with none, the actor its turn program runs as or its live run
+/// binding names.
 fn run_holder_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, run: EntityId) -> Result<WaitHolder> {
     run_holder_in(&vault.store, &vault.store, txn, run)
 }
@@ -92,7 +102,12 @@ fn run_holder_in(
     run: EntityId,
 ) -> Result<WaitHolder> {
     let actor = match response_owner_in_txn(dbs, txn, &run)? {
-        Some(owner) if owner.erased() => return Ok(WaitHolder::Erased),
+        Some(owner) if owner.erased() => {
+            let held = owner
+                .retirement_actor()
+                .map_or(WaitHolder::Erased, |actor| WaitHolder::Deleted { actor });
+            return drop_hard_erased_actor(base, txn, held);
+        }
         Some(owner) => owner.actor(),
         None => match crate::dreamer_runner::program_run_actor_in_txn(dbs, txn, &run)? {
             Some(actor) => Some(actor),
@@ -101,15 +116,38 @@ fn run_holder_in(
                 .and_then(|record| record.live_run.as_ref().map(|live| live.actor)),
         },
     };
-    if actor.is_some_and(|actor| actor_gone_in_store(base, txn, &actor)) {
-        return Ok(WaitHolder::Erased);
+    match actor {
+        Some(actor) if actor_gone_in_store(base, txn, &actor) => {
+            drop_hard_erased_actor(base, txn, WaitHolder::Deleted { actor })
+        }
+        actor => Ok(WaitHolder::Kept { actor }),
     }
-    Ok(WaitHolder::Kept { actor })
+}
+
+/// `held` as a late write leaves it (FIX 6591): a Deleted membership whose
+/// actor's hard erasure is complete (its hard-delete marker) says Erased,
+/// since no later erase of that actor runs to take its id. A soft-deleted
+/// actor's, or one a pending delete removed, stays Deleted for the
+/// retirement still to come. Any other stays as it is. A marker read error
+/// is returned.
+fn drop_hard_erased_actor(
+    base: &Store,
+    txn: &heed::RoTxn<'_>,
+    held: WaitHolder,
+) -> Result<WaitHolder> {
+    Ok(match held {
+        WaitHolder::Deleted { actor } if actor_hard_erased_in_store(base, txn, &actor)? => {
+            WaitHolder::Erased
+        }
+        held => held,
+    })
 }
 
 /// What `key`'s run holds of its wait's reply at `txn`: Erased once its
-/// membership says so, the actor that membership names is gone, or its run
-/// reads as erased; else its run's stamps.
+/// membership or its run says so; Deleted once its membership says so or
+/// the actor that membership names is gone (FIX 6591), so a retry never
+/// keeps the reply again, and Erased once that actor's hard erasure is
+/// complete; else its run's stamps.
 fn holder_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, key: &WaitKey) -> Result<WaitHolder> {
     holder_in(&vault.store, &vault.store, txn, key)
 }
@@ -125,11 +163,15 @@ fn holder_in(
     let run = run_holder_in(base, dbs, txn, key.run)?;
     let stamped = HOLDERS.get_lenient(dbs, txn, &holder_key(key))?;
     let gone = |actor: &EntityId| actor_gone_in_store(base, txn, actor);
-    Ok(match stamped {
-        Some(WaitHolder::Erased) => WaitHolder::Erased,
-        Some(WaitHolder::Kept { actor: Some(actor) }) if gone(&actor) => WaitHolder::Erased,
-        _ => run,
-    })
+    match stamped {
+        Some(WaitHolder::Erased) => Ok(WaitHolder::Erased),
+        _ if matches!(run, WaitHolder::Erased) => Ok(WaitHolder::Erased),
+        Some(held @ WaitHolder::Deleted { .. }) => drop_hard_erased_actor(base, txn, held),
+        Some(WaitHolder::Kept { actor: Some(actor) }) if gone(&actor) => {
+            drop_hard_erased_actor(base, txn, WaitHolder::Deleted { actor })
+        }
+        _ => Ok(run),
+    }
 }
 
 /// Whether `key`'s run reads its wait's reply as erased (FIX 5718): an erase
@@ -147,9 +189,9 @@ pub(super) fn holder_erased_in_txn(
 }
 
 /// Joins `key`'s run to its wait's holders in `wtxn`, as a delivery of the
-/// wait's reply to it does: its row names its run's actor, or says Erased
-/// once the run reads as erased, and an erased row stays erased. Returns
-/// the row as it stands.
+/// wait's reply to it does: its row names its run's actor, or says Deleted
+/// or Erased once the run reads as erased, and a deleted or erased row
+/// stays so. Returns the row as it stands.
 ///
 /// # Errors
 ///
@@ -231,7 +273,8 @@ pub(crate) fn wait_reply_in_txn(
 }
 
 /// Every run whose membership names `actor`: the runs a wait's reply was
-/// delivered to as `actor`'s. A row that does not decode names no actor.
+/// delivered to as `actor`'s, a soft delete's Deleted membership among them
+/// (FIX 6591). A row that does not decode names no actor.
 ///
 /// # Errors
 ///
@@ -253,7 +296,7 @@ pub(super) fn wait_holder_runs_in_txn(
         }
         if HOLDERS
             .decode_value(&bytes)
-            .is_ok_and(|held| held.actor() == Some(*actor))
+            .is_ok_and(|held| held.retirement_actor() == Some(*actor))
         {
             runs.push(run);
         }
@@ -261,15 +304,19 @@ pub(super) fn wait_holder_runs_in_txn(
     Ok(runs)
 }
 
-/// The actor scrub of `actor` over its runs' wait replies (FIX 5718), in the
-/// erase's own writer, release only: each membership that names `actor` or
-/// whose run is one of `runs` (its runs, as their replay rows name them) says
-/// Erased; each delivery those runs were given takes its erased form (when
+/// The actor scrub `scrub` of `actor` over its runs' wait replies (FIX
+/// 5718), in the delete's or the erase's own writer, release only: each
+/// membership that names `actor`, a soft delete's Deleted one included (FIX
+/// 6591), or whose run is one of `runs` (its runs, as their replay rows name
+/// them) says Deleted for a soft delete, keeping the actor it names, or
+/// Erased for an erase; each delivery those runs were given takes its erased
+/// form (when
 /// it came and the rows its reply was derived from stay, its reply goes);
 /// and so does the settled row of each code consent wait bound to one of
 /// them, which that run alone holds. Another run's membership and delivery,
 /// a shared settled reply, and a consent wait's settlement and consumption
-/// digests and receipts stay. A row that does not decode takes the bare
+/// digests and receipts stay; a connector call's settled reply whose caller
+/// was already released goes once no run keeps it (FIX 19257). A row that does not decode takes the bare
 /// erased form, so it never fails the erase.
 ///
 /// # Errors
@@ -280,6 +327,7 @@ pub(super) fn erase_actor_wait_holds_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
     runs: &BTreeSet<EntityId>,
+    scrub: ResponseScrub,
 ) -> Result<()> {
     let store = &vault.store;
     let mut held = Vec::new();
@@ -288,24 +336,25 @@ pub(super) fn erase_actor_wait_holds_in_txn(
         let Some(key) = <(EntityId, EntityId, u64) as SideKey>::decode_key(&key) else {
             continue;
         };
-        let names = HOLDERS
-            .decode_value(&bytes)
-            .is_ok_and(|holder| holder.actor() == Some(*actor));
+        let holder = HOLDERS.decode_value(&bytes).ok();
+        let names = holder.is_some_and(|holder| holder.retirement_actor() == Some(*actor));
         if names || runs.contains(&key.1) {
-            held.push(key);
+            held.push((key, holder));
         }
     }
     let mut scope = runs.clone();
     let mut called = BTreeSet::new();
-    for &(wait, run, generation) in &held {
+    let mut joined = BTreeSet::new();
+    for &((wait, run, generation), _) in &held {
         if generation == CALLER_GENERATION {
             called.insert(wait);
         } else {
             scope.insert(run);
+            joined.insert(wait);
         }
     }
-    for key in held {
-        HOLDERS.put(store, wtxn, &key, &WaitHolder::Erased)?;
+    for (key, holder) in held {
+        HOLDERS.put(store, wtxn, &key, &scrubbed_holder(scrub, holder, *actor))?;
     }
     for run in &scope {
         let mut delivered = Vec::new();
@@ -317,7 +366,10 @@ pub(super) fn erase_actor_wait_holds_in_txn(
             }
         }
         for ((_, wait, generation), erased, delivery) in delivered {
-            HOLDERS.put(store, wtxn, &(wait, *run, generation), &WaitHolder::Erased)?;
+            joined.insert(wait);
+            let key = (wait, *run, generation);
+            let holder = HOLDERS.get_lenient(store, wtxn, &key)?;
+            HOLDERS.put(store, wtxn, &key, &scrubbed_holder(scrub, holder, *actor))?;
             // An erased reply, the marker of an opaque one among them,
             // stays erased as it is (FIX 9390).
             if erased {
@@ -332,23 +384,46 @@ pub(super) fn erase_actor_wait_holds_in_txn(
     }
     // A connector call's settled copy its caller held goes once no other
     // membership of the wait keeps it.
-    for wait in called {
+    for &wait in &called {
         erase_settled_unheld_in_txn(store, wtxn, wait)?;
     }
+    // A wait whose caller's erase already released its hold keeps its
+    // settled copy only while a run's membership keeps it, so the erase of
+    // a run's membership checks that copy again (FIX 19257).
+    for &wait in joined.difference(&called) {
+        if caller_released_in_txn(store, wtxn, wait)? {
+            erase_settled_unheld_in_txn(store, wtxn, wait)?;
+        }
+    }
     Ok(())
+}
+
+/// The membership `prior` once the actor scrub `scrub` of `actor` takes
+/// it: Deleted, keeping the actor it names, for a soft delete (FIX 6591),
+/// and Erased for an erase.
+const fn scrubbed_holder(
+    scrub: ResponseScrub,
+    prior: Option<WaitHolder>,
+    actor: EntityId,
+) -> WaitHolder {
+    match scrub {
+        ResponseScrub::Delete => WaitHolder::deleted(prior, actor),
+        ResponseScrub::Erase => WaitHolder::Erased,
+    }
 }
 
 /// Joins `caller`, the actor whose connector call settles wait `wait_id`,
 /// to the wait's holders in `wtxn`, as the reader of its settled reply by
 /// `connector.call_status` (FIX 5718 part 3): its row names the caller, or
-/// says Erased once the caller is gone, and an erased row stays erased.
-/// An erased one leaves the settled row its erased form when no other
-/// membership of the wait keeps the reply, so a settle that lands after the
-/// caller's erase keeps no copy of it.
+/// says Deleted for the caller once the caller is gone (FIX 6591), and a
+/// deleted or erased row stays so; Erased once the caller's hard erasure is
+/// complete (its hard-delete marker). An erased one leaves the settled row
+/// its erased form when no other membership of the wait keeps the reply, so
+/// a settle that lands after the caller's erase keeps no copy of it.
 ///
 /// # Errors
 ///
-/// Storage errors.
+/// Storage errors, and a hard-delete marker read error.
 pub(super) fn hold_settled_for_caller_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -357,12 +432,13 @@ pub(super) fn hold_settled_for_caller_in_txn(
 ) -> Result<()> {
     let store = &vault.store;
     let key = (wait_id, caller, CALLER_GENERATION);
-    let held = match HOLDERS.get_lenient(store, wtxn, &key)? {
-        Some(WaitHolder::Erased) => WaitHolder::Erased,
-        _ if actor_gone_in_txn(vault, wtxn, &caller) => WaitHolder::Erased,
-        _ => WaitHolder::Kept {
+    let prior = HOLDERS.get_lenient(store, wtxn, &key)?;
+    let held = if prior.is_some_and(WaitHolder::erased) || actor_gone_in_txn(vault, wtxn, &caller) {
+        drop_hard_erased_actor(store, wtxn, WaitHolder::deleted(prior, caller))?
+    } else {
+        WaitHolder::Kept {
             actor: Some(caller),
-        },
+        }
     };
     HOLDERS.put(store, wtxn, &key, &held)?;
     if held.erased() {
@@ -371,10 +447,72 @@ pub(super) fn hold_settled_for_caller_in_txn(
     Ok(())
 }
 
+/// Releases `caller`'s hold on the settled reply of its connector call's
+/// wait `wait_id`, in the erase's writer `wtxn` (FIX 19257). The call's
+/// erase runs this before it drops the call row, because only that row
+/// names the caller. The caller's membership says Erased even when the
+/// wait has not settled yet, so a later settle finds the release with no
+/// call row left. It does not wait for the caller's hard-delete marker. A
+/// settled reply takes its erased form once no other membership of the
+/// wait keeps it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn release_settled_for_caller_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    wait_id: EntityId,
+    caller: EntityId,
+) -> Result<()> {
+    let key = (wait_id, caller, CALLER_GENERATION);
+    HOLDERS.put(store, wtxn, &key, &WaitHolder::Erased)?;
+    erase_settled_unheld_in_txn(store, wtxn, wait_id)
+}
+
+/// Applies a connector caller's recorded release to wait `wait_id`'s
+/// settled row, in the settling writer `wtxn`, after every parked run
+/// joined (FIX 19257). The settle runs this when it finds no call row. A
+/// caller membership of the wait that says Deleted or Erased is the release
+/// the call's erase recorded: the settled row takes its erased form once no
+/// other membership keeps it. A wait with no such membership stays as it
+/// is, so a call row missing for another reason releases nothing.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn apply_caller_release_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    wait_id: EntityId,
+) -> Result<()> {
+    if caller_released_in_txn(store, wtxn, wait_id)? {
+        erase_settled_unheld_in_txn(store, wtxn, wait_id)?;
+    }
+    Ok(())
+}
+
+/// Whether a caller membership of `wait_id`, under [`CALLER_GENERATION`],
+/// says Deleted or Erased (FIX 19257). A row that does not decode is no
+/// release.
+fn caller_released_in_txn(store: &Store, txn: &heed::RoTxn<'_>, wait_id: EntityId) -> Result<bool> {
+    for row in HOLDERS.iter_raw_from(store, txn, wait_id.as_bytes())? {
+        let (key, bytes) = row?;
+        let caller = matches!(
+            <(EntityId, EntityId, u64) as SideKey>::decode_key(&key),
+            Some((_, _, CALLER_GENERATION))
+        );
+        if caller && HOLDERS.decode_value(&bytes).is_ok_and(WaitHolder::erased) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Leaves `wait_id`'s settled row its erased form when every membership of
-/// the wait says Erased: no holder keeps its reply. A membership that does
-/// not decode keeps it, so no shared reply goes on a row that cannot be
-/// read.
+/// the wait says Deleted or Erased: no holder keeps its reply. A membership
+/// that does not decode keeps it, so no shared reply goes on a row that
+/// cannot be read.
 fn erase_settled_unheld_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -437,12 +575,13 @@ fn erase_settled_in_txn(
 }
 
 /// What an erase leaves of a delivery row that does not decode: a delivery
-/// with no reply, time or rows.
+/// with no reply, time or rows, and unknown origins (FIX 7083).
 fn unreadable_delivery() -> WaitDelivery {
     WaitDelivery {
         reply: String::new(),
         delivered_at_ms: 0,
         source_rows: None,
+        origins: None,
         erased: true,
     }
 }

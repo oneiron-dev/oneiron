@@ -1,0 +1,13 @@
+{
+  "name": "vault.projects.dismiss_card",
+  "description": "The card's person dismisses a project card so it never mints; false when it was dismissed already.",
+  "input": "ProjectCardRequest",
+  "output": "crate::task_verb::sdk::ProjectCardDismissal",
+  "call": "ProjectCardDismissal { dismissed: memory.projects_dismiss_card(&input.card_id)?, card_id: input.card_id }",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

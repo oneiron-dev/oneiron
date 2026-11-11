@@ -214,10 +214,24 @@ impl Vault {
             base_live,
         };
         Ok(ArtifactAskRun {
-            proposal: self.stage_sheet_answers(output, bundle, ask.run_ref, version, frontier)?,
+            proposal: None,
+            deferred_floor: None,
+            sheet_answers: bundle
+                .answers
+                .iter()
+                .any(|answer| answer.value.is_some())
+                .then_some(super::SheetAnswerWork::new(
+                    bundle,
+                    None,
+                    version,
+                    frontier,
+                    request.ask.deadline,
+                    None,
+                )),
             abstained,
             refused,
             read_rows,
+            next_sheet_row: None,
         })
     }
 }

@@ -92,6 +92,15 @@ impl ScopedReadActorKey {
             }
             _ => hasher.update([0u8]),
         }
+        // A key bound by several agent Grants (FIX AGENT-GRAPHFS-GRANT-WORLDS)
+        // reads inside one of them alone; a key bound by none folds nothing
+        // more, so its fingerprint is as before.
+        if let Some(alternatives) = self.grant_alternatives() {
+            fold_len(&mut hasher, alternatives.len());
+            for alternative in alternatives {
+                fold_scope(&mut hasher, alternative)?;
+            }
+        }
         Ok(hasher.finalize().into())
     }
 }
@@ -121,16 +130,26 @@ fn fold_reader_grants(
     let now = vault.instant_in_txn(txn)?.secs();
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let (grants, mut undecoded) = vault.agent_grants_reporting_in_txn(txn)?;
-    let mut standing: Vec<(EntityId, &Scope)> = grants
+    let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+        &vault.store,
+        txn,
+        grants
+            .iter()
+            .filter(|grant| grant.grant.member_ref == reader)
+            .map(|grant| &grant.grant),
+    )?;
+    // The Scope each Grant reads under: `read` listed when a class it names
+    // admits it (FIX 8735), as `reader_grants_in` hands it on.
+    let mut standing: Vec<(EntityId, std::borrow::Cow<'_, Scope>)> = grants
         .iter()
-        .filter(|grant| grant.stands_in_txn(vault, txn, reader, "read", now, &owners))
-        .map(|grant| (grant.id, &grant.grant.authority_scope))
+        .filter(|grant| grant.stands_in_txn(vault, txn, reader, "read", now, &owners, &classes))
+        .map(|grant| (grant.id, grant.grant.scope_for_verb("read", &classes)))
         .collect();
     standing.sort_by_key(|(id, _)| *id);
     fold_len(hasher, standing.len());
     for (id, scope) in standing {
         hasher.update(id.as_bytes());
-        fold_scope(hasher, scope)?;
+        fold_scope(hasher, &scope)?;
     }
     // A Grant row that does not decode stands for no one; it still marks a
     // change in what the reader's Grants are.
@@ -294,6 +313,14 @@ impl ScopedReadActorKey {
         key_fold_owner_proof(&mut hasher, self.owner_proof_guard());
         hasher.update(&[u8::from(self.owner_by_census())]);
         key_fold_record_bound(&mut hasher, self.record_bound.as_ref());
+        // Last, and only when set, so a key no agent Grants bind keeps its
+        // fingerprint (FIX AGENT-GRAPHFS-GRANT-WORLDS).
+        if let Some(alternatives) = self.grant_alternatives() {
+            key_fold_len(&mut hasher, alternatives.len());
+            for alternative in alternatives {
+                key_fold_json(&mut hasher, alternative);
+            }
+        }
         *hasher.finalize().as_bytes()
     }
 }

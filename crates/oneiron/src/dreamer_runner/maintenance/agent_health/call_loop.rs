@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use super::call_evidence::CallStream;
 use super::{AgentHealthCounter, Attempts, DialBook, Dispatches, Finding, same_inputs};
 use crate::receipt::CallOutcome;
+use crate::skill_optimize::union_source_rows;
 use crate::store::diagnostic_record::AgentHealthSignal;
 
 /// `loop`: one stream's identical `(verb, request_digest)` calls in a row,
@@ -24,7 +25,16 @@ pub(super) fn loop_findings(
     let mut out = Vec::new();
     for stream in streams {
         let (task, attempt) = stream.owner(dispatched, attempts);
-        let repeats = book.for_attempt(dispatched, attempt).loop_repeats;
+        let dials = book.for_attempt(dispatched, attempt);
+        let repeats = dials.loop_repeats;
+        let source_rows = if stream.witness.is_none() && attempt.is_none() {
+            union_source_rows([
+                Some(stream.rows.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
+                dials.loop_rows.clone(),
+            ])
+        } else {
+            None
+        };
         let rows = &stream.rows;
         let mut start = 0;
         while start < rows.len() {
@@ -64,10 +74,13 @@ pub(super) fn loop_findings(
                 attempt,
                 generation: stream.witness.map(|witness| witness.generation),
                 evidence: run.iter().map(|(id, _)| *id).collect(),
+                source_rows: source_rows.clone(),
                 window: (run[0].1.at, run[run.len() - 1].1.at),
                 actual: count,
                 dial: repeats as i64,
                 measured: count,
+                exact_dial: None,
+                exact_measured: None,
                 counter,
                 confession: None,
                 blocked: false,

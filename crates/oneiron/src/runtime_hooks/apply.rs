@@ -312,8 +312,12 @@ fn land(
         .map_err(refusal_text)
 }
 
-/// Enqueue task: the tasks.create door. `TaskCreateSpec` has no due field, so
-/// `due_at` rides in the spec.
+/// Enqueue task: the tasks.create door. `due_at` rides in the spec as the
+/// hook's original input payload AND as the typed `TaskCreateSpec::due_at`
+/// annotation (FIX685): a due/deadline stamp, never TTL expiry and never a
+/// not-before wait. The standard TASK it lands then ticks once on
+/// `schedule.tick` after that time (FIX 4749). `watch` makes it a watch
+/// TASK, which queues no work and which its tick settles (FIX 22121).
 fn enqueue_task(
     vault: &Vault,
     memory: &Memory<'_>,
@@ -338,9 +342,13 @@ fn enqueue_task(
         Some(task.title.clone()),
         None,
         None,
-    );
+    )
+    .with_watch(task.watch);
     if let Some(assignee) = task.assignee.as_deref() {
         spec = spec.with_assignee(assignee_for(vault, assignee)?);
+    }
+    if let Some(due_at) = task.due_at {
+        spec = spec.with_due_at(due_at);
     }
     let landed = |receipt: &TaskCreateReceipt| {
         let row = receipt.task_ref.or(receipt.proposal_ref);

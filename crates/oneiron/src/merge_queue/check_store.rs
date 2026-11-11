@@ -26,6 +26,7 @@ use crate::attempt_queue::{AttemptQueue, ClaimOutcome, EnqueueOutcome};
 use crate::consent::QueuedCheckApproval;
 use crate::error::{Error, Result};
 use crate::ports::JobQueue;
+use crate::repo_mutation::proposal::ContractReviewEvidence;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_inputs::ClaimAttempt;
@@ -236,6 +237,8 @@ pub(super) struct WorkUpdate<'u> {
     pub(super) config: Option<&'u QueueCheckConfiguration>,
     /// The checked baseline's pending seal, kept once (G2 PR3).
     pub(super) baseline_seal: Option<super::QueueRevisionLink>,
+    /// The removed-name review the new verdict slot routes (FIX 4365).
+    pub(super) contract_review: Option<ContractReviewEvidence>,
 }
 
 impl WorkUpdate<'_> {
@@ -637,7 +640,9 @@ impl Vault {
     /// Ends one step of claimed work `ran`: rereads it, and attaches only if
     /// the same attempt and lease still hold it and its owner's approval
     /// still holds; a stale completion attaches nothing. The batch slot,
-    /// configuration, work row and attempt completion commit together.
+    /// its removed-name review route (FIX 4365), configuration, work row and
+    /// attempt completion commit together. A refused completion routes no
+    /// review.
     pub(super) fn finish_queue_check(
         &self,
         ran: &QueueCheckWork,
@@ -665,6 +670,9 @@ impl Vault {
             if let Some((key, batch)) = update.batch {
                 check_row_size(&BATCHES.encode_value(batch)?)?;
                 BATCHES.put(store, &mut txn, &key, batch)?;
+                if let Some(evidence) = &update.contract_review {
+                    self.route_contract_review_in_txn(&mut txn, evidence)?;
+                }
             }
             if let Some(config) = update.config {
                 CHECK_CONFIGS.put(store, &mut txn, &config.store, config)?;

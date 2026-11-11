@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use crate::agent_dispatch::MeasuredRate;
 use crate::llm::decision::catalogue::DESCRIPTION_FIT;
 use crate::llm::decision::{
-    AnswerContract, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility, cut_text,
-    fit_state,
+    AnswerContract, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionWireLabels,
+    Reversibility, cut_text, fit_state,
 };
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::retrieval_depth::RetrievalDeadline;
@@ -18,6 +18,9 @@ use crate::task_type::TaskTypeRef;
 use crate::{EntityId, Result};
 
 use super::readings::DescriptionFitnessReadings;
+
+mod fitness_labels;
+use fitness_labels::FitnessQuestionLabels;
 
 /// Generation beside a decided route: the reason a routed seat's receipt keeps, from the
 /// host's own model transport. The model, its effort and its fitness are already decided;
@@ -46,7 +49,7 @@ pub(super) struct Candidate<'a> {
 /// learned bands, its wording of the fitness question, and each route's anytime budget.
 ///
 /// A provider reads the task and every candidate's description line and effort, each
-/// beside the id of the question that grades it, as the call's bounded state.
+/// beside a call-local name for the question that grades it, as the call's bounded state.
 pub struct DescriptionDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -81,6 +84,12 @@ impl DescriptionDecisions<'_> {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
+        let labels = FitnessQuestionLabels::new(
+            questions
+                .iter()
+                .chain(self.ladder.person)
+                .chain(self.ladder.paired),
+        );
         let longest = candidates
             .iter()
             .map(|candidate| candidate.description.len())
@@ -93,7 +102,7 @@ impl DescriptionDecisions<'_> {
                 .zip(&questions)
                 .map(|(candidate, question)| {
                     let mut row = json!({
-                        "question": question.id.to_hex(),
+                        "question": labels.question_label(question.id).expect("fitness question was labeled"),
                         "model": candidate.model,
                         "description": cut_text(candidate.description, cut),
                         "effort": candidate.effort,
@@ -111,7 +120,7 @@ impl DescriptionDecisions<'_> {
                 "cut_at_bytes": cut,
             })
         });
-        let decisions = self.ladder.run_pack(
+        let decisions = self.ladder.run_pack_labeled(
             &questions.iter().collect::<Vec<_>>(),
             self.principal,
             &[],
@@ -120,6 +129,7 @@ impl DescriptionDecisions<'_> {
             &self.bands,
             Reversibility::ReversibleRead,
             &RetrievalDeadline::hard(Instant::now(), self.budget),
+            &labels,
         )?;
         Ok(DescriptionFitnessReadings::of(
             candidates, decisions, type_ref,

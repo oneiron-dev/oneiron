@@ -6,8 +6,9 @@
 //! proposal, digest and run, keep every row and every slot: a slot naming the
 //! erased entity is left in its erased form, nil in its place, with no id,
 //! kind, hash or mark, so each list keeps its order and its count. A later
-//! accept or revert passes an erased slot by and brings nothing back. No
-//! listing has an entity index, so an erase reads all three to their ends.
+//! accept or revert passes an erased slot by and brings nothing back. The
+//! erase reads only the listing rows the entity index says name the id
+//! (FIX 7616, [`super::entity_rows`]), never a listing to its end.
 //!
 //! An attempt the payload erase rewrote (FIX 7076, FIX 7502) is not erased:
 //! its run's snapshot entry moves to the rewritten bytes, as its mark does,
@@ -19,15 +20,15 @@
 //! and counted, and a listing slot that does not read is left erased: the
 //! erase never fails on one (Engine on FIX 5736).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
 use super::attempt_retention::erase_task_index_in_txn;
-use super::codec_receipts::{DIGEST, PROPOSAL};
+use super::entity_rows::{self, Listing};
 use super::marks::{self, CleanupMark, Revision};
 use super::person_provenance::EXTRACTION_PERSON;
-use super::run_record::{KEY_REVERT, KEY_SNAPSHOT, RUN};
+use super::run_record::{KEY_REVERT, KEY_SNAPSHOT};
 use super::run_snapshot::{KEY_AFTER, KEY_BEFORE, KEY_ENTRIES, KEY_REVISION};
 use super::{
     CleanupKind, KEY_ARCHIVED, KEY_CANDIDATES, KEY_ENTITY, KEY_KIND, KEY_REJECTED, KEY_SKIPPED,
@@ -35,7 +36,6 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::side_table::{Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::store::attempt_id::AttemptId;
 
@@ -62,6 +62,73 @@ impl Unreadable {
     }
 }
 
+/// The slot lists of each listing, by path from the row: where an erase
+/// scrubs an id, and where the entity index reads the ids a row names.
+const PROPOSAL_LISTS: &[&[&str]] = &[&[KEY_CANDIDATES]];
+const DIGEST_LISTS: &[&[&str]] = &[&[KEY_ARCHIVED], &[KEY_SKIPPED], &[KEY_REJECTED]];
+const RUN_LISTS: &[&[&str]] = &[
+    &[KEY_CANDIDATES],
+    &[KEY_ARCHIVED],
+    &[KEY_SNAPSHOT, KEY_ENTRIES],
+    &[KEY_REVERT, KEY_ENTRIES],
+];
+
+const fn lists(listing: Listing) -> &'static [&'static [&'static str]] {
+    match listing {
+        Listing::Proposal => PROPOSAL_LISTS,
+        Listing::Digest => DIGEST_LISTS,
+        Listing::Run => RUN_LISTS,
+    }
+}
+
+/// The list at `path` in a stored map.
+fn list<'a>(parts: &'a [(Value, Value)], path: &[&str]) -> Option<&'a Vec<Value>> {
+    match path {
+        [last] => match field(parts, last)? {
+            Value::Array(slots) => Some(slots),
+            _ => None,
+        },
+        [first, rest @ ..] => match field(parts, first)? {
+            Value::Map(inner) => list(inner, rest),
+            _ => None,
+        },
+        [] => None,
+    }
+}
+
+/// The list at `path` in a stored map, to rewrite.
+fn list_mut<'a>(parts: &'a mut [(Value, Value)], path: &[&str]) -> Option<&'a mut Vec<Value>> {
+    match path {
+        [last] => match field_mut(parts, last)? {
+            Value::Array(slots) => Some(slots),
+            _ => None,
+        },
+        [first, rest @ ..] => match field_mut(parts, first)? {
+            Value::Map(inner) => list_mut(inner, rest),
+            _ => None,
+        },
+        [] => None,
+    }
+}
+
+/// Every id a stored row of `listing` names where an erase would scrub it
+/// (FIX 7616). A row that does not read names none.
+pub(super) fn named_ids(listing: Listing, raw: &[u8]) -> BTreeSet<[u8; 16]> {
+    let mut cursor = raw;
+    let Ok(Value::Map(row)) = rmpv::decode::read_value(&mut cursor) else {
+        return BTreeSet::new();
+    };
+    lists(listing)
+        .iter()
+        .filter_map(|path| list(&row, path))
+        .flatten()
+        .filter_map(|value| match slot(value) {
+            Slot::Names(id) => Some(id),
+            Slot::Erased | Slot::Unreadable => None,
+        })
+        .collect()
+}
+
 /// What one listing slot names.
 enum Slot {
     /// An erase reached it already.
@@ -86,25 +153,19 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &Entity
     erase_task_index_in_txn(store, txn, id)?;
     let named = id.as_bytes();
     let mut unreadable = Unreadable::default();
-    walk(store, txn, PROPOSAL, &mut unreadable, |row, slots| {
-        erase_slots(row, KEY_CANDIDATES, named, slots)
-    })?;
-    walk(store, txn, DIGEST, &mut unreadable, |row, slots| {
-        let mut changed = erase_slots(row, KEY_ARCHIVED, named, slots);
-        changed |= erase_slots(row, KEY_SKIPPED, named, slots);
-        changed |= erase_slots(row, KEY_REJECTED, named, slots);
-        changed
-    })?;
-    walk(store, txn, RUN, &mut unreadable, |row, slots| {
-        let mut changed = erase_slots(row, KEY_CANDIDATES, named, slots);
-        changed |= erase_slots(row, KEY_ARCHIVED, named, slots);
-        for key in [KEY_SNAPSHOT, KEY_REVERT] {
-            if let Some(Value::Map(parts)) = field_mut(row, key) {
-                changed |= erase_slots(parts, KEY_ENTRIES, named, slots);
+    for (listing, key) in entity_rows::rows_naming(store, txn, named)? {
+        // Once scrubbed, the row names the id no more.
+        entity_rows::forget_in_txn(store, txn, named, listing, &key)?;
+        visit(store, txn, listing, &key, &mut unreadable, |row, slots| {
+            let mut changed = false;
+            for path in lists(listing) {
+                if let Some(found) = list_mut(row, path) {
+                    changed |= erase_slots(found, named, slots);
+                }
             }
-        }
-        changed
-    })?;
+            changed
+        })?;
+    }
     unreadable.log("entity");
     Ok(())
 }
@@ -139,44 +200,56 @@ pub(crate) fn erase_attempt_references_in_txn(
             )
         })
         .collect();
-    let mut unreadable = Unreadable::default();
-    walk(store, txn, RUN, &mut unreadable, |row, _| {
-        let Some(Value::Map(snapshot)) = field_mut(row, KEY_SNAPSHOT) else {
-            return false;
-        };
-        let Some(Value::Array(entries)) = field_mut(snapshot, KEY_ENTRIES) else {
-            return false;
-        };
-        let mut changed = false;
-        for entry in entries {
-            changed |= scrub_entry(entry, &moves);
+    // Only a run's snapshot names an attempt there; the index finds them.
+    let mut runs = BTreeSet::new();
+    for attempt in moves.keys() {
+        for (listing, key) in entity_rows::rows_naming(store, txn, attempt)? {
+            if listing == Listing::Run {
+                runs.insert(key);
+            }
         }
-        changed
-    })?;
+    }
+    let mut unreadable = Unreadable::default();
+    for key in runs {
+        visit(store, txn, Listing::Run, &key, &mut unreadable, |row, _| {
+            let Some(entries) = list_mut(row, &[KEY_SNAPSHOT, KEY_ENTRIES]) else {
+                return false;
+            };
+            let mut changed = false;
+            for entry in entries {
+                changed |= scrub_entry(entry, &moves);
+            }
+            changed
+        })?;
+    }
     unreadable.log("attempt");
     Ok(())
 }
 
-/// Rewrites, in place, each row of `table` that `scrub` changes. A row that
-/// does not read as a map is deleted by its key and counted.
-fn walk<K: SideKey>(
+/// Rewrites, in place, the row `key` of `listing` when `scrub` changes it.
+/// A row that is gone is passed by; one that does not read as a map is
+/// deleted by its key and counted. A rewrite only clears slots, so it names
+/// no id it did not name before, and the index keeps its other rows.
+fn visit(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
-    table: SideTable<K, Vec<u8>, Raw>,
+    listing: Listing,
+    key: &[u8; 16],
     unreadable: &mut Unreadable,
-    mut scrub: impl FnMut(&mut [(Value, Value)], &mut usize) -> bool,
+    scrub: impl FnOnce(&mut [(Value, Value)], &mut usize) -> bool,
 ) -> Result<()> {
-    for (key, raw) in table.scan(store, txn)? {
-        let mut cursor = raw.as_slice();
-        let Ok(Value::Map(mut row)) = rmpv::decode::read_value(&mut cursor) else {
-            table.delete(store, txn, &key)?;
-            unreadable.rows += 1;
-            continue;
-        };
-        if scrub(&mut row, &mut unreadable.slots) {
-            let encoded = encode_row(&Value::Map(row), ERASE_LABEL)?;
-            table.put(store, txn, &key, &encoded)?;
-        }
+    let Some(raw) = listing.get(store, txn, key)? else {
+        return Ok(());
+    };
+    let mut cursor = raw.as_slice();
+    let Ok(Value::Map(mut row)) = rmpv::decode::read_value(&mut cursor) else {
+        listing.delete_unindexed(store, txn, key)?;
+        unreadable.rows += 1;
+        return Ok(());
+    };
+    if scrub(&mut row, &mut unreadable.slots) {
+        let encoded = encode_row(&Value::Map(row), ERASE_LABEL)?;
+        listing.put_unindexed(store, txn, key, &encoded)?;
     }
     Ok(())
 }
@@ -200,18 +273,9 @@ fn slot(value: &Value) -> Slot {
         .map_or(Slot::Unreadable, |id| Slot::Names(*id.as_bytes()))
 }
 
-/// Leaves each slot of the list at `key` that names `id`, or that does not
-/// read, erased; `true` when one changed. A row without that list has
-/// nothing there to erase.
-fn erase_slots(
-    parts: &mut [(Value, Value)],
-    key: &str,
-    id: &[u8; 16],
-    unreadable: &mut usize,
-) -> bool {
-    let Some(Value::Array(slots)) = field_mut(parts, key) else {
-        return false;
-    };
+/// Leaves each slot of `slots` that names `id`, or that does not read,
+/// erased; `true` when one changed.
+fn erase_slots(slots: &mut [Value], id: &[u8; 16], unreadable: &mut usize) -> bool {
     let mut changed = false;
     for value in slots {
         match slot(value) {

@@ -107,12 +107,14 @@ impl PolicyClassifyPrompt {
                     .response_format(self.category_vocabulary()),
                 locality: config.safeguard_binding.locality(),
                 host_keyless: false,
+                host_paid: false,
             },
             messages: {
                 let mut messages = vec![LlmMessage {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: self.system.clone(),
+                        signature: None,
                     }],
                 }];
                 // A row's why is explanation, never a new instruction. Keep
@@ -134,6 +136,7 @@ impl PolicyClassifyPrompt {
                         role: LlmMessageRole::User,
                         content: vec![ContentPart::Text {
                             text: json!({"policy_row_evidence": explained}).to_string(),
+                            signature: None,
                         }],
                     });
                 }
@@ -141,6 +144,7 @@ impl PolicyClassifyPrompt {
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: self.user.clone(),
+                        signature: None,
                     }],
                 });
                 messages
@@ -375,6 +379,7 @@ fn resolve_hosted_violation(
             jurisdiction: policy.jurisdiction.clone(),
             policy_version: policy.version.clone(),
             row_ref: row.row_ref.clone(),
+            basis: row.basis.clone(),
         },
     ))
 }
@@ -415,7 +420,7 @@ pub(super) const fn decision_severity(decision: PolicyClassifyDecision) -> u8 {
 pub(super) fn response_text(response: &LlmResponse) -> Option<String> {
     let mut joined = String::new();
     for part in &response.message.content {
-        if let ContentPart::Text { text } = part
+        if let ContentPart::Text { text, .. } = part
             && !text.trim().is_empty()
         {
             if joined.len().saturating_add(text.len()) > POLICY_MODEL_ANSWER_PARSE_MAX_BYTES {

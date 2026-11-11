@@ -649,7 +649,7 @@ pub(super) fn commit_on_answer(
     // so edition-2024 disjoint capture would otherwise drop `_turn` when
     // this returns and the restore would run cold (FIX 11287).
     let retain_turn = segments._turn.clone();
-    let message = handle.message_id();
+    let expected_message = handle.recorded_message_id();
     let (finished, forwarded) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         // Held until the outcome ends, whatever the turn wrote.
@@ -659,16 +659,31 @@ pub(super) fn commit_on_answer(
         };
         let whole = ended.result.is_ok()
             && ended.saved.as_ref().is_some_and(|saved| {
-                saved.message_id == message && saved.finality == StreamFinality::Final
+                let matches = match expected_message {
+                    Some(message) => saved.message_id == message,
+                    None => ended.native.as_ref().is_some_and(|finished| {
+                        matches!(&finished.outcome,
+                            oneiron::memory::SessionStreamOutcome::Retained(receipt) if receipt == saved)
+                    }),
+                };
+                matches && saved.finality == StreamFinality::Final
             });
         let saved = ended.saved.clone().filter(|_| whole);
+        let native_commit = ended
+            .native
+            .as_ref()
+            .and_then(|finished| Some((finished.turn_id?, finished.text.clone())));
         // The outcome goes on as it ended; nothing waits for the session.
         let _ = finished.send(ended);
         if let (Some(saved), Some(authority)) = (saved, commit_authority) {
             // The committed successor carries the current full lane-admitted
             // MESSAGE text, not the raw accepted stream text; a reread that
             // does not resolve stays cold (FIX 13020).
-            let text = crate::server::blocking(|| reader.committed_text(&saved));
+            let message = saved.message_id;
+            let text = match &native_commit {
+                Some((_, text)) => Some(text.clone()),
+                None => crate::server::blocking(|| reader.committed_text(&saved)),
+            };
             let Some(text) = text else {
                 return;
             };
@@ -676,14 +691,16 @@ pub(super) fn commit_on_answer(
             // 10367): HEAD does not always move to this reply's TURN, and
             // naming the TURN anyway drops the session at the next fork.
             // No HEAD stands or reads: the TURN names it, as before.
-            let head = segments
-                .manifest
-                .anchor()
-                .map(|anchor| anchor.conversation)
-                .and_then(|conversation| {
-                    crate::server::blocking(|| vault.local_head(&conversation).ok().flatten())
-                })
-                .unwrap_or(turn);
+            let head = native_commit.map(|(turn, _)| turn).unwrap_or_else(|| {
+                segments
+                    .manifest
+                    .anchor()
+                    .map(|anchor| anchor.conversation)
+                    .and_then(|conversation| {
+                        crate::server::blocking(|| vault.local_head(&conversation).ok().flatten())
+                    })
+                    .unwrap_or(turn)
+            });
             let commit = ReplyCommit {
                 head,
                 message,

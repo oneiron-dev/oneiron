@@ -2,11 +2,15 @@
 //! connection checks only a served host can run, the isolated probes that
 //! qualify a built-in on them (FIX 710), the channel handles it
 //! keeps for every checked built-in channel, the provider webhooks those
-//! handles serve, the native mail pack's inbox reads, the transports its
-//! served sinks send through, and the Slack app's manifest and OAuth install.
+//! handles serve, the native mail pack's inbox reads, the Gmail seats'
+//! mailbox reads (FIX 1168), the inbox sync of each LinkedIn seat an
+//! installed connector serves (FIX 12328), the transports its served sinks
+//! send through, and the Slack app's manifest and OAuth install.
 
 mod checks;
+mod gmail;
 mod handles;
+mod linkedin_inbox;
 mod native_mail;
 mod probes;
 mod slack_app;
@@ -31,11 +35,12 @@ use crate::server::{HousekeepingAdmission, SyncServer};
 /// their checks, whether or not any channel is Active.
 const RECONCILE_EVERY: Duration = Duration::from_secs(30);
 
-/// Installs this host's served transports on its vault (FIX 4435, 2096):
-/// the `[channel_endpoints]` provider APIs, the `[native_mail]` server and
-/// the `[apns]` applications, which every served sink on the vault sends
-/// through. Call it before any worker sends; a second install does nothing.
-pub(crate) fn install_served_transports(server: &SyncServer, models: Option<&ModelsConfig>) {
+/// Installs this host's served transports on its vault (FIX 4435, 2096,
+/// 1168): the `[channel_endpoints]` provider APIs, the `[native_mail]`
+/// server, the `[apns]` applications and this server's connector calls,
+/// which every served sink on the vault sends through. Call it before any
+/// worker sends; a second install does nothing.
+pub(crate) fn install_served_transports(server: &Arc<SyncServer>, models: Option<&ModelsConfig>) {
     // Config validation refused a bad endpoint at load; this only keeps a
     // host that skipped it on the public APIs.
     let endpoints = server
@@ -46,7 +51,9 @@ pub(crate) fn install_served_transports(server: &SyncServer, models: Option<&Mod
             tracing::warn!(%error, "[channel_endpoints] is invalid; the public provider APIs serve");
             ServedEndpoints::default()
         });
-    let mut transports = ServedTransports::new(endpoints);
+    let mut transports = ServedTransports::new(endpoints).with_connector_calls(Arc::new(
+        crate::connector_call_host::ServerConnectorCalls::new(server),
+    ));
     if let Some(mail) = &server.config.native_mail {
         match mail.stalwart() {
             Ok(placement) => transports = transports.with_native_mail(placement),
@@ -57,6 +64,16 @@ pub(crate) fn install_served_transports(server: &SyncServer, models: Option<&Mod
     }
     if let (Some(broker), Some(models)) = (server.broker_context(), models) {
         transports = transports.with_broker_model_listing(broker.secret_use_models(models));
+    }
+    // The built-in Google Sheets connector sends through the credential
+    // broker (FIX 4862): serve's own context, else the `[models.broker]`
+    // one, made at the first Sheets call.
+    if let Some(sheets) = server
+        .broker_context()
+        .map(crate::models::BrokerContext::sheets_broker)
+        .or_else(|| crate::models::BrokerContext::sheets_broker_from_config(models))
+    {
+        transports = transports.with_sheets_broker(sheets);
     }
     // Config validation refused a bad application at load; this only keeps a
     // host that skipped it without Apple push.
@@ -69,41 +86,68 @@ pub(crate) fn install_served_transports(server: &SyncServer, models: Option<&Mod
             }
         }
     }
+    // The installed MCP endpoint of each `[connectors]` section, under the
+    // normalized name the served connector host keys it by: a catalog
+    // connector's tool call goes there, and `can({effect: {connector_call}})`
+    // judges it for that endpoint (FIX 22102).
+    transports = transports.with_connector_endpoints(
+        server
+            .config
+            .connectors
+            .iter()
+            .map(|(name, connector)| {
+                (
+                    crate::config::connectors::normalize_name(name),
+                    connector.endpoint.clone(),
+                )
+            })
+            .collect(),
+    );
     server
         .vault()
         .install_served_transports(Arc::new(transports));
 }
 
-/// Starts the reconcile loop. Each pass reads the installed packs and keeps
-/// one handle per built-in channel whose engine pack is Active and whose
-/// connection check is Verified, dropping a handle the moment its receipt
-/// or check goes, then reads the native mail pack's inboxes. Each pass is
+/// Starts the reconcile loop, and beside it the LinkedIn inbox sync. Each
+/// reconcile pass reads the installed packs and keeps one handle per
+/// built-in channel whose engine pack is Active and whose connection check
+/// is Verified, dropping a handle the moment its receipt or check goes, then
+/// reads the native mail pack's inboxes and, once per the Gmail poll
+/// interval, pages the Gmail seats' mailboxes. Each pass of either is
 /// admitted through `admit`, the way a housekeeping pass is, so a vault
-/// frozen for reap reconciles nothing.
+/// frozen for reap reconciles and reads nothing.
 pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     admit: HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
     let server = Arc::clone(server);
     tokio::spawn(async move {
-        loop {
-            if let Some(admission) = admit() {
-                let vault = Arc::clone(server.vault());
-                let handles = Arc::clone(&server.builtin_handles);
-                let base = server.config.oauth_resource_indicator.clone();
-                let line = server.config.line;
-                let native_mail = server.config.native_mail.clone();
-                let pass = tokio::task::spawn_blocking(move || {
-                    let _admission = admission;
-                    handles.reconcile(&vault, base.as_deref(), &line);
-                    handles.poll_native_mail(&vault, native_mail.as_ref());
-                })
-                .await;
-                if let Err(error) = pass {
-                    tracing::warn!(%error, "built-in channel reconcile pass panicked");
-                }
-            }
-            tokio::time::sleep(RECONCILE_EVERY).await;
-        }
+        tokio::join!(
+            reconcile(Arc::clone(&server), Arc::clone(&admit)),
+            linkedin_inbox::sync_linkedin_inboxes(server, admit),
+        );
     })
+}
+
+async fn reconcile(server: Arc<SyncServer>, admit: HousekeepingAdmission) {
+    loop {
+        if let Some(admission) = admit() {
+            let vault = Arc::clone(server.vault());
+            let handles = Arc::clone(&server.builtin_handles);
+            let base = server.config.oauth_resource_indicator.clone();
+            let line = server.config.line;
+            let native_mail = server.config.native_mail.clone();
+            let pass = tokio::task::spawn_blocking(move || {
+                let _admission = admission;
+                handles.reconcile(&vault, base.as_deref(), &line);
+                handles.poll_native_mail(&vault, native_mail.as_ref());
+                handles.poll_gmail(&vault);
+            })
+            .await;
+            if let Err(error) = pass {
+                tracing::warn!(%error, "built-in channel reconcile pass panicked");
+            }
+        }
+        tokio::time::sleep(RECONCILE_EVERY).await;
+    }
 }

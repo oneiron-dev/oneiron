@@ -1,5 +1,5 @@
 //! A NOTE core's author in its raw entity row (FIX 6072, Engine R2): the
-//! `author_ref` of the pinned four-key body split out and put back, every
+//! `author_ref` of the pinned three-key core split out and put back, every
 //! other byte kept. The core reads with the strict decoder and must spell
 //! its own bytes back, so a fill gives back exactly the stored row. An
 //! author that did not open stays the erased marker, which names no one and
@@ -14,7 +14,7 @@
 //! under the vault-wide seal ([`CORE_RAW_REFS`]). A core that names no one,
 //! and an erased NOTE's empty shell, stay their tree's as they stand.
 
-use super::super::{NoteActor, NoteBody, NoteKind, decode_note_body_using, encode_note_body};
+use super::super::{NoteActor, NoteCore, NoteKind, decode_note_core_using, encode_note_core};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::Result;
 use crate::store::checkpoint_payload::loro::{self as shared, Split, SplitValue};
@@ -33,9 +33,9 @@ pub(crate) const CORE_UNREAD: &str = "a NOTE core that does not spell back";
 pub(crate) const CORE_RAW_REFS: &str = "a NOTE core author whose erase changes raw-derived refs";
 
 /// A NOTE core body, read strictly, when it spells its own bytes back.
-fn stored_core(body: &[u8]) -> Option<NoteBody> {
-    let core = decode_note_body_using(body, NoteKind::wire).ok()?;
-    let spelled = encode_note_body(&core).ok()?;
+fn stored_core(body: &[u8]) -> Option<NoteCore> {
+    let core = decode_note_core_using(body, NoteKind::wire).ok()?;
+    let spelled = encode_note_core(&core).ok()?;
     (spelled.as_slice() == body).then_some(core)
 }
 
@@ -50,11 +50,11 @@ pub(crate) fn split_core_row(row: &[u8]) -> Split<Vec<u8>> {
     let Some(author) = core.author_ref.id() else {
         return Ok(SplitValue::kept(row.to_vec()));
     };
-    let no_one = NoteBody {
+    let no_one = NoteCore {
         author_ref: NoteActor::Erased,
         ..core
     };
-    let no_one = encode_note_body(&no_one).map_err(|_| CORE_UNREAD)?;
+    let no_one = encode_note_core(&no_one).map_err(|_| CORE_UNREAD)?;
     Ok(SplitValue {
         no_one: [header, no_one.as_slice()].concat(),
         actors: vec![(CORE_AUTHOR.to_owned(), author)],
@@ -62,25 +62,26 @@ pub(crate) fn split_core_row(row: &[u8]) -> Split<Vec<u8>> {
 }
 
 /// A NOTE core's no-one row with its author back when that author's part
-/// opened; with no part it stays no one. Refuses a row whose author is not
-/// the erased form, a part for another field and a second part.
+/// opened; with no part it stays no one. A core with an imported author was
+/// kept whole by the split and comes back as it is, with no part (FIX
+/// 7777). Refuses any other author form, a part for another field and a
+/// second part.
 pub(crate) fn join_core_row(no_one: &[u8], parts: &[&ActorPart]) -> Result<Vec<u8>> {
     let (header, body) = no_one
         .split_at_checked(ENTITY_METADATA_HEADER_LEN)
         .ok_or_else(rows::bad_part)?;
-    let core = stored_core(body).filter(|core| core.author_ref == NoteActor::Erased);
-    let core = core.ok_or_else(rows::bad_part)?;
+    let core = stored_core(body).ok_or_else(rows::bad_part)?;
     let atoms = shared::opened_atoms(parts)?;
-    let author = match atoms.as_slice() {
-        [] => return Ok(no_one.to_vec()),
-        [atom] if atom.field == CORE_AUTHOR => atom.actor,
+    let author = match (core.author_ref, atoms.as_slice()) {
+        (NoteActor::Erased | NoteActor::Imported(_), []) => return Ok(no_one.to_vec()),
+        (NoteActor::Erased, [atom]) if atom.field == CORE_AUTHOR => atom.actor,
         _ => return Err(rows::bad_part()),
     };
-    let core = NoteBody {
+    let core = NoteCore {
         author_ref: NoteActor::Actor(author),
         ..core
     };
-    Ok([header, encode_note_body(&core)?.as_slice()].concat())
+    Ok([header, encode_note_core(&core)?.as_slice()].concat())
 }
 
 /// Whether `row` is a NOTE core the split reads, whichever author it names.

@@ -8,7 +8,7 @@ afterAll(suite.flush);
 
 /*
  * Public binding read at main c2239db2c8486fd18b7fe33ebe9bc272b689079a:
- * scripts/sdk/agent-verbs.json, both generated TypeScript facade catalogs,
+ * scripts/sdk/verbs/, both generated TypeScript facade catalogs,
  * api/openapi_registry.rs, conversation_dag/types.rs, conversation_members.rs,
  * mcp_gateway/tasks_response.rs, the host project-card/wave doors and cli.rs.
  * The shared harness's older binding pin is not edited by this area writer.

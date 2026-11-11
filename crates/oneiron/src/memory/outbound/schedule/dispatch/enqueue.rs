@@ -4,7 +4,9 @@ use super::*;
 
 impl Memory<'_> {
     /// Inside the schedule's write: the ready attempt and, when it is new, the
-    /// connector TASK that will replay it and an invite's SEQUENCE bump.
+    /// connector TASK that will replay it and an invite's SEQUENCE bump. An
+    /// agent run's send is scheduled only while its machine holds the run
+    /// (FIX 4747): a stale executor schedules nothing.
     pub(super) fn enqueue_scheduled_send_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -12,6 +14,13 @@ impl Memory<'_> {
         payload: Vec<u8>,
         dedupe_actor_ref: &str,
     ) -> MemoryResult<EnqueueOutcome> {
+        if let Some(host) = self.task_host() {
+            crate::agent_dispatch::fence_agent_run_effect_in_txn(
+                self.vault,
+                &*wtxn,
+                host.parent(),
+            )?;
+        }
         let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
             self.vault,
             wtxn,

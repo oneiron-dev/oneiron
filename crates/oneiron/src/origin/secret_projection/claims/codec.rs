@@ -35,6 +35,7 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
             roots,
             private_root,
             marks,
+            known_history,
             audience,
         } => vec![
             ("kind", Value::from("graph")),
@@ -61,6 +62,10 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
                 private_root.as_ref().map_or(Value::Nil, oid),
             ),
             ("marks", ids(marks)),
+            (
+                "known_history",
+                known_history.as_ref().map_or(Value::Nil, digest_value),
+            ),
         ],
         RepoProjectionRecord::Object {
             original,
@@ -330,6 +335,10 @@ pub(super) fn decode_graph(id: &EntityId, body: &ClaimBody) -> Result<RepoProjec
         .iter()
         .map(entity)
         .collect::<Result<Vec<_>>>()?;
+    let known_history = match field(map, "known_history")? {
+        Value::Nil => None,
+        value => Some(digest_of(value)?),
+    };
     let audience = match text(field(map, "audience")?)? {
         AUDIENCE_MASKED => RepoProjectionAudience::Masked,
         AUDIENCE_RECIPIENT => RepoProjectionAudience::Recipient {
@@ -352,6 +361,7 @@ pub(super) fn decode_graph(id: &EntityId, body: &ClaimBody) -> Result<RepoProjec
         roots,
         private_root,
         marks,
+        known_history,
         audience,
     };
     let claim = RepoProjectionClaim::graph(record)?;

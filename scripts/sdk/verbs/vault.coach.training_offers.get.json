@@ -1,0 +1,16 @@
+{
+  "name": "vault.coach.training_offers.get",
+  "description": "Read one Coach offer snapshot with its owner answer and receipt-backed promise checks.",
+  "input": "crate::skill_optimize::offer_doors::OfferRef",
+  "output": "Option<crate::skill_optimize::offer_doors::OfferView>",
+  "call": "crate::skill_optimize::offer_doors::get(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.get\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

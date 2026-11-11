@@ -67,12 +67,14 @@ mod import_audience;
 mod invocation_claims;
 mod ladder_poll;
 mod lens_frames;
+mod libreoffice;
 mod linear_host;
 mod livequery;
 pub mod logging;
 #[cfg(target_os = "macos")]
 mod mac_worker_bootstrap;
 mod machine;
+mod mail_host;
 pub mod managed;
 mod managed_owner_check;
 pub mod mcp;
@@ -92,12 +94,18 @@ pub mod server;
 mod shared_envs;
 mod skills_pack;
 mod slide_render;
+/// Doors from the integration tests to crate-private items. Compiled only under
+/// `--cfg oneiron_test_support`, which only the test command sets. Not API.
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub mod test_doors;
 pub mod usage;
 mod wake_adapters;
 pub mod web_client;
 mod web_connector;
 pub mod wire_health;
 pub mod wire_telemetry;
+mod xlsx_recalc;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
 // The stream/output owner still has to supply production serve prerequisites.
 #[cfg(unix)]
@@ -119,6 +127,20 @@ use crate::server::SyncServer;
 
 pub use crate::calendar_host::install_calendar_label_head;
 pub use crate::projection::View;
+
+/// Native stack space for engine-owned runtime and serving threads.
+///
+/// FIX 16372 measured an 11.49 MiB generated dispatch poll frame and a
+/// nested 3.70 MiB verb-invocation frame in a dev binary. Reserve 32 MiB
+/// while FIX 19837 outlines those generated dispatchers.
+pub const ENGINE_THREAD_STACK_BYTES: usize = 32 * 1024 * 1024;
+
+/// Builds an engine-owned thread with enough native stack for engine futures.
+pub(crate) fn engine_thread(name: String) -> std::thread::Builder {
+    std::thread::Builder::new()
+        .name(name)
+        .stack_size(ENGINE_THREAD_STACK_BYTES)
+}
 
 /// Builds the complete Axum app (WebSocket + HTTP API routes).
 ///

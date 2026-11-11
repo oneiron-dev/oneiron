@@ -286,6 +286,27 @@ impl SlideLocation {
     }
 }
 
+/// One head of an artifact as a slide review reads it (FIX 9624): see
+/// [`Vault::slide_review_snapshot`].
+pub(crate) struct SlideReviewSnapshot {
+    pub(crate) version: u64,
+    /// The version's own bytes, where the review's comments land.
+    pub(crate) bytes: Vec<u8>,
+    /// The rows those bytes were read from (FIX 5455).
+    pub(crate) read_rows: Vec<EntityId>,
+    /// A live body's deck at its head and the pin read before it: the deck
+    /// the units' text is read from (FIX 12019).
+    pub(crate) live: Option<(crate::office_body::LivePin, Vec<u8>)>,
+}
+
+impl SlideReviewSnapshot {
+    /// The deck the units' text is read from: the live body's, else the
+    /// version's own. A host draws the units' images from the same deck.
+    pub(crate) fn shown_deck(&self) -> &[u8] {
+        self.live.as_ref().map_or(&self.bytes, |(_, deck)| deck)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SlideReviewRun {
     /// `None` when no unit was answered; no empty or phantom write is settled.

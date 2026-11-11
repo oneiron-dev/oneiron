@@ -12,6 +12,9 @@ const PML: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const DML: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const TABLE_URI: &str = "http://schemas.openxmlformats.org/drawingml/2006/table";
 
+mod rebuilt;
+use rebuilt::rebuilt;
+
 /// A self-contained `p:graphicFrame`: it declares its own prefixes, so it
 /// is well formed whatever the slide binds.
 pub(super) fn graphic_frame(frame: &Frame<'_>, uri: &str, inner: &str) -> String {
@@ -382,8 +385,7 @@ pub(super) fn set_cell(
         .children(body)
         .filter(|(_, node)| node.is(DML, "p"))
         .collect();
-    let (Some(&(first, first_node)), Some(&(_, last_node))) =
-        (paragraphs.first(), paragraphs.last())
+    let (Some(&(_, first_node)), Some(&(_, last_node))) = (paragraphs.first(), paragraphs.last())
     else {
         return Err(NativeRefusal::Stale("cell has no paragraph"));
     };
@@ -407,52 +409,24 @@ pub(super) fn set_cell(
     // is tried first (FIX 12227): each field the change covers whole goes,
     // the new text written into an adjacent run, only when the cell then
     // reads exactly the requested text. Otherwise the cell is rebuilt from
-    // its first paragraph's and first run's properties, as it was before.
+    // its first paragraph/run template, except same-count lines and
+    // count-changed unchanged outer and paired middle paragraphs reuse
+    // their actual properties.
+    // Unsupported coverage/properties fall back to the existing templates.
     let (out, cut_fields) = match crate::edit::cell_text_cut(&bytes, &tree, body, value) {
         Some((out, cut_fields)) => (out, cut_fields),
         None => (
-            rebuilt(&bytes, &tree, body, (first, first_node), last_node, value)?,
-            Vec::new(),
+            rebuilt(&bytes, &tree, body, &paragraphs, value)?,
+            within(&tree, body)
+                .filter(|(_, node)| {
+                    node.is(DML, "fld")
+                        && node.span.start >= first_node.span.start
+                        && node.span.end <= last_node.span.end
+                })
+                .filter_map(|(_, node)| node.attr("type").map(str::to_owned))
+                .collect(),
         ),
     };
     package.replace_xml_part(slide, out)?;
     Ok(cut_fields)
-}
-
-/// The cell's paragraphs replaced by `value`'s lines, each with the first
-/// paragraph's `a:pPr` and the first run's `a:rPr`.
-fn rebuilt(
-    bytes: &[u8],
-    tree: &XmlTree,
-    body: usize,
-    (first, first_node): (usize, &Node),
-    last_node: &Node,
-    value: &str,
-) -> Result<Vec<u8>, NativeRefusal> {
-    let piece = |node: Option<(usize, &Node)>| {
-        node.map_or("", |(_, node)| {
-            std::str::from_utf8(&bytes[node.span.clone()]).unwrap_or("")
-        })
-    };
-    let p_pr = piece(tree.child(first, DML, "pPr")?);
-    let r_pr = piece(
-        within(tree, body)
-            .find(|(_, node)| node.is(DML, "r"))
-            .map(|(run, _)| tree.child(run, DML, "rPr"))
-            .transpose()?
-            .flatten(),
-    );
-    let p = first_node.qualified.as_str();
-    let a = p.strip_suffix('p').unwrap_or("");
-    let mut out = bytes[..first_node.span.start].to_vec();
-    for line in value.split('\n') {
-        let run = if line.is_empty() {
-            String::new()
-        } else {
-            format!("<{a}r>{r_pr}<{a}t>{}</{a}t></{a}r>", escape_text(line))
-        };
-        out.extend_from_slice(format!("<{p}>{p_pr}{run}</{p}>").as_bytes());
-    }
-    out.extend_from_slice(&bytes[last_node.span.end..]);
-    Ok(out)
 }

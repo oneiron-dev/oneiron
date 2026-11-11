@@ -1,6 +1,8 @@
 //! The executor's signed result for one request, and the receipt door that
 //! reads where a request stands.
 
+use ed25519_dalek::SigningKey;
+
 use super::OwnerWorkReceipt;
 use crate::authority::{
     AuthorityEntryHash, AuthorityKey, AuthorityOp, FrontierSigner, MAX_PARENTS, OwnerWorkOutcome,
@@ -36,6 +38,21 @@ impl Vault {
         executor: EntityId,
         outcome: OwnerWorkOutcome,
     ) -> Result<AuthorityEntryHash> {
+        self.append_owner_work_result_with_key_in_txn(txn, request, executor, outcome)
+            .map(|(hash, _)| hash)
+    }
+
+    /// [`Self::append_owner_work_result_in_txn`], returning beside the
+    /// result's entry hash the key that signed it, for work that signs more
+    /// with that key in the same commit: an export copy's numbered parts
+    /// (FIX 12373).
+    pub(crate) fn append_owner_work_result_with_key_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        request: AuthorityEntryHash,
+        executor: EntityId,
+        outcome: OwnerWorkOutcome,
+    ) -> Result<(AuthorityEntryHash, SigningKey)> {
         let signing = self.door_signing_key_in_txn(txn, executor)?;
         let public_key = signing.verifying_key().to_bytes();
         let fold = self.authority_view_readonly_in_txn(txn)?;
@@ -82,7 +99,7 @@ impl Vault {
         {
             return Err(invalid_authority());
         }
-        Ok(hash)
+        Ok((hash, signing))
     }
 
     /// Where the owner work request signed as entry `request` stands, derived

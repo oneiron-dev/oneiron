@@ -18,16 +18,25 @@
 //! run is retired or replaced, the registration is closed: it names no
 //! destination and records no grant, under one lock, so a request still in
 //! flight cannot deliver past it.
+//!
+//! The same registration holds the run's model door slots (FIX 15702,
+//! [`super::seat_models`]): the digest of each slot's reference and the
+//! run's admitted seat-child credential, which the door's every key release
+//! rechecks. Closing it forgets both, so a copied reference stops with it.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use oneiron::authority::SeatChildCredential;
 use oneiron::error::SecretError;
 use oneiron::secret_lease::{SecretCleanup, SecretGrantHolder, SecretHostDelivery, SecretTaintRef};
 use oneiron::{AttemptId, EntityId, Error, Result};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
+
+use super::seat_models::SeatModelSlot;
+use crate::models::SeatModelMeter;
 
 /// The prefix of a helper destination's name, `helper:<name>`.
 pub const HELPER_DESTINATION_PREFIX: &str = "helper:";
@@ -130,22 +139,35 @@ impl fmt::Debug for SeatHelperRuns {
 }
 
 impl SeatHelperRuns {
-    /// Registers `destinations`, keyed by their names in the operator's
-    /// table, for the run of `attempt` under the claim of `lease_owner` at
-    /// `attempt_count`, and answers its handle. A second registration of the
-    /// attempt replaces the first, which closes.
-    pub fn register(
+    /// Registers `destinations` and the model door's `slots`, each keyed by
+    /// its name in the operator's table, for the run of `attempt` under the
+    /// claim of `lease_owner` at `attempt_count`, and answers its handle.
+    /// `credential` is the run's seat-child credential the host admitted for
+    /// the model door, and `meter` the claim's run every model door call is
+    /// admitted on (FIX 15702 slice 3); with no slot there are none. A
+    /// second registration of the attempt replaces the first, which closes.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one claim's registration: its id, what it may reach and its credential"
+    )]
+    pub(crate) fn register(
         &self,
         attempt: AttemptId,
         lease_owner: &str,
         attempt_count: u32,
         destinations: BTreeMap<String, HelperDestination>,
+        slots: BTreeMap<String, SeatModelSlot>,
+        credential: Option<SeatChildCredential>,
+        meter: Option<Arc<SeatModelMeter>>,
     ) -> SeatHelperRun {
         let registered = SeatHelperRun {
             state: Arc::new(Mutex::new(HelperRunState {
                 lease_owner: lease_owner.to_owned(),
                 attempt_count,
                 destinations,
+                slots,
+                credential,
+                meter,
                 grants: Vec::new(),
                 taints: Vec::new(),
                 closed: false,
@@ -171,6 +193,33 @@ impl SeatHelperRuns {
         let state = lock(&run.state);
         (!state.closed && state.lease_owner == lease_owner && state.attempt_count == attempt_count)
             .then(|| run.clone())
+    }
+
+    /// The open registration whose model door slot `slot` `reference` is
+    /// the reference to, beside that slot, the run's credential and its
+    /// claim's meter. `None` for every other reference, a closed run and a
+    /// run with no credential or meter.
+    #[must_use]
+    pub fn model_door(&self, slot: &str, reference: &str) -> Option<SeatModelDoor> {
+        let runs: Vec<SeatHelperRun> = lock(&self.runs).values().cloned().collect();
+        runs.into_iter().find_map(|run| {
+            let state = lock(&run.state);
+            if state.closed {
+                return None;
+            }
+            let bound = state.slots.get(slot)?;
+            if !bound.presented(reference) {
+                return None;
+            }
+            let door = SeatModelDoor {
+                slot: bound.clone(),
+                credential: state.credential.clone()?,
+                meter: state.meter.clone()?,
+                run: run.clone(),
+            };
+            drop(state);
+            Some(door)
+        })
     }
 
     /// Forgets `attempt`'s run while `own` is still its registration, so a
@@ -200,6 +249,10 @@ struct HelperRunState {
     lease_owner: String,
     attempt_count: u32,
     destinations: BTreeMap<String, HelperDestination>,
+    slots: BTreeMap<String, SeatModelSlot>,
+    credential: Option<SeatChildCredential>,
+    /// The claim's run its model door calls are admitted on.
+    meter: Option<Arc<SeatModelMeter>>,
     grants: Vec<EntityId>,
     taints: Vec<SecretTaintRef>,
     closed: bool,
@@ -213,9 +266,28 @@ impl fmt::Debug for SeatHelperRun {
                 "destinations",
                 &state.destinations.keys().collect::<Vec<_>>(),
             )
+            .field("slots", &state.slots.keys().collect::<Vec<_>>())
             .field("grants", &state.grants.len())
             .field("closed", &state.closed)
             .finish()
+    }
+}
+
+/// What the model door resolves a reference to: the run's registration, the
+/// slot it names, the run's seat-child credential and its claim's meter.
+#[derive(Clone)]
+pub struct SeatModelDoor {
+    pub run: SeatHelperRun,
+    pub slot: SeatModelSlot,
+    pub credential: SeatChildCredential,
+    pub(crate) meter: Arc<SeatModelMeter>,
+}
+
+impl fmt::Debug for SeatModelDoor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SeatModelDoor")
+            .field("slot", &self.slot)
+            .finish_non_exhaustive()
     }
 }
 
@@ -271,11 +343,30 @@ impl SeatHelperRun {
         true
     }
 
+    /// Records the taint of a provider key the model door released for the
+    /// run (FIX 15702), before the key goes to the broker. `false` once the
+    /// registration is closed: the door then sends nothing.
+    #[must_use]
+    pub fn record_taint(&self, taint: SecretTaintRef) -> bool {
+        let mut state = lock(&self.state);
+        if state.closed {
+            return false;
+        }
+        if !state.taints.contains(&taint) {
+            state.taints.push(taint);
+        }
+        true
+    }
+
     /// Closes the registration and hands back what it recorded. A second
-    /// close hands back nothing.
+    /// close hands back nothing. Its model door slots and credential are
+    /// forgotten, so no reference to them is answered again.
     pub fn close(&self) -> HelperRunEnd {
         let mut state = lock(&self.state);
         state.closed = true;
+        state.slots.clear();
+        state.credential = None;
+        state.meter = None;
         HelperRunEnd {
             grants: std::mem::take(&mut state.grants),
             taints: std::mem::take(&mut state.taints),

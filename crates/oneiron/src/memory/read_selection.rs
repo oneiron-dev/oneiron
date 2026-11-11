@@ -60,11 +60,31 @@ impl Memory<'_> {
                     true,
                     [self.resolve_ref(reference)?],
                 )?)),
-                None => Ok(Some(
-                    self.reading_defaults(&[self.actor])?
+                None => {
+                    let defaults = self
+                        .reading_defaults(&[self.actor])?
                         .pop()
-                        .expect("one default per actor"),
-                )),
+                        .expect("one default per actor");
+                    if defaults.worlds().is_empty() {
+                        return Ok(Some(defaults));
+                    }
+                    let txn = self
+                        .vault
+                        .store
+                        .env
+                        .read_txn()
+                        .map_err(crate::error::Error::from)?;
+                    let mut worlds = Vec::with_capacity(defaults.worlds().len());
+                    for world in defaults.worlds() {
+                        if !self.vault.is_clipboard_world_in_txn(&txn, *world)? {
+                            worlds.push(*world);
+                        }
+                    }
+                    Ok(Some(WorldAuthoritySet::new(
+                        defaults.include_base(),
+                        worlds,
+                    )?))
+                }
             },
         }
     }

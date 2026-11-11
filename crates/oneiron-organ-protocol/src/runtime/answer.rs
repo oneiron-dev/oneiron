@@ -79,7 +79,10 @@ impl AskLine {
                     .ok()
                     .and_then(|slot| fds.into_iter().nth(slot))
                     .ok_or_else(|| broken("slot"))?;
-                // The engine's pages, mapped: nothing of this process's yet.
+                // The descriptor list is freed above, before the memory ask
+                // below: that ask gives the answer's frames' room back
+                // (FIX 12437). The engine's pages, mapped: nothing of this
+                // process's yet.
                 let region =
                     MappedRegion::map(fd, data.len).map_err(|err| broken(&err.to_string()))?;
                 let memory = self.reserve(data.len)?;

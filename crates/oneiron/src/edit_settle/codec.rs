@@ -6,11 +6,11 @@ use rmpv::Value;
 
 use super::keys::{
     KEY_ACTOR_REF, KEY_ANCHOR_DRIFTED, KEY_ANCHOR_LOCATOR, KEY_ANCHOR_THREAD_ID, KEY_ANCHORS,
-    KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH, KEY_DECK, KEY_DOCX_JUDGMENTS,
-    KEY_GRANT_REF, KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PPTX_JUDGMENTS,
-    KEY_PPTX_MINTS, KEY_PPTX_REVIEW_IDENTITIES, KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION,
-    KEY_SETTLED_AT, KEY_SHEET_ANSWERS, KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS,
-    SETTLEMENT_SCHEMA_VERSION,
+    KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH, KEY_DECK, KEY_DISCARDED_WORDS,
+    KEY_DOCX_JUDGMENTS, KEY_GRANT_REF, KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME,
+    KEY_PPTX_JUDGMENTS, KEY_PPTX_MINTS, KEY_PPTX_REVIEW_IDENTITIES, KEY_PROPOSAL_REF, KEY_REASON,
+    KEY_SCHEMA_VERSION, KEY_SETTLED_AT, KEY_SHEET_ANSWERS, KEY_VERSION, SETTLE_VERB_CLASS,
+    SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
 };
 use super::records::{PptxReviewIdentity, SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::anchored_annotation::{decode_locator, encode_locator};
@@ -88,7 +88,7 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
         })
         .transpose()?
         .unwrap_or(Value::Nil);
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(SETTLEMENT_SCHEMA_VERSION),
@@ -188,7 +188,18 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
             Value::from(KEY_GRANT_REF),
             option_str_value(record.grant_ref.as_deref()),
         ),
-    ]);
+    ];
+    // Only a record whose words left carries the key, so every other row
+    // keeps its bytes (FIX 14534).
+    if let Some(kept) = &record.discarded_words {
+        entries.push((
+            Value::from(KEY_DISCARDED_WORDS),
+            rmp_serde::to_vec_named(kept)
+                .map(Value::Binary)
+                .map_err(|_| Error::InvariantViolation("discarded settle words encode failed"))?,
+        ));
+    }
+    let value = Value::Map(entries);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
         .map_err(|_| Error::InvariantViolation("settlement record MessagePack encode failed"))?;
@@ -278,6 +289,13 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
                 rmp_serde::from_slice(bytes).map_err(|_| corrupt())?,
             )),
             _ => return Err(corrupt()),
+        },
+        discarded_words: match field(&entries, KEY_DISCARDED_WORDS) {
+            None => None,
+            Some(Value::Binary(bytes)) => {
+                Some(rmp_serde::from_slice(bytes).map_err(|_| corrupt())?)
+            }
+            Some(_) => return Err(corrupt()),
         },
     })
 }

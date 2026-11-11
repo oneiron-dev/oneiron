@@ -47,6 +47,10 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// Optional table of shared-vault act-policy rows, keyed by act name. Only a
 /// trusted manifest contributes rows; two differing tables fail closed.
 pub(crate) const POLICY_SHARED_ACT_POLICIES_KEY: &str = "shared_act_policies";
+/// Optional top-level manifest scalar naming the vault's common
+/// owner-change wait in seconds. Only a trusted manifest contributes it;
+/// two differing scalars fail closed.
+pub(crate) const POLICY_OWNER_CHANGE_WAIT_SECS_KEY: &str = "owner_change_wait_secs";
 /// Optional top-level manifest key whose value is an ordered MessagePack
 /// array of row maps. Each row selects exactly one call set — one `purpose`
 /// string (a pinned `CallPurpose` built-in name, or any other non-empty
@@ -193,6 +197,11 @@ pub(super) const DREAMER_PROVENANCE_RUN_ID_KEY: &str = "run_id";
 pub(super) const DREAMER_PROVENANCE_RUN_KEY: &str = "run";
 pub(super) const DREAMER_PROVENANCE_RUNNER_KEY: &str = "runner";
 pub(super) const DREAMER_PROVENANCE_SURFACE_KEY: &str = "surface";
+/// Provenance key naming a Generated producer that the host's auto checker reviews besides the Dreamer
+/// (FIX 3983, review 6881 P1).
+pub(crate) const CHECKED_PRODUCER_PROVENANCE_KEY: &str = "checked_producer";
+/// [`CHECKED_PRODUCER_PROVENANCE_KEY`]'s value on a caller's live-run claim put that asks Auto.
+pub(crate) const LIVE_RUN_CLAIM_PUT_PRODUCER: &str = "live_run_claim_put";
 /// Dreamer-provenance key naming the import review a claim from imported
 /// evidence waits in (`ingest::history::history_import_review_id`).
 pub(crate) const DREAMER_PROVENANCE_IMPORT_REVIEW_KEY: &str = "import_review";

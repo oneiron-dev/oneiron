@@ -72,15 +72,15 @@ impl Memory<'_> {
                 "mime_type must match embedding_kind: text, image or audio",
             ));
         }
-        if input.bytes_b64.len() > caps::MAX_BLOB_BASE64_LEN {
-            return Err(MemoryError::bad_request(
-                "asset bytes exceed the blob content bound",
-            ));
-        }
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&input.bytes_b64)
             .map_err(|_| MemoryError::bad_request("bytes_b64 must be standard base64"))?;
-        caps::check_blob_bytes(bytes.len())?;
+        // Measured, never refused for its size (FIX 76): past
+        // `blob_content_bytes` the row asks and the asset is stored whole.
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::BlobContentBytes,
+            bytes.len() as u64,
+        );
         if bytes.is_empty() {
             return Err(MemoryError::bad_request("an asset holds nonempty bytes"));
         }

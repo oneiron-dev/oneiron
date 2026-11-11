@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 use crate::config::models::{BigReply, BigSettings};
 use crate::models::{CallDeadline, ModelRuntime};
 
+mod cost;
 mod joint;
 mod note;
 mod route;
@@ -47,7 +48,10 @@ fn failed(what: impl std::fmt::Display) -> Error {
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }
 
@@ -272,7 +276,10 @@ impl BigModel {
         for clip in call.audio {
             let reference = format!("audio:{}", clip.name);
             state[clip.name.as_str()] = json!(reference);
-            content.push(ContentPart::Text { text: reference });
+            content.push(ContentPart::Text {
+                text: reference,
+                signature: None,
+            });
             content.push(ContentPart::Audio {
                 media_type: clip.media_type.clone(),
                 data: clip.base64(),
@@ -291,11 +298,12 @@ impl BigModel {
         content.push(ContentPart::Text {
             text: format!(
                 "Question: {}\n{}\n{rubric}State (JSON): {state}\n{reply}",
-                call.question.text,
+                call.question_text(),
                 contract_line(&call.question.contract),
             ),
+            signature: None,
         });
-        Ok(LlmRequest {
+        let mut request = LlmRequest {
             model,
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -306,6 +314,7 @@ impl BigModel {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, self.wording.clone()),
@@ -318,7 +327,11 @@ impl BigModel {
             params: joint.map_or_else(BTreeMap::new, |_| JointRead::params()),
             provider_options: BTreeMap::new(),
             host_segments: None,
-        })
+        };
+        if let Some(labels) = call.labels {
+            labels.bind(&mut request);
+        }
+        Ok(request)
     }
 }
 
@@ -393,6 +406,26 @@ fn probability(value: &Value) -> Option<f64> {
     (p.is_finite() && (0.0..=1.0).contains(&p)).then_some(p)
 }
 
+/// The answer and probability a written reply gives over `contract`; `None`
+/// when the reply names nothing the contract takes, or no probability.
+///
+/// The reply says how sure the model is of its own answer. A yes/no's
+/// probability is P(yes) on every path (the joint read stores it so), so a no
+/// answer stores 1 - sure (FIX 22368).
+pub(crate) fn written_decision(
+    reply: BigReply,
+    contract: &AnswerContract,
+    text: &str,
+) -> Option<(DecisionAnswer, f64)> {
+    let (answer, sure) = reply.read(text)?;
+    let answer = typed(contract, &answer)?;
+    let probability = match answer {
+        DecisionAnswer::Noul(false) => 1.0 - sure,
+        _ => sure,
+    };
+    Some((answer, probability))
+}
+
 /// The written answer as one the contract takes.
 fn typed(contract: &AnswerContract, answer: &Value) -> Option<DecisionAnswer> {
     let text = answer
@@ -433,6 +466,7 @@ fn abstained() -> ProviderDecision {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     }
 }
 
@@ -549,6 +583,7 @@ impl DecisionModel for BigModel {
                 .map_err(|_| failed("model trial usage lock"))?
                 .push(response.usage.clone());
         }
+        let cost = self.completion_cost(&binding.rung.model, &response.usage);
         let served = served.map(|model| ProviderPin {
             rung: self.pin.rung,
             model: model.to_string(),
@@ -559,7 +594,7 @@ impl DecisionModel for BigModel {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();
@@ -569,26 +604,27 @@ impl DecisionModel for BigModel {
             let decision = joint
                 .decision(&call.question.contract, response.token_scores.as_ref())
                 .unwrap_or_else(abstained);
-            return Ok(ProviderDecision { served, ..decision });
+            return Ok(ProviderDecision {
+                served,
+                cost_per_thousand: Some(cost),
+                ..decision
+            });
         }
-        let Some((answer, probability)) = self.reply.read(&text) else {
+        let Some((answer, probability)) =
+            written_decision(self.reply, &call.question.contract, &text)
+        else {
             return Ok(ProviderDecision {
                 served,
                 ..abstained()
             });
         };
-        Ok(match typed(&call.question.contract, &answer) {
-            Some(answer) => ProviderDecision {
-                answer,
-                probability: Some(probability),
-                paired: None,
-                person: None,
-                served,
-            },
-            None => ProviderDecision {
-                served,
-                ..abstained()
-            },
+        Ok(ProviderDecision {
+            answer,
+            probability: Some(probability),
+            paired: None,
+            person: None,
+            served,
+            cost_per_thousand: Some(cost),
         })
     }
 }

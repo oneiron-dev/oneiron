@@ -11,14 +11,17 @@ use std::sync::Arc;
 use oneiron::llm::media::{AiMediaDoor, MediaFuture, MediaRequest, MediaResponse};
 use oneiron::llm::run_admission::{MediaStreamLease, PayerPerson};
 use oneiron::llm::{
-    ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext, VoiceLane,
+    DispatchRelease, ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext,
+    VoiceLane,
 };
 use oneiron::voice_cascade::media::{MediaVoiceRoute, VoiceStreamDoor};
 use oneiron::{FatalLlmError, LlmResult, Vault};
 
 use super::core::SyncServer;
+use crate::models::AgentMediaCall;
 use crate::models::soniox::SonioxLive;
 use crate::models::{MediaRuntime, ModelRuntime};
+use crate::voice_host::PhoneCallRead;
 
 /// Why a media call is refused before it goes out.
 pub(crate) enum MediaRefusal {
@@ -90,12 +93,34 @@ pub struct MediaDoor {
     /// Who its calls and streams bill when a room pays for them (FIX 805),
     /// bound when the door is made; `None` is the vault owner.
     payer: Option<PayerPerson>,
+    phone: Option<PhoneMedia>,
+}
+
+struct PhoneMedia {
+    read: Arc<PhoneCallRead>,
+    models: Arc<[oneiron::agent_def::AgentModel]>,
+}
+
+impl PhoneMedia {
+    fn agent(&self, vault: &Vault) -> LlmResult<AgentMediaCall<'_>> {
+        let caller = self
+            .read
+            .admitted_media_agent(vault)
+            .map_err(|_| FatalLlmError::InvalidRequest)?;
+        Ok(AgentMediaCall {
+            caller,
+            models: &self.models,
+        })
+    }
 }
 
 impl MediaDoor {
     /// `request`, admitted on the vault's inference policy. A refused call
     /// is an invalid one to its caller.
     fn admit(&self, request: MediaRequest) -> LlmResult<MediaRequest> {
+        if let Some(phone) = &self.phone {
+            phone.agent(&self.vault)?;
+        }
         admit_media(
             &self.vault,
             self.runtime.media(),
@@ -121,7 +146,18 @@ impl MediaDoor {
     /// The media rung voice lane `lane` runs on, from the vault's voice row
     /// for it ([`ModelRuntime::voice_route`]).
     pub(crate) fn voice_route(&self, lane: VoiceLane) -> oneiron::Result<MediaVoiceRoute> {
-        self.runtime.voice_route(&self.vault, lane, None)
+        match &self.phone {
+            Some(phone) => {
+                phone.read.admitted_media_agent(&self.vault).map_err(|_| {
+                    oneiron::Error::InvalidConfig(
+                        "phone media credential or line is no longer current".into(),
+                    )
+                })?;
+                self.runtime
+                    .voice_route_for_models(&self.vault, lane, None, &phone.models)
+            }
+            None => self.runtime.voice_route(&self.vault, lane, None),
+        }
     }
 
     /// The other admitted rungs of `lane`'s seat a banked voice may fall
@@ -131,8 +167,17 @@ impl MediaDoor {
         lane: VoiceLane,
         primary: &MediaVoiceRoute,
     ) -> Vec<MediaVoiceRoute> {
-        self.runtime
-            .voice_fallback_routes(&self.vault, lane, primary)
+        match &self.phone {
+            Some(phone) => self.runtime.voice_fallback_routes_for_models(
+                &self.vault,
+                lane,
+                primary,
+                &phone.models,
+            ),
+            None => self
+                .runtime
+                .voice_fallback_routes(&self.vault, lane, primary),
+        }
     }
 
     /// The live hearing for `route` when its rung hears live, each of its
@@ -152,18 +197,58 @@ impl MediaDoor {
 
 impl AiMediaDoor for MediaDoor {
     fn call<'a>(&'a self, request: MediaRequest) -> MediaFuture<'a, MediaResponse> {
+        self.call_released(request, None)
+    }
+
+    fn call_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        release: Option<DispatchRelease<'a>>,
+    ) -> MediaFuture<'a, MediaResponse> {
         Box::pin(async move {
             let request = self.admit(request)?;
-            // The engine's door names no rows its request was read from.
-            self.runtime
-                .media()
-                .run(request, self.payer.clone(), None)
-                .await
+            // No whole source set is asserted from routing or credential metadata.
+            if let Some(phone) = &self.phone {
+                let release = || {
+                    phone.agent(&self.vault).map(|_| ())?;
+                    if let Some(release) = release {
+                        release()?;
+                    }
+                    Ok(())
+                };
+                self.runtime
+                    .media()
+                    .run_for_agent(
+                        request,
+                        self.payer.clone(),
+                        None,
+                        phone.agent(&self.vault)?,
+                        Some(&release),
+                    )
+                    .await
+            } else if release.is_some() {
+                self.runtime
+                    .media()
+                    .run_released(request, self.payer.clone(), None, release)
+                    .await
+            } else {
+                self.runtime
+                    .media()
+                    .run(request, self.payer.clone(), None)
+                    .await
+            }
         })
     }
 }
 
 impl VoiceStreamDoor for MediaDoor {
+    fn release_stream(&self) -> LlmResult<()> {
+        match &self.phone {
+            Some(phone) => phone.agent(&self.vault).map(|_| ()),
+            None => Ok(()),
+        }
+    }
+
     fn open_stream<'a>(
         &'a self,
         request: MediaRequest,
@@ -171,9 +256,20 @@ impl VoiceStreamDoor for MediaDoor {
     ) -> MediaFuture<'a, MediaStreamLease> {
         Box::pin(async move {
             let request = self.admit(request)?;
-            self.runtime
-                .media()
-                .open_stream(request, bound_ms, self.payer.clone(), None)
+            match &self.phone {
+                Some(phone) => self.runtime.media().open_stream_for_agent(
+                    request,
+                    bound_ms,
+                    self.payer.clone(),
+                    None,
+                    phone.agent(&self.vault)?,
+                ),
+                None => {
+                    self.runtime
+                        .media()
+                        .open_stream(request, bound_ms, self.payer.clone(), None)
+                }
+            }
         })
     }
 }
@@ -190,6 +286,30 @@ impl SyncServer {
             runtime: Arc::clone(self.ai.models()),
             extraction_egress: self.extraction_egress.clone(),
             payer,
+            phone: None,
+        })
+    }
+}
+
+impl MediaDoor {
+    pub(crate) fn phone_read(&self) -> Option<&Arc<PhoneCallRead>> {
+        self.phone.as_ref().map(|phone| &phone.read)
+    }
+}
+
+impl SyncServer {
+    pub(crate) fn phone_media_door(
+        &self,
+        read: Arc<PhoneCallRead>,
+        payer: Option<PayerPerson>,
+    ) -> Arc<MediaDoor> {
+        let models = read.media_models();
+        Arc::new(MediaDoor {
+            vault: Arc::clone(&self.vault),
+            runtime: Arc::clone(self.ai.models()),
+            extraction_egress: self.extraction_egress.clone(),
+            payer,
+            phone: Some(PhoneMedia { read, models }),
         })
     }
 }

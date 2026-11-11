@@ -9,19 +9,21 @@
 //! (FIX 6029). Past the profile's threshold the oldest turns outside the hot
 //! tail seal one window in one SESSION, sized on the writer the flight was
 //! prepared on; the flight runs off the answer's path, its paid tries filed
-//! in the model-step family, its summary minted as the session's next epoch
-//! with a durable receipt keyed by the SUMMARY and the Dreamer's check
-//! declared in the same write. A flight that cannot run keeps the raw log
-//! and names why; it is never handed to the Dreamer or the plain house
-//! writer.
+//! in the model-step family, its summary minted as the next epoch of the
+//! conversation's own lineage within that SESSION (FIX 5029). The same write
+//! puts a durable receipt keyed by the SUMMARY, the accepted try's gate input
+//! for the check (`check_material`, FIX 5040) and the Dreamer's check
+//! declaration. A flight that cannot run keeps the raw log and names why; it
+//! is never handed to the Dreamer or the plain house writer.
 
 use serde::{Deserialize, Serialize};
 
-use super::driver::WindowLog;
+use super::driver::{ConversationBinding, WindowLog};
 use super::{
-    CompactHooks, CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
-    CompactionEvidence, CompactionExecution, CompactionGateFailure, CompactionGatePolicy,
-    CompactionOff, CompactionRefusal, CompactionRequest, CompactionSuppression, GatedCompaction,
+    CompactHooks, CompactionBackend, CompactionCheck, CompactionCheckMaterial,
+    CompactionCheckMaterialRef, CompactionDirective, CompactionDriver, CompactionEvidence,
+    CompactionExecution, CompactionGateFailure, CompactionGatePolicy, CompactionOff,
+    CompactionRefusal, CompactionRequest, CompactionSuppression, GatedCompaction,
     SelfCompactionUnavailable, compact_invocation, compaction_input_tokens, gate_compaction,
 };
 use crate::code_run::{ExecutorStorage, LiveCompactionFork};
@@ -31,11 +33,20 @@ use crate::{EntityId, Vault, WriteActor};
 use oneiron_model::llm::LlmRequest;
 
 mod log;
+mod order;
+mod standing;
 mod storage;
+mod window;
 
-use log::ChatLogWindow;
-pub use log::{ChatLog, ChatLogLine, read_action_pinned_log, read_chat_log};
+pub use log::{
+    ChatLog, ChatLogCut, ChatLogLine, read_action_chat_log, read_action_pinned_log, read_chat_log,
+    read_first_chat_log,
+};
+pub(crate) use log::{chat_log_room, select_action_turns};
+pub(crate) use order::validate_conversation_window_in_txn;
+pub(crate) use standing::{FoldedTurnSummary, folded_turn_summary_in, summary_stands_in};
 pub(crate) use storage::{conversation_receipt_in, put_conversation_receipt_in_txn};
+use window::ChatLogWindow;
 
 /// The run a conversation's paid compaction calls are filed under: the
 /// chat's own source, never a code run's.
@@ -61,7 +72,8 @@ pub struct ConversationTurnSpan {
 /// from: the SESSION its turns were witnessed into, the conversation and the
 /// branch it read (a DAG conversation's HEAD), and the window's turns in
 /// order. The chat generation that sealed it is the paid calls' job, never
-/// evidence.
+/// evidence. A landed summary's evidence also names its check material,
+/// the gate input of its accepted try (FIX 5040).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationEvidence {
     pub session: EntityId,
@@ -69,6 +81,9 @@ pub struct ConversationEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<EntityId>,
     pub turns: Vec<ConversationTurnSpan>,
+    /// The check material's ref: `None` until its pass is accepted. Its
+    /// landing sets it, so each landed receipt names it.
+    pub check_material: Option<CompactionCheckMaterialRef>,
 }
 
 /// Why a conversation's self-written compaction did not fly at a
@@ -95,6 +110,10 @@ pub enum ConversationCompactionUnavailable {
     Unmetered,
     /// A blocking host.compact hook saved an ask/Pending stop (FIX 10085).
     Pending(VerbHookStop),
+    /// The first turn past the hot tail holds the agent's own pins, and they
+    /// do not fit one summary or the backend's input beside it (FIX 9837):
+    /// a pin is never dropped, so the log stays raw.
+    PinsDoNotFit,
 }
 
 impl ConversationCompactionUnavailable {
@@ -110,6 +129,7 @@ impl ConversationCompactionUnavailable {
             Self::LogUnreadable => "log_unreadable",
             Self::Unmetered => "unmetered",
             Self::Pending(_) => "pending",
+            Self::PinsDoNotFit => "pins_do_not_fit",
         }
     }
 }
@@ -119,15 +139,18 @@ impl ConversationCompactionUnavailable {
 /// driver's backend. `None` for a flight the cheap writer writes as the
 /// agent: a row on the retained turns, or a row on `auto` whose live prefix
 /// is cold here (FIX 6029). Why none can be bound, for a row that selects
-/// the live fork. Called before the answer is sent, so the rung is the one
-/// its walk takes now.
+/// the live fork. Called once the answer ended, so the rung is the one that
+/// answered it (FIX 4933), never the one its walk would take now. `sources`
+/// is every row the answer's request was read from, `None` when not all
+/// were witnessed: then no fork is captured (FIX 9463).
 pub fn capture_conversation_fork(
     driver: &CompactionDriver,
     live: &LlmRequest,
+    sources: Option<Vec<EntityId>>,
 ) -> Option<Result<LiveCompactionFork, SelfCompactionUnavailable>> {
     driver
         .backend()
-        .capture_live_fork(live, driver.summary_token_budget())
+        .capture_live_fork(live, sources, driver.summary_token_budget())
 }
 
 /// One sealed conversation flight: the driver that sealed it, its window's
@@ -190,6 +213,15 @@ pub fn seal_conversation_flight<'a>(
         driver.abandon();
         return Err(Why::NoWindow);
     };
+    // The agent's own pins the window holds word for word are mandatory
+    // (FIX 9837): the window keeps the whole turns whose pins fit with them.
+    let Some((window, mut pins)) =
+        window_with_pins(window, &driver.memory_profile().verbatim_pins, budget, room)
+    else {
+        driver.backend().end_flight();
+        driver.abandon();
+        return Err(Why::PinsDoNotFit);
+    };
     let turn_start = window.messages.first().map_or(0, |message| message.turn);
     let fits = |pins: &[String]| {
         crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
@@ -197,26 +229,13 @@ pub fn seal_conversation_flight<'a>(
                 compaction_input_tokens(turn_start, &window.messages, pins, None, budget) <= room
             })
     };
-    // The agent's own pins the window holds word for word, while they fit,
-    // then the lines a `host.compact` hook pins.
-    let mut pins: Vec<String> = Vec::new();
-    for pin in &driver.memory_profile().verbatim_pins {
-        let held = !pin.trim().is_empty()
-            && window
-                .messages
-                .iter()
-                .any(|message| message.content.contains(pin.as_str()));
-        if held && !pins.contains(pin) {
-            pins.push(pin.clone());
-            if !fits(&pins) {
-                pins.pop();
-            }
-        }
-    }
+    // Then the lines a `host.compact` hook pins, while they fit.
     let last = window.messages.last().map_or(0, |message| message.turn);
     let hooks = vault.pre_compact_hooks(
         compact_invocation(log.conversation.as_bytes(), last),
         byline.entity_ref(),
+        // No caller key on the conversation path; the pass reads as its actor.
+        None,
         &window.messages,
         &mut pins,
         budget,
@@ -227,6 +246,10 @@ pub fn seal_conversation_flight<'a>(
         driver.abandon();
         return Err(Why::Pending(stop.clone()));
     }
+    let binding = ConversationBinding {
+        conversation: log.conversation,
+        branch: log.branch,
+    };
     let Ok(request) = driver.seal_request(
         vault,
         &window.session,
@@ -234,7 +257,7 @@ pub fn seal_conversation_flight<'a>(
         pins,
         window.sources,
         true,
-        WindowLog::Conversation,
+        WindowLog::Conversation(Some(binding)),
     ) else {
         driver.backend().end_flight();
         driver.abandon();
@@ -245,6 +268,7 @@ pub fn seal_conversation_flight<'a>(
         conversation: log.conversation,
         branch: log.branch,
         turns: window.spans,
+        check_material: None,
     };
     Ok(ConversationFlight {
         driver,
@@ -285,17 +309,77 @@ fn window_within(window: &ChatLogWindow, budget: u64, room: Option<u64>) -> Opti
     if held == 0 {
         return None;
     }
+    Some(window_prefix(window, held))
+}
+
+/// The first `held` whole turns of `window`, with the sources they name.
+fn window_prefix(window: &ChatLogWindow, held: usize) -> ChatLogWindow {
     let spans = window.spans[..held].to_vec();
     let sources = spans
         .iter()
         .flat_map(|span| std::iter::once(span.turn).chain(span.messages.iter().copied()))
         .collect();
-    Some(ChatLogWindow {
+    ChatLogWindow {
         session: window.session,
         messages: window.messages[..held].to_vec(),
         sources,
         spans,
-    })
+    }
+}
+
+/// The agent's own literal pins `messages` hold word for word, each once, in
+/// the profile's order.
+fn profile_pins(messages: &[super::CompactionWindowMessage], profile: &[String]) -> Vec<String> {
+    let mut pins: Vec<String> = Vec::new();
+    for pin in profile {
+        let held = !pin.trim().is_empty()
+            && messages
+                .iter()
+                .any(|message| message.content.contains(pin.as_str()));
+        if held && !pins.contains(pin) {
+            pins.push(pin.clone());
+        }
+    }
+    pins
+}
+
+/// The longest whole-turn prefix of `window` whose own profile pins fit one
+/// summary and the backend's input beside it, with those pins (FIX 9837): a
+/// pin is never dropped, so a turn that brings one that does not fit ends
+/// the window before it. `None` when not even the first turn's fit.
+fn window_with_pins(
+    window: ChatLogWindow,
+    profile: &[String],
+    budget: u64,
+    room: Option<u64>,
+) -> Option<(ChatLogWindow, Vec<String>)> {
+    let fits = |turns: usize| {
+        let messages = &window.messages[..turns];
+        let turn_start = messages.first()?.turn;
+        let pins = profile_pins(messages, profile);
+        (crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
+            && room.is_none_or(|room| {
+                compaction_input_tokens(turn_start, messages, &pins, None, budget) <= room
+            }))
+        .then_some(pins)
+    };
+    if let Some(pins) = fits(window.messages.len()) {
+        return Some((window, pins));
+    }
+    // Whole turns only: the largest count whose pins fit, by halves.
+    let (mut held, mut over, mut kept) = (0, window.messages.len(), None);
+    while over - held > 1 {
+        let mid = held + (over - held) / 2;
+        match fits(mid) {
+            Some(pins) => {
+                held = mid;
+                kept = Some(pins);
+            }
+            None => over = mid,
+        }
+    }
+    let pins = kept?;
+    Some((window_prefix(&window, held), pins))
 }
 
 /// How a conversation flight ended.
@@ -311,7 +395,8 @@ pub enum ConversationFlightOutcome {
 
 impl ConversationFlight<'_> {
     /// Runs the flight's passes on its frozen fork, files every paid try,
-    /// and lands an accepted summary with its receipt and its check.
+    /// and lands an accepted summary with its receipt, its check material
+    /// and its check.
     #[must_use]
     pub fn fly(self, vault: &Vault) -> ConversationFlightOutcome {
         let backend = std::sync::Arc::clone(self.driver.backend());
@@ -320,7 +405,7 @@ impl ConversationFlight<'_> {
             file_pass(vault, self.job, execution);
         }
         let outcome = match (pass, execution) {
-            (Pass::Accepted(gated), Some(mut execution)) => {
+            (Pass::Accepted(gated, material), Some(mut execution)) => {
                 execution.evidence = Some(CompactionEvidence::Conversation(self.evidence.clone()));
                 let (first, last) = (
                     self.request.turn_start,
@@ -329,10 +414,13 @@ impl ConversationFlight<'_> {
                         .last()
                         .map_or(self.request.turn_start, |message| message.turn),
                 );
-                match self
-                    .driver
-                    .integrate_conversation(vault, self.byline, *gated, execution)
-                {
+                match self.driver.integrate_conversation(
+                    vault,
+                    self.byline,
+                    *gated,
+                    execution,
+                    material.map(|material| *material),
+                ) {
                     Ok(plan) => {
                         let summary = plan.summary_id;
                         vault.post_compact_hooks(self.hooks, &plan, first, last);
@@ -347,7 +435,7 @@ impl ConversationFlight<'_> {
                     }
                 }
             }
-            (Pass::Accepted(_), None) => {
+            (Pass::Accepted(..), None) => {
                 self.driver.abandon();
                 ConversationFlightOutcome::Refused("no_writer_receipt".to_owned())
             }
@@ -365,9 +453,10 @@ impl ConversationFlight<'_> {
     }
 }
 
-/// How one pass's tries ended.
+/// How one pass's tries ended. An accepted pass keeps its try's check
+/// material, taken before the whole reply was discarded (FIX 5040).
 enum Pass {
-    Accepted(Box<GatedCompaction>),
+    Accepted(Box<GatedCompaction>, Option<Box<CompactionCheckMaterial>>),
     Rejected(CompactionGateFailure),
     Refused(CompactionRefusal),
 }
@@ -408,7 +497,11 @@ fn run_pass(
                         .accepted(gated.summary_text(), rejected)
                         .with_calls(calls)
                 });
-                return (Pass::Accepted(Box::new(gated)), execution);
+                let material = CompactionCheckMaterial::capture(request, &product, policy);
+                return (
+                    Pass::Accepted(Box::new(gated), material.map(Box::new)),
+                    execution,
+                );
             }
             Err(failure) => {
                 if let Some(execution) = execution

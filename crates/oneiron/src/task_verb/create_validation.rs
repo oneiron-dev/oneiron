@@ -22,7 +22,7 @@ use super::wire_encode::{consult_payload_value, task_assignee_value};
 use crate::error::RecordError;
 
 pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (Value::from("spec"), spec.spec.clone()),
         (
             Value::from("label"),
@@ -59,6 +59,12 @@ pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Val
                 )])
             }),
         ),
+        // FIX685: the due annotation travels with the proposal too, so an
+        // approved hook create lands carrying the stamp it asked for.
+        (
+            Value::from("due_at"),
+            spec.due_at.map_or(Value::Nil, Value::from),
+        ),
         (
             Value::from("type_ref"),
             spec.type_ref
@@ -73,7 +79,13 @@ pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Val
                 .map_or(Value::Nil, |parent| Value::from(parent.to_hex())),
         ),
         (Value::from("created_at"), Value::from(now)),
-    ])
+    ];
+    // FIX 22121: a watch create parks as one, so its approval lands a watch
+    // TASK; elided otherwise, so an ordinary proposal keeps its bytes.
+    if spec.watch {
+        entries.push((Value::from("watch"), Value::from(true)));
+    }
+    Value::Map(entries)
 }
 
 pub(crate) use crate::store::task_body_checks::{
@@ -87,9 +99,44 @@ pub(super) struct ValidatedTaskCreate {
     pub(super) assignee: Option<TaskAssignee>,
     pub(super) consult: Option<ConsultPayload>,
     pub(super) ttl: Option<TaskTtl>,
+    /// FIX685: the hook-chosen due/deadline stamp, Unix seconds. Carried
+    /// through validation unchanged: a past stamp is an overdue display,
+    /// never a born-expired refusal (that rule is `ttl`'s alone).
+    pub(super) due_at: Option<u64>,
+    /// FIX 22121: a watch TASK, admitted only with a due time and on the
+    /// Dreamer's lane; its route queues no work.
+    pub(super) watch: bool,
     pub(super) spec: Value,
     /// OF-543: the one placed type stamp; always settled before the write.
     pub(super) type_ref: crate::task_type::TaskTypeRef,
+}
+
+impl ValidatedTaskCreate {
+    /// An engine-internal minter's shape (a wave plan's TASK, a
+    /// reconciliation): no consult and no TTL, no due annotation (FIX685),
+    /// so never a watch (FIX 22121).
+    pub(super) fn engine_internal(
+        kind: TaskKind,
+        assignee: Option<TaskAssignee>,
+        spec: Value,
+        type_ref: crate::task_type::TaskTypeRef,
+    ) -> Self {
+        Self {
+            kind,
+            assignee,
+            consult: None,
+            ttl: None,
+            due_at: None,
+            watch: false,
+            spec,
+            type_ref,
+        }
+    }
+
+    /// The due time a watch TASK waits for (FIX 22121); `None` for any other.
+    pub(super) const fn watch_due_at(&self) -> Option<u64> {
+        if self.watch { self.due_at } else { None }
+    }
 }
 
 /// Refuses a blank TASK label: a present label must carry a non-whitespace
@@ -127,6 +174,7 @@ pub(super) fn validate_task_create_in(
     if let Some(label) = spec.label.as_deref() {
         check_task_label(label)?;
     }
+    super::watch_task::reject_unfit_watch(spec)?;
     if let Some(parent_ref) = spec.parent_ref {
         check_task_parent_in(vault, txn, parent_ref)?;
     }
@@ -147,6 +195,8 @@ pub(super) fn validate_task_create_in(
     let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, txn, project)?;
     let type_ref =
         crate::task_type::ensure_type_ref(&tree, spec.type_ref.as_ref(), &placement_request, None);
+    // A watch is a standard TASK (FIX 22121): a consult naming one is no
+    // legal shape.
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,
@@ -163,7 +213,7 @@ pub(super) fn validate_task_create_in(
                 | TaskAssignee::Dreamer),
             ),
             Some(ttl),
-        ) if spec.spec == Value::Nil => {
+        ) if spec.spec == Value::Nil && !spec.watch => {
             if ttl.deadline_at <= now {
                 return Err(MemoryError::bad_request(
                     "a consult deadline must be in the future",
@@ -181,6 +231,8 @@ pub(super) fn validate_task_create_in(
                 assignee: Some(*assignee),
                 consult: Some(payload.clone()),
                 ttl: Some(*ttl),
+                due_at: spec.due_at,
+                watch: false,
                 spec: Value::Nil,
                 type_ref,
             })
@@ -206,6 +258,8 @@ pub(super) fn validate_task_create_in(
                 assignee: *assignee,
                 consult: None,
                 ttl: *ttl,
+                due_at: spec.due_at,
+                watch: spec.watch,
                 spec: spec.spec.clone(),
                 type_ref,
             })
@@ -375,6 +429,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
         legal_hold: None,
+        room_join_hold: None,
     }
 }
 
@@ -498,4 +553,53 @@ pub(crate) fn completed_task_at_in_txn(
         .and_then(|body| body.terminal().cloned())
         .filter(|terminal| terminal.disposition == TaskTerminalDisposition::Completed)
         .map(|terminal| terminal.finished_at))
+}
+
+/// The due time of an open TASK (FIX 4749): `None` when the row is gone, is
+/// no typed TASK, has settled, was cancelled (its Cancelled authority fact,
+/// which leaves the body open; review #6784) or carries no due time. A body
+/// no reader can decode reads as no due time, so one bad row never holds the
+/// tick feed.
+pub(crate) fn open_task_due_at_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<u64>> {
+    let body = match task_verb_body_in(vault, txn, task_ref) {
+        Ok(body) => body,
+        Err(Error::Record(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let Some(due_at) = body
+        .filter(|body| body.terminal().is_none())
+        .and_then(|body| body.due_at)
+    else {
+        return Ok(None);
+    };
+    if vault.task_authority_facts_in(txn, task_ref)?.cancelled {
+        return Ok(None);
+    }
+    Ok(Some(due_at))
+}
+
+/// The due time a stored TASK body ticks at (FIX 4749): an open, standard
+/// typed TASK's `due_at`. Any other body (another role, a consult, a settled
+/// TASK, one with no due time) ticks at none, and so does a body no reader
+/// can decode, as [`open_task_due_at_in_txn`] reads it.
+pub(crate) fn watcher_due_at(body: &[u8]) -> Result<Option<u64>> {
+    if task_role_from_body_bytes(body)? != TaskRole::Task
+        || !super::wire_decode::task_body_has_typed_subkind(body)?
+    {
+        return Ok(None);
+    }
+    let body = match super::wire_decode::decode_task_verb_body(body) {
+        Ok(body) => body,
+        Err(Error::Record(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let ticks = super::consts::TASK_VERB_BODY_SCHEMA_VERSIONS.contains(&body.schema_version)
+        && body.role == TaskRole::Task.role_byte()
+        && body.terminal().is_none()
+        && body.kind.is_none_or(|kind| kind == TaskKind::Standard);
+    Ok(body.due_at.filter(|_| ticks))
 }

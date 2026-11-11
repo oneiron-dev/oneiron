@@ -1,0 +1,12 @@
+{
+  "name": "vault.mail.compliance.setting",
+  "description": "Whether org compliance search across mailboxes is on; off by default.",
+  "input": "EmptyRequest",
+  "output": "crate::mail_pack::MailComplianceSettingView",
+  "call": "memory.mail_compliance_setting()?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

@@ -3,12 +3,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
-use crate::codebase::RepoRef;
+use crate::codebase::{RepoIdentity, RepoRef};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::keys::{code_symbol_entity_id, derive_symbol_fingerprint, repo_identity_key};
+use super::keys::{code_symbol_entity_id, derive_symbol_fingerprint};
 use super::text_diff::subtract_line_range;
 use super::types::{
     CODE_SYMBOL_NAME_MAX_BYTES, CodeChunk, CodeEmbeddingInput, CodeSymbolGraph,
@@ -19,13 +19,18 @@ use crate::error::CodeError;
 
 pub(super) const TREE_SITTER_RUST_SOURCE_KIND: &str = "rust";
 
+/// The symbol graph of `sources` at `repo_ref`, its ids derived under
+/// `repo_identity` (FIX 12761): the identity the vault resolves for the
+/// repository ([`crate::Vault::resolve_repo_identity`]), or
+/// [`RepoIdentity::from_location`] for a standalone parse.
 pub fn derive_code_symbol_graph_from_sources<'a>(
     repo_ref: RepoRef,
+    repo_identity: RepoIdentity,
     commit_hash: Option<String>,
     sources: impl IntoIterator<Item = CodeSymbolSource<'a>>,
 ) -> Result<CodeSymbolGraph> {
     let prepared: PreparedCodeSymbolGraph<'a> =
-        prepare_code_symbol_graph(repo_ref, commit_hash, sources)?;
+        prepare_code_symbol_graph(repo_ref, repo_identity, commit_hash, sources)?;
     let mut edges = Vec::new();
     prepared.emit_mentions(&mut |edge| {
         edges.push(edge);
@@ -52,6 +57,7 @@ pub(crate) struct PreparedCodeSymbolGraph<'a> {
 
 pub(crate) fn prepare_code_symbol_graph<'a>(
     repo_ref: RepoRef,
+    repo_identity: RepoIdentity,
     commit_hash: Option<String>,
     sources: impl IntoIterator<Item = CodeSymbolSource<'a>>,
 ) -> Result<PreparedCodeSymbolGraph<'a>> {
@@ -70,7 +76,12 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
     let mut extracted = Vec::<ExtractedCodeSymbol>::new();
     let mut parsed_sources = Vec::<ParsedRustSource<'a>>::new();
 
-    let cjs = super::cjs_source::derive_cjs_graph(&repo_ref, commit_hash.clone(), &sources)?;
+    let cjs = super::cjs_source::derive_cjs_graph(
+        &repo_ref,
+        &repo_identity,
+        commit_hash.clone(),
+        &sources,
+    )?;
     for source in sources.iter().copied() {
         validate_manifest_path(source.path)?;
         if !is_tree_sitter_rust_source(source.path) {
@@ -105,10 +116,9 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
             .push(index);
     }
 
-    let repo_key = repo_identity_key(&repo_ref);
     let symbol_ids = extracted
         .iter()
-        .map(|symbol| code_symbol_entity_id(&repo_ref, &symbol.revision))
+        .map(|symbol| code_symbol_entity_id(&repo_identity, &symbol.revision))
         .collect::<Result<Vec<_>>>()?;
     let mut attached = Vec::new();
     add_same_file_contiguity_edges(&extracted, &symbol_ids, &mut attached);
@@ -124,7 +134,10 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
         .into_iter()
         .map(|symbol| {
             let mut revision = symbol.revision;
-            revision.source_session = Some(format!("{TREE_SITTER_RUST_SOURCE_KIND}:{repo_key}"));
+            revision.source_session = Some(format!(
+                "{TREE_SITTER_RUST_SOURCE_KIND}:{}",
+                repo_identity.as_str()
+            ));
             revision
         })
         .collect::<Vec<_>>();
@@ -142,7 +155,7 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
         symbols.push(symbol);
     }
     chunks.extend(cjs.manifest.chunks);
-    let manifest = CodeSymbolManifest::new(repo_ref, commit_hash, chunks, symbols)?;
+    let manifest = CodeSymbolManifest::new(repo_ref, repo_identity, commit_hash, chunks, symbols)?;
     Ok(PreparedCodeSymbolGraph {
         manifest,
         attached,
@@ -304,7 +317,7 @@ fn parse_rust_source(source: &str) -> Result<tree_sitter::Tree> {
 }
 
 pub(super) fn rust_code_embedding_inputs(
-    repo_ref: &RepoRef,
+    repo: &RepoIdentity,
     path: &str,
     document: Option<[u8; 32]>,
     source: &str,
@@ -314,7 +327,7 @@ pub(super) fn rust_code_embedding_inputs(
     let mut inputs = Vec::new();
     collect_changed_rust_embedding_inputs(
         tree.root_node(),
-        repo_ref,
+        repo,
         (path, document),
         source,
         changed_ranges,
@@ -344,7 +357,7 @@ fn push_children<'tree>(node: tree_sitter::Node<'tree>, stack: &mut Vec<tree_sit
 
 fn collect_changed_rust_embedding_inputs(
     node: tree_sitter::Node<'_>,
-    repo_ref: &RepoRef,
+    repo: &RepoIdentity,
     (path, document): (&str, Option<[u8; 32]>),
     source: &str,
     changed_ranges: &[Range<usize>],
@@ -381,7 +394,7 @@ fn collect_changed_rust_embedding_inputs(
                     None,
                 )
                 .on_document(document, ordinal);
-                let entity_id = code_symbol_entity_id(repo_ref, &revision)?;
+                let entity_id = code_symbol_entity_id(repo, &revision)?;
                 inputs.push(CodeEmbeddingInput::new(
                     entity_id,
                     path,

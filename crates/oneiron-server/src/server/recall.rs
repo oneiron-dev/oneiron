@@ -39,13 +39,45 @@ use oneiron::task_verb::sdk::{RecallDoor, RecallRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::core::SyncServer;
-use crate::api::DecodedMediaQuery;
+use crate::api::{DecodedMediaQuery, MediaSeed};
 use crate::embedder::EmbedQueryRefusal;
 
 /// Whether a light recall (call mode included) embeds a request's `media`
 /// (OF-370). Light makes no model call (ARCH-0044 S6), so it refuses media
 /// rather than recall without it.
 const LIGHT_RECALL_EMBEDS_MEDIA: bool = false;
+
+struct RecallRequestInput {
+    request: RecallRequest,
+    _memory: MemoryLease,
+}
+
+impl RecallRequestInput {
+    fn new(request: RecallRequest, memory: MemoryLease) -> Self {
+        let mut input = Self {
+            request,
+            _memory: memory,
+        };
+        input
+            ._memory
+            .materialized(0, input.request.query.capacity() as u64);
+        input
+    }
+
+    fn into_parts(self) -> (MemoryLease, RecallRequest) {
+        (self._memory, self.request)
+    }
+}
+
+struct RecallMediaInput {
+    media: DecodedMediaQuery,
+    _memory: MemoryLease,
+}
+
+struct RecallMediaSeeds {
+    seeds: Vec<MediaSeed>,
+    _memory: MemoryLease,
+}
 
 impl SyncServer {
     /// Runs `recall` for `memory` with the server's execution inputs. Its
@@ -63,6 +95,9 @@ impl SyncServer {
         input: RecallRequest,
         payer: Option<&PayerPerson>,
     ) -> MemoryResult<MemoryPack> {
+        // Bind the request last so early returns drop it before its memory lease.
+        let (mut request_memory, input) = (self.memory.empty_lease(), input);
+        request_memory.materialized(0, input.query.capacity() as u64);
         let detail = recall_effort_name(input.effort);
         let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
         let rerank = self.door_rerank(effort, actor, class)?;
@@ -95,7 +130,7 @@ impl SyncServer {
     /// pack decodes its own: the space, the tower its MIME picks and the
     /// bytes. Light effort refuses it ([`LIGHT_RECALL_EMBEDS_MEDIA`]). The
     /// request's kind filter stays on its media-space seed.
-    fn recall_media(&self, input: &RecallRequest) -> MemoryResult<Option<DecodedMediaQuery>> {
+    fn recall_media(&self, input: &RecallRequest) -> MemoryResult<Option<RecallMediaInput>> {
         let Some(media) = input.media.as_ref() else {
             return Ok(None);
         };
@@ -107,10 +142,15 @@ impl SyncServer {
                 &["Recall media at medium effort or above."],
             ));
         }
-        crate::api::ContextPackMediaQuery::from(media.clone())
+        let mut memory = self.memory.empty_lease();
+        let media = crate::api::ContextPackMediaQuery::from(media.clone())
             .decode(self.config.limits.retrieval_query_bytes)
-            .map(Some)
-            .map_err(media_refusal)
+            .map_err(media_refusal)?;
+        memory.materialized(0, media.input_storage_bytes());
+        Ok(Some(RecallMediaInput {
+            media,
+            _memory: memory,
+        }))
     }
 
     /// [`Self::recall_embed`] plus the request's decoded `media`, embedded
@@ -122,22 +162,23 @@ impl SyncServer {
     fn recall_embed_media<'a>(
         &'a self,
         effort: Option<RecallEffort>,
-        media: Option<DecodedMediaQuery>,
+        media: Option<RecallMediaInput>,
         payer: Option<&'a PayerPerson>,
         query_memory: &'a mut MemoryLease,
     ) -> impl FnOnce(&str) -> MemoryResult<RecallQueryVectors> + 'a {
         let embed = self.recall_embed(effort, payer);
         move |query| {
             let mut vectors = embed(query);
-            if let Some(vector) = vectors.text_index.as_ref() {
-                query_memory.materialized(
-                    0,
-                    (vector.capacity() as u64).saturating_mul(std::mem::size_of::<f32>() as u64),
-                );
-            }
+            let retained = query_vector_bytes(&vectors);
+            query_memory.materialized(0, retained);
             if let Some(media) = media {
-                let seeds = self.recall_media_vectors(media, payer)?;
-                vectors.media.extend(seeds);
+                let mut seeds = self.recall_media_vectors(media, payer)?;
+                for seed in seeds.seeds.drain(..) {
+                    vectors
+                        .media
+                        .push((seed.space, seed.kind, seed.vector, seed.kinds));
+                }
+                query_memory.materialized(0, query_vector_bytes(&vectors).saturating_sub(retained));
             }
             Ok(vectors)
         }
@@ -147,9 +188,9 @@ impl SyncServer {
     /// [`Self::recall_embed_runtime`], billed to `payer`.
     fn recall_media_vectors(
         &self,
-        media: DecodedMediaQuery,
+        media: RecallMediaInput,
         payer: Option<&PayerPerson>,
-    ) -> MemoryResult<Vec<(String, InputKind, Vec<f32>, Vec<InputKind>)>> {
+    ) -> MemoryResult<RecallMediaSeeds> {
         let Ok(runtime) = self.recall_embed_runtime() else {
             return Err(MemoryError::new(
                 MEMORY_CODE_MODEL_UNAVAILABLE,
@@ -160,15 +201,20 @@ impl SyncServer {
         let seeds = runtime
             .block_on(crate::api::embed_media_seeds_for(
                 self,
-                Some(media),
+                Some(media.media),
                 None,
                 payer,
             ))
             .map_err(media_refusal)?;
-        Ok(seeds
-            .into_iter()
-            .map(|seed| (seed.space, seed.kind, seed.vector, seed.kinds))
-            .collect())
+        let mut seeds = RecallMediaSeeds {
+            seeds,
+            _memory: self.memory.empty_lease(),
+        };
+        seeds._memory.materialized(
+            0,
+            (seeds.seeds.capacity() as u64).saturating_mul(std::mem::size_of::<MediaSeed>() as u64),
+        );
+        Ok(seeds)
     }
 
     /// The query embedder recall runs with. Light is pure retrieval with no
@@ -243,10 +289,13 @@ impl SyncServer {
             }
         };
         let embedded = self.media_embedder(space).and_then(|embedder| {
+            let mut input_memory = self.memory.empty_lease();
+            let bytes = query.as_bytes().to_vec();
+            input_memory.materialized(0, bytes.capacity() as u64);
             runtime.block_on(embedder.funded_by(payer.cloned()).embed_query(
                 InputKind::Text,
                 "text/plain",
-                query.as_bytes().to_vec(),
+                bytes,
             ))
         });
         match embedded {
@@ -322,19 +371,25 @@ impl SyncServer {
         home: HomeRecallCaller,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
         let destination: ReadDestination = destination.into();
-        let detail = recall_effort_name(input.effort);
+        let input = RecallRequestInput::new(input, self.memory.empty_lease());
+        let detail = recall_effort_name(input.request.effort);
         let producers = Arc::new(ProducerRows::default());
         let listing = Arc::clone(&producers);
         let pack: MemoryResult<MemoryPack> = async move {
             let arrived = Instant::now();
             let (effort, budget) = oneiron::memory::resolve_recall_dial(
-                input.effort,
-                input.deadline_ms,
+                input.request.effort,
+                input.request.deadline_ms,
                 self.vault.call_mode_deadline(),
             )?;
             let rerank = self.door_rerank(effort, actor, class)?;
-            let media = self.recall_media(&input)?;
-            let ask = HomeRecallAsk::new(&input, room.is_some());
+            let media = self.recall_media(&input.request)?;
+            // Bind the ask last so it drops before its query-storage lease.
+            let (mut ask_memory, ask) = (
+                self.memory.empty_lease(),
+                HomeRecallAsk::new(&input.request, room.is_some()),
+            );
+            ask_memory.materialized(0, ask.query_storage_bytes());
             let ready = CutSlot::default();
             let publish = ready.clone();
             let server = Arc::clone(self);
@@ -343,6 +398,8 @@ impl SyncServer {
             // row it runs on and raises the row's check.
             let job = budget.map(|_| self.vault.admit_deadline_job(actor));
             let work = move || {
+                // Move the whole owner, then bind the request after its lease.
+                let (_request_memory, input) = input.into_parts();
                 let _job = job;
                 let publish = move |pack| publish.put(pack);
                 let memory = reader(&server.vault, actor, class, proof.as_ref())
@@ -478,8 +535,7 @@ impl SyncServer {
         // SCAN C030: the read counts among its caller's deadline jobs until
         // it ends, past the door's answer too; past the row it runs on.
         let job = self.vault.admit_deadline_job(actor);
-        std::thread::Builder::new()
-            .name("oneiron-recall".to_owned())
+        crate::engine_thread("oneiron-recall".to_owned())
             .spawn(move || {
                 let _job = job;
                 let publish = move |pack| publish.put(pack);
@@ -528,6 +584,32 @@ impl SyncServer {
             }
         }
     }
+}
+
+fn query_vector_bytes(vectors: &RecallQueryVectors) -> u64 {
+    let text = vectors.text_index.as_ref().map_or(0, |vector| {
+        (vector.capacity() as u64).saturating_mul(std::mem::size_of::<f32>() as u64)
+    });
+    let backing = (vectors.media.capacity() as u64).saturating_mul(std::mem::size_of::<(
+        String,
+        InputKind,
+        Vec<f32>,
+        Vec<InputKind>,
+    )>() as u64);
+    vectors.media.iter().fold(
+        text.saturating_add(backing),
+        |bytes, (space, _, vector, kinds)| {
+            bytes
+                .saturating_add(space.capacity() as u64)
+                .saturating_add(
+                    (vector.capacity() as u64).saturating_mul(std::mem::size_of::<f32>() as u64),
+                )
+                .saturating_add(
+                    (kinds.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<InputKind>() as u64),
+                )
+        },
+    )
 }
 
 /// The snake_case name of the effort a recall asked for, for its retrieval
@@ -629,8 +711,9 @@ pub(crate) fn blocking<R: Send>(work: impl FnOnce() -> R + Send) -> R {
     match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
         Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
         Ok(_) => std::thread::scope(|scope| {
-            scope
-                .spawn(work)
+            crate::engine_thread("recall-current-thread".into())
+                .spawn_scoped(scope, work)
+                .expect("failed to spawn thread")
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
         }),

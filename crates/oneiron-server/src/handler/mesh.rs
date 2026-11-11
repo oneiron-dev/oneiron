@@ -1,7 +1,8 @@
 //! The paired-machine mesh listener (OF-535). Off unless the host names a bind
 //! address (`ONEIRON_MESH_BIND`), and refused in a build without the `mesh`
 //! feature. It binds this install's transport key, admits a connection only
-//! from the paired machine its endpoint key names (`PairedMachineGrants`), and
+//! from the paired machine its endpoint key names (`PairedMachineGrants`), or
+//! on sync from the home this install enrolled with ([`home_pin`]), and
 //! routes each connection by its ALPN ([`mesh_routes`]).
 //!
 //! Sync (`oneiron/sync/1`) serves the very router the TCP listener serves, one
@@ -25,9 +26,13 @@ use axum::Router;
 use crate::http_listener::ConnectionLimits;
 
 #[cfg(feature = "mesh")]
+mod home_pin;
+#[cfg(feature = "mesh")]
 mod pressure;
 #[cfg(feature = "mesh")]
 mod shutdown;
+#[cfg(feature = "mesh")]
+pub(crate) use home_pin::pin_home;
 
 /// Where the mesh listener binds; unset leaves it off.
 const BIND_ENV: &str = "ONEIRON_MESH_BIND";
@@ -55,6 +60,11 @@ impl MeshConfig {
         Self { bind, relays }
     }
 
+    #[cfg(feature = "mesh")]
+    pub(crate) fn outbound_settings(&self) -> Option<(SocketAddr, &[String])> {
+        self.bind.map(|bind| (bind, self.relays.as_slice()))
+    }
+
     pub(crate) fn from_env() -> anyhow::Result<Self> {
         let bind = match std::env::var(BIND_ENV) {
             Ok(raw) if !raw.trim().is_empty() => Some(
@@ -78,7 +88,9 @@ impl MeshConfig {
 }
 
 /// Starts the mesh listener when `config` names a bind address, serving
-/// `app` for sync. `None` when it is off.
+/// `app` for sync. `None` when it is off; then the vault's rows of the
+/// models the owner's other nodes offered go stale, since no mesh catalog
+/// refresh keeps them current (FIX 22227).
 pub(crate) async fn start(
     server: Arc<crate::server::SyncServer>,
     config: &MeshConfig,
@@ -86,6 +98,8 @@ pub(crate) async fn start(
     limits: ConnectionLimits,
 ) -> anyhow::Result<Option<MeshHost>> {
     let Some(bind) = config.bind else {
+        #[cfg(feature = "mesh")]
+        crate::models::withdraw_discovered(server.vault());
         return Ok(None);
     };
     host::start(server, bind, &config.relays, app, limits).await
@@ -142,11 +156,14 @@ mod host {
         AcceptPolicy, MeshConnection, MeshError, MeshFuture, MeshService, MeshTransport,
         PairedMachineGrants, SYNC_ALPN, VaultMachineRoster, VaultPathReceipts,
     };
-    use oneiron_organ_host::{AskHandlers, MeshCancel, ORGAN_ALPN, OrganRouter, OrganService};
+    use oneiron_organ_host::{
+        AskHandlers, MeshCancel, ORGAN_ALPN, OrganRouter, OrganService, VaultOrganNodes,
+    };
     use tokio::sync::watch;
     use tokio::task::{JoinHandle, JoinSet};
 
     use super::MeshProvedMachine;
+    use super::home_pin::{PinnedGrants, PinnedRoster};
     use super::pressure::{self, MeshFloor};
     use super::shutdown::{self, MeshShutdown};
     use crate::http_listener::ConnectionLimits;
@@ -241,9 +258,19 @@ mod host {
         let vault = &server.vault;
         // This machine's organ host (the server's one, which the seal worker
         // shares) serves the owner's other nodes, and its calls that wait for
-        // a node are re-driven on the tick (OF-575).
+        // a node are re-driven on the tick (OF-575): here first, else on one
+        // of the owner's other nodes granted organ calls, over this
+        // install's one endpoint (FIX 14544).
         let organs = Arc::clone(&server.organs);
-        let router = Arc::new(OrganRouter::new().with_local(Arc::clone(&organs)));
+        let mut router = OrganRouter::new().with_local(Arc::clone(&organs));
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            router = router.with_mesh(
+                Arc::new(BoundEndpoint(Arc::downgrade(server))),
+                Arc::new(VaultOrganNodes(Arc::clone(vault))),
+                runtime,
+            );
+        }
+        let router = Arc::new(router);
         // The organ work's stop and cancel, and the model calls' deadline.
         let work = &stop.shutdown;
         MeshRoutes::default()
@@ -286,6 +313,38 @@ mod host {
             .tick(server.pack_organ_tick(work.organs.clone()))
     }
 
+    /// This install's one mesh endpoint as the organ router dials it (FIX
+    /// 14544). The router is built with the listener's routes, before the
+    /// endpoint binds, so each dial reads the endpoint the listener attached
+    /// to the server. Before that, or once the server is gone, a dial is
+    /// unavailable and the call keeps waiting. It accepts nothing: the
+    /// listener's accept loop owns every inbound connection.
+    struct BoundEndpoint(std::sync::Weak<crate::server::SyncServer>);
+
+    impl MeshTransport for BoundEndpoint {
+        fn dial(
+            &self,
+            machine: oneiron_mesh_transport::MachineId,
+            alpn: &[u8],
+        ) -> MeshFuture<'_, Box<dyn MeshConnection>> {
+            let endpoint = self
+                .0
+                .upgrade()
+                .and_then(|server| server.mesh_transport.get().cloned());
+            let alpn = alpn.to_vec();
+            Box::pin(async move {
+                match endpoint {
+                    Some(endpoint) => endpoint.dial(machine, &alpn).await,
+                    None => Err(MeshError::Unavailable),
+                }
+            })
+        }
+
+        fn accept(&self) -> MeshFuture<'_, Box<dyn MeshConnection>> {
+            Box::pin(async { Err(MeshError::Unavailable) })
+        }
+    }
+
     /// Runs every held organ call a node can take now, on a blocking thread,
     /// under the listener's stop: once it begins no held call starts, and
     /// one its cancel cuts short stays held (FIX 4755).
@@ -315,6 +374,8 @@ mod host {
     /// The running mesh listener.
     pub(crate) struct MeshHost {
         transport: Arc<IrohTransport>,
+        /// This install's MACHINE, whose enrolled home the listener pins.
+        machine: oneiron::EntityId,
         stopping: Arc<MeshStop>,
         /// The accept loop, which owns each connection it admitted.
         accepts: JoinHandle<()>,
@@ -327,6 +388,12 @@ mod host {
         /// endpoint rather than binding a second ([`crate::device_sync`]).
         pub(crate) fn transport(&self) -> Arc<dyn MeshTransport> {
             Arc::clone(&self.transport) as Arc<dyn MeshTransport>
+        }
+
+        /// Whether the listener admits `home` on sync as the home this
+        /// install enrolled with ([`super::home_pin`], FIX 3374).
+        pub(crate) fn pins_home(&self, home: oneiron::EntityId) -> bool {
+            super::home_pin::pinned_home(self.machine).is_some_and(|(pinned, _)| pinned == home)
         }
 
         /// Takes no more connections or sync streams, and returns once each
@@ -389,8 +456,14 @@ mod host {
         let stopping = Arc::new(MeshStop::new());
         let routes = Arc::new(mesh_routes(app, limits, &server, &stopping));
         let policy = AcceptPolicy {
-            roster: Arc::new(VaultMachineRoster(Arc::clone(&vault))),
-            grants: Arc::new(PairedMachineGrants(Arc::clone(&vault))),
+            roster: Arc::new(PinnedRoster {
+                local: machine,
+                vault: VaultMachineRoster(Arc::clone(&vault)),
+            }),
+            grants: Arc::new(PinnedGrants {
+                local: machine,
+                vault: PairedMachineGrants(Arc::clone(&vault)),
+            }),
         };
         let relays =
             private_relay_map(relays).map_err(|_| anyhow::anyhow!("mesh relay URL refused"))?;
@@ -424,6 +497,7 @@ mod host {
         });
         Ok(Some(MeshHost {
             transport,
+            machine,
             stopping,
             accepts,
             ticks,

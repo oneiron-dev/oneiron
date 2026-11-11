@@ -16,8 +16,6 @@ use crate::side_table::HexId;
 use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
-pub(super) const MAX_RECEIPT_PAYLOAD: usize = 8 * 1024 * 1024;
-
 /// Idempotent command carried by the canonical document frame. There is no
 /// actor field: the receiving host obtains that from its authenticated session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,6 +238,9 @@ pub(super) fn resolved_authorship_with_birth_in_txn(
                         })
                 }
                 NoteActor::Erased => NoteActor::Erased,
+                // A source vault's author resolves through no local stamp
+                // token (FIX 7777).
+                imported @ NoteActor::Imported(_) => imported,
             }
         };
         resolved.push(record);
@@ -322,7 +323,7 @@ impl Memory<'_> {
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
         let receipt = self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn| {
+            content.update_note(note, |txn, lane| {
                 if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
                     return Err(invalid("replica NOTE cannot act as an admission authority").into());
                 }
@@ -347,7 +348,13 @@ impl Memory<'_> {
                 if let NoteChange::Cite { pin } = &operation.change {
                     super::replica::admit_pin_disclosure(self.vault(), txn, scope, selector, pin)?;
                 }
-                self.apply_note_operation_in_txn(txn, note, operation, Some(selector.grant_id))
+                self.apply_note_operation_in_lane(
+                    txn,
+                    note,
+                    operation,
+                    Some(selector.grant_id),
+                    lane,
+                )
             })
         })?;
         #[cfg(feature = "sync")]
@@ -367,7 +374,7 @@ impl Memory<'_> {
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
         let receipt = self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn| {
+            content.update_note(note, |txn, lane| {
                 if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
                     return Err(invalid("replica NOTE cannot act as an admission authority").into());
                 }
@@ -376,7 +383,7 @@ impl Memory<'_> {
                 }
                 self.verify_owner_in_txn(txn)?;
                 crate::sync::documents::owner_note_admission(self.vault(), txn, note)?;
-                self.apply_note_operation_in_txn(txn, note, operation, None)
+                self.apply_note_operation_in_lane(txn, note, operation, None, lane)
             })
         })?;
         self.vault().notify_note_document(note);
@@ -389,14 +396,14 @@ impl Memory<'_> {
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
         let receipt = self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn| {
+            content.update_note(note, |txn, lane| {
                 if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
                     return Err(invalid(
                         "replica NOTE edits must be submitted to its authenticated authority",
                     )
                     .into());
                 }
-                self.apply_note_operation_in_txn(txn, note, operation, None)
+                self.apply_note_operation_in_lane(txn, note, operation, None, lane)
             })
         })?;
         #[cfg(feature = "sync")]
@@ -411,7 +418,24 @@ impl Memory<'_> {
         operation: &NoteOperation,
         grant: Option<EntityId>,
     ) -> MemoryResult<NoteOperationReceipt> {
-        self.apply_note_candidate_in_txn(txn, note, operation, grant, None)
+        self.apply_note_operation_in_lane(
+            txn,
+            note,
+            operation,
+            grant,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )
+    }
+
+    pub(super) fn apply_note_operation_in_lane(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+        operation: &NoteOperation,
+        grant: Option<EntityId>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ) -> MemoryResult<NoteOperationReceipt> {
+        self.apply_note_candidate_in_lane(txn, note, operation, grant, None, lane)
     }
 
     /// Loads the actual native fork under the same writer as admission. There
@@ -447,16 +471,24 @@ impl Memory<'_> {
                 )],
             },
         };
-        self.apply_note_candidate_in_txn(txn, fork.note, &operation, None, Some(candidate))
+        self.apply_note_candidate_in_lane(
+            txn,
+            fork.note,
+            &operation,
+            None,
+            Some(candidate),
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )
     }
 
-    fn apply_note_candidate_in_txn(
+    fn apply_note_candidate_in_lane(
         &self,
         txn: &mut heed::RwTxn<'_>,
         note: EntityId,
         operation: &NoteOperation,
         grant: Option<EntityId>,
         native: Option<NoteDocument>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> MemoryResult<NoteOperationReceipt> {
         if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
             return Err(invalid("replica NOTE edits require authenticated authority").into());
@@ -526,7 +558,7 @@ impl Memory<'_> {
                         );
                     }
                     Some(NoteScalarEditOutcome::Proposed(propose_claim(
-                        self, txn, note, operation,
+                        self, txn, note, operation, lane,
                     )?))
                 }
             }
@@ -576,14 +608,9 @@ impl Memory<'_> {
             command_hash: hash,
             outcome,
         };
-        let payload = serde_json::to_vec(&receipt).map_err(|_| invalid("NOTE receipt encode"))?;
-        // The receipt goes to its requester whole in one NOTE_RECEIPT
-        // document frame: an 18-byte head and this payload within the
-        // transport's 8 MiB frame (`sync::transport::encode_document`). This
-        // bound protects that frame and stays (FIX 10345).
-        if payload.len() > MAX_RECEIPT_PAYLOAD - 18 {
-            return Err(invalid("NOTE receipt exceeds wire bound").into());
-        }
+        // Validate the full receipt before persistence as before. Its socket
+        // delivery splits the complete result, never a truncated view.
+        let _ = serde_json::to_vec(&receipt).map_err(|_| invalid("NOTE receipt encode"))?;
         // The stored receipt keeps the stamp tokens its view names; its
         // caller reads them resolved (FIX 11964).
         NOTE_RECEIPT_BY_REQUEST.put(
@@ -625,6 +652,7 @@ fn propose_claim(
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
     op: &NoteOperation,
+    lane: crate::core_write::CoreWriteLaneRef<'_>,
 ) -> MemoryResult<CommitReceipt> {
     use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
     use crate::{ClaimCandidate, WriteEnvelope, WriteProvenance};
@@ -679,7 +707,7 @@ fn propose_claim(
                 now,
             ),
         )
-        .apply_recording_gate_decisions(txn)?;
+        .apply_recording_gate_decisions_in_lane(txn, lane)?;
     let claim = memory
         .vault()
         .get_claim_in_txn(txn, &id)?

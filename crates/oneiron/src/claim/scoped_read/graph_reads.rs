@@ -1,5 +1,4 @@
 //! Receipted graph and timeline reads under the resolved actor floor.
-use super::access_gate::HeldAuthority;
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState};
@@ -56,7 +55,7 @@ impl ScopedRead<'_> {
             return Ok(None);
         }
         // One held authority for every neighbor read in this txn (FIX 7462).
-        let held = HeldAuthority::for_request(None);
+        let held = self.held_for(None);
         let mut kept = Vec::new();
         for edge in admitted.edges {
             let edge = edge.info();
@@ -511,14 +510,36 @@ impl ScopedRead<'_> {
         use crate::federation::record_scope::{default_stamp, scope_for_blob};
         use oneiron_authority::federation::{Scope, ScopeAxis};
         // A read limited to facets names only a shell that still proves a
-        // place inside them.
-        if !self.facets_allow_in(txn, id, raw)? {
+        // place inside them. The credential's records and channel caveats
+        // bound a shell as they bound its live row (FIX 8666).
+        if !self.credential_allows_id(id) || !self.facets_allow_in(txn, id, raw)? {
             return Ok(false);
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != crate::registry::ENTITY_TYPE_TASK {
-            return Ok(true);
+            // Any other shell sits in the world its row still proves; one
+            // that proves none reads as if anywhere, so only a read whose
+            // asked and credential worlds hold every world sees it (FIX 8666).
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            let world = match self.session_view {
+                Some(view) => crate::federation::record_scope::record_world_in(
+                    view,
+                    txn,
+                    *id,
+                    header.entity_type,
+                    body,
+                )?,
+                None => crate::federation::record_scope::record_world_in(
+                    &self.vault.store,
+                    txn,
+                    *id,
+                    header.entity_type,
+                    body,
+                )?,
+            };
+            let position = world.map_or_else(Scope::top, super::actor_key::record_world_scope);
+            return Ok(position.is_narrowing_of(&self.actor_key.world_ceiling()));
         }
         let kept = match self.session_view {
             Some(view) => scope_for_blob(view, txn, *id, raw)?,

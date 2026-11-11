@@ -383,7 +383,8 @@ impl Vault {
                 .with_receipt_required(true),
         )?;
         let grant_receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
-        let grant_ref = grant_receipt.grant_ref().ok_or_else(invalid)?;
+        let grant_ref =
+            crate::consent::consent_receipt_grant_ref(&grant_receipt).ok_or_else(invalid)?;
         let receipt = ProjectMintReceipt {
             project_id: id.to_hex(),
             card_id: intent.origin_component_id.clone(),

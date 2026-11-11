@@ -15,7 +15,8 @@ PUBLIC_EXPORTS = {"Oneiron", "OneironError"}
 
 # The facade catalog has top-level verbs and generated tasks/rooms families.
 # Check both projections exactly, without flattening away dotted names.
-_manifest = json.loads((pathlib.Path(__file__).resolve().parents[3] / "scripts/sdk/agent-verbs.json").read_text())
+_verbs_dir = pathlib.Path(__file__).resolve().parents[3] / "scripts/sdk/verbs"
+_manifest = {"verbs": [json.loads(path.read_text()) for path in sorted(_verbs_dir.glob("*.json"))]}
 _VERBS = [row["name"] for row in _manifest["verbs"] if row.get("context", "memory") == "memory"]
 assert _VERBS, "SDK manifest is empty"
 PUBLIC_METHODS = {"open", "connect", "pair", "as_actor", "in_room_turn", *(verb for verb in _VERBS if "." not in verb)}

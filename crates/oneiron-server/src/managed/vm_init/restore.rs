@@ -130,11 +130,9 @@ pub(super) fn start(
     let (input_read, input_write) = std::io::pipe()?;
     let (result_read, result_write) = std::io::pipe()?;
     let reader = channel.try_clone()?;
-    std::thread::Builder::new()
-        .name("vm-restore-input".into())
+    crate::engine_thread("vm-restore-input".into())
         .spawn(move || feed(reader, input_write, &lost))?;
-    let result = std::thread::Builder::new()
-        .name("vm-restore-result".into())
+    let result = crate::engine_thread("vm-restore-result".into())
         .spawn(move || drain(result_read, channel))?;
     let (input_fd, result_fd) = (input_read.as_raw_fd(), result_write.as_raw_fd());
     let flags: Vec<OsString> = vec![

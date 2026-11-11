@@ -86,6 +86,14 @@ impl OverlayDb {
         Ok(Self::composed(self.base, overlay, snapshot, keyspace))
     }
 
+    /// The room snapshot this accessor reads, shared by every accessor of
+    /// its composed store view. Canonical accessors have no room snapshot.
+    pub fn overlay_snapshot(&self) -> Option<&OverlaySnapshot> {
+        self.overlay
+            .as_ref()
+            .map(|overlay| overlay.snapshot.as_ref())
+    }
+
     /// What this accessor's room stages over base, from the snapshot its
     /// reads compose; `None` for the vault's own accessor.
     pub fn staged_rows(&self) -> Option<crate::session_overlay::StagedRows> {

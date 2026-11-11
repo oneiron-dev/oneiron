@@ -1,0 +1,16 @@
+{
+  "name": "vault.budgets.resident_shares",
+  "description": "The owner reads every resident's share of the host-paid allocation, soft or pinned or the default split, and its depletion on the allocation it last drew on.",
+  "input": "crate::llm::run_admission::resident_doors::ResidentSharesRequest",
+  "output": "crate::llm::run_admission::resident_doors::ResidentSharesView",
+  "call": "crate::llm::run_admission::resident_doors::resident_shares_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.resident_shares\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

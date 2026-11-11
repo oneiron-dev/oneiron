@@ -44,10 +44,11 @@ impl Vault {
         for (row, _) in &live.rows {
             *counts.entry(row.target().kind().to_owned()).or_insert(0u32) += 1;
         }
+        // Judged before the naming snapshot opens: `visible` opens its own
+        // (FIX 21880).
+        let reach = reach_projection(&live.reach).visible(visible)?;
         let txn = self.store.env.read_txn()?;
-        let reach = reach_projection(&live.reach)
-            .visible(visible)?
-            .named(&mut |reference| self.reach_name_in(&txn, reference))?;
+        let reach = reach.named(&mut |reference| self.reach_name_in(&txn, reference))?;
         Ok(ShapeCard {
             seed_id: seed.map(|stored| stored.id),
             counts,

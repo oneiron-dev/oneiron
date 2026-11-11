@@ -10,6 +10,7 @@ use heed::RwTxn;
 
 use super::custody::BodyInstance;
 use super::frames::{Domain, FileKey, FrameWriter, LineCounter, SealedStream, write_line_index};
+use super::live_spill::LiveSpillWriter;
 use super::reader::BodyFile;
 use super::rows::{BODY_KEYS, BodyKeyRow, body_key_row_in_txn};
 use super::{DirSeal, KeyScope, sealed_body_file_name};
@@ -99,6 +100,8 @@ pub(crate) struct BodySpill {
     instance: Option<[u8; 16]>,
     /// That instance's lease, carried on to its staged row (FIX 6022).
     lease: Option<BodyLease>,
+    /// This exact session writer's source; `None` outside live sessions.
+    live_spill: Option<LiveSpillWriter>,
 }
 
 enum Out {
@@ -159,7 +162,22 @@ impl BodySpill {
     }
 
     fn open(dir: &BodyDir, key: Option<Arc<FileKey>>, instance: Option<[u8; 16]>) -> Result<Self> {
+        let live_sources = dir.live_spill.clone();
+        let _io = match &live_sources {
+            Some(sources) => Some(sources.io()?),
+            None => None,
+        };
         let (file, temp) = dir.create_temp()?;
+        let live_spill = match &live_sources {
+            Some(sources) => match sources.register(&file, &temp, key.clone()) {
+                Ok(writer) => Some(writer),
+                Err(error) => {
+                    dir.discard(&temp);
+                    return Err(error);
+                }
+            },
+            None => None,
+        };
         let out = match (key, &dir.sealed) {
             (Some(key), Some(sealed)) => Out::Sealed {
                 writer: Box::new(FrameWriter::new(file, key, Domain::Body)),
@@ -172,6 +190,7 @@ impl BodySpill {
             out,
             instance,
             lease: None,
+            live_spill,
         })
     }
 
@@ -181,10 +200,29 @@ impl BodySpill {
     }
 
     pub(crate) fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        match &mut self.out {
-            Out::Plain(file) => Ok(file.write_all(bytes)?),
+        let live_sources = self
+            .live_spill
+            .as_ref()
+            .map(|live| Arc::clone(live.sources()));
+        let _io = match &live_sources {
+            Some(sources) => Some(sources.io()?),
+            None => None,
+        };
+        let original = match &mut self.out {
+            Out::Plain(file) => file.write_all(bytes).map_err(Error::from),
             Out::Sealed { writer, .. } => writer.write(bytes),
+        };
+        if let Some(live) = &self.live_spill {
+            let prefix = match &self.out {
+                Out::Sealed { writer, .. } => writer.written_body_prefix(),
+                Out::Plain(_) => None,
+            };
+            let updated = live.wrote(prefix);
+            if original.is_ok() {
+                updated?;
+            }
         }
+        original
     }
 
     /// Finishes the body `digest`, `len` bytes long: a sealed spill's last
@@ -197,6 +235,14 @@ impl BodySpill {
     /// Filesystem and sealing errors, and a sealed spill that holds other
     /// bytes than `digest`.
     pub(crate) fn finish(self, digest: &[u8; 32], len: u64) -> Result<SpilledBody> {
+        let live_sources = self
+            .live_spill
+            .as_ref()
+            .map(|live| Arc::clone(live.sources()));
+        let _io = match &live_sources {
+            Some(sources) => Some(sources.io()?),
+            None => None,
+        };
         let (file, key) = match self.out {
             Out::Plain(file) => (file, None),
             Out::Sealed { writer, dir } => {
@@ -210,6 +256,9 @@ impl BodySpill {
                 (file, Some((key, dir)))
             }
         };
+        if let Some(live) = &self.live_spill {
+            live.finished(*digest, len)?;
+        }
         // A sealed spill reads back under its key, a temp's included.
         let sealed_key = key.as_ref().map(|(key, _)| Arc::clone(key));
         let staged = match (key, self.instance) {
@@ -236,6 +285,7 @@ impl BodySpill {
             len,
             sealed_key,
             key: staged,
+            live_spill: self.live_spill,
         })
     }
 }
@@ -249,6 +299,8 @@ pub(crate) struct SpilledBody {
     /// The key a sealed spill was sealed under, a temp's included.
     sealed_key: Option<Arc<FileKey>>,
     key: Option<StagedBodyKey>,
+    /// This exact session writer's source; `None` outside live sessions.
+    live_spill: Option<LiveSpillWriter>,
 }
 
 impl SpilledBody {
@@ -265,10 +317,14 @@ impl SpilledBody {
     /// Filesystem errors, and an envelope that does not check.
     pub(crate) fn reader(&self) -> Result<BodyFile> {
         let file = self.file.try_clone()?;
-        match &self.sealed_key {
-            None => Ok(BodyFile::plain(file, self.len)),
-            Some(key) => BodyFile::sealed(file, Arc::clone(key), &self.digest, self.len),
-        }
+        let reader = match &self.sealed_key {
+            None => BodyFile::plain(file, self.len),
+            Some(key) => BodyFile::sealed(file, Arc::clone(key), &self.digest, self.len)?,
+        };
+        Ok(match &self.live_spill {
+            Some(live) => reader.with_live_spill_source(live.source()),
+            None => reader,
+        })
     }
 
     /// Publishes the body under its name in `dir`, the directory it spilled
@@ -291,7 +347,28 @@ impl SpilledBody {
                 ));
             }
         };
-        dir.publish(self.file, &self.temp, &name)?;
+        let live_sources = self
+            .live_spill
+            .as_ref()
+            .map(|live| Arc::clone(live.sources()));
+        let _io = match &live_sources {
+            Some(sources) => Some(sources.io()?),
+            None => None,
+        };
+        let original = dir.publish(self.file, &self.temp, &name);
+        if let Some(live) = &self.live_spill {
+            let updated = live.published(
+                dir,
+                &name,
+                self.digest,
+                self.len,
+                self.key.as_ref().map(|key| key.row.clone()),
+            );
+            if original.is_ok() {
+                updated?;
+            }
+        }
+        original?;
         Ok(self.key)
     }
 }

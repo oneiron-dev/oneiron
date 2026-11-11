@@ -14,7 +14,7 @@ use super::super::git::validate_relative_repo_path;
 use super::{SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind, encode_snapshot};
 use crate::Vault;
 use crate::error::{CodeError, Error, Result};
-use crate::git_wire::{GitOid, GitWire, GitWireRepo};
+use crate::git_wire::{GitOid, GitWire, GitWireRepo, git_path_text};
 use crate::repo_mutation::{REPO_MUTATION_OPLOG_SCHEMA_VERSION, RepoForkHash};
 use crate::store::code_tree_blob::MODE_GITLINK;
 
@@ -134,13 +134,11 @@ struct PinnedWalk<'w, 'v> {
 impl PinnedWalk<'_, '_> {
     fn tree(&mut self, tree: &GitOid, prefix: &str) -> Result<()> {
         for entry in self.wire.read_tree(self.repo, tree)? {
-            let name = std::str::from_utf8(&entry.name).map_err(|_| {
-                Error::Code(CodeError::InvalidRepoMutationRecord(
-                    "repo snapshot path must be UTF-8",
-                ))
-            })?;
+            // A name outside UTF-8 keeps its exact bytes as a Git path's
+            // text (FIX 21326), never a lossy label or a skipped file.
+            let name = git_path_text(&entry.name)?;
             let path = if prefix.is_empty() {
-                name.to_owned()
+                name.into_owned()
             } else {
                 format!("{prefix}/{name}")
             };

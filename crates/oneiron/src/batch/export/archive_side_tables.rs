@@ -23,6 +23,7 @@
 //! restores it in the import's write transaction once the entities are in:
 //! records first, then indexes, then heads. An identical live row is unchanged;
 //! any other refuses the import.
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 
@@ -31,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use super::archive_index::{ArchiveIndex, IndexedArchive, Loc, Tag};
 use super::document_import::parse_id;
+use crate::code_revision::ArchivedRevisionRow;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::serialize::ExportBodyFile;
@@ -747,14 +749,15 @@ impl ArchiveSideRow {
 /// `rtxn`, and the families it holds out. A record's rows of one family go when
 /// the record and every carrier they name are in `included`; otherwise none go,
 /// and a record in `included` has that family named once. A vault-wide row goes
-/// only to a caller on this device; a row of a record the export does not carry,
-/// and an index row no record owns, stay unnamed (FIX 3681: a records archive
-/// never names what its reader could not read).
+/// only when `include_vault_wide` (the owner's own whole-vault archive, or one
+/// read on this device); a row of a record the export does not carry, and an
+/// index row no record owns, stay unnamed (FIX 3681: a records archive never
+/// names what its reader could not read).
 pub(crate) fn archive_side_rows_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
     included: &BTreeSet<EntityId>,
-    on_device: bool,
+    include_vault_wide: bool,
 ) -> Result<(Vec<SideRowBytes>, Vec<ArchiveSideWithheld>)> {
     let mut stored = Vec::new();
     for family in ArchiveSideFamily::ALL {
@@ -777,7 +780,14 @@ pub(crate) fn archive_side_rows_in_txn(
         .into_iter()
         .zip(&travels)
         .filter_map(|((family, key, value), (_, travel))| {
-            let owner = carried(family, travel, &groups, included, on_device, &mut held_out)?;
+            let owner = carried(
+                family,
+                travel,
+                &groups,
+                included,
+                include_vault_wide,
+                &mut held_out,
+            )?;
             let carriers = match travel {
                 Travel::With(_, carriers) => carriers.clone(),
                 Travel::Broken(_) | Travel::Vault | Travel::Orphan => Vec::new(),
@@ -1029,15 +1039,36 @@ pub(crate) fn restore_side_rows_in_txn<R: Read + Seek>(
             }
         }
         let table = lent(row.family)?;
-        match table.stored(store, wtxn, &row.key)? {
-            Some(live) if live == row.value => unchanged += 1,
-            Some(_) => {
-                return Err(invalid("side row collides with a different stored row"));
+        let stored = table.stored(store, wtxn, &row.key)?;
+        let collides = || invalid("side row collides with a different stored row");
+        let restore = match row.family {
+            // A revision's author this vault erased never lands, and a twin
+            // equal but for attribution is unchanged (FIX 6258).
+            ArchiveSideFamily::CodeRevisionRecord | ArchiveSideFamily::CodeRevisionProposal => {
+                match crate::code_revision::land_archived_revision_row_in_txn(
+                    store,
+                    wtxn,
+                    row.family == ArchiveSideFamily::CodeRevisionProposal,
+                    &row.value,
+                    stored.as_deref(),
+                )? {
+                    ArchivedRevisionRow::Unchanged => None,
+                    ArchivedRevisionRow::Restore(value) => Some(Cow::Owned(value)),
+                    ArchivedRevisionRow::Collides => return Err(collides()),
+                }
             }
-            None => {
-                table.restore(store, wtxn, &row.key, &row.value)?;
+            _ => match stored {
+                Some(live) if live == row.value => None,
+                Some(_) => return Err(collides()),
+                None => Some(Cow::Borrowed(row.value.as_slice())),
+            },
+        };
+        match restore {
+            Some(value) => {
+                table.restore(store, wtxn, &row.key, &value)?;
                 restored += 1;
             }
+            None => unchanged += 1,
         }
         after = Some(key);
     }

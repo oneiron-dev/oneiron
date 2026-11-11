@@ -950,7 +950,7 @@ fn file_in_txn(
             proposals::refresh_in_txn(vault, txn, &row_key, held, cause, reason)?;
             return Ok(false);
         }
-        if !proposals::reopens(&held) {
+        if !proposals::reopens_in_txn(vault, txn, &row_key, &held, cause, reason)? {
             return Ok(false);
         }
     }

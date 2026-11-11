@@ -1,0 +1,16 @@
+{
+  "name": "vault.workspace.establish",
+  "description": "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted.",
+  "input": "crate::task_verb::sdk::WorkspacePresetRequest",
+  "output": "crate::task_verb::sdk::WorkspacePresetReceipt",
+  "call": "crate::task_verb::sdk::establish_workspace_as(memory.vault(), &memory.embedded_owner(\"vault.workspace.establish\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "shared_person"
+}

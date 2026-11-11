@@ -26,6 +26,7 @@ mod trailer;
 mod types;
 mod worktree;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 
@@ -38,7 +39,8 @@ pub use self::proposal::actor_erase::{
     ACTOR_ERASE_PENDING_REPO_PROPOSAL, PendingRepoProposalErase, ProposalActor,
 };
 pub use self::secret_remediation::{
-    RepoSecretReferenceRenderer, RepoSecretRemediation, RepoSecretRemediationAction,
+    RepoSecretMarkEntry, RepoSecretMarkSeen, RepoSecretMarks, RepoSecretReferenceRenderer,
+    RepoSecretRemediation, RepoSecretRemediationAction, RepoSecretRemediationLinkEntry,
     RepoSecretRemediationRequest, RepoSecretRemediationStatus, RepoSecretUnresolved,
     RepoSecretUnresolvedReason,
 };
@@ -58,10 +60,11 @@ pub use self::types::{
 pub(crate) use self::bundle::bundle_merge_proposal;
 pub(crate) use self::bundle::tree::{BundleTreeEdit, stage_bundle_tree_edits};
 pub(crate) use self::conflict_value::validate_repo_conflict_claim_value;
-pub(crate) use self::git::canonical_mutation_scope;
+pub(crate) use self::git::canonical_mutation_repo_ref;
 pub(crate) use self::oplog::erase_oplog_actor_in_txn;
 pub(crate) use self::proposal::actor_erase::erase_proposal_actor_in_txn;
 pub(crate) use self::proposal::persist::PreparedRepoProposal;
+pub(crate) use self::snapshot::{CaptureEntry, visit_code_capture_files};
 // The old names of the moved bundle tree helpers (FIX 10928).
 #[allow(unused_imports)]
 pub(crate) use self::received_file::tree::{ReceivedTreeEdit, stage_received_tree_edits};

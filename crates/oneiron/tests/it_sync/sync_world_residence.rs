@@ -2,6 +2,9 @@
 
 use std::sync::Arc;
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
+use crate::sync_harness::open_vault_with_memory_keystore;
+use crate::sync_harness::window_update_frame;
 use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::recovery::{
     CanonicalSnapshot, RecoveryBudget, capture_canonical_window,
@@ -9,7 +12,7 @@ use oneiron::recovery::{
 };
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::schema::create_root_doc;
-use oneiron::sync::transport::{self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, window_sub_tags};
+use oneiron::sync::transport::{self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC};
 use oneiron::sync::window::{export_window_updates_since, load_window_from_state};
 use oneiron::sync::{SyncClient, SyncClientConfig, SyncResidenceMode, WindowKey, WindowManager};
 use oneiron::{
@@ -19,7 +22,10 @@ use oneiron::{
 
 fn vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().expect("create test vault directory");
-    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open test vault"));
+    let vault = Arc::new(open_vault_with_memory_keystore(
+        dir.path(),
+        VaultConfig::device(),
+    ));
     (dir, vault)
 }
 
@@ -56,9 +62,7 @@ fn transfer(
         export_window_updates_since(source, key, &doc.doc, &VersionVector::default().encode())
             .expect("export source window")
             .into_bytes();
-    let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &update)
-        .into_result()
-        .expect("encode window update");
+    let frame = window_update_frame(key.as_str(), &update);
     client
         .handle_server_message(&frame)
         .unwrap_or_else(|error| panic!("{key} import: {error}"));
@@ -262,6 +266,20 @@ fn cross_month_world_edges_in_both_directions_stage_until_the_other_month_arrive
         )
         .unwrap();
     }
+    // FIX 7757/7774 (d2423e39bbc): a world-subject CLAIM needs its substrate FACET row.
+    let world_facet = oneiron::claim::substrate_facet_id(world).expect("world substrate facet");
+    source
+        .put_entity(
+            &world_facet,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            TimeRange {
+                start: jan,
+                end: jan,
+            },
+            jan,
+            b"world-substrate-facet",
+        )
+        .expect("world substrate facet row");
     for (id, at) in [(january, jan), (february, feb)] {
         let mut body = ClaimBody::new(
             "test.two_month_cycle",
@@ -405,9 +423,7 @@ fn late_follow_accepts_valid_soft_and_hard_deleted_world_history() {
             },
         )
         .unwrap();
-        let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &update)
-            .into_result()
-            .unwrap();
+        let frame = window_update_frame(key.as_str(), &update);
         client
             .handle_server_message(&frame)
             .unwrap_or_else(|error| {
@@ -513,7 +529,10 @@ fn canonical_soft_world_recovery_restores_shell_edge_and_address() {
         RecoveryBudget::default(),
     )
     .unwrap();
-    assert_eq!(peer.get_raw(&claim).unwrap().unwrap().len(), 25);
+    assert_eq!(
+        peer.get_raw(&claim).unwrap().unwrap().len(),
+        ENTITY_METADATA_HEADER_LEN
+    );
     assert_eq!(
         peer.sync_state_get(&format!("m:dw:{}", claim.to_hex()))
             .unwrap()
@@ -587,9 +606,7 @@ fn canonical_soft_world_recovery_restores_shell_edge_and_address() {
                 b"person",
             )
             .unwrap();
-        let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &exported)
-            .into_result()
-            .unwrap();
+        let frame = window_update_frame(key.as_str(), &exported);
         let (mut client, _) = SyncClient::new(
             manager(&third),
             SyncClientConfig {
@@ -636,7 +653,7 @@ fn canonical_soft_world_recovery_restores_shell_edge_and_address() {
                 .unwrap(),
             oneiron::sync::sync_doctor(&third).ok()
         );
-        assert_eq!(third_raw.unwrap().len(), 25);
+        assert_eq!(third_raw.unwrap().len(), ENTITY_METADATA_HEADER_LEN);
         assert_eq!(
             third
                 .sync_state_get(&format!("m:dw:{}", claim.to_hex()))
@@ -697,11 +714,12 @@ fn canonical_soft_world_recovery_restores_shell_edge_and_address() {
             },
         )
         .unwrap();
-        let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &relayed)
-            .into_result()
-            .unwrap();
+        let frame = window_update_frame(key.as_str(), &relayed);
         fourth_client.handle_server_message(&frame).unwrap();
-        assert_eq!(fourth.get_raw(&claim).unwrap().unwrap().len(), 25);
+        assert_eq!(
+            fourth.get_raw(&claim).unwrap().unwrap().len(),
+            ENTITY_METADATA_HEADER_LEN
+        );
         assert!(
             fourth
                 .edges_out(&claim)

@@ -57,7 +57,9 @@ pub struct AuthorityCheckpointRow {
 /// that name owner anchors, the actor revocations a signer's
 /// revocations count, and the world edits, grant travel choices, frontier
 /// joins and custody permit pieces (FIX 11866) that may be a stranger's; each owner handover, whose signed
-/// grant ids a restore across it reads (FIX 5765); and each row whose
+/// grant ids a restore across it reads (FIX 5765), and each membership
+/// execution record, whose withdrawn Grants a store reader and whose
+/// handover a restore reads (FIX 12335); and each row whose
 /// transition reads the install's pin or its admitted peers' roots, which a
 /// fold under another pin or peer set judges again (a home candidacy, a
 /// federation lifecycle act; FIX 3004, 3005); and each residence directive
@@ -87,6 +89,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::FrontierJoin(_)
                 | AuthorityOp::CustodyPermitPiece(_)
                 | AuthorityOp::OwnerHandover(_)
+                | AuthorityOp::MembershipExecution(_)
                 | AuthorityOp::HomeCandidacy(_)
                 | AuthorityOp::FederationLifecycle(_)
                 | AuthorityOp::ResidenceDirective(_)

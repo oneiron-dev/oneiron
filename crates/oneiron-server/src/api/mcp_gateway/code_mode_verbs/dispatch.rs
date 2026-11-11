@@ -3,6 +3,7 @@
 //! The code_mode_verbs root defines `McpCodeModeVerbs`; `oneiron::code_run` owns the verb records.
 
 use super::*;
+use oneiron::runtime_hooks::VerbHookStop;
 
 impl McpCodeModeVerbs {
     /// Binds the door to the server runtime the `execute_code` call arrived on.
@@ -20,11 +21,12 @@ impl McpCodeModeVerbs {
             run_id,
             guests: RunGuests::new(server, run_id),
             collector: crate::api::call_receipt::attempt_collector(),
+            observer: crate::api::admission_observer(),
         }
     }
 
-    /// A browser row: this connector's binding and live credential at each
-    /// call, then the run's guest.
+    /// A browser row: this connector's binding, live session and the row's
+    /// own grant at each call, then the run's guest.
     pub(super) fn call_browser(
         &self,
         call: &SelfAgentVerbCall,
@@ -32,7 +34,7 @@ impl McpCodeModeVerbs {
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Err(error) = mcp_admit_host_verb(&self.actor, call.verb)
-            .and_then(|()| mcp_execute_code_gate(&self.server, &self.actor))
+            .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, call.verb))
         {
             return refused(error);
         }
@@ -78,6 +80,7 @@ impl McpCodeModeVerbs {
     /// its caller sits: what a run's search and a session read read under.
     pub(super) fn credential_lane(&self) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
         let unauthenticated = || AgentVerbRefusal {
+            hook_notice: None,
             code: "mcp_auth_required".to_owned(),
         };
         // A managed vault's attested owner carries no slip: he reads with his
@@ -92,6 +95,7 @@ impl McpCodeModeVerbs {
             return crate::api::scoped_read_for_core_auth(&self.server.vault, auth)
                 .map(|read| read.actor_key().clone())
                 .map_err(|error| AgentVerbRefusal {
+                    hook_notice: None,
                     code: match error.code() {
                         crate::error::ErrorCode::Forbidden
                         | crate::error::ErrorCode::HostActionRequiresSupportGrant
@@ -113,6 +117,7 @@ impl McpCodeModeVerbs {
             .vault
             .credential_read_key(proof)
             .map_err(|error| AgentVerbRefusal {
+                hook_notice: None,
                 code: match error.kind() {
                     oneiron::ErrorKind::HostActionRequiresSupportGrant => {
                         super::tasks_response::MCP_HOST_ACTION_REFUSED
@@ -176,22 +181,22 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.runtime
             .spawn(crate::api::call_receipt::with_attempt_collector(
                 self.collector.clone(),
-                answered,
+                crate::api::facade::with_admission_observer(self.observer.clone(), answered),
             ));
         let Ok((executed, kept)) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: "engine_error".to_owned(),
             }));
         };
-        let (output, listed) = match executed {
-            Ok(executed) => executed,
+        let answer = match executed {
+            Ok(answer) => answer,
             Err(error) => return refused(error),
         };
         self.served
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .extend(listed.iter().flatten().copied());
-        let answer = AgentVerbAnswer::new(output, listed);
+            .extend(answer.rows.iter().flatten().copied());
         *self
             .answer_kept
             .lock()
@@ -214,6 +219,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.answer_recorded();
         let Some(auth) = self.actor.auth.clone() else {
             return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: "mcp_auth_required".to_owned(),
             }));
         };
@@ -235,6 +241,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             let _ = sender.send(answered);
         });
         let refusal = |code: &str| AgentVerbRefusal {
+            hook_notice: None,
             code: code.to_owned(),
         };
         Ok(match receiver.recv() {
@@ -249,7 +256,8 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 
     /// A call the run serves itself meets this connector's door at each call
     /// too: a run row needs its own binding, and every call needs the
-    /// credential `execute_code` was admitted on, still live. A search reads
+    /// session `execute_code` was admitted on, still live, and the grant its
+    /// own effect needs (`mcp_run_call_gate`). A search reads
     /// under that credential's grants, as `vault.recall` does, from where its
     /// caller sits (DEC-0005).
     fn admit_run_call(
@@ -257,6 +265,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         let refused = |error: McpGatewayError| AgentVerbRefusal {
+            hook_notice: None,
             code: error.kind.to_owned(),
         };
         if let RunCall::Bridge(effect) = call
@@ -264,7 +273,11 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         {
             mcp_admit_run_verb(&self.actor, *verb).map_err(refused)?;
         }
-        mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
+        mcp_run_call_gate(&self.server, &self.actor, call).map_err(refused)?;
+        // Reading the reason is capture-only; a missing key must not refuse the decline.
+        if matches!(call, RunCall::Bridge(SelfEffect::TasksRefuse)) {
+            return Ok(self.host_turn_read_key());
+        }
         // A search reads on the credential's lane, a facet stamp places only
         // a row that lane reads, a consult lands only refs it reads, and a
         // TASK binding reads its TASK and workflow there (FIX 5316).
@@ -284,6 +297,23 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.credential_lane().map(Some)
     }
 
+    /// A run's speech is its own record only where its storage lands it in
+    /// the run's own derived conversation; anywhere else it is a room write
+    /// and needs Write (`mcp_run_speech_gate`). It reads nothing.
+    fn admit_run_speech(
+        &self,
+        _effect: SelfEffect,
+        destination: oneiron::code_run::RunSpeechDestination,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        mcp_run_speech_gate(&self.server, &self.actor, destination).map_err(|error| {
+            AgentVerbRefusal {
+                hook_notice: None,
+                code: error.kind.to_owned(),
+            }
+        })?;
+        Ok(None)
+    }
+
     /// The host turn's hooks read on the credential's lane, as the run's
     /// own search does (FIX 9841). A keyless reply stays keyless.
     fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
@@ -292,12 +322,14 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 
     /// A read a session-bound run serves through the room (WILL L11-01)
     /// meets this connector's door as its run calls do: the verb's own
-    /// binding, the credential `execute_code` was admitted on, still live,
-    /// and that credential's lane, from where its caller sits.
+    /// binding, the session `execute_code` was admitted on, still live, the
+    /// verb's own grant, and that credential's lane, from where its caller
+    /// sits.
     fn admit_session_read(&self, verb: AgentVerb) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
         mcp_admit_host_verb(&self.actor, verb)
-            .and_then(|()| mcp_execute_code_gate(&self.server, &self.actor))
+            .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, verb))
             .map_err(|error| AgentVerbRefusal {
+                hook_notice: None,
                 code: error.kind.to_owned(),
             })?;
         self.credential_lane()
@@ -329,6 +361,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         };
         crate::device_local::withholds_retained(&self.server.vault, destination, rows, &[]).map_err(
             |_| AgentVerbRefusal {
+                hook_notice: None,
                 code: "engine_error".to_owned(),
             },
         )
@@ -361,6 +394,9 @@ pub(super) fn refused<T>(error: McpGatewayError) -> oneiron::Result<Result<T, Ag
         // (FIX 3194).
         (None, Some(retry_after)) => Err(oneiron::Error::ProviderUnavailable { retry_after }),
         (None, None) => Ok(Err(AgentVerbRefusal {
+            hook_notice: error.hook_notice.as_ref().map(|_| {
+                serde_json::json!(oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY)
+            }),
             code: error.kind.to_owned(),
         })),
     }
@@ -372,7 +408,7 @@ pub(super) async fn execute_code_mode_verb(
     verb: &str,
     input: Value,
     run: McpCodeRun,
-) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
+) -> Result<AgentVerbAnswer, McpGatewayError> {
     run_code_mode_verb(server, actor, verb, input, run, mcp_admit_scoped_verb).await
 }
 
@@ -388,7 +424,7 @@ pub(super) async fn execute_step_verdict(
     // Only the verdict is read; its rows are not.
     run_code_mode_verb(server, actor, "ai.verdict", input, run, mcp_admit_step_verb)
         .await
-        .map(|(output, rows)| (output, rows.unwrap_or_default()))
+        .map(|answer| (answer.output, answer.rows.unwrap_or_default()))
 }
 
 /// How one verb call's tool binding and scope are admitted.
@@ -406,7 +442,7 @@ pub(super) async fn run_code_mode_verb(
     input: Value,
     run: McpCodeRun,
     admit: VerbAdmission,
-) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
+) -> Result<AgentVerbAnswer, McpGatewayError> {
     let surface = try_registered_surface(McpSurfaceMode::ToolFirst)
         .map_err(super::admission::mcp_surface_unavailable)?;
     let Some(McpEndpointTool::Verb(tool)) = surface.resolve(verb) else {
@@ -433,7 +469,7 @@ pub(super) async fn run_code_mode_verb(
     // A media call spends on the run's own line, as its steps do (FIX 780).
     let line = media_line(server, tool.name, run.run_id);
     // The verb table's fan-out, on the heap (FIX 12072).
-    let (output, ..) = crate::api::facade::host_doors::support::with_calling_origin(
+    let executed = crate::api::facade::host_doors::support::with_calling_origin(
         origin,
         crate::api::facade::host_doors::with_calling_line(
             line,
@@ -448,7 +484,33 @@ pub(super) async fn run_code_mode_verb(
             )),
         ),
     )
-    .await?;
+    .await;
+    let (output, _, _, _, hook_notice) = match executed {
+        // A retry of a call its drain already ran gets what that call
+        // returned, never a stop (FIX 21054). Nothing runs again. Its saved
+        // chain's actual notice rides beside it as the content-free summary
+        // (FIX 12517).
+        Err(McpGatewayError {
+            hook: Some(stop), ..
+        }) if matches!(*stop, VerbHookStop::Completed { .. }) => {
+            let notice = matches!(
+                *stop,
+                VerbHookStop::Completed {
+                    hook_notice: Some(true),
+                    ..
+                }
+            );
+            let (output, rows) = completed_answer(server, actor, *stop, &mut served)?;
+            let mut answer = AgentVerbAnswer::new(output, rows);
+            if notice {
+                answer.hook_notice = Some(serde_json::json!(
+                    oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY
+                ));
+            }
+            return Ok(answer);
+        }
+        executed => executed?,
+    };
     // A board read answers the run here: the receipt its hook rows owe is
     // recorded and their blocks spent as the answer returns (OF-579).
     if let Some(mut hooks) = board_hooks {
@@ -457,7 +519,46 @@ pub(super) async fn run_code_mode_verb(
     }
     // An act whose rows are unknown answers off this device only that it
     // ran (FIX 5988); a read releases as before.
-    super::served_rows::unknown_act_answer(tool.name, actor, output, served)
+    let (output, rows) = super::served_rows::unknown_act_answer(tool.name, actor, output, served)?;
+    let mut answer = AgentVerbAnswer::new(output, rows);
+    answer.hook_notice =
+        super::super::tasks_response::mcp_hook_notice(server, actor, hook_notice, &mut answer.rows);
+    Ok(answer)
+}
+
+/// The answer a guest call gets when its verb hook `stop` is Completed
+/// (FIX 21054): the result the call's drain saved, not a stop. The release
+/// check runs before the guest reads it, by the rows the saved answer was
+/// derived from. A held result keeps the release's withheld error. A result
+/// saved with no row set is released on this device only. Any other stop is
+/// the refusal it was.
+fn completed_answer(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    stop: VerbHookStop,
+    served: &mut McpServed,
+) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
+    let rows = super::served_rows::stop_release_rows(server, actor, &stop, served)
+        .map(<[oneiron::EntityId]>::to_vec);
+    // The drain read that answer, not this guest call (FIX 21614).
+    if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows.as_deref(), false) {
+        let ran = oneiron::task_verb::sdk::ActAnswer::<()>::details_on_device();
+        return Ok((serde_json::json!(ran), Some(Vec::new())));
+    }
+    match stop {
+        VerbHookStop::Completed { result, .. } => {
+            let released = super::super::mcp_release_listed(
+                server,
+                actor,
+                rows.as_deref(),
+                false,
+                result,
+                false,
+            )?;
+            Ok((released, rows))
+        }
+        stop => Err(super::tasks_response::mcp_hook_stop(stop)),
+    }
 }
 
 /// The `ai.*` media verbs a code-mode run's line pays for (FIX 780), and
@@ -474,10 +575,10 @@ const LINE_VERBS: [&str; 9] = [
     "connector.call",
 ];
 
-/// The line a code-mode run's `ai.*` media call spends on (FIX 780): code
-/// mode's own meter, the one the run's steps spend on, under the run's own
-/// name. `None` for any other verb, or where code mode lends no meter: that
-/// call takes the owner's door, as a direct tool call does.
+/// The line a code-mode run's `ai.*` media call spends on (FIX 780): the
+/// run's code-mode line ([`code_mode_line`]). `None` for any other verb, or
+/// where code mode lends no meter: that call takes the owner's door, as a
+/// direct tool call does.
 fn media_line(
     server: &SyncServer,
     verb: &str,
@@ -486,6 +587,17 @@ fn media_line(
     if !LINE_VERBS.contains(&verb) {
         return None;
     }
+    code_mode_line(server, run_id)
+}
+
+/// Code-mode durable run `run_id`'s line: code mode's own meter, the one the
+/// run's steps spend on, under the run's own name. Its media calls spend on
+/// it, and its self brief states its budget from it (FIX 17594 D5). `None`
+/// where code mode lends no meter.
+pub(crate) fn code_mode_line(
+    server: &SyncServer,
+    run_id: oneiron::EntityId,
+) -> Option<oneiron::llm::run_admission::RunAdmission> {
     let meter = server
         .code_execution_host()?
         .engine_native()?

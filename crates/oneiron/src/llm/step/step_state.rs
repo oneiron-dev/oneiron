@@ -2,10 +2,12 @@
 //! `DREAMER_STEP_STATE` side table.
 
 use super::codec::{expect_key, expect_map, expect_u64, invalid_step, pinned_key_index};
+use super::source::StepSource;
 use super::types::{
     DREAMER_STEP_STATE_KEYS, DREAMER_STEP_STATE_SCHEMA_VERSION, DurableStepContext,
     KEY_PROGRESSION, KEY_RESPONSE, KEY_SCHEMA_VERSION, KEY_STARTED_AT, KEY_STATE_ACTOR,
-    KEY_STATE_CLAIM, KEY_STATE_ERASED, KEY_STATE_SUBJECT, KEY_UPDATED_AT, StepProgression,
+    KEY_STATE_CLAIM, KEY_STATE_ERASED, KEY_STATE_SUBJECT, KEY_STEP_SOURCE, KEY_UPDATED_AT,
+    StepProgression,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -24,6 +26,7 @@ pub(super) struct StepStateRow {
     pub(super) started_at: u64,
     pub(super) updated_at: u64,
     pub(super) response_payload: Option<Vec<u8>>,
+    pub(super) source: Option<StepSource>,
     /// Whose the response is, stamped as the row is written (KS-2B1).
     pub(super) owners: StepStateOwners,
     /// Its owner's erase took the response (KS-2B1): the step is over, and
@@ -53,7 +56,7 @@ impl StepStateOwners {
         }
     }
 
-    fn ids(&self) -> Vec<EntityId> {
+    pub(super) fn ids(&self) -> Vec<EntityId> {
         [self.actor, self.subject, self.claim]
             .into_iter()
             .flatten()
@@ -85,8 +88,31 @@ fn id_of(value: &Value) -> std::result::Result<EntityId, CodecError> {
     Ok(EntityId::from_bytes(raw)?)
 }
 
+impl StepStateRow {
+    fn validate_source(&self) -> std::result::Result<(), CodecError> {
+        match (&self.response_payload, &self.source) {
+            (None, None) if self.erased || self.progression == StepProgression::Started => Ok(()),
+            (Some(_), Some(source))
+                if !self.erased
+                    && matches!(
+                        self.progression,
+                        StepProgression::ResponseReceived | StepProgression::Logged
+                    )
+                    && self.owners.actor == Some(source.actor.entity_ref())
+                    && self.owners.subject == Some(source.subject) =>
+            {
+                Ok(())
+            }
+            _ => {
+                Err(invalid_step("dreamer step response and original source must be paired").into())
+            }
+        }
+    }
+}
+
 impl RawValue for StepStateRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        self.validate_source()?;
         let mut entries = vec![
             (
                 Value::from(KEY_SCHEMA_VERSION),
@@ -101,6 +127,9 @@ impl RawValue for StepStateRow {
         ];
         if let Some(payload) = &self.response_payload {
             entries.push((Value::from(KEY_RESPONSE), Value::Binary(payload.clone())));
+        }
+        if let Some(source) = &self.source {
+            entries.push((Value::from(KEY_STEP_SOURCE), source.to_value()));
         }
         for (key, owner) in [
             (KEY_STATE_ACTOR, self.owners.actor),
@@ -130,6 +159,7 @@ impl RawValue for StepStateRow {
         let mut started_at = None;
         let mut updated_at = None;
         let mut response_payload = None;
+        let mut source = None;
         let mut owners = StepStateOwners::default();
         let mut erased = false;
         let mut seen = [false; DREAMER_STEP_STATE_KEYS.len()];
@@ -180,6 +210,7 @@ impl RawValue for StepStateRow {
                     };
                     response_payload = Some(bytes.clone());
                 }
+                KEY_STEP_SOURCE => source = Some(StepSource::from_value(value)?),
                 KEY_STATE_ACTOR => owners.actor = Some(id_of(value)?),
                 KEY_STATE_SUBJECT => owners.subject = Some(id_of(value)?),
                 KEY_STATE_CLAIM => owners.claim = Some(id_of(value)?),
@@ -198,15 +229,18 @@ impl RawValue for StepStateRow {
             return Err(invalid_step("unsupported dreamer step state schema_version").into());
         }
 
-        Ok(StepStateRow {
+        let row = StepStateRow {
             progression: progression
                 .ok_or(invalid_step("missing dreamer step state progression"))?,
             started_at: started_at.ok_or(invalid_step("missing dreamer step state started_at"))?,
             updated_at: updated_at.ok_or(invalid_step("missing dreamer step state updated_at"))?,
             response_payload,
+            source,
             owners,
             erased,
-        })
+        };
+        row.validate_source()?;
+        Ok(row)
     }
 }
 
@@ -253,6 +287,7 @@ pub(super) fn step_state_write_owned(
     progression: StepProgression,
     owners: StepStateOwners,
     response_payload: Option<&[u8]>,
+    source: Option<&StepSource>,
     now_ms: u64,
 ) -> Result<StepStateDisposition> {
     let started_at =
@@ -268,6 +303,7 @@ pub(super) fn step_state_write_owned(
             started_at,
             updated_at: now_ms,
             response_payload: response_payload.map(<[u8]>::to_vec),
+            source: source.cloned(),
             owners,
             erased: false,
         },
@@ -303,6 +339,7 @@ pub(super) fn step_state_put_in_txn(
         started_at: row.started_at,
         updated_at: row.updated_at,
         response_payload: None,
+        source: None,
         owners: row.owners,
         erased: true,
     };
@@ -426,6 +463,7 @@ pub(crate) fn step_state_carriage(value: &[u8]) -> ResponseScan {
     if row.response_payload.take().is_none() {
         return ResponseScan::NotResponse;
     }
+    row.source = None;
     row.erased = true;
     let Ok(stub) = row.to_raw() else {
         return ResponseScan::opaque_row();
@@ -467,6 +505,7 @@ pub(crate) fn erase_step_state_owner_in_txn(
             && state.owners.ids().contains(owner)
         {
             state.response_payload = None;
+            state.source = None;
             state.erased = true;
             owned.push((key, state));
         }

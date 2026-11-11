@@ -190,6 +190,7 @@ fn forget_drains_all_active_matches_beyond_one_page() {
                     predicate: Some("profile.city".to_owned()),
                     lifecycle: Some("active".to_owned()),
                     limit: 500,
+                    filter: None,
                 })
                 .expect("claim_list")
                 .len()

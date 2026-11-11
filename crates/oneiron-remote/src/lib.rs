@@ -17,7 +17,7 @@
 //! [`oneiron::task_verb::sdk::AgentVerb`] is the ordered, authoritative list of verbs this
 //! SDK ships, and it is the same list the server's `/v1/core/facade` nest
 //! routes and the same list both language export censuses assert against. It
-//! is generated from `scripts/sdk/agent-verbs.json`. Each facade row has a
+//! is generated from `scripts/sdk/verbs/`. Each facade row has a
 //! typed Rust method and one shared dispatch path, on both backends, beside
 //! the generated N-API, Python, HTTP and MCP projections. Adding a row extends
 //! all of those doors rather than leaving a transport-only stub.
@@ -41,8 +41,9 @@
 
 #![forbid(unsafe_code)]
 
-#[path = "generated/agent_verbs.rs"]
-mod agent_verbs;
+mod agent_verbs {
+    include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
+}
 mod caps;
 mod embedded;
 mod error;
@@ -63,10 +64,9 @@ use oneiron::authority::MachineDeviceClass;
 use oneiron::memory::{MemoryError, RecallEffort};
 
 pub use crate::caps::{
-    MAX_BATCH_ENTITIES, MAX_BLOB_BASE64_LEN, MAX_BLOB_CONTENT_BYTES, MAX_CODEBASE_FILES,
-    MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES, MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES,
-    MAX_SEARCH_LIMIT, check_batch_len, check_deadline_ms_number, check_dimensions,
-    check_payload_bytes, check_query, check_token_budget_number, check_unix_seconds,
+    MAX_BATCH_ENTITIES, MAX_CODEBASE_FILES, MAX_ENTITY_PAYLOAD_BYTES, MAX_REMOTE_REQUEST_BYTES,
+    MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_deadline_ms_number,
+    check_dimensions, check_payload_bytes, check_token_budget_number, check_unix_seconds,
 };
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::{HostOpenCheck, store_open_count, verify_read_credential};
@@ -451,6 +451,18 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(_) => None,
             Backend::Remote(remote) => remote.last_receipt_ref(),
+        }
+    }
+
+    /// The content-free hook notice beside the last facade call's reply.
+    /// Typed results keep their shape. A clone starts with none, and the next
+    /// facade call clears it before sending. Session-only calls may carry one
+    /// without keeping a durable receipt. Vault-direct handles return `None`.
+    #[must_use]
+    pub fn last_hook_notice(&self) -> Option<String> {
+        match &self.backend {
+            Backend::Embedded(_) => None,
+            Backend::Remote(remote) => remote.last_hook_notice(),
         }
     }
 

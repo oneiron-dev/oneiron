@@ -151,11 +151,18 @@ pub(crate) async fn vault_workflows_dispatch(
     input: WorkflowDispatchRequest,
 ) -> MaybeListed<WorkflowRunView> {
     const VERB: &str = "vault.workflows.dispatch";
+    // FIX 4973: the admitted transport's locality, captured before the
+    // async closure; provenance only, never from the request body.
+    let caller_origin = oneiron::agent_dispatch::CallerOrigin::Connection {
+        locality: auth.locality(),
+    };
     as_person_naming(
         server,
         VERB,
         owner_proof(auth, server, VERB),
-        move |server, owner| sdk::dispatch_workflow_as(server.vault(), &owner, input),
+        move |server, owner| {
+            sdk::dispatch_workflow_as_with_origin(server.vault(), &owner, input, caller_origin)
+        },
         workflow_run_rows,
     )
     .await

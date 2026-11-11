@@ -153,6 +153,7 @@ pub(crate) trait StoreGateHooks: Send + Sync {
         store: &Store,
         txn: &RoTxn<'_>,
         machine: EntityId,
+        authored_by: Option<EntityId>,
         body: &[u8],
     ) -> Result<()>;
 

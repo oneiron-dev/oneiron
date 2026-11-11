@@ -138,6 +138,21 @@ impl ContextPackBuilder<'_> {
         self,
         lane: &crate::claim::ScopedRead<'_>,
     ) -> Result<(crate::claim::ScopedReadResult<ContextPack>, PackRunStatus)> {
+        self.run_scoped_listing_producers(
+            lane,
+            &mut super::super::ComposedFieldProducers::default(),
+        )
+    }
+
+    /// [`Self::run_scoped_with_run_status`], which also records in
+    /// `producers` the messages whose words each TURN it returns joins as
+    /// `txt` (FIX 1435), so a caller that keeps the pack's words can name
+    /// every row they came from.
+    pub(crate) fn run_scoped_listing_producers(
+        self,
+        lane: &crate::claim::ScopedRead<'_>,
+        producers: &mut super::super::ComposedFieldProducers,
+    ) -> Result<(crate::claim::ScopedReadResult<ContextPack>, PackRunStatus)> {
         let disclosure = self.disclosure.clone();
         let run = self
             .for_destination(lane.actor_key().destination())
@@ -160,13 +175,14 @@ impl ContextPackBuilder<'_> {
             world_share: run.world_share,
         };
         lane.end_recall_plan()?;
-        let receipt = match pending.filter_scoped_under(lane, disclosure.as_ref()) {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                pending.discard_telemetry();
-                return Err(error);
-            }
-        };
+        let receipt =
+            match pending.filter_scoped_listing_producers(lane, disclosure.as_ref(), producers) {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    pending.discard_telemetry();
+                    return Err(error);
+                }
+            };
         // Instruction files name only units this read returns (FIX 9761).
         pending.project_instruction_files_under(lane, disclosure.as_ref())?;
         // Counts exposed by recall refer only to rows admitted by this read.
@@ -174,6 +190,7 @@ impl ContextPackBuilder<'_> {
         let finalized = pending.finish_post_filter()?;
         status.run_id = finalized.run_id;
         let pack = finalized.value;
+        producers.retain_returned(&pack);
         Ok((
             crate::claim::ScopedReadResult {
                 value: pack,

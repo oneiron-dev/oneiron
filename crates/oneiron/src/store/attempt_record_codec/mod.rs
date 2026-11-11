@@ -213,6 +213,7 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
     validate_optional_run_id(record.run_id.as_deref())?;
     validate_optional_failure_reason(record.last_error.as_deref())?;
     validate_requeued_history(&record.history)?;
+    validate_lease_expirations(&record)?;
     validate_attempt_events(&record.events)?;
     validate_attempt_manifest(&record.manifest)?;
     validate_cancel_state(&record.cancel_state)?;
@@ -336,6 +337,25 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
         _ => {}
     }
     Ok(record)
+}
+
+/// A persisted expiry must describe an elapsed lease of this try.
+fn validate_lease_expirations(record: &AttemptRecord) -> Result<()> {
+    for expiry in &record.lease_expirations {
+        validate_lease_owner(&expiry.lease_owner)?;
+        if expiry.attempt_count > record.attempt_count
+            || expiry.lease_timeout_secs == 0
+            || !expiry
+                .observed_at
+                .checked_sub(expiry.lease_updated_at)
+                .is_some_and(|age| age >= expiry.lease_timeout_secs)
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                "invalid runtime lease expiry observation",
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Refuses a stored history entry no requeue could have written.

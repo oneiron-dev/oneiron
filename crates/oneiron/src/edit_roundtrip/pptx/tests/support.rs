@@ -1,5 +1,16 @@
 //! Small OPC fixtures, not PowerPoint application-oracle evidence.
-use super::super::package::{A, A16, CT, P, P14, R, REL, SLIDE_ID_EXT};
+// The OOXML namespaces and the slide-id extension URI the fixture parts
+// spell. The comment writer keeps them private to
+// `crates/oneiron-docedit/src/pptx_comments/model.rs` (`pub(super)` there,
+// moved out of `pptx/package.rs` by f682b37f692).
+const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
+const A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+const CT: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+const P14: &str = "http://schemas.microsoft.com/office/powerpoint/2010/main";
+const A16: &str = "http://schemas.microsoft.com/office/drawing/2014/main";
+const SLIDE_ID_EXT: &str = "{BB962C8B-B14F-4D97-AF65-F5344CB8AC3E}";
 use crate::edit_roundtrip::opc::{self, OpcPackage, OpcPart};
 use crate::edit_roundtrip::pptx::*;
 use crate::entity_id::EntityId;

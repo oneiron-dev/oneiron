@@ -13,9 +13,12 @@
 //! - erased: an envelope alone, once its actor is erased (FIX 9283), or the
 //!   person it went to (FIX 10953).
 //!
-//! The clear and sealed envelopes also name the send's recipient, the
-//! person its frozen counterparty resolved to at admission, so that
-//! person's erase reaches the row too (FIX 10953).
+//! The clear and sealed envelopes also name the send's recipients, the
+//! persons its frozen counterparty and, for one message to several, each of
+//! its frozen recipient addresses resolved to at admission, so the erase of
+//! any of them reaches the row whole (FIX 10953, fix list row 17645). They
+//! are kept as a LEB128 count and that many ids; a count of 0 or 1 writes the
+//! same bytes the single optional recipient wrote before.
 //!
 //! The intent id, payload hash and idempotency key stay those of the clear
 //! bytes. The row's content digest covers the stored form, which is written
@@ -27,7 +30,7 @@
 
 use heed::RwTxn;
 
-use super::store::{get_ledger_record, ledger_rows, put_erased_record};
+use super::store::{get_ledger_record, ledger_rows, put_erased_record, put_ledger_record};
 use super::types::{
     IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
     RecordedOutboundOutcome,
@@ -54,19 +57,24 @@ const KIND_ERASED: u8 = 2;
 const CUSTODY_REF_DOMAIN: &str = "oneiron outbound ledger payload custody v1";
 
 /// The trusted facts admission keeps a row's payload by: the actor its Gate
-/// verified, whether its caller keeps no record, and the person the
-/// engine's own frozen send names as its counterparty. Never read from a
+/// verified, whether its caller keeps no record, and the persons the
+/// engine's own frozen send names as its recipients. Never read from a
 /// scoped request's own arguments or headers.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LedgerPayloadContext {
     pub(crate) actor: Option<EntityId>,
     pub(crate) off_record: bool,
-    pub(crate) recipient: Option<EntityId>,
+    /// Each distinct person the send's recipients resolved to, in the order
+    /// the frozen send names them; empty when none resolved.
+    pub(crate) recipients: Vec<EntityId>,
 }
 
 /// The frozen field the outbound dispatch pipeline names a send's
 /// counterparty in: a comm party key.
 const FROZEN_COUNTERPARTY_FIELD: &str = "counterparty_ref";
+/// The frozen field one message to several names every recipient in (fix
+/// list row 17645): each entry's address is its comm party key.
+const FROZEN_RECIPIENTS_FIELD: &str = "recipients";
 
 /// One stored payload, read.
 enum StoredPayload<'a> {
@@ -84,11 +92,11 @@ enum StoredPayload<'a> {
 }
 
 /// Whom a clear or sealed envelope names: the actor that admitted the send
-/// and the person it went to.
-#[derive(Clone, Copy, Default)]
+/// and each person it went to.
+#[derive(Clone, Default)]
 struct Named {
     actor: Option<EntityId>,
-    recipient: Option<EntityId>,
+    recipients: Vec<EntityId>,
 }
 
 impl<'a> StoredPayload<'a> {
@@ -106,8 +114,8 @@ impl<'a> StoredPayload<'a> {
             };
         }
         let (actor, rest) = take_optional_id(rest).ok_or_else(invalid)?;
-        let (recipient, rest) = take_optional_id(rest).ok_or_else(invalid)?;
-        let named = Named { actor, recipient };
+        let (recipients, rest) = take_ids(rest).ok_or_else(invalid)?;
+        let named = Named { actor, recipients };
         match kind {
             KIND_CLEAR => Ok(Self::Clear {
                 named,
@@ -130,7 +138,7 @@ impl<'a> StoredPayload<'a> {
 
     fn named(&self) -> Named {
         match self {
-            Self::Clear { named, .. } | Self::Sealed { named, .. } => *named,
+            Self::Clear { named, .. } | Self::Sealed { named, .. } => named.clone(),
             Self::Bare(_) | Self::Erased => Named::default(),
         }
     }
@@ -155,6 +163,34 @@ fn take_optional_id(bytes: &[u8]) -> Option<(Option<EntityId>, &[u8])> {
     }
 }
 
+/// A LEB128 count: seven bits a byte, low first, the high bit set on every
+/// byte but the last. A count under 128 is its one byte.
+fn take_count(bytes: &[u8]) -> Option<(usize, &[u8])> {
+    let mut count: u64 = 0;
+    for (index, &byte) in bytes.iter().enumerate().take(10) {
+        count |= u64::from(byte & 0x7f) << (7 * index);
+        if byte & 0x80 == 0 {
+            return Some((usize::try_from(count).ok()?, &bytes[index + 1..]));
+        }
+    }
+    None
+}
+
+/// A count, then that many ids.
+fn take_ids(bytes: &[u8]) -> Option<(Vec<EntityId>, &[u8])> {
+    let (count, mut rest) = take_count(bytes)?;
+    if count > rest.len() / 16 {
+        return None;
+    }
+    let mut ids = Vec::with_capacity(count);
+    for _ in 0..count {
+        let (id, after) = take_id(rest)?;
+        ids.push(id);
+        rest = after;
+    }
+    Some((ids, rest))
+}
+
 fn push_optional_id(out: &mut Vec<u8>, id: Option<EntityId>) {
     match id {
         Some(id) => {
@@ -165,12 +201,25 @@ fn push_optional_id(out: &mut Vec<u8>, id: Option<EntityId>) {
     }
 }
 
-fn envelope(kind: u8, named: Named, body: &[&[u8]]) -> Vec<u8> {
+/// `ids` as their LEB128 count and the ids.
+fn push_ids(out: &mut Vec<u8>, ids: &[EntityId]) {
+    let mut count = ids.len();
+    while count >= 0x80 {
+        out.push(u8::try_from(count & 0x7f).unwrap_or_default() | 0x80);
+        count >>= 7;
+    }
+    out.push(u8::try_from(count).unwrap_or_default());
+    for id in ids {
+        out.extend_from_slice(id.as_bytes());
+    }
+}
+
+fn envelope(kind: u8, named: &Named, body: &[&[u8]]) -> Vec<u8> {
     let mut out = ENVELOPE_TAG.to_vec();
     out.push(kind);
     if kind != KIND_ERASED {
         push_optional_id(&mut out, named.actor);
-        push_optional_id(&mut out, named.recipient);
+        push_ids(&mut out, &named.recipients);
     }
     for part in body {
         out.extend_from_slice(part);
@@ -240,7 +289,7 @@ pub(crate) fn stored_admission_in_txn(
     let mut stored = record.clone();
     let named = Named {
         actor: context.actor,
-        recipient: context.recipient,
+        recipients: context.recipients.clone(),
     };
     if ledger_payload_sealed(context, record.payload()) {
         let custody_ref = custody_ref(&record.id)?;
@@ -253,11 +302,11 @@ pub(crate) fn stored_admission_in_txn(
         )?;
         stored.payload = envelope(
             KIND_SEALED,
-            named,
+            &named,
             &[custody_ref.as_bytes().as_slice(), ciphertext.as_slice()],
         );
-    } else if named.actor.is_some() || named.recipient.is_some() {
-        stored.payload = envelope(KIND_CLEAR, named, &[record.payload()]);
+    } else if named.actor.is_some() || !named.recipients.is_empty() {
+        stored.payload = envelope(KIND_CLEAR, &named, &[record.payload()]);
     }
     Ok(stored)
 }
@@ -297,8 +346,8 @@ pub(super) fn open_payload_in_txn(
 }
 
 /// Erasing `actor` from the intent ledger (FIX 9283): every row the actor
-/// admitted, and every row sent to it as the person a send went to (FIX
-/// 10953), keeps its id, attempt binding, accounting, state and delivery
+/// admitted, and every row sent to it as a person a send went to (FIX
+/// 10953; one of a message's several, fix list row 17645), keeps its id, attempt binding, accounting, state and delivery
 /// knowledge, and loses its request. A sealed row's key retires with it.
 /// A send still Pending or Deferred is abandoned, keeping that it may have
 /// been delivered: no erased request is sent again, and its remote task
@@ -316,27 +365,46 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
     actor: &EntityId,
 ) -> crate::Result<()> {
     let mut erased = Vec::new();
+    let mut authorized = Vec::new();
+    // FIX 11030: the sends whose party had no PERSON when admitted, linked
+    // to this person when it was deleted, are its sends too.
+    let linked = super::late_recipient::late_recipient_intents_in(vault, &*wtxn, actor)?;
     for row in ledger_rows(vault, &*wtxn).map_err(erase_error)? {
         let (key, raw) = row?;
         let Ok(record) = super::codec::decode_record(&key, &raw) else {
             continue;
         };
         let Ok(stored) = StoredPayload::parse(record.payload()) else {
+            // The owner a row names is the record's, not its payload's: a row
+            // whose payload does not read still drops the erased owner.
+            if record.authorizing_owner == Some(*actor) {
+                authorized.push(record.id);
+            }
             continue;
         };
         let named = stored.named();
-        if named.actor == Some(*actor) || named.recipient == Some(*actor) {
+        if named.actor == Some(*actor)
+            || named.recipients.contains(actor)
+            || linked.contains(&record.id)
+        {
             let custody_ref = match stored {
                 StoredPayload::Sealed { custody_ref, .. } => Some(custody_ref),
                 _ => None,
             };
             erased.push((record.id, custody_ref, named.actor != Some(*actor)));
+        } else if record.authorizing_owner == Some(*actor) {
+            authorized.push(record.id);
         }
     }
     for (id, custody_ref, recipient_only) in erased {
         if let Some(custody_ref) = custody_ref {
             retire_connector_resume_in_txn(&vault.store, wtxn, &custody_ref)?;
         }
+        // The form question its remote task parked for the owner goes with
+        // the request: its row, its sealed carrier and its Ask (FIX 16029).
+        vault
+            .forget_remote_task_input_in_txn(wtxn, &id)
+            .map_err(erase_error)?;
         let Some(mut record) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? else {
             continue;
         };
@@ -345,11 +413,42 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
             // for that, as an actor's erase stops its own sends.
             stop_for_erase(&mut record, IntentEscalationReason::RecipientErased);
         }
+        // A session its remote task's polls kept open is owed its end
+        // before the handle naming it goes (FIX 16028).
+        super::remote_task_poll::keep_session_end_in_txn(vault, wtxn, &id).map_err(erase_error)?;
         put_erased_record(vault, wtxn, record)?;
         super::settlement::forget_remote_task_in_txn(vault, wtxn, &id).map_err(erase_error)?;
         if let Some(erased) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? {
             super::settlement::settle_reservation_in_txn(vault, wtxn, &erased)
                 .map_err(erase_error)?;
+        }
+    }
+    // A send the erased person authorized as its owner, naming him neither as
+    // its actor nor as its recipient: it keeps no id of him, and a send not
+    // yet settled stops as one whose owner is no longer live stops (FIX
+    // 17393). Its payload stays its actor's.
+    for id in authorized {
+        let Some(mut record) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? else {
+            continue;
+        };
+        let stops = matches!(record.state, IntentState::Pending | IntentState::Deferred);
+        record.authorizing_owner = None;
+        stop_for_erase(&mut record, IntentEscalationReason::OwnerNotLive);
+        put_ledger_record(vault, wtxn, &record).map_err(erase_error)?;
+        // An older checkpoint of the call still names him: its compartment
+        // rolls, and the next capture reseals the row without him.
+        super::store::payload_erase::roll_call_compartment_in_txn(
+            vault,
+            wtxn,
+            &record.attempt_id,
+            record.call_seq,
+        )?;
+        if stops {
+            super::settlement::forget_remote_task_in_txn(vault, wtxn, &id).map_err(erase_error)?;
+            if let Some(stopped) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? {
+                super::settlement::settle_reservation_in_txn(vault, wtxn, &stopped)
+                    .map_err(erase_error)?;
+            }
         }
     }
     Ok(())
@@ -358,7 +457,9 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
 /// The person the engine's own frozen send names as its counterparty, as
 /// the comm index resolves that party key in `txn` (FIX 10953): `None` for
 /// a payload that is not the pipeline's JSON, names no counterparty, or
-/// whose party has no person yet. Never fails an admission.
+/// whose party has no person yet. Never fails an admission. FIX 11030 keeps
+/// an unresolved counterparty's party by this, whatever the other
+/// recipients of the same send resolved to.
 pub(crate) fn payload_recipient_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -372,6 +473,50 @@ pub(crate) fn payload_recipient_in_txn(
         .resolve_party_ref_in_txn(vault, txn, party)
         .ok()
         .flatten()
+}
+
+/// The persons the engine's own frozen send names as its recipients, as
+/// the comm index resolves their party keys in `txn` (FIX 10953): its
+/// counterparty, then, for one message to several, each frozen recipient
+/// address (fix list row 17645), each person once, in that order. Empty for
+/// a payload that is not the pipeline's JSON or names no recipient; a party
+/// with no person yet names none. Never fails an admission.
+pub(crate) fn payload_recipients_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    payload: &[u8],
+) -> Vec<EntityId> {
+    let Ok(frozen) = serde_json::from_slice::<serde_json::Value>(payload) else {
+        return Vec::new();
+    };
+    let mut parties: Vec<&str> = frozen
+        .get(FROZEN_COUNTERPARTY_FIELD)
+        .and_then(serde_json::Value::as_str)
+        .into_iter()
+        .collect();
+    let listed = frozen
+        .get(FROZEN_RECIPIENTS_FIELD)
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|recipient| recipient.get("address").and_then(serde_json::Value::as_str));
+    for party in listed {
+        if !parties.contains(&party) {
+            parties.push(party);
+        }
+    }
+    let mut persons = Vec::new();
+    for party in parties {
+        if let Ok(Some(person)) = vault
+            .store
+            .record_hooks
+            .resolve_party_ref_in_txn(vault, txn, party)
+            && !persons.contains(&person)
+        {
+            persons.push(person);
+        }
+    }
+    persons
 }
 
 /// Stops a send an erase reaches before it settled: a Pending or Deferred
@@ -389,7 +534,11 @@ fn stop_for_erase(record: &mut IntentLedgerRecord, reason: IntentEscalationReaso
 /// send still Pending abandoned, keeping that it may have crossed the wire.
 impl ErasedForm for IntentLedgerRecord {
     fn into_erased(mut self) -> crate::Result<Self> {
-        self.payload = envelope(KIND_ERASED, Named::default(), &[]);
+        self.payload = envelope(KIND_ERASED, &Named::default(), &[]);
+        self.pinned_approval = None;
+        // A stopped row is never rechecked again, so it keeps no person's id
+        // for that (FIX 11591).
+        self.authorizing_owner = None;
         stop_for_erase(&mut self, IntentEscalationReason::ActorErased);
         Ok(self)
     }

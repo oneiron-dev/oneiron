@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::super::agent_health::{COACH_AGENT_HEALTH_FACET, ConcernCardSummary};
 use super::private_sources::digest_item_readable_by_in;
@@ -22,13 +22,21 @@ use super::{
 };
 use crate::{EntityId, Result, Vault};
 
+/// A delivered digest's locator from an inbox notification's `source.result`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DigestReadRequest {
+    /// The stable digest locator, as 64 hex.
+    pub id: String,
+}
+
 /// A delivered digest as one viewer reads it (FIX 6411): the stored
 /// digest's locator and lines, less each proposal whose words come from a
 /// private thread this viewer does not read, or did not read when those
 /// words were written, with its text rebuilt from what is left. A
 /// projection: neither its text nor its lines are checked against the
 /// stored digest's content hash, which it does not carry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProactivityDigestView {
     /// The stored digest's locator (FIX 2332): what its notifications name.
     pub id: [u8; 32],
@@ -48,7 +56,7 @@ pub struct ProactivityDigestView {
     /// The recipient's eval label asks.
     pub eval_label_asks: Vec<crate::skill_optimize::EvalLabelAsk>,
     /// Pending training offers not carried by an earlier digest.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offers: Vec<DigestOffer>,
     /// The cleanup line.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,7 +71,7 @@ pub struct ProactivityDigestView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drafter: Option<crate::drafter::DigestDrafter>,
     /// The Coach's agent-health cards.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub health_cards: Vec<ConcernCardSummary>,
     /// The digest's text as this viewer reads it: the stored text when the
     /// view keeps every proposal, else rebuilt from what it keeps.

@@ -46,12 +46,10 @@ pub(super) async fn read_cancellable<T: Send + 'static>(
         cancel,
     };
     let (answer, answered) = tokio::sync::oneshot::channel();
-    let thread = std::thread::Builder::new()
-        .name("vm-pipe-read".into())
-        .spawn(move || {
-            let _ = answer.send(read(&mut reader));
-            // `reader`, and the pipe it owns, close here on this thread.
-        })?;
+    let thread = crate::engine_thread("vm-pipe-read".into()).spawn(move || {
+        let _ = answer.send(read(&mut reader));
+        // `reader`, and the pipe it owns, close here on this thread.
+    })?;
     let mut worker = Worker {
         held: Some(held),
         thread: Some(thread),

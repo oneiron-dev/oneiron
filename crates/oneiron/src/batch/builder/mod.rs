@@ -9,7 +9,7 @@ mod edges;
 use oneiron_store::batch::builder::ops;
 mod preflight;
 mod puts;
-mod reference_read;
+pub(in crate::batch) mod reference_read;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -49,8 +49,15 @@ pub struct BatchBuilder<'a> {
     text_births: std::collections::HashMap<EntityId, Vec<EntityId>>,
     /// The Rule A birth envelope of each row this batch births.
     births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
+    /// Each NOTE `put_authored_note` queued, with its explicit birth text:
+    /// its document is born from that text in the transaction that applies
+    /// the batch, after every op (FIX 7783).
+    note_births: Vec<(EntityId, String)>,
     /// The body file each ASSET put queued as a manifest names (FIX 3677).
     asset_files: std::collections::HashMap<EntityId, crate::store::AssetBodyFacts>,
+    /// The bytes of each interpreted body file this batch puts, which the
+    /// door's secret scan and mask read in place of its manifest (FIX 22075).
+    asset_file_bodies: std::collections::HashMap<EntityId, Vec<u8>>,
     /// The rows `put_replicated` queued: replay's materialization provenance
     /// (FIX 7925), set by that door alone.
     replicated_puts: std::collections::BTreeSet<EntityId>,
@@ -58,6 +65,8 @@ pub struct BatchBuilder<'a> {
     /// is gated and applied under (FIX 8118); a put with none keeps the
     /// unbound host's.
     caller_envelopes: std::collections::HashMap<EntityId, crate::WriteEnvelope>,
+    prepared_person_substrate: Option<super::PreparedPersonSubstrate>,
+    prepared_agent_birth: Option<crate::agent_def::PreparedAgentDefinitionBirth>,
     /// Each ASSET `put_marked_carrier` queued, bound to the BLAKE3 of its
     /// exact bytes: a marked carrier's content its writer already scanned
     /// (FIX 9034), set by that door alone.
@@ -121,9 +130,13 @@ impl<'a> BatchBuilder<'a> {
             birth_mask: None,
             text_births: std::collections::HashMap::new(),
             births: Vec::new(),
+            note_births: Vec::new(),
             asset_files: std::collections::HashMap::new(),
+            asset_file_bodies: std::collections::HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
             caller_envelopes: std::collections::HashMap::new(),
+            prepared_person_substrate: None,
+            prepared_agent_birth: None,
             marked_carriers: std::collections::BTreeMap::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::store::window_protocol::ImportTier::OwnDevice,
@@ -159,6 +172,22 @@ impl<'a> BatchBuilder<'a> {
     /// caller's (FIX 8118), in this batch's preflight and in its apply.
     pub(crate) fn caller_envelope(mut self, id: &EntityId, envelope: crate::WriteEnvelope) -> Self {
         self.caller_envelopes.insert(*id, envelope);
+        self
+    }
+
+    pub(crate) fn with_prepared_agent_birth(
+        mut self,
+        birth: crate::agent_def::PreparedAgentDefinitionBirth,
+    ) -> Self {
+        self.prepared_agent_birth = Some(birth);
+        self
+    }
+
+    pub(crate) fn with_prepared_person_substrate(
+        mut self,
+        substrate: super::PreparedPersonSubstrate,
+    ) -> Self {
+        self.prepared_person_substrate = Some(substrate);
         self
     }
 

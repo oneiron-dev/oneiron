@@ -46,7 +46,11 @@ impl SpeculativeReadScope {
         deadline: Option<&RetrievalDeadline>,
     ) -> Result<PassOutput> {
         let lane = vault.scoped_read(self.key.clone());
-        let (filter, policy) = lane.recall_plan()?;
+        let crate::claim::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = lane.recall_plan()?;
         // The kinds here, then the actor gate under one authority per
         // snapshot (FIX 11648).
         let gate = lane.recall_candidate_gate(&policy, &filter);
@@ -67,7 +71,7 @@ impl SpeculativeReadScope {
             .builder(vault, deadline)
             .world(self.worlds.clone())
             .corpus(self.corpus.clone())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates)
             .scoped_note_reader(self.key.clone())
             .filter_candidates(&admitted)
             .gate_candidates(&conversation_gate);

@@ -720,6 +720,13 @@ pub(super) fn prepare(
         prompt: input.prompt,
         input: decoded(input.input),
         references: decoded(input.references),
+        mask: input
+            .mask
+            .map(|mask| {
+                mask.into_image()
+                    .ok_or_else(|| media_refused(operation, MediaCallRefusal::InvalidPart))
+            })
+            .transpose()?,
         params: input.params,
         voice: input.voice,
     };

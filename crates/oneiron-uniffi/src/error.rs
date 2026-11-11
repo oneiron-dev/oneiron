@@ -9,6 +9,7 @@
 
 use crate::dto::WireJson;
 use crate::facade_types_generated::LegalHoldNotice;
+use crate::facade_types_generated::RoomJoinHold;
 
 /// Every failure that crosses the generated foreign boundary.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -46,6 +47,8 @@ pub enum OneironError {
         reason_codes: Vec<String>,
         /// The legal-hold notice behind this refusal, when its producer supplied one.
         legal_hold: Option<LegalHoldNotice>,
+        /// The room-join hold behind this refusal, when its producer supplied one.
+        room_join_hold: Option<RoomJoinHold>,
     },
 }
 
@@ -72,6 +75,13 @@ impl From<oneiron::MemoryError> for OneironError {
             },
             None => None,
         };
+        let room_join_hold = match error.room_join_hold {
+            Some(hold) => match crate::codec::lift_room_join_hold(*hold) {
+                Ok(hold) => Some(hold),
+                Err(error) => return error,
+            },
+            None => None,
+        };
         Self::Failure {
             code: error.code,
             message: error.message,
@@ -84,6 +94,7 @@ impl From<oneiron::MemoryError> for OneironError {
             resets_at: error.resets_at,
             reason_codes: error.reason_codes,
             legal_hold,
+            room_join_hold,
         }
     }
 }

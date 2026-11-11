@@ -5,6 +5,7 @@
 use serde_json::Value;
 
 use crate::Vault;
+use crate::agent_dispatch::AgentRunEffectStop;
 use crate::connector_key::{
     CONNECTOR_ISSUER_HOLD_REASON, ConnectorCallRoute, ConnectorKeyRecord, ConnectorScopeEvidence,
     ScopeExceedCall, SlateDataClass, SlateDisposition, canonical_scoped_server_segment,
@@ -12,6 +13,7 @@ use crate::connector_key::{
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::Memory;
+use crate::outbound_grant::StandingOutboundGrant;
 use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentLedgerError, OutboundToolDescriptor, abandon_record,
 };
@@ -23,8 +25,8 @@ use crate::web_connector::{
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorCallOutcome,
-    ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCall, SettledConnectorCall,
-    UntrustedToolResult, now_ms,
+    ConnectorResultAbsence, ConnectorSource, ConnectorToolSchema, PendingConnectorCall,
+    SettledConnectorCall, UntrustedToolResult, now_ms,
 };
 use super::connector_call_dispatch::{escalation_code, step_from_host};
 use super::connector_call_erase::put_pending_call_in_txn;
@@ -32,7 +34,9 @@ use super::connector_call_input_resume::ConnectorResumeState;
 use super::scope::{
     DataClass, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
 };
-use super::tool_call::{ConnectorToolCallPreparation, ToolCallDescriptor};
+use super::tool_call::{
+    ConnectorToolCallPreparation, MutationIntent, PreparedToolCall, ToolCallDescriptor,
+};
 
 mod governance;
 use self::governance::GoverningTool;
@@ -77,6 +81,7 @@ pub(super) enum Step {
     AwaitingInput {
         intent: Option<[u8; 32]>,
         input: ConnectorAwaitingInput,
+        budget_steering: Vec<String>,
     },
     /// A full count-bound budget window paces the call until
     /// `next_eligible_at`, Unix seconds (FIX 8686): unsent and uncharged, it
@@ -85,6 +90,11 @@ pub(super) enum Step {
         next_eligible_at: u64,
         reasons: Vec<String>,
     },
+    /// FIX 4747 slice 7: an agent run's replayed step makes a call an
+    /// earlier executor of its run may have made: unsent, it waits for the
+    /// owner's answer to the ask its admission raised, and the settler's
+    /// pass drives it again then. The call's own owner ask is not queued.
+    AwaitsRunEffectAnswer { reasons: Vec<String> },
 }
 
 /// What a held `self.use` call's resumed send came to, as its host saw it
@@ -114,6 +124,59 @@ pub(super) fn refused(reason: &str) -> Step {
     }
 }
 
+/// What one pass's read half resolves and prepares a call from: the request
+/// as the call's row holds it, its caller, and the grant it last ran under.
+pub(super) struct ConnectorCallPassInput<'a> {
+    pub(super) name: &'a str,
+    pub(super) tool: &'a str,
+    /// The guest's arguments as JSON text, as the pending call holds them.
+    pub(super) arguments: &'a str,
+    pub(super) mutation: MutationIntent,
+    pub(super) principal_ref: &'a str,
+    /// The standing grant the call last ran under, if one matched.
+    pub(super) preferred_grant: Option<EntityId>,
+    /// Scope resolved from the real caller, never the tool's arguments.
+    pub(super) remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
+}
+
+impl<'a> ConnectorCallPassInput<'a> {
+    /// The read half's input for `pending`, as its pass reads it.
+    fn of(pending: &'a PendingConnectorCall) -> Self {
+        Self {
+            name: &pending.name,
+            tool: &pending.tool,
+            arguments: &pending.arguments,
+            mutation: pending.mutation,
+            principal_ref: &pending.principal_ref,
+            preferred_grant: pending
+                .grant_id
+                .as_deref()
+                .and_then(|hex| EntityId::from_hex(hex).ok()),
+            remember_context: pending.remember_context,
+        }
+    }
+}
+
+/// What one pass's read half came to. It wrote nothing.
+pub(super) struct ConnectorCallPassRead {
+    /// Every row the pass read to pick its route, grant, key and slates, in
+    /// the order it read them (FIX 5455).
+    pub(super) rows: Vec<EntityId>,
+    /// The grant the pass ran under, or the one its governance stop names.
+    pub(super) grant_id: Option<EntityId>,
+    /// The prepared call, or the hold or refusal the pass stopped with.
+    pub(super) outcome: std::result::Result<PreparedConnectorCall, Step>,
+}
+
+/// The call one pass prepared, and the grant and governing key it is
+/// prepared under.
+pub(super) struct PreparedConnectorCall {
+    pub(super) prepared: PreparedToolCall,
+    pub(super) grant_id: EntityId,
+    pub(super) grant: StandingOutboundGrant,
+    pub(super) key_id: EntityId,
+}
+
 /// The builtin `web` tool's input contract (FIX 11606): a bare string or the
 /// typed object, from the same `WebSearchInput`/`WebFetchInput` the call
 /// parses. Input shape only, never a key or budget promise.
@@ -136,7 +199,8 @@ impl Step {
             | Self::Retryable { reasons, .. }
             | Self::Unsettled { reasons, .. }
             | Self::NotDelivered { reasons, .. }
-            | Self::Paced { reasons, .. } => reasons,
+            | Self::Paced { reasons, .. }
+            | Self::AwaitsRunEffectAnswer { reasons } => reasons,
             Self::Delivered { .. } | Self::AwaitingInput { .. } => Vec::new(),
         }
     }
@@ -162,21 +226,39 @@ impl Vault {
         name: &str,
         tool: &str,
     ) -> Result<ConnectorToolSchema, IntentLedgerError> {
+        self.connector_tool_schema_from(memory, name, tool, None)
+    }
+
+    /// Reads the selected interface's schema. An explicit catalog choice
+    /// uses its actual route, caller grant, governing manifest and slate,
+    /// including when that catalog entry is named `web`.
+    pub fn connector_tool_schema_from(
+        &self,
+        memory: &Memory<'_>,
+        name: &str,
+        tool: &str,
+        source: Option<ConnectorSource>,
+    ) -> Result<ConnectorToolSchema, IntentLedgerError> {
         if !std::ptr::eq(memory.vault(), self) {
             return Err(IntentLedgerError::InvalidInput(
                 "the caller's scope is bound to another vault",
             ));
         }
         let mut read = Vec::new();
-        let schema =
-            self.connector_tool_schema_reading(&memory.actor().to_hex(), name, tool, &mut read);
+        let schema = self.connector_tool_schema_reading(
+            &memory.actor().to_hex(),
+            name,
+            tool,
+            source,
+            &mut read,
+        );
         memory.produced_from(read);
         schema
     }
 
-    /// [`Self::connector_tool_schema`] for `principal_ref`, listing each row
-    /// it reads in `read`. An exact `web` name is intercepted before the
-    /// catalog route, as the server's call is: an unknown web tool is
+    /// [`Self::connector_tool_schema_from`] for `principal_ref`, listing each
+    /// row it reads in `read`. A selected builtin `web` is intercepted
+    /// before the catalog route, as the server's call is: an unknown tool is
     /// unavailable, a hub switch continues below under the configured
     /// connector's name, and provider tools answer their input contract.
     fn connector_tool_schema_reading(
@@ -184,13 +266,18 @@ impl Vault {
         principal_ref: &str,
         name: &str,
         tool: &str,
+        source: Option<ConnectorSource>,
         read: &mut Vec<EntityId>,
     ) -> Result<ConnectorToolSchema, IntentLedgerError> {
         let unavailable = |stop: Step| ConnectorToolSchema::Unavailable {
             reasons: stop.into_reasons(),
         };
-        // Match the served web branch before resolving catalog names.
-        let hub_target: Option<String> = if name == WEB_CONNECTOR_NAME {
+        // Match the served source choice before resolving catalog names.
+        let selected = ConnectorSource::resolve(source, name);
+        let hub_target: Option<String> = if selected == ConnectorSource::Builtin {
+            if name != WEB_CONNECTOR_NAME {
+                return Err(IntentLedgerError::InvalidInput("unknown builtin connector"));
+            }
             let Some(web_tool) = WebTool::parse(tool) else {
                 return Ok(unavailable(refused("connector_tool_unknown")));
             };
@@ -319,6 +406,9 @@ impl Vault {
                     && !input.uncertain
                 {
                     input.resume = resume.seal_in_txn(self, txn, call_ref);
+                    // What the send presented binds with the state a resume
+                    // takes it up from (fix list row 10550).
+                    input.sent = resume.sent.clone();
                 }
                 let withdrawn = if row.settled.is_some() || row.input.is_some() {
                     self.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row)
@@ -385,7 +475,11 @@ impl Vault {
             // call's row, kept for a first call too, holds the round for its
             // caller to poll, and the host keeps it current (FIX 3837).
             // A row that cannot keep them leaves no caller to answer them.
-            Step::AwaitingInput { intent, input } => {
+            Step::AwaitingInput {
+                intent,
+                input,
+                budget_steering,
+            } => {
                 let row = PendingConnectorCall {
                     held_reasons: Vec::new(),
                     input: Some(super::connector_call_input::PendingConnectorInput::kept(
@@ -404,6 +498,7 @@ impl Vault {
                     call_ref: resolved,
                     intent,
                     input,
+                    budget_steering,
                 };
                 host.bind_awaiting_call(&handle, resolved);
                 let resume = host.take_awaiting_resume(&handle, resolved);
@@ -516,6 +611,15 @@ impl Vault {
                     approval_digest: None,
                 }
             }
+            // FIX 4747 slice 7: the call waits, held, for the owner's answer
+            // to the run effect ask; it asks nothing of its own, and the
+            // answer wakes the settler, whose pass drives it again.
+            Step::AwaitsRunEffectAnswer { reasons } => ConnectorCallOutcome::Held {
+                call_ref: keep(call_ref, &pending)?,
+                decision_ref: None,
+                reasons,
+                approval_digest: None,
+            },
             // The ledger stops the send, so nothing resends it, and the call
             // reads its definite non-delivery at once: its caller re-issues
             // it against the connector as now installed (FIX 2553).
@@ -572,105 +676,22 @@ impl Vault {
         host: &mut H,
         scope_evidence: &mut Option<ConnectorScopeEvidence>,
     ) -> Result<Step, IntentLedgerError> {
-        let (route, catalog_key) = self.route_connector_call_listing(&pending.name)?;
-        pending.list_rows(catalog_key);
-        let Some(route) = route else {
-            return Ok(refused("connector_not_routable"));
-        };
-        let Some(server) = canonical_scoped_server_segment(&route.name) else {
-            return Ok(refused("connector_name_not_scoped"));
-        };
-        let Some(endpoint) = host.tool_endpoint(&route) else {
-            return Ok(refused("connector_endpoint_not_installed"));
-        };
-        let preferred = pending
-            .grant_id
-            .as_deref()
-            .and_then(|hex| EntityId::from_hex(hex).ok());
-        let mut read = Vec::new();
-        let governed = self.governing_tool(
-            &pending.principal_ref,
-            &server,
-            &pending.tool,
-            preferred,
-            &mut read,
-        )?;
-        pending.list_rows(read);
-        let GoverningTool {
+        let pass = self
+            .read_connector_call_pass(&ConnectorCallPassInput::of(pending), |route| {
+                host.tool_endpoint(route)
+            })?;
+        pending.list_rows(pass.rows);
+        if let Some(grant_id) = pass.grant_id {
+            pending.grant_id = Some(grant_id.to_hex());
+        }
+        let PreparedConnectorCall {
+            prepared,
             grant_id,
             grant,
             key_id,
-            key,
-            schema,
-        } = match governed {
-            Ok(governed) => governed,
-            Err(stop) => {
-                if let Some(grant_id) = stop.grant_id {
-                    pending.grant_id = Some(grant_id.to_hex());
-                }
-                return Ok(stop.step);
-            }
-        };
-        pending.grant_id = Some(grant_id.to_hex());
-        // FIX 988: a row that depends on a credential binding whose issuer
-        // changed holds until the owner accepts its re-ask.
-        let issuer_held = {
-            let txn = self.store.env.read_txn().map_err(Error::from)?;
-            crate::connector_key::connector_issuer_hold_in_txn(
-                &self.store,
-                &txn,
-                &key_id,
-                &key,
-                &pending.tool,
-            )?
-        };
-        if issuer_held {
-            return Ok(held(CONNECTOR_ISSUER_HOLD_REASON));
-        }
-        if key.tool_requires_confirmation(&pending.tool) {
-            return Ok(held("connector_manifest_drift"));
-        }
-        if key.protocol_revision.is_none() {
-            return Ok(held("connector_protocol_unpinned"));
-        }
-        let mut slates = Vec::new();
-        let (payload_data_class, destructive_hint, replay) =
-            self.connector_tool_class(&key, &route, &pending.tool, &mut slates)?;
-        pending.list_rows(slates);
-        let arguments: Value = serde_json::from_str(&pending.arguments)
-            .map_err(|_| IntentLedgerError::InvalidRecord("held connector call arguments"))?;
-        let call = ScopedMcpCallContext {
-            server,
-            tool: pending.tool.clone(),
-            payload_data_class,
-            resolved_endpoint: endpoint,
-        };
-        let descriptor = ToolCallDescriptor {
-            schema: &schema,
-            destructive_hint,
-            // The slate row's declared hints: a tool declared neither
-            // read-only nor idempotent is effectful and not idempotent.
-            replay,
-        };
-        // FIX 990: the tool's setting, read with the key. An `always ask`
-        // call still goes to its admission, which spends the owner's press
-        // on exactly this call if one is waiting and else holds it naming
-        // the digest; `never allow` mints nothing to send.
-        let prepared = match self.prepare_connector_tool_call_with_context(
-            &key_id,
-            call,
-            descriptor,
-            &arguments,
-            pending.mutation,
-            pending.remember_context,
-        ) {
-            Ok(ConnectorToolCallPreparation::Ready(prepared)) => prepared,
-            Ok(ConnectorToolCallPreparation::ConsentRequired { candidate }) => candidate,
-            Ok(ConnectorToolCallPreparation::Denied { reason }) => {
-                return Ok(refused(escalation_code(reason)));
-            }
-            Err(Error::InvalidConfig(_)) => return Ok(refused("connector_arguments_invalid")),
-            Err(error) => return Err(error.into()),
+        } = match pass.outcome {
+            Ok(prepared) => prepared,
+            Err(step) => return Ok(step),
         };
         // A code consent pass sends only the frozen bytes its wait bound.
         if let Some(stop) =
@@ -692,18 +713,42 @@ impl Vault {
             host.abandon_awaiting_input(&left.handle);
         }
         let sent = prepared.call().clone();
-        // An off-record caller's admitted request stays sealed in the ledger (FIX 9372).
-        let dispatch = prepared.keeping_no_record(pending.off_record).execute(
-            self,
-            &authority,
-            grant_id,
-            &grant,
-            &pending.principal_ref,
-            pending.attempt_id,
-            pending.call_seq,
-            now_ms(),
-            &mut *host,
-        )?;
+        // An off-record caller's admitted request stays sealed in the ledger
+        // (FIX 9372). An agent run's call is marked on its run TASK and sends
+        // only while this machine holds the run (FIX 4747 slice 7).
+        let dispatch = prepared
+            .keeping_no_record(pending.off_record)
+            .for_agent_run(pending.agent_run)
+            .execute(
+                self,
+                &authority,
+                grant_id,
+                &grant,
+                &pending.principal_ref,
+                pending.attempt_id,
+                pending.call_seq,
+                now_ms(),
+                &mut *host,
+            )?;
+        // FIX 4747 slice 5: the run that made the call no longer runs here;
+        // nothing went, and the call names why.
+        if dispatch.agent_run_stood_down {
+            return Ok(refused(crate::agent_dispatch::AGENT_RUN_STOOD_DOWN));
+        }
+        // FIX 4747 slice 7: the admission stopped it for its run. A call that
+        // waits for the owner's answer holds; any other stop is the call's
+        // typed answer to the step: its run moved, the owner left it (it may
+        // have happened elsewhere), or its run's marks are full.
+        if let Some(stop) = dispatch.agent_run_effect {
+            return Ok(match stop {
+                AgentRunEffectStop::AwaitsOwner => Step::AwaitsRunEffectAnswer {
+                    reasons: vec![stop.reason().to_owned()],
+                },
+                AgentRunEffectStop::StoodDown
+                | AgentRunEffectStop::LeftByOwner
+                | AgentRunEffectStop::MarksFull => refused(stop.reason()),
+            });
+        }
         if let ScopedMcpConsentDecision::Escalate(reason) = dispatch.decision {
             *scope_evidence = crate::connector_key::connector_scope_evidence(
                 reason,
@@ -722,6 +767,137 @@ impl Vault {
         Ok(step_from_host(&dispatch, host))
     }
 
+    /// One pass's read half: route, canonical server, the endpoint
+    /// `endpoint_of` installed for the route, grant, governing key, issuer
+    /// hold, confirmation and protocol checks, the tool's class, then the
+    /// prepared call, or the hold or refusal the pass stops with. It writes
+    /// nothing, presents no credential and sends nothing; each row it reads
+    /// to pick them comes back on the answer (FIX 5455).
+    pub(super) fn read_connector_call_pass(
+        &self,
+        call: &ConnectorCallPassInput<'_>,
+        endpoint_of: impl FnOnce(&ConnectorCallRoute) -> Option<String>,
+    ) -> Result<ConnectorCallPassRead, IntentLedgerError> {
+        let mut rows = Vec::new();
+        let mut grant_id = None;
+        let outcome = self.connector_call_pass(call, endpoint_of, &mut rows, &mut grant_id)?;
+        Ok(ConnectorCallPassRead {
+            rows,
+            grant_id,
+            outcome,
+        })
+    }
+
+    /// [`Self::read_connector_call_pass`]'s body: each row it reads lands in
+    /// `rows`, and the grant it runs under, or the one its governance stop
+    /// names, in `ran_under`.
+    fn connector_call_pass(
+        &self,
+        call: &ConnectorCallPassInput<'_>,
+        endpoint_of: impl FnOnce(&ConnectorCallRoute) -> Option<String>,
+        rows: &mut Vec<EntityId>,
+        ran_under: &mut Option<EntityId>,
+    ) -> Result<std::result::Result<PreparedConnectorCall, Step>, IntentLedgerError> {
+        let (route, catalog_key) = self.route_connector_call_listing(call.name)?;
+        rows.extend(catalog_key);
+        let Some(route) = route else {
+            return Ok(Err(refused("connector_not_routable")));
+        };
+        let Some(server) = canonical_scoped_server_segment(&route.name) else {
+            return Ok(Err(refused("connector_name_not_scoped")));
+        };
+        let Some(endpoint) = endpoint_of(&route) else {
+            return Ok(Err(refused("connector_endpoint_not_installed")));
+        };
+        let governed = self.governing_tool(
+            call.principal_ref,
+            &server,
+            call.tool,
+            call.preferred_grant,
+            rows,
+        )?;
+        let GoverningTool {
+            grant_id,
+            grant,
+            key_id,
+            key,
+            schema,
+        } = match governed {
+            Ok(governed) => governed,
+            Err(stop) => {
+                *ran_under = stop.grant_id;
+                return Ok(Err(stop.step));
+            }
+        };
+        *ran_under = Some(grant_id);
+        // FIX 988: a row that depends on a credential binding whose issuer
+        // changed holds until the owner accepts its re-ask.
+        let issuer_held = {
+            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            crate::connector_key::connector_issuer_hold_in_txn(
+                &self.store,
+                &txn,
+                &key_id,
+                &key,
+                call.tool,
+            )?
+        };
+        if issuer_held {
+            return Ok(Err(held(CONNECTOR_ISSUER_HOLD_REASON)));
+        }
+        if key.tool_requires_confirmation(call.tool) {
+            return Ok(Err(held("connector_manifest_drift")));
+        }
+        if key.protocol_revision.is_none() {
+            return Ok(Err(held("connector_protocol_unpinned")));
+        }
+        let (payload_data_class, destructive_hint, replay) =
+            self.connector_tool_class(&key, &route, call.tool, rows)?;
+        let arguments: Value = serde_json::from_str(call.arguments)
+            .map_err(|_| IntentLedgerError::InvalidRecord("held connector call arguments"))?;
+        let context = ScopedMcpCallContext {
+            server,
+            tool: call.tool.to_owned(),
+            payload_data_class,
+            resolved_endpoint: endpoint,
+        };
+        let descriptor = ToolCallDescriptor {
+            schema: &schema,
+            destructive_hint,
+            // The slate row's declared hints: a tool declared neither
+            // read-only nor idempotent is effectful and not idempotent.
+            replay,
+        };
+        // FIX 990: the tool's setting, read with the key. An `always ask`
+        // call still goes to its admission, which spends the owner's press
+        // on exactly this call if one is waiting and else holds it naming
+        // the digest; `never allow` mints nothing to send.
+        let prepared = match self.prepare_connector_tool_call_with_context(
+            &key_id,
+            context,
+            descriptor,
+            &arguments,
+            call.mutation,
+            call.remember_context,
+        ) {
+            Ok(ConnectorToolCallPreparation::Ready(prepared)) => prepared,
+            Ok(ConnectorToolCallPreparation::ConsentRequired { candidate }) => candidate,
+            Ok(ConnectorToolCallPreparation::Denied { reason }) => {
+                return Ok(Err(refused(escalation_code(reason))));
+            }
+            Err(Error::InvalidConfig(_)) => {
+                return Ok(Err(refused("connector_arguments_invalid")));
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Ok(Ok(PreparedConnectorCall {
+            prepared,
+            grant_id,
+            grant,
+            key_id,
+        }))
+    }
+
     /// The tool's payload class, destructive flag and declared replay hints
     /// from its slate row on the governing key, else on the catalog key. A
     /// tool no slate names is Unclassified, which the grant check holds for
@@ -733,11 +909,25 @@ impl Vault {
         tool: &str,
         read: &mut Vec<EntityId>,
     ) -> crate::Result<(DataClass, bool, OutboundToolDescriptor)> {
-        let catalog_slate = self
-            .get_connector_key(&route.key_ref)?
-            .and_then(|key| key.slate_ref);
+        let txn = self.store.env.read_txn()?;
+        self.connector_tool_class_in_txn(&txn, governing, route, tool, read)
+    }
+
+    /// [`Self::connector_tool_class`] read in `txn`, a writer's included, so
+    /// a check inside one opens no read of its own (FIX 16029).
+    pub(super) fn connector_tool_class_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        governing: &ConnectorKeyRecord,
+        route: &ConnectorCallRoute,
+        tool: &str,
+        read: &mut Vec<EntityId>,
+    ) -> crate::Result<(DataClass, bool, OutboundToolDescriptor)> {
+        let catalog_slate =
+            crate::connector_key::read_key_for_pack_in_txn(self, txn, &route.key_ref)?
+                .and_then(|key| key.slate_ref);
         for slate_id in [governing.slate_ref, catalog_slate].into_iter().flatten() {
-            let slate = self.connector_slate(slate_id)?;
+            let slate = crate::connector_key::read_connector_slate_in_txn(self, txn, slate_id)?;
             if slate.is_some() {
                 read.push(slate_id);
             }

@@ -9,7 +9,7 @@
 //! authenticated observation of the issuer a credential slot answers for.
 //! None widens anything by itself: only `accept_revision` lands a revision.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,8 @@ use crate::connector_key::{
     ConnectorBindingDependent, ConnectorCredentialBinding, ConnectorIssuerObservation,
     ConnectorIssuerTransitionState, ConnectorRevisionDeferral, ConnectorScopeExceed,
     ConnectorScopeOutcome, ConnectorScopeOutcomeRecorded, ConnectorSlateRevisionAccepted,
-    ConnectorSlateRevisionOffer, ConnectorSlateScopeSignal, SlateRevisionCause,
+    ConnectorSlateRevisionOffer, ConnectorSlateScopeSignal, SlateDisposition, SlateOwnerOverride,
+    SlateRevisionCause,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edit_distance::graduation::SnoozeState;
@@ -318,6 +319,11 @@ pub struct ConnectorSlateRevisionAcceptRequest {
     /// The proposed delta slate, 32 hex.
     pub slate_ref: String,
     pub expected_revision: u64,
+    /// The owner's setting per row: `always_allow`, `auto`, `always_ask` or
+    /// `never_allow`. A row left out keeps its drafted setting. Rows go by
+    /// tool name; `@elicitation` names the elicitation row.
+    #[serde(default)]
+    pub overrides: BTreeMap<String, SlateDisposition>,
 }
 
 /// One grant an accepted scope revision minted, with its per-grant key.
@@ -371,8 +377,17 @@ pub fn accept_connector_slate_revision(
     input: ConnectorSlateRevisionAcceptRequest,
 ) -> MemoryResult<ConnectorSlateRevisionAcceptedView> {
     let slate_id = id(&input.slate_ref, "slate_ref must be 32 hex")?;
-    let accepted =
-        vault.accept_connector_slate_revision(owner, slate_id, input.expected_revision)?;
+    let overrides: BTreeMap<String, SlateOwnerOverride> = input
+        .overrides
+        .into_iter()
+        .map(|(tool, disposition)| (tool, SlateOwnerOverride { disposition }))
+        .collect();
+    let accepted = vault.accept_connector_slate_revision_with_overrides(
+        owner,
+        slate_id,
+        input.expected_revision,
+        &overrides,
+    )?;
     Ok(ConnectorSlateRevisionAcceptedView::of(&accepted))
 }
 

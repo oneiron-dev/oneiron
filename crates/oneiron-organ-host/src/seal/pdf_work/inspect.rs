@@ -11,8 +11,9 @@ use oneiron_organ_protocol::{ASK_MEMORY_GROW, AskRefusal, MemoryAnswer, MemoryAs
 use super::super::observe::{measure_asks, sized_region_call_until};
 use super::{InspectArgs, SealSettings, VERB_INSPECT, inspected_pages, reply_invalid, to_value};
 use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
-use crate::host::{LentRegion, OrganHost};
+use crate::host::{CallMeasure, LentRegion, OrganHost};
 use crate::resource_memory::MemoryGrow;
+use crate::spec::OrganTier;
 
 /// An inspection's genuine machine-memory refusal, kept apart from a
 /// malformed PDF, an unavailable worker or another seal failure.
@@ -34,6 +35,57 @@ pub fn inspect_pdf_region_until(
     deadline: Instant,
     stream_decode_bytes: u64,
 ) -> Result<Vec<PageGeometry>, PdfInspectionError> {
+    inspect_region(
+        host,
+        vault,
+        settings,
+        input,
+        deadline,
+        stream_decode_bytes,
+        &mut CallMeasure::default(),
+    )
+}
+
+/// As [`inspect_pdf_region_until`], for a caller that admits the pages as
+/// trusted, as a field save's and a sign act's admission does (FIX 9609):
+/// `None` unless the actual slot that ran the call is first party, so a
+/// third-party organ, or a reinstall racing the caller's own install check,
+/// never decides what is admitted. Every outcome of such a slot, its
+/// failures and memory refusals included, is dropped; the caller then
+/// inspects natively.
+pub fn inspect_first_party_pdf_region_until(
+    host: &OrganHost,
+    vault: &Vault,
+    settings: &SealSettings,
+    input: LentRegion,
+    deadline: Instant,
+    stream_decode_bytes: u64,
+) -> Result<Option<Vec<PageGeometry>>, PdfInspectionError> {
+    let mut measure = CallMeasure::default();
+    let inspected = inspect_region(
+        host,
+        vault,
+        settings,
+        input,
+        deadline,
+        stream_decode_bytes,
+        &mut measure,
+    );
+    if measure.tier != Some(OrganTier::FirstParty) {
+        return Ok(None);
+    }
+    inspected.map(Some)
+}
+
+fn inspect_region(
+    host: &OrganHost,
+    vault: &Vault,
+    settings: &SealSettings,
+    input: LentRegion,
+    deadline: Instant,
+    stream_decode_bytes: u64,
+    measure: &mut CallMeasure,
+) -> Result<Vec<PageGeometry>, PdfInspectionError> {
     let args = to_value(&InspectArgs {
         stream_decode_bytes,
     })
@@ -47,6 +99,7 @@ pub fn inspect_pdf_region_until(
         input,
         &handlers,
         deadline,
+        measure,
     );
     measure_asks(vault, &handlers.asked());
     if let Some(refused) = memory

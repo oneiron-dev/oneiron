@@ -12,6 +12,8 @@
  * call boundary.
  */
 
+import type { ReadFilterInput, WorldRecipientNotice } from "./facade-types.js"
+
 /** Options for an embedded {@link Oneiron.open}. */
 export type OpenOptions = {
   /** Embedding vector dimensions; omitted takes the engine default. */
@@ -357,6 +359,8 @@ export type RecallOptions = {
   tokenBudget?: number
   /** An agent definition whose memory profile sizes the rendering when `tokenBudget` is omitted; it grants no read. */
   readerAgentRef?: string
+  /** The caller's retrieval filter: it only narrows the vault's floor; an unset field leaves the floor in force. */
+  filter?: ReadFilterInput
 }
 
 /** Where one recalled item came from. */
@@ -465,10 +469,10 @@ export type RetrievalMeta = {
 }
 
 /** A full-vault render in one of the five pack serialization formats. */
-/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. */
-export type MemoryExport = { format: string; archive: string; digest: string }
-/** One whole-vault export written to the caller's file (FIX 11177): its format, length and BLAKE3. The archive is the caller's file. */
-export type ExportReceipt = { format: string; bytes: number; digest: string }
+/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. `notices` names each world the owner's own export carries that his recipient choice would keep from where it goes (owner ruling 1-EXPORT = B). */
+export type MemoryExport = { format: string; archive: string; digest: string; notices?: WorldRecipientNotice[] }
+/** One whole-vault export written to the caller's file (FIX 11177): its format, length and BLAKE3, and its notices as `MemoryExport` names them. The archive is the caller's file. */
+export type ExportReceipt = { format: string; bytes: number; digest: string; notices?: WorldRecipientNotice[] }
 
 /** One read scope: which entity types, sensitivity, staleness, confidence and salience it admits. */
 export type ReadScope = {

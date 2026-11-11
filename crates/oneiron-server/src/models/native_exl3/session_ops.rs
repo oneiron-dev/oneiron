@@ -11,8 +11,9 @@
 //! exactly, and its lengths and SHA-256 are the snapshot's. Any other answer
 //! is a cut: the caller drops what it got and goes cold.
 use oneiron::llm::{
-    SESSION_SCHEMA_MINOR, SESSIONS_CAPABILITY, SessionCapability, SessionExport, SessionExported,
-    SessionImport, SessionImported, SessionOp,
+    SESSION_SCHEMA_MINOR, SESSIONS_CAPABILITY, SessionAppend, SessionAppended, SessionCapability,
+    SessionExport, SessionExported, SessionImport, SessionImported, SessionInvalidation, SessionOp,
+    SessionPrepare, SessionPrepared,
 };
 use oneiron_driver::InferenceWorker;
 use serde::Serialize;
@@ -87,6 +88,252 @@ pub(in crate::models) async fn send<B: Serialize, R: DeserializeOwned>(
     }
     report(worker, &frame.body);
     serde_json::from_value(frame.body).map_err(|_| OpFault::Cut)
+}
+
+pub(in crate::models) enum ReleasedOpFault {
+    Op(OpFault),
+    Release(oneiron::LlmError),
+}
+
+pub(in crate::models) async fn send_released<B: Serialize, R: DeserializeOwned>(
+    launch: &NativeLaunch,
+    epoch: &str,
+    op: SessionOp,
+    body: &B,
+    conversation: &JsonValue,
+    worker: &InferenceWorker,
+    lease: &oneiron::BudgetLease,
+) -> Result<R, ReleasedOpFault> {
+    if !lease.has_dispatch_release() {
+        return send(launch, epoch, op, body, Some(conversation), worker)
+            .await
+            .map_err(ReleasedOpFault::Op);
+    }
+    let body = serde_json::to_value(body).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
+    let bytes = serde_json::to_vec(conversation).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
+    let input = InputRegion::new(&bytes).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
+    let frame = channel
+        .exchange_released(op.wire_name(), Some(epoch), body, input.outbound(), lease)
+        .await
+        .map_err(|error| match error {
+            super::transport::ReleasedExchangeError::Transport(_) => {
+                ReleasedOpFault::Op(OpFault::Cut)
+            }
+            super::transport::ReleasedExchangeError::Release(error) => {
+                ReleasedOpFault::Release(error)
+            }
+        })?;
+    drop(input);
+    if frame.op == "refused" {
+        return Err(ReleasedOpFault::Op(OpFault::Refused(
+            wire::refusal_code(&frame.body).to_owned(),
+        )));
+    }
+    if frame.op != op.wire_name() {
+        return Err(ReleasedOpFault::Op(OpFault::Cut));
+    }
+    report(worker, &frame.body);
+    serde_json::from_value(frame.body).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))
+}
+
+pub(in crate::models) type ControlSourceFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<(), SessionInvalidation>> + Send + 'a>,
+>;
+pub(in crate::models) type ControlSourceCheck<'a> = dyn Fn() -> ControlSourceFuture<'a> + Sync + 'a;
+
+/// A control frame's source rejection is not a worker fault or a live release.
+pub(in crate::models) enum ReleasedControlFault {
+    Op(OpFault),
+    Release(oneiron::LlmError),
+    Source(SessionInvalidation),
+}
+
+pub(in crate::models) async fn control_source_released<B: Serialize, R: DeserializeOwned>(
+    launch: &NativeLaunch,
+    epoch: &str,
+    op: SessionOp,
+    body: &B,
+    worker: &InferenceWorker,
+    lease: &oneiron::BudgetLease,
+    source: &ControlSourceCheck<'_>,
+) -> Result<R, ReleasedControlFault> {
+    if !lease.has_dispatch_release() {
+        return send(launch, epoch, op, body, None, worker)
+            .await
+            .map_err(ReleasedControlFault::Op);
+    }
+    let body = serde_json::to_value(body).map_err(|_| ReleasedControlFault::Op(OpFault::Cut))?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|_| ReleasedControlFault::Op(OpFault::Cut))?;
+    let frame = channel
+        .exchange_control_released(op.wire_name(), Some(epoch), body, lease, source)
+        .await
+        .map_err(|error| match error {
+            super::transport::ControlExchangeError::Transport(_) => {
+                ReleasedControlFault::Op(OpFault::Cut)
+            }
+            super::transport::ControlExchangeError::Release(error) => {
+                ReleasedControlFault::Release(error)
+            }
+            super::transport::ControlExchangeError::Source(reason) => {
+                ReleasedControlFault::Source(reason)
+            }
+        })?;
+    if frame.op == "refused" {
+        return Err(ReleasedControlFault::Op(OpFault::Refused(
+            wire::refusal_code(&frame.body).to_owned(),
+        )));
+    }
+    if frame.op != op.wire_name() {
+        return Err(ReleasedControlFault::Op(OpFault::Cut));
+    }
+    report(worker, &frame.body);
+    serde_json::from_value(frame.body).map_err(|_| ReleasedControlFault::Op(OpFault::Cut))
+}
+
+pub(in crate::models) type AppendSourceFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<(), SessionInvalidation>> + Send + 'a>,
+>;
+pub(in crate::models) type AppendSourceCheck<'a> = dyn Fn() -> AppendSourceFuture<'a> + Sync + 'a;
+
+/// The successor authority keeps its rejection separate from a worker fault.
+pub(in crate::models) enum ReleasedAppendFault {
+    Op(OpFault),
+    Release(oneiron::LlmError),
+    Source(SessionInvalidation),
+}
+
+pub(in crate::models) async fn append_source_released(
+    launch: &NativeLaunch,
+    epoch: &str,
+    body: &SessionAppend,
+    conversation: &JsonValue,
+    worker: &InferenceWorker,
+    lease: &oneiron::BudgetLease,
+    source: &AppendSourceCheck<'_>,
+) -> Result<SessionAppended, ReleasedAppendFault> {
+    let op = SessionOp::Append;
+    if !lease.has_dispatch_release() {
+        return send(launch, epoch, op, body, Some(conversation), worker)
+            .await
+            .map_err(ReleasedAppendFault::Op);
+    }
+    let body = serde_json::to_value(body).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
+    let bytes =
+        serde_json::to_vec(conversation).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
+    let input = InputRegion::new(&bytes).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
+    let frame = channel
+        .exchange_append_released(
+            op.wire_name(),
+            Some(epoch),
+            body,
+            input.outbound(),
+            lease,
+            source,
+        )
+        .await
+        .map_err(|error| match error {
+            super::transport::AppendExchangeError::Transport(_) => {
+                ReleasedAppendFault::Op(OpFault::Cut)
+            }
+            super::transport::AppendExchangeError::Release(error) => {
+                ReleasedAppendFault::Release(error)
+            }
+            super::transport::AppendExchangeError::Source(reason) => {
+                ReleasedAppendFault::Source(reason)
+            }
+        })?;
+    drop(input);
+    if frame.op == "refused" {
+        return Err(ReleasedAppendFault::Op(OpFault::Refused(
+            wire::refusal_code(&frame.body).to_owned(),
+        )));
+    }
+    if frame.op != op.wire_name() {
+        return Err(ReleasedAppendFault::Op(OpFault::Cut));
+    }
+    report(worker, &frame.body);
+    serde_json::from_value(frame.body).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))
+}
+
+/// A preparation's canonical source or its newly rendered tail changed.
+#[derive(Debug)]
+pub(in crate::models) enum PrepareSourceMiss {
+    Canonical(SessionInvalidation),
+    TailChanged,
+}
+
+pub(in crate::models) type PrepareSourceFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), PrepareSourceMiss>> + Send + 'a>>;
+pub(in crate::models) type PrepareSourceCheck<'a> = dyn Fn() -> PrepareSourceFuture<'a> + Sync + 'a;
+
+pub(in crate::models) enum ReleasedPrepareFault {
+    Op(OpFault),
+    Release(oneiron::LlmError),
+    Source(PrepareSourceMiss),
+}
+
+pub(in crate::models) async fn prepare_source_released(
+    launch: &NativeLaunch,
+    epoch: &str,
+    body: &SessionPrepare,
+    conversation: &JsonValue,
+    worker: &InferenceWorker,
+    lease: &oneiron::BudgetLease,
+    source: &PrepareSourceCheck<'_>,
+) -> Result<SessionPrepared, ReleasedPrepareFault> {
+    let op = SessionOp::Prepare;
+    if !lease.has_dispatch_release() {
+        return send(launch, epoch, op, body, Some(conversation), worker)
+            .await
+            .map_err(ReleasedPrepareFault::Op);
+    }
+    let body = serde_json::to_value(body).map_err(|_| ReleasedPrepareFault::Op(OpFault::Cut))?;
+    let bytes =
+        serde_json::to_vec(conversation).map_err(|_| ReleasedPrepareFault::Op(OpFault::Cut))?;
+    let input = InputRegion::new(&bytes).map_err(|_| ReleasedPrepareFault::Op(OpFault::Cut))?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|_| ReleasedPrepareFault::Op(OpFault::Cut))?;
+    let frame = channel
+        .exchange_prepare_released(
+            op.wire_name(),
+            Some(epoch),
+            body,
+            input.outbound(),
+            lease,
+            source,
+        )
+        .await
+        .map_err(|error| match error {
+            super::transport::PrepareExchangeError::Transport(_) => {
+                ReleasedPrepareFault::Op(OpFault::Cut)
+            }
+            super::transport::PrepareExchangeError::Release(error) => {
+                ReleasedPrepareFault::Release(error)
+            }
+            super::transport::PrepareExchangeError::Source(reason) => {
+                ReleasedPrepareFault::Source(reason)
+            }
+        })?;
+    drop(input);
+    if frame.op == "refused" {
+        return Err(ReleasedPrepareFault::Op(OpFault::Refused(
+            wire::refusal_code(&frame.body).to_owned(),
+        )));
+    }
+    if frame.op != op.wire_name() {
+        return Err(ReleasedPrepareFault::Op(OpFault::Cut));
+    }
+    report(worker, &frame.body);
+    serde_json::from_value(frame.body).map_err(|_| ReleasedPrepareFault::Op(OpFault::Cut))
 }
 
 /// `session.export` of `body` to the incarnation `epoch` names: its answer
@@ -172,6 +419,93 @@ pub(in crate::models) async fn import(
     Ok(answer)
 }
 
+/// Why the stored snapshot cannot be written under its original authority.
+pub(in crate::models) enum SnapshotSourceMiss {
+    /// The admission lapsed; the kept snapshot remains valid.
+    Cold,
+    /// The snapshot's own authority no longer holds; retire it.
+    Retire,
+}
+
+pub(in crate::models) type SnapshotSourceFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<(), SnapshotSourceMiss>> + Send + 'a>,
+>;
+pub(in crate::models) type SnapshotSourceCheck<'a> =
+    dyn Fn() -> SnapshotSourceFuture<'a> + Sync + 'a;
+
+/// A snapshot cache miss is not a worker fault or a live call's release.
+pub(in crate::models) enum SnapshotImportFault {
+    Op(OpFault),
+    Release(oneiron::LlmError),
+    Source(SnapshotSourceMiss),
+}
+
+/// Imports a kept snapshot under the turn's live conditions and its own
+/// stored-source authority, checked again at each descriptor write.
+pub(in crate::models) async fn import_released(
+    launch: &NativeLaunch,
+    epoch: &str,
+    body: &SessionImport,
+    snapshot: &SnapshotRegion,
+    worker: &InferenceWorker,
+    lease: &oneiron::BudgetLease,
+    source: &SnapshotSourceCheck<'_>,
+) -> Result<SessionImported, SnapshotImportFault> {
+    if !lease.has_dispatch_release() {
+        return import(launch, epoch, body, snapshot, worker)
+            .await
+            .map_err(SnapshotImportFault::Op);
+    }
+    let op = SessionOp::Import;
+    if snapshot.len() != body.snapshot_bytes {
+        return Err(SnapshotImportFault::Op(cut(
+            op,
+            &"the region is not the snapshot the body names",
+        )));
+    }
+    let request = serde_json::to_value(body).map_err(|e| SnapshotImportFault::Op(cut(op, &e)))?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|e| SnapshotImportFault::Op(cut(op, &e)))?;
+    let frame = channel
+        .exchange_snapshot_released(
+            op.wire_name(),
+            Some(epoch),
+            request,
+            snapshot.outbound(),
+            lease,
+            source,
+        )
+        .await
+        .map_err(|error| match error {
+            super::transport::SnapshotExchangeError::Transport(error) => {
+                SnapshotImportFault::Op(cut(op, &error))
+            }
+            super::transport::SnapshotExchangeError::Release(error) => {
+                SnapshotImportFault::Release(error)
+            }
+            super::transport::SnapshotExchangeError::Source(miss) => {
+                SnapshotImportFault::Source(miss)
+            }
+        })?;
+    let answer: SessionImported = answer_of(op, epoch, &frame).map_err(SnapshotImportFault::Op)?;
+    if answer.staged != body.checkpoint {
+        return Err(SnapshotImportFault::Op(cut(
+            op,
+            &"the answer staged another checkpoint",
+        )));
+    }
+    if answer.imported_bytes != body.snapshot_bytes
+        || answer.snapshot_sha256 != body.snapshot_sha256
+    {
+        return Err(SnapshotImportFault::Op(cut(
+            op,
+            &"the answer read other bytes",
+        )));
+    }
+    report(worker, &frame.body);
+    Ok(answer)
+}
 /// The answer `frame` gives `op`: its own frame, from the incarnation
 /// `epoch` names, read; or the worker's refusal.
 fn answer_of<R: DeserializeOwned>(

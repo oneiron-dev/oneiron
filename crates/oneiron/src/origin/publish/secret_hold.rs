@@ -19,6 +19,7 @@ use super::types::{OriginPublishRefusalReason, OriginPublishRequestView, OriginP
 use crate::Vault;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitPlanPushReport, GitWireRepo};
+use crate::llm::BrokerIsolation;
 use crate::origin::secret_publication::SecretPublicationHold;
 
 /// What one batch's send did.
@@ -30,6 +31,9 @@ pub(super) struct MirrorPlanSend {
     /// That child's report; an empty one when the gate held every member
     /// and no child ran.
     pub(super) report: Result<GitPlanPushReport>,
+    /// How the credential broker that child's exchanges went through is
+    /// kept apart from the daemon (FIX 19083); `None` when none did.
+    pub(super) broker_isolation: Option<BrokerIsolation>,
 }
 
 impl MirrorPlanSend {

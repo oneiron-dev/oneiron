@@ -35,6 +35,7 @@ mod tool_effect;
 mod tool_remember;
 mod txn;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 
@@ -47,11 +48,11 @@ pub use self::codec::{
 };
 pub use self::credential_binding::{
     CONNECTOR_ISSUER_HOLD_REASON, ConnectorBindingDependent, ConnectorCredentialBinding,
-    ConnectorIssuerObservation, ConnectorIssuerTransition, ConnectorIssuerTransitionState,
+    ConnectorIssuerHaltView, ConnectorIssuerObservation, ConnectorIssuerTransition,
+    ConnectorIssuerTransitionState,
 };
 pub use self::lifecycle::{
-    ActorConnectorRegistration, CONNECTOR_CONSENT_ORIGIN_ACTION_ID,
-    CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID, ConnectorCallRoute, ConnectorConsentRowView,
+    ActorConnectorRegistration, ConnectorCallRoute, ConnectorConsentRowView,
     ConnectorConsentTarget, ConnectorConsentView, ConnectorDescription, ConnectorManifestQualifier,
     ConnectorQualificationError, ConnectorToolConsent, ConnectorToolConsentRow, ConnectorToolGrant,
     OwnerAttestedManifestQualifier, PROXY_CONNECTOR, ProbeManifestQualifier,
@@ -59,9 +60,10 @@ pub use self::lifecycle::{
 pub use self::meter::{
     ConnectorDispatchTelemetry, ConnectorKeyDispatchTally, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE,
     EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE,
-    EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID, EffectorBudgetCharge, EffectorBudgetDebit,
-    EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRead, EffectorBudgetRowId,
-    EffectorBudgetRowRead, EffectorBudgetRowSource, EffectorPoolCharge,
+    EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID, EffectorBudgetApproval, EffectorBudgetCharge,
+    EffectorBudgetDebit, EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRead,
+    EffectorBudgetRowId, EffectorBudgetRowRead, EffectorBudgetRowSource,
+    EffectorBudgetSettlementEvents, EffectorPoolCharge, EffectorSpendReservationRow,
 };
 pub use self::qualification_kit::{ConnectorIssuerRerunOutcome, ConnectorIssuerRerunStage};
 pub use self::record::{
@@ -76,7 +78,7 @@ pub use self::setup::{
     LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK,
     PACK_CONNECTION_ACTOR_CLASS, PACK_SETUP_ALLOW_ASK_DOOR, PACK_SETUP_ALLOW_ASK_QUEUE,
     PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier, PackSetupOwnerAsk,
-    ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK, TELEGRAM_GET_ME_CHECK,
+    ProviderConnectionChecks, SHEETS_TOKEN_CHECK, SLACK_AUTH_TEST_CHECK, TELEGRAM_GET_ME_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 
@@ -89,13 +91,17 @@ pub(crate) use self::credential_binding::{
 };
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
-    BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, budget_block_pooled,
-    budget_exhausted_reason, charge_effector_budgets, charge_effector_budgets_pooled,
+    BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, append_effector_steering_message,
+    budget_block_pooled, budget_exhausted_reason, charge_effector_budgets,
+    charge_effector_budgets_pooled, fire_settled_effector_debits_in_txn,
     preflight_effector_budgets_pooled, reconcile_connector_spend_in_txn,
-    release_effector_debits_in_txn, reserve_connector_spend_in_txn, shares_budget_pool,
+    release_effector_debits_in_txn, reserve_connector_spend_in_txn, restore_effector_debits_in_txn,
+    set_effector_debits_reserved_in_txn, shares_budget_pool, spend_overrun_in_txn,
+    tool_spend_price_in_txn,
 };
 pub(crate) use self::record::{
-    ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
+    ScopedCapabilityProvenance, brief_server_name, canonical_scoped_server_segment,
+    normalize_connector_key,
 };
 pub(crate) use self::slate::{
     erase_grant_slate_holder_narrows_in_txn, read_connector_slate_in_txn,
@@ -106,7 +112,9 @@ pub(crate) use self::tool_remember::{
     ConnectorToolRememberContext, connector_tool_connection_in_txn,
     connector_tool_remember_bound_in_txn, connector_tool_remembered_in_txn,
 };
-pub(crate) use self::txn::{governing_connector_key, suspend_connector_key_in_txn};
+pub(crate) use self::txn::{
+    governing_connector_key, governing_keys_for_actor_in_txn, suspend_connector_key_in_txn,
+};
 
 // Crate-visible paths whose only live consumers are the test modules of sibling
 // modules; gated so the non-test build carries no unused re-export.
@@ -147,6 +155,11 @@ pub use slate_draft::{
     SlateTrait, draft_connector_slate, rule_draft_row,
 };
 pub use slate_holder::ConnectorKeySlateNarrowed;
+#[allow(
+    unused_imports,
+    reason = "FIX 9230 seam for the L13/L06-A consent, slate and reach overlays"
+)]
+pub(crate) use slate_holder::{KeySlateNarrows, narrowed_settings_in_txn};
 pub use slate_revision::{
     ConnectorRevisionDeferral, ConnectorSlateRevisionAccepted, ConnectorSlateRevisionOffer,
     SlateRevisionCause,
@@ -159,7 +172,8 @@ pub(crate) use slate_scope_signal::{
     ConnectorScopeEvidence, ScopeExceedCall, connector_scope_evidence, keep_connector_scope_signal,
 };
 pub(crate) use slate_setting::{
-    connector_tool_setting_in_txn, effect_slate_always_allows, governing_slate_in_txn,
+    connector_elicitation_setting_in_txn, connector_tool_setting_in_txn,
+    effect_slate_always_allows, governing_slate_in_txn,
 };
 
 pub use manifest_drift::{

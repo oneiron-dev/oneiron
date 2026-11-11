@@ -4,6 +4,13 @@
 //!
 //! The effect ledger remains device-local send authority. The record is
 //! synced audit evidence, never a permit to execute a transport.
+//!
+//! One put door judges every RECEIPT_RECORD on either write target (FIX
+//! 7354): base's batch apply and a room's session apply both decode the
+//! body, bind it to its id and stamps, and refuse a change to a stored one.
+//! The served-form projector reads the content target its caller hands it
+//! (FIX 7355): base for a canonical query, a room's view for a query in the
+//! room. The room sees the vault and itself; the vault never sees the room.
 
 use serde::{Deserialize, Serialize};
 
@@ -266,8 +273,10 @@ pub(crate) fn validate_receipt_record_time(
 
 /// The one RECEIPT_RECORD put door covers both a malformed new carrier and an ordinary
 /// body replacing an already committed carrier (including same-ID replay).
+/// `store` is the write target the prior row is read from: base, or a room's
+/// view, whose overlay ∪ base holds what the room staged (FIX 7354).
 pub(crate) fn validate_receipt_record_put(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -539,14 +548,22 @@ pub(super) fn scan_suppression_receipts(vault: &Vault) -> Result<ReceiptScan> {
 }
 
 /// The served-form receipts `query` matches, newest first up to its limit,
-/// read from every RECEIPT_RECORD in the type index under `txn`. Each is
-/// matched before it competes for the limit, and the walk reads every row:
-/// past its threshold row it raises one check and reads on. A suppression
-/// row here is the outbound projector's.
+/// read from every RECEIPT_RECORD in `read`'s type index under `txn`. Each
+/// is matched before it competes for the limit, and the walk reads every
+/// row: past its threshold row, which the vault holds, it raises one check
+/// into `pending` and reads on. A suppression row here is the outbound
+/// projector's.
+///
+/// `read` is the content target (FIX 7355): base for a canonical query, a
+/// room's view for a query in the room. The view's union type index holds
+/// the room's rows beside base's, a row the room restaged in place of base's
+/// and none the room deleted, so no receipt is counted twice.
 pub(super) fn served_form_receipts(
     vault: &Vault,
+    read: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     query: &ReceiptQuery,
+    pending: &crate::scan_check::PendingScanChecks,
 ) -> Result<Vec<ReceiptRecord>> {
     let mut count = ScanCount::start(
         &vault.store,
@@ -555,14 +572,10 @@ pub(super) fn served_form_receipts(
         &[ENTITY_TYPE_RECEIPT_RECORD],
     )?;
     let mut receipts = Vec::new();
-    for id in vault
-        .store
-        .port_entity_ids_by_type(txn, ENTITY_TYPE_RECEIPT_RECORD, None)?
-    {
+    for id in read.port_entity_ids_by_type(txn, ENTITY_TYPE_RECEIPT_RECORD, None)? {
         count.row();
         let id = id?;
-        let stored = vault
-            .store
+        let stored = read
             .port_entity_record(txn, &id)?
             .filter(|row| row.entity_type == ENTITY_TYPE_RECEIPT_RECORD)
             .ok_or(Error::CorruptedIndex("served form record type index"))?;
@@ -571,7 +584,7 @@ pub(super) fn served_form_receipts(
             retain_newest_receipt(&mut receipts, receipt, query.limit);
         }
     }
-    count.finish(vault);
+    count.defer_to(pending);
     Ok(receipts)
 }
 

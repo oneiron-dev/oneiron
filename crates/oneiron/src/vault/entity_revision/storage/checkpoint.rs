@@ -23,6 +23,7 @@
 )]
 
 mod document;
+mod native;
 
 use std::collections::BTreeMap;
 
@@ -46,6 +47,7 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     let frontiers = rows::typed_rows(dbs, txn, FRONTIER, &mut out)?;
     let identities = rows::typed_rows(dbs, txn, IDENTITY, &mut out)?;
     let bindings = document::Bindings::index(&docs, &states, &frontiers, &identities);
+    bindings.check_native_without_doc(dbs, txn)?;
     let mut carriers = BTreeMap::new();
     for row in states {
         let owner = OwnerRef::entity(&row.key);
@@ -135,7 +137,10 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     } else if at.in_table(DOC.decl()) {
         document::check(at, value).or_else(|_| document::check_carrier(at, value))
     } else if at.in_table(FRONTIER.decl()) {
-        rows::check_row(FRONTIER, at, value)
+        rows::check_row(FRONTIER, at, value)?;
+        super::frontier::FrontierEntry::decode(value)
+            .map(|_| ())
+            .map_err(|_| rows::bad_part())
     } else if at.in_table(IDENTITY.decl()) {
         rows::check_row(IDENTITY, at, value)
     } else if at.in_table(REFILL.decl()) {
@@ -150,8 +155,9 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
 }
 
 /// Puts `opened`'s revision-ledger rows back: each exact row as it stands,
-/// and a revision document as its join gives it back. That document's
-/// bindings are checked whole: their collisions before any row is written,
+/// and a revision document as its join gives it back (an author carrier's
+/// comes back whole, out of its actor's part, with no binding staged). A
+/// joined document's bindings are checked whole: their collisions before any row is written,
 /// and what was written once every row is in, before this returns, so no
 /// later row of this getter writes one of them again.
 pub(crate) fn restore_in_txn(

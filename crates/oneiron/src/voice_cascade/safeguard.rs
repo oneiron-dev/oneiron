@@ -122,6 +122,13 @@ impl SentenceWork {
         self.safeguard.is_some()
     }
 
+    /// The sentence's exact bytes, as TTS gets them: what a host's heard
+    /// ledger records for its submission (FIX 4899).
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
     /// All methods enqueue work, not await model/audio completion. Even a failed
     /// TTS submission cannot skip safeguard. The host owns the scheduling proof
     /// and must end/flush on a submission error rather than leave a pending pass.

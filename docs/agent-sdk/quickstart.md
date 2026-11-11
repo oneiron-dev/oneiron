@@ -117,7 +117,9 @@ oneiron-server token pair \
 ```
 
 Second, you pair once with that link as `ONEIRON_LINK`, and store the
-credential it prints as `ONEIRON_KEY`. Pairing also returns the checkpoint pin
+credential it prints as a private credential file. For CLI-compatible
+environment variables, split it into `ONEIRON_SECRET` (the `v2.slip.*`
+bearer) and `ONEIRON_BINDING_KEY` (its 64-hex holder seed). Pairing also returns the checkpoint pin
 the link named, already checked against it and stored nowhere by the SDK. A
 machine that will run a local replica keeps that pin beside the server origin
 and the credential, and supplies it when the replica starts; a remote-only
@@ -131,11 +133,12 @@ const link = process.env.ONEIRON_LINK
 if (!link) throw new Error("Set ONEIRON_LINK to the one-line link your server's owner created")
 const { credential } = Oneiron.pair(link)
 
-// Store this as ONEIRON_KEY. The link is now spent; the credential is not.
+// The link is now spent; the credential is not. Store these privately.
+const [slip, seed] = credential.slice("v2.cred.".length).split(".")
+console.log(JSON.stringify({ ONEIRON_SECRET: `v2.slip.${slip}`, ONEIRON_BINDING_KEY: seed }))
 // The result's `pin` is the checkpoint pin the link named (null when the vault
 // has no attested checkpoint): a machine that will run a local replica keeps
 // it beside the server origin and the credential.
-console.log(credential)
 ```
 <!-- /snippet -->
 
@@ -147,11 +150,12 @@ from oneiron import Oneiron
 
 paired = Oneiron.pair(os.environ["ONEIRON_LINK"])
 
-# Store this as ONEIRON_KEY. The link is now spent; the credential is not.
+# The link is now spent; the credential is not. Store these privately.
+slip, seed = paired["credential"].removeprefix("v2.cred.").rsplit(".", 1)
+print({"ONEIRON_SECRET": "v2.slip." + slip, "ONEIRON_BINDING_KEY": seed})
 # paired["pin"] is the checkpoint pin the link named (None when the vault has
 # no attested checkpoint): a machine that will run a local replica keeps it
 # beside the server origin and the credential.
-print(paired["credential"])
 ```
 <!-- /snippet -->
 
@@ -163,9 +167,11 @@ programs; the constructors are the only behavioral change.
 import { Oneiron } from "oneiron"
 
 const url = process.env.ONEIRON_URL
-const key = process.env.ONEIRON_KEY
-if (!url || !key) throw new Error("Set ONEIRON_URL and ONEIRON_KEY to your server and paired credential")
-const memory = Oneiron.connect(url, key)
+const secret = process.env.ONEIRON_SECRET
+const bindingKey = process.env.ONEIRON_BINDING_KEY
+if (!url || !secret || !bindingKey) throw new Error("Set ONEIRON_URL, ONEIRON_SECRET and ONEIRON_BINDING_KEY")
+const credential = `v2.cred.${secret.slice("v2.slip.".length)}.${bindingKey}`
+const memory = Oneiron.connect(url, credential)
 
 const witnessed = memory.vault.witness({
   conversationRef: "11111111111111111111111111111111",
@@ -199,7 +205,8 @@ import os
 
 from oneiron import Oneiron
 
-memory = Oneiron.connect(os.environ["ONEIRON_URL"], os.environ["ONEIRON_KEY"])
+credential = "v2.cred." + os.environ["ONEIRON_SECRET"].removeprefix("v2.slip.") + "." + os.environ["ONEIRON_BINDING_KEY"]
+memory = Oneiron.connect(os.environ["ONEIRON_URL"], credential)
 
 witnessed = memory.vault.witness(
     {
@@ -237,12 +244,138 @@ print(
 ```
 <!-- /snippet -->
 
-`key` is the credential `pair` returned: it holds the slip and its connection
+`credential` is the paired value reconstructed from those two variables: it holds the slip and its connection
 key, and this package signs every request with that key. The package never
 reads the slip's claims: write identity comes from the server-verified slip,
 and every authority decision is made server-side. A connected handle's
 `asActor` therefore fails with `FORBIDDEN` — pair a link created for the actor
 you want to act as instead.
+
+## Let an agent act
+
+The server operator first stops `oneiron serve`, then creates a named agent
+credential against the same vault config on its host. This writes a private
+paired credential file and prints `principal_ref`; keep that id for `agentRef`
+below. Start `oneiron serve --config /absolute/private/oneiron.toml` again
+before making the SDK calls.
+
+```sh
+oneiron token agent --name sdk-example --tier full-access \
+  --out /absolute/private/agent.cred --config /absolute/private/oneiron.toml
+```
+
+`--tier` sets the credential's read/propose/write ceiling. A person's pairing
+`--scope core:read,core:write` chooses its HTTP capabilities. Neither is an
+owner grant: an owner-only act stays owner-only, and an agent using `ai.embed`
+also needs an active grant naming that verb. The grant is checked at use and
+stops conferring when revoked or expired.
+
+Use a connected **owner** handle as `memory` for mint, revoke and audit.
+Replace `agentRef` with the principal printed above. This example permits
+`read` and `ai.embed` across all worlds, facets, bands, projects and
+sensitivity levels in the owner's scope; narrow those axes for your use.
+The server must have an embedding model configured for the agent call.
+
+```js
+import { readFileSync } from "node:fs"
+import { Oneiron } from "oneiron"
+
+const agentRef = "<32-hex principal from token agent>"
+const minted = memory.vault.agents.grants.mint({
+  agent: agentRef,
+  authority_scope: {
+    worlds: { kind: "all" }, facets: { kind: "all" },
+    bands: { kind: "all" }, audience: { kind: "all" },
+    sensitivity: { kind: "all" },
+    verbs: { kind: "some", values: ["read", "ai.embed"] },
+  },
+})
+const agent = Oneiron.connect(process.env.ONEIRON_URL,
+  readFileSync("/absolute/private/agent.cred", "utf8").trim())
+try {
+  console.log(agent.ai.embed({ prompt: "A project note to embed." }))
+} finally {
+  memory.vault.agents.grants.revoke({ grant_ref: minted.grant.grant_ref })
+}
+console.log(memory.vault.authority.audit({ kinds: ["grant", "revoke"], limit: 100 }))
+```
+
+`vault.authority.audit` shows the grant and revoke in the authority log. It
+returns a page; use its `next_after` as `after` to continue. `self.grants.*`
+are requests for grants, not a list of active grants.
+
+## Export
+
+`vault.export` is **owner-only** and **includes custody secrets** by default.
+Keep the output private. It carries every world; `notices` names worlds that
+the owner's recipient choice would otherwise keep from the destination.
+To load the ZIP back today, stop `oneiron serve` for the target vault and run
+the local CLI on that vault's host:
+
+```sh
+oneiron import archive vault-export.zip --config /absolute/private/oneiron.toml
+```
+
+The CLI checks the archive against its manifest and imports it in one
+transaction. It refuses while the vault is served. No served HTTP/MCP verb
+imports a whole-vault archive; `oneiron restore` uses a different backup format.
+This command takes the ZIP archive, not an OKF bundle.
+
+On an embedded or connected owner handle `memory`, save the inline ZIP:
+
+```js
+import { writeFileSync } from "node:fs"
+const exported = memory.vault.export()
+writeFileSync("vault-export.zip", Buffer.from(exported.archive, "base64"), { mode: 0o600, flag: "wx" })
+```
+
+For a large vault, use the transfer form through `oneiron api` (which reads
+`ONEIRON_URL`, `ONEIRON_SECRET` and `ONEIRON_BINDING_KEY` and signs each call).
+It keeps the archive on the server. `vault.export.transfer.read` returns
+4 MiB by default; only the exporter can read or release it. This Bun script
+writes a private file and checks the length and BLAKE3 before release:
+
+```js
+import { openSync, writeSync, closeSync } from "node:fs"
+function call(verb, input) {
+  const reply = Bun.spawnSync(["oneiron", "api", "call", verb, "--data", JSON.stringify(input)])
+  if (reply.exitCode !== 0) throw new Error(reply.stderr.toString())
+  return JSON.parse(reply.stdout.toString())
+}
+const file = openSync("vault-export.zip", "wx", 0o600)
+const digest = new Bun.CryptoHasher("blake3")
+let transfer
+let offset = 0
+try {
+  transfer = call("vault.export", { delivery: "transfer" })
+  for (;;) {
+    const piece = call("vault.export.transfer.read", { transfer_ref: transfer.transfer_ref, offset })
+    const bytes = Buffer.from(piece.bytes_base64, "base64")
+    let written = 0
+    while (written < bytes.length) written += writeSync(file, bytes, written)
+    digest.update(bytes)
+    offset += piece.length
+    if (piece.end) break
+  }
+  if (offset !== transfer.bytes || digest.digest("hex") !== transfer.digest) throw new Error("Export length or digest mismatch")
+} finally {
+  closeSync(file)
+  if (transfer) call("vault.export.transfer.release", { transfer_ref: transfer.transfer_ref })
+}
+```
+
+The environment names used here and by the agent quickstart are:
+
+| Value | Environment name |
+|---|---|
+| One-use pairing link | `ONEIRON_LINK` (read by the pairing example) |
+| Bearer slip (`v2.slip.*`) | `ONEIRON_SECRET` (CLI default) |
+| Holder seed (64 hex) | `ONEIRON_BINDING_KEY` (CLI default) |
+| Server origin, not a credential | `ONEIRON_URL` |
+
+A paired `v2.cred.*` value is the two credential components together, not a
+second bearer name. The agent example reads it from its private file. Never
+put the host issuer secret in any request-credential variable.
 
 ## API
 
@@ -264,6 +397,11 @@ you want to act as instead.
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
 | `handle.vault.receipts(limit?, kinds?)` | `FacadeReceipt[]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
 
+Approval-required inbox rows from held outbound receipts may carry
+`approval_digest`, the exact 64-lowercase-hex digest already on that receipt.
+Other inbox rows omit it. Gate decision receipts and the claim-only pending
+tray do not gain a digest through this projection; it adds no approval or
+release authority.
 Witness-read grants (`vault.connectors.read_grants.grant` and `.revoke`)
 keep earlier lifecycle generations. For kind `scoped_read`, `vault.receipts`
 projects a created receipt for each stored generation and a revoked receipt
@@ -400,7 +538,10 @@ No input chooses another actor, world, owner, entity ID, or erasure reason.
 Namespaces compare complete literal string segments. Search accepts exact
 field-equality filters, not operators or semantic queries. Results have lexical
 namespace/key order. Namespace rows are deduplicated after optional depth
-truncation. `limit` is 1–1000 and `offset` is 0–1000000. Pages are individual live
+truncation. `limit` is 1–1000 and `offset` is any nonnegative integer. Namespaces
+and keys may be any length; past the `[limits]` rows `keyed_namespace_segments`,
+`keyed_namespace_bytes` and `keyed_key_bytes` the engine asks whether everything is
+okay and serves them whole. Pages are individual live
 snapshots; concurrent mutations can shift subsequent offsets.
 
 Keyed bodies never appear in generic recall, context packs, scoped hydration,

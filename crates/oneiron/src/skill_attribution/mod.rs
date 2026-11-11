@@ -71,6 +71,7 @@ mod contribution_targets;
 pub(crate) use contribution_targets::Experiment;
 pub use contribution_targets::{CheckedEdge, ContributionTarget};
 mod credit_join;
+mod credit_judge;
 pub(crate) use credit_join::effective_credit_subjects_in_txn;
 pub(crate) use credit_join::erase_credit_adjustments_in_txn;
 pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
@@ -105,13 +106,16 @@ mod skill_erase;
 pub(crate) use self::skill_erase::erase_scan_in_txn;
 mod split;
 pub(crate) use self::split::{
-    classify_split_traced, measure_split_notes, settled_split, split_from_verdicts, unclear_floor,
-    unclear_floor_sourced,
+    classify_split_traced, measure_split_notes, outcome_world_in_txn, settled_split,
+    split_from_verdicts, unclear_floor, unclear_floor_sourced,
 };
 use oneiron_skill_attribution::types;
 mod unclear;
-pub use self::unclear::{UnclearAttribution, unclear_attributions};
-pub(crate) use self::unclear::{delete_unclear_in_txn, put_unclear_in_txn};
+pub use self::unclear::{UnclearAttribution, UnclearContext, unclear_attributions};
+pub(crate) use self::unclear::{
+    delete_unclear_in_txn, erase_unclear_entity_in_txn, erase_unclear_source_in_txn,
+    put_unclear_in_txn, unclear_key, unclear_page_in_txn, unclear_row_in_txn,
+};
 
 pub use self::audit::{
     AttributionAuditRecord, AttributionAuditReport, AuditFixture, attribution_audit_records,
@@ -156,7 +160,8 @@ pub use host::{
     bind_agent_run_attribution, bind_dreamer_weave_attribution, witness_agent_run_close,
 };
 pub(crate) use host::{
-    run_executor_model, run_executor_model_in_txn, witness_agent_run_close_in_txn,
+    is_solo_attribution, run_executor_model, run_executor_model_in_txn,
+    witness_agent_run_close_in_txn,
 };
 mod judge_binding;
 pub(crate) use judge_binding::{finalize_run_judge_in_txn, pinned_judge_model};
@@ -180,6 +185,7 @@ pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
     run_task_attribution_sweep, run_task_attribution_sweep_with_decisions,
 };
+pub(crate) mod tables;
 mod trace;
 pub use trace::{
     LoadedSkillRevision, ReceiptTrace, receipt_attribution_trace, receipt_attribution_trace_sourced,

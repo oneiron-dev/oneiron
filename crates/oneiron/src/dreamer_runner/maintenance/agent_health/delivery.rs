@@ -11,6 +11,7 @@
 use std::collections::HashSet;
 
 use super::{AgentHealthCard, AgentHealthOutcome, CARD_REF_PREFIX, CARDS, card_ref};
+use crate::store::Store;
 use crate::{EntityId, Result, Vault};
 use crate::{
     agent_inbox_lens::AgentInboxConcern,
@@ -43,7 +44,7 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
                     Vec::new()
                 })
             });
-            pending_owners(&card, owners)
+            pending_owners(&vault.store, &rtxn, &card, owners)
         } else {
             continue;
         };
@@ -70,6 +71,7 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
             occurred_at: card.window_to,
             receipt_ref: card.diagnostics.last().map(EntityId::to_hex),
             payload_ref: Some(card_ref),
+            approval_digest: None,
             concern: Some(AgentInboxConcern {
                 subject: card.subject,
                 signal: card.signal,
@@ -86,22 +88,47 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
 /// The owners `card`'s notice still waits on: each recipient who is one of
 /// the live vault `owners` and has set no outcome of its own, as an owner,
 /// over the card's evidence as it stands now.
-fn pending_owners(card: &AgentHealthCard, owners: &[EntityId]) -> Vec<EntityId> {
+fn pending_owners(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    card: &AgentHealthCard,
+    owners: &[EntityId],
+) -> Vec<EntityId> {
     card.recipients
         .iter()
         .copied()
-        .filter(|recipient| owners.contains(recipient) && !acknowledged(card, *recipient))
+        .filter(|recipient| {
+            owners.contains(recipient) && !acknowledged(store, txn, card, *recipient)
+        })
         .collect()
 }
 
-/// Whether `owner` set an outcome on `card`, as an owner, whose receipt
-/// holds every evidence id the card holds now.
-fn acknowledged(card: &AgentHealthCard, owner: EntityId) -> bool {
+/// Whether `owner` set an outcome on `card`, as an owner, whose receipt's
+/// review state holds every evidence id the card holds now. A missing state
+/// covers nothing.
+fn acknowledged(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    card: &AgentHealthCard,
+    owner: EntityId,
+) -> bool {
     card.review_outcomes
         .iter()
         .filter(|receipt| receipt.by == owner && receipt.by_owner)
         .any(|receipt| {
-            let held: HashSet<&EntityId> = receipt.evidence.iter().collect();
-            card.evidence.iter().all(|id| held.contains(id))
+            match super::outcomes::review_state::get_in_txn(store, txn, &receipt.receipt) {
+                Ok(Some(state)) => {
+                    let held: HashSet<&EntityId> = state.evidence.iter().collect();
+                    card.evidence.iter().all(|id| held.contains(id))
+                }
+                Ok(None) => false,
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "agent-health review state not read; the owner keeps the notice"
+                    );
+                    false
+                }
+            }
         })
 }

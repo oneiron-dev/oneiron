@@ -24,6 +24,9 @@ use std::cell::RefCell;
 use std::future::Future;
 use std::time::Duration;
 
+use oneiron::{LlmError, LlmResult, RetryableLlmError};
+use zeroize::Zeroizing;
+
 use crate::byte_line::HeldBytes;
 
 use super::super::host_budgets::{ModelHostBudgets, ReplyLine};
@@ -167,8 +170,92 @@ pub(in crate::models) async fn read_whole(
     Ok((body, ReplyBytes::default()))
 }
 
+/// Drains a broker reply on the call's reply line. Transport frames arrive
+/// already allocated; cumulative buffer growth is booked before its fallible
+/// allocation, and replacing a buffer wipes its old allocation. As on the old
+/// broker path, charging never adds a wait or a byte-line refusal.
+pub(in crate::models) async fn read_broker_booked(
+    mut stream: oneiron_broker::BrokerStream,
+) -> LlmResult<(oneiron_broker::BrokerReply, ReplyBytes)> {
+    use oneiron_broker::{BrokerReply, Outcome, StreamPart};
+
+    let (budgets, replies) = call_budgets();
+    let ReplyLine { line, questions } = replies.line(&budgets);
+    let allocation_error = |held| {
+        out_of_memory(held);
+        LlmError::from(RetryableLlmError::ServerError)
+    };
+    let mut held = None;
+    let mut body = Zeroizing::new(Vec::new());
+    loop {
+        match stream
+            .next()
+            .await
+            .map_err(super::super::broker::broker_error)?
+        {
+            StreamPart::Chunk(chunk) if body.is_empty() => {
+                let mut first = line.empty();
+                line.charge(&mut first, chunk.capacity(), questions);
+                body = chunk;
+                held = Some(first);
+            }
+            StreamPart::Chunk(chunk) => {
+                let held = held
+                    .as_mut()
+                    .expect("a nonempty broker reply holds its line");
+                let needed = body
+                    .len()
+                    .checked_add(chunk.len())
+                    .ok_or_else(|| allocation_error(body.len()))?;
+                let present = body
+                    .capacity()
+                    .checked_add(chunk.capacity())
+                    .ok_or_else(|| allocation_error(body.len()))?;
+                line.charge(held, present, questions);
+                if needed > body.capacity() {
+                    let capacity = needed.max(body.capacity().saturating_mul(2));
+                    let peak = present
+                        .checked_add(capacity)
+                        .ok_or_else(|| allocation_error(body.len()))?;
+                    line.charge(held, peak, questions);
+                    let mut grown = Zeroizing::new(Vec::new());
+                    grown
+                        .try_reserve_exact(capacity)
+                        .map_err(|_| allocation_error(body.len()))?;
+                    let actual_peak = present
+                        .checked_add(grown.capacity())
+                        .ok_or_else(|| allocation_error(body.len()))?;
+                    line.charge(held, actual_peak, questions);
+                    grown.extend_from_slice(&body);
+                    body = grown;
+                }
+                body.extend_from_slice(&chunk);
+                drop(chunk);
+                line.charge(held, body.capacity(), questions);
+            }
+            StreamPart::End => break,
+            StreamPart::Cut(reason) => {
+                return Ok((
+                    BrokerReply {
+                        outcome: Outcome::Failed { reason },
+                        body: Zeroizing::new(Vec::new()),
+                    },
+                    ReplyBytes::default(),
+                ));
+            }
+        }
+    }
+    Ok((
+        BrokerReply {
+            outcome: stream.outcome().clone(),
+            body,
+        },
+        held.map(keep).unwrap_or_default(),
+    ))
+}
+
 /// Charges `bytes` a reply already holds, read whole by another transport
-/// (the credential broker's), or a decoded answer's (FIX 10626), on the line
+/// or a decoded answer's (FIX 10626), on the line
 /// of the call that reads it: kept as a read reply's are.
 pub(in crate::models) fn charge_read(bytes: usize) -> ReplyBytes {
     let (budgets, replies) = call_budgets();

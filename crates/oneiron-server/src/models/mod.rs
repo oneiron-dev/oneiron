@@ -64,6 +64,7 @@ mod ladder;
 pub(crate) mod launch_price;
 mod llama_identity;
 mod media;
+pub(crate) mod native_call_capture;
 #[cfg(unix)]
 mod native_exl3;
 mod offer;
@@ -80,6 +81,10 @@ mod role_route;
 mod router;
 mod run_backend;
 mod runtime;
+// FIX 15702: a seat's model door, its key read at the custody door per call.
+mod seat_model;
+// FIX 15702 slice 3: each of its calls admitted and settled on the claim's run.
+mod seat_model_admission;
 mod served;
 mod siwc_responses;
 pub(crate) mod soniox;
@@ -96,18 +101,19 @@ mod walk;
 mod worker_host;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
-pub(crate) use broker_context::BrokerContext;
+pub(crate) use broker_context::{BrokerContext, WeakBrokerContext};
 use cooldown::FallbackRung;
 pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
-pub(crate) use discovered::MeshRoutes;
+pub(crate) use discovered::{MeshRoutes, withdraw_discovered};
 pub(crate) use host_budgets::ModelHostBudgets;
 pub use hosted_speech::{HostedCloner, VendorVoice};
 pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_cloud_node};
-pub(crate) use ladder::ModelCallBinding;
+pub(crate) use ladder::{AnsweringRung, ModelCallBinding};
 pub use ladder::{CallDeadline, OfferLadder};
+pub(crate) use media::AgentMediaCall;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
@@ -122,6 +128,8 @@ pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
+pub(crate) use seat_model::{SeatKeyDoor, SeatModelAnswer, SeatModelRefusal, send_seat_model};
+pub(crate) use seat_model_admission::{SeatModelCall, SeatModelMeter};
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,
@@ -130,6 +138,7 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
+pub(crate) use worker_host::start_worker_controller;
 pub(crate) use worker_host::{
     install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
 };
@@ -263,6 +272,8 @@ pub struct ModelRuntime {
     token_ratios: Option<Arc<TokenRatios>>,
     /// The trainer connectors `[models.training]` names (FIX 7263).
     training: crate::config::models::TrainingSettings,
+    /// Config-bound managed workers whose local weight files the Coach can read.
+    stock_weights: BTreeMap<String, worker_host::StockWeights>,
     /// The vault's model byte budgets its media rungs and mesh routes hold
     /// their bytes on (FIX 9321, FIX 9323).
     budgets: ModelHostBudgets,
@@ -554,28 +565,25 @@ struct NativeLocal {
 
 /// `provider`'s on-device alternative (I2-LOCAL), when managed EXL3 workers
 /// this process launches serve some of its chat models over a native channel
-/// whose peer is checked against the supervised child, and its calls are free
-/// work (`Payer::Local`, no key). Its backend is the provider's chat adapter
-/// over [`native_exl3::NativeLocalTransport`], for those models alone, so the
-/// request mapping, output cap and response format are the provider's own.
-/// `None` otherwise: the provider's own backend serves every call, at its own
-/// locality, as it always has. A provider holding a Responses socket keeps
-/// its socket and HTTP path, as its own transport does.
+/// whose peer is checked against the supervised child. Free and paid work
+/// alike (FIX 14889): each offer over it keeps the provider offer's payer,
+/// key custody and rates, so a paid provider's on-device call is charged as
+/// its own-server call is ([`offer::native_local_offer`]). Its backend is the
+/// provider's chat adapter over [`native_exl3::NativeLocalTransport`], for
+/// those models alone, so the request mapping, output cap and response format
+/// are the provider's own; the native channel carries the request body and
+/// no key, since it is checked against the child instead. A key the provider
+/// holds still makes its calls paid. `None` otherwise: the provider's own
+/// backend serves every call, at its own locality, as it always has. A
+/// provider holding a Responses socket keeps its socket and HTTP path, as
+/// its own transport does.
 #[cfg(unix)]
 fn build_native_local(
     name: &str,
     provider: &ProviderConfig,
     config: &ModelsConfig,
 ) -> Option<NativeLocal> {
-    let chat = matches!(
-        provider.kind,
-        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
-    );
-    // Paid work has no on-device offer, so no locality turns it free.
-    let free = provider.payer == oneiron::llm::run_admission::Payer::Local
-        && provider.key_secret.is_none()
-        && provider.key_env.is_none();
-    if !chat || !free || provider.responses_socket.is_some() {
+    if !speaks_native_local(provider) {
         return None;
     }
     let routes = worker_host::native_local_routes(name, provider, &config.workers);
@@ -630,6 +638,18 @@ fn build_native_local(
     _config: &ModelsConfig,
 ) -> Option<NativeLocal> {
     None
+}
+
+/// Whether `provider`'s chat calls may go over the native channel of a
+/// managed EXL3 worker bound to it (I2-LOCAL): an OpenAI-compatible chat
+/// provider holding no Responses socket, which keeps its socket and HTTP
+/// path, as its own transport does.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn speaks_native_local(provider: &ProviderConfig) -> bool {
+    matches!(
+        provider.kind,
+        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
+    ) && provider.responses_socket.is_none()
 }
 
 /// `model` on `provider` over `native` alone, as a rung at `position`: the

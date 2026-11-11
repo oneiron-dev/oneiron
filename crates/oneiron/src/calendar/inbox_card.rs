@@ -2,6 +2,11 @@
 //! earns at T-45, the check-in that follows its end, and that check-in's one
 //! morning re-ask.
 //!
+//! A meeting a person's own pack calendar landed earns its prep card on that
+//! person's own lane, and the card is theirs alone (FIX 16308): it joins only
+//! their own INBOX slice, never the owners' overview, and shows its words
+//! only while each row they were copied from still reads to them.
+//!
 //! The engine owns no clock. The host runs [`run_calendar_card_pass`] on the
 //! elected home node, the proof [`run_due_home_node_prep_with_sources`] asks
 //! of it, and the
@@ -32,20 +37,21 @@ use super::outcome::{
     current_status_in, outcome_grace_secs,
 };
 use super::prep::{
-    PrepEvent, PrepHomeNodeJob, PrepLensCopy, PrepPolicy, live_prep_event, plan_check_in_re_ask,
-    prep_wake_id, run_due_home_node_prep_with_sources,
+    PrepEvent, PrepHomeNodeJob, PrepLensCopy, PrepPolicy, live_prep_event, person_lane,
+    plan_check_in_re_ask, prep_wake_id, run_due_home_node_prep_with_sources,
+    run_due_person_prep_with_sources,
 };
 use crate::agent_inbox_lens::{
     AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
     agent_inbox_row_done_in_txn,
 };
+use crate::claim::{PointRead, ScopedRead};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::lens::GeneratedLens;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-use crate::task_verb::sdk::AgentVerb;
 use crate::vault::Vault;
 
 /// Key: (EVENT, card kind token).
@@ -123,6 +129,11 @@ impl CheckInReAsk {
 pub struct CalendarInboxCard {
     pub kind: CalendarCardKind,
     pub event_ref: EntityId,
+    /// Who the card is for: `None` for the vault's owners (a meeting the
+    /// vault's own calendars hold); `Some` for the PERSON whose own pack
+    /// calendar landed the meeting, the card built on their lane and shown
+    /// to them alone (FIX 16308).
+    pub recipient: Option<EntityId>,
     /// The EVENT's start the card was built for, unix seconds UTC.
     pub scheduled_start_utc: u64,
     /// The EVENT's end the card was built for, unix seconds UTC.
@@ -249,10 +260,16 @@ pub fn run_calendar_card_pass(
 }
 
 /// The meeting rows of the INBOX: each delivered card with a lens that still
-/// stands, addressed to the vault's owners on no identity. A prep card is an
-/// update; a check-in waits on its answer, so an answer or a cancellation
-/// takes it away at once.
-pub(crate) fn calendar_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensItem>> {
+/// stands, on no identity. An owners' card is addressed to the vault's
+/// owners. A person's card joins only when `own_reader`, the one actor
+/// reading its own slice, is that person, and only while their own lane
+/// still reads its meeting EVENT: no other reader, the vault's owners
+/// included, lists it. A prep card is an update; a check-in waits on its
+/// answer, so an answer or a cancellation takes it away at once.
+pub(crate) fn calendar_inbox_items(
+    vault: &Vault,
+    own_reader: Option<EntityId>,
+) -> Result<Vec<AgentInboxLensItem>> {
     let rtxn = vault.store.env.read_txn()?;
     let cards = CARDS.scan(&vault.store, &rtxn)?;
     if cards.is_empty() {
@@ -268,15 +285,24 @@ pub(crate) fn calendar_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensIt
             return Ok(Vec::new());
         }
     };
-    let Some(actor_ref) = owners.first().copied() else {
-        return Ok(Vec::new());
-    };
     let now = vault.now_recorded_at();
     let mut items = Vec::new();
+    let mut own_cards = Vec::new();
     for (_, card) in cards {
         if card.lens.is_none() || !card_stands_in_txn(vault, &rtxn, &card, now)? {
             continue;
         }
+        let (actor_ref, participants) = match card.recipient {
+            Some(person) if own_reader == Some(person) => {
+                own_cards.push((card.item_id(), card.event_ref));
+                (person, vec![person])
+            }
+            Some(_) => continue,
+            None => match owners.first() {
+                Some(first) => (*first, owners.clone()),
+                None => continue,
+            },
+        };
         let (kind, impact) = match card.kind {
             CalendarCardKind::Prep => (AgentInboxItemKind::CoordinationUpdate, PREP_INBOX_IMPACT),
             CalendarCardKind::CheckIn => {
@@ -290,31 +316,56 @@ pub(crate) fn calendar_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensIt
             identity_ref: None,
             actor_ref,
             facet_ref: None,
-            participants: owners
-                .iter()
-                .map(|owner| AgentInboxParticipant {
+            participants: participants
+                .into_iter()
+                .map(|actor_ref| AgentInboxParticipant {
                     identity_ref: None,
-                    actor_ref: *owner,
+                    actor_ref,
                 })
                 .collect(),
             impact: InboxImpact(impact),
             occurred_at: card.asked_at,
             receipt_ref: None,
             payload_ref: Some(card.event_ref.to_hex()),
+            approval_digest: None,
             concern: None,
             diary_review: None,
             sender: None,
             widening: None,
         });
     }
+    drop(rtxn);
+    if let Some(person) = own_reader
+        && !own_cards.is_empty()
+    {
+        let lane = person_lane(vault, person)?;
+        let points: Vec<PointRead<'_>> = own_cards
+            .iter()
+            .map(|(_, event)| PointRead::id(*event))
+            .collect();
+        let read = lane.read(&points, None)?.value;
+        let withheld: BTreeSet<String> = own_cards
+            .into_iter()
+            .zip(read)
+            .filter(|(_, row)| row.is_none())
+            .map(|((item_id, _), _)| item_id)
+            .collect();
+        items.retain(|item| !withheld.contains(&item.item_id));
+    }
     Ok(items)
 }
 
-/// The lens the meeting row `item_id` carries, as delivered; `None` for a row
-/// that is no meeting card, or whose card a moved meeting has replaced.
+/// The lens the meeting row `item_id` carries, as delivered, for `reader`,
+/// whose own lane is `read`; `None` for a row that is no meeting card, or
+/// whose card a moved meeting has replaced. A person's card shows its lens
+/// to that person alone, and only while `read` still reads its meeting EVENT
+/// and every row the lens copied: a revoked share or a lost grant takes its
+/// words away.
 pub(crate) fn calendar_inbox_card_lens(
     vault: &Vault,
     item_id: &str,
+    reader: EntityId,
+    read: &ScopedRead<'_>,
 ) -> Result<Option<GeneratedLens>> {
     let mut parts = item_id.splitn(3, ':');
     let (Some(kind), Some(event), Some(start)) = (parts.next(), parts.next(), parts.next()) else {
@@ -326,9 +377,26 @@ pub(crate) fn calendar_inbox_card_lens(
     let (Ok(event_ref), Ok(start)) = (EntityId::from_hex(event), start.parse::<u64>()) else {
         return Ok(None);
     };
-    Ok(read_card(vault, &card_key(event_ref, kind))?
+    let Some(card) = read_card(vault, &card_key(event_ref, kind))?
         .filter(|card| card.scheduled_start_utc == start)
-        .and_then(|card| card.lens))
+    else {
+        return Ok(None);
+    };
+    match card.recipient {
+        None => Ok(card.lens),
+        Some(person) if person == reader && reads_card_rows(read, &card)? => Ok(card.lens),
+        Some(_) => Ok(None),
+    }
+}
+
+/// Whether `read` reads `card`'s meeting EVENT and every row its lens copied,
+/// in one snapshot at its persisted grant clock.
+fn reads_card_rows(read: &ScopedRead<'_>, card: &CalendarInboxCard) -> Result<bool> {
+    let points: Vec<PointRead<'_>> = std::iter::once(&card.event_ref)
+        .chain(&card.source_refs)
+        .map(|id| PointRead::id(*id))
+        .collect();
+    Ok(read.read(&points, None)?.value.iter().all(Option::is_some))
 }
 
 /// One pass's clock, copy and tally.
@@ -447,13 +515,30 @@ impl CardRun<'_> {
             scheduled_for: fire_at,
             wake_id: prep_wake_id(&event_ref),
         };
-        let delivered = run_due_home_node_prep_with_sources(
-            self.vault,
-            &job,
-            self.now,
-            PrepPolicy::default(),
-            &self.copy.prep,
-        )?;
+        // A meeting a person's own pack calendar landed is prepped on that
+        // person's lane, for them alone (FIX 16308); every other one from
+        // the vault, for its owners.
+        let recipient = {
+            let rtxn = self.vault.store.env.read_txn()?;
+            crate::mail_pack::calendar_source_person_in(self.vault, &rtxn, &event_ref)?
+        };
+        let delivered = match recipient {
+            Some(person) => run_due_person_prep_with_sources(
+                self.vault,
+                &job,
+                person,
+                self.now,
+                PrepPolicy::default(),
+                &self.copy.prep,
+            )?,
+            None => run_due_home_node_prep_with_sources(
+                self.vault,
+                &job,
+                self.now,
+                PrepPolicy::default(),
+                &self.copy.prep,
+            )?,
+        };
         let (lens, source_refs) =
             delivered.map_or((None, BTreeSet::new()), |(lens, refs)| (Some(lens), refs));
         let prepped = lens.is_some();
@@ -463,6 +548,7 @@ impl CardRun<'_> {
             &CalendarInboxCard {
                 kind: CalendarCardKind::Prep,
                 event_ref,
+                recipient,
                 scheduled_start_utc: start,
                 scheduled_end_utc: end,
                 delivered_at: self.now,
@@ -499,6 +585,7 @@ impl CardRun<'_> {
             &CalendarInboxCard {
                 kind: CalendarCardKind::CheckIn,
                 event_ref,
+                recipient: None,
                 scheduled_start_utc: start,
                 scheduled_end_utc: end,
                 delivered_at: self.now,
@@ -617,9 +704,8 @@ fn check_in_lens(event_ref: EntityId, start: u64, copy: &CheckInCopy) -> Result<
         &CheckInCardModel {
             event_ref,
             scheduled_start_utc: start,
-            answer_action_id: AgentVerb::VaultCalendarCheckInAnswer.as_str().to_owned(),
-            recording_upload_action_id: AgentVerb::VaultCalendarTranscriptIngest
-                .as_str()
+            answer_action_id: crate::verb_names::VAULT_CALENDAR_CHECK_IN_ANSWER.to_owned(),
+            recording_upload_action_id: crate::verb_names::VAULT_CALENDAR_TRANSCRIPT_INGEST
                 .to_owned(),
         },
         copy,
@@ -652,8 +738,9 @@ fn write_card(vault: &Vault, key: &(EntityId, String), card: &CalendarInboxCard)
 }
 
 /// Drops the meeting cards an erased row reached: every card keyed by it as
-/// the EVENT, and every card whose delivered lens copied it. Cards are few,
-/// so the source scan reads the whole table.
+/// the EVENT, every card whose delivered lens copied it, and every card
+/// addressed to it as its recipient. Cards are few, so the scan reads the
+/// whole table.
 pub(crate) fn erase_inbox_cards_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -663,7 +750,7 @@ pub(crate) fn erase_inbox_cards_in_txn(
     let doomed = CARDS
         .scan(store, &*txn)?
         .into_iter()
-        .filter(|(_, card)| card.source_refs.contains(id))
+        .filter(|(_, card)| card.source_refs.contains(id) || card.recipient == Some(*id))
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
     for key in doomed {

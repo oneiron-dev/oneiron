@@ -1,0 +1,16 @@
+{
+  "name": "vault.off_record.rooms.save_from_here",
+  "description": "A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live.",
+  "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+  "output": "crate::task_verb::sdk::OffRecordRoomView",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.save_from_here\", &input)?",
+  "host_door": true,
+  "no_record": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record_room"
+}

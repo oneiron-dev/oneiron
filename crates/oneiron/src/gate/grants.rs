@@ -570,15 +570,22 @@ pub(super) fn external_effect_grant_matches(
     actor: &GateActor,
     effect: &ExternalEffectGateContext,
 ) -> bool {
+    external_effect_grant_admits_effect(grant)
+        && external_effect_actor_matches(grant, actor)
+        && external_effect_effector_matches(grant.effector.trim(), effect.verb.trim())
+        && external_effect_scope_matches(grant.scope.as_ref(), effect)
+}
+
+/// Whether `grant`'s authority Scope admits an external effect at all: the
+/// first test [`external_effect_grant_matches`] meets.
+pub(super) fn external_effect_grant_admits_effect(grant: &PolicyScopedGrant) -> bool {
     // This adapter has no positively stamped record position. A bounded
     // resource grant cannot be widened by treating missing context as a match.
     grant.authority_scope.admits(
         "effect",
         &oneiron_authority::federation::scope_codec::effect_preset(),
         &oneiron_authority::federation::Scope::top(),
-    ) && external_effect_actor_matches(grant, actor)
-        && external_effect_effector_matches(grant.effector.trim(), effect.verb.trim())
-        && external_effect_scope_matches(grant.scope.as_ref(), effect)
+    )
 }
 
 fn external_effect_actor_matches(grant: &PolicyScopedGrant, actor: &GateActor) -> bool {

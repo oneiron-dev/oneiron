@@ -370,6 +370,37 @@ pub(super) fn drop_overlay_row(state: &mut OverlayState, keyspace: OverlayKeyspa
     }
 }
 
+/// Removes a single row only while it is still the one the base writer
+/// observed. Unlike a delete this leaves no mask over the new base value.
+pub(super) fn retire_snapshot_row(
+    state: &mut OverlayState,
+    snapshot: &OverlayState,
+    keyspace: OverlayKeyspace,
+    key: &[u8],
+) {
+    let same = match (
+        snapshot.keyspaces[keyspace.slot()].as_ref(),
+        state.keyspaces[keyspace.slot()].as_ref(),
+    ) {
+        (KeyspaceState::Single { rows: before, .. }, KeyspaceState::Single { rows: now, .. }) => {
+            match (before.get(key), now.get(key)) {
+                (Some(OverlayValue::Present(before)), Some(OverlayValue::Present(now))) => {
+                    before == now
+                }
+                (Some(OverlayValue::Tombstone), Some(OverlayValue::Tombstone)) => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+    if same
+        && let KeyspaceState::Single { rows, .. } =
+            Arc::make_mut(&mut state.keyspaces[keyspace.slot()])
+    {
+        remove_owned_row(rows, key);
+    }
+}
+
 pub(super) fn project_mutation(
     state: &OverlayState,
     mutation: &OverlayMutation,

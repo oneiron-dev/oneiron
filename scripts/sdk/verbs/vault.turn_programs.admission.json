@@ -1,0 +1,17 @@
+{
+  "name": "vault.turn_programs.admission",
+  "description": "Reads one page of a landed turn's admissions for the caller's turn programs, or all when the owner asks, and the wakes it still owes them with each hold, withholding each field whose record the caller's credential does not read.",
+  "input": "crate::dreamer_runner::TurnProgramAdmissionRequest",
+  "output": "Option<crate::dreamer_runner::TurnProgramAdmissionView>",
+  "call": "crate::dreamer_runner::turn_program_admission(memory, &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

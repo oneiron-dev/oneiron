@@ -13,7 +13,9 @@
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-use oneiron_docedit::resource::{ResourcePort, ResourceRefusal, Resources};
+use oneiron_docedit::resource::{
+    MeasuringPort, ResourceAllocation, ResourcePort, ResourceRefusal, Resources,
+};
 
 /// A host's machine memory, as document operations take it: one port per
 /// operation.
@@ -46,11 +48,67 @@ pub fn document_resources() -> Resources {
 /// [`document_resources`] for an operation whose caller gave it `deadline`.
 #[must_use]
 pub fn document_resources_until(deadline: Option<Instant>) -> Resources {
-    DOCUMENT_MEMORY
-        .get()
-        .map_or_else(Resources::measuring, |memory| {
-            Resources::new(memory.operation(deadline))
+    DOCUMENT_MEMORY.get().map_or_else(
+        || match deadline {
+            Some(deadline) => Resources::new(Arc::new(TimedMeasuringPort {
+                memory: MeasuringPort::default(),
+                deadline,
+            })),
+            None => Resources::measuring(),
+        },
+        |memory| Resources::new(memory.operation(deadline)),
+    )
+}
+
+/// A caller's own deadline still applies when no host memory line is registered.
+/// Memory accounting remains exactly the non-reserving measuring port's.
+struct TimedMeasuringPort {
+    memory: MeasuringPort,
+    deadline: Instant,
+}
+
+impl ResourcePort for TimedMeasuringPort {
+    fn reserve(
+        &self,
+        bytes: u64,
+        measured: u64,
+    ) -> std::result::Result<Box<dyn Send + Sync>, ResourceRefusal> {
+        self.checkpoint()?;
+        self.memory.reserve(bytes, measured)
+    }
+
+    fn checkpoint(&self) -> std::result::Result<(), ResourceRefusal> {
+        if Instant::now() >= self.deadline {
+            Err(ResourceRefusal::Deadline)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn allocation(&self) -> Box<dyn ResourceAllocation> {
+        Box::new(TimedMeasuringAllocation {
+            memory: self.memory.allocation(),
+            deadline: self.deadline,
         })
+    }
+}
+
+struct TimedMeasuringAllocation {
+    memory: Box<dyn ResourceAllocation>,
+    deadline: Instant,
+}
+
+impl ResourceAllocation for TimedMeasuringAllocation {
+    fn grow(&mut self, bytes: u64, measured: u64) -> std::result::Result<(), ResourceRefusal> {
+        if Instant::now() >= self.deadline {
+            return Err(ResourceRefusal::Deadline);
+        }
+        self.memory.grow(bytes, measured)
+    }
+
+    fn materialized(&mut self, bytes: u64) {
+        self.memory.materialized(bytes);
+    }
 }
 
 /// A refusal of a document operation's memory as the engine's error, never

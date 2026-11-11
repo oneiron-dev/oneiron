@@ -1,0 +1,19 @@
+//! The side tables `training_pack` keeps (core split slice 1): each row declares one, and the crate's
+//! build script places it in `side_table`'s catalogue.
+
+crate::side_table::side_tables! {
+    /// Current owner-approved training checkpoint per model role. Key: serialized role string.
+    TRAINING_PACK_ROLE: VaultMeta b"training_pack:role:v1:" Named
+        // Restore class: A restore never replays a GPU dispatch or rolls back an owner's model
+        // swap.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::training_pack::erase_role_actor_in_txn;
+    /// Pinned corpus, compute, dispatch and evaluation of one training job. Key: id16 (run).
+    TRAINING_PACK_RUN: VaultMeta b"training_pack:run:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::training_pack::erase_run_id_in_txn;
+    /// Immutable owner-approved role-swap receipt. Key: id16 (receipt).
+    TRAINING_PACK_SWAP: VaultMeta b"training_pack:swap:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::training_pack::erase_swap_actor_in_txn;
+}

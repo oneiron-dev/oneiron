@@ -7,9 +7,15 @@
 //! each such ask, owed to every target its host resolved for the call. The
 //! image row holds its skeleton, the stub a retired reply leaves, with no
 //! carried ask in it. A step start whose prefix holds such a spawn travels
-//! the same way: its rest, and each ask. Erasing one target retires only
-//! the asks of the calls it seats, so every other part stays restorable;
-//! two calls that reach one target are two parts.
+//! the same way: its rest, and each ask. A start's captured folds keep no
+//! words (FIX 18694), so they never make it travel apart. Erasing one target
+//! retires only the asks of the calls it seats, so every other part stays
+//! restorable; two calls that reach one target are two parts.
+//!
+//! The skeleton keeps no request words (FIX 6534): each call's request is
+//! its identity, as the stub of the row as it stands erases it, so a live
+//! ask never goes back into a retired reply's skeleton, and a retired ask
+//! keeps a text-free bit beside it, not its call's request.
 //!
 //! A restore recomposes each row or start once, after every part's
 //! disposition is known ([`recompose_replay_record`]). A row or start that
@@ -25,7 +31,8 @@ use super::codec::{
 use super::replay::{CodeRunBridgeCall, CodeRunReplayRecord};
 use super::replay_capsule::StepStartBody;
 use super::spawn_replay::{
-    decode_spawn_targets, erase_spawn_call, spawn_ask_part, spawn_targets_value, swap_spawn_ask,
+    decode_spawn_targets, erase_spawn_call, original_ask_erased, retire_carried_ask,
+    spawn_ask_part, spawn_erasure, spawn_targets_value, swap_spawn_ask,
 };
 use super::storage::replay_carriage;
 use super::support::invalid_code_run_replay;
@@ -46,14 +53,14 @@ pub(crate) struct ReplayPart {
     pub(crate) bytes: Vec<u8>,
     /// A request part's owners: every seat its host resolved for the call.
     pub(crate) seats: Vec<EntityId>,
-    /// A request part's call in its erased form, text-free; empty for the
-    /// rest.
+    /// A request part's call in its erased form, text-free
+    /// ([`erased_facts`]); empty for the rest.
     pub(crate) erased: Vec<u8>,
     /// What the part changes of its destination's record, for its grouped
     /// landing length ([`recomposed_len`]), each as (bytes, bytes at or
     /// above 0x80): a request part's ask, then its call's spawn fields as
-    /// the rest holds them, as the skeleton holds them, and erased; a
-    /// start's rest, its record.
+    /// the rest holds them, as the skeleton holds them, erased, and erased
+    /// in the skeleton; a start's rest, its record.
     pub(crate) extents: Vec<(u64, u64)>,
 }
 
@@ -97,7 +104,9 @@ fn row_parts(value: &[u8]) -> Result<Option<ReplayParts>> {
     };
     let mut requests = take_asks(&mut record)?;
     let reply = encode_code_run_replay_record(&record)?;
-    let ResponseScan::Decoded(ResponseCarriage { stub, .. }) = replay_carriage(&reply) else {
+    // The stub of the row as it stands, each ask in its place, so each
+    // erased request keeps its own call's identity (FIX 6534).
+    let ResponseScan::Decoded(ResponseCarriage { stub, .. }) = replay_carriage(value) else {
         return Ok(None);
     };
     let skeleton = decode_code_run_replay_record(&stub)?;
@@ -106,6 +115,9 @@ fn row_parts(value: &[u8]) -> Result<Option<ReplayParts>> {
             && let Some(call) = skeleton.bridge_calls.get(index as usize)
         {
             part.extents[2] = spawn_fields_extent(call)?;
+            let mut retired = call.clone();
+            retire_request_part(&mut retired, &part.erased, true)?;
+            part.extents[4] = spawn_fields_extent(&retired)?;
         }
     }
     Ok(Some(ReplayParts {
@@ -193,6 +205,7 @@ fn take_asks(record: &mut CodeRunReplayRecord) -> Result<Vec<ReplayPart>> {
         swap_spawn_ask(call, Value::Nil);
         let bytes = encode_code_run_replay_value(&ask, "spawn ask MessagePack encode failed")?;
         let rest = spawn_fields_extent(call)?;
+        let erased_extent = spawn_fields_extent(&erased)?;
         requests.push(ReplayPart {
             request: Some((
                 u32::try_from(index)
@@ -203,7 +216,8 @@ fn take_asks(record: &mut CodeRunReplayRecord) -> Result<Vec<ReplayPart>> {
                 bytes_extent(&bytes),
                 rest,
                 rest,
-                spawn_fields_extent(&erased)?,
+                erased_extent,
+                erased_extent,
             ],
             erased: erased_facts(&erased)?,
             bytes,
@@ -237,18 +251,48 @@ fn rest_then(
     parts
 }
 
-/// The text-free facts of a call in its erased form: its request with the
-/// erased marker, its `TargetErased` answer with any row receipt, and its
-/// targets with the id it answered before.
+/// The text-free facts of a call in its erased form: whether the guest's
+/// original ask took the erased marker beside the dispatched one
+/// ([`original_ask_erased`]), never the request's words (FIX 6534); its
+/// `TargetErased` answer with any row receipt; and its targets with the id
+/// it answered before.
 fn erased_facts(erased: &CodeRunBridgeCall) -> Result<Vec<u8>> {
     encode_code_run_replay_value(
         &Value::Array(vec![
-            erased.request.clone(),
+            Value::Boolean(original_ask_erased(erased)),
             erased.outcome.clone(),
             spawn_targets_value(&erased.spawn_targets),
         ]),
         "erased spawn facts MessagePack encode failed",
     )
+}
+
+/// The call one retired request part names, given the erased `facts` kept
+/// beside it: the erased marker in its carried ask's place, with the cause
+/// its kept answer names ([`retire_carried_ask`], [`spawn_erasure`]), its
+/// answer and targets too when the reply
+/// retired, and [`erase_spawn_call`] last. A retired reply's skeleton keeps
+/// its request erased (FIX 6534).
+fn retire_request_part(
+    call: &mut CodeRunBridgeCall,
+    facts: &[u8],
+    reply_retired: bool,
+) -> Result<()> {
+    let Value::Array(facts) = value_of(facts)? else {
+        return Err(invalid_code_run_replay("erased spawn facts are not a list"));
+    };
+    let [Value::Boolean(original), outcome, targets] = facts.as_slice() else {
+        return Err(invalid_code_run_replay(
+            "erased spawn facts are not a mark, an answer and targets",
+        ));
+    };
+    retire_carried_ask(call, *original, spawn_erasure(outcome))?;
+    if reply_retired {
+        call.outcome = outcome.clone();
+        call.spawn_targets = decode_spawn_targets(targets)?;
+    }
+    erase_spawn_call(call)?;
+    Ok(())
 }
 
 /// What a call's spawn fields (its request, answer and targets) take of its
@@ -317,10 +361,11 @@ fn spawn_at(
 /// parts, `record` its reply or rest when live, or its skeleton when the
 /// reply retired (`reply_retired`). Each live ask goes back in its call's
 /// place first; then each retired one's call takes the erased facts kept
-/// beside it (its answer and targets too when the reply retired, which
-/// keeps the id it answered before and any row receipt) and
-/// [`erase_spawn_call`] runs on it last, so its `TargetErased` wins over
-/// the reply's old answer and over a retired reply's stub. Every other call
+/// beside it ([`retire_request_part`]: its answer and targets too when the
+/// reply retired, which keeps the id it answered before and any row
+/// receipt) and [`erase_spawn_call`] runs on it last, so its `TargetErased`
+/// wins over the reply's old answer and over a retired reply's stub. A
+/// skeleton's erased request takes no ask back (FIX 6534). Every other call
 /// and field stays as `record` holds it.
 fn recompose_replay_record(
     record: &mut CodeRunReplayRecord,
@@ -331,13 +376,12 @@ fn recompose_replay_record(
         let RequestPart::Live(ask) = part else {
             continue;
         };
+        let call = spawn_at(record, *call)?;
+        if call.request_erased() {
+            continue;
+        }
         let ask = value_of(ask)?;
-        if !ask.is_str()
-            || !matches!(
-                swap_spawn_ask(spawn_at(record, *call)?, ask),
-                Some(Value::Nil)
-            )
-        {
+        if !ask.is_str() || !matches!(swap_spawn_ask(call, ask), Some(Value::Nil)) {
             return Err(invalid_code_run_replay(
                 "a carried spawn ask does not fit its call",
             ));
@@ -347,19 +391,7 @@ fn recompose_replay_record(
         let RequestPart::Retired(facts) = part else {
             continue;
         };
-        let call = spawn_at(record, *call)?;
-        let Value::Array(facts) = value_of(facts)? else {
-            return Err(invalid_code_run_replay("erased spawn facts are not a list"));
-        };
-        let [request, outcome, targets] = facts.as_slice() else {
-            return Err(invalid_code_run_replay("erased spawn facts are not three"));
-        };
-        call.request = request.clone();
-        if reply_retired {
-            call.outcome = outcome.clone();
-            call.spawn_targets = decode_spawn_targets(targets)?;
-        }
-        erase_spawn_call(call)?;
+        retire_request_part(spawn_at(record, *call)?, facts, reply_retired)?;
     }
     Ok(())
 }
@@ -404,7 +436,10 @@ pub(crate) fn recompose_step_start(
 /// the reply retired (`reply_retired`); `record`, a start's rest's record,
 /// which its body spells one integer per byte. Each live ask takes its
 /// nil's place, and each retired call's spawn fields take their erased
-/// form. `requests` names each request part's liveness and extents.
+/// form. A retired reply's skeleton keeps its requests erased (FIX 6534):
+/// a live ask stays out of it, and a retired one's call takes its erased
+/// answer and targets there. `requests` names each request part's liveness
+/// and extents.
 pub(crate) fn recomposed_len(
     base: u64,
     record: Option<(u64, u64)>,
@@ -413,13 +448,14 @@ pub(crate) fn recomposed_len(
 ) -> u64 {
     let (mut len, mut high) = (0_i128, 0_i128);
     for (live, extents) in requests {
-        let &[ask, rest, stub, erased] = *extents else {
+        let &[ask, rest, stub, erased, stub_erased] = *extents else {
             continue;
         };
         let (from, to) = match (*live, reply_retired) {
-            (true, _) => (NIL_EXTENT, ask),
+            (true, false) => (NIL_EXTENT, ask),
+            (true, true) => (stub, stub),
             (false, false) => (rest, erased),
-            (false, true) => (stub, erased),
+            (false, true) => (stub, stub_erased),
         };
         len += i128::from(to.0) - i128::from(from.0);
         high += i128::from(to.1) - i128::from(from.1);

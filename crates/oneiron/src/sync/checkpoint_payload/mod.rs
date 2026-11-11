@@ -40,6 +40,7 @@
     reason = "a build without the KS7-5 port leaves some of these unread"
 )]
 
+mod author_carrier;
 mod classify;
 mod documents;
 mod frame;
@@ -56,6 +57,7 @@ use heed::RoTxn;
 use loro::IdSpan;
 use loro::checkpoint::Skeleton;
 
+pub(crate) use self::owners::WINDOW_ROOTS;
 #[allow(unused_imports, reason = "KS7-5 drives them")]
 pub(crate) use self::owners::root_entry;
 #[allow(unused_imports, reason = "KS7-5 drives them")]

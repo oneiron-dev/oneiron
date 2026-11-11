@@ -64,8 +64,8 @@ pub use self::cancel::{OP_KIND_OWNER_WORK_CANCEL, OwnerWorkCancel, ROOT_WORK_CAN
 pub(super) use self::cancel::{decode_owner_work_cancel, owner_work_cancel_value};
 pub use self::custody::{
     CUSTODY_RECIPIENT_SET_DOMAIN, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange,
-    CustodyPermitPieces, CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority,
-    custody_recipient_set, custody_recipients_encoded_len,
+    CustodyPermitPieces, CustodyPermitSet, CustodyRecipientPermit, CustodyRecipientPermits,
+    CustodyRequestAuthority, custody_recipient_set, custody_recipients_encoded_len,
 };
 pub use self::export::ExportSecretWork;
 pub use self::import_mark::{
@@ -303,7 +303,8 @@ pub enum OwnerWorkBody {
     /// is the revision of the roots and of the target's standing the change
     /// is for ([`ROOT_WORK_REVISION_CONTEXT`]). `basis` names those heads as
     /// the recorder folded them, its witness (FIX 5551): its revision is the
-    /// act's `seen`.
+    /// act's `seen`. Beside them it carries the bound anchor and the anchor
+    /// heads' parents, outside the revision (FIX 6556).
     Root {
         change: RootChange,
         basis: RootRevisionBasis,
@@ -327,13 +328,13 @@ pub enum OwnerWorkBody {
     /// `recipients` is empty as the entry carries it, and the fold fills it
     /// from the [`CustodyPermitPiece`] rows in the request's causal past.
     /// Every request the fold keeps on one joined set shares its permits
-    /// ([`CustodyRecipientPermits`], FIX 12281).
+    /// ([`CustodyPermitSet`], FIX 12281, 12370).
     Custody {
         change: CustodyChange,
         generation: u32,
         input: Option<[u8; 32]>,
         holder: Option<EntityId>,
-        recipients: CustodyRecipientPermits,
+        recipients: CustodyPermitSet,
         pieces: Option<CustodyPermitPieces>,
         authority: CustodyRequestAuthority,
     },
@@ -464,9 +465,12 @@ impl OwnerWorkRequest {
             return Err(invalid_authority());
         }
         // A root change is done on the install it changes, and only there,
-        // and its basis is the revision its act saw (FIX 5551).
-        if let OwnerWorkBody::Root { basis, .. } = &self.work
-            && (self.act.target != self.executor || basis.revision() != self.act.seen)
+        // and its basis is the revision its act saw (FIX 5551). Only a
+        // change that binds a root has a bound anchor (FIX 6556).
+        if let OwnerWorkBody::Root { change, basis } = &self.work
+            && (self.act.target != self.executor
+                || basis.revision() != self.act.seen
+                || (change.root().is_none() && basis.bound.is_some()))
         {
             return Err(invalid_authority());
         }
@@ -570,7 +574,7 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             *generation,
             *input,
             *holder,
-            (recipients.as_slice(), *pieces),
+            (recipients, *pieces),
             *authority,
         ),
         OwnerWorkBody::ExportSecret(work) => export::export_secret_work_value(work),

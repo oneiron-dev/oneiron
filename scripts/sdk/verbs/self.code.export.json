@@ -1,0 +1,8 @@
+{
+  "name": "self.code.export",
+  "input": "crate::memory::repo_doors::RepoExportInput",
+  "output": "crate::memory::repo_doors::RepoExportOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "RepoExport"
+}

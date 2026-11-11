@@ -17,10 +17,10 @@
 use crate::Vault;
 use crate::authority::AuthorityEntryHash;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SyncProtocolValidation};
+use crate::error::{Error, ErrorKind, Result, SyncProtocolValidation};
 use crate::side_table::{self, Raw, SideTable};
 use crate::sync::residence::{SealedBundleCommitInput, sealed_digest_from_hex, sealed_digest_hex};
-use crate::world_keys::{RecoveryRootId, SealedBundleGeneration};
+use crate::world_keys::{RecoveryRootId, SealedBundleGeneration, UnmergedSection, UnmergedStage};
 
 /// This install's unresolved attempts: request hex for asked ones, `auto:`
 /// plus the route address digest hex for automatic ones.
@@ -38,7 +38,11 @@ const AUTO_PREFIX: &str = "auto:";
 /// parent24 ‖ root?1 ‖ root32 ‖ request?1 ‖ request32 ‖ bundleTotal8 ‖
 /// bundleDigest32 ‖ padsTotal8 ‖ padsDigest32. Absent options zero their
 /// bytes; the flags rule. Two u64be-counted [`EntityId`] tails follow: the
-/// incomplete authorities, then the awaiting readers.
+/// incomplete authorities, then the awaiting readers. A third, u64be-counted
+/// tail of unmerged sections follows only when it lists one (FIX 19525), so a
+/// row with none is byte for byte the row written before it existed: each
+/// section is world16 ‖ stage1 ‖ window?1 ‖ (windowLen u32be ‖ window) ‖
+/// kindLen u16be ‖ kind, the kind its snake_case wire name.
 const ATTEMPT_FIXED_LEN: usize = 1 + 16 + 16 + 24 + 1 + 24 + 1 + 32 + 1 + 32 + 8 + 32 + 8 + 32;
 
 /// Which logical attempt a row is: one per pending owner request, or one per
@@ -82,6 +86,17 @@ pub(crate) struct BundleAttempt {
     /// Each world a kit restore of the upload awaits a reader for (FIX
     /// 4496).
     pub(super) awaiting_reader: Vec<EntityId>,
+    /// Each readable section the upload carries unchanged because it did not
+    /// open, decode or merge here (FIX 19525), kept so a commit a later pass
+    /// finds, after a lost acknowledgement or a restart, still shows it to
+    /// the owner. A row written without it carries none.
+    pub(super) unmerged_sections: Vec<UnmergedSection>,
+    /// When this install assembled the upload (FIX 19525): its recorded
+    /// clock seconds, raised at persist above every attempt still stored, so
+    /// no two coexisting attempts share one and a later assembly is always
+    /// greater. The order in which reconciled attempts' sections are shown,
+    /// newest last. `None` for a row written before it was kept.
+    pub(super) assembled_at: Option<u64>,
 }
 
 impl BundleAttempt {
@@ -103,7 +118,7 @@ impl BundleAttempt {
         ]
     }
 
-    fn encode(&self) -> Vec<u8> {
+    fn encode(&self) -> Result<Vec<u8>> {
         let mut out = Vec::with_capacity(
             ATTEMPT_FIXED_LEN
                 + 16
@@ -161,7 +176,17 @@ impl BundleAttempt {
                 out.extend_from_slice(world.as_bytes());
             }
         }
-        out
+        // The third tail (FIX 19525): when the upload was assembled, then
+        // its unmerged sections. A row written before it was kept has none,
+        // and encodes byte for byte as it was stored.
+        if self.assembled_at.is_some() || !self.unmerged_sections.is_empty() {
+            out.extend_from_slice(&self.assembled_at.unwrap_or_default().to_be_bytes());
+            out.extend_from_slice(&(self.unmerged_sections.len() as u64).to_be_bytes());
+            for section in &self.unmerged_sections {
+                encode_unmerged(&mut out, section)?;
+            }
+        }
+        Ok(out)
     }
 
     fn decode(raw: &[u8]) -> Result<Self> {
@@ -220,6 +245,16 @@ impl BundleAttempt {
             }
             at = end;
         }
+        let (assembled_at, unmerged_sections) = if at == raw.len() {
+            (None, Vec::new())
+        } else {
+            let assembled_at = u64::from_be_bytes(
+                read_at(raw, &mut at, 8)?
+                    .try_into()
+                    .map_err(|_| Error::InvalidKey)?,
+            );
+            (Some(assembled_at), decode_unmerged(raw, &mut at)?)
+        };
         if at != raw.len() {
             return Err(Error::InvalidKey);
         }
@@ -237,8 +272,102 @@ impl BundleAttempt {
             pads_digest: raw[196..228].try_into().map_err(|_| Error::InvalidKey)?,
             incomplete_authority,
             awaiting_reader,
+            unmerged_sections,
+            assembled_at,
         })
     }
+}
+
+/// The byte `stage` is stored as.
+const fn stage_byte(stage: UnmergedStage) -> u8 {
+    match stage {
+        UnmergedStage::Open => 0,
+        UnmergedStage::Decode => 1,
+        UnmergedStage::Merge => 2,
+    }
+}
+
+/// Appends one unmerged section of the third tail (FIX 19525).
+fn encode_unmerged(out: &mut Vec<u8>, section: &UnmergedSection) -> Result<()> {
+    out.extend_from_slice(section.world.as_bytes());
+    out.push(stage_byte(section.stage));
+    match &section.window {
+        Some(window) => {
+            let len = u32::try_from(window.len()).map_err(|_| Error::InvalidKey)?;
+            out.push(1);
+            out.extend_from_slice(&len.to_be_bytes());
+            out.extend_from_slice(window.as_bytes());
+        }
+        None => out.push(0),
+    }
+    let Ok(serde_json::Value::String(kind)) = serde_json::to_value(section.kind) else {
+        return Err(Error::InvalidKey);
+    };
+    let len = u16::try_from(kind.len()).map_err(|_| Error::InvalidKey)?;
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(kind.as_bytes());
+    Ok(())
+}
+
+/// The `len` bytes of `raw` at `at`, which then moves past them.
+fn read_at<'a>(raw: &'a [u8], at: &mut usize, len: usize) -> Result<&'a [u8]> {
+    let end = at.checked_add(len).ok_or(Error::InvalidKey)?;
+    let bytes = raw.get(*at..end).ok_or(Error::InvalidKey)?;
+    *at = end;
+    Ok(bytes)
+}
+
+/// Reads the unmerged sections of the third tail at `at` (FIX 19525), none
+/// or more.
+fn decode_unmerged(raw: &[u8], at: &mut usize) -> Result<Vec<UnmergedSection>> {
+    let count = u64::from_be_bytes(
+        read_at(raw, at, 8)?
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?,
+    );
+    let mut sections = Vec::new();
+    for _ in 0..count {
+        let world: [u8; 16] = read_at(raw, at, 16)?
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?;
+        let world = EntityId::from_bytes(world).map_err(|_| Error::InvalidKey)?;
+        let stage = match read_at(raw, at, 1)?[0] {
+            0 => UnmergedStage::Open,
+            1 => UnmergedStage::Decode,
+            2 => UnmergedStage::Merge,
+            _ => return Err(Error::InvalidKey),
+        };
+        let window = match read_at(raw, at, 1)?[0] {
+            0 => None,
+            1 => {
+                let len = u32::from_be_bytes(
+                    read_at(raw, at, 4)?
+                        .try_into()
+                        .map_err(|_| Error::InvalidKey)?,
+                );
+                let len = usize::try_from(len).map_err(|_| Error::InvalidKey)?;
+                let window = read_at(raw, at, len)?.to_vec();
+                Some(String::from_utf8(window).map_err(|_| Error::InvalidKey)?)
+            }
+            _ => return Err(Error::InvalidKey),
+        };
+        let len = u16::from_be_bytes(
+            read_at(raw, at, 2)?
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+        );
+        let kind = String::from_utf8(read_at(raw, at, usize::from(len))?.to_vec())
+            .map_err(|_| Error::InvalidKey)?;
+        let kind: ErrorKind = serde_json::from_value(serde_json::Value::String(kind))
+            .map_err(|_| Error::InvalidKey)?;
+        sections.push(UnmergedSection {
+            world,
+            window,
+            stage,
+            kind,
+        });
+    }
+    Ok(sections)
 }
 
 /// Persists this install's exact attempt under `key`. The caller resolved
@@ -246,19 +375,34 @@ impl BundleAttempt {
 /// different still-unresolved attempt under the key is never overwritten:
 /// the write fails and the caller keeps the old attempt. Identical bytes
 /// persist idempotently.
-pub(super) fn persist(vault: &Vault, key: AttemptKey, attempt: &BundleAttempt) -> Result<()> {
-    let encoded = attempt.encode();
+///
+/// A fresh attempt's assembly time is raised, in the same writer, above
+/// every attempt still stored (FIX 19525), and `attempt` takes the value
+/// stored, so its later compares meet the stored bytes.
+pub(super) fn persist(vault: &Vault, key: AttemptKey, attempt: &mut BundleAttempt) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
         let current = ATTEMPTS.get_bytes(&vault.store, wtxn, &key.encode())?;
-        if current
-            .as_deref()
-            .is_some_and(|current| current != encoded.as_slice())
-        {
-            return Err(Error::sync_protocol(
-                SyncProtocolValidation::DocumentPendingUpdate,
-            ));
+        if let Some(current) = current {
+            if current != attempt.encode()? {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentPendingUpdate,
+                ));
+            }
+            return Ok(());
         }
-        ATTEMPTS.put(&vault.store, wtxn, &key.encode(), &encoded)
+        if let Some(assembled_at) = attempt.assembled_at {
+            let mut order = assembled_at;
+            for row in ATTEMPTS.iter_raw_from(&vault.store, wtxn, &[])? {
+                let (_, raw) = row?;
+                if let Ok(stored) = BundleAttempt::decode(&raw)
+                    && let Some(stored_at) = stored.assembled_at
+                {
+                    order = order.max(stored_at.saturating_add(1));
+                }
+            }
+            attempt.assembled_at = Some(order);
+        }
+        ATTEMPTS.put(&vault.store, wtxn, &key.encode(), &attempt.encode()?)
     })
 }
 
@@ -267,7 +411,7 @@ pub(super) fn persist(vault: &Vault, key: AttemptKey, attempt: &BundleAttempt) -
 /// attempt, stays: a stale reply never deletes a newer attempt. The compare
 /// and the delete share the one writer.
 pub(super) fn settle_one(vault: &Vault, key: AttemptKey, expected: &BundleAttempt) -> Result<()> {
-    let encoded = expected.encode();
+    let encoded = expected.encode()?;
     vault.with_write_txn_grouped(|wtxn| {
         let current = ATTEMPTS.get_bytes(&vault.store, wtxn, &key.encode())?;
         if current.as_deref() == Some(encoded.as_slice()) {

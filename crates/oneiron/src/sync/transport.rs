@@ -15,7 +15,7 @@ use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 
 mod admission_fault;
-pub(crate) use admission_fault::is_window_admission_read_fault;
+pub(crate) use admission_fault::{is_own_vault_fault, is_window_admission_read_fault};
 mod asset_bodies;
 pub use asset_bodies::{
     ASSET_BODY_FRAME_BYTES, ASSET_BODY_RETRY, AssetBodyAddress, AssetBodyData, AssetBodyEnd,
@@ -38,6 +38,11 @@ pub use leaf_keys::{
     decode_leaf_key_answer, decode_leaf_key_failure, decode_leaf_key_request,
     encode_leaf_key_answer, encode_leaf_key_failure, encode_leaf_key_request, leaf_key_request_hex,
 };
+mod root_updates;
+pub use root_updates::{
+    ROOT_PART_HEADER_BYTES, RootUpdateFrames, RootUpdatePart, TAG_ROOT_PART,
+    decode_root_update_part, root_update_frames,
+};
 mod unsplit_frame;
 pub use unsplit_frame::{MAX_WINDOW_PAD_PAYLOAD_BYTES, encode_unsplit_window_sync};
 mod window_pads;
@@ -52,6 +57,11 @@ mod sealed_updates;
 pub use sealed_updates::{
     SEALED_UPDATE_EPOCH_LEN, SEALED_UPDATE_FRAME_ID_LEN, SealedUpdateFrame, TAG_SEALED_UPDATE,
     decode_sealed_update_frame, encode_sealed_update_frame, sealed_update_sub_tags,
+};
+mod document_parts;
+pub use document_parts::{
+    DocumentAssembly, DocumentPartFrames, JoinedDocument, decode_unsplit_document,
+    encode_unsplit_document,
 };
 mod documents;
 pub use documents::{
@@ -287,6 +297,14 @@ impl EncodedFrame {
     /// Consumes the frame and returns the typed encode result.
     pub fn into_result(self) -> Result<Vec<u8>, TransportError> {
         self.0
+    }
+
+    /// [`Self::into_result`] for a frame of this machine's own, such as its
+    /// reply to a frame the far end sent (FIX 22179): an encode that fails
+    /// is this machine's own fault ([`TransportError::own_encode`]), never
+    /// the far end's oversized or malformed frame.
+    pub(crate) fn into_own_frame(self) -> Result<Vec<u8>, TransportError> {
+        self.0.map_err(TransportError::own_encode)
     }
 
     fn valid_frame(&self) -> &Vec<u8> {

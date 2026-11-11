@@ -1,8 +1,11 @@
 //! Staging an ASSET body from a reader before the transaction that puts it
 //! (FIX 3677): the body streams into the body directory, measured as it
-//! passes, and is published as a file only when it is long and opaque, or
-//! long MessagePack the whole-body classification files, a record its
-//! stored-row readers read nothing from among them (FIX 12150). On a
+//! passes, and is published as a file only when it is long and opaque, long
+//! MessagePack the whole-body classification files, a record its stored-row
+//! readers read nothing from among them (FIX 12150), or long text, a
+//! container or a body a stream rule hits, which the batch door reads from
+//! its file (FIX 22075), or an owning adapter's carrier, which its adapter
+//! and the batch door read from its file (FIX 22091). On a
 //! sealed vault it spills sealed as it streams and is published as an
 //! envelope, whose key row the put commits (FIX 5348). While the file plane
 //! is on, the values custody holds are found in the stream too, and marked
@@ -39,6 +42,8 @@ const HEAD_BYTES: usize = 64;
 pub(crate) struct StagedAssetBody {
     facts: AssetBodyFacts,
     mime: Option<String>,
+    /// Whether the whole body is UTF-8 text (FIX 22075).
+    text: bool,
     body: Staged,
     /// A sealed file's key row, committed with the put (FIX 5348).
     key: Option<StagedBodyKey>,
@@ -55,6 +60,18 @@ pub(crate) struct StagedAssetBody {
 pub(crate) struct StagedHold {
     _key: Option<StagedBodyKey>,
     _pin: Option<ResultBodyPin>,
+}
+
+impl StagedHold {
+    /// The hold on a body file staged for a row other than an ASSET put
+    /// (a waiting native output, FIX 20812): its instance's lease and its
+    /// digest's pin.
+    pub(crate) fn of_file(key: StagedBodyKey, pin: ResultBodyPin) -> Self {
+        Self {
+            _key: Some(key),
+            _pin: Some(pin),
+        }
+    }
 }
 
 enum Staged {
@@ -81,6 +98,11 @@ impl StagedAssetBody {
         }
     }
 
+    /// Whether the whole body is UTF-8 text, wherever it is held (FIX 22075).
+    pub(crate) const fn is_text(&self) -> bool {
+        self.text
+    }
+
     /// The body's bytes when it stays in its row: `None` for a published
     /// body file, whose bytes are read only from the file (FIX 12091).
     pub(crate) fn inline_bytes(&self) -> Option<&[u8]> {
@@ -88,6 +110,29 @@ impl StagedAssetBody {
             Staged::Inline(bytes) => Some(bytes),
             Staged::File { .. } => None,
         }
+    }
+
+    /// `put`, the batch that puts this body as its file, with the file's
+    /// bytes for the batch door's secret scan and mask when the file is
+    /// interpreted or an owning adapter's carrier: they read them in place
+    /// of its manifest, as they read a body in its row (FIX 22075), and so
+    /// do the carrier's put checks (FIX 22091).
+    ///
+    /// # Errors
+    ///
+    /// The file's read error.
+    fn read_by_batch_door<'b>(
+        &self,
+        id: &EntityId,
+        put: crate::batch::BatchBuilder<'b>,
+    ) -> Result<crate::batch::BatchBuilder<'b>> {
+        Ok(match &self.body {
+            Staged::File {
+                kind: AssetFileKind::Interpreted | AssetFileKind::Carrier,
+                ..
+            } => put.with_asset_file_body(id, self.to_vec()?),
+            _ => put,
+        })
     }
 
     /// The whole body, read back from its file when it has one.
@@ -115,6 +160,9 @@ struct StageMeter {
     xxh32: xxhash_rust::xxh32::Xxh32,
     len: u64,
     head: Vec<u8>,
+    /// The first byte past JSON whitespace: a birth source's marker needs an
+    /// object or an array there, whatever bytes its strings hold.
+    lead: Option<u8>,
     utf8: Utf8Stream,
     /// The result body store's write-door rules over a body as it streams.
     secrets: SecretScan,
@@ -129,6 +177,7 @@ impl StageMeter {
             xxh32: xxhash_rust::xxh32::Xxh32::new(0),
             len: 0,
             head: Vec::with_capacity(HEAD_BYTES),
+            lead: None,
             utf8: Utf8Stream::default(),
             secrets: SecretScan::default(),
             known: known.map(KnownStreamFinder::new),
@@ -141,6 +190,12 @@ impl StageMeter {
         self.len = self.len.saturating_add(bytes.len() as u64);
         let room = HEAD_BYTES.saturating_sub(self.head.len());
         self.head.extend_from_slice(&bytes[..room.min(bytes.len())]);
+        if self.lead.is_none() {
+            self.lead = bytes
+                .iter()
+                .copied()
+                .find(|byte| !matches!(byte, b' ' | b'\n' | b'\t' | b'\r'));
+        }
         self.utf8.feed(bytes);
         self.secrets.feed(bytes);
         if let Some(known) = &mut self.known {
@@ -148,27 +203,26 @@ impl StageMeter {
         }
     }
 
-    /// The body's facts, what its stream shows it, and the values custody
-    /// holds that it carries. A body with UTF-8 text in it, or a hit of the
-    /// write door's stream rules, stays in its row ([`StreamShape::Row`]);
-    /// any other is as its head shows it ([`stream_shape`]). A body the
-    /// stream cannot show opaque is read whole: the batch door judges one
-    /// that stays in its row.
-    fn finish(mut self) -> (AssetBodyFacts, StreamShape, StreamKnown) {
+    /// The body's facts, what its stream shows it, whether it is UTF-8
+    /// text, whether a JSON object or array opens it, and the values custody
+    /// holds that it carries. A body an owning
+    /// adapter's tag leads is a carrier ([`StreamShape::Carrier`]); one with
+    /// UTF-8 text in it, or a hit of the write door's stream rules, is
+    /// interpreted ([`StreamShape::Interpreted`]); any other is as its head
+    /// shows it ([`stream_shape`]).
+    fn finish(mut self) -> (AssetBodyFacts, StreamShape, bool, bool, StreamKnown) {
         let facts = AssetBodyFacts {
             blake3: *self.hasher.finalize().as_bytes(),
             len: self.len,
             xxh32: self.xxh32.digest(),
         };
-        let shape = if self.utf8.text() || self.secrets.finish().is_some() {
-            StreamShape::Row
-        } else {
-            stream_shape(&self.head)
-        };
+        let text = self.utf8.text();
+        let shape = stream_shape(&self.head, text, self.secrets.finish().is_some());
+        let json = matches!(self.lead, Some(b'{' | b'['));
         let known = self
             .known
             .map_or_else(StreamKnown::default, KnownStreamFinder::finish);
-        (facts, shape, known)
+        (facts, shape, text, json, known)
     }
 }
 
@@ -180,25 +234,42 @@ enum StreamShape {
     /// A MessagePack map or array leads it (a record, or a pack source's
     /// envelope): judged whole before it is a body file (FIX 12150).
     MessagePack,
-    /// A body a reader interprets: it stays in its row.
+    /// Text, a container or a body a stream rule hits: a body file the
+    /// batch door's secret scan and mask read whole (FIX 22075).
+    Interpreted,
+    /// An owning adapter's carrier: a body file its adapter's readers and
+    /// put checks read whole, as the batch door does (FIX 22091).
+    Carrier,
+    /// A MessagePack body a stream rule hits, or an empty one: it stays in
+    /// its row, where the batch door judges it.
     Row,
 }
 
-/// What a body's `head` shows it: an owning adapter's tag (each names
-/// itself `oneiron.` at the head, one byte in at most) or a ZIP, gzip or
-/// PDF container stays in its row; a MessagePack map or array is judged
-/// whole; any other head is opaque.
-fn stream_shape(head: &[u8]) -> StreamShape {
+/// What a body's `head` shows it. An owning adapter's carrier names itself
+/// `oneiron.` at the head, one byte in at most, or, an agent's birth source,
+/// in its canonical JSON's leading format: a carrier file (FIX 22091). Text
+/// and a ZIP, gzip or PDF container are interpreted. A body a stream rule of
+/// the write door hits (`hit`) is interpreted too, unless MessagePack leads
+/// it: that one stays in its row, as before, where the batch door judges it
+/// and a record's stored-row readers read it. Any other MessagePack map or
+/// array is judged whole, a pack source's or a shape seed's among them; any
+/// other head is opaque.
+fn stream_shape(head: &[u8], text: bool, hit: bool) -> StreamShape {
     let Some(&lead) = head.first() else {
         return StreamShape::Row;
     };
     let tagged = |bytes: &[u8]| bytes.starts_with(b"oneiron.");
+    let messagepack = matches!(lead, 0x80..=0x9f | 0xdc..=0xdf);
     if tagged(head)
         || head.get(1..).is_some_and(tagged)
-        || crate::batch::secret_scan::is_container(head)
+        || head.starts_with(b"{\"format\":\"oneiron.")
     {
+        StreamShape::Carrier
+    } else if hit && messagepack && !text {
         StreamShape::Row
-    } else if matches!(lead, 0x80..=0x9f | 0xdc..=0xdf) {
+    } else if text || hit || crate::batch::secret_scan::is_container(head) {
+        StreamShape::Interpreted
+    } else if messagepack {
         StreamShape::MessagePack
     } else {
         StreamShape::Opaque
@@ -209,18 +280,20 @@ fn stream_shape(head: &[u8]) -> StreamShape {
 enum Judged {
     /// A body file of this kind.
     File(AssetFileKind),
-    /// It stays in its row: its bytes, when the judgement read them whole.
-    Row(Option<Vec<u8>>),
+    /// It stays in its row: its bytes, which the judgement read whole.
+    Row(Vec<u8>),
 }
 
 /// `file`, a staged body `len` long that MessagePack leads, judged as
 /// [`super::asset_file_kind`] judges it whole. When a map with a string key
-/// leads it, it is read whole, as its readers read a record, and files only
-/// with no hit of the write door's rules: a body they hit stays in its row,
-/// where the batch door judges it. Any other is judged as it streams (its
-/// first value, then the owning adapters' stream test), so a long body of
-/// that shape, a weights shard whose header length starts with such a byte
-/// among them, never sits whole in memory (FIX 12091).
+/// leads it, it is read whole, as its readers read a record: an owning
+/// adapter's carrier files as one, whose bytes the batch door reads (FIX
+/// 22091); a record files only with no hit of the write door's rules, as a
+/// body they hit stays in its row, where the batch door judges it. Any
+/// other is judged as it streams (its first value, then the owning
+/// adapters' stream test), so a long body of that shape, a weights shard
+/// whose header length starts with such a byte among them, never sits whole
+/// in memory (FIX 12091).
 ///
 /// # Errors
 ///
@@ -241,25 +314,44 @@ fn judge_messagepack(file: &BodyFile, len: u64) -> Result<Judged> {
                 .map_err(|_| Error::InvariantViolation("asset body past this machine's memory"))?,
         )?;
         return Ok(
-            match super::asset_file_kind(&bytes)
-                .filter(|_| crate::batch::secret_scan::write_tree_hit(&bytes, None).is_none())
-            {
+            match super::asset_file_kind(&bytes).filter(|kind| {
+                *kind == AssetFileKind::Carrier
+                    || crate::batch::secret_scan::write_tree_hit(&bytes, None).is_none()
+            }) {
                 Some(kind) => Judged::File(kind),
-                None => Judged::Row(Some(bytes)),
+                None => Judged::Row(bytes),
             },
         );
     }
-    // No keyed map leads it: what the whole-body test still reads is whether
-    // an owning adapter (a pack source, a receipt source) reads it.
+    // No string-keyed map leads it: what the whole-body test still reads is
+    // whether an owning adapter reads it, a shape seed's or a pack source's
+    // marker in any field-name form: a carrier file.
+    if crate::vault_shape::names_shape_seed(io::BufReader::with_capacity(
+        LINE_INDEX_BLOCK_BYTES as usize,
+        FileFromStart::new(file, len),
+    )) {
+        return Ok(Judged::File(AssetFileKind::Carrier));
+    }
     let attaches = crate::serialize::attaches_as_file_read(
         ENTITY_TYPE_ASSET,
         &mut FileFromStart::new(file, len),
     )?;
-    Ok(if attaches {
-        Judged::File(AssetFileKind::Opaque)
+    Ok(Judged::File(if attaches {
+        AssetFileKind::Opaque
     } else {
-        Judged::Row(None)
-    })
+        AssetFileKind::Carrier
+    }))
+}
+
+/// Whether a staged body a JSON object or array opens is what an agent's
+/// birth source decoder reads as one, valid or not, read through as it does
+/// and whatever bytes its strings hold: a carrier file its validator and
+/// readers read whole (FIX 22075, 22091).
+fn names_birth_source(file: &BodyFile, len: u64) -> bool {
+    crate::agent_def::is_birth_source_candidate(io::BufReader::with_capacity(
+        LINE_INDEX_BLOCK_BYTES as usize,
+        FileFromStart::new(file, len),
+    ))
 }
 
 /// A body file read from its start by range, whatever its descriptor's
@@ -390,7 +482,8 @@ impl crate::Vault {
         if !ASSET_FILE_PLANE {
             return Ok(None);
         }
-        Ok(KnownValues::load_in_writer(&self.store, txn)?.map(Arc::new))
+        // One write's passes share the index they read (FIX 12210, 12229).
+        KnownValues::shared_in_writer(&self.store, txn)
     }
 
     /// The body instances ASSET bodies of the lengths `lens` may be filed
@@ -425,11 +518,13 @@ impl crate::Vault {
     /// that puts it (FIX 3677): a body past [`ASSET_INLINE_BODY_BYTES`]
     /// spills to a temp file in the body directory as it streams, sealed as
     /// it streams on a sealed vault, and is published under its name (synced,
-    /// renamed, the directory synced) when its stream shows it opaque, or,
-    /// when MessagePack leads it, when the whole-body classification files
-    /// it ([`judge_messagepack`]: a record its stored-row readers read
-    /// nothing from, read whole once, among them; FIX 12150). Any other
-    /// body is held whole for its row, as a slice put holds it. `mime`
+    /// renamed, the directory synced) when its stream shows it opaque,
+    /// interpreted (FIX 22075) or an owning adapter's carrier (FIX 22091),
+    /// or, when MessagePack leads it, when the whole-body classification
+    /// files it ([`judge_messagepack`]: a record its stored-row readers read
+    /// nothing from, or a pack source or shape seed, read whole once, among
+    /// them; FIX 12150). Any other body is held whole for its row, as a
+    /// slice put holds it. `mime`
     /// is the body's media type, kept in its manifest. Each value of `known`
     /// a published file carries is found as it streams, for its put to mark
     /// (FIX 5395). Nothing is refused for its size (Rule 5).
@@ -490,10 +585,11 @@ impl crate::Vault {
                 spill = Some(opened);
             }
         }
-        let (facts, shape, known) = meter.finish();
+        let (facts, shape, text, json, known) = meter.finish();
         let staged = |body| StagedAssetBody {
             facts,
             mime: mime.map(str::to_owned),
+            text,
             body,
             key: None,
             known: StreamKnown::default(),
@@ -516,7 +612,19 @@ impl crate::Vault {
             held.read_range(0, len)
         };
         let kind = match shape {
+            StreamShape::Opaque | StreamShape::Interpreted
+                if ASSET_FILE_PLANE
+                    && mint.is_some()
+                    && json
+                    && names_birth_source(&held, facts.len) =>
+            {
+                AssetFileKind::Carrier
+            }
             StreamShape::Opaque if ASSET_FILE_PLANE && mint.is_some() => AssetFileKind::Opaque,
+            StreamShape::Carrier if ASSET_FILE_PLANE && mint.is_some() => AssetFileKind::Carrier,
+            StreamShape::Interpreted if ASSET_FILE_PLANE && mint.is_some() => {
+                AssetFileKind::Interpreted
+            }
             StreamShape::MessagePack if ASSET_FILE_PLANE && mint.is_some() => {
                 match judge_messagepack(&held, facts.len)
                     .inspect_err(|_| dir.discard(spilled.temp()))?
@@ -524,10 +632,6 @@ impl crate::Vault {
                     Judged::File(kind) => kind,
                     Judged::Row(bytes) => {
                         dir.discard(spilled.temp());
-                        let bytes = match bytes {
-                            Some(bytes) => bytes,
-                            None => whole(&held)?,
-                        };
                         return Ok(staged(Staged::Inline(bytes)));
                     }
                 }
@@ -544,7 +648,14 @@ impl crate::Vault {
         let key = spilled.publish(&dir)?;
         Ok(StagedAssetBody {
             key,
-            known,
+            // An interpreted or carrier file's values are placed by the batch
+            // door, in its text and in each member, as a body in its row is
+            // (FIX 22075, 22091): its stream's root matches mark nothing.
+            known: if matches!(kind, AssetFileKind::Interpreted | AssetFileKind::Carrier) {
+                StreamKnown::default()
+            } else {
+                known
+            },
             _pin: Some(pin),
             ..staged(Staged::File { file: held, kind })
         })
@@ -572,6 +683,11 @@ impl crate::Vault {
         staged: &StagedAssetBody,
     ) -> Result<()> {
         let batch = self.batch_in();
+        // A body this install writes is not one its home served, whatever
+        // bytes it holds: the owner's discard of a world copy keeps it
+        // (FIX 14534).
+        #[cfg(feature = "sync")]
+        crate::sync::asset_body::home_proof::forget_in_txn(&self.store, txn, *id)?;
         if let Staged::File { file, .. } = &staged.body {
             staged
                 .known
@@ -591,8 +707,11 @@ impl crate::Vault {
                 mime: staged.mime.clone(),
             }
             .encode()?;
-            batch
-                .put_asset_file(id, occurred, learned_at, &manifest, staged.facts)
+            staged
+                .read_by_batch_door(
+                    id,
+                    batch.put_asset_file(id, occurred, learned_at, &manifest, staged.facts),
+                )?
                 .apply(txn)?;
             // A file's new mask spans refresh the repo index copies its bytes
             // derive (FIX 7608 slice 3).
@@ -660,14 +779,17 @@ impl crate::Vault {
                 mime: staged.mime.clone(),
             }
             .encode()?;
-            batch.put_replicated_asset_file(
+            staged.read_by_batch_door(
                 id,
-                occurred,
-                learned_at,
-                Some(row_version),
-                &manifest,
-                staged.facts,
-            )
+                batch.put_replicated_asset_file(
+                    id,
+                    occurred,
+                    learned_at,
+                    Some(row_version),
+                    &manifest,
+                    staged.facts,
+                ),
+            )?
         } else {
             let bytes = match &staged.body {
                 Staged::Inline(bytes) => std::borrow::Cow::Borrowed(bytes.as_slice()),

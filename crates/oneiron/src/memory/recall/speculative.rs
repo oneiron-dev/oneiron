@@ -29,7 +29,9 @@ impl Memory<'_> {
             Some(worlds) => lane.within_worlds(worlds.clone()),
             None => lane,
         };
-        let selection = if lane.read_receipt(None, 0)?.applied.deny_all {
+        // A key that reads nothing by itself still recalls what a Grant of
+        // its own reads (FIX 7528).
+        let selection = if lane.search_receipt(None, 0)?.applied.deny_all {
             selection.denied()
         } else {
             self.recall_faceted(selection, scope, None, &self.vault.store.read())?

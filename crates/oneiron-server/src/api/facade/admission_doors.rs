@@ -19,6 +19,38 @@ pub(crate) fn admission_observer() -> Option<Arc<dyn LineObserver>> {
     OBSERVER.try_with(Arc::clone).ok()
 }
 
+/// `work` under `observer`, the serving call's admission observer as the
+/// task that spawned `work` held it: each wait `work` takes in a line is
+/// reported on that call's receipt. No task-local crosses a spawn on its
+/// own, so a task run for part of a call carries it there (FIX 4735).
+pub(crate) async fn with_admission_observer<F: Future>(
+    observer: Option<Arc<dyn LineObserver>>,
+    work: F,
+) -> F::Output {
+    match observer {
+        Some(observer) => OBSERVER.scope(observer, work).await,
+        None => work.await,
+    }
+}
+
+/// [`with_admission_observer`] with the observer this task holds now, taken
+/// before `work` is spawned.
+pub(crate) fn carrying_admission_observer<F: Future>(work: F) -> impl Future<Output = F::Output> {
+    with_admission_observer(admission_observer(), work)
+}
+
+/// `run` on this thread under `observer`: a blocking hop's closure, whose
+/// own spawns then carry the call's observer as an async task's do.
+pub(crate) fn with_admission_observer_sync<R>(
+    observer: Option<Arc<dyn LineObserver>>,
+    run: impl FnOnce() -> R,
+) -> R {
+    match observer {
+        Some(observer) => OBSERVER.sync_scope(observer, run),
+        None => run(),
+    }
+}
+
 struct Flight {
     tracker: AdmissionTracker,
     settled: bool,
@@ -56,28 +88,69 @@ pub(crate) fn call_verb<'a>(
     let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
     let admitted = super::clock_ingress::scoped(restrictive, async move {
         let named = call.invocation()?;
-        // No receipt of an off-record sitting is ever kept. Session-bound
-        // calls retain their original door and its own recording policy.
-        if named.is_none()
-            || call.session_ref().is_some()
-            || oneiron::task_verb::sdk::NO_RECORD_ROWS.contains(&verb)
-            || verb.starts_with("self.admission.")
-            || !oneiron::task_verb::sdk::AgentVerb::from_name(verb)
-                .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_facade)
-        {
+        if named.is_none() || !tracks_admission(verb) {
             return dispatch::call_verb(server, call, verb, input).await;
         }
         let value = match input {
             Ok(value) => value,
             Err(error) => return dispatch::call_verb(server, call, verb, Err(error)).await,
         };
+        // No receipt of an off-record sitting is ever kept (OF-063): a call
+        // inside an anonymous off-record session its principal is verified
+        // in, or one serving a room NOTE (FIX 4280), keeps none, judged on
+        // arrival as its call receipt judges it. Any other session-bound
+        // call keeps its admission receipt as anywhere else (FIX 4735).
+        if keeps_no_record(server, call, verb, &value) {
+            return dispatch::call_verb(server, call, verb, Ok(value)).await;
+        }
         // A row that binds no actor still runs under its original authority
         // gate. It has no actor-owned admission ledger to read back.
         let Ok((actor, class)) = facade_actor(server, call.auth()) else {
             return dispatch::call_verb(server, call, verb, Ok(value)).await;
         };
         let invocation = named.expect("named invocation checked above");
-        let digest = oneiron::receipt::call_json_digest(&value);
+        // Settlement's run of a held call reopens its held intent (FIX 8753).
+        let resumed = call.drain().is_some();
+        // A paced call the drain already ran answers its saved outcome to
+        // the same caller's retry, before an admission intent starts again:
+        // that intent is settled, and the effect never runs twice (FIX 8753).
+        if !resumed {
+            let ended = crate::server::blocking(|| {
+                let memory = super::facade_invocation(
+                    crate::api::credential_memory(server.vault(), Some(call.auth()), actor, class)
+                        .at(call.auth().locality()),
+                    call,
+                )?;
+                Ok::<_, FacadeApiError>(memory.ended_paced_verb_reply_listed(verb))
+            })?;
+            match ended {
+                // Released by the rows its saved answer was derived from, and
+                // judged again for this caller first: the drain read them,
+                // not this retry (FIX 22294, as FIX 21054).
+                Some(Ok((value, saved))) => {
+                    let producers = oneiron::memory::ProducerRows::saved(saved);
+                    let value = super::drained_still_admitted(
+                        &server.vault,
+                        call.auth(),
+                        &producers,
+                        value,
+                        super::export_transfer::owner_whole_vault_export_admitted(
+                            server,
+                            call.auth(),
+                            verb,
+                        ),
+                    );
+                    return Ok(FacadeCallOutput::listed(value, &producers));
+                }
+                Some(Err(error)) => return Err(error.into()),
+                None => {}
+            }
+        }
+        // An artifact write whose content its body held as a file states
+        // the input as it arrived, not the input without it (FIX 22074).
+        let digest = call
+            .arrival_digest(verb)
+            .map_or_else(|| oneiron::receipt::call_json_digest(&value), str::to_owned);
         let room = call.room_turn()?.map(|id| id.to_hex()).unwrap_or_default();
         let fingerprint = crate::api::facade::invocation_body(
             Some(call.auth()),
@@ -87,13 +160,25 @@ pub(crate) fn call_verb<'a>(
         let fingerprint = blake3::Hash::from_bytes(fingerprint).to_hex().to_string();
         let (server, call, verb) = (Arc::clone(server), call.owned(), verb.to_owned());
         let store_key = crate::invocation_claims::invocation_claim_key(invocation);
+        // The call this one runs inside, when it is nested (a skill's or an
+        // action step's verb): its waits are that call's waits too.
+        let outer = admission_observer();
         let worker = super::clock_ingress::scoped(restrictive, async move {
             // The receipt and worker start inside the same detached task:
             // hanging up during the durable write cannot orphan an intent.
             let vault = Arc::clone(server.vault());
             let name = verb.clone();
             let tracker = super::clock_ingress::run_blocking(move || {
-                AdmissionTracker::start(vault, actor, class, invocation, &name, digest, fingerprint)
+                AdmissionTracker::start(
+                    vault,
+                    actor,
+                    class,
+                    invocation,
+                    &name,
+                    digest,
+                    fingerprint,
+                    resumed,
+                )
             })
             .await
             .map_err(|_| super::host_doors::support::internal(&verb))??;
@@ -101,7 +186,7 @@ pub(crate) fn call_verb<'a>(
                 tracker,
                 settled: false,
             };
-            let observer: Arc<dyn LineObserver> = Arc::new(flight.tracker.clone());
+            let observer = tracker_observer(&flight.tracker, outer);
             let result = OBSERVER
                 .scope(observer, async {
                     dispatch::call_verb(&server, &call.call(), &verb, Ok(value)).await
@@ -132,4 +217,73 @@ pub(crate) fn call_verb<'a>(
         .map_err(|_| super::host_doors::support::internal("admission"))?
     });
     Box::pin(super::secret_body::with_custody_secret(secret, admitted))
+}
+
+/// The observer a tracked call's waits report to: its own receipt, and,
+/// for a call nested in another tracked call (a skill's or an action step's
+/// verb), that outer call's observer too, since the outer call waits with
+/// it (FIX 4735).
+pub(crate) fn tracker_observer(
+    tracker: &AdmissionTracker,
+    outer: Option<Arc<dyn LineObserver>>,
+) -> Arc<dyn LineObserver> {
+    match outer {
+        Some(outer) => Arc::new(NestedObserver {
+            own: tracker.clone(),
+            outer,
+        }),
+        None => Arc::new(tracker.clone()),
+    }
+}
+
+/// A nested tracked call's observer: each transition goes to its own
+/// receipt and to the call it runs inside.
+struct NestedObserver {
+    own: AdmissionTracker,
+    outer: Arc<dyn LineObserver>,
+}
+
+impl LineObserver for NestedObserver {
+    fn queued(&self) {
+        self.own.queued();
+        self.outer.queued();
+    }
+
+    fn held(&self) {
+        self.own.held();
+        self.outer.held();
+    }
+}
+
+/// Whether a named call of `verb` keeps an admission receipt, on every
+/// transport that runs it: a facade row, other than an off-record session's
+/// own rows and the admission reads themselves.
+pub(crate) fn tracks_admission(verb: &str) -> bool {
+    !oneiron::task_verb::sdk::NO_RECORD_ROWS.contains(&verb)
+        && !verb.starts_with("self.admission.")
+        && oneiron::task_verb::sdk::AgentVerb::from_name(verb)
+            .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_facade)
+}
+
+/// Whether `call` of `verb` with `input` sits off the record, so it keeps no
+/// admission receipt: the same two signals its call receipt reads, the
+/// anonymous off-record session its principal is verified in
+/// ([`crate::api::call_receipt::session_is_anonymous_for`]) and a room NOTE
+/// it serves ([`crate::api::call_receipt::room_notes::room_note_call`]).
+fn keeps_no_record(
+    server: &SyncServer,
+    call: &FacadeCall<'_>,
+    verb: &str,
+    input: &serde_json::Value,
+) -> bool {
+    let principal = crate::api::call_receipt::request_principal(call.auth());
+    let session = call.session_ref();
+    crate::api::call_receipt::session_is_anonymous_for(server, session, principal)
+        || crate::api::call_receipt::room_notes::room_note_call(
+            server,
+            session,
+            principal,
+            verb,
+            Some(input),
+        )
 }

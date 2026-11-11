@@ -307,6 +307,7 @@ pub(super) fn dispatch_result_receipt(
         gate_reason_codes,
         gate_receipt_reasons,
         effector_charge,
+        budget_settlement_events,
         effect_state,
         resolution,
         outcome,
@@ -343,6 +344,7 @@ pub(super) fn dispatch_result_receipt(
             resolution,
             effector_budget: None,
             budget_ladder_events: Vec::new(),
+            budget_settlement_events,
             budget_pool: None,
         };
     }
@@ -517,6 +519,7 @@ pub(super) fn dispatch_result_receipt(
         resolution,
         effector_budget,
         budget_ladder_events,
+        budget_settlement_events,
         budget_pool,
     }
 }
@@ -678,8 +681,15 @@ fn append_contract_receipt(
     );
 }
 
-/// Stamps the request's optional content, idempotency, dedupe, identity and
-/// counterparty references on the receipt.
+/// Receipt field listing every recipient of one message to several, in its
+/// role and place, as JSON `[{"role":"to","address":...}, ...]` (fix list
+/// row 17645). The receipt's outcome is the one message's: no recipient is
+/// claimed apart from it. Each recipient's counterparty projection lists
+/// the message and counts its one debit.
+pub(crate) const RECIPIENTS_FIELD: &str = "recipients";
+
+/// Stamps the request's optional content, idempotency, dedupe, identity,
+/// counterparty and recipient references on the receipt.
 fn append_request_receipt(receipt: &mut ReceiptRecord, request: &OutboundDispatchRequest) {
     append_optional_receipt_field(
         receipt,
@@ -705,4 +715,11 @@ fn append_request_receipt(receipt: &mut ReceiptRecord, request: &OutboundDispatc
         "counterparty_ref",
         request.counterparty_ref.as_deref(),
     );
+    if !request.intent.recipients.is_empty()
+        && let Ok(recipients) = serde_json::to_string(&request.intent.recipients)
+    {
+        receipt
+            .fields
+            .insert(RECIPIENTS_FIELD.to_owned(), recipients);
+    }
 }

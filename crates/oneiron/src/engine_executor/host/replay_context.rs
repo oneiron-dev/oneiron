@@ -5,11 +5,13 @@
 //! of its source. A parent's settled findings are kept at each lookup of a
 //! handle that names none of its own results. The fold receipt, or none, of
 //! each whole result the guest describes is kept as its card carries it:
-//! this step's staged receipt first, then the committed one. Each answer
-//! kept is the one the read goes on.
+//! this step's staged receipt first, then the committed one. The door's row
+//! check on each read of another run's result is kept with the reference
+//! the read was made by, withheld and refused reads too. Each answer kept is
+//! the one the read goes on.
 
 use super::*;
-use crate::code_run::{CapturedReaderChild, ReaderRoute, vault_ref};
+use crate::code_run::{CapturedReaderChild, ReaderRoute, RetainedReadVerdict, vault_ref};
 
 /// The reader binding `gated_write` holds for run `run`, when the run is a
 /// reader child: its job's task and claimed generation, its route, the
@@ -58,6 +60,24 @@ impl RecordingJsHost<'_, '_> {
             .reader_reads
             .observe_findings(self.next_seq, selection);
         Ok(finding)
+    }
+
+    /// Keeps the answer the door's row check gave a read of another run's
+    /// result by `reference`, under the run's callable rows when `callable`,
+    /// at the step's bridge position: admitted, withheld, or the code of the
+    /// refusal it named (FIX 6352).
+    pub(super) fn observe_retained_read(
+        &mut self,
+        reference: &JsResultRef,
+        callable: bool,
+        answer: std::result::Result<bool, &str>,
+    ) {
+        self.context_capture.reader_reads.observe_retained_read(
+            self.next_seq,
+            reference,
+            callable,
+            RetainedReadVerdict::of(answer),
+        );
     }
 
     /// The fold receipt the card of `read`, a whole result, carries: this

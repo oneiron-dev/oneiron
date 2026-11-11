@@ -43,6 +43,13 @@ impl TaskAskSpec {
         {
             return Err(MemoryError::bad_request("invalid ask ladder prediction"));
         }
+        if let Some(rec) = &self.rec
+            && !self.what.options.contains_key(&rec.option)
+        {
+            return Err(MemoryError::bad_request(
+                "ask recommendation names an unknown option",
+            ));
+        }
         if self.what.class_key.as_ref().is_some_and(String::is_empty) {
             return Err(MemoryError::bad_request("invalid ask question class"));
         }

@@ -11,16 +11,25 @@ mod erase_ask;
 mod execute;
 mod export_records;
 mod membership;
+mod owner_add;
 mod removal;
+mod removal_answer;
 mod removal_archive;
+mod removal_file;
 mod removal_import;
 
 pub use erase_ask::{
     EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
 };
+pub(crate) use membership::SharedMemberDeparture;
 pub use membership::{
     OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState,
 };
+pub use owner_add::AddOwnerPlan;
+pub use removal_answer::RemovalExportFile;
+#[cfg(all(unix, feature = "sync"))]
+pub(crate) use removal_file::removal_archive_body_keys_in_txn;
+pub(crate) use removal_file::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
 pub use removal_import::{ReceivedRemovalArchive, ReceivedRemovalArchiveState};
 
 use super::FederationGrantRole as Role;
@@ -50,8 +59,8 @@ const SHARED_VAULT_DELETION: SideTable<(), SharedVaultDeletion, LegacyJson> =
     SideTable::new(&side_table::SHARED_VAULT_DELETION);
 
 /// Each export-first removal's archive, bound to the removed Owner, with its
-/// records' frozen positions (FIX-LIST 8224). Key: hex32 (removed Owner)
-/// ":" hex32 (receipt id).
+/// records' frozen positions (FIX-LIST 8224) and the file its bytes are
+/// (FIX 3679). Key: hex32 (removed Owner) ":" hex32 (receipt id).
 const REMOVAL_EXPORT: SideTable<String, removal_archive::StoredRemovalExport, Named> =
     SideTable::new(&side_table::SHARED_ACT_REMOVAL_EXPORT);
 
@@ -60,12 +69,36 @@ fn removal_export_key(member: &str, receipt_id: &str) -> String {
     format!("{member}:{receipt_id}")
 }
 
+/// One archive row by its key's two halves: the removed member and the
+/// removal receipt. Its archive file is held under this pair
+/// ([`removal_file::removal_archive_owner`]), never the receipt alone, so
+/// one member's expiry or erase reaches no other member's archive of the
+/// same receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchiveRow {
+    pub(crate) member: EntityId,
+    pub(crate) receipt: EntityId,
+}
+
+impl ArchiveRow {
+    /// The row an archive row key names; `None` for a key that does not
+    /// read.
+    fn from_key(row_key: &str) -> Option<Self> {
+        let (member, receipt) = row_key.split_once(':')?;
+        Some(Self {
+            member: EntityId::from_hex(member).ok()?,
+            receipt: EntityId::from_hex(receipt).ok()?,
+        })
+    }
+}
+
 /// The acts the shared preset lists. Their names are the policy row names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SharedActKind {
     DeleteVault,
     Erase,
+    AddOwner,
     TransferOwnership,
     RemoveOwner,
 }
@@ -74,6 +107,7 @@ impl SharedActKind {
         match self {
             Self::DeleteVault => "delete_vault",
             Self::Erase => "erase",
+            Self::AddOwner => "add_owner",
             Self::TransferOwnership => "transfer_ownership",
             Self::RemoveOwner => "remove_owner",
         }
@@ -82,6 +116,7 @@ impl SharedActKind {
         match act {
             "delete_vault" => Some(Self::DeleteVault),
             "erase" => Some(Self::Erase),
+            "add_owner" => Some(Self::AddOwner),
             "transfer_ownership" => Some(Self::TransferOwnership),
             "remove_owner" => Some(Self::RemoveOwner),
             _ => None,
@@ -126,6 +161,9 @@ pub struct RemoveOwnerPlan {
 pub enum SharedVaultChange {
     VaultDeleted {
         backup_retain_until: u64,
+    },
+    OwnerAdded {
+        owner: String,
     },
     OwnershipTransferred {
         from: String,
@@ -204,17 +242,35 @@ pub struct SharedActExecutionReceipt {
     pub revoked_slips: Vec<String>,
     /// The export made for a removed Owner before the removal.
     pub export: Option<SharedActExport>,
-    /// The hash (hex) of the host-signed `OwnerHandover` AUTHORITY_LOG
-    /// entry an ownership change wrote in this writer, which names this
-    /// receipt back. `None` when nothing was signed: a membership change, or
-    /// an act run with no slip issuer.
+    /// The hash (hex) of the AUTHORITY_LOG entry that signs the change and
+    /// names this receipt back: the host-signed `OwnerHandover` an ownership
+    /// change wrote in this writer, or the carrier-signed membership
+    /// execution record of a change no host issuer signed, in this writer
+    /// or once a later pass counted it (FIX 12335). `None` while that record
+    /// is pending, and for a change no entry names: an invitation, an
+    /// erase, or a member change whose withdrawals the host signed apart.
     pub authority_entry: Option<String>,
+    /// Whether the change's signed record is pending (FIX 12335): its writer
+    /// had no host issuer to sign the withdrawal of a Grant an owner's
+    /// signed mint made, or its Owner handover, and the carrier-signed
+    /// record of it does not count yet. The pass that counts it clears this
+    /// and names the record in `authority_entry`. A pending change is never
+    /// reported signed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub authority_record_pending: bool,
     /// The person who authorized the change, PERSON hex, when the writer
     /// holds one apart from its actor: the attested account owner of a
     /// managed vault's proof-of-control recovery, as its signed handover
     /// names him (FIX 5401). `None` for every other change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authorizer: Option<String>,
+    /// The bound Connect grants a genuine leave released here (FIX 12555):
+    /// the grants actually withdrawn and the typed remainder still standing.
+    /// `Some` only when the leave selected at least one bound grant; `None`
+    /// on every other change. A local outcome, never proof the peer dropped
+    /// its copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detach: Option<DetachReport>,
     pub completed_at: u64,
 }
 
@@ -228,6 +284,80 @@ pub struct SharedActExport {
     pub records: u64,
     pub digest: String,
     pub diary_reads: Vec<crate::batch::export::ExportDiaryRead>,
+}
+
+/// The local outcome of releasing an owner's bound Connect grants when a
+/// member genuinely left (FIX 12555): the grants actually withdrawn here and
+/// the per-grant typed remainder still standing. It names no peer delivery,
+/// courtesy deletion or remote erasure.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetachReport {
+    /// Bound Connect grants actually withdrawn here, id hex.
+    pub withdrawn: Vec<String>,
+    /// Bound grants still standing, each with its typed remainder.
+    pub remaining: Vec<DetachRemainder>,
+}
+
+/// One bound grant still standing after a genuine leave, and why.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetachRemainder {
+    /// The grant still standing, id hex.
+    pub grant: String,
+    /// Why it still stands.
+    pub reason: DetachRemainderReason,
+}
+
+/// Why a bound grant still stands after a genuine leave.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetachRemainderReason {
+    /// No host issuer signed in this writer; the membership still progressed.
+    NoIssuer,
+    /// The withdrawal failed with this stable error kind; the membership
+    /// still progressed. The kind names the failure, never its payload.
+    WithdrawalFailed { kind: crate::error::ErrorKind },
+}
+
+/// What a genuine leave's detach wrote, before its receipt is written.
+pub(crate) struct DetachOutcome {
+    /// Bound Connect grants actually withdrawn, for the receipt's lists.
+    pub(crate) withdrawn: Vec<EntityId>,
+    /// Slips revoked with those withdrawals, for the receipt's lists.
+    pub(crate) revoked_slips: Vec<[u8; 32]>,
+    /// The durable report: `Some` only when at least one bound grant was
+    /// selected, whatever its outcome.
+    pub(crate) report: Option<DetachReport>,
+}
+
+impl DetachOutcome {
+    /// No bound grant selected: nothing withdrawn, no report.
+    pub(crate) fn none() -> Self {
+        Self {
+            withdrawn: Vec::new(),
+            revoked_slips: Vec::new(),
+            report: None,
+        }
+    }
+
+    /// The outcome over the selected bound grants: withdrawn ids and slips
+    /// for the receipt's lists, and the report over both outcomes.
+    pub(crate) fn collected(
+        withdrawn: Vec<EntityId>,
+        revoked_slips: Vec<[u8; 32]>,
+        remaining: Vec<DetachRemainder>,
+    ) -> Self {
+        let report = DetachReport {
+            withdrawn: withdrawn.iter().map(EntityId::to_hex).collect(),
+            remaining,
+        };
+        Self {
+            withdrawn,
+            revoked_slips,
+            report: Some(report),
+        }
+    }
 }
 
 /// An executed act's receipt and, for an export-first removal, where its
@@ -280,19 +410,6 @@ pub struct RemovalExportCopy {
     pub delivered_at: u64,
     pub expires_at: u64,
     pub export: crate::memory::MemoryExport,
-}
-
-impl RemovalExportCopy {
-    /// What the delivery tells an Owner: never the archive.
-    fn delivery(&self) -> RemovalExportDelivery {
-        RemovalExportDelivery {
-            receipt_id: self.receipt_id.clone(),
-            recipient: self.member.clone(),
-            digest: self.export.digest.clone(),
-            delivered_at: self.delivered_at,
-            expires_at: self.expires_at,
-        }
-    }
 }
 
 /// One recipient's durable notice that a receipt was written.
@@ -434,11 +551,36 @@ pub struct SharedVaultDeletion {
     pub backup_retain_until: u64,
 }
 
+/// What the authority log holds of one change, as its receipt names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChangeRecord {
+    /// No entry names the change: an invitation, an erase, or a member
+    /// change whose withdrawals the host signed apart.
+    Unnamed,
+    /// The counted entry that signs the change and names its receipt.
+    Signed(crate::authority::AuthorityEntryHash),
+    /// No issuer signed the change in its writer, and its carrier-signed
+    /// record does not count yet (FIX 12335).
+    Pending,
+}
+
+impl ChangeRecord {
+    /// The entry a receipt names, for a signed change alone.
+    const fn entry(self) -> Option<crate::authority::AuthorityEntryHash> {
+        match self {
+            Self::Signed(hash) => Some(hash),
+            Self::Unnamed | Self::Pending => None,
+        }
+    }
+}
+
 /// One applied effect, before its receipt is written.
 struct Effect {
     change: SharedVaultChange,
     grants: Vec<EntityId>,
     revoked_slips: Vec<[u8; 32]>,
+    /// The genuine leave's detach report, when it selected a bound grant.
+    detach: Option<DetachReport>,
     /// Holders the change concerns beyond the live Owners and the actor.
     notify: BTreeSet<EntityId>,
 }
@@ -457,7 +599,7 @@ fn live_owners(holders: &[LiveActHolder], verb: Option<&str>) -> BTreeSet<Entity
 }
 fn non_root(role: Option<Role>) -> Result<()> {
     match role {
-        None | Some(Role::Admin | Role::Member | Role::Viewer) => Ok(()),
+        None | Some(Role::Admin | Role::Steward | Role::Member | Role::Viewer) => Ok(()),
         Some(_) => Err(invalid()),
     }
 }
@@ -618,7 +760,7 @@ impl Vault {
             .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
             .ok_or_else(invalid)?;
         REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
-        Ok(Some(stored.copy.delivery()))
+        Ok(Some(stored.delivery()))
     }
 
     /// Persist the receipt and one notice to each live Owner, the actor and
@@ -634,7 +776,7 @@ impl Vault {
         owners: BTreeSet<EntityId>,
         effect: Effect,
         export: Option<SharedActExport>,
-        authority_entry: Option<crate::authority::AuthorityEntryHash>,
+        record: ChangeRecord,
         authorizer: Option<EntityId>,
         now: u64,
     ) -> Result<SharedActExecutionReceipt> {
@@ -653,10 +795,13 @@ impl Vault {
                 .map(|slip| crate::entity_id::bytes_to_hex_lower(slip))
                 .collect(),
             export,
-            authority_entry: authority_entry
+            authority_entry: record
+                .entry()
                 .as_ref()
                 .map(|hash| crate::entity_id::bytes_to_hex_lower(hash)),
+            authority_record_pending: record == ChangeRecord::Pending,
             authorizer: authorizer.as_ref().map(EntityId::to_hex),
+            detach: effect.detach,
             completed_at: now,
         };
         self.store

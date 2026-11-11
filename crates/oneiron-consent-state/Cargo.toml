@@ -1,0 +1,25 @@
+[package]
+name = "oneiron-consent-state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Consent state below the oneiron engine: grants, markers, bypass, the code-wait state and voice consent"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
+rmpv = { workspace = true, features = ["with-serde"] }
+schemars = "=0.8.22"
+serde = { workspace = true }
+
+[lints]
+workspace = true

@@ -56,10 +56,12 @@ pub(super) fn held_out_receipts_in_txn(
     )
 }
 
-/// [`held_out_receipts`] beside the outcome-ledger rows it read (FIX 7288):
-/// one attempt row id per receipt, in receipt order. `None` is unknown: a
-/// receipt that names no row. Capture only: the receipts are exactly
-/// [`held_out_receipts_in_txn`]'s.
+/// [`held_out_receipts`] with optional physical source row ids.
+///
+/// The outcome ledger has side-table rows, not `EntityId`-addressable entities,
+/// so its source ids are unknown (`None`). Receipt suffixes and input read sets
+/// do not identify the physical rows this read accessed. The receipts, order,
+/// and errors are exactly [`held_out_receipts_in_txn`]'s.
 ///
 /// # Errors
 ///
@@ -77,25 +79,7 @@ pub(super) fn held_out_receipts_sourced_in_txn(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<(Vec<String>, Option<Vec<EntityId>>)> {
-    let receipts = crate::skill_reliability::attributed_outcome_receipts(vault, rtxn, skill)?;
-    let rows = match crate::skill_reliability::attributed_outcome_row_ids(vault, rtxn, skill)? {
-        None => None,
-        Some(ids) => Some(
-            receipts
-                .iter()
-                .zip(ids)
-                .filter(|(receipt, _)| receipt_is_held_out(skill, receipt))
-                .map(|(_, row)| row)
-                .collect::<Vec<_>>(),
-        ),
-    };
-    Ok((
-        receipts
-            .into_iter()
-            .filter(|receipt| receipt_is_held_out(skill, receipt))
-            .collect(),
-        rows,
-    ))
+    Ok((held_out_receipts_in_txn(vault, rtxn, skill)?, None))
 }
 
 /// Held-out outcomes WITH their world labels, in the same ledger order as
@@ -113,6 +97,43 @@ pub(super) fn held_out_outcome_results_in_txn(
             .filter(|(receipt, _)| receipt_is_held_out(skill, receipt))
             .collect(),
     )
+}
+
+/// Held-out evidence beside the complete native bodies consulted by its fold.
+/// Unlike the attempt links in `held_out_receipts_sourced_in_txn`, these sources
+/// include rows consumed before the held-out filter and native exclusions.
+pub(super) fn held_out_evidence_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(Vec<String>, Option<Vec<EntityId>>)> {
+    let (outcomes, sources) =
+        crate::skill_reliability::attributed_outcome_results_sourced(vault, rtxn, skill)?;
+    Ok((
+        outcomes
+            .into_iter()
+            .map(|(receipt, _)| receipt)
+            .filter(|receipt| receipt_is_held_out(skill, receipt))
+            .collect(),
+        sources,
+    ))
+}
+
+/// World labels beside the same native read-body sources, before subset filtering.
+pub(super) fn held_out_outcome_results_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(Vec<(String, bool)>, Option<Vec<EntityId>>)> {
+    let (outcomes, sources) =
+        crate::skill_reliability::attributed_outcome_results_sourced(vault, rtxn, skill)?;
+    Ok((
+        outcomes
+            .into_iter()
+            .filter(|(receipt, _)| receipt_is_held_out(skill, receipt))
+            .collect(),
+        sources,
+    ))
 }
 
 /// The optimize job's view: everything the gate did NOT reserve.
@@ -566,10 +587,19 @@ pub fn skill_edit_cycle_cap(vault: &Vault) -> Result<u32> {
 }
 
 pub(super) fn cycle_cap_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<u32> {
+    cycle_cap_sourced_in_txn(vault, rtxn).map(|(cap, _)| cap)
+}
+
+/// A stored cap is a body on a singleton carrier with no row identity.
+/// Absence uses the unchanged default and consumes no stored cap body.
+pub(super) fn cycle_cap_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<(u32, Option<Vec<EntityId>>)> {
     let Some(bytes) = SKILL_EDIT_CYCLE_CAP.get(&vault.store, rtxn, &())? else {
-        return Ok(DEFAULT_SKILL_EDIT_CYCLE_CAP);
+        return Ok((DEFAULT_SKILL_EDIT_CYCLE_CAP, Some(Vec::new())));
     };
-    Ok(u32::from_be_bytes(bytes))
+    Ok((u32::from_be_bytes(bytes), None))
 }
 
 /// Sets K.

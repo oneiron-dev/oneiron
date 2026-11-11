@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `examples/vector_row_codec.rs` | src | s | — | — | Bench-only micro-bench (never part of production paths): the public persisted vector-row f16 codec in… |
 | `src/active_write_txn.rs` | src | s | 1 struct · 2 fn | ActiveWriteTxnGuard | The calling thread's open write-transaction depth: a guard raises it while a vault write runs its closure… |
 | `src/agent_birth_identity.rs` | src | s | 1 fn | — | The derived id of the asset that carries a birthed agent's captured source |
 | `src/agent_definition_codec.rs` | src | s | 2 mod | — | Store-layer modules of core `store::agent_definition_codec`; core re-exports each one at its old path |
@@ -29,7 +30,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_inputs.rs` | src | s | 7 struct · 2 enum · 2 fn | AttemptEvent, AttemptInterventionEffect, AttemptInterventionKind, ClaimAttempt, CompleteAttempt, EnqueueAttempt, FailAttempt, RetryAttempt +1 | Queue admission inputs and durable intervention vocabulary |
 | `src/attempt_lease.rs` | src | s | 1 fn | — | Lease-owner validation for queued-work storage ports |
 | `src/attempt_payload_route.rs` | src | s | 1 struct · 1 const | Routing | The routing probe that tells an agent dispatch's attempt row apart without the strict reader: its record… |
-| `src/attempt_read_producer.rs` | src | s | 1 struct · 1 fn · 14 const | ReadSetProducer | Named producers of a queued attempt's recorded input rows |
+| `src/attempt_read_producer.rs` | src | s | 1 struct · 1 fn · 15 const | ReadSetProducer | Named producers of a queued attempt's recorded input rows |
 | `src/attempt_record_codec.rs` | src | s | 1 mod | — | Store-layer modules of core `store::attempt_record_codec`; core re-exports each one at its old path |
 | `src/attempt_record_codec/field_validators.rs` | src | s | 10 fn · 51 const | — | The attempt record's field validators and their length caps and error literals: every check the strict… |
 | `src/attempt_result.rs` | src | s | 1 struct · 4 fn · 5 const | AttemptResultRef | Validated durable result references for queued work |
@@ -58,12 +59,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/mod.rs` | src | s | 2 struct · 1 enum · 1 fn | AppliedPut, BatchEntityPut, EffectiveEntity | Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers |
 | `src/batch/row_put.rs` | src | s | 1 enum | RowPut | What a put is to the row it writes, as the record-scope stamp reads it |
 | `src/batch/secret_scan.rs` | src | s | 7 mod | — | Store-layer modules of core `batch::secret_scan`; core re-exports each one at its old path |
-| `src/batch/secret_scan/container.rs` | src | m | 1 struct · 3 enum · 21 fn · 1 type · 3 const · 7 mod · 1 re-export | Budget, ContainerReadMode, Kind, Stop | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
+| `src/batch/secret_scan/container.rs` | src | m | 1 struct · 3 enum · 24 fn · 1 type · 3 const · 9 mod · 2 re-export | Budget, ContainerReadMode, Kind, Stop | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
 | `src/batch/secret_scan/container/archive.rs` | src | s | 1 struct · 6 fn · 2 const | Entry | A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its… |
 | `src/batch/secret_scan/container/gzip.rs` | src | s | 2 fn | — | A gzip file's payload: every member it chains, decoded in order as one payload, each member's CRC-32 and… |
-| `src/batch/secret_scan/container/pdf.rs` | src | m | 10 fn · 3 const | — | A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly… |
+| `src/batch/secret_scan/container/pacing.rs` | src | s | 2 struct · 1 enum · 1 trait · 3 fn | ReadCancelled, ReadPacer, ReadPacing, ReadProgress | Scheduling data for one live container read |
+| `src/batch/secret_scan/container/pdf.rs` | src | m | 11 fn · 3 const | — | A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly… |
 | `src/batch/secret_scan/container/projection_edit.rs` | src | s | 1 struct · 1 enum · 1 type | MemberEdits, RetainedProjectionEdit | An agent's edit of a masked container copy, replayed member by member onto its ORIGINAL (FIX 7608 slice… |
 | `src/batch/secret_scan/container/retained_iterative.rs` | src | s | 2 struct · 1 enum · 1 trait | FillPlaces, Frame, RebuildAll, RetainedLeafTransform | The container walk and rebuild with their frames on the heap (FIX 8031, 7943): each container's frame held… |
+| `src/batch/secret_scan/container/sevenz.rs` | src | s | 3 fn · 1 const | — | A 7z archive's members (FIX 11575): each entry with data, by its place in the archive's file list, decoded… |
 | `src/batch/secret_scan/container/tar.rs` | src | s | 3 fn | — | A tar archive's members: each regular file in archive order, read whole against its declared length under… |
 | `src/batch/secret_scan/container/xz.rs` | src | s | 2 fn | — | An xz file's payload: the stream decoded whole, its checks verified and nothing left after the last stream… |
 | `src/batch/secret_scan/lift_history.rs` | src | s | 2 mod | — | Store-layer modules of core `batch::secret_scan::lift_history`; core re-exports each one at its old path |
@@ -97,7 +100,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/model.rs` | src | s | 8 struct · 10 enum · 2 fn · 2 const | AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignAuthenticationMethod, EsignField, EsignItem +10 | Typed document, recipient, field and event vocabulary for ARCH-0064 |
 | `src/blob_artifact/esign/render.rs` | src | s | 1 mod | — | Store-layer modules of core `blob_artifact::esign::render`; core re-exports each one at its old path |
 | `src/blob_artifact/esign/render/admitted.rs` | src | s | 1 struct · 1 trait · 1 fn | InspectionMemory, StageCount | A PDF inspection's memory, admitted by its host before the parse allocates it (FIX 8065) |
-| `src/blob_artifact/esign/sealer.rs` | src | s | 6 struct · 4 enum · 2 fn | EsignSealRequest, EsignSealed, EsignSealerError, EsignSignatureRevision, EsignVerdict, SealDegrade, SealDegradeReason, SealProfile +2 | The seal port: how the engine reaches a PAdES sealer it does not link |
+| `src/blob_artifact/esign/sealer.rs` | src | s | 7 struct · 4 enum · 2 fn | EsignSealRequest, EsignSealed, EsignSealerError, EsignSignatureRevision, EsignVerdict, SealActiveContentFacts, SealDegrade, SealDegradeReason +3 | The seal port: how the engine reaches a PAdES sealer it does not link |
 | `src/blob_artifact/esign/signature_revision.rs` | src | s | 1 struct · 10 fn · 4 const | BaseAdmission | The ordinary signature revision, written on the engine's side of the seal (ARCH-0075… |
 | `src/blob_artifact/esign/template.rs` | src | s | 3 struct · 1 enum | ContentSource, FieldGeographyPack, HtmlContentTemplate, TemplatePage | Regenerable repo HTML content plus an independent data-only field geography |
 | `src/blob_artifact/native_output.rs` | src | s | 1 struct · 2 fn | NativeOutput | Native organ export files offered as artifact versions |
@@ -115,15 +118,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/checkout_task.rs` | src | s | 1 enum · 2 fn | CheckoutTaskClass | Checkout task classes and their lease-reclaim policy |
 | `src/checkpoint_host_recipient.rs` | src | s | 1 struct · 1 enum · 3 fn | HostHoldsRecipient, HostHoldsSealing | Host recipient and sealing policy for checkpoint legal-hold members |
 | `src/checkpoint_payload/kept.rs` | src | s | 1 struct · 4 fn | KeptGenerations | What the kept copies of a vault's checkpoints still need of its payload leaves (KS7-5): each compartment's… |
-| `src/checkpoint_payload/loro.rs` | src | s | 5 struct · 2 enum · 1 trait · 10 fn · 1 type · 4 const · 2 mod | Atom, JoinedLoro, LoroActorCodec, OpenedRow, Site, Slice, SplitRow, SplitValue | The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full… |
-| `src/checkpoint_payload/loro/frame.rs` | src | s | 1 struct · 3 const | Frame | A Loro row's content as the shared projection frames it: the framing version, the family, the slice, each… |
+| `src/checkpoint_payload/loro.rs` | src | m | 5 struct · 2 enum · 1 trait · 10 fn · 1 type · 4 const · 2 mod | Atom, JoinedLoro, LoroActorCodec, OpenedRow, Site, Slice, SplitRow, SplitValue | The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full… |
+| `src/checkpoint_payload/loro/frame.rs` | src | s | 1 struct · 4 const | Frame | A Loro row's content as the shared projection frames it: the framing version, the family, the slice, each… |
 | `src/checkpoint_payload/loro/proof.rs` | src | s | 1 fn | — | The typed equality of two Loro histories a join's proof compares (FIX 6072, Engine R1): change by change and… |
 | `src/checkpoint_payload/mod.rs` | src | s | 1 struct · 2 enum · 16 fn · 5 const · 2 mod | CompartmentAccess, PayloadItem, Subtype | Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at… |
 | `src/claim_lineage.rs` | src | s | 6 fn | — | Claim source lineage, evidence taint, and stored value projections |
-| `src/claim_refinement_control.rs` | src | s | 2 struct · 3 enum · 4 fn | RefinementControl, RefinementState, RefinementTarget, SharedSkillDelta, SharedSkillLane | A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered… |
+| `src/claim_refinement_control.rs` | src | s | 2 struct · 3 enum · 5 fn | RefinementControl, RefinementState, RefinementTarget, SharedSkillDelta, SharedSkillLane | A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered… |
 | `src/claim_source_ranking/mod.rs` | src | m | 1 struct · 8 fn | SourceRankingPolicy | PACK data for provenance-aware claim ordering |
 | `src/claim_vad_payment.rs` | src | s | 2 struct | ClaimVadPayment, ClaimVadPaymentWorker | Per-handle claim VAD payment wake state and attached-worker lifetime |
-| `src/code_artifact_body.rs` | src | m | 1 struct · 1 enum · 7 fn · 9 const | CodeArtifactBody, CodeArtifactClass | Code artifact body values and the pinned MessagePack codec |
+| `src/code_artifact_body.rs` | src | m | 1 struct · 1 enum · 8 fn · 10 const | CodeArtifactBody, CodeArtifactClass | Code artifact body values and the pinned MessagePack codec |
 | `src/code_commit_metadata.rs` | src | s | 1 struct · 3 fn | CodeCommitMetadata | Canonical commit authorship, message and file modes |
 | `src/code_document_values.rs` | src | s | 5 struct · 1 enum · 10 fn | CodeDocumentFrontier, CodeDocumentRows, CodeFileEdit, CodeFileMetadataEdit, CodeFilePresence, CodeSpanAnchor | Tested code file frontiers, text edits and Git metadata edits |
 | `src/code_import_manifest.rs` | src | s | 2 struct · 6 fn · 1 const | CodeImportAnchor, CodeImportManifest | Reviewed repository import anchors, manifest digests and raw claim codecs |
@@ -131,16 +134,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_memory_values/mod.rs` | src | m | 15 struct · 5 enum · 21 fn · 8 const · 1 mod · 1 re-export | AlwaysOnCodeMemoryContract, AnchorTransfer, AnchorTransferKind, AnchorTransferReceipt, AnchorTransferRecord, AttachCodeMemory, BlocksWriteContext, CodeMemoryAnchor +12 | Symbol-anchored memory values, deterministic union rules and row codecs |
 | `src/code_memory_values/pull_result.rs` | src | s | 1 struct | CodeMemoryPullResult | Provenance-labelled code-memory pull values |
 | `src/code_promotion_gap.rs` | src | s | 1 enum · 1 fn | QueuePromotionGap | Reasons a tested revision lacks reviewed promotion |
+| `src/code_repo_registration.rs` | src | s | 1 struct · 1 enum · 9 fn · 1 const | CodeRepoRegistration, CodeRepoSource | The retained configuration of a registered repository (FIX 4299, CODE-CUSTODY-01), nested in its… |
 | `src/code_revision_identity.rs` | src | s | 3 fn | — | Deterministic aggregation-session, tested-revision and provenance identifiers |
-| `src/code_revision_record/commit_metadata.rs` | src | s | 2 fn | — | Authorship, message and file modes are canonical revision data, not export input |
+| `src/code_revision_record/commit_metadata.rs` | src | s | 3 fn | — | Message and file modes are canonical revision data, not export input; authorship is erasable attribution… |
 | `src/code_revision_record/file_frontiers.rs` | src | s | 2 fn | — | Pure tested-file frontier map validation and codecs |
 | `src/code_revision_record/mod.rs` | src | s | 1 struct · 3 mod · 2 re-export | CodePathRetirement | Code revision records, canonical codecs and pure complete-tree vocabulary |
 | `src/code_revision_record/tree_codec.rs` | src | s | 5 fn | — | The strict canonical encoding of a tested queue revision's blob map and queue record, and their fold input… |
 | `src/code_snapshot.rs` | src | s | 5 mod | — | Store-layer modules of core `store::code_snapshot`; core re-exports each one at its old path |
 | `src/code_snapshot/file_mode.rs` | src | s | 1 fn · 1 const | — | The Git file modes a code snapshot keeps (FIX 6869, G4 PR1) |
 | `src/code_snapshot/ids.rs` | src | s | 4 fn | — | Domain-separated entity identifiers for immutable snapshot assets and manifests |
-| `src/code_snapshot/repo_ref.rs` | src | s | 1 enum · 7 fn · 2 const | RepoRef | RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization |
-| `src/code_snapshot/snapshot.rs` | src | m | 2 struct · 8 fn · 2 type · 8 const | CodebaseFileEntry, CodebaseSnapshot | Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation |
+| `src/code_snapshot/repo_ref.rs` | src | s | 1 enum · 8 fn · 2 const | RepoRef | Repository references: committed local/GitHub trees and current local captures |
+| `src/code_snapshot/snapshot.rs` | src | m | 2 struct · 10 fn · 2 type · 8 const | CodebaseFileEntry, CodebaseSnapshot | Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation |
 | `src/code_snapshot/validation.rs` | src | s | 2 fn | — | Project identifiers and normalized paths in code snapshot manifests |
 | `src/code_tree_blob.rs` | src | s | 1 struct · 1 const | CodeTreeBlob | Untouched blob references and submodule mode in tested code trees |
 | `src/compaction.rs` | src | s | 2 mod | — | Store-layer modules of core `compaction`; core re-exports each one at its old path |
@@ -153,11 +157,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/community_graph/mod.rs` | src | s | 4 mod · 6 re-export | — | Pure community graph projection, snapshot codecs and configuration |
 | `src/config/community_graph/refresh.rs` | src | s | 4 fn | — | Refresh policy, affected-set expansion and read-side cache view |
 | `src/config/community_graph/types.rs` | src | s | 9 struct · 3 fn · 1 type · 7 const · 1 re-export | CommunityCacheMeta, CommunityEdge, CommunityGraphInput, CommunityId, CommunityMembership, CommunityProjection, CommunityQueryView, CommunityRefreshReport +1 | Community constants, error, ids, config and shared shells |
-| `src/config/context_spec.rs` | src | s | 1 struct · 2 enum · 8 fn · 9 const | ChatProjection, ContextSpec, MemoryProjection | The `ContextSpec` descriptor, its bounds, normalization, and structural validation |
+| `src/config/context_spec.rs` | src | s | 1 struct · 2 enum · 8 fn · 5 const | ChatProjection, ContextSpec, MemoryProjection | The `ContextSpec` descriptor, its bounds, normalization, and structural validation |
 | `src/config/retrieval_affect.rs` | src | s | 1 struct · 3 fn · 3 const | AffectRetrievalPolicy | Per-vault read-side affect retrieval policy |
 | `src/config/tagging.rs` | src | s | 2 struct · 1 enum · 9 fn · 7 const | TaggingMarkerConfig, TaggingMode, TaggingTraceHistory | Tagging marker configuration and identity validation |
 | `src/connector_key_status.rs` | src | s | 1 enum · 2 fn | ConnectorKeyStatus | Connector-key lifecycle status and its pinned wire strings |
-| `src/consent_bound.rs` | src | m | 7 struct · 5 enum · 49 fn · 6 const | ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope, BoundSubject, ConsentDecision +4 | Consent bound vocabulary, normalization and containment |
+| `src/consent_bound.rs` | src | L | 7 struct · 5 enum · 51 fn · 5 const | ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope, BoundSubject, ConsentDecision +4 | Consent bound vocabulary, normalization and containment |
 | `src/consolidation_evidence.rs` | src | s | 1 fn · 1 const | — | Domain-separated content hashes of consolidation source bytes |
 | `src/consolidation_reader.rs` | src | s | 1 enum · 1 fn · 1 const | ConsolidationReader | The readers that consolidate a claim: the vocabulary the engine's consolidation check and the store layer's… |
 | `src/consolidation_scope.rs` | src | s | 1 enum · 2 fn | DreamerConsolidationScope | Consolidation attempt-table lanes and their stored queue kinds |
@@ -176,7 +180,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/core_write/dag.rs` | src | s | 3 struct · 1 enum · 1 fn | CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt | The `vault.conversations.records.append` row's input and receipt types (OF-181) and the append door's input… |
 | `src/core_write/mod.rs` | src | s | 1 mod · 4 re-export | — | Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages… |
 | `src/core_write/shape.rs` | src | m | 2 struct · 2 enum · 14 fn · 5 const | AnnouncementAuthority, CoreWriteRefusal, CoreWriteTextField, CoreWriteTimes | The shape every core entity write shares: its id, its interval, its announcement-normalized body and its… |
-| `src/critic_lens.rs` | src | s | 2 struct · 9 fn · 7 const | CriticLens, LensCatalog | Critic lens catalogue vocabulary, seed catalogue and pure shape checks |
+| `src/critic_lens.rs` | src | s | 2 struct · 9 fn · 6 const | CriticLens, LensCatalog | Critic lens catalogue vocabulary, seed catalogue and pure shape checks |
 | `src/critical_confirm_record.rs` | src | s | 5 const | — | The critical-confirm pending record: its reason codes, its deadline, and the deterministic binding the… |
 | `src/critical_confirm_retry.rs` | src | s | 2 struct · 3 fn · 1 type · 2 const | ConfirmDemotionRetries, ConfirmDemotionRetry | The expiry walk's backoff state for a timeout demotion that keeps failing (FIX 12079): a row whose demotion… |
 | `src/custody_retirement_status.rs` | src | s | 1 const | — | Completion marker for acknowledged custody retirement |
@@ -231,22 +235,24 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate_decision/vet.rs` | src | s | 3 fn · 1 const | — | Gate-decision record, notice, and receipt-reason validators |
 | `src/gate_decision/write_mode.rs` | src | s | 1 struct | GateWriteMode | Claim-write decision recording and pending-consent mode |
 | `src/gate_reason.rs` | src | m | 3 enum · 7 fn · 2 const | GateMetricReasonClass, GateOutcome, GateReasonCode | Gate outcomes, stable reason codes, and pure metric classification |
-| `src/git_wire.rs` | src | s | 21 mod | — | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
-| `src/git_wire/argv.rs` | src | s | 5 fn | — | Frozen typed argv: one constructor per git verb plus the token validators |
+| `src/git_wire.rs` | src | s | 23 mod | — | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
+| `src/git_wire/argv.rs` | src | s | 6 fn | — | Frozen typed argv: one constructor per git verb plus the token validators |
 | `src/git_wire/bridge.rs` | src | s | 3 fn | — | `repo_mutation` migration bridge: validated arbitrary-argv entry plus failure redaction |
 | `src/git_wire/bundle_tree.rs` | src | s | 1 struct · 2 fn · 1 static | BundleTreeEdit | Exact bundle bytes and modes staged through the existing Git bridge |
 | `src/git_wire/config.rs` | src | s | 21 const | — | Every `GIT_WIRE_*` constant: schema, domain, bounds, env baseline, closed config policy |
 | `src/git_wire/execution_context.rs` | src | s | 2 enum · 4 fn | GitExecutionContext, GitExecutionEffect | Typed Git invocation context: repository selector and operation policy travel together |
 | `src/git_wire/execution_scope.rs` | src | s | 1 fn | — | Private Git execution view, derived only from an admitted repository profile |
 | `src/git_wire/failure.rs` | src | s | 1 struct · 1 enum · 9 fn · 1 type | GitWireFailure, GitWireFailureClass | Failure taxonomy and redaction: classified git failures plus the two error-constructor helpers |
-| `src/git_wire/hub_read.rs` | src | s | 4 fn | — | Fixed network-read profile for a private disposable hub object store |
+| `src/git_wire/hub_read.rs` | src | s | 5 fn | — | Fixed read profiles for a private disposable hub object store: the network profile, and the local-only… |
 | `src/git_wire/ids.rs` | src | s | 4 struct · 1 enum · 16 fn | GitOid, GitRefExpectation, GitRefName, GitRefPublication, ObservedGitRef | Validated git identity newtypes: ref names, object ids, observations, expectations, publications |
 | `src/git_wire/import_fetch.rs` | src | s | 1 mod | — | Store-layer modules of core `git_wire::import_fetch`; core re-exports each one at its old path |
-| `src/git_wire/import_fetch/profile.rs` | src | s | 1 struct · 4 fn | ImportProcessProfile | The fixed process profile of an outside import's Git legs (FIX 6871) |
-| `src/git_wire/mirror_push.rs` | src | s | 1 struct · 3 fn · 3 const | MirrorEgress | Fixed outbound push profile for an origin's mirror (ARCH-0068 RA8). https only, no redirects, no proxy, no… |
+| `src/git_wire/import_fetch/profile.rs` | src | s | 1 struct · 5 fn · 1 const · 3 crate-vis | ImportProcessProfile | The fixed process profile of an outside import's Git legs (FIX 6871) |
+| `src/git_wire/mirror_push.rs` | src | s | 1 struct · 2 fn · 3 const | MirrorEgress | Fixed outbound push profile for an origin's mirror (ARCH-0068 RA8). https only, no redirects, no proxy, no… |
 | `src/git_wire/mutation_commands.rs` | src | s | 6 fn | — | Repository scope identity and the existing redacted Git command bridge |
 | `src/git_wire/objects.rs` | src | s | 3 struct · 7 fn | GitCommitHeader, GitCommitRequest, GitTreeEntry | Commit and tree object model: tree entries, commit headers, commit-request bytes, tree parsers |
 | `src/git_wire/operation.rs` | src | s | 2 enum · 6 fn · 1 const | GitWireEffectClass, GitWireOperation | Operation enum, effect classes, and the stable wire-name mapping |
+| `src/git_wire/origin_relay.rs` | src | s | 1 struct · 4 fn | OriginRelayEgress | The fixed process profile of an origin mirror's Git legs on a served host: an exact publish's and an… |
+| `src/git_wire/path_text.rs` | src | s | 6 fn · 1 const | — | The text form of a Git path (FIX 21326) |
 | `src/git_wire/plan.rs` | src | s | 1 struct · 1 enum · 1 fn | GitWirePlannedOid, PlannedPublication | Two-phase plan assembly: object writes plus the ref publications they authorize |
 | `src/git_wire/process.rs` | src | s | 7 fn | — | The crate's single git child-process constructor plus its bounded IO and thread-pump helpers |
 | `src/git_wire/projected_object.rs` | src | m | 2 struct · 1 enum · 11 fn · 3 const | GitObjectEdge, GitProjectedPayload, RawTreeEntry | A masked copy's objects and its store (FIX 7608 slice 2b-i, CALL P2 `PreservePayload`) |
@@ -264,7 +270,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/home_handoff_custody.rs` | src | s | 1 mod | — | Store-layer modules of core `store::home_handoff_custody`; core re-exports each one at its old path |
 | `src/home_handoff_custody/seal.rs` | src | s | 3 fn · 4 const | — | The erasable handoff key's envelopes (FIX 8875): content sealed under the key itself, and the key's transit… |
 | `src/host_issuer_seed.rs` | src | s | 2 const | — | Independent host-issuer seed format and derivation label |
-| `src/housekeeping_report.rs` | src | s | 4 struct · 2 enum · 6 fn | HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork | What a housekeeping pass reports: one row per sweep, and the counts each sweep run reports |
+| `src/housekeeping_report.rs` | src | m | 4 struct · 2 enum · 6 fn | HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork | What a housekeeping pass reports: one row per sweep, and the counts each sweep run reports |
 | `src/housekeeping_schedule.rs` | src | m | 3 struct · 3 enum · 8 fn · 4 const | Deadline, HostOnlyReason, HousekeepingBudget, HousekeepingHandle, HousekeepingSweep, Runner | Housekeeping sweep identifiers, cadence policy, and pass budget values |
 | `src/human_task.rs` | src | s | 1 mod | — | Store-layer modules of core `human_task`; core re-exports each one at its old path |
 | `src/human_task/storage.rs` | src | s | 14 fn · 15 const | — | vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker |
@@ -274,7 +280,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/inbox/notification_recipient.rs` | src | s | 1 enum · 4 fn | NotificationRecipientScope | Who a pending notification is delivered to: the recipient markers its stored body carries, read one way… |
 | `src/inbox/view_values.rs` | src | s | 3 struct · 1 enum · 1 const | AgentInboxDiaryReview, AgentInboxItemKind, AgentInboxParticipant, InboxImpact | Inbox item kinds, ordering impact, diary-review input and receiving participants |
 | `src/index_keys.rs` | src | s | 3 fn | — | Byte layouts of the edge, temporal and type index keys |
-| `src/inference_context.rs` | src | s | 1 struct · 1 enum · 3 fn | HostInferenceBinding, HostInferenceContext | Host-bound inference identity and extraction context |
+| `src/inference_context.rs` | src | s | 1 struct · 1 enum · 4 fn | HostInferenceBinding, HostInferenceContext | Host-bound inference identity and extraction context |
 | `src/key_custody.rs` | src | s | 8 mod | — | Store-layer modules of core `store::key_custody`; core re-exports each one at its old path |
 | `src/key_custody/anchor.rs` | src | s | 1 fn · 2 const | — | The custody anchor (KS-4, FIX 5685): one lineage's current position, kept where neither the vault's image… |
 | `src/key_custody/credential_faults.rs` | src | s | 1 enum · 1 const | CustodyCredentialPassFault | A credential's keys in the passes every custody client shares (KS-6, FIX-LIST 5687 part 1): a head's… |
@@ -297,7 +303,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/known_value_index/forms.rs` | src | m | 1 struct · 11 fn · 1 const | View | A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not… |
 | `src/known_value_index/rolling.rs` | src | s | 3 struct · 11 fn | RollingKey, RollingScan, RollingSets | The keyed rolling prefilter (FIX 12209): each entry keeps a 2-byte keyed rolling value of its first window… |
 | `src/l2_evidence.rs` | src | s | 2 struct · 4 fn | L2BaseCache, L2BaseSummary | Bounded, vault-owned cache of score-free context evidence |
-| `src/lib.rs` | src | s | 221 mod | — | The store layer of the oneiron engine |
+| `src/lib.rs` | src | s | 223 mod | — | The store layer of the oneiron engine |
 | `src/live_speaker_calls.rs` | src | s | 1 struct · 3 fn | LiveSpeakers | Per-room live voice-call registration index |
 | `src/local_queue_budget.rs` | src | s | 1 fn | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/long_interval.rs` | src | s | 1 const | — | The occurrence span past which a stored record is a long interval |
@@ -306,20 +312,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/manifest_origin_keys.rs` | src | s | 2 fn | — | The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the… |
 | `src/materialization_event.rs` | src | s | 1 struct | OriginMark | Commit-bound materialization revisions and read invalidation data |
 | `src/merge_queue.rs` | src | s | 5 mod | — | Store-layer modules of core `merge_queue`; core re-exports each one at its old path |
-| `src/merge_queue/driver_types.rs` | src | s | 7 struct · 4 enum · 2 fn | QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDriveHold, QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass, QueueDriveStatus +3 | The queue driver's instructions, outcomes, holds and the durable drive record a batch keeps (FIX 6868, G2 PR2) |
+| `src/merge_queue/driver_types.rs` | src | s | 8 struct · 4 enum · 2 fn | QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDiagnosisDecision, QueueDriveHold, QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass +4 | The queue driver's instructions, outcomes, holds and the durable drive record a batch keeps (FIX 6868, G2 PR2) |
 | `src/merge_queue/file_metadata.rs` | src | s | 2 fn | — | A received bundle's files in speculation (FIX 6869, G4 PR2): each one's reviewed exact Git state change… |
 | `src/merge_queue/source_types.rs` | src | s | 1 struct · 2 const | ServedQueueSource | The served queue source's names (FIX 6869): which authenticated import a served repository's checked queue… |
 | `src/merge_queue/tested_types.rs` | src | s | 6 struct · 5 enum · 3 fn | CodePushProjectionSourceLink, CodePushSourceLink, QueueAppliedSource, QueueExportHold, QueueExportHoldReason, QueueGreenExportView, QueueRevisionIntent, QueueRevisionLink +3 | The tested-revision seal's records, links and holds (FIX 6868, G2 PR3) |
 | `src/merge_queue/types.rs` | src | s | 8 struct · 3 enum · 7 fn | BatchState, CheckReport, EffectIntent, LandingPermit, MergeFile, MergeFileExpected, MergeProposal, MergeQueuePointers +3 | Persisted queue records and sealed landing/check boundaries |
 | `src/model_decision/answer_actor.rs` | src | s | 1 enum · 4 fn | AnswerActor | An answer actor identity, including its erased state |
-| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 50 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 52 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
 | `src/model_decision/mod.rs` | src | s | 3 mod · 9 re-export | — | Model-independent typed decision vocabulary and pure policy values |
-| `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 const | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
+| `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 re-export | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
 | `src/model_decision/provider.rs` | src | s | 3 struct · 7 fn · 3 const | PairedAnswer, ProviderCapability, ProviderDecision | Provider answer values, capabilities, and score-level rules |
-| `src/model_decision/questions/mod.rs` | src | s | 2 re-export | — | Graph-question recipe and outcome vocabulary |
+| `src/model_decision/questions/mod.rs` | src | s | 3 re-export | — | Graph-question recipe and outcome vocabulary |
 | `src/model_decision/questions/recipe.rs` | src | s | 2 struct | GraphQuestionInput, GraphQuestionRef | Graph-question identities and explicit evidence joins |
 | `src/model_decision/questions/records.rs` | src | s | 8 struct · 5 enum · 2 fn | CalibrationPair, OmittedNeighbor, OutcomeBinding, OutcomeLabel, OutcomeSource, OutcomeWindowClose, QuestionActivation, QuestionAudience +5 | Standing-question outcome, refresh, and evidence values |
+| `src/model_decision/questions/route.rs` | src | s | 1 struct · 1 enum | DecisionRoute, RoutingPolicy | How a calibration pair's answer was returned: its route and the routing policy revision its receipt pins… |
 | `src/model_decision/roles.rs` | src | s | 3 enum · 1 fn | AskAct, HolderKind, RoleRank | Actor-free role ranks, ask acts, and holder kinds |
 | `src/model_decision/slides_policy.rs` | src | m | 3 struct · 2 enum · 8 fn | SlideReviewLimits, SlideReviewPolicy, SlideReviewPolicyRow, SlideReviewPrecedence, SlideReviewRoute | Manifest-backed operating limits for the artifact judgment adapter |
 | `src/model_decision/state.rs` | src | s | 4 fn | — | Caller-prepared decision state fitting |
@@ -375,7 +382,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_outcome.rs` | src | s | 1 enum · 1 fn | OutboundDispatchOutcome | Stable outcome vocabulary for outbound dispatch observations |
 | `src/outbound_trigger.rs` | src | s | 1 struct · 1 enum · 8 fn | OutboundIntentSource, OutboundIntentTrigger | Source tags and trigger envelopes for outbound intent records |
 | `src/overlay_bookkeeping.rs` | src | s | 3 const | — | Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages |
-| `src/overlay_db/accessors.rs` | src | m | 2 struct · 30 fn · 2 crate-vis | OverlayDb, OverlayStrDb | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
+| `src/overlay_db/accessors.rs` | src | m | 2 struct · 31 fn · 2 crate-vis | OverlayDb, OverlayStrDb | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
 | `src/overlay_db/iters.rs` | src | s | 7 enum · 1 fn | OverlayDupValues, OverlayIter, OverlayPrefix, OverlayRange, OverlayRevRange, OverlayStrIter, OverlayStrPrefix | Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str) |
 | `src/overlay_db/merge.rs` | src | m | 4 struct · 11 crate-vis | MergedPrefixRows, MergedRows, PrefetchedMergedRows, StrMergedRows | Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and… |
 | `src/overlay_db/mod.rs` | src | s | 3 mod · 1 re-export | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
@@ -410,8 +417,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/reaction_predicate.rs` | src | s | 1 const | — | Reaction outcome predicate stored by event-outcome projections |
 | `src/reader_fold_receipt.rs` | src | s | 2 struct | ReceiptPartial, SummaryMemo | Stored reader-fold receipts and their occurrence vocabulary |
 | `src/receipt_identity.rs` | src | s | 1 fn · 2 const | — | The identity marker carried after receipt attribution is erased |
-| `src/receipt_row.rs` | src | m | 1 enum · 6 fn · 83 const | ReceiptKind | Receipt row fields, query values, and deterministic ordering |
-| `src/receive_scan.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 const | PushedBlob, ReceiveBlobKind, ReceiveScanHit | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
+| `src/receipt_row.rs` | src | s | 1 enum · 6 fn · 38 const | ReceiptKind | Receipt row fields, query values, and deterministic ordering |
+| `src/receive_scan.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 const | PushedBlob, ReceiveBlobKind, ReceiveScanHit | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
 | `src/record_links/blocks.rs` | src | m | 1 struct · 1 enum · 2 fn | Blocks, Line | The block structure [`super::parse_record_links`] reads a text's lines through (CommonMark, as far as… |
 | `src/record_links/mod.rs` | src | m | 2 struct · 2 fn · 4 const · 1 mod | ProseLink, ProseLinks | Pure parsing of record links in Markdown text |
 | `src/record_ref.rs` | src | s | 4 fn · 4 const | — | Typed record references and bounded record display labels |
@@ -423,7 +430,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/refinement_carrier.rs` | src | s | 1 fn · 1 const | — | Raw refinement carrier framing used by value scans |
 | `src/replay_only_commits.rs` | src | s | 1 struct · 2 fn | ReplayOnlyCommits | The txn ids of recent commits that wrote only request-replay rows (a slip's nonce and proof clock) or the… |
 | `src/replica_edge_key.rs` | src | s | 1 fn | — | The CRDT map key of an edge in a window document |
-| `src/repo_environment.rs` | src | s | 1 struct · 1 enum · 6 fn · 1 const | RepoEnvEntry, RepoEnvFileKind | The dotenv reading (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: ".env: values -> secret store… |
+| `src/repo_environment.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 const | RepoEnvEntry, RepoEnvFileKind | The dotenv reading (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: ".env: values -> secret store… |
 | `src/repo_fork.rs` | src | s | 1 type | — | Repository recovery-fork identity |
 | `src/repo_import_predicate.rs` | src | s | 1 const | — | Predicate of a frozen external repository import source |
 | `src/repo_mutation_record.rs` | src | s | 6 struct · 2 enum · 4 fn · 2 const · 1 re-export | RepoBundleFile, RepoCommitProvenance, RepoConflictClaim, RepoConflictResolutionClaim, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationStatus | Repository mutation operations, journal outcomes and conflict records |
@@ -431,7 +438,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/repo_provenance_trailer.rs` | src | s | 2 fn · 2 const | — | Repository provenance trailer grammar and exact entity-reference parsing |
 | `src/restore_admission.rs` | src | s | 2 struct · 3 enum · 9 fn | Rejected, RestoreAdmissionError, RestoreAdmissionReason, RestoreDestinationState, RestorePhase | Why a cold managed restore refused (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a… |
 | `src/result_body_erasure.rs` | src | s | 1 fn | — | The typed unavailable a read of erased reply content answers with |
-| `src/result_body_pins.rs` | src | s | 4 struct · 8 fn | PinCounts, RebuildEntry, ResultBodyPin, ResultBodyPins | Reader pins: a result body a reader holds is never deleted |
+| `src/result_body_pins.rs` | src | m | 4 struct · 1 enum · 14 fn | PinCounts, RebuildEntry, ResultBodyPin, ResultBodyPins, RetiringFile | Reader pins: a result body a reader holds is never deleted |
 | `src/result_body_rows.rs` | src | s | 2 fn · 3 const | — | The raw result body rows (`CODE_RUN_RAW_OUTPUT`): each row keyed by its body's content handle, where its… |
 | `src/result_manifest.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 const | CodeRunOutputKind, CodeRunOutputPreview | Result-body manifests, occurrence identifiers and their format bounds |
 | `src/result_memory.rs` | src | s | 3 struct · 7 fn | ResultHold, ResultMemoryPool, ResultShare | The memory code-mode result bodies may hold (OF-190 B++) |
@@ -441,7 +448,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retrieval_policy/posterior.rs` | src | s | 1 struct · 1 const | RewardPosterior | A continuous-context Beta kernel posterior |
 | `src/retrieval_signal.rs` | src | s | 1 enum | Signal | The retrieval signals a run scores entities by: which channel ranked a result |
 | `src/retrieval_telemetry.rs` | src | s | 2 mod | — | Store-layer modules of core `store::retrieval_telemetry`; core re-exports each one at its old path |
-| `src/retrieval_telemetry/state.rs` | src | s | 2 struct | RetrievalReplayInputs, RetrievalTurn | Query-free retrieval context, preserved verbatim for offline replay |
+| `src/retrieval_telemetry/state.rs` | src | s | 2 struct · 1 fn | RetrievalReplayInputs, RetrievalTurn | Query-free retrieval context, preserved verbatim for offline replay |
 | `src/retrieval_telemetry/types.rs` | src | s | 1 re-export | — | Retrieval-telemetry record, trace, signal, and blend-weight types |
 | `src/retrieval_values.rs` | src | s | 1 struct | PendingVectorEmbedding | Retrieval result values and transaction-local candidate admission contracts |
 | `src/revision_ref.rs` | src | s | 1 struct | RevisionRef | A retained document frontier's opaque reference (`RevisionRef`), the revision a manifest entry and a… |
@@ -468,10 +475,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_lease/types.rs` | src | s | 1 struct · 1 re-export | SecretTaintRef | Lease/registration/receipt row types, VaultInstant clock, key prefixes |
 | `src/secret_manifest.rs` | src | m | 2 struct · 3 fn · 1 const | SecretManifest, SecretManifestEntry | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
 | `src/secret_name_index.rs` | src | s | 1 struct | NameEntry | The live secret name index: each live custody record's name, the record it resolves to and the name's… |
-| `src/secret_record/codec.rs` | src | s | 1 enum · 6 fn · 4 const | BodyValue | MessagePack body codec for custody records, bands, floors, and bindings |
-| `src/secret_record/mod.rs` | src | s | 3 struct · 1 trait · 7 fn · 9 const · 4 mod · 18 re-export | SecretBinding, SecretCustodyFloor, SecretCustodyFloorSource, TierBand | Secret custody floor and binding vocabulary used by the store layer |
-| `src/secret_record/types.rs` | src | s | 2 struct · 1 enum · 5 fn · 5 const · 2 re-export | SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus | Custody domain types: classes, tiers, bands, floors, bindings, records, and metadata |
-| `src/secret_record/write_records.rs` | src | s | 5 struct · 4 enum · 6 fn · 1 const | ArchiveSameId, CustodyKeptHere, CustodyPlan, FoundKeyAction, FoundKeySettled, FoundNote, RepoFileKeys, RepoFileOriginal +1 | Custody write context, stored-value forms, and value-free change and found-key records |
+| `src/secret_record/codec.rs` | src | s | 5 fn · 4 const | — | MessagePack body codec for custody records, bands, floors, and bindings |
+| `src/secret_record/mod.rs` | src | s | 3 struct · 1 trait · 7 fn · 9 const · 4 mod · 16 re-export | SecretBinding, SecretCustodyFloor, SecretCustodyFloorSource, TierBand | Secret custody floor and binding vocabulary used by the store layer |
+| `src/secret_record/types.rs` | src | s | 1 struct · 1 enum · 2 fn · 5 const · 2 re-export | SecretCustodyMetadata, SecretCustodyStatus | Custody domain types: classes, tiers, bands, floors, bindings, status and metadata |
+| `src/secret_record/write_records.rs` | src | s | 5 struct · 4 enum · 5 fn · 1 const | ArchiveSameId, CustodyKeptHere, CustodyPlan, FoundKeyAction, FoundKeySettled, FoundNote, RepoFileKeys, RepoFileOriginal +1 | Custody write context, stored-value forms, and value-free change and found-key records |
 | `src/secret_rotation.rs` | src | s | 8 fn · 1 const | — | SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build… |
 | `src/serialize.rs` | src | s | 26 mod | — | Store-layer modules of core `serialize`; core re-exports each one at its old path |
 | `src/serialize/access_grant_fields.rs` | src | s | 4 const | — | Access-grant body fields used by context-pack serialization |
@@ -504,25 +511,28 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/yaml_format.rs` | src | s | 3 fn | — | YAML section writer and YAML scalar/key quoting rules |
 | `src/session_overlay/hygiene_tests.rs` | test | s | 1 struct · 1 enum · 7 fn | ObservedAllocator, ShortIdScratch | Allocation-boundary teardown observer for session-owned buffers |
 | `src/session_overlay/journal.rs` | src | m | 4 struct · 1 enum · 10 fn · 4 crate-vis | JournalEntry, JournalRole, JournalScope, PromotePlan, PublishedEntry | Typed session-overlay journal: entries, promotion plans, and replay |
-| `src/session_overlay/keyspace.rs` | src | m | 1 enum · 1 fn · 12 crate-vis | OverlayKeyspace | Overlay keyspace manifest: the 28 named databases and their mutations |
+| `src/session_overlay/keyspace.rs` | src | m | 1 enum · 1 fn · 13 crate-vis | OverlayKeyspace | Overlay keyspace manifest: the 28 named databases and their mutations |
 | `src/session_overlay/mod.rs` | src | s | 7 mod · 5 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
-| `src/session_overlay/overlay/held.rs` | src | s | 8 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
-| `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 7 fn · 9 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
-| `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 8 mod · 2 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
+| `src/session_overlay/overlay/held.rs` | src | s | 11 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
+| `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 8 fn · 10 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
+| `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 8 mod · 3 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
 | `src/session_overlay/overlay/publication.rs` | src | s | 1 fn | — | Visibility of a segment whose base writer has already committed |
 | `src/session_overlay/overlay/repo_projection.rs` | src | s | 2 fn | — | Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a… |
 | `src/session_overlay/overlay/retained.rs` | src | s | 8 crate-vis | — | The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX… |
 | `src/session_overlay/overlay/retire.rs` | src | s | 1 fn | — | Promoted-closure retirement reusing the store's index-key builders |
 | `src/session_overlay/overlay/retire_selected.rs` | src | m | 1 fn | — | Selected-artifact retirement for a natively saved subset (FIX 13687) |
-| `src/session_overlay/overlay/rows.rs` | src | m | 13 fn · 1 crate-vis | — | Row staging, preflight, budget checks, read probes |
-| `src/session_overlay/overlay/segment.rs` | src | m | 1 struct · 2 fn · 3 crate-vis | TxnSegmentGuard | Txn segment install, leases, commit/apply guards |
-| `src/session_overlay/route.rs` | src | s | 1 struct · 1 enum · 6 fn | RouteTarget, SessionWriteRoute | Session write routing: which store a session write lands in per mode |
+| `src/session_overlay/overlay/retrieval_erase.rs` | src | m | 1 struct · 1 fn | RecordMetaRows | A room's copies of a deleted or erased record's own retrieval rows (FIX 17382) |
+| `src/session_overlay/overlay/rows.rs` | src | m | 14 fn · 2 crate-vis | — | Row staging, preflight, budget checks, read probes |
+| `src/session_overlay/overlay/segment.rs` | src | m | 1 struct · 2 fn · 1 re-export · 3 crate-vis | TxnSegmentGuard | Txn segment install, leases, commit/apply guards |
+| `src/session_overlay/overlay/segment/base_retirement.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | BaseRowRetirementGuard | Canonical reader-ledger writes that supersede rows in a sealed overlay |
+| `src/session_overlay/route.rs` | src | s | 1 struct · 1 enum · 7 fn | RouteTarget, SessionWriteRoute | Session write routing: which store a session write lands in per mode |
 | `src/session_overlay/short_id.rs` | src | s | 1 fn · 5 crate-vis | — | Session-scoped short-id allocation over the overlay keyspace |
 | `src/session_overlay/snapshot.rs` | src | m | 3 struct · 2 enum · 13 fn · 1 crate-vis | OverlaySnapshot, SnapshotLookup, SnapshotMergePlan, SnapshotMergeRow, StagedRows | Overlay snapshots: staged-row views merged over durable state for one read |
 | `src/session_overlay/tests.rs` | test | m | — | — | — |
 | `src/setting_seed.rs` | src | s | 1 struct · 15 const | SettingSpec | Learned numeric setting specifications and shipped seeds |
-| `src/settings.rs` | src | s | 3 mod | — | Store-layer modules of core `settings`; core re-exports each one at its old path |
+| `src/settings.rs` | src | s | 4 mod | — | Store-layer modules of core `settings`; core re-exports each one at its old path |
 | `src/settings/backup.rs` | src | s | 1 struct · 1 fn · 2 const | BackupPolicy | The owner's backup setting (FIX 5621): whether a running server takes backups on its own, how many hours… |
+| `src/settings/model_pack.rs` | src | m | 6 struct · 3 enum · 14 fn · 3 const | ModelPack, ModelPackAccess, ModelPackBenchRef, ModelPackChangelogEntry, ModelPackError, ModelPackId, ModelPackModelRetirement, ModelPackPreference +1 | Model packs (FIX 5365, MODEL PACKS = A): the hub form of a seasonal model stack |
 | `src/settings/model_versioning.rs` | src | m | 8 struct · 4 enum · 19 fn · 2 const | ModelStack, ModelStackDeprecation, ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId, ModelStackIdError, ModelStackModel +4 | Versioned default model stack settings |
 | `src/settings/web_connector/mod.rs` | src | s | 4 struct · 5 enum · 3 fn · 3 const · 1 mod · 1 re-export | WebCallOutcome, WebConnectorSetting, WebConnectorUsage, WebConnectorUsagePage, WebConnectorUsageRead, WebCostBasis, WebKeySource, WebProviderKey +1 | Web provider selection and content-free usage vocabulary |
 | `src/settings/web_connector/provider.rs` | src | s | 1 struct · 3 enum · 3 fn · 1 const | FetchRoute, ResultRetention, WebProvider, WebProviderProfile | The provider registry: which providers may serve a web call, on whose key, at what declared price, and how… |
@@ -535,6 +545,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/snapshot_key.rs` | src | s | 1 struct · 4 fn · 3 const | WrappedSnapshotKey | Wrapped inference-snapshot data keys and their byte grammar |
 | `src/snapshot_lifecycle.rs` | src | s | 2 struct · 1 trait · 2 fn · 1 type · 4 re-export | Gate, SnapshotAdmission, SnapshotRuntime | A vault's inference snapshot lifecycle (DESIGN-V2 §7 "On vault lock", V2-R3): the admission generation and… |
 | `src/snapshot_lock_result.rs` | src | s | 3 struct · 1 const | SnapshotLockReceipt, SnapshotRelease, SnapshotWorkerAbort | Results of releasing inference snapshot state before a vault lock |
+| `src/source_audience_obligation.rs` | src | s | 1 enum · 3 fn · 1 const | SourceAudienceObligation | The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack… |
 | `src/store_clock.rs` | src | m | 2 struct · 2 trait · 20 fn · 1 const · 1 mod | Clock, IdGen, LeaseRenewal, StoreClock | Per-store clock and id source |
 | `src/store_clock/lease_journal.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | LeaseJournal | The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A) |
 | `src/store_clock/tests.rs` | test | s | — | — | The store clock's reads, observed through what a caller gets back |
@@ -567,7 +578,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/window_key.rs` | src | s | 1 struct · 15 fn · 1 crate-vis | WindowKey | Monthly CRDT window keys and their timestamp conversion |
 | `src/window_protocol.rs` | src | s | 2 enum · 1 fn · 2 const | FederationAdmissionRole, ImportTier | Window payload bounds and local commit origin values |
 | `src/window_rows.rs` | src | s | 5 struct · 1 enum · 2 const | CarrierRemoval, HexSeqKey, WindowEntityHexKey, WindowEntityKey, WindowUpdateKey, WindowUpdateSeq | Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state… |
-| `src/witness_message_body.rs` | src | m | 1 struct · 2 enum · 4 fn · 5 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope | Canonical MESSAGE body vocabulary, encoding, and structural validation |
+| `src/witness_message_body.rs` | src | m | 2 struct · 2 enum · 8 fn · 5 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope, WitnessMetadataMeasure | Canonical MESSAGE body vocabulary, encoding, and structural validation |
 | `src/workflow_definition.rs` | src | s | 1 struct · 6 fn | WorkflowDefinition | A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission |
 | `src/world_pad_codec.rs` | src | s | 1 struct · 1 enum · 17 fn | PadBody, WorldKeyPad | The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its… |
 | `src/world_registration_keys.rs` | src | s | 2 const | — | Storage keys for foreign-world registration and stale markers |
@@ -580,10 +591,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/channel_identity/mod.rs` | src | s | 1 fn · 1 mod | — | Channel-identity claim predicates and pinned wire keys |
 | `src/write_envelope/claim_body/codec.rs` | src | m | 2 fn | — | The pinned MessagePack codec for type-0 (CLAIM) bodies: the canonical encoder and the single fail-closed… |
 | `src/write_envelope/claim_body/evidence_refs.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const · 1 crate-vis | CursorSpan, EvidenceKind, EvidenceRef | Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary… |
-| `src/write_envelope/claim_body/lexical_query_hint.rs` | src | s | 1 struct · 4 fn · 4 const | LexicalQueryHintValue | Codec primitives for `core.lexical.query_hint` side records |
+| `src/write_envelope/claim_body/lexical_query_hint.rs` | src | s | 1 struct · 6 fn · 3 const | LexicalQueryHintValue | Codec primitives for `core.lexical.query_hint` side records |
 | `src/write_envelope/claim_body/made_by.rs` | src | s | 1 enum · 3 fn | MadeByClass | The provenance class a stored claim offers to readers |
 | `src/write_envelope/claim_body/mod.rs` | src | m | 4 struct · 1 enum · 5 fn · 10 const · 2 mod · 11 re-export · 1 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim, SessionClaimBundleMember | The stored CLAIM body, its MessagePack codec, scope stamps and citations |
-| `src/write_envelope/claim_body/relationship_scope.rs` | src | s | 6 fn · 1 type | — | CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of… |
+| `src/write_envelope/claim_body/relationship_scope.rs` | src | s | 1 struct · 11 fn · 1 type | RelationshipSet | CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of… |
 | `src/write_envelope/claim_body/scope.rs` | src | s | 1 fn · 1 crate-vis | — | The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed… |
 | `src/write_envelope/claim_body/scope_stamp.rs` | src | s | 5 fn · 1 const · 1 re-export | — | Stable CLAIM scope identifiers and their MessagePack representation |
 | `src/write_envelope/claim_body/source_trust.rs` | src | s | 1 struct · 4 enum · 6 fn · 5 const · 1 crate-vis | ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung, ClaimSuccession, MapValue | CLAIM scope-map values used by write envelopes and stored-body codecs |
@@ -598,7 +609,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/commitment_actor.rs` | src | s | 1 fn | — | Deterministic identity used by commitment projection writes |
 | `src/write_envelope/commitment_transition.rs` | src | s | 2 fn · 1 const | — | Commitment successor identity rules |
 | `src/write_envelope/communication.rs` | src | s | 1 struct · 4 enum · 5 fn · 1 type · 25 const | ClaimClassDescriptorRow, CommClearOptOutOutcome, CommError, SendOverrideMatch, SendOverrideScope | Communication predicate, error, send-override and descriptor-row vocabulary |
-| `src/write_envelope/communication_record.rs` | src | m | 2 enum · 18 fn · 2 const | CommEventKind, CommRecord | Communication event, gate and receipt wire values and their strict MessagePack codec |
+| `src/write_envelope/communication_record.rs` | src | m | 2 enum · 18 fn · 2 const · 1 re-export | CommEventKind, CommRecord | Communication event, gate and receipt wire values and their strict MessagePack codec |
+| `src/write_envelope/communication_record/source_position.rs` | src | s | 1 struct · 2 crate-vis | ScopedTouchSource | Frozen source data for an explicitly born, scoped touch; not write authority |
 | `src/write_envelope/companion_subject.rs` | src | s | 1 struct · 4 enum · 16 fn | CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKey | Typed companion task domain: scopes, PERSON/relationship subjects, and task keys |
 | `src/write_envelope/companion_task_kind.rs` | src | s | 1 enum · 2 fn | CompanionTaskKind | Companion background task family strings |
 | `src/write_envelope/coping_outcome.rs` | src | m | 3 struct · 1 enum · 18 fn · 1 const | CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue, CopingStrategy | Coping outcome records and canonical claim value codec |
@@ -608,11 +620,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/identity_reputation.rs` | src | m | 3 struct · 4 enum · 16 fn · 17 const | EmailReputationWebhookSignal, IdentityAttestationTier, IdentityReputation, IdentityReputationSignal, IdentityReputationStatus, IdentitySendRateClamp, IdentityWarmupStage | Sender reputation values, wire predicates, and pure claim validation |
 | `src/write_envelope/learning_predicate.rs` | src | s | 1 fn · 5 const · 1 re-export | — | The measured-state claim family and its namespace classifier |
 | `src/write_envelope/person_identity.rs` | src | s | 3 fn | — | Identity-bearing facet classification and canonical PERSON body maps |
-| `src/write_envelope/profile_snapshot/codec.rs` | src | s | 11 fn · 1 re-export | — | Canonical MessagePack encode/decode and field validation helpers |
+| `src/write_envelope/profile_snapshot/codec.rs` | src | s | 1 enum · 12 fn · 1 re-export | PsychProfileBodyEnvelope | Canonical MessagePack encode/decode and field validation helpers |
 | `src/write_envelope/profile_snapshot/codec/source_pages.rs` | src | s | 1 const · 4 crate-vis | — | The paged source frames of a PSYCH_PROFILE body (FIX 10054, Rule 5): a size bound is a codec frame, never a… |
 | `src/write_envelope/profile_snapshot/keys.rs` | src | s | 1 struct · 1 fn | PsychProfileKey | Stable Person x Facet x World addressing and entity-id derivation |
 | `src/write_envelope/profile_snapshot/mod.rs` | src | s | 3 mod · 5 re-export | — | Profile snapshot records, addressing and canonical MessagePack codec |
-| `src/write_envelope/profile_snapshot/record.rs` | src | s | 3 struct · 3 enum · 6 fn · 18 const · 2 crate-vis | PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileStaleReason, PsychProfileState | Snapshot record types, projections, and constructors/validators |
+| `src/write_envelope/profile_snapshot/record.rs` | src | m | 4 struct · 6 enum · 8 fn · 19 const · 2 crate-vis | PsychProfile, PsychProfileByteRange, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileSourceWords, PsychProfileSpanText, PsychProfileStaleReason +2 | Snapshot record types, projections, and constructors/validators |
 | `src/write_envelope/provenance/actor_stamp.rs` | src | s | 1 struct | ActorStamp | Opaque actor stamp identity |
 | `src/write_envelope/provenance/actor_substrate.rs` | src | s | 6 fn · 1 const | — | Actor-class validation and model substrate codec |
 | `src/write_envelope/provenance/codec.rs` | src | m | 1 struct · 5 fn | EdgeProvenanceClaimBody | Edge-provenance value record and its fail-closed MessagePack gate |
@@ -645,4 +657,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/voice_segment.rs` | src | s | 2 fn · 7 const | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
 | `src/write_envelope/world_access_predicates.rs` | src | s | 2 const | — | World-access authority claim predicates |
 | `src/writer_hold.rs` | src | s | 1 struct · 2 fn | WriterHold | Writer closure timing and the Dreamer writer-hold trace |
-| `src/writer_lease.rs` | src | m | 1 struct · 15 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
+| `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |

@@ -86,6 +86,9 @@ pub struct LeasedSpawnRequest {
 /// pick, the root spend scope it opened, and the placement adapter that
 /// places and plans the ask. Host configuration, borrowed for one call.
 pub struct PlannedSpawnHost<'a> {
+    /// The actual root caller's host-stamped origin. The first reservation
+    /// freezes it; later calls cannot replace it. A leased spawn inherits.
+    pub caller_origin: crate::agent_dispatch::CallerOrigin,
     /// The seats the spawn may run on: a model and its AGENT_DEF each.
     pub seats: &'a [PlannerSeat],
     /// The team-shape skill and each rung's workflow skill.

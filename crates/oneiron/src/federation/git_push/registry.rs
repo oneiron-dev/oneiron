@@ -4,7 +4,8 @@
 //! deleted row is joined back from the authority log (FIX 7136): its signed
 //! mint carries what the row held, and its revoke record, the owner's signed
 //! revoke act or the host's signed withdrawal a membership change logged
-//! (FIX 7135), says it no longer stands. The registry adds no table.
+//! (FIX 7135), or this vault's mark of its withdrawal (FIX 22193), says it no
+//! longer stands. The registry adds no table.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -89,10 +90,13 @@ impl Vault {
 
     /// The GitPush grants a revoke withdrew, in id order, each as its signed
     /// mint carried it: every GitPush mint act the authority fold counted
-    /// whose grant a counted revoke names, the owner's own revoke act or the
+    /// whose grant a counted revoke names, the owner's own revoke act, the
     /// host's signed withdrawal (`SlipGrantRevoke`) a membership change
-    /// logged. An entry whose body this vault no longer holds (an adopted
-    /// checkpoint covers it) names none.
+    /// logged, or the carrier-signed record of a membership change no host
+    /// issuer signed (FIX 12335), or that this vault marks withdrawn with no
+    /// counted revoke yet: the rule the GitPush revoke door answers unchanged
+    /// by (FIX 22193). An entry whose body this vault no longer holds (an
+    /// adopted checkpoint covers it) names none.
     fn revoked_git_push_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -114,6 +118,14 @@ impl Vault {
             let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
                 continue;
             };
+            // A membership change no host issuer signed, signed later by its
+            // carrier (FIX 12335), withdraws each Grant it names.
+            if let AuthorityOp::MembershipExecution(record) = &entry.op {
+                if fold.valid_entries.contains(&authority_entry_hash(&entry)?) {
+                    revoked.extend(record.withdrawn_grants.iter().copied());
+                }
+                continue;
+            }
             let named = match &entry.op {
                 AuthorityOp::AgentGrantAct(record) => match &record.change {
                     AgentGrantChange::Mint {
@@ -138,7 +150,7 @@ impl Vault {
                     AgentGrantChange::Mint { .. } => None,
                     AgentGrantChange::Revoke { .. } => Some((record.grant, None)),
                 },
-                AuthorityOp::SlipGrantRevoke { grant_ref } => Some((*grant_ref, None)),
+                AuthorityOp::SlipGrantRevoke { grant_ref, .. } => Some((*grant_ref, None)),
                 _ => None,
             };
             let Some((grant, mint)) = named else {
@@ -156,10 +168,13 @@ impl Vault {
                 }
             }
         }
-        Ok(mints
-            .into_values()
-            .filter(|mint| revoked.contains(&mint.id))
-            .collect())
+        let mut withdrawn = Vec::new();
+        for mint in mints.into_values() {
+            if revoked.contains(&mint.id) || self.grant_withdrawal_marked_in_txn(txn, mint.id)? {
+                withdrawn.push(mint);
+            }
+        }
+        Ok(withdrawn)
     }
 }
 
@@ -197,6 +212,7 @@ fn registry_row(grant: &GitPushRegistryGrant, status: ConsentGrantStatus) -> Con
             command: GIT_PUSH_REVOKE_COMMAND.to_owned(),
             grant_ref: grant_ref.clone(),
         },
+        regrant_action: None,
         grant_ref,
         bypass: None,
         delegation: None,

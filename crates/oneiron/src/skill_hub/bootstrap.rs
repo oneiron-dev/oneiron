@@ -258,6 +258,16 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
     Ok(package)
 }
 
+/// The bootstrap skills' seed ids and content hashes, for the empty-vault
+/// join guard: recomputed from the embedded files the seed pass imports.
+pub(crate) fn bootstrap_skill_ids_and_hashes()
+-> Result<Vec<(EntityId, crate::skill::SkillContentHash)>> {
+    FILES
+        .iter()
+        .map(|(name, markdown)| Ok((stable_id(name)?, package(name, markdown)?.content_hash()?)))
+        .collect()
+}
+
 pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
     if SEEDED.contains(&vault.store, &rtxn, &())? {
@@ -307,8 +317,15 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
             name,
             HubPin::ContentHash(content_hash.to_hex()),
         )?;
-        let id = vault
-            .import_skill_from_hub_in_txn(&mut wtxn, &hub_ref, &package, seed_id, occurred, 0)?;
+        let id = vault.import_skill_from_hub_in_txn(
+            &mut wtxn,
+            &hub_ref,
+            &package,
+            seed_id,
+            occurred,
+            0,
+            &mut super::SkillImportRows::default(),
+        )?;
         if id != seed_id {
             // A different holder cannot appear while this write transaction owns
             // the preflight and import; roll back rather than mutate it.

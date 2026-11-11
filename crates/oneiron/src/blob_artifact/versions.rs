@@ -7,31 +7,28 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edit_settle::{MadeByReader, PendingProposalView};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::federation::record_scope::BirthPosition;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::code_snapshot::entity_id_from_hash_material;
-use crate::store::{BodyMint, StagedAssetBody, Store};
+use crate::store::{BodyMint, ManifestDbs, StagedAssetBody, StagedHold};
 use crate::temporal::TimeRange;
-use crate::write_envelope::claim_body::ClaimSubject;
-use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::WriteActor;
 
 use super::body::{BlobArtifactBody, decode_blob_artifact_body, encode_blob_artifact_body};
-use super::made_by::{
-    bind_version_made_by, births_row, default_version_made_by, made_by_text,
-    validate_version_made_by_in_txn,
-};
-use super::provenance::{
-    BLOB_VERSION_CLAIM_PREDICATE, BlobVersionProvenance, blob_version_claim_value,
-    validate_provenance, write_provenance_value,
-};
-use super::store_keys::{
-    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, require_entity_type,
-};
+use super::body_file::{BlobBodyFile, BlobContent};
+use super::made_by::bind_version_made_by;
+use super::provenance::{BlobVersionProvenance, validate_provenance};
+use super::store_keys::{BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN};
 pub(super) use super::version_codec::decode_blob_artifact_version_record;
 use super::version_codec::encode_blob_artifact_version_record;
 use crate::error::ArtifactError;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::provenance::made_by::MadeBy;
 
+// The one version append every door takes.
+mod append;
+// FIX 4818: a room step's response version, staged in the room.
+mod room;
 // The version chain's reads: the head, the tree, one version's metadata
 // and its bytes, with the gate on a compaction step's response (FIX 5977).
 mod checked;
@@ -39,6 +36,7 @@ mod queue_check;
 mod reads;
 pub(crate) use queue_check::{append_queue_check_output_in_txn, mint_queue_check_artifact_id};
 pub use reads::BlobBytes;
+pub(crate) use room::RoomResponseVersion;
 
 /// Blob artifact version record. Key: id16 (artifact) + u64be (version).
 pub(super) const VERSIONS: SideTable<(EntityId, u64), BlobArtifactVersion, Raw> =
@@ -254,7 +252,9 @@ impl Vault {
     /// content-write authority checked beside it; HEAD stays untouched until
     /// Keep takes the existing authorized settlement path (FIX 8208). The read
     /// lane is constructed only for a retained envelope naming sources beyond
-    /// its writer, never for a landed append (FIX 12562).
+    /// its writer, never for a landed append (FIX 12562). No producing host
+    /// binds a position on this door: the claim keeps the birth default
+    /// (FIX 3171).
     #[expect(clippy::too_many_arguments)]
     pub fn append_blob_artifact_version_checked<'reader, E>(
         &self,
@@ -271,17 +271,96 @@ impl Vault {
     where
         E: From<Error>,
     {
-        let (version, fork_base) = self.with_write_txn_grouped(|wtxn| {
+        self.append_blob_artifact_content_checked(
+            artifact_id,
+            fork_parent,
+            BlobContent::Bytes(bytes),
+            provenance,
+            made_by,
+            reader,
+            actor,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// [`Self::append_blob_artifact_version_checked`] of a body file an
+    /// ingress door decoded before any writer opened (FIX 22074): a body no
+    /// longer than the asset plane's inline size is read once and appended
+    /// as a slice; a longer one is staged from the file inside the writer,
+    /// and waits in its own body file when it is proposed, never held whole.
+    ///
+    /// # Errors
+    ///
+    /// The slice door's errors, the file's read errors, and
+    /// [`Error::InvariantViolation`] when the file changes under the door.
+    #[expect(clippy::too_many_arguments)]
+    pub fn append_blob_artifact_version_checked_file<'reader, E>(
+        &self,
+        artifact_id: &EntityId,
+        fork_parent: Option<u64>,
+        body: &BlobBodyFile<'_>,
+        provenance: &BlobVersionProvenance,
+        made_by: Option<&MadeBy>,
+        reader: impl FnOnce() -> std::result::Result<Option<MadeByReader<'reader>>, E>,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> std::result::Result<BlobArtifactAppendOutcome, E>
+    where
+        E: From<Error>,
+    {
+        let inline = body.inline_bytes()?;
+        let content = match &inline {
+            Some(bytes) => BlobContent::Bytes(bytes),
+            None => BlobContent::File(body),
+        };
+        self.append_blob_artifact_content_checked(
+            artifact_id,
+            fork_parent,
+            content,
+            provenance,
+            made_by,
+            reader,
+            actor,
+            occurred,
+            learned_at,
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn append_blob_artifact_content_checked<'reader, E>(
+        &self,
+        artifact_id: &EntityId,
+        fork_parent: Option<u64>,
+        content: BlobContent<'_>,
+        provenance: &BlobVersionProvenance,
+        made_by: Option<&MadeBy>,
+        reader: impl FnOnce() -> std::result::Result<Option<MadeByReader<'reader>>, E>,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> std::result::Result<BlobArtifactAppendOutcome, E>
+    where
+        E: From<Error>,
+    {
+        // A landing version past the inline size goes to its body file under
+        // an instance minted before the writer opens (FIX 20812).
+        let mint = self.asset_body_mint([content.len()])?;
+        let (version, fork_base, _hold) = self.with_write_txn_grouped(|wtxn| {
             self.decide_blob_artifact_append_in_txn(
                 wtxn,
                 artifact_id,
                 fork_parent,
-                bytes,
+                content,
+                mint.as_ref(),
                 provenance,
                 made_by,
                 actor,
                 occurred,
                 learned_at,
+                BirthPosition::default(),
+                crate::core_write::CoreWriteLaneRef::Unbound,
             )
         })?;
         if let Some(version) = version {
@@ -291,7 +370,7 @@ impl Vault {
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
         let output =
-            checked::direct_append_output(body, bytes, provenance, made_by, actor, learned_at);
+            checked::direct_append_output(body, content, provenance, made_by, actor, learned_at);
         let reader = if made_by.is_some_and(|named| {
             named.process.actor != actor.entity_ref()
                 || !named.inputs.is_empty()
@@ -304,10 +383,12 @@ impl Vault {
         self.propose_native_output_with_write_grant(
             artifact_id,
             &output,
+            content,
             reader,
             actor,
             learned_at,
             fork_base,
+            None,
         )
         .map(BlobArtifactAppendOutcome::Proposed)
         .map_err(E::from)
@@ -369,6 +450,7 @@ impl Vault {
                 occurred,
                 learned_at,
                 Some(parent_version),
+                crate::core_write::CoreWriteLaneRef::Unbound,
             )
         })
     }
@@ -405,6 +487,75 @@ impl Vault {
         })
     }
 
+    /// [`Self::append_blob_artifact_version`], or with `made_by`
+    /// [`Self::append_blob_artifact_version_made_by`] on the head, of a body
+    /// file an ingress door decoded before any writer opened (FIX 22074): a
+    /// body no longer than the asset plane's inline size is read once and
+    /// appended as a slice; a longer one is staged from the file inside the
+    /// writer, under an instance minted before it opened, never held whole.
+    ///
+    /// # Errors
+    ///
+    /// The slice doors' errors, the file's read errors, and
+    /// [`Error::InvariantViolation`] when the file changes under the door.
+    #[expect(clippy::too_many_arguments)]
+    pub fn append_blob_artifact_version_file(
+        &self,
+        artifact_id: &EntityId,
+        body: &BlobBodyFile<'_>,
+        provenance: &BlobVersionProvenance,
+        made_by: Option<&MadeBy>,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<BlobArtifactVersion> {
+        if let Some(bytes) = body.inline_bytes()? {
+            return match made_by {
+                Some(made_by) => self.append_blob_artifact_version_made_by(
+                    artifact_id,
+                    None,
+                    &bytes,
+                    provenance,
+                    made_by,
+                    actor,
+                    occurred,
+                    learned_at,
+                ),
+                None => self.append_blob_artifact_version(
+                    artifact_id,
+                    &bytes,
+                    provenance,
+                    actor,
+                    occurred,
+                    learned_at,
+                ),
+            };
+        }
+        let mint = self.asset_body_mint([body.len()])?;
+        let (version, _hold) = self.with_write_txn_grouped(|wtxn| {
+            let staged = self.stage_blob_body_in_txn(wtxn, &mut body.reader()?, mint.as_ref())?;
+            body.check(staged.facts().len, staged.facts().blake3)?;
+            let version = self.append_blob_artifact_version_body_in_txn(
+                wtxn,
+                artifact_id,
+                VersionBody::Staged(&staged),
+                provenance,
+                actor,
+                occurred,
+                learned_at,
+                None,
+                None,
+                made_by,
+                false,
+                true,
+                None,
+                crate::core_write::CoreWriteLaneRef::Unbound,
+            )?;
+            Ok((version, staged.into_hold()))
+        })?;
+        Ok(version)
+    }
+
     /// Transaction-composable body of [`Vault::append_blob_artifact_version_made_by`].
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn append_blob_artifact_version_made_by_in_txn(
@@ -430,6 +581,7 @@ impl Vault {
             fork_parent,
             None,
             Some(made_by),
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
 
@@ -448,35 +600,70 @@ impl Vault {
 
     /// The trusted Keep path: the retained envelope was bound to its
     /// producer when the proposal was authenticated, so it lands validated
-    /// but unchanged. The keeper's write authority stays out of the producer
+    /// but unchanged. A row retained with none lands with the default
+    /// envelope. The keeper's write authority stays out of the producer
     /// receipt: no rebind to the approver (blind review of #4554).
+    /// `producer_position` is the producing run's position, frozen when the
+    /// proposal was retained (FIX 3171): the claim is born there, never at
+    /// the keeper's.
+    /// `bytes` past the asset plane's inline size go to their body file
+    /// under `mint`, taken before `wtxn` opened (FIX 20812). The hold comes
+    /// back beside the version: keep it until `wtxn` has committed.
     #[expect(clippy::too_many_arguments)]
-    pub(crate) fn append_blob_artifact_version_kept_in_txn(
+    pub(crate) fn append_kept_output_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
         fork_parent: Option<u64>,
         bytes: &[u8],
         provenance: &BlobVersionProvenance,
-        made_by: &MadeBy,
+        made_by: Option<&MadeBy>,
+        mint: Option<&BodyMint>,
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<BlobArtifactVersion> {
-        self.append_blob_artifact_version_body_in_txn(
+        producer_position: BirthPosition,
+    ) -> Result<(BlobArtifactVersion, Option<StagedHold>)> {
+        let staged = self.stage_version_slice_in_txn(wtxn, bytes, mint)?;
+        let body = staged
+            .as_ref()
+            .map_or(VersionBody::Bytes(bytes), VersionBody::Staged);
+        let version = self.append_blob_artifact_version_body_with_authority_in_txn(
             wtxn,
             artifact_id,
-            VersionBody::Bytes(bytes),
+            body,
             provenance,
-            actor,
+            VersionAuthority::Actor(actor),
             occurred,
             learned_at,
             fork_parent,
             None,
-            Some(made_by),
+            made_by,
             true,
             false,
-        )
+            None,
+            producer_position,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )?;
+        Ok((version, staged.map(StagedAssetBody::into_hold)))
+    }
+
+    /// `bytes` staged to their body file in `wtxn` under `mint`, taken before
+    /// `wtxn` opened, so a version past the asset plane's inline size puts its
+    /// ASSET as a file manifest, not as one value holding the bytes
+    /// (FIX 20812). `None` with no mint: the slice is put as it is.
+    fn stage_version_slice_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        bytes: &[u8],
+        mint: Option<&BodyMint>,
+    ) -> Result<Option<StagedAssetBody>> {
+        match mint {
+            Some(mint) => self
+                .stage_blob_body_in_txn(wtxn, &mut std::io::Cursor::new(bytes), Some(mint))
+                .map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Transaction-composable body of [`Vault::append_blob_artifact_version`].
@@ -505,6 +692,38 @@ impl Vault {
             occurred,
             learned_at,
             None,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )
+    }
+
+    /// An artifact content writer's append, under that writer's actual read lane.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_blob_artifact_version_in_lane(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_body_in_txn(
+            wtxn,
+            artifact_id,
+            VersionBody::Bytes(bytes),
+            provenance,
+            actor,
+            occurred,
+            learned_at,
+            None,
+            None,
+            None,
+            false,
+            true,
+            None,
+            lane,
         )
     }
 
@@ -555,6 +774,8 @@ impl Vault {
             None,
             false,
             true,
+            None,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )?;
         Ok((version, staged))
     }
@@ -588,336 +809,14 @@ impl Vault {
             made_by,
             false,
             false,
-        )
-    }
-
-    #[expect(clippy::too_many_arguments)]
-    fn append_blob_artifact_version_with_parent_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        artifact_id: &EntityId,
-        bytes: &[u8],
-        provenance: &BlobVersionProvenance,
-        actor: WriteActor,
-        occurred: TimeRange,
-        learned_at: u64,
-        fork_parent: Option<u64>,
-    ) -> Result<BlobArtifactVersion> {
-        self.append_blob_artifact_version_with_parent_and_engine_in_txn(
-            wtxn,
-            artifact_id,
-            bytes,
-            provenance,
-            actor,
-            occurred,
-            learned_at,
-            fork_parent,
             None,
-            None,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
-    }
-
-    #[expect(clippy::too_many_arguments)]
-    fn append_blob_artifact_version_with_parent_and_engine_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        artifact_id: &EntityId,
-        bytes: &[u8],
-        provenance: &BlobVersionProvenance,
-        actor: WriteActor,
-        occurred: TimeRange,
-        learned_at: u64,
-        fork_parent: Option<u64>,
-        calc_engine: Option<&CalcEngineStamp>,
-        made_by: Option<&MadeBy>,
-    ) -> Result<BlobArtifactVersion> {
-        self.append_blob_artifact_version_body_in_txn(
-            wtxn,
-            artifact_id,
-            VersionBody::Bytes(bytes),
-            provenance,
-            actor,
-            occurred,
-            learned_at,
-            fork_parent,
-            calc_engine,
-            made_by,
-            false,
-            true,
-        )
-    }
-
-    /// The one version append every door takes, over a slice or a staged
-    /// body (FIX 12091). `preserve_made_by` is the trusted Keep path only:
-    /// the retained envelope lands validated but unbound, so the keeper is
-    /// never rebound as producer (blind review of #4554). Direct doors re-anchor
-    /// HTML here; Keep and settlement keep their existing behavior and results.
-    #[expect(clippy::too_many_arguments)]
-    fn append_blob_artifact_version_body_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        artifact_id: &EntityId,
-        body: VersionBody<'_>,
-        provenance: &BlobVersionProvenance,
-        actor: WriteActor,
-        occurred: TimeRange,
-        learned_at: u64,
-        fork_parent: Option<u64>,
-        calc_engine: Option<&CalcEngineStamp>,
-        made_by: Option<&MadeBy>,
-        preserve_made_by: bool,
-        reanchor_html: bool,
-    ) -> Result<BlobArtifactVersion> {
-        self.append_blob_artifact_version_body_with_authority_in_txn(
-            wtxn,
-            artifact_id,
-            body,
-            provenance,
-            VersionAuthority::Actor(actor),
-            occurred,
-            learned_at,
-            fork_parent,
-            calc_engine,
-            made_by,
-            preserve_made_by,
-            reanchor_html,
-        )
-    }
-
-    #[expect(clippy::too_many_arguments)]
-    fn append_blob_artifact_version_body_with_authority_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        artifact_id: &EntityId,
-        body: VersionBody<'_>,
-        provenance: &BlobVersionProvenance,
-        authority: VersionAuthority<'_, '_>,
-        occurred: TimeRange,
-        learned_at: u64,
-        fork_parent: Option<u64>,
-        calc_engine: Option<&CalcEngineStamp>,
-        made_by: Option<&MadeBy>,
-        preserve_made_by: bool,
-        reanchor_html: bool,
-    ) -> Result<BlobArtifactVersion> {
-        let actor = match &authority {
-            VersionAuthority::Actor(actor) => *actor,
-            VersionAuthority::QueueCheck(token) => {
-                WriteActor::new(token.recorded_actor(), crate::edge::EdgeActorClass::Human)
-            }
-        };
-        validate_provenance(provenance)?;
-        if let Some(stamp) = calc_engine {
-            stamp.validate()?;
-        }
-        let content_hash = body.content_hash();
-        let claim_id = EntityId::from_bytes(self.store.clock.ulid()?)?;
-
-        require_entity_type(
-            &self.store,
-            wtxn,
-            artifact_id,
-            ENTITY_TYPE_BLOB_ARTIFACT,
-            "append target must be a BLOB_ARTIFACT entity",
-        )?;
-        let artifact = self
-            .get_blob_artifact_in_txn(wtxn, artifact_id)?
-            .ok_or(Error::EntityNotFound)?;
-        let fingerprint = match body.held_bytes() {
-            Some(bytes) => crate::store::blob_fingerprint::prepare_blob_artifact_birth(
-                &self.store,
-                wtxn,
-                artifact_id,
-                bytes,
-            )?,
-            // A body file is never text: its birth reads none of its bytes.
-            None => crate::store::blob_fingerprint::prepare_binary_blob_artifact_birth(
-                &self.store,
-                wtxn,
-                artifact_id,
-                content_hash,
-            )?,
-        };
-        let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
-        let highwater = read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?;
-        // HEAD is the greatest version that stays; a released one (FIX 6225)
-        // leaves the high-water mark above it, never below.
-        if head
-            .as_ref()
-            .is_some_and(|head| highwater.is_none_or(|highwater| highwater < head.version))
-        {
-            return Err(Error::CorruptedIndex("blob artifact version highwater"));
-        }
-        let (parent_version, parent_claim) = match (fork_parent, &head) {
-            (Some(parent), Some(head)) if parent > 0 && parent <= head.version => {
-                let record = VERSIONS
-                    .get(&self.store, wtxn, &(*artifact_id, parent))?
-                    .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                        "fork parent version does not exist",
-                    )))?;
-                if record.version != parent {
-                    return Err(Error::CorruptedIndex("blob artifact fork parent"));
-                }
-                (Some(parent), Some(record.claim_id))
-            }
-            (Some(_), _) => {
-                return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                    "fork parent version does not exist",
-                )));
-            }
-            (None, Some(head)) if head.content_hash == content_hash => {
-                fingerprint.persist(&self.store, wtxn, artifact_id)?;
-                return Ok(head.clone());
-            }
-            (None, Some(head)) => (Some(head.version), Some(head.claim_id)),
-            (None, None) => (None, None),
-        };
-        let made_by = match made_by {
-            Some(named) => {
-                validate_version_made_by_in_txn(self, wtxn, named)?;
-                if preserve_made_by {
-                    named.clone()
-                } else {
-                    bind_version_made_by(&actor, provenance, named, learned_at)
-                }
-            }
-            None => default_version_made_by(&actor, provenance, parent_claim, learned_at),
-        };
-        let made_by_json = made_by_text(&made_by)?;
-        // Deletion removes the current chain, and a response pin's release
-        // one version (FIX 6225), but never the high-water mark: the next
-        // number is above every one ever issued, never reused.
-        let previous_version = highwater.unwrap_or(0);
-        let next_version = previous_version
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))?;
-        if VERSIONS.contains(&self.store, wtxn, &(*artifact_id, next_version))? {
-            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "blob artifact version is already recorded",
-            )));
-        }
-
-        let candidate = ClaimCandidate::new(
-            BLOB_VERSION_CLAIM_PREDICATE,
-            ClaimSubject::Entity(*artifact_id),
-            blob_version_claim_value(
-                next_version,
-                &content_hash,
-                provenance,
-                parent_version,
-                fork_parent,
-                calc_engine,
-                &made_by_json,
-            ),
-            1.0,
-        );
-        let mut envelope = WriteEnvelope::new(
-            actor,
-            provenance.claim_source(),
-            WriteProvenance::new(write_provenance_value(provenance))?,
-            provenance.approval_status(),
-        );
-        // The artifact is the logical owner of this content-addressed version.
-        // The ASSET bytes and head/index rows are supporting effects of it;
-        // the canonical claim is a second semantic content owner.
-        if let VersionAuthority::Actor(actor) = &authority {
-            self.authorize_shared_content_write_in_txn(wtxn, *artifact_id, actor)?;
-        }
-        match body {
-            VersionBody::Bytes(bytes) => {
-                crate::ports::BlobStore::port_blob_put(
-                    self,
-                    wtxn,
-                    artifact_id,
-                    bytes,
-                    occurred,
-                    learned_at,
-                )?;
-            }
-            VersionBody::Staged(staged) => {
-                self.put_staged_blob_in_txn(wtxn, artifact_id, staged, occurred, learned_at)?;
-            }
-        }
-        self.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
-        let claim = self
-            .batch_in()
-            .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at);
-        match &authority {
-            VersionAuthority::Actor(actor) => claim.apply_actor(wtxn, actor)?,
-            VersionAuthority::QueueCheck(_) => claim.apply(wtxn)?,
-        }
-
-        let record = BlobArtifactVersion {
-            version: next_version,
-            content_hash,
-            provenance: provenance.clone(),
-            calc_engine: calc_engine.cloned(),
-            claim_id,
-            created_at: learned_at,
-            export_name: artifact.name,
-            export_media_type: artifact.media_type,
-            parent_version,
-            fork_of_version: fork_parent,
-            made_by,
-        };
-        let recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
-        crate::ports::ChangeLogStore::port_changelog_append(
-            self,
-            wtxn,
-            &crate::ports::ChangeLogRecord {
-                id: self.store.clock.ulid()?,
-                entity: *artifact_id,
-                op: crate::ports::ChangeOp::Update,
-                actor_principal: actor.entity_ref(),
-                actor_person: None,
-                occurred_at: occurred.start,
-                recorded_at,
-                input_hash: content_hash,
-                patch: None,
-                reason: Some("blob version appended".into()),
-            },
-        )?;
-        VERSIONS.put(&self.store, wtxn, &(*artifact_id, next_version), &record)?;
-        HEAD.put(&self.store, wtxn, artifact_id, &record)?;
-        HIGHWATER.put(&self.store, wtxn, artifact_id, &next_version.to_be_bytes())?;
-        super::born_from::index_version_in_txn(&self.store, wtxn, artifact_id, &record)?;
-        // The first version is the artifact's birth: its envelope is the
-        // artifact row's Rule A birth, read backwards by `rows_born_from`.
-        if previous_version == 0 && births_row(&record.made_by) {
-            crate::store::birth_record::stamp_row_birth_in_txn(
-                &self.store,
-                wtxn,
-                artifact_id,
-                &crate::store::row_birth::RowBirth {
-                    made_by: record.made_by.clone(),
-                    content_hash: crate::store::row_birth::RowBirth::content_hash_of(&[
-                        content_hash.as_slice(),
-                    ]),
-                    withheld: Vec::new(),
-                    room_evidence: None,
-                },
-            )?;
-        }
-
-        fingerprint.persist(&self.store, wtxn, artifact_id)?;
-        if reanchor_html && let Some(head) = head {
-            self.reanchor_html_append_in_txn(
-                wtxn,
-                artifact_id,
-                &record.export_media_type,
-                head.version,
-                record.version,
-                actor,
-                occurred,
-                learned_at,
-            )?;
-        }
-        Ok(record)
     }
 }
 
 fn read_blob_artifact_highwater_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     artifact_id: &EntityId,
 ) -> Result<Option<u64>> {
@@ -932,7 +831,7 @@ fn read_blob_artifact_highwater_in_txn(
 }
 
 pub(crate) fn read_blob_artifact_head_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     artifact_id: &EntityId,
 ) -> Result<Option<BlobArtifactVersion>> {

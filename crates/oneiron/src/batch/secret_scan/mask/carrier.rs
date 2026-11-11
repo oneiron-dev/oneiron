@@ -257,6 +257,16 @@ pub(crate) fn carrier_texts_hit_in_txn(
     Ok(None)
 }
 
+/// The custody origin of `table`'s row `key` as a carrier, and the place its
+/// custody records name: one per row, whether a lift marked its texts or a
+/// writer's admission masked them (FIX 2372).
+pub(crate) fn carrier_origin(table: &SideTableDecl, key: &[u8]) -> Result<(EntityId, String)> {
+    Ok((
+        EntityId::derive(CARRIER_ORIGIN, &[table.name.as_bytes(), key])?,
+        format!("carrier:{}", table.name),
+    ))
+}
+
 /// [`mark_carrier_text_in_txn`] over each of `texts`, the stored texts of
 /// `table`'s row `key`, as one outcome. Each key's custody record names the
 /// row as where it was found.
@@ -267,8 +277,7 @@ pub(crate) fn mark_carrier_texts_in_txn(
     key: &[u8],
     texts: &[String],
 ) -> Result<CarrierText> {
-    let origin = EntityId::derive(CARRIER_ORIGIN, &[table.name.as_bytes(), key])?;
-    let place = format!("carrier:{}", table.name);
+    let (origin, place) = carrier_origin(table, key)?;
     let mut outcome = CarrierText::Clean;
     for text in texts {
         outcome = outcome.and(mark_carrier_text_in_txn(

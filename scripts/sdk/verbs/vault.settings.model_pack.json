@@ -1,0 +1,16 @@
+{
+  "name": "vault.settings.model_pack",
+  "description": "Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::llm::model_pack::ModelPackSetting",
+  "call": "crate::task_verb::sdk::read_model_pack_setting(memory)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

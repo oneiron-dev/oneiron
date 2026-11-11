@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::Vault;
+use oneiron::authority::PeerMachine;
+use oneiron::settings::{ReadDestination, ReleaseHold};
 use oneiron_mesh_transport::{MachineId, MeshTransport};
 use tokio::runtime::Handle;
 
@@ -105,6 +107,11 @@ pub enum Routed {
     /// No node can run it now. [`OrganRouter::submit`] holds such a call
     /// in the vault until one can.
     Waiting(NodeWait),
+}
+
+struct MeshInputs {
+    lent: Vec<LentInput>,
+    staged: Option<Vec<(Option<OrganInput>, LentInput)>>,
 }
 
 struct MeshLeg {
@@ -255,13 +262,14 @@ impl OrganRouter {
             tried.push("no other node of yours is granted organ calls".into());
             return waiting(tried);
         }
-        let inputs = read_inputs(vault, &call, lent)?;
+        let mut inputs = MeshInputs { lent, staged: None };
         for machine in nodes {
             shutdown::check()?;
             let tried_node = mesh.runtime.block_on(mesh.try_node(
+                vault,
                 machine,
                 &call,
-                &inputs,
+                &mut inputs,
                 asks,
                 self.floor.as_ref(),
             ));
@@ -285,9 +293,10 @@ impl OrganRouter {
 impl MeshLeg {
     async fn try_node(
         &self,
+        vault: &Vault,
         machine: MachineId,
         call: &OrganCall,
-        inputs: &[(Option<OrganInput>, LentInput)],
+        inputs: &mut MeshInputs,
         asks: &AskHandlers<'_>,
         floor: Option<&SharedFloor>,
     ) -> Result<OrganOutcome, PeerError> {
@@ -312,6 +321,23 @@ impl MeshLeg {
                     call.organ, call.verb
                 )));
             }
+            if !call.inputs.is_empty() {
+                let peer = vault
+                    .mesh_peer_machine(conn.endpoint_key(), ORGAN_ALPN)
+                    .map_err(|error| PeerError::Failed(error.into()))?;
+                if let Some(hold) =
+                    input_destination_hold(vault, call, peer).map_err(PeerError::Failed)?
+                {
+                    return Err(PeerError::Absent(hold.reason().into()));
+                }
+            }
+            if inputs.staged.is_none() {
+                inputs.staged = Some(
+                    read_inputs(vault, call, std::mem::take(&mut inputs.lent))
+                        .map_err(PeerError::Failed)?,
+                );
+            }
+            let inputs = inputs.staged.as_deref().expect("inputs just staged");
             let longest = Duration::from_millis(u64::from(u32::MAX));
             let wait = call.deadline.min(longest) + REPLY_GRACE;
             let called = mesh::call_on(&*conn, machine, call, inputs, asks, floor);
@@ -346,10 +372,31 @@ fn cannot_here(err: &HostError) -> bool {
     )
 }
 
-/// Reads the call's vault inputs here, under the caller's own reach and
-/// each as its caller's sight reads it (FIX 6508), so the node that runs it
-/// needs nothing of this vault and judges no input again: vault inputs
-/// first, each with the version it is, then the lent bytes.
+/// Judges every vault input's actual artifact and version claim before any
+/// input bytes are read or staged for this connection's destination.
+fn input_destination_hold(
+    vault: &Vault,
+    call: &OrganCall,
+    peer: PeerMachine,
+) -> Result<Option<ReleaseHold>, HostError> {
+    let mut rows = Vec::new();
+    for sighted in &call.inputs {
+        let input = sighted.input;
+        let record = vault
+            .blob_artifact_version_metadata(&input.artifact, input.version)?
+            .ok_or_else(|| HostError::InputNotFound {
+                artifact: input.artifact.to_hex(),
+                version: input.version,
+            })?;
+        rows.push(input.artifact);
+        rows.push(record.claim_id);
+    }
+    Ok(vault.release_hold_for(&rows, &ReadDestination::toward(peer))?)
+}
+
+/// Reads inputs after every vault input passes the destination judge. The
+/// caller's sight still selects each copy (FIX 6508); the executing node
+/// needs nothing of this vault. Vault inputs come first, then lent bytes.
 fn read_inputs(
     vault: &Vault,
     call: &OrganCall,

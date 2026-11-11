@@ -17,6 +17,33 @@ use crate::sync::{
 };
 use crate::{EntityId, Error, Result};
 
+/// Constructed only after this module verifies the signed Connect and imports it.
+pub(crate) struct VerifiedConnectOrigin<'a> {
+    body: &'a ConnectWindow,
+    pact: [u8; 32],
+    local: [u8; 32],
+    state: &'a crate::authority::FederationPactState,
+    grant: &'a crate::federation::FederationGrant,
+}
+
+impl VerifiedConnectOrigin<'_> {
+    pub(crate) fn body(&self) -> &ConnectWindow {
+        self.body
+    }
+    pub(crate) fn pact(&self) -> [u8; 32] {
+        self.pact
+    }
+    pub(crate) fn local(&self) -> [u8; 32] {
+        self.local
+    }
+    pub(crate) fn state(&self) -> &crate::authority::FederationPactState {
+        self.state
+    }
+    pub(crate) fn grant(&self) -> &crate::federation::FederationGrant {
+        self.grant
+    }
+}
+
 fn refused() -> Error {
     Error::InvalidConfig("Connect delivery does not match the live reciprocal pact".into())
 }
@@ -67,6 +94,7 @@ impl SyncClient {
     ) -> Result<ConnectDelivery> {
         let vault = manager.vault();
         let (local, state) = active(vault, owner, &id(&request.pact)?)?;
+        let by = owner.actor_for_read(vault)?;
         let local_world = crate::entity_id::LocalWorldId::try_from(request.world_ref)?;
         let grant = grant(vault, state.grant_ref)?;
         let selector = SyncSelector::new(
@@ -81,13 +109,25 @@ impl SyncClient {
             return Err(refused());
         }
         let window = manager.open_window(&key)?;
-        let envelope = crate::sync::selector::guest_share_envelope_body(
+        let (envelope, rows, travelled) = crate::sync::selector::guest_share_envelope_body_listing(
             vault,
             &window.doc,
             &key,
             grant.scope,
             &selector,
         )?;
+        let update = match crate::federation::record_scope::witness_connect_positions(
+            vault,
+            &envelope.update,
+            &grant,
+            &selector,
+        ) {
+            Ok(update) => update,
+            Err(error) => {
+                tracing::warn!(error_kind = ?error.kind(), "Connect origin positions unavailable");
+                None
+            }
+        };
         let body = ConnectWindow {
             pact: request.pact,
             epoch: state.pact_epoch,
@@ -97,11 +137,24 @@ impl SyncClient {
             facets: request.facets,
             bands: request.bands,
             window_key: request.window_key,
-            update: envelope.update,
+            update: update.unwrap_or(envelope.update),
         };
+        let signature = issuer.sign_connect_window(&body)?;
+        let travel_receipt = Some(vault.record_guest_window_travel(
+            &state.grant_ref,
+            &grant.member_ref,
+            grant.scope,
+            &body.window_key,
+            &body.world_ref,
+            &rows,
+            &body.update,
+            &by,
+            travelled,
+        ));
         Ok(ConnectDelivery {
-            signature: issuer.sign_connect_window(&body)?,
+            signature,
             body,
+            travel_receipt,
         })
     }
 
@@ -212,6 +265,20 @@ impl SyncClient {
                 }
                 other => Error::InvalidConfig(other.to_string()),
             })?;
+        if burst.state == crate::sync::federation_burst::FederationBurstWorkState::Imported {
+            let verified = VerifiedConnectOrigin {
+                body: &body,
+                pact: pact_id,
+                local,
+                state: &state,
+                grant: &grant,
+            };
+            if let Err(error) =
+                crate::federation::record_scope::import_connect_positions(vault, &verified)
+            {
+                tracing::warn!(error_kind = ?error.kind(), "Connect origin positions not installed");
+            }
+        }
         let request = (burst.state
             == crate::sync::federation_burst::FederationBurstWorkState::Pending)
             .then(|| burst.batch_ref.clone());
