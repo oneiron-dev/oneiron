@@ -1,0 +1,19 @@
+{
+  "name": "vault.repo.symbols.observe",
+  "description": "Reads the attached run's own current symbol declaration, held or waiting, and the TASKs it waits behind now, without renewing or changing it.",
+  "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoSymbolsObserveInput>",
+  "output": "crate::memory::repo_doors::RepoSymbolsObserveOutput",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.observe\", &input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "host_door_session": true,
+  "openapi": true
+}
