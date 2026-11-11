@@ -11,7 +11,7 @@
 }
 
 .sl-seal[data-by="person"] {
-  background: var(--sl-disc);
+  background: var(--sl-ink-3);
 }
 
 .sl-seal[data-by="agent"] {
