@@ -764,6 +764,11 @@ mod plugin_fixture {
 
         /// Takes a checkpoint of the fixture vault at `image`.
         pub(crate) fn back_up(&self, image: &std::path::Path) {
+            // A sealed checkpoint needs the vault data key: the owner's backup
+            // door mints or unlocks it first (oneiron-server owner/backup).
+            self.vault
+                .ensure_vault_key()
+                .expect("hold the vault data key");
             self.vault
                 .snapshot_checkpoint(image, 1_500)
                 .expect("checkpoint the fixture vault");
