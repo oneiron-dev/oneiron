@@ -42,7 +42,8 @@ export function fieldCover(
 
 const images = new Map<string, Promise<HTMLImageElement>>()
 
-/* One decoded image per URL for the page's lifetime. */
+/* One decoded image per URL for the page's lifetime (the field art and a
+   scene's pictures). */
 export function loadImage(src: string): Promise<HTMLImageElement> {
   let pending = images.get(src)
   if (!pending) {
@@ -52,7 +53,7 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
       img.onload = () => resolve(img)
       img.onerror = () => {
         images.delete(src)
-        reject(new Error(`field art failed to load: ${src}`))
+        reject(new Error(`picture failed to load: ${src}`))
       }
       img.src = src
     })

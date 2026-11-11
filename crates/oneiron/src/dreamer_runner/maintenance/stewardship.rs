@@ -241,6 +241,65 @@ impl Vault {
         })
     }
 
+    /// The owner, by its proof, or a holder of `engine.controls` sets how often one standing rule
+    /// falls due (untangle 6.6b; maintenance cadence). The rule's person, draft route, `since` and
+    /// the rule set's owner stay as the owner set them. Untangle 6.6d gives it its verb. Returns
+    /// the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
+    /// holder of `engine.controls`; an unknown rule id or a period the rule refuses; store
+    /// failures.
+    pub fn set_stewardship_rule_period_by(
+        &self,
+        actor: crate::federation::EngineControlActor<'_>,
+        rule_id: &str,
+        every_secs: u64,
+    ) -> Result<EntityId> {
+        self.apply_engine_control(
+            actor,
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_STEWARDSHIP_RULES",
+            &crate::federation::rendered_change(&serde_json::json!({
+                "rule": rule_id,
+                "every_secs": every_secs,
+            }))?,
+            |txn| {
+                let mut row = RULES.get(&self.store, &*txn, &())?.ok_or_else(invalid)?;
+                let rule = row
+                    .rules
+                    .iter_mut()
+                    .find(|rule| rule.id == rule_id)
+                    .ok_or_else(invalid)?;
+                rule.every_secs = every_secs;
+                rule.validate()?;
+                RULES.admit(self, txn, &(), &mut row)?;
+                RULES.put(&self.store, txn, &(), &row)?;
+                Ok(())
+            },
+        )
+    }
+
+    /// [`Self::set_stewardship_rule_period_by`] for a holder of `engine.controls` (untangle
+    /// 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_stewardship_rule_period_by`].
+    pub fn set_stewardship_rule_period_as_holder(
+        &self,
+        holder: EntityId,
+        rule_id: &str,
+        every_secs: u64,
+    ) -> Result<EntityId> {
+        self.set_stewardship_rule_period_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            rule_id,
+            every_secs,
+        )
+    }
+
     /// One page of the standing reach-outs whose rule has a draft route and
     /// no draft yet, read after the reach-out `after`: each one applied and
     /// not reverted, or held for the owner and not declined. A page is a
