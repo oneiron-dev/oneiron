@@ -33,10 +33,9 @@ pub fn install_actor_ceiling(vault: &Vault, actor: &EntityId, ceiling: &str) -> 
     let actor_ref = actor.to_hex();
     let bytes = crate::gate::default_policy_manifest()?;
     let mut cursor = std::io::Cursor::new(bytes);
-    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| {
-            Error::InvalidConfig("the default policy manifest failed to decode".to_owned())
-        })?
+    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::InvalidConfig("the default policy manifest failed to decode".to_owned())
+    })?
     else {
         return Err(Error::InvalidConfig(
             "the default policy manifest is not a map".to_owned(),
@@ -44,9 +43,7 @@ pub fn install_actor_ceiling(vault: &Vault, actor: &EntityId, ceiling: &str) -> 
     };
     let ceilings = entries
         .iter_mut()
-        .find_map(|(key, value)| {
-            (key.as_str() == Some("actor_ceilings")).then_some(value)
-        })
+        .find_map(|(key, value)| (key.as_str() == Some("actor_ceilings")).then_some(value))
         .ok_or(Error::InvalidConfig(
             "the default policy manifest has no actor ceilings".to_owned(),
         ))?;
@@ -75,10 +72,7 @@ pub fn install_actor_ceiling(vault: &Vault, actor: &EntityId, ceiling: &str) -> 
         (rmpv::Value::from("ceiling"), rmpv::Value::from(ceiling)),
     ]));
     let grant = rmpv::Value::Map(vec![
-        (
-            rmpv::Value::from("actor_ref"),
-            rmpv::Value::from(actor_ref),
-        ),
+        (rmpv::Value::from("actor_ref"), rmpv::Value::from(actor_ref)),
         (
             rmpv::Value::from("effector"),
             rmpv::Value::from("core:read"),
