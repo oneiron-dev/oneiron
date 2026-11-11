@@ -13,6 +13,8 @@ mod arc_work_store;
 use oneiron_store::scope_summary::codec;
 mod derivation;
 mod doors;
+mod landing_reply;
+mod landing_writer;
 mod producer;
 mod public;
 mod public_types;
@@ -47,10 +49,14 @@ pub use codec::{
     encode_scope_summary_body,
 };
 pub use doors::LandedHeader;
+#[cfg(oneiron_test_support)]
+pub(crate) use doors::mint_scope_summary_for_test;
 pub(crate) use doors::{
     body_covers_in_txn, body_covers_through_in, merge_summary_ref, merge_word_sources_in_txn,
     merge_word_sources_through_in, turn_needs_summary_cover, validate_summary_put,
 };
+pub(crate) use landing_reply::{LandingReplyVerdict, validate_landing_reply_in};
+pub(crate) use landing_writer::{check_landing_append, landing_writer, landing_writer_id};
 pub(crate) use request::{ComposedSummary, ScopeSummaryPlan, decode_target};
 pub use request::{ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget};
 pub(crate) use scrub::scrub_withdrawn_copy_in_txn;
