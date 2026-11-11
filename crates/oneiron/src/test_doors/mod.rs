@@ -4,6 +4,7 @@
 //! ... --test <stem>`); never behind a cargo feature, so no `--all-features`
 //! build reaches them. Hidden; never API.
 
+pub mod callable_skill;
 pub mod coach;
 pub mod code_reply_healer;
 pub mod code_run_answer;
@@ -14,6 +15,7 @@ pub mod live_run_claim_put;
 pub mod retrieval_policy_default_floor;
 pub mod run_hold;
 pub mod scope_summary;
+pub mod source_audience_binding;
 pub mod steward;
 pub mod substrate_reads;
 pub mod untangle_regressions;
