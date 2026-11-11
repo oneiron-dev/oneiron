@@ -79,7 +79,12 @@ fn house_read_row(actor_ref: &str) -> Result<Value> {
 /// [`seeded_policy_manifest_in_txn`] adds for the house that leads the root
 /// in its place. Only a seeded AGENT_DEF can be a workspace's house
 /// (`workspace_roster::steps`), so the rows of the seeded system agents are
-/// every row the engine writes. An owner-edited row matches none of them.
+/// every row the engine writes. The candidates are built from the embedded
+/// system-agent manifest's ids and the row's fixed shape, never from a stored
+/// AGENT_DEF or policy row, so a re-seed or an edit cannot leave a stale
+/// match. The compare is on decoded values: an owner-edited row that differs
+/// from every candidate still caps, and one that decodes equal to a
+/// candidate is that engine default.
 pub(crate) fn is_shipped_house_read_row(grant: &PolicyScopedGrant) -> bool {
     static HOUSE_READ_ROWS: OnceLock<Vec<PolicyScopedGrant>> = OnceLock::new();
     HOUSE_READ_ROWS
