@@ -544,21 +544,25 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Sets the ARCH-0004 / ARCH-0022 world scope. Delegates the post-fusion
-    /// filter to the pipeline; under the default [`WorldScope::All`] the pack
-    /// additionally groups surviving claims by world (base section first). For
-    /// [`WorldScope::Base`] / [`WorldScope::World`] the pack stays flat.
+    /// filter to the pipeline. Under a scope that selects base beside another
+    /// world — the default [`WorldScope::All`], or a [`WorldScope::WorldSet`]
+    /// that includes base and names a world — the pack additionally groups
+    /// surviving claims by world (base section first) and holds non-base claims
+    /// to the world share. For [`WorldScope::Base`], [`WorldScope::World`] and
+    /// a one-sided `WorldSet` the pack stays flat.
     pub fn world(mut self, scope: WorldScope) -> Self {
         self.pipeline = self.pipeline.world(scope.clone());
         self.world_scope = scope;
         self
     }
 
-    /// Sets the share of the pack's claims non-base worlds may occupy under
-    /// [`WorldScope::All`] (default `0.5`). The pack's rows are selected so
-    /// non-base claims stay at most `floor(fraction × emitted claims)`: a base
-    /// claim ranked below fiction still gets its slot, and the pack goes short
-    /// rather than over the share when base claims are scarce. Only consulted
-    /// for `All` scope.
+    /// Sets the share of the pack's claims non-base worlds may occupy under a
+    /// partitioned scope (default `0.5`): [`WorldScope::All`], or a
+    /// [`WorldScope::WorldSet`] that includes base and names a world. The
+    /// pack's rows are selected so non-base claims stay at most
+    /// `floor(fraction × emitted claims)`: a base claim ranked below fiction
+    /// still gets its slot, and the pack goes short rather than over the share
+    /// when base claims are scarce. Not consulted for the other scopes.
     pub fn non_base_world_claim_fraction(mut self, fraction: f32) -> Self {
         self.non_base_world_fraction = fraction;
         self
