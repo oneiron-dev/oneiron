@@ -599,7 +599,9 @@ fn live_owners(holders: &[LiveActHolder], verb: Option<&str>) -> BTreeSet<Entity
 }
 fn non_root(role: Option<Role>) -> Result<()> {
     match role {
-        None | Some(Role::Admin | Role::Steward | Role::Member | Role::Viewer) => Ok(()),
+        None | Some(Role::Deputy | Role::Admin | Role::Steward | Role::Member | Role::Viewer) => {
+            Ok(())
+        }
         Some(_) => Err(invalid()),
     }
 }
