@@ -6,8 +6,10 @@
 
 use std::sync::Arc;
 
+use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SECRET_CUSTODY};
 use oneiron::secret_custody::SecretSight;
+use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -316,5 +318,37 @@ fn a_phrase_one_wrapped_word_per_item_is_read_whole() -> TestResult {
             );
         }
     }
+    Ok(())
+}
+
+/// With the owner's switch off the door seeks no new secret, but a value
+/// custody already holds keeps its handle wherever it comes back (OF-560 C,
+/// FIX 8644): a phrase custody holds, put again split over a file's parts,
+/// is marked word by word with its record, and no record is minted.
+#[test]
+fn a_held_phrase_split_in_a_file_is_marked_with_the_switch_off() -> TestResult {
+    let bodies = bodies();
+    let (_dir, vault) = open_vault()?;
+    let (first, rest) = bodies.split_first().expect("bodies");
+    put_asset(&vault, &first.1)?;
+    let held = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    vault.set_secret_scan_mode(&owner, SecretScanMode::Off, 10)?;
+    for (name, body) in rest {
+        let id = put_asset(&vault, body)?;
+        let stored = vault.get(&id)?.expect("stored file");
+        assert_eq!(&stored, body, "{name}: the stored bytes stay as written");
+        let served = vault.sighted_asset_bytes(stored, SecretSight::Masked)?;
+        assert!(
+            !carries_a_word(&served),
+            "{name}: switch off, a masked reader is served no word: {served:?}"
+        );
+    }
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
+        held,
+        "the switch off mints no record"
+    );
     Ok(())
 }
