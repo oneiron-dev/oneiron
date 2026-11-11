@@ -69,3 +69,48 @@ pub fn write_root_goal(vault: &Vault, owner: &AuthenticatedOwner) -> Result<Enti
     vault.write_project_goal_from_intake(owner, project, &goal, 2)?;
     Ok(project)
 }
+
+/// Writes a minimal human-authored agent definition, as the owner's own
+/// agent; its id.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn define_agent(vault: &Vault) -> Result<EntityId> {
+    use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+    let definition = AgentDefinition::new(
+        "oneiron.agent.free-time-fixture",
+        "Free-time fixture agent",
+        "1",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        AgentScope::All,
+        AgentCeiling::Proposed,
+        None,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("definedVia"),
+            rmpv::Value::from("define_agent"),
+        )]),
+        None,
+        true,
+        None,
+    );
+    let id = EntityId::now();
+    vault.put_agent_definition(
+        &id,
+        &definition,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    Ok(id)
+}
