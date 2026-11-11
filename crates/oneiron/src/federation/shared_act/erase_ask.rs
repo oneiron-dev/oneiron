@@ -1,5 +1,6 @@
 //! Erase asks (ARCH-0043 "Who may archive, delete and erase", 2026-10-09): in
-//! a shared vault a Member requests an erase and an Admin proposes one, while
+//! a shared vault a Member requests an erase and an Admin or a Deputy (which
+//! holds Admin's powers, ARCH-0082 #roles) proposes one, while
 //! only an Owner erases, by hand, through the erase doors and their veto
 //! window. An ask erases nothing, starts no window and lifts no hold. It is
 //! one durable record, an inbox ask to every live Owner, and the asker's own
@@ -17,7 +18,7 @@ pub const NOTIFICATION_PRODUCER_ERASE_ASK: &str = "shared_vault.erase_ask";
 /// The act name an Owner's erase runs under, which a closing answer names.
 const ERASE_ACT: &str = "erase";
 
-/// Who asked: a Member requests, an Admin proposes.
+/// Who asked: a Member requests, an Admin or a Deputy proposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EraseAskKind {
@@ -27,12 +28,13 @@ pub enum EraseAskKind {
 
 impl EraseAskKind {
     /// What an erase ask from a live holder of `role` is, once its grant
-    /// carries `write`: a Member's request or an Admin's proposal. `None`
-    /// for every other role; an Owner erases instead of asking.
+    /// carries `write`: a Member's request, or an Admin's or a Deputy's
+    /// proposal. `None` for every other role; an Owner erases instead of
+    /// asking, and the erase itself stays the Owner's.
     pub(crate) const fn for_asker_role(role: Role) -> Option<Self> {
         match role {
             Role::Member => Some(Self::Request),
-            Role::Admin => Some(Self::Proposal),
+            Role::Admin | Role::Deputy => Some(Self::Proposal),
             _ => None,
         }
     }
@@ -54,7 +56,8 @@ pub enum EraseAskStatus {
     },
 }
 
-/// One Member's request or Admin's proposal to erase a record.
+/// One Member's request, or an Admin's or a Deputy's proposal, to erase a
+/// record.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedEraseAsk {
@@ -89,10 +92,10 @@ impl Vault {
     }
 
     /// Ask the Owners to erase `record`, a live record of this vault: a live
-    /// Member requests it and a live Admin proposes it, each through their
-    /// grant's `write` verb. Every live Owner gets an inbox ask naming the
-    /// record. Asking again while the asker's ask for the record is open
-    /// answers that ask.
+    /// Member requests it and a live Admin or Deputy proposes it, each
+    /// through their grant's `write` verb. Every live Owner gets an inbox ask
+    /// naming the record. Asking again while the asker's ask for the record is
+    /// open answers that ask.
     pub fn ask_shared_erase(
         &self,
         asker: &AuthenticatedOwner,
