@@ -34,6 +34,13 @@ use tower::ServiceExt;
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const OCCURRED_AT: u64 = 1_769_947_200;
+/// The probe rows' predicate. They sit in different worlds, so neither
+/// supersedes the other.
+const PROBE_PREDICATE: &str = "profile.preference";
+/// The neighbour's own predicate: an owner upsert on the same subject,
+/// predicate, world, relationships and scope supersedes the standing head,
+/// which would close `readable` and drop it from every read.
+const NEIGHBOUR_PREDICATE: &str = "profile.note";
 const READABLE_TEXT: &str = "legacy quartz readable";
 const NEIGHBOUR_TEXT: &str = "legacy quartz neighbour";
 const HIDDEN_TEXT: &str = "legacy quartz hidden";
@@ -76,7 +83,7 @@ struct Fixture {
     root: CapabilitySlip,
     /// Base world, with a vector, and edges to `neighbour` and `hidden`.
     readable: EntityId,
-    /// Base world, no vector.
+    /// Base world, no vector, its own predicate.
     neighbour: EntityId,
     /// The hidden world, with the same vector as `readable`.
     hidden: EntityId,
@@ -96,11 +103,13 @@ impl Fixture {
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
         let (owner, owner_proof) = embedded_owner(&vault)?;
         let hidden_world = vault.create_world(&owner_proof, HIDDEN_WORLD_NAME, OCCURRED_AT)?;
-        let readable =
-            write_owner_claim(&vault, owner, &owner_proof, base_world_id(), READABLE_TEXT)?;
-        let neighbour =
-            write_owner_claim(&vault, owner, &owner_proof, base_world_id(), NEIGHBOUR_TEXT)?;
-        let hidden = write_owner_claim(&vault, owner, &owner_proof, hidden_world, HIDDEN_TEXT)?;
+        let base = base_world_id();
+        let write = |world, predicate, value| {
+            write_owner_claim(&vault, owner, &owner_proof, world, predicate, value)
+        };
+        let readable = write(base, PROBE_PREDICATE, READABLE_TEXT)?;
+        let neighbour = write(base, NEIGHBOUR_PREDICATE, NEIGHBOUR_TEXT)?;
+        let hidden = write(hidden_world, PROBE_PREDICATE, HIDDEN_TEXT)?;
         let probe = probe_vector();
         vault
             .batch()
@@ -272,6 +281,7 @@ fn write_owner_claim(
     owner: EntityId,
     owner_proof: &AuthenticatedOwner,
     world: EntityId,
+    predicate: &str,
     value: &str,
 ) -> TestResult<EntityId> {
     let id = EntityId::now();
@@ -280,7 +290,7 @@ fn write_owner_claim(
         .with_owner_authorship(owner_proof)
         .claim_upsert_scoped(&ScopedClaimInput {
             id: Some(id.to_hex()),
-            predicate: "profile.preference".to_owned(),
+            predicate: predicate.to_owned(),
             subject_ref: owner.to_hex(),
             value: json!(value),
             confidence: 1.0,
