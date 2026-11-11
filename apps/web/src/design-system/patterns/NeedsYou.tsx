@@ -26,6 +26,11 @@ interface NeedsYouContextValue {
   open: (id: string) => void
   /* The item finished its undo window: fold it and open the next. */
   markSettled: (id: string, value: string, kind: SettleKind) => void
+  /* An item is set aside or brought back: an item set aside never opens,
+     and when the open one is set aside the next opens. */
+  reportAside: (id: string, aside: boolean) => void
+  /* The person chose `later` on an item. */
+  later: (id: string) => void
   undoWindowMs: number
 }
 
@@ -56,7 +61,7 @@ export interface NeedsYouProps extends Omit<React.ComponentPropsWithRef<'section
   onOpenChange?: (id: string | null) => void
   /* An answer stood through its undo window; called as the item folds away. */
   onSettle?: (id: string, value: string) => void
-  /* The item was set aside with `later`. */
+  /* An item was set aside with `later`. */
   onLater?: (id: string) => void
   undoWindowMs?: number
   /* `well` is the sunk block of a room; `bare` sits on a popover or a desk. */
@@ -64,7 +69,8 @@ export interface NeedsYouProps extends Omit<React.ComponentPropsWithRef<'section
 }
 
 /* The things waiting on a person: an accordion with one item open. When the
-   open item settles it folds away and the next one opens. */
+   open item settles it folds away and the next one opens. `later` sets an
+   item aside: it stays as one quiet line and the next one opens. */
 function NeedsYouRoot({
   ref,
   openId: openIdProp,
@@ -85,25 +91,26 @@ function NeedsYouRoot({
     onOpenChange ? (next) => onOpenChange(next ?? null) : undefined,
   )
   const [settled, setSettled] = React.useState<ReadonlySet<string>>(() => new Set())
+  const [aside, setAside] = React.useState<ReadonlySet<string>>(() => new Set())
   const ids = itemIds(children)
-  const live = ids.filter((id) => !settled.has(id))
+  const live = ids.filter((id) => !settled.has(id) && !aside.has(id))
   const openId = chosen && live.includes(chosen) ? chosen : (live[0] ?? null)
 
   const rootRef = React.useRef<HTMLElement | null>(null)
-  const latest = React.useRef({ ids, settled, openId, onSettle, onLater })
+  const latest = React.useRef({ ids, settled, aside, openId, onSettle, onLater })
   useIsomorphicLayoutEffect(() => {
-    latest.current = { ids, settled, openId, onSettle, onLater }
+    latest.current = { ids, settled, aside, openId, onSettle, onLater }
   })
 
   const open = React.useCallback((id: string) => setChosen(id), [setChosen])
 
   const markSettled = React.useCallback(
     (id: string, value: string, kind: SettleKind) => {
-      const { ids: order, settled: done, openId: current } = latest.current
+      const { ids: order, settled: done, aside: setAside, openId: current } = latest.current
       const nextSettled = new Set(done).add(id)
       setSettled(nextSettled)
       if (current === id) {
-        const rest = order.filter((x) => !nextSettled.has(x))
+        const rest = order.filter((x) => !nextSettled.has(x) && !setAside.has(x))
         const after = rest.find((x) => order.indexOf(x) > order.indexOf(id))
         const next = after ?? rest[0] ?? null
         setChosen(next)
@@ -132,9 +139,28 @@ function NeedsYouRoot({
     [setChosen],
   )
 
+  const reportAside = React.useCallback(
+    (id: string, on: boolean) => {
+      const { ids: order, settled: done, aside: was, openId: current } = latest.current
+      if (was.has(id) === on) return
+      const next = new Set(was)
+      if (on) next.add(id)
+      else next.delete(id)
+      latest.current = { ...latest.current, aside: next }
+      setAside(next)
+      /* The open item went aside: the next one after it opens. */
+      if (on && current === id) {
+        const rest = order.filter((x) => !done.has(x) && !next.has(x))
+        setChosen(rest.find((x) => order.indexOf(x) > order.indexOf(id)) ?? rest[0] ?? null)
+      }
+    },
+    [setChosen],
+  )
+  const later = React.useCallback((id: string) => latest.current.onLater?.(id), [])
+
   const ctx = React.useMemo(
-    () => ({ openId, open, markSettled, undoWindowMs }),
-    [openId, open, markSettled, undoWindowMs],
+    () => ({ openId, open, markSettled, reportAside, later, undoWindowMs }),
+    [openId, open, markSettled, reportAside, later, undoWindowMs],
   )
 
   return (
@@ -186,6 +212,12 @@ export interface NeedsYouItemProps extends Omit<React.ComponentPropsWithRef<'div
   /* The question, one serif line; it wraps when the item is open. */
   question: React.ReactNode
   urgency?: NeedsYouUrgency
+  /* Set aside with `later`: the item is one quiet line (its first words,
+     `set aside`, and `answer now`, which brings it back open with focus on
+     its first pick). */
+  setAside?: boolean
+  defaultSetAside?: boolean
+  onSetAsideChange?: (setAside: boolean) => void
 }
 
 /* One answer's state: the pick, its undo window (Escape or `undo`
@@ -230,18 +262,95 @@ function useAnswerScope(onSettled: (value: string, kind: SettleKind) => void, un
 }
 
 /* Closed: one line. Open: the question line and its body (a shape, then the
-   picks). */
-function NeedsYouItem({ id, asker, question, urgency, className, children, ...props }: NeedsYouItemProps) {
+   picks). Set aside: one quiet line with `answer now`. */
+function NeedsYouItem({
+  id,
+  asker,
+  question,
+  urgency,
+  setAside: setAsideProp,
+  defaultSetAside = false,
+  onSetAsideChange,
+  className,
+  children,
+  ...props
+}: NeedsYouItemProps) {
   const root = useNeedsYou('NeedsYou.Item')
-  const isOpen = root.openId === id
-  const { markSettled } = root
-  const ctx = useAnswerScope((value, kind) => markSettled(id, value, kind), root.undoWindowMs)
-  const state = ctx.state
+  const { markSettled, reportAside, later: rootLater, open: openItem } = root
+  const [aside, setAside] = useControllableState(setAsideProp, defaultSetAside, onSetAsideChange)
+  const isOpen = root.openId === id && !aside
+  const answer = useAnswerScope((value, kind) => markSettled(id, value, kind), root.undoWindowMs)
+  const state = answer.state
   const settled = state.status === 'settled'
+  const itemRef = React.useRef<HTMLDivElement | null>(null)
+  /* Where focus goes once the item has changed form. */
+  const focusAfter = React.useRef<'next' | 'first-pick' | null>(null)
+
+  useIsomorphicLayoutEffect(() => {
+    reportAside(id, aside)
+  }, [id, aside, reportAside])
+
+  /* `later` on an item sets it aside instead of starting an undo window:
+     `answer now` is the way back. */
+  const ctx = React.useMemo<ItemContextValue>(
+    () => ({
+      ...answer,
+      later: () => {
+        if (itemRef.current?.contains(document.activeElement)) focusAfter.current = 'next'
+        setAside(true)
+        rootLater(id)
+      },
+    }),
+    [answer, setAside, rootLater, id],
+  )
+
+  React.useEffect(() => {
+    const target = focusAfter.current
+    if (!target) return
+    focusAfter.current = null
+    const item = itemRef.current
+    requestAnimationFrame(() => {
+      if (target === 'first-pick') {
+        item?.querySelector<HTMLElement>('.sl-needs-you-pick:not(:disabled)')?.focus({ preventScroll: true })
+        return
+      }
+      const section = item?.closest('.sl-needs-you')
+      const next = section?.querySelector<HTMLElement>('.sl-needs-you-item[data-state="open"] .sl-needs-you-pick:not(:disabled)')
+      ;(next ?? item?.querySelector<HTMLElement>('.sl-needs-you-answer-now'))?.focus({ preventScroll: true })
+    })
+  }, [aside, isOpen])
+
+  if (aside) {
+    return (
+      <div
+        ref={itemRef}
+        className={cx('sl-needs-you-item', className)}
+        data-needs-you-id={id}
+        data-state="aside"
+        {...props}
+      >
+        <div className="sl-needs-you-aside">
+          <span className="sl-needs-you-aside-words">{question}</span>
+          <span className="sl-needs-you-aside-state">set aside</span>
+          <Verb
+            className="sl-needs-you-answer-now"
+            onClick={() => {
+              focusAfter.current = 'first-pick'
+              setAside(false)
+              openItem(id)
+            }}
+          >
+            answer now
+          </Verb>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <ItemContext.Provider value={ctx}>
       <div
+        ref={itemRef}
         className={cx('sl-needs-you-item', className)}
         data-needs-you-id={id}
         data-state={isOpen ? 'open' : 'closed'}

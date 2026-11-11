@@ -35,6 +35,38 @@
   opacity: 0;
 }
 
+/* Set aside: one quiet line in the question's column: its first words,
+   `set aside`, and `answer now` at the right. */
+.sl-needs-you-aside {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  padding: 6px 0 6px 34px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+}
+
+.sl-needs-you-aside-words {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--sl-ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-needs-you-aside-state {
+  flex: none;
+  color: var(--sl-ink-3);
+  white-space: nowrap;
+}
+
+.sl-needs-you-answer-now {
+  flex: none;
+  margin-left: auto;
+}
+
 /* The head: the asker's mark, the question, the urgency at the right. */
 .sl-needs-you-head.sl-unfold-trigger {
   display: grid;

@@ -176,6 +176,8 @@ function NeedsYouDemo() {
   const [gone, setGone] = React.useState<string[]>([])
   const [log, setLog] = React.useState('Nothing settled yet.')
   const [round, setRound] = React.useState(0)
+  /* Set aside, held here (controlled): one item starts aside. */
+  const [aside, setAside] = React.useState<string[]>(['dip'])
   const asks = ASKS.filter((a) => !gone.includes(a.id))
   return (
     <div className="lib-stack">
@@ -188,13 +190,18 @@ function NeedsYouDemo() {
             setGone((g) => [...g, id])
             setLog(`${id}: ${value}`)
           }}
-          onLater={(id) => {
-            setGone((g) => [...g, id])
-            setLog(`${id}: later`)
-          }}
+          onLater={(id) => setLog(`${id}: set aside`)}
         >
           {asks.map((a) => (
-            <NeedsYou.Item key={a.id} id={a.id} asker={a.asker} question={a.question} urgency={a.urgency}>
+            <NeedsYou.Item
+              key={a.id}
+              id={a.id}
+              asker={a.asker}
+              question={a.question}
+              urgency={a.urgency}
+              setAside={aside.includes(a.id)}
+              onSetAsideChange={(on) => setAside((l) => (on ? [...l, a.id] : l.filter((x) => x !== a.id)))}
+            >
               {a.body}
             </NeedsYou.Item>
           ))}
@@ -202,9 +209,11 @@ function NeedsYouDemo() {
       ) : null}
       <span className="lib-readout">
         <span>{log}</span>
+        <span data-specimen="needs-you-aside">set aside: {aside.join(', ') || 'none'}</span>
         <Verb
           onClick={() => {
             setGone([])
+            setAside(['dip'])
             setRound((r) => r + 1)
             setLog('Nothing settled yet.')
           }}
@@ -856,7 +865,7 @@ export function PatternSections() {
   return (
     <>
       <Section title="NeedsYou">
-        <Specimen name="in a room: the first open, picks apply with undo, the next opens" full>
+        <Specimen name="in a room: the first open, picks apply with undo, the next opens; later sets an item aside as one quiet line, answer now brings it back" full>
           <NeedsYouDemo />
         </Specimen>
       </Section>
