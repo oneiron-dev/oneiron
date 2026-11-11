@@ -285,11 +285,11 @@ impl Vault {
         let mut lfs_objects = Vec::new();
         for pointer in pointers {
             let intent = pointer.intent(repo_id);
-            let admission =
+            // Every pushed pointer requires its object, whatever its class
+            // (Engine CODECUSTODY-LFS Q2 = A).
+            let LfsAdmission::StoreInLfs =
                 self.admit_lfs_pointer(&DefaultRepositoryLargeLfsPathPolicy, &intent)?;
-            lfs_objects.push(
-                (admission == LfsAdmission::StoreInLfs).then_some((intent.oid, intent.size_bytes)),
-            );
+            lfs_objects.push(Some((intent.oid, intent.size_bytes)));
         }
         let mut reasons = RetainedReasons::default();
         for (index, update) in updates.iter().enumerate() {

@@ -1,0 +1,16 @@
+{
+  "name": "vault.code.origin.lfs_path_policy.get",
+  "description": "Read one served origin's ordered LFS path rules, their revision and the class of an unmatched path (repository-large), as the owner.",
+  "input": "crate::memory::origin_doors::OriginRepoRequest",
+  "output": "crate::memory::origin_doors::OriginLfsPathPolicyView",
+  "call": "memory.origin_lfs_path_policy_get_as(&memory.embedded_owner(\"vault.code.origin.lfs_path_policy.get\")?, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
