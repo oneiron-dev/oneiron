@@ -173,8 +173,9 @@ pub(crate) fn execute(
 
 /// Runs a requested pass on `admitted` and ends its record by what the pass
 /// came to. A pass that errs ends its record `Failed` before the error
-/// returns, and the attempt fails with the error's kind; a record that
-/// already ended keeps its end.
+/// returns, its apply's claim too when that end did not record, and the
+/// attempt fails with the error's kind; a record that already ended keeps
+/// its end.
 fn finish(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
