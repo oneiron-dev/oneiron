@@ -491,7 +491,6 @@ use readonly_fold::authority_log_rows_in_txn;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
-#[cfg(feature = "sync")]
 pub(crate) use readonly_fold::is_history_incomplete;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
@@ -526,7 +525,6 @@ pub(crate) use world_key_support::{
     standing_rows, unsigned_side_entry,
 };
 pub use world_models::WorldModelRoutes;
-#[cfg(feature = "sync")]
 pub(crate) use world_privacy::side_world;
 pub use world_privacy::{
     Destination, EffectiveModelOrder, EffectiveRead, EffectiveWorldPrivacy, FoldedWorld,
