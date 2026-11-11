@@ -197,16 +197,14 @@ enum Node {
 }
 
 /// One decoded part, read as the write door's field walk reads it
-/// (`sanitize_messagepack`): an array first as one text and, when that holds
-/// no phrase, item by item; a map key and member by member; text as itself.
+/// (`sanitize_messagepack`): an array as one text, then item by item; a map
+/// key and member by member; text as itself. A phrase the array's text
+/// holds does not end the reading: one nested in an item is found too (a
+/// word two readings find is placed once, `place_split_phrases`).
 fn read_part(value: &Value, node: &Node, out: &mut Vec<SplitPhrase>) {
     match (value, node) {
         (Value::Array(items), Node::Array(nodes)) if items.len() == nodes.len() => {
-            let found = out.len();
             read_text(out, |text| text.push_array(items, nodes));
-            if out.len() > found {
-                return;
-            }
             for (item, node) in items.iter().zip(nodes) {
                 read_part(item, node, out);
             }

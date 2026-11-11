@@ -352,3 +352,101 @@ fn a_held_phrase_split_in_a_file_is_marked_with_the_switch_off() -> TestResult {
     );
     Ok(())
 }
+
+/// A phrase the door finds in an array's text does not end its reading:
+/// the same phrase again under a key in one of the array's items is marked
+/// too, with the same record, so a masked reader is served neither copy
+/// (REVIEW-7059 P1).
+#[test]
+fn a_phrase_nested_in_an_array_that_holds_one_is_marked_too() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let words: Vec<&[u8]> = PHRASE.split(' ').map(str::as_bytes).collect();
+    let mut items: Vec<serde_json::Value> =
+        words.iter().map(|word| serde_json::json!(word)).collect();
+    items.push(serde_json::json!({ "notes": words }));
+    let body = serde_json::to_vec(&items)?;
+    let before = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
+    let id = put_asset(&vault, &body)
+        .unwrap_or_else(|error| panic!("the nested-phrase write lands: {error:?}"));
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
+        before + 1,
+        "one custody record holds the phrase, both copies"
+    );
+    let served =
+        vault.sighted_asset_bytes(vault.get(&id)?.expect("stored file"), SecretSight::Masked)?;
+    let key = b"{\"notes\":";
+    let notes = served
+        .windows(key.len())
+        .position(|window| window == key)
+        .expect("the key is no word and stays as written");
+    // The nested object alone, as a reader that decodes it reads it.
+    let nested = served
+        .get(notes..served.len() - 1)
+        .expect("the nested object's bytes");
+    assert!(
+        !carries_a_word(nested),
+        "the nested copy is served masked: {}",
+        String::from_utf8_lossy(nested)
+    );
+    assert!(
+        !carries_a_word(&served),
+        "a masked reader is served no word: {}",
+        String::from_utf8_lossy(&served)
+    );
+    Ok(())
+}
+
+/// A carrier's stored text (an entity document's, a typed body's) and how a
+/// lifted text reads back (REVIEW-7059, Fable P1).
+#[cfg(oneiron_test_support)]
+mod carrier {
+    use oneiron::test_doors::split_phrase_carrier::{
+        carrier_text_is_placeable, lifted_text_round_trip,
+    };
+
+    use super::{PHRASE, TestResult, carries_a_word, open_vault, put_asset};
+
+    /// The phrase one word per JSON string under a key: the text rules miss
+    /// it (each word reads alone), and the door's field walk reads the list
+    /// whole and finds it.
+    fn listed_phrase_text() -> String {
+        let words: Vec<&str> = PHRASE.split(' ').collect();
+        serde_json::json!({ "account": "main", "list": words }).to_string()
+    }
+
+    /// A carrier's text is placed as before: a phrase split over its parts
+    /// leaves it unplaced, never marked word by word under one handle.
+    #[test]
+    fn a_split_phrase_in_a_carrier_text_stays_unplaced() -> TestResult {
+        let text = listed_phrase_text();
+        assert!(
+            !carrier_text_is_placeable(text.as_bytes())?,
+            "a carrier's split phrase stays unplaced: {text}"
+        );
+        Ok(())
+    }
+
+    /// A carrier's text with the bytes of a file whose split phrase is
+    /// marked reads that file's marks: a masked reader is served each word
+    /// as the phrase's handle, and a writer's copy that keeps those handles
+    /// writes no other word in their place.
+    #[test]
+    fn a_split_phrase_handle_writes_back_no_wrong_word() -> TestResult {
+        let (_dir, vault) = open_vault()?;
+        let text = listed_phrase_text();
+        put_asset(&vault, text.as_bytes())
+            .unwrap_or_else(|error| panic!("the listed-phrase file lands: {error:?}"));
+        let (masked, resolved) = lifted_text_round_trip(&vault, &text)?;
+        let masked = masked.expect("the lifted text reads the file's marks");
+        assert!(
+            !carries_a_word(masked.as_bytes()),
+            "a masked reader is served no word: {masked}"
+        );
+        assert!(
+            resolved.as_ref().is_none_or(|back| *back == text),
+            "kept handles write back the phrase as it was, or stay as written: {resolved:?}"
+        );
+        Ok(())
+    }
+}
