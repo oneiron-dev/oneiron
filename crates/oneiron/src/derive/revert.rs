@@ -144,13 +144,24 @@ impl Vault {
         let now_ms = crate::ports::recorded_at_in_txn(&self.store, txn)?.saturating_mul(1_000);
         let mut reverted = Vec::new();
         let mut left = Vec::new();
+        let mut reverted_rows = std::collections::BTreeSet::new();
         for item in record.items.iter().rev().filter(|item| item.landed) {
             let read: &heed::RoTxn<'_> = txn;
             let mut current = Vec::with_capacity(item.rows.len());
             for row in &item.rows {
                 current.push(row_revision_in(self, read, &item.kind, *row)?);
             }
-            if current != item.revisions {
+            // The revert is one write transaction, and an item is taken back
+            // only while each of its rows stands as recorded or as an undo of
+            // this revert left it. So a row of an item already taken back
+            // differs from its record only by this revert's own undo.
+            if current.len() != item.revisions.len()
+                || current.iter().zip(&item.revisions).zip(&item.rows).any(
+                    |((current, recorded), row)| {
+                        current != recorded && !reverted_rows.contains(row)
+                    },
+                )
+            {
                 left.push((item.local.clone(), REVERT_CHANGED_SINCE.to_owned()));
                 continue;
             }
@@ -158,6 +169,7 @@ impl Vault {
             match self.undo_item_in_txn(&mut savepoint, &record.actor, reverter, item, now_ms) {
                 Ok(true) => {
                     savepoint.commit()?;
+                    reverted_rows.extend(item.rows.iter().copied());
                     reverted.push(item.local.clone());
                 }
                 Ok(false) => {
