@@ -17,6 +17,10 @@ use crate::memory::{MemoryError, MemoryResult};
 use crate::write_envelope::WriteActor;
 use crate::{EdgeActorClass, EntityId, TimeRange, Vault};
 
+// An ordinary agent's derive rows: the door of 6.7a, where these tests
+// have always found it.
+pub use super::derive::grant_derive_rows;
+
 /// Writes a minimal human-authored agent definition named `name`, with a
 /// Proposed ceiling, as the owner's own agent; its id.
 ///
@@ -55,25 +59,6 @@ pub fn define_agent(vault: &Vault, name: &str) -> Result<EntityId> {
     let id = EntityId::now();
     vault.put_agent_definition(&id, &definition, TimeRange { start: 1, end: 1 }, 1)?;
     Ok(id)
-}
-
-/// Writes the shipped policy with, for each of `agents`, the rows an
-/// owner's policy gives an ordinary agent that derives: its `core:read`
-/// grant, an `agent` Auto ceiling and the actor-bound `generated` permit.
-///
-/// # Errors
-///
-/// The vault's.
-pub fn grant_derive_rows(vault: &Vault, agents: &[EntityId]) -> Result<()> {
-    let mut body = crate::gate::default_policy_manifest()?;
-    for agent in agents {
-        body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
-    }
-    crate::test_support::put_policy_manifest_bytes(
-        vault,
-        crate::gate::default_policy_manifest_id()?,
-        &body,
-    )
 }
 
 /// A live run of a defined agent: its dispatched attempt, leased.
