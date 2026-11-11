@@ -59,7 +59,7 @@
 use std::fmt;
 use std::future::Future;
 use std::pin::pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
 
@@ -78,6 +78,7 @@ use oneiron::{
     EntityId, LlmRequest, ModelId, ModelLocality, RunWakePass, Vault, WakeAttemptContext,
     WakeCancellation, WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger, WriteActor,
 };
+use oneiron_keystore::{DeviceKeystore, MemoryKeystore};
 use serde_json::{Value, json};
 
 use crate::clock::FakeClock;
@@ -289,17 +290,32 @@ pub fn test_host_issuer() -> oneiron::Result<HostSlipIssuer> {
     HostSlipIssuer::from_seed(&seed)
 }
 
+/// The process's one this-device keystore, in memory. Its slots are named by
+/// vault id and install, so every vault a test opens shares it, and a reopen
+/// in the same process finds the keys its install was enrolled under. A vault
+/// reopened in another process (a cached fixture's copy under nextest) finds
+/// none, and its install's profile then stands under other keys.
+fn test_keystore() -> Arc<dyn DeviceKeystore> {
+    static KEYSTORE: OnceLock<Arc<MemoryKeystore>> = OnceLock::new();
+    let keystore = KEYSTORE.get_or_init(|| Arc::new(MemoryKeystore::new()));
+    Arc::clone(keystore) as Arc<dyn DeviceKeystore>
+}
+
 /// Attaches the kit's test host to an open vault, as a self-hosted server's
-/// start does: roots it (binding the embedded owner as `human`), profiles
-/// this install so it carries the owner's acts, and enrols and retains the
-/// engine's machine writers. Call it after every open, once the vault's
-/// owner exists ([`door::owner`]): the machine signers live in memory.
+/// start does: installs the process's in-memory keystore, roots the vault
+/// (binding the embedded owner as `human`), profiles this install so it
+/// carries the owner's acts, and enrols and retains the engine's machine
+/// writers. Call it after every open, once the vault's owner exists
+/// ([`door::owner`]): the keystore handle and the machine signers live in
+/// memory.
 ///
 /// # Errors
 /// The engine refuses a step: a vault rooted under another host, or an
-/// install whose profile stands under other keys.
+/// install whose profile stands under other keys (one profiled in another
+/// process: the keystore lives in this process's memory).
 pub fn attach_test_host(vault: &Vault) -> Result<(), DreamerPassError> {
     let issuer = test_host_issuer()?;
+    vault.install_device_keystore(test_keystore());
     vault.ensure_host_root_slip(&issuer)?;
     vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
     vault.provision_engine_machine_identities(&issuer)?;
