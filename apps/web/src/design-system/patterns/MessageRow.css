@@ -1,0 +1,256 @@
+/* A message: the mark column, then the name line and what the row says.
+   Hover is one tone step; the actions arrive in the HoverBar. */
+.sl-message-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  column-gap: 14px;
+  padding: 8px 10px;
+  border-radius: var(--sl-radius);
+}
+
+.sl-message-row:hover,
+.sl-message-row:has(.sl-hover-bar:focus-within),
+.sl-message-row:has(.sl-hover-bar [aria-expanded="true"]) {
+  background: var(--sl-hover);
+}
+
+.sl-message-author {
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  padding-top: 2px;
+}
+
+.sl-message-body {
+  min-width: 0;
+  max-width: 70ch;
+}
+
+.sl-message-name-line {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+}
+
+.sl-message-name {
+  font-size: var(--sl-t-say);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--sl-ink-1);
+}
+
+.sl-message-text {
+  padding-top: 2px;
+  font-size: var(--sl-t-say);
+  line-height: 1.55;
+  color: var(--sl-ink-2);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.sl-message-row[data-provisional] .sl-message-text {
+  color: var(--sl-ink-3);
+}
+
+/* Attachments: a file per card, on a sunk tone. */
+.sl-message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.sl-message-attachment {
+  display: inline-grid;
+  grid-template-columns: 18px auto;
+  column-gap: 10px;
+  align-items: center;
+  min-width: 210px;
+  padding: 8px 14px 8px 12px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-sunk);
+  color: var(--sl-ink-2);
+  text-align: left;
+}
+
+.sl-message-attachment:hover {
+  background: var(--sl-island);
+}
+
+.sl-message-attachment-name {
+  overflow: hidden;
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--sl-ink-1);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* A folded line and its detail. The chevron points right when folded. */
+.sl-fold-line.sl-unfold-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 1px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+  text-align: left;
+}
+
+.sl-fold-line:hover,
+.sl-fold-line:focus-visible,
+.sl-fold-line[aria-expanded="true"] {
+  color: var(--sl-ink-1);
+}
+
+.sl-fold-chevron {
+  transform: rotate(-90deg);
+  transition: transform 160ms var(--sl-ease-out);
+}
+
+.sl-fold-line[aria-expanded="true"] .sl-fold-chevron {
+  transform: none;
+}
+
+.sl-message-fold-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 0 4px 18px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+/* The thread line: marks, the count, the last reply; hover reads view thread. */
+.sl-thread-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 640px;
+  margin-top: 6px;
+  margin-left: -4px;
+  padding: 4px 8px 4px 4px;
+  border-radius: var(--sl-radius);
+  text-align: left;
+}
+
+.sl-thread-line:hover,
+.sl-thread-line:focus-visible {
+  background: var(--sl-hover);
+  outline: none;
+}
+
+.sl-thread-line-people {
+  display: flex;
+  gap: 3px;
+}
+
+.sl-thread-line-unread {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--sl-ink-1);
+}
+
+.sl-thread-line-count,
+.sl-thread-line-last {
+  font-family: var(--sl-mono);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--sl-t-figure);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.sl-thread-line-count {
+  color: var(--sl-ink-2);
+}
+
+.sl-thread-line-last {
+  color: var(--sl-ink-3);
+}
+
+.sl-thread-line-view {
+  display: none;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-1);
+  white-space: nowrap;
+}
+
+.sl-thread-line:hover .sl-thread-line-view,
+.sl-thread-line:focus-visible .sl-thread-line-view {
+  display: inline;
+}
+
+.sl-thread-line:hover .sl-thread-line-last,
+.sl-thread-line:focus-visible .sl-thread-line-last {
+  display: none;
+}
+
+/* Reactions: the emoji and a figure; yours prints the figure brighter. */
+.sl-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-left: -6px;
+  padding-top: 4px;
+}
+
+.sl-reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: var(--sl-radius);
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-reaction:hover {
+  background: var(--sl-hover);
+}
+
+.sl-reaction:active {
+  transform: scale(0.96);
+}
+
+.sl-reaction-emoji {
+  font-family: var(--sl-emoji);
+  font-size: var(--sl-t-do);
+  line-height: 1;
+}
+
+.sl-reaction[aria-pressed="true"] > .sl-figure {
+  color: var(--sl-ink-1);
+}
+
+.sl-reaction-add {
+  opacity: 0;
+}
+
+.sl-message-row:hover .sl-reaction-add,
+.sl-reaction-add:focus-visible,
+.sl-reaction-add[aria-expanded="true"] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .sl-reaction-add {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-fold-chevron,
+  .sl-reaction {
+    transition: none;
+  }
+  .sl-reaction:active {
+    transform: none;
+  }
+}
