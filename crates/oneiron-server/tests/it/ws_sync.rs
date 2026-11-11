@@ -1575,18 +1575,20 @@ async fn imported_update_relays_to_second_client_and_persists_contract_keys() {
         vault.sync_state_get("d:w:2026-02").unwrap().is_some(),
         "window snapshot d:w:2026-02 must exist"
     );
+    // FIX 8883 (#4221) widened the window update sequence to u64: sixteen
+    // hex digits in the row key, an eight-byte LE counter.
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-02:00000001")
+            .sync_state_get("u:w:2026-02:0000000000000001")
             .unwrap()
             .unwrap(),
         update,
-        "imported update bytes must be appended at u:w:2026-02:00000001"
+        "imported update bytes must be appended at u:w:2026-02:0000000000000001"
     );
     assert_eq!(
         vault.sync_state_get("m:u_seq:w:2026-02").unwrap().unwrap(),
-        1u32.to_le_bytes(),
-        "m:u_seq:w:2026-02 must be a u32 LE counter at 1"
+        1u64.to_le_bytes(),
+        "m:u_seq:w:2026-02 must be a u64 LE counter at 1"
     );
     assert_eq!(
         vault.sync_state_get("svf:w:2026-02").unwrap().unwrap(),
