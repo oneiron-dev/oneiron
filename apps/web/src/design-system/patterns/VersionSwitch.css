@@ -1,0 +1,27 @@
+/* Under the newest reply: `try again`, then the version step. */
+.sl-version-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 30px;
+}
+
+.sl-version-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sl-version-value {
+  min-width: 4.5ch;
+  text-align: center;
+}
+
+/* The chevron points down; turned, it points back and on. */
+.sl-version-back {
+  transform: rotate(90deg);
+}
+
+.sl-version-on {
+  transform: rotate(-90deg);
+}
