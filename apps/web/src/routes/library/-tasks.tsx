@@ -140,9 +140,9 @@ function TasksDemo() {
                   <TaskRow.Last>Fitting with {answered} now.</TaskRow.Last>
                 ) : (
                   <>
-                    <TaskRow.Question>Should the fit treat weeks 44 to 46 as promo weeks?</TaskRow.Question>
-                    <NeedsYou.Answer
-                      id="fit-promo"
+                    <NeedsYou
+                      ground="bare"
+                      aria-label="what the fit asks"
                       onSettle={(_, value) => {
                         const pick = PROMO_PICKS.find((p) => p.value === value)
                         setAnswered(pick?.label ?? value)
@@ -150,15 +150,21 @@ function TasksDemo() {
                       }}
                       onLater={() => say('set aside')}
                     >
-                      <NeedsYou.Picks>
-                        {PROMO_PICKS.map((p) => (
-                          <NeedsYou.Pick key={p.value} value={p.value}>
-                            {p.label}
-                          </NeedsYou.Pick>
-                        ))}
-                        <NeedsYou.Later />
-                      </NeedsYou.Picks>
-                    </NeedsYou.Answer>
+                      <NeedsYou.Ask
+                        id="fit-promo"
+                        question="Should the fit treat weeks 44 to 46 as promo weeks?"
+                        note="Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline."
+                      >
+                        <NeedsYou.Picks>
+                          {PROMO_PICKS.map((p) => (
+                            <NeedsYou.Pick key={p.value} value={p.value}>
+                              {p.label}
+                            </NeedsYou.Pick>
+                          ))}
+                          <NeedsYou.OwnAnswer />
+                        </NeedsYou.Picks>
+                      </NeedsYou.Ask>
+                    </NeedsYou>
                   </>
                 )}
                 <TaskRow.Write placeholder="Write to Metryon" onSend={(text) => say(`wrote “${text}”`)} />
