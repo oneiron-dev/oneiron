@@ -1,27 +1,37 @@
 //! In-process Dreamer wake passes over a small seeded vault, every model
 //! call answered by the scripted backend.
 //!
-//! The prompts' digests are unknown until a fleet run: each list below
-//! starts empty, every call misses, and `ScriptedBackend::finish` fails the
-//! test with the backend's miss report, which prints each prompt and its
-//! digest. Script a step per reported call as `(digest, reply)`. A reply
-//! that proposes no claim and no person is
+//! Each table below lists one wake's model calls as `(prompt digest,
+//! reply)`. A call no table answers fails the test in
+//! `ScriptedBackend::finish` with the backend's miss report, which names the
+//! prompt and its digest; `print_seen` puts every request on a `## SEEN`
+//! line in full. A reply that proposes no claim and no person is
 //! `r#"{"candidates":[],"persons":[]}"#`.
 
 use oneiron::WakePassStop;
+use oneiron_testkit::TestVault;
+use oneiron_testkit::door;
 use oneiron_testkit::dreamer::{
-    DreamerPass, allow_scripted_extraction, attach_test_host, grant_dreamer_read,
-    read_everything_scope,
+    DreamerPass, allow_scripted_extraction, attach_test_host, grant_dreamer_read, print_seen,
+    read_everything_scope, scripted_backend,
 };
-use oneiron_testkit::{PromptDigest, ScriptedBackend, Step, TestVault, door};
 use serde_json::json;
 
-/// The turn wake's model calls, as `(prompt digest, reply)`: at least its
-/// extraction over the seeded turn.
-const TURN_WAKE_CALLS: &[(&str, &str)] = &[];
+/// The turn wake's model calls: the reading of the turn's two name spans,
+/// then the extraction over the turn, which proposes nothing.
+const TURN_WAKE_CALLS: &[(&str, &str)] = &[
+    (
+        "68ab6de1d6a827b746eec1d062ce4cdc857fa3b6ae5270e169bbf23b1c4f8629",
+        r#"{"readings":[{"span":1,"kind":"name","novel":true,"confidence":90,"entity":null},{"span":2,"kind":"name","novel":true,"confidence":90,"entity":null}]}"#,
+    ),
+    (
+        "78d9143fe540c8d87f9f1c3807d66bd8622baf605aaa7e445e123a51655ea334",
+        r#"{"candidates":[],"persons":[]}"#,
+    ),
+];
 
-/// The Timer wake's model calls, as `(prompt digest, reply)`. A Timer wake
-/// plans from the Dreamer's interest queue and may make none.
+/// The Timer wake's model calls. A Timer wake plans from the Dreamer's
+/// interest queue, and over one turn it makes none.
 const TIMER_WAKE_CALLS: &[(&str, &str)] = &[];
 
 /// The one owner turn the passes read.
@@ -60,32 +70,17 @@ fn seeded() -> TestVault {
     .expect("the Dreamer fixture seeds through public doors")
 }
 
-/// A scripted backend answering `calls`, one step each.
-fn backend(calls: &[(&str, &str)]) -> ScriptedBackend {
-    let steps = calls
-        .iter()
-        .enumerate()
-        .map(|(index, (digest, reply))| {
-            Step::text(
-                format!("dreamer-call-{index}"),
-                PromptDigest::from_hex(digest).expect("a 64-hex prompt digest"),
-                *reply,
-            )
-        })
-        .collect();
-    ScriptedBackend::new(steps).expect("the script")
-}
-
 #[test]
 fn a_turn_wake_reads_the_fresh_owner_turn_and_runs_to_an_empty_queue() {
     let test_vault = seeded();
     let vault = test_vault.open_owned().expect("open the seeded vault");
     attach_test_host(&vault).expect("the test host attaches after the open");
-    let backend = backend(TURN_WAKE_CALLS);
+    let backend = scripted_backend("turn-wake", TURN_WAKE_CALLS);
 
     let pass = DreamerPass::new(&backend)
         .with_run_id("turn-wake")
         .run_turn_wake(&vault, test_vault.clock());
+    print_seen(&backend.seen());
     // An unscripted call fails here, first, with the prompt and its digest.
     let seen = backend.finish();
     let report = pass.unwrap_or_else(|error| panic!("{error}"));
@@ -108,11 +103,12 @@ fn a_timer_wake_over_one_witnessed_turn_runs_to_an_empty_queue() {
     // with such content would.
     grant_dreamer_read(&vault, read_everything_scope())
         .expect("the owner grants the Dreamer its reads");
-    let backend = backend(TIMER_WAKE_CALLS);
+    let backend = scripted_backend("timer-wake", TIMER_WAKE_CALLS);
 
     let pass = DreamerPass::new(&backend)
         .with_run_id("timer-wake")
         .run_timer_wake(&vault, test_vault.clock());
+    print_seen(&backend.seen());
     let seen = backend.finish();
     let report = pass.unwrap_or_else(|error| panic!("{error}"));
 
