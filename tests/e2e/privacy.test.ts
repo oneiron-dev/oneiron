@@ -566,8 +566,16 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
   }, {
     id: "archive-summary", origin: "summary", role: "dreamer_current", purpose: "background scope summary",
     standing: true,
-    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", fields: { response_format: { type: "json_schema" } } },
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", system: SUMMARY_PROMPT, fields: { response_format: { type: "json_schema" } } },
     response: openaiText("archive-summary", "privacy-summary", JSON.stringify({ text: "A short note was recorded.", keep: "" }),
+      { inputTokens: 128, outputTokens: 16 }),
+  }, {
+    // A later wake sees the protection/enrichment facts added below. This is
+    // the roster About producer, not another conversation-summary response.
+    id: "archive-person-about", origin: "summary", role: "dreamer_current",
+    purpose: "roster About refresh after the archive case adds person facts", standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", system: PERSON_ABOUT_PROMPT },
+    response: openaiText("archive-person-about", "privacy-summary", "A person has a recorded profile fact.",
       { inputTokens: 128, outputTokens: 16 }),
   }, ...backgroundExtraction("privacy-extract")] });
   let engine: EngineFixture | undefined;
@@ -575,7 +583,7 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
   let primary: unknown;
   let stage = "archive engine setup";
   try {
-    engine = await EngineFixture.start({ id: "PRIVACY-01", profile, serverConfig: dreamerConfig(providers) });
+    engine = await EngineFixture.start({ id: "PRIVACY-01", profile, serverConfig: dreamerConfig(providers, true) });
     await grantExtraction(engine);
     const room = await ownerRoom(engine, "Privacy archive source", undefined, spec.occurredAt);
     // Arm the handoff before witnessing can schedule Micro alongside Meso.
@@ -727,6 +735,16 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
   } finally {
     const cleanups: string[] = [];
     try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try {
+      for (const call of providers.seenFixtureCalls.filter(call => call.fixtureId === "archive-person-about")) {
+        const body = call.body as { response_format?: unknown; messages?: { content: string }[] };
+        expect(body.response_format).toBeUndefined();
+        const facts = body.messages?.[1]?.content.split("\n") ?? [];
+        expect(facts.length).toBeGreaterThan(0);
+        expect(facts.every(line => line.startsWith("privacy.archive_protection: ")
+          || line.startsWith("provider.enrichment: "))).toBe(true);
+      }
+    } catch (error) { cleanups.push(`PRIVACY-01 roster About request contract: ${errorText(error)}`); }
     try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
     if (primaryFailed) {
       if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
@@ -830,15 +848,56 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", system: SUMMARY_PROMPT, fields: { response_format: { type: "json_schema" } } },
     response: openaiText("source-summary", "privacy-summary", JSON.stringify({ text: spec.summaryText, keep: "" }),
       { inputTokens: 128, outputTokens: 48 }),
+  }, {
+    // The uncertain follower reading above owes Typing on GenerativeReasoner,
+    // which this host leaves on its narrative backend. This is not a summary.
+    id: "source-span-typing", origin: "summary", role: "generative_reasoner",
+    purpose: "type the one uncertain Mira span from the witnessed source", standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary",
+      system: recipeDefaults.typing_instruction,
+      fields: { response_format: { type: "json_schema", json_schema: { schema: {
+        properties: { Q4: { required: ["none", "P1"] } }, additionalProperties: false,
+      } } } } },
+    response: openaiText("source-span-typing", "privacy-summary", JSON.stringify({
+      Q1: { yes: 1, no: 0 }, Q2: { date: 0, name: 1 },
+      Q3: { score: 50, probability: 1 }, Q4: { none: 1, P1: 0 },
+    }), { inputTokens: 128, outputTokens: 64 }),
+  }, {
+    // Keep automatic embedding unadmitted: this journey supplies its own
+    // vectors and tests their erasure, not encoder availability. The public
+    // endpoint configuration still pins the space. A POST is NOT scripted;
+    // any attempt to embed a document or query remains a loud fixture error.
+    id: "erase-vector-model-unavailable", origin: "embedding", role: "embedder",
+    purpose: "declared unavailable encoder for client-supplied vectors", standing: true,
+    request: { method: "GET", path: "/v1/models" },
+    response: { kind: "json", status: 503, body: {
+      error: { type: "fixture_encoder_unavailable", message: "This journey supplies vectors through vault.vectors.put." },
+    } },
   }, ...backgroundExtraction("privacy-extract", ["follower_instruction"])] });
   let engine: EngineFixture | undefined;
   let primaryFailed: boolean = false;
   let primary: unknown;
   let stage = "setup";
   try {
+    const embeddingEndpoint = `${providers.urls.embedding!}/v1`;
+    const embeddingModelId = "e2e/privacy-erase@v1";
     engine = await EngineFixture.start({ id: "PRIVACY-02", profile,
-      initArgs: ["--dimensions", String(spec.vectorTable.dimensions)], serverConfig: dreamerConfig(providers, true) });
+      // EngineFixture supplies remote egress flags, so declare an owner-server
+      // rung and the same-space loopback fallback, as retrieval.test.ts does.
+      initArgs: ["--embedder-locality", "owner-server", "--embedder-fallback-endpoint", embeddingEndpoint],
+      embedder: { endpoint: embeddingEndpoint, modelKey: "privacy-vectors", modelId: embeddingModelId,
+        dimensions: spec.vectorTable.dimensions, egress: { allowAll: true } },
+      serverConfig: dreamerConfig(providers, true) });
     await grantExtraction(engine);
+    stage = "configured and persisted vector-space readback";
+    const modelStatus = await engine.client.request<{ embedder: {
+      configured: { model_id: string; dimensions: number } | null;
+      persisted: { model_id: string | null; dimensions: number | null } | null;
+    } }>("GET", "/v1/owner/status");
+    expect(modelStatus.body.embedder.configured?.model_id).toBe(embeddingModelId);
+    expect(modelStatus.body.embedder.persisted?.model_id).toBe(embeddingModelId);
+    expect(modelStatus.body.embedder.configured?.dimensions).toBe(spec.vectorTable.dimensions);
+    stage = "source conversation, witness and extraction";
     const source = await ownerRoom(engine, spec.sourceText, spec.phoneticName);
     const witnessed = await engine.client.call("vault.witness", turn(source.id, spec.sourceText));
     const sourceTurn = turnId(witnessed);
@@ -857,17 +916,13 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
         expect(message.byte_range[1]).toBeGreaterThan(message.byte_range[0]);
       }
     }
-    // DEFECT (2026-11-10, FIX DREAMER-STAMP-FACET): the SUMMARY birth parks with "summary landing
-    // refused: invalid active facet": actor_stamp_in_txn (provenance/actor_stamp.rs) and bind_peer
-    // (typed_body.rs) build their bookkeeping CLAIM with ClaimBody::new, whose scope facet is the
-    // subject's PERSON substrate facet, and the Dreamer is a MACHINE with no such FACET. PRIVACY-02
-    // stays red at this wait until both writers take the vault default facet.
+    stage = "source-linked SUMMARY create and completion";
     const queued = await engine.client.call("vault.summaries.create", {
       scope: { conversation_ref: source.id, path: "canonical" },
     });
     const completed = await awaitPublic(
       () => engine!.client.call("vault.summaries.status", { attempt: queued.attempt }),
-      value => value.state === "completed", { label: "source-linked SUMMARY" },
+      value => value.state === "completed", { label: "PRIVACY-02 source-linked SUMMARY completion" },
     );
     if (!completed.result) throw new Error("Completed summary has no result");
     const summaryId = completed.result.summary;
@@ -875,6 +930,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     expect(summary.value?.text).toBe(spec.summaryText);
     expect(summary.value?.covers).toContain(sourceTurn);
     expect(summary.value?.metadata.derivation.sources.some(pin => pin.id === sourceTurn)).toBe(true);
+    stage = "unrelated control write";
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
     const controlRoom = await ownerRoom(engine, spec.unrelatedText, "Copper Telescope");
     const unrelated = await engine.client.call("vault.claims.upsert", {
@@ -890,7 +946,9 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       ["summary", summaryId, spec.vectorTable.summary], ["control", controlId, spec.vectorTable.unrelated],
     ] as const) {
       stage = `vault.vectors.put ${target}`;
-      await engine.client.call("vault.vectors.put", { entity_ref, vector: [...vector] });
+      const put = await engine.client.call("vault.vectors.put", { entity_ref, vector: [...vector] });
+      expect(put.entity_ref).toBe(entity_ref);
+      expect(put.dimensions).toBe(spec.vectorTable.dimensions);
     }
     stage = "erase and public reads";
     const sourceRow = (await engine.client.call("vault.get", { entity_ref: source.id })).value;
@@ -915,7 +973,12 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       expect(hits.value.some(hit => hit.record?.id === targets[index]
         || hit.short_id === [sourceRow, claimRow, summaryRow][index]!.short_ref)).toBe(true);
     }
-    const vectorBefore = await engine.client.call("vault.search.vector", { query: spec.vectorTable.query, limit: 100 });
+    stage = "client-supplied vector readback before erase";
+    const vectorBefore = await awaitPublic(
+      () => engine!.client.call("vault.search.vector", { query: spec.vectorTable.query, limit: 100 }),
+      value => targets.every(id => value.value.hits.some(hit => hit.entity_ref === id)),
+      { label: "PRIVACY-02 source, claim and summary vectors searchable before erase" },
+    );
     for (const id of targets) expect(vectorBefore.value.hits.map(hit => hit.entity_ref)).toContain(id);
     // Standard English Soundex, authored from Selina/Saleena Aurelium: S-L-N-R => S456.
     // Only the public index key prefix is a transport binding, not an oracle.
@@ -953,12 +1016,18 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     expect(controlNeighbors.length).toBeGreaterThan(0);
     const controlBefore = (await engine.client.call("vault.get", { entity_ref: controlId })).value;
     expect(controlBefore).not.toBeNull();
+    stage = "owner erase and immediate active-store readbacks";
     const receipt = await eraseRecord(engine.client, source.id);
     expect(receipt.state).toBe("applied");
     // No poll, receipt read or sweep may precede any of these active-store reads.
     const allIds = [...targets, sourceTurn, ...(witnessed.messages ?? []).map(row => row.id)];
     for (const entity_ref of allIds) {
-      expect((await engine.client.call("vault.get", { entity_ref })).value).toBeNull();
+      const read = await engine.client.call("vault.get", { entity_ref });
+      try { expect(read.value).toBeNull(); }
+      catch (error) {
+        if (entity_ref === source.id) throw error;
+        throw new Error(`PRIVACY-02 MISSING DOOR 2026-11-12: vault.records.erase_confirm erased the CONVERSATION, not its room records; ${read.value?.kind ?? "record"} ${entity_ref} survives. FIX 23156: room-aware OwnerErase preview/confirm for TURN/MESSAGE is absent; source and dependent erasure remain unproved. ${errorText(error)}`, { cause: error });
+      }
     }
     await expectHydrateGone(engine.client, allIds, forbidden);
     for (const query of lexicalQueries) {
@@ -1000,6 +1069,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     const exported = await exportText(engine.client);
     excludes(exported, forbidden);
     expect(exported.includes(spec.unrelatedText)).toBe(true);
+    stage = "content-free audit and historical sweep deadline readback";
     await readAudit(engine.client, receipt.receipt_ref, source.id, forbidden);
     if (!receipt.receipt_ref) throw new Error("Erase has no redaction receipt");
     const sweep = await engine.client.call("vault.records.erase_sweep", { receipt_ref: receipt.receipt_ref });
@@ -1008,6 +1078,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     }
     expect(sweep.deadline_at).toBeGreaterThanOrEqual(sweep.requested_at);
     expect(sweep.deadline_at - sweep.requested_at).toBeLessThanOrEqual(spec.expected.historicalSweepMaxSeconds);
+    stage = "owner-forced historical sweep";
     await finishHistoricalSweep(engine);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-claim")).toHaveLength(1);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-person-about").length).toBeGreaterThanOrEqual(1);
@@ -1018,7 +1089,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     // A refused public call keeps its wire code and message; a bare "HTTP 400" names neither step nor cause.
     primary = error instanceof PublicHttpError
       ? new Error(`PRIVACY-02 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`, { cause: error })
-      : error;
+      : new Error(`PRIVACY-02 ${stage}: ${errorText(error)}`, { cause: error });
   } finally {
     const cleanups: string[] = [];
     // Capture the real summary wire body before provider cleanup. The standing
@@ -1026,6 +1097,23 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     try { await engine?.artifacts.json("diagnostic-privacy-02-provider-calls.json", { seen: providers.seenFixtureCalls }); }
     catch (error) { cleanups.push(errorText(error)); }
     try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
+    // Check after shutdown too: a final wake can reach the provider during close.
+    try {
+      const embeddingCalls = providers.seenFixtureCalls.filter(call => call.origin === "embedding");
+      expect(embeddingCalls.length).toBeGreaterThan(0);
+      expect(embeddingCalls.every(call => call.fixtureId === "erase-vector-model-unavailable"
+        && call.method === "GET" && call.path === "/v1/models")).toBe(true);
+      for (const call of providers.seenFixtureCalls.filter(call => call.fixtureId === "source-span-typing")) {
+        const body = call.body as { response_format?: { json_schema?: { schema?: { properties?: object } } };
+          messages?: { content: string }[] };
+        expect(Object.keys(body.response_format?.json_schema?.schema?.properties ?? {}).sort())
+          .toEqual(["Q1", "Q2", "Q3", "Q4"]);
+        const request = JSON.parse(body.messages?.[1]?.content ?? "{}");
+        expect(request.state?.spans).toHaveLength(1);
+        expect(request.state.spans[0].span.text).toBe("Mira");
+        expect(request.state.contexts.map((row: { text: string }) => row.text)).toEqual([spec.sourceText]);
+      }
+    } catch (error) { cleanups.push(`PRIVACY-02 embedding/typing request contract: ${errorText(error)}`); }
     try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
     if (primaryFailed) {
       if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
