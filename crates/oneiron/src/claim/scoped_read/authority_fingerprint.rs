@@ -324,6 +324,7 @@ impl ScopedReadActorKey {
         key_fold_owner_proof(&mut hasher, self.owner_proof_guard());
         hasher.update(&[u8::from(self.owner_by_census())]);
         key_fold_record_bound(&mut hasher, self.record_bound.as_ref());
+        key_fold_id(&mut hasher, self.system_agent_guard());
         // Last, and only when set, so a key no agent Grants bind keeps its
         // fingerprint (FIX AGENT-GRAPHFS-GRANT-WORLDS).
         if let Some(alternatives) = self.grant_alternatives() {
