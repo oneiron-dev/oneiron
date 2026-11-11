@@ -6,8 +6,7 @@
   "call": "memory.projects_rooms_list(&input)?",
   "scope": "Read",
   "mcp_fields": {
-    "spec": "$",
-    "project_ref": "=project_ref"
+    "spec": "$"
   },
   "mcp_scope": "unrestricted",
   "section": false

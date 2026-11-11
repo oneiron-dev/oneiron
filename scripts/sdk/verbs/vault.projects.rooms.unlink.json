@@ -7,7 +7,6 @@
   "scope": "Write",
   "mcp_fields": {
     "spec": "$",
-    "project_ref": "=project_ref",
     "room_ref": "=room_ref"
   },
   "mcp_scope": "unrestricted",
