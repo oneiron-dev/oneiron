@@ -209,8 +209,8 @@ impl TurnProgramArming {
 
 /// A disarm this machine knows (FIX 5266): when it was made, on the
 /// disarming writer's recording clock, so an arming of the same registration
-/// carried in an older window never arms it here again, and only an arming
-/// made after it would.
+/// carried by any window never arms it here again. Arming the definition
+/// again mints another registration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct TurnProgramDisarm {

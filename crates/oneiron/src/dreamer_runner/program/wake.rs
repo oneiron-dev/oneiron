@@ -4,6 +4,8 @@
 //! and its dedupe. A wake whose sealed slip lapsed stays owed, held, until
 //! its rebind or its own expiry (FIX 12058).
 
+use std::collections::BTreeMap;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -34,39 +36,63 @@ pub(crate) fn turn_programs_armed_in_txn(
 
 /// Records, in the landing turn's own writer, the wake `turn` owes each
 /// program `authority`'s actor armed for it. One turn wakes one program
-/// once: a later landing of the same turn (an append) owes nothing new.
-/// Answers how many wakes it recorded.
+/// once across armings with the same actor, class, conversation and revision.
+/// Any wake or decision under one of those registrations keeps an append
+/// from recording another. Otherwise the earliest arming, then smallest
+/// registration, records the group's wake. Answers how many it recorded.
 pub(crate) fn record_turn_program_wakes_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     authority: &TurnProgramAuthority,
     turn: &LandedTurnRef,
 ) -> Result<usize> {
-    let mut armed = Vec::new();
+    let mut groups = BTreeMap::new();
     for row in ARM.iter_from(vault, &*txn, authority.actor().as_bytes())? {
-        armed.push(row?.1);
+        let (_, arming) = row?;
+        if arming.wakes_on(authority, turn) {
+            groups
+                .entry((
+                    arming.actor,
+                    arming.actor_class,
+                    arming.conversation,
+                    arming.revision,
+                ))
+                .or_insert_with(Vec::new)
+                .push(arming);
+        }
     }
     let mut owed = 0;
-    for arming in armed {
-        if !arming.wakes_on(authority, turn) {
+    for armings in groups.values() {
+        let mut wakes = Vec::new();
+        let mut recorded = false;
+        for arming in armings {
+            let wake = TurnProgramWake {
+                registration: arming.registration,
+                revision: arming.revision,
+                authority: authority.clone(),
+                turn: *turn,
+                held: None,
+            };
+            if WAKE.contains(vault, &*txn, &wake.key())?
+                || ADMISSION.contains(vault, &*txn, &wake.admission_id())?
+                || DECIDED.contains(vault, &*txn, &wake.key())?
+            {
+                recorded = true;
+                break;
+            }
+            wakes.push((arming.armed_at, arming.registration, wake));
+        }
+        if recorded {
             continue;
         }
-        let wake = TurnProgramWake {
-            registration: arming.registration,
-            revision: arming.revision,
-            authority: authority.clone(),
-            turn: *turn,
-            held: None,
-        };
-        if WAKE.contains(vault, &*txn, &wake.key())?
-            || ADMISSION.contains(vault, &*txn, &wake.admission_id())?
-            || DECIDED.get(vault, &*txn, &wake.key())? == Some(wake.admission_id())
+        if let Some((_, _, wake)) = wakes
+            .into_iter()
+            .min_by_key(|(at, registration, _)| (*at, *registration))
         {
-            continue;
+            WAKE.put(vault, txn, &wake.key(), &wake)?;
+            super::index::index_wake_in_txn(vault, txn, authority.actor(), wake.key())?;
+            owed += 1;
         }
-        WAKE.put(vault, txn, &wake.key(), &wake)?;
-        super::index::index_wake_in_txn(vault, txn, authority.actor(), wake.key())?;
-        owed += 1;
     }
     Ok(owed)
 }

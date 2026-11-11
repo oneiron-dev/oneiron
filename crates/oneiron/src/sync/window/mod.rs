@@ -126,6 +126,41 @@ pub use self::tombstones::{
 pub(crate) use self::tombstones::{arm_fail_after_carrier_mark, disarm_fail_after_carrier_mark};
 pub(crate) use self::withdrawn::replace_withdrawn_carriers;
 
+/// Whether the stored TURN `turn` can ride its base month window, judged in
+/// the caller's snapshot with the same exclusion the reverse pass asks.
+/// The canonical base window withholds every world kept from an unknown
+/// destination, and checks source ancestry and live off-record membership.
+pub(crate) fn turn_packs_in_base_window_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &crate::EntityId,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, turn)?
+    else {
+        return Ok(false);
+    };
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+        return Ok(false);
+    };
+    if header.entity_type != crate::registry::ENTITY_TYPE_TURN
+        || !types::entity_belongs_to_window(&raw, &WindowKey::from_timestamp(header.learned_at))
+    {
+        return Ok(false);
+    }
+    let withheld = crate::settings::device_local_worlds_at(
+        vault,
+        txn,
+        crate::settings::CallerLocality::OffDevice,
+    )?;
+    let mut lineage = crate::source_audience::LineagePass::new(vault, txn)?;
+    Ok(!window_packing_excludes_entity_with(
+        vault,
+        &mut lineage,
+        &withheld,
+        turn,
+    )?)
+}
+
 /// Reserved prefix for Loro commit MESSAGES written by the edit-distance
 /// proposal-artifact substrate (ED-00, ONE-1756).
 ///

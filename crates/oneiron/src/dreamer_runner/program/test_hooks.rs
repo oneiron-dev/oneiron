@@ -8,7 +8,7 @@
 
 use super::authority::TurnProgramAuthority;
 use super::types::{LandedTurnRef, OwedWakeHold, ProgramRecipePin, TurnProgramArming};
-use super::{ADMISSION, ARM, WAKE};
+use super::{ADMISSION, ARM, DISARMED, WAKE};
 use crate::authority::{InvocationSlipBinding, VerifiedSlip};
 use crate::error::{Error, Result};
 use crate::{EdgeActorClass, EntityId, Vault};
@@ -118,4 +118,72 @@ pub(crate) fn wake_decisions_here(
         }
     }
     Ok(decisions)
+}
+
+/// Plants an agent arming without a wake, keeping the supplied definition
+/// and its revision so separate machines can arm the same program.
+pub(crate) fn plant_arming(
+    vault: &Vault,
+    actor: EntityId,
+    conversation: EntityId,
+    definition: &ProgramRecipePin,
+    armed_at: u64,
+) -> Result<EntityId> {
+    let registration = vault.new_entity_id()?;
+    let arming = TurnProgramArming {
+        registration,
+        actor,
+        actor_class: EdgeActorClass::Agent as u8,
+        conversation: Some(conversation),
+        definition: definition.clone(),
+        revision: definition.revision(),
+        armed_at,
+    };
+    vault.with_write_txn_grouped(|txn| ARM.put(vault, txn, &(actor, registration), &arming))?;
+    Ok(registration)
+}
+
+/// Records a landed turn's wakes through the turn writer's recorder.
+pub(crate) fn record_slip_turn_wakes(
+    vault: &Vault,
+    actor: EntityId,
+    proof: &VerifiedSlip,
+    binding: &InvocationSlipBinding,
+    turn: LandedTurnRef,
+) -> Result<usize> {
+    let authority = TurnProgramAuthority::slip(actor, EdgeActorClass::Agent, proof, binding)
+        .ok_or_else(|| Error::InvalidConfig("the slip seals no turn program authority".into()))?;
+    vault.with_write_txn_grouped(|txn| {
+        super::wake::record_turn_program_wakes_in_txn(vault, txn, &authority, &turn)
+    })
+}
+
+/// Disarms through the engine door and answers its stored timestamp, or
+/// none when the registration was not armed.
+pub(crate) fn disarm_program(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<Option<u64>> {
+    let at = vault.with_write_txn_grouped(|txn| {
+        if !super::arm::disarm_turn_program_in_txn(vault, txn, actor, registration)? {
+            return Ok(None);
+        }
+        Ok(DISARMED
+            .get(vault, &*txn, &(actor, registration))?
+            .map(|disarm| disarm.at))
+    })?;
+    #[cfg(feature = "sync")]
+    vault.refresh_turn_program_armings_in_live_windows();
+    Ok(at)
+}
+
+/// Whether this machine still holds the registration as armed.
+pub(crate) fn program_armed_here(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    ARM.contains(vault, &txn, &(actor, registration))
 }

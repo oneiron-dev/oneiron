@@ -4,9 +4,9 @@
 //! (`sync::turn_programs`) move the rows; this module says what rides and
 //! what a carried row does here.
 //!
-//! - Each registration has one intent order: the writer's recorded time,
-//!   then a disarm after an arming made in the same second, then the row's
-//!   content digest. An arming rides the base window of the month it was
+//! - Each registration is armed once: its disarm always orders after its
+//!   arming. Between intents of the same kind, the writer's recorded time,
+//!   then the row's content digest decide. An arming rides the month it was
 //!   armed in, as `Armed`; a disarm rides the base window of its own month,
 //!   as `Disarmed`, and each machine that learns it keeps it (`DISARMED`).
 //!   A carried row takes its registration only when it comes later in that
@@ -18,8 +18,11 @@
 //!   that program is run where its secrets are.
 //! - A wake rides to the elected home when its authority verifies on any of
 //!   the vault's machines (a capability slip with its signed instrument) and
-//!   its arming rides. It rides the base window of its TURN, as `Owed`; only
-//!   the home takes it, when it holds neither that wake nor its admission.
+//!   its arming rides, and its stored TURN can pack into a base window. A
+//!   TURN excluded by world settings, off-record membership or source audience
+//!   keeps its wake on the recording machine, which admits it there. A riding
+//!   wake travels in the base window of its TURN, as `Owed`; only the home
+//!   takes it, when it holds neither that wake nor its admission.
 //!   Once the home decides it, the home writes `Admitted` in its place: the
 //!   terminal row clears the machine that recorded the wake, also through a
 //!   history-free replacement, and that machine never writes its wake over
@@ -76,15 +79,15 @@ impl ArmingRow {
         }
     }
 
-    /// The row's place in its registration's intent order: the writer's
-    /// recorded time, a disarm after an arming of the same second, then its
-    /// content digest.
-    fn order(&self) -> Result<(u64, u8, [u8; 32])> {
+    /// The row's place in its registration's intent order: disarmed after
+    /// armed, then the writer's recorded time and content digest between
+    /// rows of the same kind.
+    fn order(&self) -> Result<(u8, u64, [u8; 32])> {
         let (at, rank) = match self {
             Self::Armed(arming) => (arming.armed_at, 0),
             Self::Disarmed { at, .. } => (*at, 1),
         };
-        Ok((at, rank, *blake3::hash(&encode(self)?).as_bytes()))
+        Ok((rank, at, *blake3::hash(&encode(self)?).as_bytes()))
     }
 }
 
@@ -162,14 +165,19 @@ fn arming_rides(arming: &TurnProgramArming) -> bool {
 }
 
 /// Whether `wake` rides to the elected home: its authority verifies on any
-/// machine and its arming, held here, rides.
+/// machine, its arming held here rides, and its TURN can pack into a base
+/// window in this snapshot.
 fn wake_rides_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, wake: &TurnProgramWake) -> Result<bool> {
     if !wake.authority.rides_to_home() {
         return Ok(false);
     }
-    Ok(ARM
+    if !ARM
         .get(vault, txn, &(wake.authority.actor(), wake.registration))?
-        .is_some_and(|arming| arming_rides(&arming)))
+        .is_some_and(|arming| arming_rides(&arming))
+    {
+        return Ok(false);
+    }
+    crate::sync::window::turn_packs_in_base_window_in_txn(vault, txn, &wake.turn.turn)
 }
 
 /// The intent this machine holds for `key`: its arming, else its disarm.

@@ -3,6 +3,7 @@
 //! home election, and read what a machine owes and decided.
 
 use crate::authority::{InvocationSlipBinding, VerifiedSlip};
+use crate::dreamer_runner::{LandedTurnRef, ProgramRecipePin};
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
@@ -86,4 +87,82 @@ pub fn hold_wake_on_lapsed_slip(
         registration,
         held_at,
     )
+}
+
+/// Plants an agent arming with the supplied definition and no wake.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn plant_arming(
+    vault: &Vault,
+    actor: EntityId,
+    conversation: EntityId,
+    definition: &ProgramRecipePin,
+    armed_at: u64,
+) -> Result<EntityId> {
+    crate::dreamer_runner::turn_program_test_hooks::plant_arming(
+        vault,
+        actor,
+        conversation,
+        definition,
+        armed_at,
+    )
+}
+
+/// Records a landed turn's wakes through the turn writer's recorder.
+///
+/// # Errors
+///
+/// A slip that seals no turn program authority; a store failure.
+pub fn record_slip_turn_wakes(
+    vault: &Vault,
+    actor: EntityId,
+    proof: &VerifiedSlip,
+    binding: &InvocationSlipBinding,
+    turn: LandedTurnRef,
+) -> Result<usize> {
+    crate::dreamer_runner::turn_program_test_hooks::record_slip_turn_wakes(
+        vault, actor, proof, binding, turn,
+    )
+}
+
+/// Disarms through the engine door and answers its recorded second, or
+/// none when the registration was not armed.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn disarm_program(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<Option<u64>> {
+    crate::dreamer_runner::turn_program_test_hooks::disarm_program(vault, actor, registration)
+}
+
+/// Whether this machine holds the registration as armed.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn program_armed_here(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<bool> {
+    crate::dreamer_runner::turn_program_test_hooks::program_armed_here(vault, actor, registration)
+}
+
+/// Withholds a TURN through the source-audience writer, so window packing
+/// keeps it on this machine.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn withhold_turn(vault: &Vault, turn: EntityId) -> Result<bool> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::source_audience::hold_back_in_txn(
+            vault,
+            txn,
+            &turn,
+            crate::source_audience::HeldBack::Withheld,
+        )
+    })
 }
