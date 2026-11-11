@@ -95,7 +95,7 @@ impl Memory<'_> {
             // so the skill answers `None`, as `vault.skills.get` withholds it
             // (#7149 review round 1).
             if self.secret_sight_in_txn(txn)? == crate::secret_custody::SecretSight::Masked
-                && crate::snapshot_read::package_holds_credential(&package)
+                && crate::snapshot_read::skill_reader::package_holds_credential(&package)
             {
                 return Ok((None, None));
             }
