@@ -45,6 +45,8 @@ impl SyncServer {
                     vault.ensure_host_root_slip(&issuer)?;
                     // The engine's MACHINE writers sign with host-held keys (ONE-1634).
                     vault.provision_engine_machine_identities(&issuer)?;
+                    // The Dreamer's reach becomes its Steward grant (untangle 6.3).
+                    vault.provision_system_agent_grants()?;
                     if hosted
                         && !vault.checkpoint_policy_selection_available()
                         && !vault.checkpoint_root_eligible(&issuer.public_key())?
@@ -181,6 +183,12 @@ impl SyncServer {
         // FIX 14976: this vault's drafter bindings are served on this
         // process's own managed worker, where it launches one for this vault.
         crate::models::install_drafter_serving(&vault);
+        // F1-6: this vault's guests run on the isolating backends this build
+        // carries, installed on the vault, not named by a process global. A
+        // vault an earlier server of this process installed keeps its set.
+        let _ = vault.install_sandbox_backends(Arc::new(
+            oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends,
+        ));
         // Provider media replies are booked on their own line (FIX 8615),
         // this vault's, as its mesh bytes are (FIX 9321, FIX 9323).
         let model_budgets = crate::models::ModelHostBudgets::new(

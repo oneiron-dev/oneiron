@@ -55,7 +55,13 @@ fn a_machine_removed_while_it_widened_never_widens() {
         settings(ReadLocation::Everywhere),
     );
     host.vault
-        .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
+        .set_machine_role(
+            &host.owner,
+            ActSurface::ThisInstall,
+            laptop,
+            MachineRole::Removed,
+            None,
+        )
         .unwrap();
     land(&host, std::slice::from_ref(&widen));
 
@@ -108,10 +114,11 @@ fn a_machine_that_loses_standing_never_widens_a_world() {
     );
     host.vault
         .set_machine_role(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             laptop,
             MachineRole::Owned(MachineOwnership::WorkSchool),
+            None,
         )
         .unwrap();
     land(&host, &[narrow]);
@@ -197,7 +204,13 @@ fn a_chain_of_raced_widens_never_widens() {
             &laptop_key,
         );
         host.vault
-            .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
+            .set_machine_role(
+                &host.owner,
+                ActSurface::ThisInstall,
+                laptop,
+                MachineRole::Removed,
+                None,
+            )
             .unwrap();
         if second_first {
             land(&host, std::slice::from_ref(&second));
@@ -249,10 +262,11 @@ fn a_later_revision_never_acknowledges_a_raced_widening() {
             );
             host.vault
                 .set_machine_role(
-                    &host.issuer,
                     &host.owner,
+                    ActSurface::ThisInstall,
                     laptop,
                     MachineRole::Owned(MachineOwnership::WorkSchool),
+                    None,
                 )
                 .unwrap();
             land(&host, std::slice::from_ref(&widen));
@@ -278,7 +292,7 @@ fn a_later_revision_never_acknowledges_a_raced_widening() {
                 );
             } else {
                 host.vault
-                    .set_machine_role(&host.issuer, &host.owner, laptop, later)
+                    .set_machine_role(&host.owner, ActSurface::ThisInstall, laptop, later, None)
                     .unwrap();
             }
             let fold = host.vault.authority_fold().unwrap();
@@ -307,7 +321,7 @@ fn a_removal_keeps_what_it_saw_after_an_earlier_not_mine_period() {
         let (laptop, laptop_key) = other_machine(&host, 84, earlier[0]);
         for role in &earlier[1..] {
             host.vault
-                .set_machine_role(&host.issuer, &host.owner, laptop, *role)
+                .set_machine_role(&host.owner, ActSurface::ThisInstall, laptop, *role, None)
                 .unwrap();
         }
         for read in [ReadLocation::MyMachines, ReadLocation::Everywhere] {
@@ -317,7 +331,13 @@ fn a_removal_keeps_what_it_saw_after_an_earlier_not_mine_period() {
             );
         }
         host.vault
-            .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
+            .set_machine_role(
+                &host.owner,
+                ActSurface::ThisInstall,
+                laptop,
+                MachineRole::Removed,
+                None,
+            )
             .unwrap();
         assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
     }
@@ -445,7 +465,7 @@ fn one_worlds_later_edit_never_rolls_back_anothers() {
 fn a_stale_machine_never_widens_a_world() {
     let old = ed_key(110);
     let next = ed_key(111);
-    let genesis = genesis_entry(110, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(110, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
     let (kept, kept_key) = (EntityId::now(), ed_key(112));
@@ -461,11 +481,14 @@ fn a_stale_machine_never_widens_a_world() {
                     machine,
                     owner: EntityId::now(),
                     machine_key: request.machine_key,
+                    device_class: request.device_class,
                     encryption_key: request.encryption_key,
                     role: MachineRole::Owned(MachineOwnership::Yours),
                     revision: 1,
                     machine_proof: request.machine_proof,
                     seen_world_edits: BTreeSet::new(),
+                    carrier: None,
+                    act: None,
                 }),
                 authority_key_from_ed(signer),
                 2,
@@ -533,7 +556,7 @@ fn a_stale_machine_never_widens_a_world() {
 fn a_holder_going_stale_never_accepts_a_refused_edit() {
     let old = ed_key(114);
     let next = ed_key(115);
-    let genesis = genesis_entry(114, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(114, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
     let (holder, holder_key) = (EntityId::now(), ed_key(116));
@@ -549,11 +572,14 @@ fn a_holder_going_stale_never_accepts_a_refused_edit() {
                     machine,
                     owner: EntityId::now(),
                     machine_key: request.machine_key,
+                    device_class: request.device_class,
                     encryption_key: request.encryption_key,
                     role: MachineRole::Owned(MachineOwnership::Yours),
                     revision,
                     machine_proof: request.machine_proof,
                     seen_world_edits: BTreeSet::new(),
+                    carrier: None,
+                    act: None,
                 }),
                 authority_key_from_ed(signer),
                 2,
@@ -641,7 +667,7 @@ fn a_holder_going_stale_never_accepts_a_refused_edit() {
 fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
     let old = ed_key(130);
     let next = ed_key(131);
-    let genesis = genesis_entry(130, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(130, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
     let (a, a_key) = (EntityId::now(), ed_key(132));
@@ -658,11 +684,14 @@ fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
                     machine,
                     owner: EntityId::now(),
                     machine_key: request.machine_key,
+                    device_class: request.device_class,
                     encryption_key: request.encryption_key,
                     role: MachineRole::Owned(MachineOwnership::Yours),
                     revision,
                     machine_proof: request.machine_proof,
                     seen_world_edits: BTreeSet::new(),
+                    carrier: None,
+                    act: None,
                 }),
                 authority_key_from_ed(signer),
                 2,
@@ -758,7 +787,7 @@ fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
 fn a_narrowing_above_a_fenced_row_stays() {
     let old = ed_key(135);
     let next = ed_key(136);
-    let genesis = genesis_entry(135, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(135, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
     let (laptop, laptop_key) = (EntityId::now(), ed_key(137));
@@ -774,11 +803,14 @@ fn a_narrowing_above_a_fenced_row_stays() {
                     machine,
                     owner: EntityId::now(),
                     machine_key: request.machine_key,
+                    device_class: request.device_class,
                     encryption_key: request.encryption_key,
                     role: MachineRole::Owned(MachineOwnership::Yours),
                     revision: 1,
                     machine_proof: request.machine_proof,
                     seen_world_edits: BTreeSet::new(),
+                    carrier: None,
+                    act: None,
                 }),
                 authority_key_from_ed(&old),
                 2,
@@ -865,8 +897,8 @@ fn a_narrowing_above_a_fenced_row_stays() {
 #[test]
 fn a_world_edit_above_a_two_vault_row_folds_closed() {
     let root = ed_key(155);
-    let first = genesis_entry(155, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let second = genesis_entry(156, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let first = genesis_entry(155, 1);
+    let second = genesis_entry(156, 1);
     let id = genesis_vault_id(&first).unwrap();
     let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
     let mut parents = vec![hash(&first), hash(&second)];
@@ -876,9 +908,7 @@ fn a_world_edit_above_a_two_vault_row_folds_closed() {
             Some(id),
             1,
             parents,
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::Software,
-            },
+            AuthorityOp::SlipRevoke { slip_id: [155; 32] },
             authority_key_from_ed(&root),
             2,
         ),
@@ -915,7 +945,7 @@ fn a_world_edit_above_a_two_vault_row_folds_closed() {
 #[test]
 fn a_custodial_mark_acknowledges_no_widening() {
     let root = ed_key(120);
-    let genesis = genesis_entry(120, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(120, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
     let (custodied, admitted, successor) = (ed_key(121), ed_key(122), ed_key(123));
@@ -977,11 +1007,14 @@ fn a_custodial_mark_acknowledges_no_widening() {
             machine,
             owner: EntityId::now(),
             machine_key: request.machine_key,
+            device_class: request.device_class,
             encryption_key: request.encryption_key.clone(),
             role: MachineRole::Owned(MachineOwnership::Yours),
             revision,
             machine_proof: request.machine_proof,
             seen_world_edits,
+            carrier: None,
+            act: None,
         })
     };
     let mark = entry(
@@ -1206,7 +1239,13 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
         match removal {
             "door" => {
                 host.vault
-                    .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
+                    .set_machine_role(
+                        &host.owner,
+                        ActSurface::ThisInstall,
+                        laptop,
+                        MachineRole::Removed,
+                        None,
+                    )
                     .unwrap();
             }
             "crafted" => land(
@@ -1273,7 +1312,7 @@ fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
             settings(ReadLocation::Everywhere),
         );
         host.vault
-            .set_machine_role(&host.issuer, &host.owner, laptop, removed)
+            .set_machine_role(&host.owner, ActSurface::ThisInstall, laptop, removed, None)
             .unwrap();
         land(&host, std::slice::from_ref(&widen));
         if marked_again {
@@ -1410,7 +1449,13 @@ fn a_widening_never_exempts_a_demotion_its_mark_never_followed() {
             .contains(&authority_entry_hash(&widen).unwrap())
     );
     host.vault
-        .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
+        .set_machine_role(
+            &host.owner,
+            ActSurface::ThisInstall,
+            laptop,
+            MachineRole::Removed,
+            None,
+        )
         .unwrap();
     let fold = host.vault.authority_fold().unwrap();
     let removal = fold.machine(laptop).unwrap().head();

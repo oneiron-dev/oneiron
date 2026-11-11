@@ -1,9 +1,9 @@
 {
   "name": "vault.projects.goal.get",
-  "description": "Reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it.",
+  "description": "The owner, or a holder of a Steward grant naming read, reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it.",
   "input": "ProjectRefRequest",
   "output": "crate::task_verb::sdk::ProjectGoalView",
-  "call": "crate::task_verb::sdk::project_goal_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.projects.goal.get\")?, crate::EntityId::from_hex(&input.project_ref)?)?",
+  "call": "crate::task_verb::sdk::project_goal_get_embedded(memory, crate::EntityId::from_hex(&input.project_ref)?)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
@@ -12,5 +12,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "substrate_reader"
 }

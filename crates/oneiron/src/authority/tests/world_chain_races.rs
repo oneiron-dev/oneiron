@@ -23,7 +23,7 @@ struct SelfHost {
 }
 
 fn self_host(seed: u8) -> SelfHost {
-    let genesis = genesis_entry(seed, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(seed, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let (owner_root, owner_anchor, published) = publish(id, &genesis);
     let a_key = ed_key(seed.wrapping_add(1));

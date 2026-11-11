@@ -16,6 +16,7 @@ fn closing_op(vault: &Vault, id: EntityId) -> Result<BatchOp> {
             end: 30,
         },
         learned_at: header.learned_at,
+        row_version: None,
         data: encode_claim_body(&body)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,

@@ -2,7 +2,8 @@
 //! widening-reject fixture.
 
 use super::*;
-use crate::error::SecretError;
+use crate::error::{Error, SecretError};
+use crate::secret_record::{CustodyClass, CustodyTier, SecretBinding, SecretCustodyFloor};
 
 fn floor() -> SecretCustodyFloor {
     SecretCustodyFloor::default()
@@ -34,6 +35,7 @@ fn entry(
         class,
         bindings,
         declared_paths: paths.iter().map(|s| (*s).to_owned()).collect(),
+        env_name: None,
     }
 }
 

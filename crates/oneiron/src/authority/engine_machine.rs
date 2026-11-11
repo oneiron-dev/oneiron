@@ -53,7 +53,7 @@ impl Vault {
     }
 
     /// Every engine MACHINE writer, its row created on first use.
-    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 8]> {
+    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 9]> {
         let seed = ENGINE_MACHINE_SEED_TIME;
         Ok([
             self.ensure_commitment_projection_machine(seed)?,
@@ -64,6 +64,7 @@ impl Vault {
             self.ensure_esign_seal_machine(seed)?,
             self.dreamer_authority()?.entity_ref(),
             self.coach_authority()?.entity_ref(),
+            self.ensure_scope_summary_landing_machine(seed)?,
         ])
     }
 
@@ -188,6 +189,12 @@ impl Vault {
     fn ensure_esign_artifact_machine(&self, now: u64) -> Result<EntityId> {
         self.with_write_txn_grouped(|txn| {
             Ok(crate::blob_artifact::esign::artifact_machine(self, txn, now)?.entity_ref())
+        })
+    }
+
+    fn ensure_scope_summary_landing_machine(&self, now: u64) -> Result<EntityId> {
+        self.with_write_txn_grouped(|txn| {
+            Ok(crate::scope_summary::landing_writer(self, txn, now)?.entity_ref())
         })
     }
 }
