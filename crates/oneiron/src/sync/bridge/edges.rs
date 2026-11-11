@@ -370,6 +370,34 @@ impl EdgeMaterialization {
                         }
                     }
 
+                    // A landing reply whose signed landing has not arrived
+                    // yet waits: its ChildOf stays owed in its pending
+                    // ledger, its RepliesTo with its replay marker, never a
+                    // terminal quarantine.
+                    if matches!(kind, EdgeKind::ChildOf | EdgeKind::RepliesTo)
+                        && crate::conversation_dag::landing_reply_waits_in(
+                            &vault.store,
+                            &vault.store,
+                            &*wtxn,
+                            &src,
+                        )?
+                    {
+                        if kind == EdgeKind::ChildOf {
+                            super::childof::defer_child_of(
+                                vault, wtxn, window_key, &src, &tgt, buf,
+                            )?;
+                        } else {
+                            quarantine::set_replay_remat_marker_in_txn(
+                                vault, wtxn, window_key, &src,
+                            )?;
+                        }
+                        tracing::debug!(
+                            edge = %key,
+                            "observer-b: edge deferred — landing reply waits for its signed landing"
+                        );
+                        continue;
+                    }
+
                     // The source body, not the peer-controlled edge map, owns
                     // addressing. Both endpoints were just hydrated in this
                     // transaction, so out-of-order arrivals above defer rather
