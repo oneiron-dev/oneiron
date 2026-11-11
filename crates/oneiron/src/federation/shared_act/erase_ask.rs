@@ -25,6 +25,19 @@ pub enum EraseAskKind {
     Proposal,
 }
 
+impl EraseAskKind {
+    /// What an erase ask from a live holder of `role` is, once its grant
+    /// carries `write`: a Member's request or an Admin's proposal. `None`
+    /// for every other role; an Owner erases instead of asking.
+    pub(crate) const fn for_asker_role(role: Role) -> Option<Self> {
+        match role {
+            Role::Member => Some(Self::Request),
+            Role::Admin => Some(Self::Proposal),
+            _ => None,
+        }
+    }
+}
+
 /// Where an ask stands. Only an Owner closes one.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,10 +108,9 @@ impl Vault {
         let kind = holders
             .iter()
             .find(|holder| holder.member == actor)
-            .and_then(|holder| match holder.role {
-                Role::Member if holder.can(&[Role::Member], "write") => Some(EraseAskKind::Request),
-                Role::Admin if holder.can(&[Role::Admin], "write") => Some(EraseAskKind::Proposal),
-                _ => None,
+            .and_then(|holder| {
+                EraseAskKind::for_asker_role(holder.role)
+                    .filter(|_| holder.can(&[holder.role], "write"))
             })
             .ok_or_else(invalid)?;
         if !crate::vault::live_entity_row_in_txn(&self.store, &txn, &record)?.is_live() {

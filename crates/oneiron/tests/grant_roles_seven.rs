@@ -1,7 +1,9 @@
 //! The grant roles after the lead's 11 Nov 11:38 ruling (VS-CHECKIN-NAMES = A
 //! with the roles, VS-OLD-NAMES = A), part R1: `deputy` is a grant role on the
 //! Admin envelope, with Admin's starting powers and its own check-in column;
-//! `auditor` and the `audit` preset are refused, with no alias.
+//! `auditor` and the `audit` preset are refused, with no alias. A Deputy
+//! passes the role guards that name Admin: the weave Admin proof and the
+//! erase ask (review round 1 of #7071).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -11,9 +13,11 @@
 
 use oneiron::check_in::RolePreset;
 use oneiron::federation::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+    EraseAskKind, FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
 };
-use oneiron::test_doors::grant_roles::default_membership_verbs;
+use oneiron::test_doors::grant_roles::{
+    default_membership_verbs, erase_ask_kind, is_weave_admin_role,
+};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
@@ -90,4 +94,53 @@ fn auditor_and_the_audit_preset_are_refused() {
         Some(FederationGrantRole::Viewer),
         "viewer stays until the label PR"
     );
+}
+
+#[test]
+fn a_deputy_passes_the_weave_admin_role_guard_and_an_owner_does_not() {
+    for role in [FederationGrantRole::Admin, FederationGrantRole::Deputy] {
+        assert!(
+            is_weave_admin_role(role),
+            "a {role:?} reads the weave as an Admin, behind its step-up"
+        );
+    }
+    for role in [
+        FederationGrantRole::Owner,
+        FederationGrantRole::Steward,
+        FederationGrantRole::Member,
+        FederationGrantRole::Viewer,
+        FederationGrantRole::Delegate,
+        FederationGrantRole::Guest,
+    ] {
+        assert!(
+            !is_weave_admin_role(role),
+            "a {role:?} is no weave Admin; an Owner reads as the Owner"
+        );
+    }
+}
+
+#[test]
+fn a_deputys_erase_ask_is_a_proposal_as_an_admins_is() {
+    assert_eq!(
+        erase_ask_kind(FederationGrantRole::Deputy),
+        Some(EraseAskKind::Proposal),
+        "a Deputy proposes an erase as an Admin does"
+    );
+    assert_eq!(
+        erase_ask_kind(FederationGrantRole::Admin),
+        Some(EraseAskKind::Proposal)
+    );
+    assert_eq!(
+        erase_ask_kind(FederationGrantRole::Member),
+        Some(EraseAskKind::Request)
+    );
+    for role in [
+        FederationGrantRole::Owner,
+        FederationGrantRole::Steward,
+        FederationGrantRole::Viewer,
+        FederationGrantRole::Delegate,
+        FederationGrantRole::Guest,
+    ] {
+        assert_eq!(erase_ask_kind(role), None, "a {role:?} makes no erase ask");
+    }
 }
