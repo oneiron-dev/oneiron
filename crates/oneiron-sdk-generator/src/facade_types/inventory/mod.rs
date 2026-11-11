@@ -312,10 +312,11 @@ impl Inventory {
     }
 
     /// Names the item when first reached, before its body is walked (so a cycle meets the placeholder), and appends
-    /// it to `order` after.
+    /// it to `order` after. The item's file is a dependency (the lookup that found it recorded it already).
     pub(crate) fn declare(&mut self, item: &ItemRef) -> Result<Key, GenerateError> {
         let key = Rc::clone(&item.key);
         if !self.decls.contains_key(&key) {
+            self.index.record_dependency(&item.crate_name, &item.file);
             let name = self.allocate(item)?;
             let decl = Decl {
                 name: name.clone(),
@@ -373,5 +374,93 @@ pub(crate) fn type_text(text: &Value) -> Result<&str, GenerateError> {
             "expected string or bytes-like object, got '{}'",
             other.type_name()
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::fs;
+
+    use super::*;
+    use crate::py::json::loads;
+
+    /// One row rooting `Thing` (imported by the root context, re-exported by `api`, defined in `api/inner.rs`, with a
+    /// field of `model::Part`) and `Loose` (imported by no file, so looked up by name: two files define it). The set
+    /// holds the root context, the module chain to `Thing` and its field's file, and both files holding `Loose`;
+    /// it omits the crate root (no lookup read it) and a file whose items no lookup asked for.
+    #[test]
+    fn the_dependency_set_holds_the_resolved_files_and_their_module_chain() {
+        let root = std::env::temp_dir().join(format!(
+            "oneiron-sdk-generator-dependencies-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let src = root.join("crates/oneiron/src");
+        let derive = "#[derive(Debug, Serialize, Deserialize)]\n";
+        for (file, text) in [
+            (
+                "lib.rs",
+                "pub mod api;\npub mod deep;\npub mod loose_a;\npub mod model;\npub mod unrelated;\npub mod verbs;\n"
+                    .to_owned(),
+            ),
+            ("verbs/mod.rs", "use crate::api::Thing;\n".to_owned()),
+            (
+                "api/mod.rs",
+                "pub mod inner;\npub use self::inner::Thing;\n".to_owned(),
+            ),
+            (
+                "api/inner.rs",
+                format!("use crate::model::Part;\n\n{derive}pub struct Thing {{\n    pub part: Part,\n}}\n"),
+            ),
+            (
+                "model.rs",
+                format!("{derive}pub struct Part {{\n    pub size: u32,\n}}\n"),
+            ),
+            (
+                "loose_a.rs",
+                format!("{derive}pub struct Loose {{\n    pub size: u32,\n}}\n"),
+            ),
+            (
+                "deep/loose_b.rs",
+                format!("{derive}pub struct Loose {{\n    pub name: String,\n}}\n"),
+            ),
+            (
+                "unrelated.rs",
+                format!("{derive}pub struct Unrelated {{\n    pub size: u32,\n}}\n"),
+            ),
+        ] {
+            let path = src.join(file);
+            fs::create_dir_all(path.parent().expect("a parent")).expect("a scratch tree");
+            fs::write(&path, text).expect("a source");
+        }
+        let row = loads(r#"{"input": "Thing", "output": "Loose"}"#).expect("a row");
+        let row = row.as_dict().expect("a row object");
+        let inventory = Inventory::with_type_names(&root, &[row], &Value::Dict(Dict::new()))
+            .expect("an inventory over the scratch tree");
+        let found: BTreeSet<String> = inventory.index.dependency_paths().collect();
+        let expected: BTreeSet<String> = [
+            "api/inner.rs",
+            "api/mod.rs",
+            "deep/loose_b.rs",
+            "loose_a.rs",
+            "model.rs",
+            "verbs/mod.rs",
+        ]
+        .iter()
+        .map(|file| format!("crates/oneiron/src/{file}"))
+        .collect();
+        assert_eq!(found, expected);
+        // The walk reached all three types, and the by-name lookup chose the nearer `Loose`.
+        let declared: Vec<String> = inventory.decls.keys().map(|key| key.path()).collect();
+        assert_eq!(
+            declared,
+            [
+                "oneiron::api::inner::Thing",
+                "oneiron::model::Part",
+                "oneiron::loose_a::Loose"
+            ]
+        );
+        fs::remove_dir_all(&root).expect("cleanup");
     }
 }

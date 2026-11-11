@@ -19,6 +19,7 @@ mod row_access;
 mod rows;
 pub(crate) mod uniffi;
 
+use std::collections::BTreeSet;
 use std::ops::Index;
 use std::path::PathBuf;
 
@@ -146,6 +147,9 @@ pub(crate) struct Generator {
     /// `INVENTORY`. `None` only from `Generator::rows_only` (the refusal tests' module level, without the type
     /// inventory); the emitters run on `Generator::new`'s.
     pub(crate) inventory: Option<Inventory>,
+    /// The crate source files the catalog fragment's own inventory read (its index's dependency set, as paths from
+    /// the repository root), set by `outputs()`; `Generator::dependencies` joins it to `INVENTORY`'s.
+    pub(crate) fragment_dependencies: BTreeSet<String>,
 }
 
 impl Generator {

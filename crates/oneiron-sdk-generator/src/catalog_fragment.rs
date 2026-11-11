@@ -5,6 +5,7 @@
 //! TypeScript and Python outputs keep theirs). One text goes to two paths; the revision is its SHA-256, written as a
 //! Rust constant beside it. The text is read back before it is returned: it must declare exactly the code-mode rows.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use indexmap::{IndexMap, IndexSet};
@@ -562,14 +563,18 @@ pub(crate) fn declared(text: &str) -> Result<IndexSet<String>, GenerateError> {
 }
 
 /// The fragment at both its paths and its revision constant, in Python's dict order: the files the generator writes
-/// and checks. `type_names` is `TYPE_NAMES`, the parsed type_names.json, which the fragment's `Inventory` reads.
+/// and checks. `type_names` is `TYPE_NAMES`, the parsed type_names.json, which the fragment's `Inventory` reads. The
+/// crate source files that inventory's lookups read are added to `dependencies` (paths from the repository root).
 pub(crate) fn catalog_fragment(
     root: &Path,
     rows: &[&Dict],
     header: &str,
     type_names: &Value,
+    dependencies: &mut BTreeSet<String>,
 ) -> Result<Vec<(&'static str, String)>, GenerateError> {
-    let text = Fragment::new(root, rows, type_names)?.text()?;
+    let mut fragment = Fragment::new(root, rows, type_names)?;
+    let text = fragment.text()?;
+    dependencies.extend(fragment.inventory.index.dependency_paths());
     let declared = declared(&text)?;
     // `{row['name'] for row in rows}`: every name is a `str` once `text()` has split it.
     let mut verbs: IndexSet<&str> = IndexSet::new();
@@ -813,7 +818,7 @@ declare const ünï: {
                 panic!("a list of rows");
             };
             let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
-            let got = catalog_fragment(&root, &rows, "// h\n", &pins)
+            let got = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new())
                 .expect_err("a refusal")
                 .to_string();
             assert_eq!(got, expected);
