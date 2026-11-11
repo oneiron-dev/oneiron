@@ -4,16 +4,19 @@ import { Figure } from '../primitives/Figure'
 import { Icon } from '../primitives/Icon'
 import { IconAction } from '../primitives/IconAction'
 import { Verb } from '../primitives/Verb'
-import { cx, mergeSlotProps, useControllableState, useSafeId } from '../lib/react-utils'
+import { cx, mergeRefs, mergeSlotProps, useControllableState, useSafeId } from '../lib/react-utils'
 import { splitChildRows } from './sidebar-tree'
 import { useReorder } from './use-reorder'
 
 /* ── the root ───────────────────────────────────────────────────────────── */
 
 interface SidebarContextValue {
-  ground: 'field' | 'paper'
   collapsed: boolean
   announce: (message: string) => void
+  /* Keeps the list at its present height until the pointer or focus
+     leaves the sidebar, so a group folding above the end of a scrolled
+     list does not pull the list (and the label just pressed) down. */
+  holdHeight: () => void
 }
 
 /* True inside a row's child rows: the tree has two levels, never more. */
@@ -28,9 +31,6 @@ function useSidebar(part: string): SidebarContextValue {
 }
 
 export interface SidebarProps extends React.ComponentPropsWithRef<'nav'> {
-  /* `field`: bare on the printed field; words carry the on-field ink (and
-     its soft shadow by day). `paper`: on a near-opaque strip of the ground. */
-  ground?: 'field' | 'paper'
   /* Symbols only; names show in a tooltip. */
   collapsed?: boolean
   /* `icon`: a child row sits one icon step in, its symbol under the
@@ -43,21 +43,35 @@ export interface SidebarProps extends React.ComponentPropsWithRef<'nav'> {
   onGroupReorder?: (ids: string[]) => void
 }
 
-/* The list of places at the left. Children: one Sidebar.Head, then
-   Sidebar.Groups. The tree has two levels: a group's rows, and under a row
-   its child rows (`childRows`). A group label is quiet; the rows carry a
-   symbol each. */
+/* The list of places at the left, in the sheet's inks; it has no surface
+   of its own (in the frame it stands on the sidebar's tone, in a peek on
+   the popover's). Children: one Sidebar.Head, then Sidebar.Groups, each a
+   direct child (the head is found by its type, so a component that
+   renders a Sidebar.Head lands among the groups). The
+   tree has two levels: a group's rows, and under a row its child rows
+   (`childRows`). A group label is quiet; the rows carry a symbol each.
+   Folding or unfolding a group never moves the label that was pressed. */
 function SidebarRoot({
-  ground = 'field',
   collapsed = false,
   childIndent = 'icon',
   onGroupReorder,
   className,
   children,
   'aria-label': ariaLabel = 'places',
+  onPointerLeave,
+  onBlur,
   ...props
 }: SidebarProps) {
   const [message, setMessage] = React.useState('')
+  const groupsRef = React.useRef<HTMLDivElement | null>(null)
+  const holdHeight = React.useCallback(() => {
+    const groups = groupsRef.current
+    if (groups) groups.style.minHeight = `${groups.offsetHeight}px`
+  }, [])
+  const releaseHeight = () => {
+    const groups = groupsRef.current
+    if (groups) groups.style.minHeight = ''
+  }
   const reorder = useReorder<HTMLDivElement>({
     itemAttribute: 'data-sidebar-group-id',
     handle: '[data-sidebar-group-handle]',
@@ -67,20 +81,32 @@ function SidebarRoot({
   const parts = React.Children.toArray(children)
   const heads = parts.filter((c) => React.isValidElement(c) && c.type === SidebarHead)
   const groups = parts.filter((c) => !heads.includes(c))
-  const ctx = React.useMemo(() => ({ ground, collapsed, announce: setMessage }), [ground, collapsed])
+  const ctx = React.useMemo(() => ({ collapsed, announce: setMessage, holdHeight }), [collapsed, holdHeight])
 
   return (
     <SidebarContext.Provider value={ctx}>
       <nav
         aria-label={ariaLabel}
         className={cx('sl-sidebar', className)}
-        data-ground={ground}
         data-collapsed={collapsed ? '' : undefined}
         data-child-indent={childIndent}
+        onPointerLeave={(event) => {
+          onPointerLeave?.(event)
+          if (event.pointerType !== 'touch') releaseHeight()
+        }}
+        onBlur={(event) => {
+          onBlur?.(event)
+          const to = event.relatedTarget as Node | null
+          if (!to || !event.currentTarget.contains(to)) releaseHeight()
+        }}
         {...props}
       >
         {heads}
-        <div ref={reorder.containerRef} className="sl-sidebar-groups" {...reorder.containerProps}>
+        <div
+          ref={mergeRefs(groupsRef, reorder.containerRef)}
+          className="sl-sidebar-groups"
+          {...reorder.containerProps}
+        >
           {groups}
         </div>
         <span className="sl-sidebar-status" role="status">
@@ -95,7 +121,10 @@ function SidebarRoot({
 
 export interface SidebarHeadProps extends React.ComponentPropsWithRef<'div'> {}
 
-/* The top of the sidebar: the vault switch, then icon actions at the right. */
+/* The first line of a sidebar. On Home: the vault's name and a chevron at
+   the left (a VaultSwitch, the menu of the person's vaults), then at the
+   right IconAction search and the fold action (AppFrame.Fold). Elsewhere
+   the place's name takes the left. */
 function SidebarHead({ className, ...props }: SidebarHeadProps) {
   return <div className={cx('sl-sidebar-head', className)} {...props} />
 }
@@ -156,7 +185,10 @@ function SidebarGroup({
           aria-controls={listId}
           tabIndex={sidebar.collapsed ? -1 : undefined}
           draggable={false}
-          onClick={() => setOpen(!openState)}
+          onClick={() => {
+            sidebar.holdHeight()
+            setOpen(!openState)
+          }}
         >
           {label}
           <Icon name="chevron" size={12} className="sl-sidebar-group-chevron" />

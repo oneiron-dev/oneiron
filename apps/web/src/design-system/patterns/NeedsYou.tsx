@@ -2,80 +2,106 @@ import * as React from 'react'
 import { Figure } from '../primitives/Figure'
 import { Icon } from '../primitives/Icon'
 import { IconAction } from '../primitives/IconAction'
-import { Unfold } from '../primitives/Unfold'
+import { InfoMark } from '../primitives/InfoMark'
 import { Verb } from '../primitives/Verb'
+import { Tooltip } from '../overlays/Tooltip'
 import { PickDiamond } from '../marks/PickDiamond'
-import { UrgencyMark } from '../marks/UrgencyMark'
 import { soundPress } from '../lib/press'
 import { cx, mergeRefs, useControllableState, useIsomorphicLayoutEffect, useSafeId } from '../lib/react-utils'
 import { pushPendingUndo } from '../lib/pending-undo'
-import { SETTLE_OPEN, settleReducer, type SettleKind, type SettleState } from './settle-reducer'
+import { SETTLE_OPEN, settleReducer } from './settle-reducer'
+import { formatAnswerTime } from './answer-time'
 
 /* How long an answer can be undone before it stands. */
 export const NEEDS_YOU_UNDO_MS = 5000
-/* How long a settled item takes to fold away (matches the CSS). */
+/* Outside a block, how long a settled answer takes to fold away (matches
+   the CSS of the part around it). */
 const FOLD_MS = 260
 
 const prefersReducedMotion = () =>
   typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
-/* ── the root ───────────────────────────────────────────────────────────── */
+/* The mark an answer leaves in its record: a filled diamond for a pick or
+   an own answer, a check or a cross for yes or no, a clock for later. */
+export type NeedsYouAnswerMark = 'pick' | 'check' | 'cross' | 'later'
 
-interface NeedsYouContextValue {
-  openId: string | null
-  open: (id: string) => void
-  /* The item finished its undo window: fold it and open the next. */
-  markSettled: (id: string, value: string, kind: SettleKind) => void
-  /* An item is set aside or brought back: an item set aside never opens,
-     and when the open one is set aside the next opens. */
-  reportAside: (id: string, aside: boolean) => void
-  /* The person chose `later` on an item. */
-  later: (id: string) => void
-  undoWindowMs: number
+/* How the answers are drawn: tone chips, or plain marks and words. */
+export type NeedsYouAnswers = 'chips' | 'plain'
+
+/* One answer, as its record line shows it. */
+export interface NeedsYouAnswerRecord {
+  value: string
+  /* The answer's word in the record: `promo weeks`, `approved`. */
+  word: string
+  mark: NeedsYouAnswerMark
+  /* When it was given, as a figure: `09:14`. */
+  time: string
 }
 
-const NeedsYouContext = React.createContext<NeedsYouContextValue | null>(null)
+/* ── the answer scope: what the answers line reads ───────────────────────── */
 
-function useNeedsYou(part: string): NeedsYouContextValue {
-  const ctx = React.useContext(NeedsYouContext)
-  if (!ctx) throw new Error(`${part} must be inside NeedsYou`)
+type AnswerStatus = 'open' | 'pending' | 'settled'
+
+interface AnswerScopeValue {
+  status: AnswerStatus
+  record: NeedsYouAnswerRecord | null
+  answerWith: (value: string, word: string, mark: NeedsYouAnswerMark) => void
+  later: () => void
+  undo: () => void
+  answers: NeedsYouAnswers
+  /* Outside an ask the answers line draws the answered state itself; in
+     an ask the whole row becomes the record line. */
+  drawsRecord: boolean
+}
+
+const AnswerScope = React.createContext<AnswerScopeValue | null>(null)
+
+function useAnswerScope(part: string): AnswerScopeValue {
+  const ctx = React.useContext(AnswerScope)
+  if (!ctx) throw new Error(`${part} must be inside NeedsYou.Ask or NeedsYou.Answer`)
   return ctx
 }
 
-/* Item ids in the order they are written, found by walking the JSX given
-   to the root (through fragments and wrapping elements). */
-function itemIds(children: React.ReactNode, out: string[] = []): string[] {
-  React.Children.forEach(children, (child) => {
-    if (!React.isValidElement(child)) return
-    const props = child.props as { id?: unknown; children?: React.ReactNode }
-    if (child.type === NeedsYouItem && typeof props.id === 'string') out.push(props.id)
-    else if (props.children !== undefined) itemIds(props.children, out)
-  })
-  return out
+/* The state of the answer around a part: null outside an ask or answer. */
+export function useNeedsYouAnswerStatus(): AnswerStatus | null {
+  return React.useContext(AnswerScope)?.status ?? null
 }
 
+/* ── the block ──────────────────────────────────────────────────────────── */
+
+interface BlockValue {
+  answers: NeedsYouAnswers
+  undoWindowMs: number
+  /* The latest callbacks of the block. */
+  latest: React.RefObject<Pick<NeedsYouProps, 'onAnswerChange' | 'onSettle' | 'onLater'>>
+}
+
+const BlockContext = React.createContext<BlockValue | null>(null)
+
 export interface NeedsYouProps extends Omit<React.ComponentPropsWithRef<'section'>, 'onChange'> {
-  /* The open item. Exactly one is open: the first by default. */
-  openId?: string | null
-  defaultOpenId?: string
-  onOpenChange?: (id: string | null) => void
-  /* An answer stood through its undo window; called as the item folds away. */
+  /* `chips` draws each answer as a tone chip; `plain` as a mark and a word. */
+  answers?: NeedsYouAnswers
+  /* An ask was answered (a record) or its answer undone (null), in the
+     same frame: whatever asked changes at once. */
+  onAnswerChange?: (id: string, answer: NeedsYouAnswerRecord | null) => void
+  /* An answer stood through its undo window. */
   onSettle?: (id: string, value: string) => void
-  /* An item was set aside with `later`. */
+  /* An ask was set aside with `later`. */
   onLater?: (id: string) => void
   undoWindowMs?: number
-  /* `well` is the sunk block of a room; `bare` sits on a popover or a desk. */
+  /* `well` is the raised block in a room; `bare` sits on a popover or a desk. */
   ground?: 'well' | 'bare'
 }
 
-/* The things waiting on a person: an accordion with one item open. When the
-   open item settles it folds away and the next one opens. `later` sets an
-   item aside: it stays as one quiet line and the next one opens. */
+/* Everything that waits on the person, in one block: NeedsYou.Group per
+   room, NeedsYou.Ask per ask. Every ask shows its answers; an answer turns
+   its row into one record line that stays in the block, with `undo` for
+   the undo window. Nothing else in the block moves when a row changes
+   state except the rows under it. The block is what an InfoMark in it
+   measures against. */
 function NeedsYouRoot({
-  ref,
-  openId: openIdProp,
-  defaultOpenId,
-  onOpenChange,
+  answers = 'chips',
+  onAnswerChange,
   onSettle,
   onLater,
   undoWindowMs = NEEDS_YOU_UNDO_MS,
@@ -85,157 +111,299 @@ function NeedsYouRoot({
   'aria-label': ariaLabel = 'needs you',
   ...props
 }: NeedsYouProps) {
-  const [chosen, setChosen] = useControllableState<string | null | undefined>(
-    openIdProp,
-    defaultOpenId,
-    onOpenChange ? (next) => onOpenChange(next ?? null) : undefined,
-  )
-  const [settled, setSettled] = React.useState<ReadonlySet<string>>(() => new Set())
-  const [aside, setAside] = React.useState<ReadonlySet<string>>(() => new Set())
-  const ids = itemIds(children)
-  const live = ids.filter((id) => !settled.has(id) && !aside.has(id))
-  const openId = chosen && live.includes(chosen) ? chosen : (live[0] ?? null)
-
-  const rootRef = React.useRef<HTMLElement | null>(null)
-  const latest = React.useRef({ ids, settled, aside, openId, onSettle, onLater })
+  const latest = React.useRef({ onAnswerChange, onSettle, onLater })
   useIsomorphicLayoutEffect(() => {
-    latest.current = { ids, settled, aside, openId, onSettle, onLater }
+    latest.current = { onAnswerChange, onSettle, onLater }
   })
-
-  const open = React.useCallback((id: string) => setChosen(id), [setChosen])
-
-  const markSettled = React.useCallback(
-    (id: string, value: string, kind: SettleKind) => {
-      const { ids: order, settled: done, aside: setAside, openId: current } = latest.current
-      const nextSettled = new Set(done).add(id)
-      setSettled(nextSettled)
-      if (current === id) {
-        const rest = order.filter((x) => !nextSettled.has(x) && !setAside.has(x))
-        const after = rest.find((x) => order.indexOf(x) > order.indexOf(id))
-        const next = after ?? rest[0] ?? null
-        setChosen(next)
-        /* Keyboard flow: focus that was in the settled item moves to the next. */
-        const root = rootRef.current
-        const item = root?.querySelector<HTMLElement>(`[data-needs-you-id="${CSS.escape(id)}"]`)
-        if (next && root && item?.contains(document.activeElement)) {
-          requestAnimationFrame(() => {
-            const nextItem = root.querySelector<HTMLElement>(`[data-needs-you-id="${CSS.escape(next)}"]`)
-            const target =
-              nextItem?.querySelector<HTMLElement>('.sl-needs-you-pick:not(:disabled)') ??
-              nextItem?.querySelector<HTMLElement>('.sl-needs-you-head')
-            target?.focus({ preventScroll: true })
-          })
-        }
-      }
-      setTimeout(
-        () => {
-          const { onSettle: settleCb, onLater: laterCb } = latest.current
-          if (kind === 'later') laterCb?.(id)
-          else settleCb?.(id, value)
-        },
-        prefersReducedMotion() ? 0 : FOLD_MS,
-      )
-    },
-    [setChosen],
-  )
-
-  const reportAside = React.useCallback(
-    (id: string, on: boolean) => {
-      const { ids: order, settled: done, aside: was, openId: current } = latest.current
-      if (was.has(id) === on) return
-      const next = new Set(was)
-      if (on) next.add(id)
-      else next.delete(id)
-      latest.current = { ...latest.current, aside: next }
-      setAside(next)
-      /* The open item went aside: the next one after it opens. */
-      if (on && current === id) {
-        const rest = order.filter((x) => !done.has(x) && !next.has(x))
-        setChosen(rest.find((x) => order.indexOf(x) > order.indexOf(id)) ?? rest[0] ?? null)
-      }
-    },
-    [setChosen],
-  )
-  const later = React.useCallback((id: string) => latest.current.onLater?.(id), [])
-
-  const ctx = React.useMemo(
-    () => ({ openId, open, markSettled, reportAside, later, undoWindowMs }),
-    [openId, open, markSettled, reportAside, later, undoWindowMs],
-  )
-
+  const ctx = React.useMemo(() => ({ answers, undoWindowMs, latest }), [answers, undoWindowMs])
   return (
-    <NeedsYouContext.Provider value={ctx}>
+    <BlockContext.Provider value={ctx}>
       <section
-        ref={mergeRefs(ref, rootRef)}
         aria-label={ariaLabel}
         className={cx('sl-needs-you', className)}
         data-ground={ground}
+        data-answers={answers}
+        data-info-block=""
         {...props}
       >
         {children}
       </section>
-    </NeedsYouContext.Provider>
+    </BlockContext.Provider>
   )
 }
 
-/* ── one item ───────────────────────────────────────────────────────────── */
-
-interface ItemContextValue {
-  state: SettleState
-  /* The words of the pending answer, shown with a filled diamond. */
-  pendingLabel: React.ReactNode
-  pendingWord: string
-  pick: (value: string, label: React.ReactNode, word?: string) => void
-  later: () => void
-  undo: () => void
+export interface NeedsYouGroupProps extends React.ComponentPropsWithRef<'div'> {
+  /* The room the asks come from, without the hash symbol. */
+  room: React.ReactNode
 }
 
-const ItemContext = React.createContext<ItemContextValue | null>(null)
-
-function useItem(part: string): ItemContextValue {
-  const ctx = React.useContext(ItemContext)
-  if (!ctx) throw new Error(`${part} must be inside NeedsYou.Item`)
-  return ctx
+/* The asks from one room, under a quiet label naming it. A hairline
+   separates one group from the next. */
+function NeedsYouGroup({ room, className, children, ...props }: NeedsYouGroupProps) {
+  const labelId = useSafeId('sl-needs-you-group')
+  return (
+    <div role="group" aria-labelledby={labelId} className={cx('sl-needs-you-group', className)} {...props}>
+      <p id={labelId} className="sl-needs-you-group-label">
+        # {room}
+      </p>
+      {children}
+    </div>
+  )
 }
 
-export interface NeedsYouUrgency {
-  /* One serif reason: `blocks the fit`, `due Friday`. */
-  reason: React.ReactNode
-  /* A time that ends the reason, set as a figure. */
-  deadline?: React.ReactNode
-}
+/* ── one ask ────────────────────────────────────────────────────────────── */
 
-export interface NeedsYouItemProps extends Omit<React.ComponentPropsWithRef<'div'>, 'id'> {
+export interface NeedsYouAskProps extends Omit<React.ComponentPropsWithRef<'div'>, 'id'> {
   id: string
-  /* The asker's mark: a Glyph. */
+  /* The asker's portrait: a Glyph at 20 px. */
   asker?: React.ReactNode
-  /* The question, one serif line; it wraps when the item is open. */
+  /* The ask, one serif line; it wraps when it must. */
   question: React.ReactNode
-  urgency?: NeedsYouUrgency
-  /* Set aside with `later`: the item is one quiet line (its first words,
-     `set aside`, and `answer now`, which brings it back open with focus on
-     its first pick). */
+  /* The short note of the information mark at the right of the first
+     line. Without a note the mark does not show. */
+  note?: React.ReactNode
+  /* Pressing the information mark: the caller opens the ask beside the
+     room. */
+  onOpen?: () => void
+  noteLabel?: string
+  /* The answer given, or null. A given answer shows as the record line;
+     one answered here can be undone for the undo window. */
+  answer?: NeedsYouAnswerRecord | null
+  defaultAnswer?: NeedsYouAnswerRecord | null
+  onAnswerChange?: (answer: NeedsYouAnswerRecord | null) => void
+  /* Set aside with `later`: one line with the ask, `set aside` and
+     `answer now`. */
   setAside?: boolean
   defaultSetAside?: boolean
   onSetAsideChange?: (setAside: boolean) => void
 }
 
-/* One answer's state: the pick, its undo window (Escape or `undo`
-   restores), and the moment it stands. `onSettled` runs once the window
-   ends. */
-function useAnswerScope(onSettled: (value: string, kind: SettleKind) => void, undoWindowMs: number): ItemContextValue {
-  const [state, dispatch] = React.useReducer(settleReducer, SETTLE_OPEN)
-  const [pending, setPending] = React.useState<{ label: React.ReactNode; word: string }>({ label: null, word: '' })
+/* One ask, one skeleton. Line 1: the asker's portrait, the ask, and at the
+   right `later` (a clock) and the information mark. Line 2: the answers
+   (NeedsYou.Picks or NeedsYou.YesNo). */
+function NeedsYouAsk({
+  ref,
+  id,
+  asker,
+  question,
+  note,
+  onOpen,
+  noteLabel,
+  answer: answerProp,
+  defaultAnswer = null,
+  onAnswerChange,
+  setAside: setAsideProp,
+  defaultSetAside = false,
+  onSetAsideChange,
+  className,
+  children,
+  ...props
+}: NeedsYouAskProps) {
+  const block = React.useContext(BlockContext)
+  const [record, setRecord] = useControllableState<NeedsYouAnswerRecord | null>(answerProp, defaultAnswer, onAnswerChange)
+  const [aside, setAside] = useControllableState(setAsideProp, defaultSetAside, onSetAsideChange)
+  /* The answer was given here and its undo window is open. */
+  const [pending, setPending] = React.useState(false)
+  const undoWindowMs = block?.undoWindowMs ?? NEEDS_YOU_UNDO_MS
+  const rowRef = React.useRef<HTMLDivElement | null>(null)
+  /* Where focus goes once the row has changed form. */
+  const focusAfter = React.useRef<'undo' | 'first-answer' | 'answer-now' | 'next' | null>(null)
 
-  const pick = React.useCallback((value: string, label: React.ReactNode, word = 'answered') => {
-    setPending({ label, word })
-    dispatch({ type: 'pick', value })
-  }, [])
+  const focusWasHere = () => {
+    const active = document.activeElement
+    return !active || active === document.body || !!rowRef.current?.contains(active)
+  }
+
+  const answerWith = React.useCallback(
+    (value: string, word: string, mark: NeedsYouAnswerMark) => {
+      const next = { value, word, mark, time: formatAnswerTime(new Date()) }
+      if (focusWasHere()) focusAfter.current = 'undo'
+      setRecord(next)
+      setPending(true)
+      block?.latest.current.onAnswerChange?.(id, next)
+    },
+    [block, id, setRecord],
+  )
+  const undo = React.useCallback(() => {
+    if (focusWasHere()) focusAfter.current = 'first-answer'
+    setPending(false)
+    setRecord(null)
+    block?.latest.current.onAnswerChange?.(id, null)
+  }, [block, id, setRecord])
   const later = React.useCallback(() => {
-    setPending({ label: null, word: 'parked' })
-    dispatch({ type: 'pick', value: 'later', kind: 'later' })
+    if (focusWasHere()) focusAfter.current = 'answer-now'
+    setAside(true)
+    block?.latest.current.onLater?.(id)
+  }, [block, id, setAside])
+
+  /* The undo window: Escape or `undo` restores; when it ends the answer
+     stands and the block hears of it. */
+  React.useEffect(() => {
+    if (!pending || !record) return
+    const release = pushPendingUndo(undo)
+    const value = record.value
+    const timer = setTimeout(() => {
+      if (rowRef.current?.contains(document.activeElement)) focusAfter.current = 'next'
+      setPending(false)
+      block?.latest.current.onSettle?.(id, value)
+    }, undoWindowMs)
+    return () => {
+      clearTimeout(timer)
+      release()
+    }
+  }, [pending, record, undo, undoWindowMs, block, id])
+
+  /* An answer that arrives from outside (controlled) is not undoable. */
+  React.useEffect(() => {
+    if (!record) setPending(false)
+  }, [record])
+
+  React.useEffect(() => {
+    const target = focusAfter.current
+    if (!target) return
+    focusAfter.current = null
+    const row = rowRef.current
+    requestAnimationFrame(() => {
+      if (!row) return
+      let el: HTMLElement | null = null
+      if (target === 'undo') el = row.querySelector<HTMLElement>('.sl-needs-you-undo')
+      else if (target === 'first-answer') el = row.querySelector<HTMLElement>('.sl-needs-you-answer')
+      else if (target === 'answer-now') el = row.querySelector<HTMLElement>('.sl-needs-you-answer-now')
+      else {
+        /* The next ask in the block that still waits, else this row's record. */
+        const rows = [...(row.closest('.sl-needs-you')?.querySelectorAll<HTMLElement>('.sl-needs-you-ask') ?? [])]
+        const after = rows.slice(rows.indexOf(row) + 1).concat(rows.slice(0, rows.indexOf(row)))
+        el = after.filter((r) => r.dataset.state === 'open').map((r) => r.querySelector<HTMLElement>('.sl-needs-you-answer')).find(Boolean) ?? null
+      }
+      el?.focus({ preventScroll: true })
+    })
+  }, [record, aside, pending])
+
+  const status: AnswerStatus = record ? (pending ? 'pending' : 'settled') : 'open'
+  const scope = React.useMemo<AnswerScopeValue>(
+    () => ({ status, record, answerWith, later, undo, answers: block?.answers ?? 'chips', drawsRecord: false }),
+    [status, record, answerWith, later, undo, block],
+  )
+
+  const state = aside ? 'aside' : record ? 'answered' : 'open'
+
+  let body: React.ReactNode
+  if (aside) {
+    body = (
+      <div className="sl-needs-you-aside">
+        <span className="sl-needs-you-record-ask">{question}</span>
+        <span className="sl-needs-you-aside-state">set aside</span>
+        <Verb
+          className="sl-needs-you-answer-now"
+          onClick={() => {
+            focusAfter.current = 'first-answer'
+            setAside(false)
+          }}
+        >
+          answer now
+        </Verb>
+      </div>
+    )
+  } else if (record) {
+    body = (
+      <div className="sl-needs-you-record" role="status">
+        {asker !== undefined ? <span className="sl-needs-you-asker">{asker}</span> : null}
+        <span className="sl-needs-you-record-ask">{question}</span>
+        <RecordWords record={record} />
+        {pending ? (
+          <Verb className="sl-needs-you-undo" onClick={undo}>
+            undo
+          </Verb>
+        ) : null}
+      </div>
+    )
+  } else {
+    body = (
+      <>
+        <div className="sl-needs-you-line">
+          {asker !== undefined ? <span className="sl-needs-you-asker">{asker}</span> : null}
+          <span className="sl-needs-you-question">{question}</span>
+          <IconAction label="Later" className="sl-needs-you-later" onClick={later}>
+            <Icon name="clock" />
+          </IconAction>
+          {note !== undefined ? <InfoMark note={note} onOpen={onOpen} label={noteLabel} /> : null}
+        </div>
+        {children}
+      </>
+    )
+  }
+
+  return (
+    <AnswerScope.Provider value={scope}>
+      <div
+        ref={mergeRefs(ref, rowRef)}
+        className={cx('sl-needs-you-ask', className)}
+        data-needs-you-id={id}
+        data-state={state}
+        data-asker={asker !== undefined ? '' : undefined}
+        {...props}
+      >
+        {body}
+      </div>
+    </AnswerScope.Provider>
+  )
+}
+
+/* The mark of the answer, the answer's word and its time. */
+function RecordWords({ record }: { record: NeedsYouAnswerRecord }) {
+  return (
+    <>
+      <span className="sl-needs-you-record-mark" data-mark={record.mark} aria-hidden="true">
+        {record.mark === 'check' ? (
+          <Icon name="check" size={15} />
+        ) : record.mark === 'cross' ? (
+          <Icon name="x" size={14} />
+        ) : record.mark === 'later' ? (
+          <Icon name="clock" size={14} />
+        ) : (
+          <PickDiamond chosen />
+        )}
+      </span>
+      <span className="sl-needs-you-record-word">{record.word}</span>
+      <Figure className="sl-needs-you-record-time">{record.time}</Figure>
+    </>
+  )
+}
+
+/* ── one answer outside a block ─────────────────────────────────────────── */
+
+export interface NeedsYouAnswerProps {
+  id: string
+  /* The answer stood through its undo window (after the fold). */
+  onSettle?: (id: string, value: string) => void
+  /* `later` stood through its undo window. */
+  onLater?: (id: string) => void
+  undoWindowMs?: number
+  answers?: NeedsYouAnswers
+  children?: React.ReactNode
+}
+
+/* One answers line outside a block (under an activity row, in a task):
+   the same answers, undo window and Escape as an ask. The line itself
+   shows the answer with `undo` while the window is open. Renders no
+   element. */
+function NeedsYouAnswer({ id, onSettle, onLater, undoWindowMs = NEEDS_YOU_UNDO_MS, answers = 'chips', children }: NeedsYouAnswerProps) {
+  const [state, dispatch] = React.useReducer(settleReducer, SETTLE_OPEN)
+  const [record, setRecord] = React.useState<NeedsYouAnswerRecord | null>(null)
+  const latest = React.useRef({ onSettle, onLater })
+  useIsomorphicLayoutEffect(() => {
+    latest.current = { onSettle, onLater }
+  })
+
+  const answerWith = React.useCallback((value: string, word: string, mark: NeedsYouAnswerMark) => {
+    setRecord({ value, word, mark, time: formatAnswerTime(new Date()) })
+    dispatch({ type: 'pick', value, kind: mark === 'later' ? 'later' : 'answer' })
   }, [])
-  const undo = React.useCallback(() => dispatch({ type: 'undo' }), [])
+  const later = React.useCallback(() => answerWith('later', 'later', 'later'), [answerWith])
+  const undo = React.useCallback(() => {
+    setRecord(null)
+    dispatch({ type: 'undo' })
+  }, [])
 
   React.useEffect(() => {
     if (state.status !== 'pending') return
@@ -247,291 +415,97 @@ function useAnswerScope(onSettled: (value: string, kind: SettleKind) => void, un
     }
   }, [state.status, undo, undoWindowMs])
 
-  const settledRef = React.useRef(onSettled)
-  useIsomorphicLayoutEffect(() => {
-    settledRef.current = onSettled
-  })
   React.useEffect(() => {
-    if (state.status === 'settled') settledRef.current(state.value, state.kind)
-  }, [state])
-
-  return React.useMemo(
-    () => ({ state, pendingLabel: pending.label, pendingWord: pending.word, pick, later, undo }),
-    [state, pending, pick, later, undo],
-  )
-}
-
-/* Closed: one line. Open: the question line and its body (a shape, then the
-   picks). Set aside: one quiet line with `answer now`. */
-function NeedsYouItem({
-  id,
-  asker,
-  question,
-  urgency,
-  setAside: setAsideProp,
-  defaultSetAside = false,
-  onSetAsideChange,
-  className,
-  children,
-  ...props
-}: NeedsYouItemProps) {
-  const root = useNeedsYou('NeedsYou.Item')
-  const { markSettled, reportAside, later: rootLater, open: openItem } = root
-  const [aside, setAside] = useControllableState(setAsideProp, defaultSetAside, onSetAsideChange)
-  const isOpen = root.openId === id && !aside
-  const answer = useAnswerScope((value, kind) => markSettled(id, value, kind), root.undoWindowMs)
-  const state = answer.state
-  const settled = state.status === 'settled'
-  const itemRef = React.useRef<HTMLDivElement | null>(null)
-  /* Where focus goes once the item has changed form. */
-  const focusAfter = React.useRef<'next' | 'first-pick' | null>(null)
-
-  useIsomorphicLayoutEffect(() => {
-    reportAside(id, aside)
-  }, [id, aside, reportAside])
-
-  /* `later` on an item sets it aside instead of starting an undo window:
-     `answer now` is the way back. */
-  const ctx = React.useMemo<ItemContextValue>(
-    () => ({
-      ...answer,
-      later: () => {
-        if (itemRef.current?.contains(document.activeElement)) focusAfter.current = 'next'
-        setAside(true)
-        rootLater(id)
-      },
-    }),
-    [answer, setAside, rootLater, id],
-  )
-
-  React.useEffect(() => {
-    const target = focusAfter.current
-    if (!target) return
-    focusAfter.current = null
-    const item = itemRef.current
-    requestAnimationFrame(() => {
-      if (target === 'first-pick') {
-        item?.querySelector<HTMLElement>('.sl-needs-you-pick:not(:disabled)')?.focus({ preventScroll: true })
-        return
-      }
-      const section = item?.closest('.sl-needs-you')
-      const next = section?.querySelector<HTMLElement>('.sl-needs-you-item[data-state="open"] .sl-needs-you-pick:not(:disabled)')
-      ;(next ?? item?.querySelector<HTMLElement>('.sl-needs-you-answer-now'))?.focus({ preventScroll: true })
-    })
-  }, [aside, isOpen])
-
-  if (aside) {
-    return (
-      <div
-        ref={itemRef}
-        className={cx('sl-needs-you-item', className)}
-        data-needs-you-id={id}
-        data-state="aside"
-        {...props}
-      >
-        <div className="sl-needs-you-aside">
-          <span className="sl-needs-you-aside-words">{question}</span>
-          <span className="sl-needs-you-aside-state">set aside</span>
-          <Verb
-            className="sl-needs-you-answer-now"
-            onClick={() => {
-              focusAfter.current = 'first-pick'
-              setAside(false)
-              openItem(id)
-            }}
-          >
-            answer now
-          </Verb>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <ItemContext.Provider value={ctx}>
-      <div
-        ref={itemRef}
-        className={cx('sl-needs-you-item', className)}
-        data-needs-you-id={id}
-        data-state={isOpen ? 'open' : 'closed'}
-        data-settle={state.status}
-        inert={settled}
-        {...props}
-      >
-        <Unfold
-          className="sl-needs-you-item-inner"
-          open={isOpen}
-          onOpenChange={(next) => {
-            if (next) root.open(id)
-          }}
-        >
-          <Unfold.Trigger className="sl-needs-you-head">
-            <span className="sl-needs-you-asker">{asker}</span>
-            <span className="sl-needs-you-question">{question}</span>
-            {urgency ? (
-              <span className="sl-needs-you-meta">
-                <UrgencyMark>
-                  {urgency.reason}
-                  {urgency.deadline !== undefined ? <Figure>{urgency.deadline}</Figure> : null}
-                </UrgencyMark>
-              </span>
-            ) : null}
-          </Unfold.Trigger>
-          <Unfold.Content>
-            <div className="sl-needs-you-body">{children}</div>
-          </Unfold.Content>
-        </Unfold>
-      </div>
-    </ItemContext.Provider>
-  )
-}
-
-export interface NeedsYouAnswerProps {
-  id: string
-  /* The answer stood through its undo window (after the fold). */
-  onSettle?: (id: string, value: string) => void
-  /* The item was set aside with `later`. */
-  onLater?: (id: string) => void
-  undoWindowMs?: number
-  children?: React.ReactNode
-}
-
-/* One answer outside the accordion (a picks line under an activity row):
-   the same pick, undo window and Escape as an item. Renders no element. */
-function NeedsYouAnswer({ id, onSettle, onLater, undoWindowMs = NEEDS_YOU_UNDO_MS, children }: NeedsYouAnswerProps) {
-  const latest = React.useRef({ onSettle, onLater })
-  useIsomorphicLayoutEffect(() => {
-    latest.current = { onSettle, onLater }
-  })
-  const ctx = useAnswerScope((value, kind) => {
-    setTimeout(
+    if (state.status !== 'settled') return
+    const { value, kind } = state
+    const timer = setTimeout(
       () => {
         if (kind === 'later') latest.current.onLater?.(id)
         else latest.current.onSettle?.(id, value)
       },
       prefersReducedMotion() ? 0 : FOLD_MS,
     )
-  }, undoWindowMs)
-  return <ItemContext.Provider value={ctx}>{children}</ItemContext.Provider>
+    return () => clearTimeout(timer)
+  }, [state, id])
+
+  const scope = React.useMemo<AnswerScopeValue>(
+    () => ({ status: state.status, record, answerWith, later, undo, answers, drawsRecord: true }),
+    [state.status, record, answerWith, later, undo, answers],
+  )
+  return <AnswerScope.Provider value={scope}>{children}</AnswerScope.Provider>
 }
 
-/* The state of the answer around a part: null outside an item or answer. */
-export function useNeedsYouAnswerStatus(): SettleState['status'] | null {
-  return React.useContext(ItemContext)?.state.status ?? null
+/* ── the answers ────────────────────────────────────────────────────────── */
+
+interface AnswersLineProps extends React.ComponentPropsWithRef<'div'> {
+  kind: 'picks' | 'yes-no'
+  ownPlaceholder?: string
+  own?: boolean
+  onOwnChange?: (own: boolean) => void
 }
 
-/* ── the picks line ─────────────────────────────────────────────────────── */
-
-interface PicksContextValue {
-  value: string | null
-  choose: (value: string, label: React.ReactNode, word?: string) => void
-  openOwn: () => void
-  ownPlaceholder: React.RefObject<string>
-}
-
-const PicksContext = React.createContext<PicksContextValue | null>(null)
-
-function usePicks(part: string): PicksContextValue {
-  const ctx = React.useContext(PicksContext)
-  if (!ctx) throw new Error(`${part} must be inside NeedsYou.Picks`)
-  return ctx
-}
-
-export interface NeedsYouPicksProps extends Omit<React.ComponentPropsWithRef<'div'>, 'defaultValue'> {
-  value?: string | null
-  defaultValue?: string | null
-  onValueChange?: (value: string | null) => void
-}
-
-/* The second line of an open item: the picks as diamonds, the pencil, and
-   `later` at the right. A pick applies at once; the line then shows the
-   pick, what happened and `undo` until the window closes. */
-function NeedsYouPicks({ ref, value: valueProp, defaultValue = null, onValueChange, className, children, ...props }: NeedsYouPicksProps) {
-  const item = useItem('NeedsYou.Picks')
-  const [value, setValue] = useControllableState<string | null>(valueProp, defaultValue, onValueChange)
-  const [own, setOwn] = React.useState(false)
-  const ownPlaceholder = React.useRef('Your own answer')
+/* The second line of an ask: the answers, or (outside an ask) the answer
+   given with `undo`, or the field of an own answer. */
+function AnswersLine({ ref, kind, ownPlaceholder = 'Your own answer', own = false, onOwnChange, className, children, ...props }: AnswersLineProps) {
+  const scope = useAnswerScope(kind === 'picks' ? 'NeedsYou.Picks' : 'NeedsYou.YesNo')
   const ownField = React.useRef<HTMLInputElement | null>(null)
-  const undoRef = React.useRef<HTMLButtonElement | null>(null)
   const lineRef = React.useRef<HTMLDivElement | null>(null)
-  const status = item.state.status
-
-  /* A pick moves focus to `undo`; undo clears the pick and returns focus to
-     the first pick. Focus moves only when it was on the line (the control
-     that held it has just been replaced, which leaves it on the body). */
-  const previous = React.useRef(status)
-  React.useEffect(() => {
-    const active = document.activeElement
-    const focusWasHere = !active || active === document.body || !!lineRef.current?.contains(active)
-    if (previous.current === 'pending' && status === 'open') {
-      setValue(null)
-      if (focusWasHere) {
-        requestAnimationFrame(() => lineRef.current?.querySelector<HTMLElement>('.sl-needs-you-pick')?.focus({ preventScroll: true }))
-      }
-    }
-    if (previous.current === 'open' && status === 'pending' && focusWasHere) {
-      requestAnimationFrame(() => undoRef.current?.focus({ preventScroll: true }))
-    }
-    previous.current = status
-  }, [status, setValue])
+  const undoRef = React.useRef<HTMLButtonElement | null>(null)
 
   React.useEffect(() => {
     if (own) ownField.current?.focus()
   }, [own])
 
-  const choose = React.useCallback(
-    (next: string, label: React.ReactNode, word?: string) => {
-      setValue(next)
-      item.pick(next, label, word)
-    },
-    [setValue, item],
-  )
-  const ctx = React.useMemo(
-    () => ({ value, choose, openOwn: () => setOwn(true), ownPlaceholder }),
-    [value, choose],
-  )
+  /* Outside an ask: focus follows the line's change of form. */
+  const previous = React.useRef(scope.status)
+  React.useEffect(() => {
+    if (!scope.drawsRecord) return
+    const active = document.activeElement
+    const focusWasHere = !active || active === document.body || !!lineRef.current?.contains(active)
+    if (previous.current === 'open' && scope.status === 'pending' && focusWasHere) {
+      requestAnimationFrame(() => undoRef.current?.focus({ preventScroll: true }))
+    }
+    if (previous.current === 'pending' && scope.status === 'open' && focusWasHere) {
+      requestAnimationFrame(() => lineRef.current?.querySelector<HTMLElement>('.sl-needs-you-answer')?.focus({ preventScroll: true }))
+    }
+    previous.current = scope.status
+  }, [scope.status, scope.drawsRecord])
 
   let line: React.ReactNode
-  if (status === 'pending' || status === 'settled') {
+  let mode: 'answers' | 'own' | 'record' = 'answers'
+  if (scope.drawsRecord && scope.status !== 'open' && scope.record) {
+    mode = 'record'
     line = (
-      <>
-        {item.pendingLabel !== null ? (
-          <button type="button" className="sl-needs-you-pick" aria-pressed="true" disabled>
-            <PickDiamond />
-            {item.pendingLabel}
-          </button>
-        ) : null}
-        <span className="sl-needs-you-pending" role="status">
-          {item.pendingWord}
-          <span aria-hidden="true"> · </span>
-          <Verb ref={undoRef} className="sl-needs-you-undo" onClick={item.undo} disabled={status === 'settled'}>
-            undo
-          </Verb>
-        </span>
-      </>
+      <span className="sl-needs-you-record" role="status">
+        <RecordWords record={scope.record} />
+        <Verb ref={undoRef} className="sl-needs-you-undo" onClick={scope.undo} disabled={scope.status === 'settled'}>
+          undo
+        </Verb>
+      </span>
     )
   } else if (own) {
+    mode = 'own'
     line = (
       <>
         <input
           ref={ownField}
           className="sl-needs-you-own"
           aria-label="your own answer"
-          placeholder={ownPlaceholder.current}
+          placeholder={ownPlaceholder}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) return
             const text = event.currentTarget.value.trim()
             if (event.key === 'Enter' && text) {
               event.preventDefault()
-              setOwn(false)
-              choose(text, `“${text}”`)
+              onOwnChange?.(false)
+              scope.answerWith(text, `“${text}”`, 'pick')
             } else if (event.key === 'Escape') {
               event.preventDefault()
-              setOwn(false)
+              onOwnChange?.(false)
             }
           }}
         />
-        <Verb className="sl-needs-you-later" onClick={() => setOwn(false)}>
+        <Verb className="sl-needs-you-own-cancel" onClick={() => onOwnChange?.(false)}>
           cancel
         </Verb>
       </>
@@ -541,48 +515,69 @@ function NeedsYouPicks({ ref, value: valueProp, defaultValue = null, onValueChan
   }
 
   return (
+    <div
+      ref={mergeRefs(ref, lineRef)}
+      role="group"
+      className={cx('sl-needs-you-answers', className)}
+      data-kind={kind}
+      data-answers={scope.answers}
+      data-mode={mode}
+      {...props}
+    >
+      {line}
+    </div>
+  )
+}
+
+interface PicksValue {
+  openOwn: () => void
+  setOwnPlaceholder: (placeholder: string) => void
+}
+
+const PicksContext = React.createContext<PicksValue | null>(null)
+
+export interface NeedsYouPicksProps extends React.ComponentPropsWithRef<'div'> {}
+
+/* The options of an ask (NeedsYou.Pick), then NeedsYou.OwnAnswer. A pick
+   answers at once. */
+function NeedsYouPicks({ children, ...props }: NeedsYouPicksProps) {
+  const [own, setOwn] = React.useState(false)
+  const [ownPlaceholder, setOwnPlaceholder] = React.useState('Your own answer')
+  const ctx = React.useMemo(() => ({ openOwn: () => setOwn(true), setOwnPlaceholder }), [])
+  return (
     <PicksContext.Provider value={ctx}>
-      <div
-        ref={mergeRefs(ref, lineRef)}
-        role="group"
-        className={cx('sl-needs-you-picks', className)}
-        data-mode={status !== 'open' ? 'pending' : own ? 'own' : 'picks'}
-        {...props}
-      >
-        {line}
-      </div>
+      <AnswersLine kind="picks" own={own} onOwnChange={setOwn} ownPlaceholder={ownPlaceholder} {...props}>
+        {children}
+      </AnswersLine>
     </PicksContext.Provider>
   )
 }
 
 export interface NeedsYouPickProps extends Omit<React.ComponentPropsWithRef<'button'>, 'value'> {
   value: string
-  /* What the line says once picked; `answered` by default. */
+  /* The answer's word in the record; the option's own words by default. */
   word?: string
-  /* `consent` arms the red on hover: the pick refuses or removes. */
-  tone?: 'plain' | 'consent'
 }
 
-/* One option: the diamond and a word. */
-function NeedsYouPick({ value, word, tone = 'plain', className, onClick, children, type = 'button', ...props }: NeedsYouPickProps) {
-  const picks = usePicks('NeedsYou.Pick')
-  const chosen = picks.value === value
+/* One option: a tone chip, or a diamond and a word when the answers are
+   plain. */
+function NeedsYouPick({ value, word, className, onClick, children, type = 'button', ...props }: NeedsYouPickProps) {
+  const scope = useAnswerScope('NeedsYou.Pick')
   return (
     <button
       type={type}
-      className={cx('sl-needs-you-pick', className)}
-      aria-pressed={chosen}
-      data-tone={tone}
+      className={cx('sl-needs-you-answer', className)}
+      data-kind="pick"
       onClick={(event) => {
         onClick?.(event)
         if (event.defaultPrevented) return
         soundPress(event)
-        picks.choose(value, children, word)
+        scope.answerWith(value, word ?? (typeof children === 'string' ? children : value), 'pick')
       }}
       {...props}
     >
-      <PickDiamond />
-      {children}
+      <PickDiamond className="sl-needs-you-diamond" />
+      <span>{children}</span>
     </button>
   )
 }
@@ -593,118 +588,123 @@ export interface NeedsYouOwnAnswerProps extends Omit<React.ComponentPropsWithRef
   label?: string
 }
 
-/* The pencil: turns the picks line into a field for your own answer. Enter
-   commits it like a pick; Escape or `cancel` brings the picks back. */
-function NeedsYouOwnAnswer({ placeholder = 'Your own answer', label = 'Your own answer', onClick, ...props }: NeedsYouOwnAnswerProps) {
-  const picks = usePicks('NeedsYou.OwnAnswer')
-  picks.ownPlaceholder.current = placeholder
+/* The pencil chip: turns the line into a field for the person's own
+   answer. Enter answers with it; Escape or `cancel` brings the options
+   back. */
+function NeedsYouOwnAnswer({ placeholder = 'Your own answer', label = 'Your own answer', className, onClick, type = 'button', ...props }: NeedsYouOwnAnswerProps) {
+  const picks = React.useContext(PicksContext)
+  if (!picks) throw new Error('NeedsYou.OwnAnswer must be inside NeedsYou.Picks')
+  const { setOwnPlaceholder } = picks
+  React.useEffect(() => setOwnPlaceholder(placeholder), [placeholder, setOwnPlaceholder])
+  return (
+    <Tooltip label={label} side="top">
+      <button
+        type={type}
+        aria-label={label}
+        className={cx('sl-needs-you-answer', className)}
+        data-kind="own"
+        onClick={(event) => {
+          onClick?.(event)
+          if (event.defaultPrevented) return
+          soundPress(event)
+          picks.openOwn()
+        }}
+        {...props}
+      >
+        <Icon name="pen" size={15} />
+      </button>
+    </Tooltip>
+  )
+}
+
+export interface NeedsYouYesNoProps extends React.ComponentPropsWithRef<'div'> {
+  /* What a yes costs, set as a figure on the check: `¥2,400`. */
+  figure?: string
+  /* The answer's word in the record for each. */
+  yesWord?: string
+  noWord?: string
+  /* The accessible names, and the tooltips. */
+  yesLabel?: string
+  noLabel?: string
+}
+
+/* The answers of a yes-or-no ask: a chip with a check (it carries the
+   figure when money is involved) and a chip with a cross. */
+function NeedsYouYesNo({
+  figure,
+  yesWord = 'approved',
+  noWord = 'denied',
+  yesLabel = 'Approve',
+  noLabel = 'Do not',
+  ...props
+}: NeedsYouYesNoProps) {
+  const scope = useAnswerScope('NeedsYou.YesNo')
+  return (
+    <AnswersLine kind="yes-no" {...props}>
+      <Tooltip label={yesLabel} side="top">
+        <button
+          type="button"
+          aria-label={figure ? `${yesLabel}, ${figure}` : yesLabel}
+          className="sl-needs-you-answer"
+          data-kind="yes"
+          onClick={(event) => {
+            soundPress(event)
+            scope.answerWith('yes', yesWord, 'check')
+          }}
+        >
+          <Icon name="check" size={16} />
+          {figure ? <Figure>{figure}</Figure> : null}
+        </button>
+      </Tooltip>
+      <Tooltip label={noLabel} side="top">
+        <button
+          type="button"
+          aria-label={noLabel}
+          className="sl-needs-you-answer"
+          data-kind="no"
+          onClick={(event) => {
+            soundPress(event)
+            scope.answerWith('no', noWord, 'cross')
+          }}
+        >
+          <Icon name="x" size={15} />
+        </button>
+      </Tooltip>
+    </AnswersLine>
+  )
+}
+
+export interface NeedsYouLaterProps extends Omit<React.ComponentPropsWithRef<'button'>, 'children'> {}
+
+/* `later` as a clock, for an answers line outside a block (an ask's own
+   clock sits on its first line). It sets the answer aside with the same
+   undo window as a pick. */
+function NeedsYouLater({ className, onClick, ...props }: NeedsYouLaterProps) {
+  const scope = useAnswerScope('NeedsYou.Later')
   return (
     <IconAction
-      label={label}
-      size="sm"
-      tooltipSide="top"
+      label="Later"
+      className={cx('sl-needs-you-later', className)}
       onClick={(event) => {
         onClick?.(event)
-        if (!event.defaultPrevented) picks.openOwn()
+        if (!event.defaultPrevented) scope.later()
       }}
       {...props}
     >
-      <Icon name="pen" />
+      <Icon name="clock" />
     </IconAction>
   )
 }
 
-export interface NeedsYouLaterProps extends React.ComponentPropsWithRef<'button'> {}
-
-/* `later`, at the right end of the line: sets the item aside, with the same
-   undo window as a pick. */
-function NeedsYouLater({ className, onClick, children = 'later', ...props }: NeedsYouLaterProps) {
-  const item = useItem('NeedsYou.Later')
-  return (
-    <Verb
-      className={cx('sl-needs-you-later', className)}
-      onClick={(event) => {
-        onClick?.(event)
-        if (!event.defaultPrevented) item.later()
-      }}
-      {...props}
-    >
-      {children}
-    </Verb>
-  )
-}
-
-/* ── body shapes ────────────────────────────────────────────────────────── */
-
-export interface NeedsYouCommandProps extends React.ComponentPropsWithRef<'p'> {}
-
-/* What will run, said once as one plain sentence. */
-function NeedsYouCommand({ className, ...props }: NeedsYouCommandProps) {
-  return <p className={cx('sl-needs-you-command', className)} {...props} />
-}
-
-export interface NeedsYouPlanProps extends React.ComponentPropsWithRef<'div'> {
-  /* Steps shown before `show all`. */
-  visible?: number
-  defaultOpen?: boolean
-}
-
-/* A plan: its first three steps, the rest behind `show all`. Children are
-   NeedsYou.Step. */
-function NeedsYouPlan({ visible = 3, defaultOpen = false, className, children, ...props }: NeedsYouPlanProps) {
-  const [open, setOpen] = React.useState(defaultOpen)
-  const steps = React.Children.toArray(children)
-  const head = steps.slice(0, visible)
-  const rest = steps.slice(visible)
-  const restId = useSafeId('sl-plan-rest')
-  return (
-    <div className={cx('sl-needs-you-plan', className)} {...props}>
-      <ol className="sl-needs-you-steps">{head}</ol>
-      {rest.length ? (
-        <Unfold open={open} onOpenChange={setOpen} className="sl-needs-you-plan-rest">
-          <Unfold.Content id={restId}>
-            <ol className="sl-needs-you-steps" start={visible + 1}>
-              {rest}
-            </ol>
-          </Unfold.Content>
-          <Unfold.Trigger asChild>
-            <Verb>{open ? 'show fewer' : 'show all'}</Verb>
-          </Unfold.Trigger>
-        </Unfold>
-      ) : null}
-    </div>
-  )
-}
-
-export interface NeedsYouStepProps extends React.ComponentPropsWithRef<'li'> {}
-
-/* One step of a plan; its number is a figure. */
-function NeedsYouStep({ className, children, ...props }: NeedsYouStepProps) {
-  return (
-    <li className={cx('sl-needs-you-step', className)} {...props}>
-      <span>{children}</span>
-    </li>
-  )
-}
-
-export interface NeedsYouContextProps extends React.ComponentPropsWithRef<'div'> {}
-
-/* One picture of the thing the question touches. */
-function NeedsYouContextPicture({ className, ...props }: NeedsYouContextProps) {
-  return <div className={cx('sl-needs-you-context', className)} {...props} />
-}
-
-/* Compound parts: NeedsYou, .Item, .Answer, .Picks, .Pick, .OwnAnswer,
-   .Later, .Command, .Plan, .Step, .Context. */
+/* Compound parts: NeedsYou, .Group, .Ask, .Picks, .Pick, .OwnAnswer,
+   .YesNo, .Answer, .Later. */
 export const NeedsYou = Object.assign(NeedsYouRoot, {
-  Item: NeedsYouItem,
-  Answer: NeedsYouAnswer,
+  Group: NeedsYouGroup,
+  Ask: NeedsYouAsk,
   Picks: NeedsYouPicks,
   Pick: NeedsYouPick,
   OwnAnswer: NeedsYouOwnAnswer,
+  YesNo: NeedsYouYesNo,
+  Answer: NeedsYouAnswer,
   Later: NeedsYouLater,
-  Command: NeedsYouCommand,
-  Plan: NeedsYouPlan,
-  Step: NeedsYouStep,
-  Context: NeedsYouContextPicture,
 })
