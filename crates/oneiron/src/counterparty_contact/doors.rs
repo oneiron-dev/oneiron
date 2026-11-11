@@ -203,7 +203,12 @@ impl Vault {
             }
         }
 
-        for body in record.claim_bodies(*contact_id)? {
+        // [COUNTERPARTY-CONTACT-CLAIM-FACET]: the contact's own substrate is
+        // no FACET, so the CLAIM birth gate refused every head. Each head is
+        // born in the vault default facet.
+        let facet = self.default_facet_in_txn(wtxn)?;
+        for mut body in record.claim_bodies(*contact_id)? {
+            body.scope_facet = facet;
             let existing = live
                 .iter()
                 .find(|(_, live_body)| live_body.predicate == body.predicate);

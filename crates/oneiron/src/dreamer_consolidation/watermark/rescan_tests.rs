@@ -1,5 +1,11 @@
 use super::*;
 
+use rmpv::Value;
+
+use super::super::support::{
+    KEY_LAST_LEARNED_AT, KEY_LAST_TURN_ID, KEY_SCHEMA_VERSION, WATERMARK_SCHEMA_VERSION_V1,
+    encode_value,
+};
 use crate::config::VaultConfig;
 use crate::dreamer_prefilter::reopen_prefilter_rescan;
 use crate::temporal::TimeRange;

@@ -202,9 +202,8 @@ fn end_outcome_row(run_id: RetrievalRunId, metadata: &[(&str, &str)]) -> EndOutc
         fields.insert((*key).to_owned(), (*value).to_owned());
     }
     EndOutcomeRow {
-        run_id: run_id.to_hex(),
+        retrieval_run_ids: vec![run_id.to_hex()],
         turn_id: hex_id(FIXTURE_TURN_ID),
-        activated_memory_id: hex_id(FIXTURE_MEMORY_ID),
         gate_score: 0.75,
         confirmed_fact_hit: true,
         latency_scale_us: 1,
@@ -266,7 +265,8 @@ fn eval_outcome_ingest_applies_evaluator_reward_with_provenance_metadata() {
         .as_ref()
         .expect("gated terminal evidence");
     assert_eq!(evidence.turn_id, FIXTURE_TURN_ID);
-    assert_eq!(evidence.activated_memory_id, FIXTURE_MEMORY_ID);
+    // Rule D (OF-092, 30b6386f6fd): "no activated-memory id is required";
+    // the evidence no longer carries one, so its assertion went with it.
     assert_eq!(evidence.gate_score, 0.75);
     assert_eq!(metadata_of(outcome, "session_id"), Some("session-3"));
 }
@@ -336,13 +336,18 @@ fn eval_outcome_ingest_requires_a_real_terminal_gate_not_a_raw_reward() {
         .expect("outcome");
     let expected = 0.5 - 0.001 * (run.elapsed_us as f32 + f32::from(run.state.hops));
     assert!((outcome.reward.expect("reward") - expected).abs() < 1e-4);
+    let before_tune = vault.retrieval_blend_weight_table().expect("table");
+    let error = vault
+        .tune_retrieval_blend_weights(RetrievalBlendTuningConfig::default())
+        .expect_err("the sole accepted run is held out, not training data");
+    assert!(matches!(
+        error,
+        oneiron::Error::InvalidConfig(message)
+            if message == "retrieval blend tuning requires at least 1 reward outcome(s), found 0"
+    ));
     assert_eq!(
-        vault
-            .tune_retrieval_blend_weights(RetrievalBlendTuningConfig::default())
-            .expect("terminal label trains")
-            .data_window
-            .outcome_count,
-        1,
+        vault.retrieval_blend_weight_table().expect("table"),
+        before_tune
     );
 }
 
@@ -493,7 +498,7 @@ fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
         &config,
         &reward_flags,
     ));
-    let tuned = run_existing_eval(&eval_argv(
+    let tune_argv = eval_argv(
         "tune",
         &vault_path,
         &config,
@@ -505,25 +510,26 @@ fn eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune() {
             "--min-reward-count",
             "1",
         ]),
+    );
+    let tune_result = run_tune(&tune_argv[1..]);
+    assert!(matches!(
+        &tune_result,
+        Err(EvalError::Oneiron(oneiron::Error::InvalidConfig(message)))
+            if message == "retrieval blend tuning requires at least 1 reward outcome(s), found 0"
     ));
+    assert_eq!(report(tune_result), ExitCode::FAILURE);
 
     assert!(matches!(refused, ExitCode::FAILURE));
-    assert_eq!(ingested, tuned);
+    assert!(ingested);
     let vault = open_vault_with(&vault_path, config);
     let outcomes = vault.retrieval_outcomes(run_id).expect("outcomes");
     let weights = vault.retrieval_blend_weight_table().expect("table");
-    if ingested {
-        assert_eq!(outcomes.len(), 1);
-        assert_eq!(outcomes[0].reward, Some(0.75));
-        assert_ne!(weights.weights, before.weights);
-        assert_eq!(weights.data_window.outcome_count, 1);
-    } else {
-        assert!(
-            outcomes.is_empty(),
-            "refused ingest must not write outcomes"
-        );
-        assert_eq!(weights, before, "refused tune must not write weights");
-    }
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].reward, Some(0.75));
+    assert_eq!(
+        weights, before,
+        "a held-out-only window must not replace weights"
+    );
 }
 
 /// The M1 class at bench level: a real vault root is renamed away and an empty
