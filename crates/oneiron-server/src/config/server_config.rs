@@ -679,6 +679,12 @@ impl ServeConfig {
     /// (FIX 2544, 2709).
     pub fn base_vault_config(&self) -> oneiron::VaultConfig {
         let mut config = oneiron::VaultConfig::server();
+        // `[runtime] clock`: the clock the vault reads. A manual clock stays
+        // manual even if its file has gone since validation; it never falls
+        // back to the host's clock.
+        if let Some(clock) = self.runtime.store_clock() {
+            config.store_clock = clock;
+        }
         config.dimensions = self.dimensions;
         config.fast_dims = self.fast_dims;
         config.map_size = self.map_size;

@@ -29,9 +29,9 @@ impl LlmBackend for CountingJudge {
             assert_eq!(request.envelope.purpose, CallPurpose::Eval);
             assert_eq!(request.model.as_str(), BEAM_JUDGE);
             assert!(
-                matches!(&request.messages[0].content[0], ContentPart::Text { text } if text == "Fixture scoring policy.")
+                matches!(&request.messages[0].content[0], ContentPart::Text { text, .. } if text == "Fixture scoring policy.")
             );
-            let ContentPart::Text { text } = &request.messages[1].content[0] else {
+            let ContentPart::Text { text, .. } = &request.messages[1].content[0] else {
                 panic!("expected judge evidence");
             };
             let evidence: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -49,6 +49,7 @@ impl LlmBackend for CountingJudge {
                     role: LlmMessageRole::Assistant,
                     content: vec![ContentPart::Text {
                         text: if n == 2 { "0" } else { "0.5" }.into(),
+                        signature: None,
                     }],
                 },
                 usage: LlmUsage {
@@ -62,8 +63,11 @@ impl LlmBackend for CountingJudge {
                         reasoning: 0,
                     },
                     raw_provider: serde_json::json!({"prompt_tokens":100,"completion_tokens":2}),
+                    call_metadata: None,
                 },
                 finish_reason: FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }
