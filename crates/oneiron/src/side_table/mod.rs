@@ -876,7 +876,6 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
 /// owns. For an exact key (`sync_state_get`, `sync_state_put` and their
 /// `_in_write_txn`/`delete` siblings): a lookup or a write always names one
 /// specific row, so it must name one a table actually declares.
-#[cfg(feature = "sync")]
 pub(crate) fn host_declared_sync_state(key: &str) -> Result<()> {
     declared_for(SideDb::SyncState, key.as_bytes())
         .map(|_| ())
@@ -899,7 +898,6 @@ pub(crate) fn host_declared_sync_state(key: &str) -> Result<()> {
 /// An overlapping prefix can also match undeclared rows planted by legacy or
 /// damaged writers. Scan callers must check each returned key with
 /// [`host_declared_sync_state`] before exposing it.
-#[cfg(feature = "sync")]
 pub(crate) fn host_declared_sync_state_scan(prefix: &str) -> Result<()> {
     if prefix.len() <= 1 || declared_overlaps(SideDb::SyncState, prefix.as_bytes()) {
         return Ok(());
@@ -912,7 +910,6 @@ pub(crate) fn host_declared_sync_state_scan(prefix: &str) -> Result<()> {
 /// The write half of the generic host door: checks [`host_declared_sync_state`],
 /// then puts through the same `sync_state` handle every declared table writes
 /// through, so the raw call lives here rather than in `vault/transactions.rs`.
-#[cfg(feature = "sync")]
 pub(crate) fn host_sync_state_put(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -932,7 +929,6 @@ pub(crate) fn host_sync_state_put(
 
 /// The delete half of the generic host door: checks [`host_declared_sync_state`],
 /// then deletes. `true` when a row was present.
-#[cfg(feature = "sync")]
 pub(crate) fn host_sync_state_delete(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,

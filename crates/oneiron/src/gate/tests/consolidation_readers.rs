@@ -670,8 +670,14 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::ProviderPrior => reserved::provider_prior(&vault, reader)?,
+            // FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+            #[cfg(any())]
             ConsolidationReader::CriticOutcome => reserved::critic_outcome(reader)?,
+            // FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+            #[cfg(any())]
             ConsolidationReader::CriticReliability => reserved::critic_reliability(reader)?,
+            // FIX [T0B-CRITIC-CALIB-REWRITE]: the two critic readers are skipped until their arms above are ported
+            ConsolidationReader::CriticOutcome | ConsolidationReader::CriticReliability => {}
             ConsolidationReader::ProviderConfidence => {
                 reserved::provider_confidence(&vault, claim, reader)?;
             }

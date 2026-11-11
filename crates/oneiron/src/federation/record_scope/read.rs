@@ -77,14 +77,31 @@ impl Vault {
                 && scope.as_ref().is_some_and(|scope| {
                     note_world::admits_at(&self.store, &txn, id, h.entity_type, scope, door, "read")
                 })
-                && fences_pass(door)?;
+                && fences_pass(door)?
+                && self.esign_dependencies_admitted_in(
+                    &txn,
+                    h.entity_type,
+                    &raw,
+                    |dep, ty, dep_raw| self.read_admitted_in(&txn, dep, ty, dep_raw, door),
+                )?;
             if !allowed && view == ScopeView::Normal {
                 continue;
             }
             // Debug reveals what the selector suppressed, never words that
             // are withdrawn or that a fence refuses: such a row keeps only
             // its header.
-            let words = allowed || (!withdrawn && fences_pass([&Scope::top(), slip, channel])?);
+            let debug_door = [&Scope::top(), slip, channel];
+            let words = allowed
+                || (!withdrawn
+                    && fences_pass(debug_door)?
+                    && self.esign_dependencies_admitted_in(
+                        &txn,
+                        h.entity_type,
+                        &raw,
+                        |dep, ty, dep_raw| {
+                            self.read_admitted_in(&txn, dep, ty, dep_raw, debug_door)
+                        },
+                    )?);
             let bytes = if words {
                 self.scoped_row_bytes_in_txn(&txn, &id, raw)?
             } else {
@@ -101,5 +118,46 @@ impl Vault {
             });
         }
         Ok(out)
+    }
+
+    /// One row as this door's Normal view judges it, for an `esign.*`
+    /// claim's dependencies (ESIGN-AUDIT-CLAIM-FACET): the row readable,
+    /// its disclosure scope admitted at `door` under `read`, then the
+    /// causal, epoch and text fences. The dependency's raw row and parsed
+    /// type come from the same snapshot `txn`.
+    fn read_admitted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        entity_type: u8,
+        raw: &[u8],
+        door: [&Scope; 3],
+    ) -> Result<bool> {
+        if !crate::ports::raw_readable_in_txn(&self.store, txn, &id, raw)? {
+            return Ok(false);
+        }
+        let Some(scope) = disclosure_scope_for_stored_row(
+            &self.store,
+            txn,
+            id,
+            entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )?
+        else {
+            return Ok(false);
+        };
+        if !note_world::admits_at(&self.store, txn, id, entity_type, &scope, door, "read") {
+            return Ok(false);
+        }
+        if !crate::authority::row_causal_admitted(self, txn, &id, raw)? {
+            return Ok(false);
+        }
+        if !self.epoch_fence_in(txn, id, raw, door, "read")? {
+            return Ok(false);
+        }
+        if !self.text_fence_in(txn, id, raw, door, "read", |_| Ok(false))? {
+            return Ok(false);
+        }
+        Ok(true)
     }
 }

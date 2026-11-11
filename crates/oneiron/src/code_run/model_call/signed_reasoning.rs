@@ -23,7 +23,7 @@ pub(super) fn seal_signed_reasoning_in_txn(
     if !record
         .reasoning
         .iter()
-        .any(|part| part.occurrence.is_none() && part.terminal_part.as_ref().is_some_and(&signed))
+        .any(|part| part.occurrence.is_none() && part.terminal_part.as_ref().is_some_and(signed))
         || secret_scan_mode_in_txn(&vault.store, txn)? == SecretScanMode::Off
     {
         return Ok(());

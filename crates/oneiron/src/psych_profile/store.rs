@@ -29,15 +29,33 @@ impl crate::Vault {
     /// carrying the exact words it was read from")`. The worlds each
     /// source's record lies in are added in the same write (FIX 11149).
     pub fn put_psych_profile(&self, id: &EntityId, profile: &PsychProfile) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        self.put_psych_profile_in_txn(&mut wtxn, id, profile)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// [`Self::put_psych_profile`] in the caller's write `wtxn` (untangle
+    /// 6.7a): the derivation commit's profile item publishes through it, in
+    /// its own savepoint.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::put_psych_profile`].
+    pub(crate) fn put_psych_profile_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        profile: &PsychProfile,
+    ) -> Result<()> {
         profile.validate_source_words()?;
         let learned_at = self.store.clock.now_recorded_at();
-        let mut wtxn = self.store.env.write_txn()?;
-        let data = encode_psych_profile_body(&self.psych_profile_placed_in(&wtxn, profile)?)?;
+        let data = encode_psych_profile_body(&self.psych_profile_placed_in(wtxn, profile)?)?;
         apply_ops(
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut wtxn,
+            wtxn,
             vec![BatchOp::Put {
                 id: *id,
                 entity_type: ENTITY_TYPE_PSYCH_PROFILE,
@@ -56,7 +74,6 @@ impl crate::Vault {
             false,
             true,
         )?;
-        wtxn.commit()?;
         Ok(())
     }
 

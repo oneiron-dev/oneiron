@@ -66,8 +66,9 @@ fn bounded_pieces(unit: &str) -> Vec<&str> {
         }
         let window = &rest[..limit];
         let half = limit / 2;
-        let cut = [b'\n', b' ']
-            .into_iter()
+        let cut = b"\n "
+            .iter()
+            .copied()
             .find_map(|separator| {
                 window
                     .bytes()

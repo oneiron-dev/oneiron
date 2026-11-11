@@ -32,7 +32,7 @@ fn confirm(
 
 #[test]
 fn federation_confirm_consumes_ids_nonces_and_requires_live_roster() {
-    let genesis = genesis_entry(21, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(21, 1);
     let first = confirm(&genesis, &genesis, 21, 1, 1, 1);
     for (id, nonce) in [(1, 2), (2, 1), (1, 1)] {
         let replay = confirm(&first, &genesis, 21, 2, id, nonce);
@@ -59,7 +59,7 @@ fn federation_confirm_consumes_ids_nonces_and_requires_live_roster() {
 
 #[test]
 fn federation_confirm_sibling_replay_is_permutation_independent() {
-    let genesis = genesis_entry(21, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(21, 1);
     let a = confirm(&genesis, &genesis, 21, 1, 1, 1);
     let b = confirm(&genesis, &genesis, 21, 2, 2, 1);
     let first = fold_authority_log(&[genesis.clone(), a.clone(), b.clone()]);
@@ -81,7 +81,7 @@ fn federation_confirm_sibling_replay_is_permutation_independent() {
 
 #[test]
 fn federation_confirm_codec_all_kinds_and_zero_rejection() {
-    let genesis = genesis_entry(21, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(21, 1);
     for kind in [
         AuthorityConfirmKind::Accept,
         AuthorityConfirmKind::Rescope,
@@ -120,7 +120,7 @@ fn verified_revoke_survives_rejection_of_its_signers_enrollment() {
     let owner = ed_key(owner_seed);
     let owner_key = authority_key_from_ed(&owner);
     let actor = scope_entity(0x71);
-    let genesis = genesis_entry(owner_seed, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(owner_seed, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let bind = sign_ed(
         unsigned_entry(
