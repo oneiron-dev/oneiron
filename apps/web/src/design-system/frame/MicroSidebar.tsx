@@ -195,7 +195,7 @@ function MicroSidebarItem({
   }
   if (micro.labels === 'none') {
     control = (
-      <Tooltip label={label} side="right" open={peeking ? false : undefined}>
+      <Tooltip label={label} side="right" disabled={peeking}>
         {control}
       </Tooltip>
     )

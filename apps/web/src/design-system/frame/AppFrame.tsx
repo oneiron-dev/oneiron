@@ -4,7 +4,7 @@ import { IconAction, type IconActionProps } from '../primitives/IconAction'
 import { firstFocusable, isTopLayer, layerOpenFrom, onLayersChange, pushLayer, removeLayer } from '../lib/layer'
 import { cx, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { AppFrameContext, type AppFrameContextValue } from './app-frame-context'
-import { PEEK_CLOSED, PEEK_DELAY_MS, peekReducer } from './frame-peek'
+import { PEEK_CLOSED, PEEK_DELAY_MS, PEEK_WARM_MS, peekReducer } from './frame-peek'
 
 /* The `[` key folds and opens one frame: the one the person last pressed
    or focused in (the first mounted until then). */
@@ -56,8 +56,11 @@ export interface AppFrameProps extends React.ComponentPropsWithRef<'div'> {
    (the children) taking the rest of the width. The sidebar folds with
    AppFrame.Fold in its head or the `[` key; the work area then takes the
    freed width. While it is folded, resting the pointer on a microsidebar
-   item shows that item's sidebar over the work area after a short delay;
-   it hides at once when the pointer leaves both, and on Escape. A menu or
+   item shows that item's sidebar over the work area after a short delay.
+   The peek previews the place under the pointer: moving to another item
+   switches it at once (the delay applies to the first show only); an item
+   without a sidebar shows its tooltip and no peek. It hides at once when
+   the pointer leaves the items and the peek, and on Escape. A menu or
    popover opened from inside the peek holds it open while that layer is
    open; when the layer closes the peek follows the pointer. ArrowRight
    on a focused item opens it with focus inside; on a touch screen a tap on
@@ -133,6 +136,13 @@ function AppFrameRoot({
     const timer = setTimeout(() => dispatch({ type: 'elapsed', id }), PEEK_DELAY_MS)
     return () => clearTimeout(timer)
   }, [peekState.waitingId])
+
+  /* The warm window after a peek hid. */
+  React.useEffect(() => {
+    if (!peekState.warm) return
+    const timer = setTimeout(() => dispatch({ type: 'cool' }), PEEK_WARM_MS)
+    return () => clearTimeout(timer)
+  }, [peekState.warm])
 
   /* The `[` key, for the active frame only. */
   React.useEffect(() => {

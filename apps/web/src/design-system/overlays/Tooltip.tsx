@@ -21,6 +21,10 @@ export interface TooltipProps {
   open?: boolean
   defaultOpen?: boolean
   onOpenChange?: (open: boolean) => void
+  /* While true the tooltip stays hidden (a larger layer shows the same
+     name, as a peek does). It keeps following the pointer, so it does not
+     pop up stale when it is enabled again. */
+  disabled?: boolean
   /* One element that takes a ref and pointer and focus handlers. */
   children: React.ReactElement
 }
@@ -37,6 +41,7 @@ export function Tooltip({
   open: openProp,
   defaultOpen = false,
   onOpenChange,
+  disabled = false,
   children,
 }: TooltipProps) {
   const [open, setOpen] = useControllableState(openProp, defaultOpen, onOpenChange)
@@ -66,7 +71,7 @@ export function Tooltip({
   useIsomorphicLayoutEffect(() => {
     const layer = layerRef.current
     const anchor = anchorRef.current
-    if (!open || !layer || !anchor) return
+    if (!open || disabled || !layer || !anchor) return
     showLayer(layer)
     const offset = side === 'left' || side === 'right' ? 10 : 8
     const place = () => placeLayer(layer, anchor, { side, align, offset })
@@ -85,7 +90,7 @@ export function Tooltip({
       removeEventListener('resize', place)
       hideLayer(layer)
     }
-  }, [open, side, align, hide])
+  }, [open, disabled, side, align, hide])
 
   const captionId = caption ? `${id}-caption` : undefined
 
