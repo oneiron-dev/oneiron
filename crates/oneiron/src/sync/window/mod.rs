@@ -82,6 +82,8 @@ pub use self::egress::{
 #[cfg(test)]
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::forward::replay_window_in_edge_order_for_test;
 pub(crate) use self::forward::{FORWARD_PASS_VERSION, ForwardRun, forward_rematerialize_mirror};
 pub(crate) use self::history_free::export_sealed_mirror_snapshot;
 pub use self::history_free::{

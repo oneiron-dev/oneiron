@@ -103,21 +103,30 @@ pub(super) fn scoped_capability_connector(server: &str, grant_id: &EntityId) -> 
         .to_owned()
 }
 
-fn scoped_mcp_grant_intent(
+fn mint_scoped_mcp_grant(
+    vault: &crate::Vault,
+    grant_id: &EntityId,
     principal_ref: &str,
     server: &str,
-) -> crate::outbound_grant::ScopedMcpGrantMintIntent {
-    crate::outbound_grant::ScopedMcpGrantMintIntent {
-        principal_ref: principal_ref.to_owned(),
-        origin_component_id: "ask-mcp".to_owned(),
-        origin_action_id: "grant-scoped-mcp".to_owned(),
-        origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
-        server: server.to_owned(),
-        tool: "read_file".to_owned(),
-        data_class_ceiling: crate::outbound_consent::DataClass::Personal,
-        tool_data_classes: vec![crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
-        endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-    }
+) -> Result<crate::outbound_grant::StandingOutboundGrant> {
+    let owner = crate::test_util::embedded_owner_proof(vault);
+    vault.with_write_txn(|wtxn| {
+        vault.mint_standing_outbound_grant_in_txn(
+            wtxn,
+            &owner,
+            *grant_id,
+            principal_ref,
+            crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp {
+                server: server.to_owned(),
+                tool: "read_file".to_owned(),
+                data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+                tool_data_classes: vec![
+                    crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+                ],
+                endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+            },
+        )
+    })
 }
 
 fn scoped_mcp_effect(principal: EntityId, server: &str) -> ExternalEffectGateInput {
@@ -183,20 +192,18 @@ fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
     let denied_grant = test_id(0xC7);
     let neighbour_grant = test_id(0xC8);
     let hyphen_grant = test_id(0xC9);
-    vault.mint_scoped_mcp_outbound_grant(
-        &denied_grant,
-        &scoped_mcp_grant_intent(&denied_principal.to_hex(), "files"),
-        10,
-    )?;
-    vault.mint_scoped_mcp_outbound_grant(
+    mint_scoped_mcp_grant(&vault, &denied_grant, &denied_principal.to_hex(), "files")?;
+    mint_scoped_mcp_grant(
+        &vault,
         &neighbour_grant,
-        &scoped_mcp_grant_intent(&neighbour_principal.to_hex(), "files"),
-        10,
+        &neighbour_principal.to_hex(),
+        "files",
     )?;
-    vault.mint_scoped_mcp_outbound_grant(
+    mint_scoped_mcp_grant(
+        &vault,
         &hyphen_grant,
-        &scoped_mcp_grant_intent(&denied_principal.to_hex(), "my-server"),
-        10,
+        &denied_principal.to_hex(),
+        "my-server",
     )?;
     let denied_key = test_id(0xCA);
     let neighbour_key = test_id(0xCB);
@@ -278,16 +285,8 @@ fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> R
     let principal = test_id(0xD0);
     let hyphen_grant = test_id(0xD1);
     let underscore_grant = test_id(0xD2);
-    vault.mint_scoped_mcp_outbound_grant(
-        &hyphen_grant,
-        &scoped_mcp_grant_intent(&principal.to_hex(), "foo-bar"),
-        10,
-    )?;
-    vault.mint_scoped_mcp_outbound_grant(
-        &underscore_grant,
-        &scoped_mcp_grant_intent(&principal.to_hex(), "foo_bar"),
-        10,
-    )?;
+    mint_scoped_mcp_grant(&vault, &hyphen_grant, &principal.to_hex(), "foo-bar")?;
+    mint_scoped_mcp_grant(&vault, &underscore_grant, &principal.to_hex(), "foo_bar")?;
     let hyphen_key = test_id(0xD3);
     let underscore_key = test_id(0xD4);
     vault.register_connector_key(
@@ -347,11 +346,7 @@ fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> R
     let alias_key = test_id(0xD6);
     let alias_grant = test_id(0xD8);
     let alias_principal = test_id(0xD9);
-    vault.mint_scoped_mcp_outbound_grant(
-        &alias_grant,
-        &scoped_mcp_grant_intent(&alias_principal.to_hex(), "foo-bar"),
-        10,
-    )?;
+    mint_scoped_mcp_grant(&vault, &alias_grant, &alias_principal.to_hex(), "foo-bar")?;
     vault.register_connector_key(
         &alias_key,
         crate::connector_key::ConnectorKeyRecord::active(
@@ -382,11 +377,7 @@ fn charter_wildcard_channel_still_binds_typed_scoped_calls() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xE5), &encode_policy_manifest(vec![]))?;
     let principal = test_id(0xE6);
     let grant_id = test_id(0xE7);
-    vault.mint_scoped_mcp_outbound_grant(
-        &grant_id,
-        &scoped_mcp_grant_intent(&principal.to_hex(), "foo-bar"),
-        10,
-    )?;
+    mint_scoped_mcp_grant(&vault, &grant_id, &principal.to_hex(), "foo-bar")?;
     let key_id = test_id(0xE8);
     vault.register_connector_key(
         &key_id,
@@ -421,11 +412,7 @@ fn charter_wildcard_channel_still_binds_typed_scoped_calls() -> Result<()> {
     let other_principal = test_id(0xE9);
     let other_grant = test_id(0xEA);
     let other_key = test_id(0xEB);
-    vault.mint_scoped_mcp_outbound_grant(
-        &other_grant,
-        &scoped_mcp_grant_intent(&other_principal.to_hex(), "foo-bar"),
-        10,
-    )?;
+    mint_scoped_mcp_grant(&vault, &other_grant, &other_principal.to_hex(), "foo-bar")?;
     vault.register_connector_key(
         &other_key,
         crate::connector_key::ConnectorKeyRecord::active(
@@ -642,11 +629,7 @@ fn resolved_manifest_drift_holds_scoped_tool_at_gate() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xC6), &encode_policy_manifest(vec![]))?;
     let principal = test_id(0xE5);
     let grant_id = test_id(0xE6);
-    vault.mint_scoped_mcp_outbound_grant(
-        &grant_id,
-        &scoped_mcp_grant_intent(&principal.to_hex(), "files"),
-        10,
-    )?;
+    mint_scoped_mcp_grant(&vault, &grant_id, &principal.to_hex(), "files")?;
     let key_id = test_id(0xE7);
     vault.register_connector_key(
         &key_id,

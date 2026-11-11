@@ -14,6 +14,8 @@ use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
 
+use super::traversal::inbox_group_page;
+
 const REASON_CEILING: &str = "gate.pending.actor_ceiling";
 const REASON_CHECKER: &str = "gate.pending.checker_low_confidence";
 
@@ -238,7 +240,12 @@ fn bundle_receipt_reopens_group_after_accept_all() -> Result<()> {
     );
     assert!(vault.store.pending_gate_consents(10)?.is_empty());
     vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
-    assert!(vault.inbox_groups(InboxQuery::at(60, 10))?.is_empty());
+    assert!(
+        vault
+            .inbox_groups(InboxQuery::at(60, 10))?
+            .groups
+            .is_empty()
+    );
 
     let approved = vault.receipts(ReceiptQuery::new(10).with_outcome("approved"))?;
     assert_eq!(approved.len(), 2);
@@ -309,7 +316,7 @@ fn stale_semantic_hash_sidecar_keeps_current_member_visible_and_clearable() -> R
         .commit()?;
 
     vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
-    assert_eq!(vault.inbox_groups(InboxQuery::at(50, 10))?.len(), 1);
+    assert_eq!(vault.inbox_groups(InboxQuery::at(50, 10))?.groups.len(), 1);
     assert!(
         vault
             .reopen_inbox_group_at(&format!("{INBOX_GROUP_DOOR_PREFIX}{run_id}"), 50)?
@@ -375,12 +382,12 @@ fn indexed_explicit_group_matches_scan_for_raw_and_branch_root_aliases() -> Resu
     )?;
 
     let root_key = bytes_to_hex_lower(root.as_bytes());
-    let scan_groups = inbox_groups_projection(
+    let scan_groups = inbox_group_page(
         &vault,
         InboxQuery::at(100, 10),
         InboxReviewDial::ReviewEverything,
-        10,
-    )?;
+    )?
+    .groups;
     let expected_parent = scan_groups
         .iter()
         .find(|group| group.run_id == "run-parent")
@@ -397,17 +404,17 @@ fn indexed_explicit_group_matches_scan_for_raw_and_branch_root_aliases() -> Resu
         bytes_to_hex_lower(branch.as_bytes())
     );
     assert_eq!(
-        explicit_inbox_group(&vault, "run-parent", 100)?,
+        explicit_inbox_group(&vault, "run-parent", 100)?.1,
         Some(expected_parent.clone())
     );
     assert_eq!(
-        explicit_inbox_group(&vault, "run-branch", 100)?,
+        explicit_inbox_group(&vault, "run-branch", 100)?.1,
         Some(expected_branch)
     );
     // A canonical root door follows the former projection's first matching
     // raw run, so it picks the parent row and carries the duplicate.
     assert_eq!(
-        explicit_inbox_group(&vault, &root_key, 100)?,
+        explicit_inbox_group(&vault, &root_key, 100)?.1,
         Some(expected_parent.clone())
     );
     assert_eq!(
@@ -459,14 +466,14 @@ fn indexed_explicit_group_matches_scan_for_raw_and_branch_root_aliases() -> Resu
             .pending_gate_consents_for_semantic_claim_hash(&semantic_hash)?
             .is_empty()
     );
-    assert!(explicit_inbox_group(&vault, &root_key, 120)?.is_none());
+    assert!(explicit_inbox_group(&vault, &root_key, 120)?.1.is_none());
     assert!(
-        inbox_groups_projection(
+        inbox_group_page(
             &vault,
             InboxQuery::at(120, 10),
             InboxReviewDial::ReviewEverything,
-            10,
         )?
+        .groups
         .is_empty()
     );
 
@@ -521,6 +528,7 @@ fn late_root_insertion_rekeys_pending_group_aliases() -> Result<()> {
     vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
     let group = vault
         .inbox_groups(InboxQuery::at(100, 10))?
+        .groups
         .into_iter()
         .next()
         .expect("browse surfaces the late-root group");
@@ -627,7 +635,7 @@ fn supersede_of_user_stated_and_conflict_rows_surface_as_exceptions() -> Result<
 
     // Default exceptions-only dial: the supersede-of-user_stated row and
     // the conflict row surface; the plain new claim rides auto.
-    let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+    let groups = vault.inbox_groups(InboxQuery::at(100, 10))?.groups;
     assert_eq!(groups.len(), 1);
     let group = &groups[0];
     assert_eq!(group.members.len(), 2);
@@ -767,7 +775,12 @@ fn approve_with_edit_persists_the_amended_body_and_receipts_the_delta() -> Resul
     );
 
     // The member is resolved: no open row survives the approval.
-    assert!(vault.inbox_groups(InboxQuery::at(30, 10))?.is_empty());
+    assert!(
+        vault
+            .inbox_groups(InboxQuery::at(30, 10))?
+            .groups
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -864,7 +877,7 @@ fn an_amendment_may_not_move_the_reviewed_predicate_or_subject() -> Result<()> {
     let stored = vault.get_claim(&claim_id)?.expect("proposal");
     assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
     assert_eq!(stored.value, Value::from("draft"));
-    assert_eq!(vault.inbox_groups(InboxQuery::at(30, 10))?.len(), 1);
+    assert_eq!(vault.inbox_groups(InboxQuery::at(30, 10))?.groups.len(), 1);
     Ok(())
 }
 

@@ -4,6 +4,7 @@
 use rmpv::Value;
 
 use super::*;
+use crate::error::{Error, RecordError};
 
 fn actor(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("actor id")
@@ -12,7 +13,7 @@ fn actor(seed: u8) -> EntityId {
 fn take(markdown: &str) -> NoteBody {
     NoteBody {
         kind: NoteKind::parse("opinion/take").expect("shipped kind"),
-        author_ref: actor(0x7a),
+        author_ref: NoteActor::Actor(actor(0x7a)),
         markdown: markdown.to_owned(),
         source_revision_ref: [0x42; 16],
     }
@@ -192,7 +193,7 @@ fn brief_kind_round_trip_is_person_stamped_and_fail_closed() {
     for tag in ["brief", "unknown.pack"] {
         let body = NoteBody {
             kind: NoteKind::Plugin(tag.into()),
-            author_ref: actor,
+            author_ref: NoteActor::Actor(actor),
             markdown: "authored".into(),
             source_revision_ref: [0x42; 16],
         };
@@ -207,21 +208,115 @@ fn brief_kind_round_trip_is_person_stamped_and_fail_closed() {
     );
 }
 
+/// Roots `vault` with a single-key authority and binds `owner` as its human
+/// owner, so the owner mints delegating `diary.read` grants.
+fn diary_owner_binding(vault: &crate::Vault, seed: u8, owner: EntityId) {
+    use crate::authority::{
+        AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+        AuthorityTier, DeviceAuthority, ROLE_ADMIN, ROLE_OWNER,
+    };
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let signing = SigningKey::from_bytes(&[seed; 32]);
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let sign = |mut entry: AuthorityLogEntry| {
+        let transcript =
+            crate::authority::authority_transcript(&entry).expect("authority transcript");
+        entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+        entry
+    };
+    let genesis = sign(AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: None,
+        seq: 0,
+        parent_hashes: Vec::new(),
+        op: AuthorityOp::Genesis {
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+            genesis_nonce: [seed.wrapping_add(10); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+        },
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: 100,
+    });
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let bind = sign(AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(vault_id),
+        seq: 1,
+        parent_hashes: vec![
+            crate::authority::authority_entry_hash(&genesis).expect("genesis hash"),
+        ],
+        op: AuthorityOp::BindActor {
+            authority_key: key.clone(),
+            actor_ref: owner,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: 101,
+    });
+    let time = |at: u64| crate::TimeRange { start: at, end: at };
+    vault
+        .put_authority_log_entries(&[(genesis, time(1), 1), (bind, time(2), 2)])
+        .expect("atomic genesis owner-binding");
+}
+
 #[test]
 fn diary_round_trip_and_revision_are_required() {
+    use crate::memory::{DiaryReadOutcome, DiaryReadsRequest};
+
+    // LABEL-05 (ARCH-0032 #private-reads): author-only is the DEFAULT for a
+    // diary, not a lock. By default only the author reads; an Owner's grant
+    // widens who reads, through the reason-logged door.
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    let txn = vault.store.env.read_txn().unwrap();
-    let readable = |bytes: &[u8], actor: Option<&EntityId>| {
-        note_body_readable(&vault.store, &txn, bytes, actor).unwrap()
+    let author = actor(0x7a);
+    let stranger = actor(0x7b);
+    let note_id = actor(0x7c);
+    let diary = NoteBody {
+        kind: NoteKind::parse("diary").expect("shipped kind"),
+        author_ref: NoteActor::Actor(author),
+        markdown: "private journal".to_owned(),
+        source_revision_ref: [0x42; 16],
     };
-    let mut diary = take("private journal");
-    diary.kind = NoteKind::parse("diary").expect("shipped kind");
-    let bytes = encode_note_body(&diary).expect("encode diary");
-    assert_eq!(decode_note_body(&bytes).expect("decode diary"), diary);
-    assert!(!readable(&bytes, None));
-    assert!(!readable(&bytes, Some(&actor(0x7b))));
-    assert!(readable(&bytes, Some(&diary.author_ref)));
+    // The logical projection round-trips.
+    let body_bytes = encode_note_body(&diary).expect("encode diary");
+    assert_eq!(decode_note_body(&body_bytes).expect("decode diary"), diary);
+    // The stored row round-trips.
+    let core_bytes = encode_note_core(&diary.core()).expect("encode diary core");
+    assert_eq!(
+        decode_note_core(&core_bytes).expect("decode diary core"),
+        diary.core()
+    );
+    let txn = vault.store.env.read_txn().unwrap();
+    let readable = |id: &EntityId, bytes: &[u8], reader: Option<&EntityId>| {
+        note_body_readable(&vault.store, &txn, id, bytes, reader).unwrap()
+    };
+    // By default only the author reads.
+    assert!(!readable(&note_id, &core_bytes, None));
+    assert!(!readable(&note_id, &core_bytes, Some(&stranger)));
+    assert!(readable(&note_id, &core_bytes, Some(&author)));
+    // An invalid revision fails closed: the logical projection refuses it
+    // and it reads to no one, not even the author.
     for revision in [
         Value::Nil,
         Value::Binary(vec![1; 15]),
@@ -232,7 +327,7 @@ fn diary_round_trip_and_revision_are_required() {
             (Value::from("kind"), Value::from("diary")),
             (
                 Value::from("author_ref"),
-                Value::from(diary.author_ref.to_hex()),
+                Value::from(diary.author_ref.to_wire()),
             ),
             (Value::from("markdown"), Value::from("private")),
             (Value::from("source_revision_ref"), revision),
@@ -241,8 +336,143 @@ fn diary_round_trip_and_revision_are_required() {
             decode_note_body(&bytes),
             Err(Error::Record(RecordError::InvalidNoteBody(_)))
         ));
-        assert!(!readable(&bytes, Some(&diary.author_ref)));
+        assert!(!readable(&note_id, &bytes, Some(&author)));
     }
+    // ... and the stored row refuses an invalid revision too.
+    for revision in [
+        Value::Nil,
+        Value::Binary(vec![1; 15]),
+        Value::Binary(vec![1; 17]),
+        Value::from("opaque"),
+    ] {
+        let bytes = encode_map(vec![
+            (Value::from("kind"), Value::from("diary")),
+            (
+                Value::from("author_ref"),
+                Value::from(diary.author_ref.to_wire()),
+            ),
+            (Value::from("source_revision_ref"), revision),
+        ]);
+        assert!(matches!(
+            decode_note_core(&bytes),
+            Err(Error::Record(RecordError::InvalidNoteBody(_)))
+        ));
+        assert!(!readable(&note_id, &bytes, Some(&author)));
+    }
+    drop(txn);
+
+    // An Owner's grant widens the default: the grantee then reads through
+    // the reason-logged door. Owning the vault alone reads nothing.
+    let grant_dir = tempfile::tempdir().unwrap();
+    let grant_vault = crate::Vault::open(grant_dir.path(), crate::VaultConfig::default()).unwrap();
+    let put_person = |seed: u8| {
+        let id = actor(seed);
+        grant_vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::TimeRange { start: 1, end: 1 },
+                1,
+                b"person",
+            )
+            .unwrap();
+        id
+    };
+    let agent = put_person(0xA1);
+    let reader = put_person(0xA2);
+    let owner = grant_vault.ensure_embedded_owner_actor().unwrap();
+    let receipt = grant_vault
+        .memory(agent, crate::edge::EdgeActorClass::Human)
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate { owner_ref: agent },
+            markdown: "private journal entry".to_owned(),
+            source_revision_ref: [0xA3; 16],
+            mask: None,
+        })
+        .unwrap();
+    let entry = EntityId::from_hex(&receipt.id_hex).unwrap();
+    diary_owner_binding(&grant_vault, 0xA4, owner);
+    let owner_proof = grant_vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let agent_proof = grant_vault
+        .authenticate_owner(
+            agent,
+            &agent.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    // The author reads its own diary, with no grant and no log row.
+    match grant_vault
+        .memory(agent, crate::edge::EdgeActorClass::Human)
+        .read_agent_diary(Some(&agent_proof), agent, "self review")
+        .unwrap()
+    {
+        DiaryReadOutcome::Granted { read, entries } => {
+            assert!(read.is_none());
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].id, entry);
+            assert_eq!(entries[0].markdown, "private journal entry");
+        }
+        other => panic!("the author reads its own diary, got {other:?}"),
+    }
+    // Before any grant no one else reads, not even the vault's owner.
+    assert!(matches!(
+        grant_vault
+            .memory(owner, crate::edge::EdgeActorClass::Human)
+            .read_agent_diary(Some(&owner_proof), agent, "owner audit")
+            .unwrap(),
+        DiaryReadOutcome::NotCovered
+    ));
+    assert!(matches!(
+        grant_vault
+            .memory(reader, crate::edge::EdgeActorClass::Agent)
+            .read_agent_diary(None, agent, "owner audit")
+            .unwrap(),
+        DiaryReadOutcome::NotCovered
+    ));
+    // The Owner's grant widens the diary to its named reader.
+    grant_vault
+        .memory(owner, crate::edge::EdgeActorClass::Human)
+        .grant_diary_read(
+            &owner_proof,
+            crate::WriteActor::new(reader, crate::edge::EdgeActorClass::Agent),
+            agent,
+            &[],
+        )
+        .unwrap();
+    match grant_vault
+        .memory(reader, crate::edge::EdgeActorClass::Agent)
+        .read_agent_diary(None, agent, "owner audit")
+        .unwrap()
+    {
+        DiaryReadOutcome::Granted { read, entries } => {
+            assert!(read.is_some());
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].id, entry);
+            assert_eq!(entries[0].markdown, "private journal entry");
+        }
+        other => panic!("the grantee reads the diary, got {other:?}"),
+    }
+    // The granted read lands in the agent's log with its reason.
+    let log = grant_vault
+        .memory(agent, crate::edge::EdgeActorClass::Human)
+        .diary_reads(&DiaryReadsRequest {
+            limit: None,
+            include_used: false,
+        })
+        .unwrap();
+    assert_eq!(log.reads.len(), 1);
+    assert_eq!(log.reads[0].reader, reader);
+    assert_eq!(log.reads[0].reason, "owner audit");
+    assert_eq!(log.reads[0].entries, vec![entry]);
 }
 
 fn facet_stamps(vault: &crate::Vault, id: EntityId) -> Vec<EntityId> {

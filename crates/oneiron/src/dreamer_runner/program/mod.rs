@@ -91,6 +91,9 @@ pub(crate) use self::run::{
     ProgramWrite, TurnProgramEntered, bind_program_write_in_txn, join_program_checkpoint_in_txn,
     note_program_write_uncertain, settle_program_outbound_in_txn, settle_program_write_in_txn,
 };
+// The owner's stop of a parked try (`park_release`) abandons the try's
+// Pending sends as a held program's Stop does (FIX 7188).
+pub(in crate::dreamer_runner) use self::stop_sends::abandon_stopped_sends_in_txn;
 pub use self::types::{
     ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin,
     TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
