@@ -18,7 +18,7 @@ mod park;
 mod retry_policy;
 
 pub use crate::store::dreamer_attempt_payload::DreamerAttemptPayload;
-pub use park::{DreamerParkWait, DreamerParkedWait, ParkDreamerAttempt};
+pub use park::{DreamerParkWait, DreamerParkedWait, ModelSeatId, ParkDreamerAttempt};
 
 use super::constants::DEFAULT_DREAMER_CHILD_RESERVE_UNITS;
 

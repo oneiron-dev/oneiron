@@ -2,6 +2,7 @@
 
 use crate::attempt_queue::AttemptId;
 use crate::code_run::WaitKey;
+use crate::entity_id::EntityId;
 use crate::workspace_roster::spend_scope::SpendScopeId;
 
 use super::DreamerParkCause;
@@ -23,9 +24,12 @@ pub struct ParkDreamerAttempt {
     pub now: u64,
 }
 
-/// Exactly what wakes a parked attempt's trap. A typed wait exists only on a trap park.
-/// For Consent, Peer and Human, the code-run wait's delivery wakes the trap through the `TRAPS`
-/// binding written beside the park.
+/// A model seat's durable identity: one login or subscription.
+pub type ModelSeatId = EntityId;
+
+/// Exactly what wakes a parked attempt. A Budget, Consent, Peer or Human wait exists only on a
+/// trap park: for Consent, Peer and Human, the code-run wait's delivery wakes the trap through
+/// the `TRAPS` binding written beside the park. A Seat wait exists only on the driver's own park.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DreamerParkWait {
     /// The hard cap of exactly this open spend scope refused the step's reservation, which asked
@@ -52,6 +56,15 @@ pub enum DreamerParkWait {
         /// The exact code-run wait whose delivery wakes the bound trap.
         key: WaitKey,
     },
+    /// A spent model seat refused the try; the seat's available write wakes it.
+    Seat {
+        /// The spent seat.
+        seat: ModelSeatId,
+        /// The seat row's generation this park names; the available write answers it.
+        generation: u64,
+        /// The vendor-reported reset in seconds, when the refusal named one.
+        reset_at_s: Option<u64>,
+    },
 }
 
 impl DreamerParkWait {
@@ -63,16 +76,18 @@ impl DreamerParkWait {
             Self::Consent { .. } => DreamerParkWaitClass::Consent,
             Self::Peer { .. } => DreamerParkWaitClass::Peer,
             Self::Human { .. } => DreamerParkWaitClass::Human,
+            Self::Seat { .. } => DreamerParkWaitClass::Seat,
         }
     }
 }
 
 /// A parked attempt's typed wait with its lease fence: the queue row's `attempt_count` the writer
-/// read in the park's own transaction. Budget top-ups check this generation before waking the trap;
-/// answer deliveries use the trap's private attempt and lineage binding and the exact wait key.
+/// read in the park's own transaction. Budget top-ups and seat-available writes check this
+/// generation before waking a park; answer deliveries use the trap's private attempt and lineage
+/// binding and the exact wait key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DreamerParkedWait {
-    /// The condition that wakes the parked attempt's trap.
+    /// The condition that wakes the parked attempt.
     pub wait: DreamerParkWait,
     /// The queue row's attempt count stamped by the writer for every class; Consent, Peer and Human
     /// resumers do not read it here because the trap binding and exact wait key fence their delivery.
