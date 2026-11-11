@@ -63,7 +63,7 @@ fn two_open_vaults_observe_on_independent_authority_clocks() {
 
 #[test]
 fn authority_genesis_golden_vector_is_canonical() {
-    let genesis = genesis_entry(1, 86_400, 123);
+    let genesis = genesis_entry(1, 123);
     let encoded = encode_authority_log_entry_body(&genesis).unwrap();
     let vault_id = genesis_vault_id(&genesis).unwrap();
 
@@ -72,38 +72,6 @@ fn authority_genesis_golden_vector_is_canonical() {
     // The identity hashes the pinned full signed body, not just its operation.
     assert_eq!(vault_id, *blake3::hash(&hex_bytes(golden)).as_bytes());
     assert_eq!(decode_authority_log_entry_body(&encoded).unwrap(), genesis);
-}
-
-#[test]
-fn legacy_genesis_without_pending_delay_decodes_with_default_and_old_hash() {
-    let signing = ed_key(79);
-    let key = authority_key_from_ed(&signing);
-    let op = AuthorityOp::Genesis {
-        device: device(
-            key.clone(),
-            ROLE_OWNER | ROLE_ADMIN,
-            AuthorityTier::Software,
-        ),
-        genesis_nonce: [79; 32],
-        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        tier_floor: AuthorityTier::Software,
-        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
-    };
-    let legacy = sign_ed_legacy_genesis(unsigned_entry(None, 0, Vec::new(), op, key, 1), &signing);
-    let legacy_encoded =
-        encode_value(&entry_value_with_genesis_delay(&legacy, true, false)).unwrap();
-    let current_encoded = encode_authority_log_entry_body(&legacy).unwrap();
-    let legacy_hash = *blake3::hash(&legacy_encoded).as_bytes();
-
-    assert_ne!(legacy_encoded, current_encoded);
-    let decoded = decode_authority_log_entry_body(&legacy_encoded).unwrap();
-    assert_eq!(decoded, legacy);
-    assert_eq!(
-        authority_entry_hash(&decoded).unwrap(),
-        legacy_hash,
-        "legacy genesis hash must stay tied to the legacy signed bytes"
-    );
-    assert_eq!(genesis_vault_id(&decoded).unwrap(), legacy_hash);
 }
 
 /// ONE-1604-D1 T5: the AUTHORITY_LOG store key is pinned to the first 16 bytes of
@@ -122,8 +90,6 @@ fn authority_log_entity_id_is_first_sixteen_bytes_of_entry_hash() {
         ),
         genesis_nonce: [96; 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        tier_floor: AuthorityTier::Software,
-        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
     };
     let genesis = sign_ed(unsigned_entry(None, 0, Vec::new(), op, key, 1), &signing);
     let hash = authority_entry_hash(&genesis).unwrap();
@@ -180,7 +146,7 @@ fn sub_second_readonly_folds_still_advance_the_observed_clock() {
 
 #[test]
 fn authority_signature_suite_verifies_ed25519_and_p256() {
-    let ed = genesis_entry(2, 172_800, 1);
+    let ed = genesis_entry(2, 1);
     assert!(verify_authority_signature(
         &ed.signer,
         &authority_transcript(&ed).unwrap()
@@ -192,8 +158,6 @@ fn authority_signature_suite_verifies_ed25519_and_p256() {
         device: device(key.clone(), ROLE_OWNER, AuthorityTier::Hardware),
         genesis_nonce: [44; 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        tier_floor: AuthorityTier::Hardware,
-        pending_widen_delay_secs: 86_400,
     };
     let entry = sign_p256(unsigned_entry(None, 0, Vec::new(), op, key, 2), &p256);
     assert!(verify_authority_signature(
@@ -207,7 +171,7 @@ fn authority_signature_suite_verifies_ed25519_and_p256() {
 
 #[test]
 fn authority_body_validation_rejects_bad_origin_signature() {
-    let mut genesis = genesis_entry(3, 86_400, 3);
+    let mut genesis = genesis_entry(3, 3);
     genesis.signer.signature[0] ^= 0xff;
     let encoded = encode_value(&entry_value(&genesis, true)).unwrap();
     let err = validate_authority_log_entry_body_bytes(&encoded)
@@ -224,8 +188,6 @@ fn p256_authority_identity_requires_canonical_compressed_sec1() {
         device: device(key.clone(), ROLE_OWNER, AuthorityTier::Hardware),
         genesis_nonce: [22; 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        tier_floor: AuthorityTier::Hardware,
-        pending_widen_delay_secs: 86_400,
     };
     let entry = unsigned_entry(None, 0, Vec::new(), op, key, 1);
 
@@ -238,7 +200,7 @@ fn p256_authority_identity_requires_canonical_compressed_sec1() {
 fn authority_transcript_binds_cosigner_key_set() {
     let owner = ed_key(23);
     let second = ed_key(24);
-    let genesis = genesis_entry(23, 86_400, 1);
+    let genesis = genesis_entry(23, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enroll = enroll_entry(vault_id, &genesis, &owner, 24, 1, 2);
     let signed = cosign_ed(
@@ -246,9 +208,7 @@ fn authority_transcript_binds_cosigner_key_set() {
             Some(vault_id),
             2,
             vec![authority_entry_hash(&enroll).unwrap()],
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::Hardware,
-            },
+            AuthorityOp::SlipRevoke { slip_id: [23; 32] },
             authority_key_from_ed(&owner),
             3,
         ),
@@ -279,8 +239,6 @@ fn self_host_fold_rejects_cloud_consent_roles() {
         ),
         genesis_nonce: [25; 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        tier_floor: AuthorityTier::Software,
-        pending_widen_delay_secs: 86_400,
     };
     let entry = unsigned_entry(None, 0, Vec::new(), op, key, 1);
 
@@ -297,8 +255,6 @@ fn device_authority_roles_reject_unknown_bits() {
         device: device(key.clone(), ROLE_OWNER | 0x8000, AuthorityTier::Hardware),
         genesis_nonce: [31; 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        tier_floor: AuthorityTier::Software,
-        pending_widen_delay_secs: 86_400,
     };
     let entry = unsigned_entry(None, 0, Vec::new(), op, key, 1);
 
@@ -315,8 +271,6 @@ fn genesis_requires_owner_or_admin_authority_consent() {
         device: device(key.clone(), ROLE_AGENT, AuthorityTier::Software),
         genesis_nonce: [37; 32],
         recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        tier_floor: AuthorityTier::Software,
-        pending_widen_delay_secs: 86_400,
     };
     let entry = unsigned_entry(None, 0, Vec::new(), op, key, 1);
 
@@ -342,7 +296,7 @@ fn rotate_key_rejects_self_rotation() {
 
 #[test]
 fn invalid_signatures_do_not_enter_fold() {
-    let valid = genesis_entry(39, 86_400, 1);
+    let valid = genesis_entry(39, 1);
     let valid_hash = authority_entry_hash(&valid).unwrap();
     let mut forged = valid.clone();
     forged.ts = 2;
@@ -387,10 +341,8 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
                 },
             ),
         ]),
-        tier_floor: AuthorityTier::Software,
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
-        tier_floor_events: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
@@ -409,20 +361,32 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         host_custody_keys: BTreeSet::new(),
         worlds: BTreeMap::new(),
         refused_world_edits: BTreeSet::new(),
+        grant_travel: BTreeMap::new(),
+        refused_grant_travel: BTreeSet::new(),
+        checkpoint_policy: Default::default(),
+        home_pick: Default::default(),
+        origin_cut: Default::default(),
+        device_succession: Default::default(),
+        conversation_training: Default::default(),
+        conversation_training_vault: Default::default(),
+        policy_settings: Default::default(),
+        refused_export_acts: BTreeSet::new(),
+        agent_carried_acts: BTreeMap::new(),
+        home_candidacy: Default::default(),
+        owner_work: Default::default(),
         world_keys: BTreeMap::new(),
         refused_world_keys: BTreeSet::new(),
         key_admitters: BTreeMap::new(),
         hosted: false,
         actor_rows: BTreeSet::new(),
+        residence_directives: BTreeMap::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(
             Some(state.vault_id),
             1,
             vec![[41; 32]],
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::Hardware,
-            },
+            AuthorityOp::SlipRevoke { slip_id: [41; 32] },
             owner_key,
             1,
         ),

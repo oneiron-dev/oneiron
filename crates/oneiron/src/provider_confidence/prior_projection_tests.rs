@@ -7,6 +7,7 @@ use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
 };
 use crate::provider_confidence::write_provider_prior;
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
 fn put_actor(vault: &Vault, id: EntityId, provider: &str) -> Result<()> {
@@ -369,7 +370,9 @@ mod one1891_ruling {
         }
 
         pub(super) fn effective(vault: &Vault, claim: &EntityId) -> f32 {
-            crate::provider_confidence::effective_confidence(vault, claim).expect("effective")
+            crate::provider_confidence::effective_confidence(vault, claim)
+                .and_then(crate::provider_confidence::EffectiveConfidence::resolved_or_error)
+                .expect("effective")
         }
 
         pub(super) fn decide(
@@ -403,7 +406,7 @@ mod one1891_ruling {
             let bytes = encode_claim_body(body).expect("encode stored claim fixture");
             vault
                 .batch()
-                .put_replicated(claim, ENTITY_TYPE_CLAIM, at(200), 200, &bytes)
+                .put_replicated(claim, ENTITY_TYPE_CLAIM, at(200), 200, None, &bytes)
                 .commit()
                 .expect("seed stored claim through the replication fixture door");
             assert_eq!(

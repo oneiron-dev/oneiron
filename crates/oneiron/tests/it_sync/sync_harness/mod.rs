@@ -30,10 +30,14 @@ use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::affect::Vad;
 use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
+use oneiron::sync::transport::{WindowPadEnvelope, WindowPadForm, WindowPadKind, window_sub_tags};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow, WindowExport};
 use oneiron::temporal::TimeRange;
 use oneiron::{EdgeInfo, EdgeKind, EntityId, HnswConfig, Vault, VaultConfig};
+// The entity metadata header's length: type, occurred interval, learned-at
+// stamp and row version, everything before the MessagePack body.
+pub(crate) use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 
 /// The harness window every suite shares: March 2026.
 pub(crate) const WINDOW: &str = "2026-03";
@@ -62,6 +66,50 @@ pub(crate) fn test_config_with_embedding() -> VaultConfig {
     cfg
 }
 
+/// Opens a test vault at `path` and installs a process-memory keystore on it,
+/// as a host does after each open: a delete signs its receipt with this
+/// install's key, which the signing doors load from the keystore (P6c).
+pub(crate) fn open_vault_with_memory_keystore(path: &std::path::Path, cfg: VaultConfig) -> Vault {
+    let vault = Vault::open(path, cfg).unwrap();
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // P6c (96df97d2238): load the install signer before replay enters a transaction.
+    vault.prepare_install_signing().unwrap();
+    vault
+}
+
+/// The one wire frame of a window `UPDATE` carrying `update`: every frame
+/// that carries a window's bytes is a window pad envelope (#3918), and an
+/// update that holds no pad goes alone, in the pad-free form.
+pub(crate) fn window_update_frame(window_key: &str, update: &[u8]) -> Vec<u8> {
+    let mut frames = WindowPadEnvelope {
+        kind: WindowPadKind::Update,
+        form: WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: update.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode_frames(window_key, window_sub_tags::UPDATE)
+    .unwrap();
+    assert_eq!(frames.len(), 1, "a test update fits one frame");
+    frames.remove(0)
+}
+
+/// A whole window state as a bulk transfer's `Done` carries it: one pad-free
+/// window pad envelope of the bulk-state kind (#3918).
+pub(crate) fn bulk_state_envelope(state: &[u8]) -> Vec<u8> {
+    WindowPadEnvelope {
+        kind: WindowPadKind::BulkState,
+        form: WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: state.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap()
+}
+
 pub(crate) fn clear_policy_manifests(vault: &Vault) {
     // The seeded default manifest is local engine state. Public deletion is
     // rejected, and sync mirroring skips it, so legacy sync fixtures no longer
@@ -74,9 +122,10 @@ pub(crate) fn clear_policy_manifests(vault: &Vault) {
     );
 }
 
-/// Builds the pinned 25-byte entity envelope + body from LITERAL parts
-/// (contracts.ts `entityValueEnvelope`: type u8 | occurred_start u64 BE |
-/// occurred_end u64 BE | learned_at u64 BE | MessagePack body). Test INPUT —
+/// Builds the pinned entity metadata header + body from LITERAL parts
+/// (`record_layout`: type u8 | occurred_start u64 BE | occurred_end u64 BE |
+/// learned_at u64 BE | row_version u64 BE | MessagePack body). The row
+/// version is zero, as on every row but a CLAIM's origin write. Test INPUT —
 /// expectations built from this are independent of engine encode paths.
 pub(crate) fn entity_blob(
     entity_type: u8,
@@ -84,11 +133,12 @@ pub(crate) fn entity_blob(
     learned_at: u64,
     data: &[u8],
 ) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     blob.push(entity_type);
     blob.extend_from_slice(&occurred.start.to_be_bytes());
     blob.extend_from_slice(&occurred.end.to_be_bytes());
     blob.extend_from_slice(&learned_at.to_be_bytes());
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(data);
     blob
 }
@@ -250,7 +300,7 @@ impl TestNode {
 
     pub(crate) fn with_config(name: &'static str, peer_id: u64, cfg: VaultConfig) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Arc::new(Vault::open(dir.path(), cfg).unwrap());
+        let vault = Arc::new(open_vault_with_memory_keystore(dir.path(), cfg));
         clear_policy_manifests(&vault);
         let initial_rows = vault
             .entities_in_learned_range(0, u64::MAX)
@@ -668,7 +718,7 @@ fn assert_btree_eq(
 ///   CRDT entity;
 /// - tombstone effect parity: hard (per ARCH-0038 fail-closed decode) ⇒ no
 ///   row on either node; soft (`user_delete`) ⇒ each node holds either no
-///   row or the 25 B shell, and shells agree byte-exactly when both exist
+///   row or the header-only shell, and shells agree byte-exactly when both exist
 ///   (the shell is local-history-dependent: it exists only where the body
 ///   was materialized before the delete arrived);
 /// - edge value byte-exactness INCLUDING `value[24]`/`value[25]`
@@ -741,8 +791,8 @@ pub(crate) fn assert_converged(a: &TestNode, b: &TestNode, key: &str) {
                 if let Some(raw) = raw {
                     assert_eq!(
                         raw.len(),
-                        25,
-                        "soft-tombstoned entity {hex} on {name} must be the 25 B shell"
+                        ENTITY_METADATA_HEADER_LEN,
+                        "soft-tombstoned entity {hex} on {name} must be the header-only shell"
                     );
                 }
             }
@@ -864,11 +914,12 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 }
 
 /// Returns the hyphenated `request_id` string from a REDACTION_AUDIT
-/// receipt body (25 B envelope + MessagePack body; contracts.ts
+/// receipt body (metadata header + MessagePack body; contracts.ts
 /// `redactionAuditReceipt.fields`).
 pub(crate) fn receipt_request_id(vault: &Vault, receipt_id: &EntityId) -> String {
     let raw = vault.get_raw(receipt_id).unwrap().expect("receipt raw");
-    let body: serde_json::Value = rmp_serde::from_slice(&raw[25..]).expect("receipt body");
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("receipt body");
     body["request_id"]
         .as_str()
         .expect("request_id string")
