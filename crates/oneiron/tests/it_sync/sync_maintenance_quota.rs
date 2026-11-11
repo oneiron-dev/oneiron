@@ -2,6 +2,8 @@
 #![allow(clippy::unwrap_used)]
 use std::sync::Arc;
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
 use oneiron::registry::ENTITY_TYPE_EVENT;
@@ -19,11 +21,11 @@ use oneiron::{
     authority::AuthorityAttestation, authority::AuthorityEntryHash, authority::AuthorityKey,
     authority::AuthorityLogCheck, authority::AuthorityLogEntry,
     authority::AuthorityObservationPolicy, authority::AuthorityOp, authority::AuthoritySignature,
-    authority::AuthorityTier, authority::AuthorityVaultId,
-    authority::DEFAULT_PENDING_WIDEN_DELAY_SECS, authority::DeviceAuthority, authority::ROLE_ADMIN,
-    authority::ROLE_AGENT, authority::ROLE_OWNER, authority::authority_entry_hash,
-    authority::authority_transcript, authority::encode_authority_log_entry_body,
-    authority::genesis_vault_id, registry::ENTITY_TYPE_AUTHORITY_LOG,
+    authority::AuthorityTier, authority::AuthorityVaultId, authority::DeviceAuthority,
+    authority::ROLE_ADMIN, authority::ROLE_AGENT, authority::ROLE_OWNER,
+    authority::authority_entry_hash, authority::authority_transcript,
+    authority::encode_authority_log_entry_body, authority::genesis_vault_id,
+    registry::ENTITY_TYPE_AUTHORITY_LOG,
 };
 
 const WINDOW: &str = "2026-03";
@@ -40,7 +42,7 @@ fn test_config() -> VaultConfig {
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    let vault = open_vault_with_memory_keystore(dir.path(), test_config());
     (dir, vault)
 }
 
@@ -50,6 +52,7 @@ fn set_quota(vault: &Vault, max_ops_per_peer_window: u32, quota_window_secs: u64
         MaintenanceIngestQuotaConfig {
             max_ops_per_peer_window,
             quota_window_secs,
+            max_bytes_per_peer_window: None,
         },
     )
     .unwrap();
@@ -137,8 +140,6 @@ fn genesis_entry(seed: u8) -> (SigningKey, AuthorityLogEntry, AuthorityVaultId) 
                 device: device(key.clone(), ROLE_OWNER | ROLE_ADMIN),
                 genesis_nonce: [seed.wrapping_add(10); 32],
                 recovery: oneiron::authority::GenesisRecoveryStep::Saved([1; 32]),
-                tier_floor: AuthorityTier::Software,
-                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
             },
             key,
             LEARNED_AT,
@@ -174,7 +175,10 @@ fn enroll_entry(
     )
 }
 
-fn set_tier_floor_entry(
+/// A plain signed authority row with no roster effect: it revokes the actor
+/// binding of a key no row binds. Revocation applies in any order, so the row
+/// stands wherever its signer does.
+fn revoke_actor_entry(
     vault_id: AuthorityVaultId,
     parent_hash: AuthorityEntryHash,
     signer: &SigningKey,
@@ -186,8 +190,9 @@ fn set_tier_floor_entry(
             Some(vault_id),
             seq,
             vec![parent_hash],
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::Software,
+            AuthorityOp::RevokeActor {
+                authority_key: authority_key_from_ed(&SigningKey::from_bytes(&[0xEE; 32])),
+                epoch: 1,
             },
             signer_key,
             LEARNED_AT + seq,
@@ -207,11 +212,12 @@ fn authority_blob_with_times(
     learned_at: u64,
 ) -> Vec<u8> {
     let body = encode_authority_log_entry_body(entry).unwrap();
-    let mut blob = Vec::with_capacity(25 + body.len());
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     blob.push(ENTITY_TYPE_AUTHORITY_LOG);
     blob.extend_from_slice(&occurred_start.to_be_bytes());
     blob.extend_from_slice(&occurred_end.to_be_bytes());
     blob.extend_from_slice(&learned_at.to_be_bytes());
+    blob.extend_from_slice(&0_u64.to_be_bytes());
     blob.extend_from_slice(&body);
     blob
 }
@@ -275,7 +281,7 @@ fn foreign_authority_log_is_quarantined_not_batch_abort_on_replay_doors() {
     let doc = create_window_doc("user", &window_key);
     let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x45);
     let (_, foreign_genesis, _) = genesis_entry(0x46);
-    let good_entry = set_tier_floor_entry(
+    let good_entry = revoke_actor_entry(
         vault_id,
         authority_entry_hash(&genesis).unwrap(),
         &owner_key,
@@ -312,7 +318,7 @@ fn foreign_authority_log_is_quarantined_not_batch_abort_on_replay_doors() {
     let _subs = register_observer_b(&doc_b, &vault_b, &materializer_b, WINDOW);
     let (owner_key_b, genesis_b, vault_id_b) = seed_local_genesis(&vault_b, 0x47);
     let (_, foreign_genesis_b, _) = genesis_entry(0x48);
-    let good_entry_b = set_tier_floor_entry(
+    let good_entry_b = revoke_actor_entry(
         vault_id_b,
         authority_entry_hash(&genesis_b).unwrap(),
         &owner_key_b,
@@ -356,7 +362,7 @@ fn newly_enrolled_signer_entry_can_replay_before_enrollment() {
         1,
     );
     let first_new_signer_entry = cosign_entry(
-        set_tier_floor_entry(
+        revoke_actor_entry(
             vault_id,
             authority_entry_hash(&enroll).unwrap(),
             &new_key,
@@ -410,7 +416,7 @@ fn a_row_by_a_not_yet_enrolled_signer_lands_after_its_enrollment() {
         1,
     );
     let child = cosign_entry(
-        set_tier_floor_entry(
+        revoke_actor_entry(
             vault_id,
             authority_entry_hash(&enroll).unwrap(),
             &new_key,
@@ -600,7 +606,7 @@ fn an_admin_and_three_rows(
     let mut parent = authority_entry_hash(&admitted).unwrap();
     let rows = (1..=3)
         .map(|seq| {
-            let row = set_tier_floor_entry(vault_id, parent, &admin, seq);
+            let row = revoke_actor_entry(vault_id, parent, &admin, seq);
             parent = authority_entry_hash(&row).unwrap();
             row
         })
@@ -622,6 +628,7 @@ fn stored(vault: &Vault, row: &AuthorityLogEntry) -> bool {
 /// `authority_log_signer_bound` check. The owner raises the row, and the
 /// next pass lands the held row with no re-send.
 #[test]
+#[ignore = "stale since 369ea1076d2: a vouched signer's row count only asks, so no row waits at the bound (FIX 8564, 8876)"]
 fn a_row_past_its_signers_bound_waits_and_lands_once_the_owner_raises_it() {
     let (_dir, vault) = test_vault();
     let vault = Arc::new(vault);
@@ -681,6 +688,7 @@ fn a_row_past_its_signers_bound_waits_and_lands_once_the_owner_raises_it() {
 /// bound then landed nothing until a full replay. The marker now outlives
 /// the refused tombstone.
 #[test]
+#[ignore = "stale since 369ea1076d2: a vouched signer's row count only asks, so no held row or retry marker exists (FIX 8564, 8876)"]
 fn a_refused_tombstone_beside_a_held_row_leaves_its_retry_marker() {
     let (_dir, vault) = test_vault();
     let materializer = Materializer::new();
@@ -720,6 +728,7 @@ fn a_refused_tombstone_beside_a_held_row_leaves_its_retry_marker() {
 /// pass found the row stored byte for byte and wrote nothing, so the window
 /// stayed pending. The next pass now settles the marker.
 #[test]
+#[ignore = "stale since 369ea1076d2: a vouched signer's row count only asks, so no held row or retry marker exists (FIX 8564, 8876)"]
 fn a_held_row_that_lands_before_its_marker_settles_clears_it_on_the_next_pass() {
     let (_dir, vault) = test_vault();
     let vault = Arc::new(vault);
@@ -781,7 +790,7 @@ fn observer_b_invalid_envelope_leaves_no_quota_trace_and_retry_admits() {
         .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
         .unwrap();
 
-    let bad_entry = set_tier_floor_entry(vault_id, parent_hash, &owner_key, 1);
+    let bad_entry = revoke_actor_entry(vault_id, parent_hash, &owner_key, 1);
     let bad_id = oneiron::authority::authority_log_entity_id(&bad_entry).unwrap();
     // A hostile peer pre-squats the derived id with an ordinary row.
     vault
@@ -829,7 +838,7 @@ fn observer_b_invalid_envelope_leaves_no_quota_trace_and_retry_admits() {
 
     // Same entry, well-formed envelope. Signing is deterministic, so this
     // re-lands on `bad_id`; the rejected row must have left its occupant intact.
-    let valid_entry = set_tier_floor_entry(vault_id, parent_hash, &owner_key, 1);
+    let valid_entry = revoke_actor_entry(vault_id, parent_hash, &owner_key, 1);
     let valid_id = insert_authority_entry(&doc, &valid_entry);
     assert_eq!(valid_id, bad_id, "content addressing must reuse the key");
     doc.commit();

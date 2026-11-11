@@ -17,6 +17,7 @@
     "esModuleInterop": true,
     "allowJs": false,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src", "tests"],

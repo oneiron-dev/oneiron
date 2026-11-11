@@ -21,4 +21,4 @@ pub mod wasmtime_boundary;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub mod wasmtime_runtime;
 
-pub use self::compiled_backends::{CompiledSandboxBackends, SANDBOX_BACKENDS};
+pub use self::compiled_backends::CompiledSandboxBackends;

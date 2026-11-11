@@ -53,7 +53,10 @@ crate::side_table::side_tables! {
     /// no longer from manifest rows that name it, and the agent's read keys are held to it. Local
     /// to this vault. Key: id16 (the agent's principal).
     FEDERATION_SYSTEM_AGENT_GRANT: VaultMeta b"federation:system_agent_grant:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        // Restore class: the marker names a Steward grant row, and those rows stay as the live
+        // vault holds them: the marker stays with them, never naming a grant the restored vault
+        // does not hold.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The facet a verified Connect origin position names for an imported ASSET or ASSET_TEXT. This
     /// vault holds no edge to the sender's FACET, so the facet is kept here, written beside the
     /// record-scope stamp and retired with it (FIX 22223). Key: id16 (record). Value: id16 (facet).

@@ -71,6 +71,74 @@ pub fn stand_steward_grant(vault: &Vault, agent: EntityId, verbs: &[&str]) -> Re
     vault.stand_steward_grant_for_test(agent, verbs)
 }
 
+/// Stands `agent`'s Steward grant with `verbs` and marks it, as
+/// [`stand_steward_grant`] does, then holds the grant row to the record kinds
+/// `bands` and every other data axis whole. The host's mint leaves every axis
+/// whole, and no owner door narrows one yet: this door writes the row such a
+/// door would leave.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn stand_steward_grant_in_bands(
+    vault: &Vault,
+    agent: EntityId,
+    verbs: &[&str],
+    bands: &[u8],
+) -> Result<EntityId> {
+    use crate::federation::{decode_federation_grant_body, encode_federation_grant_body};
+    use crate::ports::EntityStoreRead;
+    let id = vault.stand_steward_grant_for_test(agent, verbs)?;
+    vault.with_write_txn_grouped(|txn| {
+        let raw = vault
+            .store
+            .port_entity_record(&*txn, &id)?
+            .ok_or(Error::InvariantViolation("the Steward grant row"))?;
+        let mut grant = decode_federation_grant_body(&raw.body)?;
+        grant.authority_scope.bands = bands.iter().copied().collect();
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                occurred: crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                row_version: None,
+                data: encode_federation_grant_body(&grant)?,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })?;
+    Ok(id)
+}
+
+/// Every member the roster of shared vault `vault_id` lists, at their role.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn shared_roster(
+    vault: &Vault,
+    vault_id: u64,
+) -> Result<Vec<(EntityId, crate::federation::FederationGrantRole)>> {
+    let txn = vault.store.env.read_txn()?;
+    vault.shared_members_in_txn(&txn, vault_id)
+}
+
 /// Marks `agent` opted out of its Steward grant.
 ///
 /// # Errors
@@ -299,6 +367,56 @@ pub fn keep_only_the_dreamer_ceiling(vault: &Vault) -> Result<()> {
     })
 }
 
+/// The shipped policy with no actor ceiling and with `Generated` trust written
+/// as the shorthand row `false` (this source never lands by itself), as the
+/// policy decode accepts it. The Dreamer's read row stays as shipped, so a
+/// first mint over it copies `read` alone.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_generated_false_without_ceilings(vault: &Vault) -> Result<()> {
+    rewrite_shipped_policy(vault, |entries| {
+        *policy_entry(entries, "actor_ceilings")? = rmpv::Value::Array(Vec::new());
+        let rmpv::Value::Map(sources) = policy_entry(entries, "source_trust")? else {
+            return Err(Error::InvalidConfig("source trust is not a map".into()));
+        };
+        *policy_entry(sources, "generated")? = rmpv::Value::Boolean(false);
+        Ok(())
+    })
+}
+
+/// The shipped policy with one class-wide `system` Auto ceiling and the
+/// `Generated` permit bound to the Dreamer's id spelt in upper case, as the
+/// source-trust decode accepts it. The Dreamer's read row stays as shipped.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_upper_case_dreamer_permit(vault: &Vault) -> Result<()> {
+    use rmpv::Value;
+    let dreamer = dreamer(vault)?.to_hex().to_uppercase();
+    rewrite_shipped_policy(vault, |entries| {
+        *policy_entry(entries, "actor_ceilings")? = Value::Array(vec![Value::Map(vec![
+            (Value::from("actor_class"), Value::from("system")),
+            (Value::from("ceiling"), Value::from("auto")),
+        ])]);
+        let Value::Map(sources) = policy_entry(entries, "source_trust")? else {
+            return Err(Error::InvalidConfig("source trust is not a map".into()));
+        };
+        *policy_entry(sources, "generated")? = Value::Map(vec![
+            (Value::from("actor_ref"), Value::from(dreamer)),
+            (
+                Value::from("max_auto_sensitivity"),
+                Value::from(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+            ),
+            (Value::from("receipted"), Value::Boolean(true)),
+            (Value::from("warned"), Value::Boolean(true)),
+        ]);
+        Ok(())
+    })
+}
+
 /// Revokes every live MACHINE binding of base agent `agent` with the host
 /// root's signed `RevokeActor`, as a host that withdraws the agent's
 /// delegation does. Its Steward grant stays as it stands. Returns how many
@@ -349,6 +467,30 @@ pub fn class_key_reads(vault: &Vault, actor: EntityId, entity: EntityId) -> Resu
     Ok(read
         .entity_raw_live_in(&txn, &entity)
         .is_ok_and(|row| row.is_some()))
+}
+
+/// Every grant row that stands as a Steward grant naming `agent`, whichever
+/// the marker names.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn standing_steward_grants(vault: &Vault, agent: EntityId) -> Result<Vec<EntityId>> {
+    use crate::ports::EntityStoreRead;
+    let txn = vault.store.env.read_txn()?;
+    let mut standing = Vec::new();
+    for id in vault.store.port_entity_ids_by_type(
+        &txn,
+        crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+        None,
+    )? {
+        let id = id?;
+        if !crate::federation::standing_steward_verbs_in(&vault.store, &txn, id, agent)?.is_empty()
+        {
+            standing.push(id);
+        }
+    }
+    Ok(standing)
 }
 
 /// Where `agent`'s Steward grant stands, or `None` before any mint.

@@ -32,7 +32,7 @@ interactions** in Tauri 2. It opens at `/app/inbox`. It is not connected to an
 engine. Sign-in, vault creation, task activity and receipts shown by the current
 UI are still fixtures, not real operations.
 
-Requirements: Bun, Rust 1.96.0 (pinned in `src-tauri/rust-toolchain.toml`), and the
+Requirements: Bun, Rust 1.99.1 (pinned in `src-tauri/rust-toolchain.toml`), and the
 macOS Xcode command-line tools. Install project dependencies with `bun install`.
 The project-local Tauri CLI is included; no global CLI install is needed.
 

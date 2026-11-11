@@ -1,5 +1,25 @@
 use super::*;
 
+/// The specificity seed weights through their successor: 8c949422af9 (#4178)
+/// made the direct entry the private `specificity_seed_weights_with_deadline`,
+/// reached by the `Specificity` arm of `seed_weights_with_deadline`. No
+/// deadline is the value the cache-free test walk passes.
+fn specificity_seed_weights(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    seeds: &[crate::entity_id::EntityId],
+    visibility: Option<&dyn crate::ports::PprNodeVisibility>,
+) -> crate::error::Result<Vec<f32>> {
+    crate::ppr::policy::seed_weights_with_deadline(
+        store,
+        txn,
+        seeds,
+        SeedWeighting::Specificity,
+        visibility,
+        None,
+    )
+}
+
 #[test]
 fn retrieval_depth_specificity_counts_only_visible_inbound_sources() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());

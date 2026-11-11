@@ -14,7 +14,7 @@ const CODE_FENCE: &str = "```";
 
 /// One model reply, normalized onto the strict bare wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct HealedExecutorReply {
+pub(crate) struct HealedExecutorReply {
     /// The sole source passed to [`JsCodeModeRuntime::run_step`].
     pub code: String,
     /// ONE-1686-owned implicit-speak payload; never part of `code` or console.
@@ -80,7 +80,7 @@ pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecu
 /// [`heal_executor_text`], writing each repair into `repairs` as it is made.
 /// A reply the normalization refuses leaves the repairs made before the
 /// refusal in `repairs`, for its correction record (FIX 4412).
-pub(super) fn heal_executor_text_tracking_repairs(
+pub(crate) fn heal_executor_text_tracking_repairs(
     text: &str,
     repairs: &mut ExecutorWireRepairs,
 ) -> EngineExecutorResult<HealedExecutorReply> {

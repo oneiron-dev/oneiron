@@ -30,7 +30,7 @@ const PAST: u64 = 120 + DEFAULT_STALE_ROSTER_WINDOW_SECS;
 
 fn two_copies(role: MachineRole, again: impl Fn(AuthorityKey) -> DeviceAuthority) -> TwoCopies {
     let (root_key, next) = (ed_key(180), ed_key(183));
-    let genesis = genesis_entry(180, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(180, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let ordinary = |key: &SigningKey| {
         device(

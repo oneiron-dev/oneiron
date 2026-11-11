@@ -1893,3 +1893,50 @@ fn fetch_result_decoding_keeps_the_field_doors_closed() {
 // ---------------------------------------------------------------------------
 // Peer-controlled link cardinality
 // ---------------------------------------------------------------------------
+
+#[test]
+fn a_long_chain_is_bounded_by_live_frontier_not_historical_enqueues() {
+    // The frontier ceiling FIX 8168 removed (5d7407d2178, #4109: "no page or crawl is
+    // refused for its link count"); the chain still crosses it.
+    let frontier_ceiling = 65_536;
+    let seed = fixture_url("https://chain.test/p/0");
+    let mut walk = super::ladder::CrawlWalk::new(seed, frontier_ceiling + 2);
+    let markdown = "markdown body for a one-link chain";
+    let hash = content_hash(markdown);
+
+    // Cross the old historical-enqueue ceiling while the live queue remains one
+    // URL wide. Clearing admitted pages keeps this a frontier-state regression,
+    // not a 65k-result allocation test.
+    for index in 0..=frontier_ceiling {
+        let current = walk
+            .pop_frontier()
+            .expect("the previous page left exactly one live successor");
+        let requested = current.to_string();
+        walk.visited.insert(requested.clone());
+        let next = format!("https://chain.test/p/{}", index + 1);
+        walk.absorb_success(
+            requested.clone(),
+            FetchResult {
+                markdown: markdown.to_string(),
+                title: String::new(),
+                canonical_url: requested,
+                fetched_at: 1_700_000_042,
+                content_hash: hash.clone(),
+                renderer: RendererKind::Readability,
+            },
+            &[next],
+            &current,
+            CrawlScope::SameSite,
+        );
+        assert!(
+            walk.failed.is_empty(),
+            "historical enqueue count cannot reject chain page {index}"
+        );
+        assert_eq!(
+            walk.frontier.len(),
+            1,
+            "the live frontier remains exactly one URL wide at page {index}"
+        );
+        walk.pages.clear();
+    }
+}

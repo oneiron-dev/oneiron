@@ -1,3 +1,5 @@
+// FIX [T0B-SKILL-CALL-RUNTIME-MOVE]: moves to an integration test above oneiron-agent-runtime in a PR stacked on #7030
+#![cfg(any())]
 use super::*;
 use crate::attempt_queue::{
     AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
