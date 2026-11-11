@@ -47,8 +47,8 @@ function paintNight(
   )
 }
 
-/* The day field: the day art as drawn, exposed cell by cell in Bayer order
-   while it develops. */
+/* The day field: the day art drawn smooth at device resolution, exposed
+   cell by cell in Bayer order while it develops. */
 function paintDay(
   canvas: HTMLCanvasElement,
   img: HTMLImageElement,
@@ -68,6 +68,11 @@ function paintDay(
   art.height = H
   const artCtx = art.getContext('2d')
   if (!artCtx) return () => {}
+  /* The day art is a fine print of its own: resampled at a non-integer
+     scale without filtering it aliases into a moire, so it is drawn with
+     high-quality smoothing. Only the develop mask below stays hard-edged. */
+  artCtx.imageSmoothingEnabled = true
+  artCtx.imageSmoothingQuality = 'high'
   drawFieldArt(artCtx, img, W, H)
 
   const columns = Math.ceil(width / FIELD_CELL)
