@@ -9700,7 +9700,7 @@
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
       "crate-vis": 10,
-      "mod": 2,
+      "mod": 3,
       "re-export": 25
      }
     },
@@ -10038,7 +10038,7 @@
      "path": "src/blob_artifact/esign/seal.rs",
      "purpose": "Lease-fenced seal job",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -90422,6 +90422,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/esign_seal_verify_reasons.rs",
+     "purpose": "Door for `tests/esign_seal_verify_reasons.rs`, declared inside e-sign so it can reach the ledger writer…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/feeds.rs",
      "purpose": "Doors for `tests/feed_erase_doors.rs`: the change feed rows that name an entity, which an erase leaves at…",
      "surface": {
@@ -98662,6 +98672,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/esign_seal_verify_reasons.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101296,7 +101314,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101466,8 +101484,8 @@
    },
    "over_bar": 244,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7268,
-   "test_files": 949
+   "source_files": 7269,
+   "test_files": 950
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -120261,13 +120279,12 @@
   "oneiron-sdk-build": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "The SDK's generated outputs, produced at build time (untangle slice 4.3, SLICE4-RULED S4-2 G1)",
      "surface": {
-      "const": 1,
       "fn": 2
      }
     }
@@ -120276,7 +120293,7 @@
     "lib": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The SDK's generated outputs, produced at build time (untangle slice 4.3, SLICE4-RULED S4-2 G1)"
     }
@@ -120284,6 +120301,450 @@
    "over_bar": 0,
    "purpose": "The SDK's generated outputs, produced at build time (untangle slice 4.3, SLICE4-RULED S4-2 G1)",
    "source_files": 1,
+   "test_files": 0
+  },
+  "oneiron-sdk-generator": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "build.rs",
+     "purpose": "Sets `GENERATOR_SOURCE_DIGEST` (exposed as `oneiron_sdk_generator::GENERATOR_SOURCE_DIGEST`): a digest of…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/catalog_fragment.rs",
+     "purpose": "The code-mode catalog fragment and its revision (ONE-2510 S2)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GenerateError"
+     ],
+     "path": "src/error.rs",
+     "purpose": "`GenerateError`: the line the generator prints last on stderr when it refuses its inputs, as the Python…",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/index.rs",
+     "purpose": "Every struct, enum and alias of the engine crates, with each file's imports, and the heuristic resolver that…",
+     "surface": {
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/inventory/census.rs",
+     "purpose": "The `census` section of `Inventory`: how the rows' inputs and results read, fully typed, typed to an opaque…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/inventory/mod.rs",
+     "purpose": "The declarations every facade root reaches, and the census of what they read as",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/inventory/python.rs",
+     "purpose": "The `Python` section of `Inventory`: the declarations as the Python stubs spell them (`facade_types.pyi`)…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/inventory/rust_ir.rs",
+     "purpose": "The `Rust type -> IR` section of `Inventory`: a Rust type, field, struct or enum as its serde wire shape",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/inventory/typescript.rs",
+     "purpose": "The `TypeScript` section of `Inventory`: IR as TypeScript, and the declarations module (`facade-types.ts`)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/mod.rs",
+     "purpose": "The facade's wire types, read from the Rust serde types every facade row names",
+     "surface": {
+      "const": 1,
+      "crate-vis": 46
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade_types/reader.rs",
+     "purpose": "The Rust-text scanner (strings, char literals, comments, brackets), the attribute readers and the type parser",
+     "surface": {
+      "crate-vis": 28
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/common.rs",
+     "purpose": "The shared boundary helpers every emitter calls, and `AGENT_VERBS_TS`, which `hand_declared('ts')` reads",
+     "surface": {
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/docs.rs",
+     "purpose": "Port of packages/oneiron/scripts/agent-docs.py's `generated_artifacts` and `write`: the three agent-SDK…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/emit_core.rs",
+     "purpose": "The Rust core outputs: `run_verb_catalog.rs` (`run_catalog`), `core_verb_names.rs` (untangle slice 5.0a…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/emit_http.rs",
+     "purpose": "The one client artifact, `packages/oneiron-client/src/facade.ts`: the typed facade tree over an injected…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/emit_mcp.rs",
+     "purpose": "The MCP dispatch (`agent_verb_dispatch.rs`, which `outputs()` prefixes with `HEADER` and `use super::*;`)…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/emit_native.rs",
+     "purpose": "The native bindings: the napi `agent_verbs.rs` and the PyO3 `#[pymethods]` file, built by one loop of…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/emit_py.rs",
+     "purpose": "The Python emitters: the facade verbs as the mixin `_FacadeVerbs` that `Oneiron` derives from, at…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/emit_remote.rs",
+     "purpose": "The remote client: `crates/oneiron-remote/src/generated/agent_verbs.rs`, the `remote` segment of `outputs()`…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/emit_server.rs",
+     "purpose": "The server's facade outputs: `agent_verbs.rs` and `dispatch.rs` (`facade_dispatch`), `host_door_rows.rs`…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/emit_ts.rs",
+     "purpose": "The TypeScript emitters: the verb tree every package emitter walks, the facade verbs module…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/mod.rs",
+     "purpose": "The `Generator` state and the module-level constants",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Outputs"
+     ],
+     "path": "src/generate/outputs.rs",
+     "purpose": "`BUILD_TIME_OUTPUTS`, `PACKAGE_OUTPUTS`, `PACKAGE_PATHS` and `outputs()`, which runs the emitters in a fixed…",
+     "surface": {
+      "crate-vis": 17,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/row_access.rs",
+     "purpose": "Python's operations on a verb row, as the Rust emitters perform them (G4a)",
+     "surface": {
+      "crate-vis": 26
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/rows.rs",
+     "purpose": "The Python generator's module level: the verb rows' validation and the row sets, in source order",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/generate/uniffi.rs",
+     "purpose": "The UniFFI verb surface (`facade_generated.rs`, one `export_facade!` arm per facade row) and its generated…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Run"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust…",
+     "surface": {
+      "const": 3,
+      "fn": 12,
+      "re-export": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/main.rs",
+     "purpose": "The `oneiron-sdk-generator` binary: the Python generator's `main()`: its argument parsing, as Python's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/projection_rules.rs",
+     "purpose": "The projection rules and refusals a verb author depends on, checked on the generator's real outputs: on the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/py/builtins.rs",
+     "purpose": "Python's builtin names and keywords, embedded from the reference interpreter",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/py/json.rs",
+     "purpose": "Python's `json` (brief H1, H1b): `loads` as CPython 3.14.7's C scanner reads a `str`, with…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/py/mod.rs",
+     "purpose": "The Python-behaviour helpers: Python's values, `json`, `str` methods, builtins and the regular expressions…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/py/re.rs",
+     "purpose": "Python's `re` where Rust's `regex` differs",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/py/text.rs",
+     "purpose": "Python's `str` methods with Python's Unicode rules: only the ones the generator calls",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/py/value.rs",
+     "purpose": "`Value`: a decoded JSON value with Python's meaning (DESIGN 3)",
+     "surface": {
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "XL",
+     "kind": "src",
+     "notable": [],
+     "path": "src/uniffi_types.rs",
+     "purpose": "The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type…",
+     "surface": {
+      "crate-vis": 15,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verb_table.rs",
+     "purpose": "The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order",
+     "surface": {
+      "crate-vis": 3
+     }
+    }
+   ],
+   "modules": {
+    "catalog_fragment": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "file",
+     "purpose": "The code-mode catalog fragment and its revision (ONE-2510 S2)"
+    },
+    "error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`GenerateError`: the line the generator prints last on stderr when it refuses its inputs, as the Python…"
+    },
+    "facade_types": {
+     "files": 8,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "The facade's wire types, read from the Rust serde types every facade row names"
+    },
+    "generate": {
+     "files": 15,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "The `Generator` state and the module-level constants"
+    },
+    "projection_rules": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The projection rules and refusals a verb author depends on, checked on the generator's real outputs: on the…"
+    },
+    "py": {
+     "files": 6,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "The Python-behaviour helpers: Python's values, `json`, `str` methods, builtins and the regular expressions…"
+    },
+    "uniffi_types": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "XL",
+     "layout": "file",
+     "purpose": "The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type…"
+    },
+    "verb_table": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order"
+    }
+   },
+   "over_bar": 15,
+   "purpose": "The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust…",
+   "source_files": 37,
    "test_files": 0
   },
   "oneiron-seal": {
