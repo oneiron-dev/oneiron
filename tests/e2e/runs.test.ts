@@ -863,9 +863,14 @@ suite.test(test, "RUNS-07", "Consolidation root trusts only its own pin and coun
   const corrected = await client.call("vault.claims.upsert",
     runs07Claim(owner, scope, sourceA.sourceClass, scenario.inputs.postPinSourceEdit, sourceId));
   expect(corrected.approval).toBe("auto");
-  expect(corrected.superseded_short_id).toBe(written.claim_short_id);
+  // Closing the old claim changes its body checksum, not its entity identity.
+  expect(corrected.superseded?.id).toBe(sourceId);
+  const supersededRef = corrected.superseded_short_id;
+  if (!supersededRef) throw new Error("Owner correction named no superseded claim");
+  expect(await runs07EntityId(client, supersededRef, "CLAIM")).toBe(sourceId);
   expect(corrected.claim_short_id).not.toBe(written.claim_short_id);
   const liveHeadId = await runs07EntityId(client, corrected.claim_short_id, "CLAIM");
+  expect(liveHeadId).not.toBe(sourceId);
   const afterEdit = await client.call("vault.consolidation.accounting", { root_ref: rootRef });
   revisions.add(afterEdit.revision);
   expect(afterEdit).toEqual(pinned);
