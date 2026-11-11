@@ -13,9 +13,13 @@
 //! response as its stub, KS-2B1; an inline body without its bytes, KS-2A; a
 //! window's pads by reference, KS-5; a queue row unleased, FIX 7115), or
 //! when a restore reads references from it in the image's rows alone,
-//! before any compartment lands (a body's instance, file or descriptor,
-//! KS-2A; the known-value history, KS-3; an agent id pin, H215; a world key
-//! pad, KS-5; a credential, KS-6).
+//! before any compartment lands (a body's instance or file, KS-2A; the
+//! known-value history, KS-3; an agent id pin, H215; a world key pad, KS-5;
+//! a credential, KS-6). A body's descriptors and digest holders are sealed,
+//! so an owner's erase reaches them in every earlier checkpoint: their
+//! compartment carries only the rows the image holds as they rest, and the
+//! rows go back among the image's as it opens, before any reference pass
+//! reads them (FIX [PROVENANCE-BODY-OWNER-FAMILY-READ-BEFORE-LANDING]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -75,16 +79,15 @@ static REWRITTEN_KINDS: &[u8] = &[ENTITY_TYPE_ASSET, ENTITY_TYPE_WORLD_KEY_PAD];
 static REWRITTEN_DATABASES: &[&str] = &["job_records"];
 
 /// The families a restore reads references from in the image's rows alone:
-/// body instances, files, descriptors and holders, which a retired body's
-/// prune rewrites, and a step response's pins (KS-2A,
+/// body instances and files, and a step response's pins (KS-2A,
 /// `carried_bodies::require`); the known-value history (KS-3); agent id pins
-/// (H215).
+/// (H215). A body's descriptors and holders are not among them: they land
+/// among the image's rows as their compartments open
+/// (`restore::open_image_payload`).
 static REFERENCES: &[&SideTableDecl] = &[
     &side_table::PROVENANCE_BODY_KEY,
     &side_table::PROVENANCE_BODY_INLINE,
     &side_table::PROVENANCE_BODY_RESPONSE,
-    &side_table::PROVENANCE_BODY,
-    &side_table::PROVENANCE_BODY_DIGEST,
     &side_table::PROVENANCE_BODY_RELEASED,
     &side_table::CODE_RUN_RAW_OUTPUT,
     &side_table::DREAMER_STEP_RESPONSE_PIN,
