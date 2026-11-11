@@ -15,7 +15,8 @@ use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derivation_floor::define_agent;
 use oneiron::test_doors::derive::{
     Claim, Derived, Named, SameAs, Supersede, claim_lifecycle, commit, commit_claims,
-    mint_nightly_links, revert, revert_as_owner, same_as_edge,
+    define_auto_agent, grant_derive_rows, mint_nightly_links, revert, revert_as_owner,
+    same_as_edge,
 };
 use oneiron::test_doors::steward::dreamer;
 use oneiron::{EdgeActorClass, EntityId, Vault};
@@ -247,4 +248,84 @@ fn reverting_a_repeated_same_as_leaves_the_edge_the_first_batch_applied() {
         same_as_edge(&fixture.vault, one, other).expect("read"),
         "the edge the first batch applied still stands"
     );
+}
+
+#[test]
+fn reverting_a_batch_whose_items_share_a_row_takes_back_every_item() {
+    let fixture = fixture();
+    // An ordinary agent's claims: the lifecycle reopens them, as it reopens
+    // no claim the Dreamer signed.
+    let agent = define_auto_agent(&fixture.vault).expect("an agent");
+    grant_derive_rows(&fixture.vault, &[agent]).expect("the agent's derive rows");
+    let seeded = commit_claims(
+        &fixture.vault,
+        agent,
+        EdgeActorClass::Agent,
+        "run-seed-shared-row",
+        &[
+            claim(fixture.person, fixture.turn, "a", "preference.snack"),
+            claim(fixture.person, fixture.turn, "b", "preference.breakfast"),
+            claim(fixture.person, fixture.turn, "c", "preference.dinner"),
+        ],
+    )
+    .expect("the agent's claims commit");
+    let [a, b, c] = seeded.items.as_slice() else {
+        panic!("three items: {:?}", seeded.items);
+    };
+    for item in [a, b, c] {
+        assert!(item.landed, "{item:?}");
+        assert_eq!(item.approval.as_deref(), Some("auto"));
+    }
+    let (a, b, c) = (a.rows[0], b.rows[0], c.rows[0]);
+    let supersessions = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-supersede-shared-row",
+        &[
+            Derived::Supersede(Supersede {
+                local: "supersede_b",
+                new: Named::Stored(a),
+                old: Named::Stored(b),
+            }),
+            Derived::Supersede(Supersede {
+                local: "supersede_a",
+                new: Named::Stored(c),
+                old: Named::Stored(a),
+            }),
+        ],
+    )
+    .expect("the supersessions commit");
+    assert_eq!(supersessions.items.len(), 2);
+    assert!(
+        supersessions.items.iter().all(|item| item.landed),
+        "{:?}",
+        supersessions.items
+    );
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, b).expect("read"),
+        Some("superseded".to_owned())
+    );
+    assert_eq!(
+        claim_lifecycle(&fixture.vault, a).expect("read"),
+        Some("superseded".to_owned())
+    );
+    assert!(active(&fixture, c));
+
+    let (reverted, left) = revert(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        supersessions.batch,
+    )
+    .expect("revert")
+    .expect("the Dreamer may revert its own batch");
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(
+        reverted,
+        vec!["supersede_a".to_owned(), "supersede_b".to_owned()]
+    );
+    assert!(active(&fixture, a));
+    assert!(active(&fixture, b));
+    assert!(active(&fixture, c));
 }
