@@ -248,7 +248,10 @@ fn doctor_does_not_open_a_vault_whose_default_config_it_cannot_check() {
                     command.env_remove(name);
                 }
             }
-            command.arg("doctor").arg(&vault).env("XDG_CONFIG_HOME", &xdg);
+            command
+                .arg("doctor")
+                .arg(&vault)
+                .env("XDG_CONFIG_HOME", &xdg);
             (case, command.output().expect("run oneiron doctor"))
         })
         .collect();
@@ -269,12 +272,18 @@ fn doctor_does_not_open_a_vault_whose_default_config_it_cannot_check() {
             note.contains("doctor did not open the vault"),
             "doctor opened the vault under {case}: {stdout}"
         );
-        let errors = report["config_errors"].as_array().cloned().unwrap_or_default();
+        let errors = report["config_errors"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         let named = errors
             .iter()
             .filter_map(Value::as_str)
             .any(|text| text.contains("cannot be checked"));
-        assert!(named, "the config error names the unchecked path under {case}: {stdout}");
+        assert!(
+            named,
+            "the config error names the unchecked path under {case}: {stdout}"
+        );
     }
 }
 

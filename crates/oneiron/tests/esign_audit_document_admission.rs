@@ -172,7 +172,9 @@ fn setup() -> Result<Fixture> {
     let expected = draft(artifact);
     vault.create_esign_document(document, &expected, actor(), 2)?;
     let claim = drafted_claim(&vault, &document)?;
-    let stored = vault.get_claim(&claim)?.expect("the drafted claim reads back");
+    let stored = vault
+        .get_claim(&claim)?
+        .expect("the drafted claim reads back");
     let facet = stored.scope_facet;
     let document_scope = vault.record_scope(&document)?;
     let claim_scope = vault.record_scope(&claim)?;
@@ -256,12 +258,16 @@ fn mint_reader_proof(
     claims.slip_id = slip_id();
     claims.holder_ref = fixture.reader.to_hex();
     claims.actor_class = Some("human".to_owned());
-    let mut slip = fixture.vault.mint_capability_slip(&fixture.issuer, claims)?;
+    let mut slip = fixture
+        .vault
+        .mint_capability_slip(&fixture.issuer, claims)?;
     if let Some(caveat) = caveat {
         fixture.issuer.attenuate(&mut slip, caveat)?;
     }
     let binding = fixture.issuer.binding_proof(&slip, challenge)?;
-    fixture.vault.verify_capability_slip(&fixture.issuer.public_key(), &slip, challenge, &binding)
+    fixture
+        .vault
+        .verify_capability_slip(&fixture.issuer.public_key(), &slip, challenge, &binding)
 }
 
 /// The live body of `id` as `proof` reads it through the public credential
@@ -290,7 +296,9 @@ fn facet_limited_credential_reads_no_esign_claim_its_document_withholds() -> Res
         body.is_none(),
         "FAILBEFORE ESIGN-AUDIT-CLAIM-FACET: the facet-limited credential reads no esign claim its document withholds"
     );
-    let request = EsignGetRequest { document_ref: fixture.document.to_hex() };
+    let request = EsignGetRequest {
+        document_ref: fixture.document.to_hex(),
+    };
     let refused = fixture
         .vault
         .memory(fixture.reader, EdgeActorClass::Human)
@@ -345,22 +353,28 @@ fn facet_limited_credential_reads_no_esign_claim_its_document_withholds() -> Res
 /// its document from. Red at the base: each door judges the claim's own
 /// position there.
 #[test]
-fn scoped_record_doors_withhold_an_esign_claim_their_selector_keeps_its_document_from(
-) -> Result<()> {
+fn scoped_record_doors_withhold_an_esign_claim_their_selector_keeps_its_document_from() -> Result<()>
+{
     let fixture = setup()?;
     let selector = facet_scope(fixture.facet);
     let top = Scope::top();
-    let rows = fixture.vault.records_in_scope(&selector, &top, &top, ScopeView::Normal)?;
+    let rows = fixture
+        .vault
+        .records_in_scope(&selector, &top, &top, ScopeView::Normal)?;
     assert!(
         !rows.iter().any(|row| row.id == fixture.claim),
         "FAILBEFORE ESIGN-AUDIT-CLAIM-FACET: the scoped read door withholds an esign claim whose document its selector keeps from it"
     );
-    let rows = fixture.vault.export_records_in_scope(&selector, &top, &top)?;
+    let rows = fixture
+        .vault
+        .export_records_in_scope(&selector, &top, &top)?;
     assert!(
         !rows.iter().any(|row| row.id == fixture.claim),
         "FAILBEFORE ESIGN-AUDIT-CLAIM-FACET: the scoped export door withholds an esign claim whose document its selector keeps from it"
     );
-    let rows = fixture.vault.records_in_scope(&top, &top, &top, ScopeView::Normal)?;
+    let rows = fixture
+        .vault
+        .records_in_scope(&top, &top, &top, ScopeView::Normal)?;
     assert!(
         rows.iter().any(|row| row.id == fixture.claim),
         "control: the top selector still reads the claim"
@@ -388,12 +402,16 @@ fn scoped_record_doors_withhold_an_esign_claim_their_selector_keeps_its_document
 /// control; the partial one is red at the base, where the claim's own
 /// admission does not ask for the original.
 #[test]
-fn record_bounded_credential_reads_an_esign_claim_only_with_its_document_and_original(
-) -> Result<()> {
+fn record_bounded_credential_reads_an_esign_claim_only_with_its_document_and_original() -> Result<()>
+{
     let fixture = setup()?;
     let full = mint_reader_proof(
         &fixture,
-        Some(records_caveat(&[fixture.claim, fixture.document, fixture.artifact])),
+        Some(records_caveat(&[
+            fixture.claim,
+            fixture.document,
+            fixture.artifact,
+        ])),
         b"esign audit records full",
     )?;
     let body = credential_body(&fixture.vault, &full, &fixture.claim)?;
