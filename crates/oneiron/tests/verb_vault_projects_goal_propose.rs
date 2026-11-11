@@ -136,9 +136,10 @@ fn agent(vault: &Vault, owner_proof: &AuthenticatedOwner, name: &str) -> EntityI
 }
 
 /// The owner's live Grant listing this verb for `agent`; the grant's row.
+/// A Grant confers only with `read` among its verbs (`AgentGrantMintRequest`).
 fn grant_propose(vault: &Vault, owner_proof: &AuthenticatedOwner, agent: EntityId) -> EntityId {
     let mut scope = Scope::top();
-    scope.verbs = ScopeAxis::Some(BTreeSet::from([VERB.to_owned()]));
+    scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned(), VERB.to_owned()]));
     let minted = mint_agent_grant_as(
         vault,
         owner_proof,
