@@ -233,16 +233,18 @@ impl ScopedRead<'_> {
         };
         Ok(allowed
             && self.provenance_cited_readable_in(rtxn, policy, body, authority)?
-            && self.esign_document_readable_in(rtxn, policy, body)?)
+            && self.esign_document_readable_in(rtxn, policy, body)?
+            && self.coreference_endpoints_readable_in(rtxn, policy, body, authority)?)
     }
 
     /// Whether this lane reads every record the claim `body` names when it is
     /// an `edge.provenance` Claim (FIX 3959): its edge, under the endpoint and
     /// exact-pair admission the typed audit gives it, its actor, and the
     /// record its `source_revision_ref` cites, at that revision. One of the
-    /// two trailing conjuncts of every CLAIM's admission, beside
-    /// [`Self::esign_document_readable_in`], on the row path and the class
-    /// path alike, and never a class's: what it reads is the row's own. One
+    /// three trailing conjuncts of every CLAIM's admission, beside
+    /// [`Self::esign_document_readable_in`] and
+    /// [`Self::coreference_endpoints_readable_in`], on the row path and the
+    /// class path alike, and never a class's: what it reads is the row's own. One
     /// named record this lane may not read withholds the Claim whole, as any
     /// withheld row is, and a body that does not decode as a provenance
     /// record is withheld too. A cited revision no record retains (an opaque
@@ -329,14 +331,54 @@ impl ScopedRead<'_> {
         }
     }
 
+    /// Whether this lane reads both records the `core.coreference.status`
+    /// claim `body` names in its edge subject. One of the three trailing
+    /// conjuncts of every CLAIM's admission, beside
+    /// [`Self::provenance_cited_readable_in`] and
+    /// [`Self::esign_document_readable_in`], on the row path and the class
+    /// path alike, and never a class's: the endpoints are the row's own.
+    /// A missing or withheld endpoint withholds the Claim whole, and so
+    /// does a subject that is not an edge. No applied edge is required.
+    /// Every other predicate passes, and so do the vault owner and a record
+    /// judged as one such Claim names. The endpoints meet this lane's own
+    /// floor and ordinary admission under `HeldAuthority::judge_cited`, so
+    /// the rule runs one level deep and is not re-entered for a cited Claim.
+    pub(super) fn coreference_endpoints_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        body: &ClaimBody,
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        if body.predicate != crate::claim::PREDICATE_COREFERENCE_STATUS
+            || self.actor_key.vault_owner_ref().is_some()
+            || authority.judges_cited()
+        {
+            return Ok(true);
+        }
+        let crate::claim::ClaimSubject::Edge { source, target, .. } = body.subject else {
+            return Ok(false);
+        };
+        let floor = self.actor_retrieval_floor(policy)?;
+        authority.judge_cited(|cited| {
+            for end in [source, target] {
+                if !self.is_entity_readable_held_in(rtxn, policy, &end, &floor, cited)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })
+    }
+
     /// Whether this lane reads the `esign.*` claim `body` beside its signing
     /// document (FIX 6945 A): the claim is admitted on the generic claim
     /// reads only when the reader is also admitted to the live signing
     /// document the claim's subject names and to every original artifact
     /// that document's trail names, the same gate `vault.esign.get`
-    /// applies. One of the two trailing conjuncts of every CLAIM's
-    /// admission, beside [`Self::provenance_cited_readable_in`], on the row
-    /// path and the class path alike, and never a class's: what it reads is
+    /// applies. One of the three trailing conjuncts of every CLAIM's
+    /// admission, beside [`Self::provenance_cited_readable_in`] and
+    /// [`Self::coreference_endpoints_readable_in`], on the row path and the
+    /// class path alike, and never a class's: what it reads is
     /// the row's own. Every other predicate passes before it reads
     /// anything, and so does a reader with no proof or with a whole-vault
     /// proof whose guest view still stands, exactly the callers
