@@ -105,6 +105,12 @@ pub(crate) struct CoreBatchEntityResult {
     /// Numeric entity type byte.
     #[schema(example = 1)]
     pub(crate) entity_type: u8,
+    /// For an agent's AGENT_DEF put, what its author writer made of it
+    /// (ARCH-0053:20): `disposition` active, proposed or proposed_change,
+    /// and for a proposed change the `proposal_id` it was stored at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub(crate) agent_definition: Option<oneiron::core_write::AgentDefinitionWriteReceipt>,
 }
 
 /// Core batch response envelope.
@@ -190,6 +196,7 @@ pub(crate) async fn core_batch(
             .map(|entity| CoreBatchEntityResult {
                 id: entity.id,
                 entity_type: entity.entity_type,
+                agent_definition: entity.agent_definition,
             })
             .collect(),
     }))

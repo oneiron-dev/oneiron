@@ -314,7 +314,7 @@ pub(crate) async fn core_memory_verb(
             )?;
             // Held to the credential's write lane, as `vault.batch` is (FIX 1216).
             let lane = facade::host_doors::core_write_lane(&server.vault, &auth)?;
-            commit_core_batch_in_lane(&server, &auth, batch, &lane, "memory.remember").map_err(|error| {
+            let receipts = commit_core_batch_in_lane(&server, &auth, batch, &lane, "memory.remember").map_err(|error| {
                 tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory remember failed");
                 core_engine_error("core memory remember failed", error)
             })?;
@@ -329,6 +329,7 @@ pub(crate) async fn core_memory_verb(
                 entity: Some(CoreBatchEntityResult {
                     id: id.to_hex(),
                     entity_type: entity.entity_type,
+                    agent_definition: receipts.get(&id),
                 }),
                 delete: None,
             }))

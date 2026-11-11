@@ -142,7 +142,7 @@ pub(crate) fn commit_core_batch_in_lane(
     batch: oneiron::BatchBuilder<'_>,
     lane: &oneiron::core_write::CoreWriteLane<'_>,
     door: &'static str,
-) -> oneiron::Result<()> {
+) -> oneiron::Result<oneiron::agent_def::AgentDefinitionWriteReceipts> {
     if let Some(action) = crate::api::host_action::host_action_of(server.vault(), auth) {
         action?;
     }
@@ -158,7 +158,10 @@ pub(crate) fn commit_core_batch_in_lane(
         Some(writer) => batch.authored_through(&writer, door, lane.actor_key()),
         None => batch,
     };
-    batch.commit_in_core_lane(lane, commit)
+    // What the author writer made of each AGENT_DEF put, for the receipt.
+    let receipts = batch.agent_definition_write_receipts();
+    batch.commit_in_core_lane(lane, commit)?;
+    Ok(receipts)
 }
 
 pub(crate) fn core_text_fields(

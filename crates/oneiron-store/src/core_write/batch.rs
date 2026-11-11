@@ -32,11 +32,39 @@ pub struct CoreBatchWriteInput {
     pub entities: Vec<CoreBatchEntityInput>,
 }
 
-/// One put a batch committed.
+/// One put a batch committed. `id` is the id the put was staged at.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CoreBatchEntityReceipt {
     pub id: String,
     pub entity_type: u8,
+    /// For an agent's AGENT_DEF put, what its author writer made of it
+    /// (ARCH-0053:20); absent for every other put.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_definition: Option<AgentDefinitionWriteReceipt>,
+}
+
+/// How the author writer stored an agent's AGENT_DEF put (ARCH-0053:20).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentDefinitionWriteDisposition {
+    /// Stored at its id, approved: its agent runs under it.
+    Active,
+    /// Stored at its id as a proposal no dispatch runs.
+    Proposed,
+    /// A put that grants a stored definition more than its author's slice:
+    /// stored as a new proposal at `proposal_id`; the stored definition at
+    /// the staged id stays as it is.
+    ProposedChange,
+}
+
+/// What the author writer made of one agent's AGENT_DEF put.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AgentDefinitionWriteReceipt {
+    pub disposition: AgentDefinitionWriteDisposition,
+    /// The proposal's id (hex) for a proposed change: the owner answers it
+    /// through `vault.agents.proposed_changes.approve` or `.reject`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,
 }
 
 /// The puts a batch committed, in input order.
