@@ -1,0 +1,26 @@
+{
+  "name": "self.memory.self_model",
+  "description": "Reads the caller's own self-model SUMMARY text with its live revision, or why it is absent.",
+  "input": "crate::scope_summary::SummaryReadRequest",
+  "output": "crate::claim::ScopedReadResult<crate::task_verb::sdk::SelfModelReadView>",
+  "call": "crate::task_verb::sdk::self_memory_self_model_embedded(memory, input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "request",
+        "type": "crate::scope_summary::SummaryReadRequest",
+        "field": "$"
+      }
+    ]
+  },
+  "mcp_scope": "filtered",
+  "grant_class": "self.memory.self_model grant + caller read lane"
+}
