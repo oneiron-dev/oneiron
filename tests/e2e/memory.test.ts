@@ -1891,7 +1891,7 @@ suite.test(test, "MUSE-DURA-02", "A hard delete is gone from recall and export b
 
     // Owner hard delete of the message. The first reads after the receipt
     // returns already find nothing: no wait, no maintain, no restart.
-    stage = 'message delete, live absence and deletion receipts';
+    stage = 'MISSING DOOR room-authorized message hard-delete: vault.delete carries owner proof but no room authority';
     const messageDeleteReceipt = await engine.client.call("vault.delete", deleteMessageInput);
     const messageReceiptRef = museDura02DeleteReceiptRef(messageDeleteReceipt, allSentinels);
     expect((await engine.client.call("vault.get", { entity_ref: messageRef })).value).toBeNull();
@@ -2891,7 +2891,7 @@ suite.test(test, "MUSE-DURA-05", "A prior owner export keeps an erased record wh
     expect(spareAfterRefusal.value !== null).toBe(true);
     expect(museDura05TextHas(spareAfterRefusal.value?.body, bPhrase)).toBe(true);
 
-    stage = 'owner main erase and sweep read-back';
+    stage = 'MISSING DOOR owner-manual room-message erase: erase_confirm carries owner proof but no room authority';
     const mainPreview = await engine.client.call("vault.records.erase_preview", {
       record: main.idHex,
     } satisfies FacadeInput<"vault.records.erase_preview">);
@@ -3232,21 +3232,27 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
     expect(JSON.stringify(baseMessage.value?.body).includes(baseControl)).toBe(true);
 
     const roomConversation = await engine.client.call("vault.conversations.create", {
-      body: { members: [ownerRef, guest.principalRef, agent.principalRef] },
+      body: { member_ids: [ownerRef, guest.principalRef, agent.principalRef] },
       occurred_start: occurredAt, occurred_end: occurredAt,
     });
     const room = roomConversation.id;
-    const roomRequest: FacadeInput<"vault.off_record.rooms.status"> = {
-      room, session_ref: roomSession,
-    };
     stage = 'room start and two private witness turns';
     const started = await engine.client.call("vault.off_record.rooms.start", {
       room, session_ref: roomSession, backend: "local",
     });
     expect(started.mode).toBe("off_record");
+    expect(started.room).toBe(room);
+    expect(started.session_ref).toBe(roomSession);
+    const roomRequest: FacadeInput<"vault.off_record.rooms.status"> = {
+      room: started.room!, session_ref: started.session_ref,
+    };
+    const startedReadback = await guest.client.call("vault.off_record.rooms.status", roomRequest);
+    expect(startedReadback.mode).toBe("off_record");
+    expect(startedReadback.room).toBe(room);
+    expect(startedReadback.session_ref).toBe(roomSession);
 
     const alphaReceipt = await engine.client.call("vault.off_record.rooms.witness", {
-      room, session_ref: roomSession,
+      ...roomRequest,
       turn: {
         conversation_ref: room, occurred_at: occurredAt,
         messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
@@ -3254,7 +3260,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
       },
     } satisfies FacadeInput<"vault.off_record.rooms.witness">);
     const betaReceipt = await guest.client.call("vault.off_record.rooms.witness", {
-      room, session_ref: roomSession,
+      ...roomRequest,
       turn: {
         conversation_ref: room, occurred_at: occurredAt,
         messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
@@ -3337,7 +3343,7 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
     // One more room turn stays unsaved; a guest copy proves the room held it
     // before the restart below proves the vault never kept it.
     await engine.client.call("vault.off_record.rooms.witness", {
-      room, session_ref: roomSession,
+      ...roomRequest,
       turn: {
         conversation_ref: room, occurred_at: occurredAt,
         messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
