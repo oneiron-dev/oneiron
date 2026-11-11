@@ -13,7 +13,7 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use oneiron::memory::MEMORY_CODE_LEASE_REQUIRED;
+use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_LEASE_REQUIRED};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::temporal::TimeRange;
@@ -182,6 +182,34 @@ fn the_wire_names_no_actor() {
         .run
         .commit(&fixture.vault, request)
         .expect_err("an item that names a source class is refused");
+    assert!(
+        batches_of(&fixture.vault, fixture.agent)
+            .expect("read")
+            .is_empty(),
+        "nothing is committed"
+    );
+}
+
+#[test]
+fn the_wire_carries_no_person_about_item() {
+    let fixture = fixture();
+    let request = json!({
+        "items": [{
+            "kind": "person_about",
+            "spec": {
+                "local": "about",
+                "person": { "stored": fixture.person },
+                "written_from": "00".repeat(32),
+                "lines": [{ "band": 0, "text": "A person on the roster." }],
+            },
+        }],
+        "sources": [],
+    });
+    let refusal = fixture
+        .run
+        .commit(&fixture.vault, request)
+        .expect_err("a person's about lines are not a wire item");
+    assert_eq!(refusal.code, MEMORY_CODE_BAD_REQUEST, "{refusal:?}");
     assert!(
         batches_of(&fixture.vault, fixture.agent)
             .expect("read")
