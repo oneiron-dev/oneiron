@@ -33,8 +33,8 @@ function useMicroSidebar(part: string): MicroSidebarContextValue {
 const PinnedContext = React.createContext(false)
 
 export interface MicroSidebarProps extends React.ComponentPropsWithRef<'nav'> {
-  /* `none`: the symbol alone, its name in a tooltip. `word`: a small word
-     under each symbol. */
+  /* `none`, the default: the symbol alone, its name in a tooltip. `word`:
+     a small word under each symbol. */
   labels?: 'none' | 'word'
   /* `field`: bare on the printed field, in the on-field inks. `paper`: on
      a near-opaque strip of the ground. */
@@ -98,7 +98,9 @@ export interface MicroSidebarItemProps extends Omit<React.ComponentPropsWithRef<
   id?: string
   /* The symbol: an Icon, or a Glyph in its line form. */
   icon: React.ReactNode
-  /* The place's name: the tooltip, or the word under the symbol. */
+  /* The place's name: the tooltip, or the word under the symbol. A word
+     under a symbol is at most eight letters (`activity`, `eiri`), so it
+     never truncates. */
   label: string
   /* The place on screen now: one tone step. */
   current?: boolean
