@@ -103,14 +103,17 @@ impl<'writer, 'env> SharedMemberDeparture<'writer, 'env> {
     }
 }
 
-/// Higher ranks hold more; a change to a lower rank revokes held slips.
+/// Higher ranks hold more; a change to a lower rank revokes held slips. A
+/// Deputy sits above Admin: a move from Deputy to Admin drops its delegated
+/// Owner powers.
 const fn rank(role: Role) -> u8 {
     match role {
-        Role::Owner => 5,
+        Role::Owner => 6,
+        Role::Deputy => 5,
         Role::Admin => 4,
         Role::Steward => 3,
         Role::Member => 2,
-        Role::Viewer | Role::Auditor => 1,
+        Role::Viewer => 1,
         Role::Delegate | Role::Guest => 0,
     }
 }

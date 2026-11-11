@@ -56,17 +56,16 @@ impl RolePreset {
         }
     }
 
-    /// The preset a grant role reads its defaults from. Viewer and its legacy
-    /// spelling read the Member column; their grant narrows the powers.
+    /// The preset a grant role reads its defaults from. Viewer reads the
+    /// Member column; its grant narrows the powers.
     #[must_use]
     pub const fn of_grant_role(role: FederationGrantRole) -> Self {
         match role {
             FederationGrantRole::Owner => Self::Owner,
+            FederationGrantRole::Deputy => Self::Deputy,
             FederationGrantRole::Admin => Self::Admin,
             FederationGrantRole::Steward => Self::Steward,
-            FederationGrantRole::Member
-            | FederationGrantRole::Viewer
-            | FederationGrantRole::Auditor => Self::Member,
+            FederationGrantRole::Member | FederationGrantRole::Viewer => Self::Member,
             FederationGrantRole::Delegate => Self::Delegate,
             FederationGrantRole::Guest => Self::Guest,
         }
