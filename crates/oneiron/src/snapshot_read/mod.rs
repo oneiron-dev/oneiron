@@ -33,6 +33,7 @@ pub use policy_preflight::{
 pub use run_reader::{
     checkpoint_as_reader, checkpoint_embedded, settled_step_as_reader, settled_step_embedded,
 };
+pub(crate) use run_reader::{is_attempt_actor_in_txn, is_steward_in_txn, not_the_callers};
 pub use settings_doors::{read_snapshot_read_settings, replace_snapshot_read_settings};
 pub use skill_reader::{
     skill_library_get_as_reader, skill_library_get_embedded, skill_library_list_as_reader,
