@@ -95,6 +95,8 @@ mod dispatch {
 }
 mod drafter_doors;
 mod embedding_space_doors;
+// Untangle 6.6d: the engine-control knob verbs, for the owner or a holder.
+mod engine_control_doors;
 mod errors;
 mod eval_doors;
 pub(super) mod export_transfer;
@@ -213,6 +215,9 @@ mod slim_doors;
 pub(crate) use slim_doors::is_slim_lifecycle_observation;
 mod snapshot_read_settings_doors;
 mod standing_doors;
+mod steward_doors;
+// Untangle 6.6c: who reads engine substrate rows through a host door.
+mod substrate_read_doors;
 // FIX 11694: a person's passkey step-up on their own credential (MFA-1 A).
 pub(super) mod step_up_doors;
 mod stream_recovery_doors;

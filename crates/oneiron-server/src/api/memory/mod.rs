@@ -311,13 +311,16 @@ pub(crate) async fn core_memory_verb(
             }
             // Through the guarded `vault.batch` door, at the credential's grade and lane, so a
             // CONVERSATION body meets the same caller-stamp guard and link carry as every other
-            // generic write.
+            // generic write. An agent's AGENT_DEF put still records `memory.remember` as its
+            // door (ARCH-0053:20).
             let input = oneiron::core_write::CoreBatchWriteInput {
                 entities: vec![entity.into_row()],
             };
             // The door's refusal rides whole, as `/v1/core/batch` forwards it: the engine's code
             // picks the status (an invented reference is a 422), in the facade's MemoryError body.
-            let receipt = facade::host_doors::write_core_batch(&server, &auth, input).await?;
+            let receipt =
+                facade::host_doors::write_core_batch(&server, &auth, input, "memory.remember")
+                    .await?;
             let written =
                 receipt.entities.into_iter().next().ok_or_else(|| {
                     ApiError::internal_server_error("core memory remember failed")

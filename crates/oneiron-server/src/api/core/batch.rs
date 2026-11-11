@@ -179,7 +179,10 @@ pub(crate) async fn core_batch(
             serde_json::from_value::<CoreBatchWriteReceipt>(output)
                 .map_err(|_| ApiError::internal_server_error("batch result encoding failed"))?
         }
-        None => super::super::facade::host_doors::write_core_batch(&server, &auth, input).await?,
+        None => {
+            super::super::facade::host_doors::write_core_batch(&server, &auth, input, "vault.batch")
+                .await?
+        }
     };
 
     Ok(Json(CoreBatchResponse {
