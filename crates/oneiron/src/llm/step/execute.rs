@@ -258,8 +258,13 @@ async fn durable_step(
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {
-            return budget_trap(ctx, step_hash, BUDGET_PARK_REASON)
-                .inspect(|_| step_budget_hit(ctx, guard, &request));
+            return budget_trap(
+                ctx,
+                step_hash,
+                BUDGET_PARK_REASON,
+                Some(guard.reserve_units()),
+            )
+            .inspect(|_| step_budget_hit(ctx, guard, &request));
         }
         Err(denied) => {
             let source = LlmError::from(denied);
@@ -398,7 +403,11 @@ async fn durable_step(
                 BudgetDenied::HostCheck => HOST_CHECK_PARK_REASON,
                 _ => BUDGET_PARK_REASON,
             };
-            return budget_trap(ctx, step_hash, reason).inspect(|_| {
+            let asked_units = match denied {
+                BudgetDenied::Exhausted => Some(guard.reserve_units()),
+                _ => None,
+            };
+            return budget_trap(ctx, step_hash, reason, asked_units).inspect(|_| {
                 if denied == BudgetDenied::Exhausted {
                     step_budget_hit(ctx, guard, &request);
                 }
@@ -657,6 +666,7 @@ pub(super) fn budget_trap(
     ctx: &DurableStepContext<'_>,
     step_hash: [u8; 32],
     reason: &str,
+    asked_units: Option<u64>,
 ) -> DurableStepResult<StepOutcome> {
     let failure_policy =
         resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
@@ -671,7 +681,16 @@ pub(super) fn budget_trap(
             reason,
             TrapBindingScope::Attempt,
         )?;
-        store.park_attempt_in_txn(
+        let wait = match (&ctx.spend_scope, asked_units) {
+            (Some(scope), Some(units)) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
+                .hard_cap_refusal_in_txn(wtxn, scope, units)?
+                .map(|scope| crate::dreamer_runner::DreamerParkWait::Budget {
+                    scope,
+                    asked_units: units,
+                }),
+            _ => None,
+        };
+        store.park_attempt_with_wait_in_txn(
             wtxn,
             crate::dreamer_runner::ParkDreamerAttempt {
                 attempt_id: ctx.attempt_id,
@@ -681,6 +700,7 @@ pub(super) fn budget_trap(
                 carried_spend: None,
                 now: ctx.now_s(),
             },
+            wait,
         )?;
         Ok(trap)
     })?;
