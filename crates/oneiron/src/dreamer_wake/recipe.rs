@@ -238,11 +238,7 @@ fn read_evidence(
     actor: WriteActor,
     id: EntityId,
 ) -> Result<Evidence> {
-    let key = ScopedReadActorKey::with_actor_class(
-        actor.entity_ref().to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or_else(invalid)?;
+    let key = ScopedReadActorKey::for_engine_actor(actor).ok_or_else(invalid)?;
     let raw = vault
         .scoped_read(key)
         .entity_raw_live_in(txn, &id)?
