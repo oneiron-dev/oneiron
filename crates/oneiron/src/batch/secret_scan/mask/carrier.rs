@@ -360,6 +360,24 @@ impl LiftedKeys {
         swapped(text, self.0.iter().map(|(value, tag)| (value, tag)))
     }
 
+    /// Where a handle of these keys reads in `shown`, a text as
+    /// [`Self::masked`] reads it: byte ranges, in order. A selection of
+    /// `shown` that splits none of them names no part of a value.
+    pub(crate) fn handle_ranges(&self, shown: &str) -> Vec<Range<usize>> {
+        let mut ranges: Vec<Range<usize>> = self
+            .0
+            .iter()
+            .flat_map(|(_, handle)| {
+                shown
+                    .match_indices(handle.as_str())
+                    .map(|(at, found)| at..at + found.len())
+            })
+            .collect();
+        ranges.sort_by_key(|range| (range.start, range.end));
+        ranges.dedup();
+        ranges
+    }
+
     /// `text`, a writer's new text for the carrier, with each handle back as
     /// the value it stands for: an edit that kept a handle writes the value
     /// again, one that deleted it removed the secret. A handle of any other
