@@ -71,8 +71,10 @@ pub struct ReviewFinding {
     pub out_of_scope: bool,
 }
 
-/// Generated text beside one finding. Both parts are optional.
-#[derive(Debug, Clone, Default)]
+/// Generated text beside one finding. Every part is optional: a note read
+/// from JSON names only the parts it has.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ReviewNote {
     pub evidence_refs: Vec<String>,
     pub suggested_edit: Option<String>,
