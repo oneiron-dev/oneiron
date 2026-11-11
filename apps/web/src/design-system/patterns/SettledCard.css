@@ -1,11 +1,15 @@
-/* A settled ask: quiet, in the thread's flow, no well. The question in
-   the body ink, the answer line under it. */
+/* A settled ask: a raised card in the thread's flow (the sunk tone and the
+   card ring). The question in the body ink, the answer line under it. */
 .sl-settled {
   display: flex;
   flex-direction: column;
   gap: 2px;
   max-width: 640px;
-  --sl-mark-ground: var(--sl-island);
+  padding: 10px 14px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
+  --sl-mark-ground: var(--sl-sunk);
 }
 
 .sl-settled-question {

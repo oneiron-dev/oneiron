@@ -46,10 +46,11 @@
   --sl-activity-ink: var(--sl-ink-3);
 }
 
-/* The open needs-you row is a sunk well. */
+/* The open needs-you row holds an ask: a raised card. */
 .sl-activity-row[data-open] {
   --sl-mark-ground: var(--sl-sunk);
   background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
 }
 
 /* The row whose item is open elsewhere on the screen: the lit tone. */
@@ -223,9 +224,8 @@
   white-space: nowrap;
 }
 
-/* In a sidebar the list's words and marks take the sidebar's inks (on the
-   field: the on-field inks and their halo), so they read on the field by
-   day; portraits keep their own. */
+/* In a sidebar the list's words and marks take the sidebar's inks;
+   portraits keep their own. */
 .sl-sidebar .sl-activity-row {
   --sl-activity-name-ink: var(--sl-sidebar-ink-on);
   --sl-activity-ink: var(--sl-sidebar-ink);
@@ -247,17 +247,6 @@
 
 .sl-sidebar .sl-activity-list .sl-figure {
   color: var(--sl-sidebar-quiet);
-}
-
-.sl-sidebar .sl-activity-day,
-.sl-sidebar .sl-activity-name,
-.sl-sidebar .sl-activity-row [data-slot="say"],
-.sl-sidebar .sl-activity-list .sl-figure {
-  text-shadow: var(--sl-sidebar-text-shadow);
-}
-
-.sl-sidebar .sl-activity-mark {
-  filter: var(--sl-sidebar-symbol-shadow);
 }
 
 .sl-sidebar .sl-activity-mark[data-kind="running"] svg {

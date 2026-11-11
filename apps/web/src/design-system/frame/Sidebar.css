@@ -1,14 +1,13 @@
-/* The sidebar: places only. On the field it is bare (words in the on-field
-   ink, a halo by night and a soft shadow by day); on paper it sits on a
-   near-opaque strip of the ground. The ground sets the sidebar's own inks. */
+/* The sidebar: places only, in the sheet's inks. It has no surface of its
+   own: the frame's column gives it the sidebar's tone, a peek the
+   popover's. Scroll anchoring is off, so a group folding never shifts the
+   list under the pointer (see Sidebar.Group). */
 .sl-sidebar {
   --sl-sidebar-ink: var(--sl-ink-2);
   --sl-sidebar-ink-on: var(--sl-ink-1);
   --sl-sidebar-quiet: var(--sl-ink-3);
   --sl-sidebar-hover: var(--sl-hover);
   --sl-sidebar-lit: var(--sl-lit);
-  --sl-sidebar-text-shadow: none;
-  --sl-sidebar-symbol-shadow: none;
   --sl-sidebar-badge: var(--sl-ink-1);
   --sl-sidebar-badge-ink: var(--sl-on-primary);
   --sl-sidebar-rule: var(--sl-rule);
@@ -25,27 +24,11 @@
   padding: 14px 6px 14px 12px;
   overflow-x: hidden;
   overflow-y: auto;
+  overflow-anchor: none;
   scrollbar-width: none;
   font-size: var(--sl-t-do);
   line-height: 1.5;
   color: var(--sl-sidebar-ink);
-}
-
-.sl-sidebar[data-ground="field"] {
-  --sl-sidebar-ink: var(--sl-on-field-word);
-  --sl-sidebar-ink-on: var(--sl-on-field-ink);
-  --sl-sidebar-quiet: var(--sl-on-field-quiet);
-  --sl-sidebar-hover: var(--sl-on-field-hover);
-  --sl-sidebar-lit: var(--sl-on-field-lit);
-  --sl-sidebar-text-shadow: var(--sl-on-field-text-halo);
-  --sl-sidebar-symbol-shadow: var(--sl-on-field-symbol-halo);
-  --sl-sidebar-badge: var(--sl-on-field-ink);
-  --sl-sidebar-badge-ink: var(--sl-on-field-badge-ink);
-  --sl-sidebar-rule: var(--sl-on-field-quiet);
-}
-
-.sl-sidebar[data-ground="paper"] {
-  background: var(--sl-paper);
 }
 
 .sl-sidebar[data-child-indent="none"] {
@@ -83,15 +66,8 @@
   background: var(--sl-sidebar-hover);
 }
 
-.sl-sidebar .sl-icon-action > svg,
-.sl-sidebar-row-mark,
-.sl-sidebar-row-shared {
-  filter: var(--sl-sidebar-symbol-shadow);
-}
-
 .sl-sidebar .sl-vault-switch {
   color: var(--sl-sidebar-ink-on);
-  text-shadow: var(--sl-sidebar-text-shadow);
 }
 
 .sl-sidebar .sl-vault-switch:hover,
@@ -101,7 +77,6 @@
 
 .sl-sidebar .sl-vault-switch-chevron {
   color: var(--sl-sidebar-ink);
-  filter: var(--sl-sidebar-symbol-shadow);
 }
 
 /* ── groups ───────────────────────────────────────────────────────────── */
@@ -131,7 +106,6 @@
   font-weight: 400;
   line-height: 1.4;
   color: var(--sl-sidebar-quiet);
-  text-shadow: var(--sl-sidebar-text-shadow);
   transition: color 120ms ease;
 }
 
@@ -142,7 +116,6 @@
 
 .sl-sidebar-group-chevron {
   display: block;
-  filter: var(--sl-sidebar-symbol-shadow);
   transition: transform 160ms var(--sl-ease-out);
 }
 
@@ -203,7 +176,6 @@
   color: var(--sl-sidebar-ink);
   text-align: left;
   text-decoration: none;
-  text-shadow: var(--sl-sidebar-text-shadow);
   transition:
     color 120ms ease,
     background-color 120ms ease;
@@ -279,12 +251,6 @@
   white-space: nowrap;
 }
 
-/* By day the field is bright sky and cloud: a resident's glyph on it prints
-   in the on-field ink like every other symbol; by night it keeps its own. */
-.sl-sidebar[data-ground="field"] .sl-glyph-line {
-  color: light-dark(var(--sl-on-field-word), var(--sl-glyph-ink, var(--sl-ink-2)));
-}
-
 .sl-sidebar-row-shared {
   display: block;
   flex: none;
@@ -322,7 +288,6 @@
   color: var(--sl-sidebar-badge-ink);
   line-height: 20px;
   text-align: center;
-  text-shadow: none;
 }
 
 .sl-sidebar-row-words:has(> .sl-sidebar-row-caption) + .sl-sidebar-row-count {
@@ -383,7 +348,6 @@
 
 .sl-sidebar .sl-sidebar-more .sl-verb {
   color: var(--sl-sidebar-ink);
-  text-shadow: var(--sl-sidebar-text-shadow);
 }
 
 .sl-sidebar .sl-sidebar-more .sl-verb:hover,
@@ -393,7 +357,6 @@
 
 .sl-sidebar-more .sl-figure {
   color: var(--sl-sidebar-quiet);
-  text-shadow: var(--sl-sidebar-text-shadow);
 }
 
 /* ── reordering ───────────────────────────────────────────────────────── */
@@ -418,11 +381,6 @@
 
 .sl-sidebar-group[data-dragging] > .sl-sidebar-group-label {
   color: var(--sl-sidebar-ink-on);
-}
-
-.sl-sidebar[data-ground="paper"] .sl-sidebar-group[data-dragging] {
-  border-radius: var(--sl-radius);
-  background: var(--sl-paper);
 }
 
 /* Moves said in words for a screen reader. */
@@ -472,7 +430,6 @@
   overflow: hidden;
   background: var(--sl-sidebar-rule);
   color: transparent;
-  text-shadow: none;
   pointer-events: none;
 }
 

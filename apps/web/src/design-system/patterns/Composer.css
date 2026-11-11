@@ -1,24 +1,48 @@
-/* The write box: what rides along above, then one sunk bar with the
-   persona, the add menu, the field, the tool icons, the microphone and the
-   one filled button; under the bar, one quiet line. */
+/* The write box. Default size: a grid of the 24 px gutter and the
+   messages column; the writer's portrait sits in the gutter at the foot,
+   everything else in the column, so the box's left edge is the column's
+   left edge. The box is a text field: the sunk tone and a 1 px inset
+   hairline, ends rounded to half the one-line height. */
 .sl-composer {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   --sl-mark-ground: var(--sl-sunk);
+  /* The box's height on one line: the 36 px button and 8 px of padding
+     above and below. Its ends are rounded to half of it. */
+  --sl-composer-line: 52px;
+}
+
+.sl-composer[data-size="default"] {
+  display: grid;
+  grid-template-columns: 24px minmax(0, var(--sl-col));
+  column-gap: 12px;
+  row-gap: 8px;
+  align-items: end;
+}
+
+.sl-composer[data-size="default"] > * {
+  grid-column: 2;
+}
+
+/* On the box's first line, centred on it, whatever the box's height. */
+.sl-composer[data-size="default"] > .sl-composer-writer {
+  grid-column: 1;
+  display: grid;
+  margin-bottom: calc((var(--sl-composer-line) - 24px) / 2);
 }
 
 .sl-composer-bar {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
-  padding: 6px;
-  border-radius: var(--sl-radius);
+  gap: 12px;
+  min-width: 0;
+  max-width: var(--sl-col);
+  padding: 8px 8px 8px 16px;
+  border-radius: calc(var(--sl-composer-line) / 2);
   background: var(--sl-sunk);
+  box-shadow: inset 0 0 0 1px var(--sl-rule);
 }
 
 .sl-composer-bar:focus-within {
-  background: var(--sl-sunk-focus);
+  box-shadow: inset 0 0 0 1px var(--sl-ink-4);
 }
 
 .sl-composer-field-box {
@@ -32,7 +56,7 @@
   flex: 1;
   min-width: 0;
   height: 36px;
-  padding: 7px 8px;
+  padding: 7px 0;
   border: 0;
   background: transparent;
   resize: none;
@@ -43,15 +67,19 @@
   line-height: 22px;
 }
 
+.sl-composer-field:focus {
+  outline: none;
+}
+
 /* Over the empty field, on the field's first line: one line in any
    width, a long placeholder ends in an ellipsis. */
 .sl-composer-placeholder {
   position: absolute;
   top: 7px;
-  right: 8px;
-  left: 8px;
+  right: 0;
+  left: 0;
   overflow: hidden;
-  color: var(--sl-ink-2);
+  color: var(--sl-ink-3);
   font-size: var(--sl-t-say);
   font-style: italic;
   line-height: 22px;
@@ -60,45 +88,90 @@
   pointer-events: none;
 }
 
-.sl-composer-field:focus {
-  outline: none;
+.sl-composer-field::placeholder {
+  color: var(--sl-ink-3);
+  font-style: italic;
+  opacity: 1;
 }
 
-.sl-composer-bar > .sl-icon-action {
+/* The tools at the right of the field: further icons, dictation, the
+   button. */
+.sl-composer-tools {
+  display: flex;
+  align-items: flex-end;
+  flex: none;
+  gap: 12px;
+}
+
+.sl-composer-bar > .sl-icon-action,
+.sl-composer-tools > .sl-icon-action {
   margin-bottom: 3px;
 }
 
-/* The filled button holds one symbol: an arrow to send, or the voice
-   lines to talk while the field is empty. */
+/* The one filled button, round: an arrow to send, or the voice lines to
+   talk while the field is empty. */
 .sl-composer-send {
   width: 36px;
   padding: 0;
+  border-radius: 50%;
 }
 
 .sl-composer-send > .sl-icon {
   display: block;
 }
 
-/* Under the bar: where the message is kept at the left, the boost at the
-   right, on one line so neither moves the field when the other appears. */
-.sl-composer-foot {
+/* Small: one 40 px line in a pane or under one thing. */
+.sl-composer[data-size="small"] {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sl-composer[data-size="small"] .sl-composer-bar {
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 5px 4px 14px;
+  border-radius: 20px;
+}
+
+.sl-composer[data-size="small"] .sl-composer-field {
+  height: 30px;
+  padding: 0;
+  line-height: 30px;
+  text-overflow: ellipsis;
+}
+
+.sl-composer[data-size="small"] .sl-composer-tools {
+  align-items: center;
+  gap: 6px;
+}
+
+.sl-composer[data-size="small"] .sl-icon-action {
+  margin: 0;
+}
+
+.sl-composer[data-size="small"] .sl-composer-send {
+  width: 30px;
+  height: 30px;
+}
+
+/* Tools on focus: at rest only the field shows; focus or text brings the
+   tools in at the right, after the text, so the text never moves. */
+.sl-composer[data-tools="on focus"]:not(:focus-within):not([data-has-text]) .sl-composer-tools {
+  display: none;
+}
+
+/* Under the box while the text holds a boost word. */
+.sl-composer-boost {
+  display: flex;
   align-items: baseline;
-  gap: 2px 16px;
-  min-height: 21px;
+  gap: 10px;
   margin-top: -2px;
-  padding: 0 8px;
+  padding: 0 16px;
   font-size: var(--sl-t-do);
   line-height: 1.5;
   color: var(--sl-ink-3);
-}
-
-.sl-composer-boost {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-left: auto;
 }
 
 /* The persona portrait: a disc with the initial; each persona marks it. */
@@ -107,9 +180,8 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 30px;
-  height: 30px;
-  margin: 0 0 3px 2px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   font-size: var(--sl-t-do);
   line-height: 1;

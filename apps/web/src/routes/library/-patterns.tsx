@@ -12,6 +12,7 @@ import {
   HoverBar,
   Icon,
   IconAction,
+  InfoMark,
   LedgerTable,
   Menu,
   MessageRow,
@@ -23,9 +24,11 @@ import {
   SplitPane,
   StepsBar,
   Verb,
-  WriteLine,
   formatElapsed,
   type ComposerPersonaKind,
+  type NeedsYouAnswerRecord,
+  type NeedsYouAnswers,
+  type ComposerTools,
   type RunSubState,
   type Step,
 } from '~/design-system'
@@ -36,190 +39,199 @@ import { Section, Specimen } from './-gallery-frame'
 
 /* ── needs you ────────────────────────────────────────────────────────── */
 
-const SALES_ROWS: Array<[string, string, string]> = [
-  ['store 104', '44', '1.38'],
-  ['store 117', '44', '1.21'],
-  ['store 131', '45', '0.97'],
-]
+const PROMO_NOTE = 'Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline.'
+const EXTRACTS_NOTE = 'Buys one extract for each of the three Kobe suppliers at ¥800. Paid from the house card. The files land in # the house.'
 
-function SalesPicture() {
-  return (
-    <LedgerTable aria-label="Acme store sales, the stores in question" className="lib-mini-ledger">
-      <LedgerTable.Head>
-        <LedgerTable.Cell>Store</LedgerTable.Cell>
-        <LedgerTable.Cell numeric>Week</LedgerTable.Cell>
-        <LedgerTable.Cell numeric>Units, thousands</LedgerTable.Cell>
-      </LedgerTable.Head>
-      {SALES_ROWS.map(([store, week, units]) => (
-        <LedgerTable.Row key={store}>
-          <LedgerTable.Cell>{store}</LedgerTable.Cell>
-          <LedgerTable.Cell numeric>{week}</LedgerTable.Cell>
-          <LedgerTable.Cell numeric>{units}</LedgerTable.Cell>
-        </LedgerTable.Row>
-      ))}
-    </LedgerTable>
-  )
-}
+/* An answer given earlier this morning: the record line, no undo. */
+const STORES_ANSWER: NeedsYouAnswerRecord = { value: 'drop', word: 'drop them', mark: 'pick', time: '09:14' }
 
-interface AskFixture {
-  id: string
-  asker: React.ReactNode
-  question: string
-  urgency?: { reason: string; deadline?: string }
-  body: React.ReactNode
-}
-
-const ASKS: AskFixture[] = [
-  {
-    id: 'promo',
-    asker: <Glyph glyph="ruler" label="Metryon" size={18} />,
-    question: 'Should the fit treat weeks 44 to 46 as promo weeks?',
-    urgency: { reason: 'blocks the fit' },
-    body: (
-      <NeedsYou.Picks>
-        <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
-        <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
-        <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
-        <NeedsYou.OwnAnswer />
-        <NeedsYou.Later />
-      </NeedsYou.Picks>
-    ),
-  },
-  {
-    id: 'stores',
-    asker: <Glyph initial="y" label="Yuki" size={18} guest />,
-    question: 'Edit Acme store sales: drop the 12 stores that close in November',
-    urgency: { reason: 'due Friday', deadline: '17:00' },
-    body: (
-      <>
-        <NeedsYou.Context>
-          <SalesPicture />
-        </NeedsYou.Context>
-        <NeedsYou.Picks>
-          <NeedsYou.Pick value="accept" word="accepted">
-            accept
-          </NeedsYou.Pick>
-          <NeedsYou.Pick value="decline" word="declined" tone="consent">
-            decline
-          </NeedsYou.Pick>
-          <NeedsYou.OwnAnswer />
-          <NeedsYou.Later />
-        </NeedsYou.Picks>
-      </>
-    ),
-  },
-  {
-    id: 'extracts',
-    asker: <Glyph glyph="owl" label="Tory" size={18} />,
-    question: 'Pull paid registry extracts at ¥800 each?',
-    body: (
-      <>
-        <NeedsYou.Command>Pull the paid extracts for the three Hokuei suppliers, ¥800 each.</NeedsYou.Command>
-        <NeedsYou.Picks>
-          <NeedsYou.Pick value="allow" word="allowed once">
-            allow once
-          </NeedsYou.Pick>
-          <NeedsYou.Pick value="deny" word="denied" tone="consent">
-            deny
-          </NeedsYou.Pick>
-          <NeedsYou.OwnAnswer />
-          <NeedsYou.Later />
-        </NeedsYou.Picks>
-      </>
-    ),
-  },
-  {
-    id: 'join',
-    asker: <Glyph glyph="wing" label="Eiri" size={18} />,
-    question: 'Join # hokuei pilot for up to a tenth of her week',
-    body: (
-      <>
-        <NeedsYou.Plan>
-          <NeedsYou.Step>read the Hokuei email map</NeedsYou.Step>
-          <NeedsYou.Step>draft two openers for the COO</NeedsYou.Step>
-          <NeedsYou.Step>send the one you pick through Yuki</NeedsYou.Step>
-          <NeedsYou.Step>log each send in the thread</NeedsYou.Step>
-          <NeedsYou.Step>stop at a tenth of the week</NeedsYou.Step>
-        </NeedsYou.Plan>
-        <NeedsYou.Picks>
-          <NeedsYou.Pick value="allow" word="let in">
-            let in
-          </NeedsYou.Pick>
-          <NeedsYou.Pick value="deny" word="not let in" tone="consent">
-            no
-          </NeedsYou.Pick>
-          <NeedsYou.Later />
-        </NeedsYou.Picks>
-      </>
-    ),
-  },
-  {
-    id: 'dip',
-    asker: <Glyph glyph="laurel" label="Antevon" size={18} />,
-    question: 'Acme’s week 44 dip comes back every year',
-    body: (
-      <NeedsYou.Picks>
-        <NeedsYou.Pick value="accept" word="accepted">
-          accept
-        </NeedsYou.Pick>
-        <NeedsYou.Pick value="reject" word="rejected" tone="consent">
-          reject
-        </NeedsYou.Pick>
-        <NeedsYou.OwnAnswer placeholder="What is true instead" />
-        <NeedsYou.Later />
-      </NeedsYou.Picks>
-    ),
-  },
-]
-
-function NeedsYouDemo() {
-  const [gone, setGone] = React.useState<string[]>([])
-  const [log, setLog] = React.useState('Nothing settled yet.')
+/* Two rooms' asks: a pick ask and an answered one, a yes-or-no ask with a
+   figure and one set aside (held here, controlled). */
+function AsksBlock({ answers, specimen }: { answers: NeedsYouAnswers; specimen: string }) {
   const [round, setRound] = React.useState(0)
-  /* Set aside, held here (controlled): one item starts aside. */
-  const [aside, setAside] = React.useState<string[]>(['dip'])
-  const asks = ASKS.filter((a) => !gone.includes(a.id))
+  const [log, setLog] = React.useState<string[]>([])
+  const [aside, setAside] = React.useState<string[]>(['join'])
+  const [waiting, setWaiting] = React.useState(2)
+  const say = (line: string) => setLog((l) => [...l.slice(-2), line])
   return (
-    <div className="lib-stack">
-      {asks.length ? (
-        <NeedsYou
-          key={round}
-          aria-label="needs you in # acme-forecast"
-          data-specimen="needs-you"
-          onSettle={(id, value) => {
-            setGone((g) => [...g, id])
-            setLog(`${id}: ${value}`)
-          }}
-          onLater={(id) => setLog(`${id}: set aside`)}
-        >
-          {asks.map((a) => (
-            <NeedsYou.Item
-              key={a.id}
-              id={a.id}
-              asker={a.asker}
-              question={a.question}
-              urgency={a.urgency}
-              setAside={aside.includes(a.id)}
-              onSetAsideChange={(on) => setAside((l) => (on ? [...l, a.id] : l.filter((x) => x !== a.id)))}
-            >
-              {a.body}
-            </NeedsYou.Item>
-          ))}
-        </NeedsYou>
-      ) : null}
+    <div className="lib-stack lib-asks" data-specimen={specimen}>
+      <NeedsYou
+        key={round}
+        answers={answers}
+        aria-label="needs you, from two rooms"
+        onAnswerChange={(id, answer) => {
+          setWaiting((n) => n + (answer ? -1 : 1))
+          say(answer ? `${id}: ${answer.word}` : `${id}: undone`)
+        }}
+        onSettle={(id, value) => say(`${id} stands: ${value}`)}
+        onLater={(id) => say(`${id}: set aside`)}
+      >
+        <NeedsYou.Group room="acme-forecast">
+          <NeedsYou.Ask
+            id="promo"
+            asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
+            question="Should the fit treat weeks 44 to 46 as promo weeks?"
+            note={PROMO_NOTE}
+            onOpen={() => say('promo: opened beside the room')}
+          >
+            <NeedsYou.Picks>
+              <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
+              <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
+              <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
+              <NeedsYou.OwnAnswer />
+            </NeedsYou.Picks>
+          </NeedsYou.Ask>
+          <NeedsYou.Ask
+            id="stores"
+            asker={<Glyph initial="y" label="Yuki" size={20} guest />}
+            question="Edit Acme store sales: drop the 12 stores that close in November?"
+            note="Yuki proposes the edit from Acme’s vault. The old rows stay in the ledger."
+            defaultAnswer={STORES_ANSWER}
+          >
+            <NeedsYou.Picks>
+              <NeedsYou.Pick value="drop" word="drop them">
+                drop them
+              </NeedsYou.Pick>
+              <NeedsYou.Pick value="keep" word="keep them">
+                keep them
+              </NeedsYou.Pick>
+              <NeedsYou.OwnAnswer />
+            </NeedsYou.Picks>
+          </NeedsYou.Ask>
+        </NeedsYou.Group>
+        <NeedsYou.Group room="the house">
+          <NeedsYou.Ask
+            id="extracts"
+            asker={<Glyph glyph="owl" label="Tory" size={20} />}
+            question="Pull three paid registry extracts?"
+            note={EXTRACTS_NOTE}
+            onOpen={() => say('extracts: opened beside the room')}
+          >
+            <NeedsYou.YesNo figure="¥2,400" />
+          </NeedsYou.Ask>
+          <NeedsYou.Ask
+            id="join"
+            asker={<Glyph glyph="wing" label="Eiri" size={20} />}
+            question="Join # hokuei pilot for up to a tenth of my week?"
+            note="Reads the Hokuei email map, drafts two openers for the COO, and stops at a tenth of the week."
+            setAside={aside.includes('join')}
+            onSetAsideChange={(on) => setAside((l) => (on ? [...l, 'join'] : l.filter((x) => x !== 'join')))}
+          >
+            <NeedsYou.YesNo yesWord="let in" noWord="not let in" yesLabel="Let in" noLabel="No" />
+          </NeedsYou.Ask>
+        </NeedsYou.Group>
+      </NeedsYou>
       <span className="lib-readout">
-        <span>{log}</span>
-        <span data-specimen="needs-you-aside">set aside: {aside.join(', ') || 'none'}</span>
+        <span data-specimen={`${specimen}-log`}>{log.length ? log.join(', ') : 'Nothing answered yet.'}</span>
+        <span>
+          waiting <Figure data-specimen={`${specimen}-waiting`}>{waiting}</Figure>
+        </span>
+        <span data-specimen={`${specimen}-aside`}>set aside: {aside.join(', ') || 'none'}</span>
         <Verb
           onClick={() => {
-            setGone([])
-            setAside(['dip'])
+            setAside(['join'])
+            setWaiting(2)
+            setLog([])
             setRound((r) => r + 1)
-            setLog('Nothing settled yet.')
           }}
         >
           bring them back
         </Verb>
+      </span>
+    </div>
+  )
+}
+
+/* ── the information mark ─────────────────────────────────────────────── */
+
+const STORES_NOTE = 'Metryon built this list from Acme store sales: 214 stores, sold through week 45. Twelve close in November.'
+
+/* A block with its mark at the right end of its first line. Rest on the
+   mark for the note; press it and the caller opens the block beside the
+   room (here the readout counts it). */
+function InfoBlock({ specimen, open }: { specimen: string; open?: boolean }) {
+  const [opened, setOpened] = React.useState(0)
+  return (
+    <div className="lib-stack">
+      <div className="lib-info-block" data-info-block="" data-specimen={specimen}>
+        <span className="lib-info-title">Stores in the pilot</span>
+        <InfoMark note={STORES_NOTE} defaultOpen={open} onOpen={() => setOpened((n) => n + 1)} />
+      </div>
+      <span className="lib-readout" data-specimen={`${specimen}-log`}>
+        {opened ? `opened beside the room ${opened === 1 ? 'once' : `${opened} times`}` : 'Press the mark to open the block beside the room.'}
+      </span>
+    </div>
+  )
+}
+
+/* ── the column ───────────────────────────────────────────────────────── */
+
+/* Three messages and a card in the messages column: the rows start at the
+   left edge; the text, the card and the write box share one width. */
+function ColumnDemo() {
+  const [marked, setMarked] = React.useState(false)
+  React.useEffect(() => {
+    if (!marked) return
+    const timer = setTimeout(() => setMarked(false), 1800)
+    return () => clearTimeout(timer)
+  }, [marked])
+  return (
+    <div className="lib-stack">
+      <div className="lib-messages lib-column" data-specimen="column">
+        <DayDivider>Today</DayDivider>
+        <MessageRow
+          author={<Glyph initial="y" label="Yuki" size={24} guest />}
+          name="Yuki"
+          time="13:50"
+          marked={marked}
+          marks={
+            <span title="Pinned in this room" className="lib-pin-mark">
+              <Icon name="pin" size={14} />
+            </span>
+          }
+          data-specimen="column-pinned"
+        >
+          <MessageRow.Text>Can we have the Q4 view by Friday?</MessageRow.Text>
+        </MessageRow>
+        <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={24} />} name="Metryon" time="14:02">
+          <MessageRow.Text>Before I fit the quarter, one answer from you. The rest of the view waits on it.</MessageRow.Text>
+          <NeedsYou aria-label="needs you" className="lib-column-card">
+            <NeedsYou.Group room="acme-forecast">
+              <NeedsYou.Ask
+                id="column-promo"
+                asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
+                question="Should the fit treat weeks 44 to 46 as promo weeks?"
+                note={PROMO_NOTE}
+              >
+                <NeedsYou.Picks>
+                  <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
+                  <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
+                  <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
+                  <NeedsYou.OwnAnswer />
+                </NeedsYou.Picks>
+              </NeedsYou.Ask>
+            </NeedsYou.Group>
+          </NeedsYou>
+        </MessageRow>
+        <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="14:10">
+          <MessageRow.Text>
+            Keep the promo weeks for now. When the fit is in, put week 44 on its own line as well, so Yuki can see what the dip costs the
+            quarter before Friday, and keep last year’s weeks beside it for the same stores.
+          </MessageRow.Text>
+        </MessageRow>
+      </div>
+      <Composer
+        placeholder="Write to acme-forecast"
+        persona={<Composer.Persona initial="o" note="You write as Owen. Saved in Antevon’s vault." aria-label="Owen" />}
+        onVoice={() => {}}
+        onDictate={() => {}}
+        data-specimen="column-write"
+      >
+        {composerAddMenu()}
+      </Composer>
+      <span className="lib-readout">
+        <Verb onClick={() => setMarked(true)}>go to the pinned message</Verb>
+        <span data-specimen="column-marked">{marked ? 'marked' : 'not marked'}</span>
       </span>
     </div>
   )
@@ -290,7 +302,7 @@ function MessagesDemo() {
     <div className="lib-messages" data-specimen="messages">
       <DayDivider>Yesterday</DayDivider>
       <MessageRow
-        author={<Glyph glyph="ruler" label="Metryon" size={32} />}
+        author={<Glyph glyph="ruler" label="Metryon" size={24} />}
         name="Metryon"
         time="Yesterday at 16:40"
       >
@@ -302,7 +314,7 @@ function MessagesDemo() {
         <MessageActions saved={saved.includes('m1')} onSave={save('m1')} />
       </MessageRow>
       <DayDivider>Today</DayDivider>
-      <MessageRow author={<Glyph initial="o" label="Owen" size={32} />} name="Owen" time="46 min ago" data-specimen="message-reactions">
+      <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="46 min ago" data-specimen="message-reactions">
         <MessageRow.Text>Eiri, do my notes say anything about Acme’s promo calendar?</MessageRow.Text>
         <MessageRow.Reactions onAdd={() => toggle('👀')}>
           {reactions.map((r) => (
@@ -311,7 +323,7 @@ function MessagesDemo() {
         </MessageRow.Reactions>
         <MessageActions saved={saved.includes('m2')} onSave={save('m2')} />
       </MessageRow>
-      <MessageRow author={<Glyph glyph="wing" label="Eiri" size={32} guest />} name="Eiri" time="44 min ago" provisional>
+      <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} guest />} name="Eiri" time="44 min ago" provisional>
         <MessageRow.Fold summary="from Owen’s vault">
           <span>Answered from Owen’s personal vault.</span>
           <span>Nothing was copied into this vault.</span>
@@ -320,7 +332,7 @@ function MessagesDemo() {
         <MessageRow.Text>Your notes from the August call say the promo runs in weeks 44 to 46.</MessageRow.Text>
         <MessageActions saved={saved.includes('m3')} onSave={save('m3')} />
       </MessageRow>
-      <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={32} />} name="Metryon" time="31 min ago" data-specimen="message-thread">
+      <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={24} />} name="Metryon" time="31 min ago" data-specimen="message-thread">
         <MessageRow.Text>Starting on the Q4 view Yuki asked for.</MessageRow.Text>
         <MessageRow.ThreadLine
           replies={3}
@@ -434,26 +446,24 @@ function CrewDemo({ open }: { open?: boolean }) {
           <Popover.Content align="end" offset={10} className="lib-crew-pop" aria-label="Metryon">
             <CrewPopoverHead glyph="ruler" name="Metryon" line="fitting the Q4 forecast for Acme" />
             <NeedsYou ground="bare" aria-label="Metryon’s asks">
-              <NeedsYou.Item
+              <NeedsYou.Ask
                 id="pop-promo"
-                asker={<Glyph glyph="ruler" label="Metryon" size={18} />}
+                asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
                 question="Should the fit treat weeks 44 to 46 as promo weeks?"
-                urgency={{ reason: 'blocks the fit' }}
+                note={PROMO_NOTE}
               >
                 <NeedsYou.Picks>
                   <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
                   <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
                   <NeedsYou.OwnAnswer />
-                  <NeedsYou.Later />
                 </NeedsYou.Picks>
-              </NeedsYou.Item>
-              <NeedsYou.Item id="pop-band" asker={<Glyph glyph="ruler" label="Metryon" size={18} />} question="How should I split the Q4 band?">
+              </NeedsYou.Ask>
+              <NeedsYou.Ask id="pop-band" asker={<Glyph glyph="ruler" label="Metryon" size={20} />} question="How should I split the Q4 band?">
                 <NeedsYou.Picks>
                   <NeedsYou.Pick value="supplier">by supplier</NeedsYou.Pick>
                   <NeedsYou.Pick value="region">by region</NeedsYou.Pick>
-                  <NeedsYou.Later />
                 </NeedsYou.Picks>
-              </NeedsYou.Item>
+              </NeedsYou.Ask>
             </NeedsYou>
           </Popover.Content>
         </Popover>
@@ -546,7 +556,8 @@ function SplitDemo() {
                 {r}
               </span>
             ))}
-            <WriteLine
+            <Composer
+              size="small"
               className="lib-thread-reply"
               placeholder="Reply in the thread"
               onSend={(text) => setReplies((l) => [...l.slice(-1), text])}
@@ -580,6 +591,25 @@ function SplitDemo() {
 
 const PERSONAS: ComposerPersonaKind[] = ['all', 'work', 'personal', 'dream']
 
+/* The `+` of a write box: what can ride along, then the model and the
+   effort the message is answered with. Called as a function, so the
+   write box receives a Composer.Add child it can place inside the box. */
+function composerAddMenu({ onFile, onPointer }: { onFile?: () => void; onPointer?: () => void } = {}) {
+  return (
+    <Composer.Add label="Add to the message">
+      <Menu.Item icon={<Icon name="clip" />} onClick={onFile}>
+        a file
+      </Menu.Item>
+      <Menu.Item icon={<Icon name="images" />}>a picture</Menu.Item>
+      <Menu.Item icon={<Icon name="reply" />} onClick={onPointer}>
+        a pointer to a message
+      </Menu.Item>
+      <Menu.Separator />
+      <Menu.Item icon={<Icon name="tool" />}>model and effort</Menu.Item>
+    </Composer.Add>
+  )
+}
+
 function ComposerDemo() {
   const [persona, setPersona] = React.useState<ComposerPersonaKind>('all')
   const [sent, setSent] = React.useState<Array<{ text: string; boost: boolean }>>([])
@@ -591,7 +621,7 @@ function ComposerDemo() {
   return (
     <div className="lib-stack" data-specimen="composer">
       {sent.map((m, i) => (
-        <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={32} />} name="Owen" time="just now">
+        <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="just now">
           <MessageRow.Text>{m.text}</MessageRow.Text>
         </MessageRow>
       ))}
@@ -604,13 +634,27 @@ function ComposerDemo() {
         }}
         onDictate={() => hear('dictate')}
         onVoice={() => hear('talk')}
-        savedIn="Saved in: your vault"
         boostWords={['ultrathink', 'think hard']}
         onBoostChange={setBoost}
+        crossing={
+          <OutsideLine summary="Guests see what you send here">
+            <OutsideLine.Group origin="from Acme’s vault">
+              <OutsideLine.Guest glyph={<Glyph initial="y" label="Yuki" size={18} guest />}>Yuki</OutsideLine.Guest>
+            </OutsideLine.Group>
+            <OutsideLine.Group origin="from Owen’s personal vault">
+              <OutsideLine.Guest glyph={<Glyph glyph="wing" label="Eiri" size={18} guest />}>Eiri</OutsideLine.Guest>
+            </OutsideLine.Group>
+          </OutsideLine>
+        }
         persona={
           <Menu>
             <Menu.Trigger asChild>
-              <Composer.Persona persona={persona} initial="o" aria-label={`persona ${persona}, change who you write as`} />
+              <Composer.Persona
+                persona={persona}
+                initial="o"
+                note="You write as Owen. Saved in Antevon’s vault."
+                aria-label={`persona ${persona}, change who you write as`}
+              />
             </Menu.Trigger>
             <Menu.Content side="top" aria-label="personas">
               {PERSONAS.map((p) => (
@@ -627,14 +671,6 @@ function ComposerDemo() {
           </Menu>
         }
       >
-        <OutsideLine summary="Guests see what you send here">
-          <OutsideLine.Group origin="from Acme’s vault">
-            <OutsideLine.Guest glyph={<Glyph initial="y" label="Yuki" size={18} guest />}>Yuki</OutsideLine.Guest>
-          </OutsideLine.Group>
-          <OutsideLine.Group origin="from Owen’s personal vault">
-            <OutsideLine.Guest glyph={<Glyph glyph="wing" label="Eiri" size={18} guest />}>Eiri</OutsideLine.Guest>
-          </OutsideLine.Group>
-        </OutsideLine>
         <Composer.Carry>
           {pointer ? (
             <Composer.Pointer who="Metryon" onRemove={() => setPointer(false)} removeLabel="Drop the pointer">
@@ -647,15 +683,7 @@ function ComposerDemo() {
             </Composer.Chip>
           ) : null}
         </Composer.Carry>
-        <Composer.Add label="Add to the message">
-          <Menu.Item icon={<Icon name="clip" />} onClick={() => setChip(true)}>
-            a file
-          </Menu.Item>
-          <Menu.Item icon={<Icon name="images" />}>a picture</Menu.Item>
-          <Menu.Item icon={<Icon name="reply" />} onClick={() => setPointer(true)}>
-            a pointer to a message
-          </Menu.Item>
-        </Composer.Add>
+        {composerAddMenu({ onFile: () => setChip(true), onPointer: () => setPointer(true) })}
       </Composer>
       <span className="lib-readout" data-specimen="composer-log">
         boost {boost ? 'on' : 'off'}
@@ -666,14 +694,23 @@ function ComposerDemo() {
   )
 }
 
-/* ── one line to write ───────────────────────────────────────────────── */
+/* ── the small write box ─────────────────────────────────────────────── */
 
-function WriteLineDemo() {
+function ComposerSmallDemo({ tools, text, specimen }: { tools: ComposerTools; text?: string; specimen: string }) {
   const [log, setLog] = React.useState<string[]>([])
   return (
-    <div className="lib-stack lib-write-line" data-specimen="write-line">
-      <WriteLine placeholder="Reply to Metryon about the Q4 view" onSend={(text) => setLog((l) => [...l.slice(-1), `sent “${text}”`])} />
-      <span className="lib-readout" data-specimen="write-line-log">
+    <div className="lib-stack lib-composer-small" data-specimen={specimen}>
+      <Composer
+        size="small"
+        tools={tools}
+        placeholder="Write about this"
+        defaultValue={text}
+        onDictate={() => setLog((l) => [...l.slice(-1), 'dictate'])}
+        onSend={(sent) => setLog((l) => [...l.slice(-1), `sent “${sent}”`])}
+      >
+        {composerAddMenu()}
+      </Composer>
+      <span className="lib-readout" data-specimen={`${specimen}-log`}>
         {log.length ? log.join(', ') : 'Nothing sent yet.'}
       </span>
     </div>
@@ -864,13 +901,30 @@ function LedgerDemo() {
 export function PatternSections() {
   return (
     <>
+      <Section title="InfoMark">
+        <Specimen name="rest on the mark: after 160 ms the note shows to the right of the block when 350 px is free there; press it to open the block beside the room" full>
+          <InfoBlock specimen="info-right" open />
+        </Specimen>
+        <Specimen name="less than 350 px free beside the block: the note shows under the mark" full>
+          <div className="lib-info-narrow">
+            <InfoBlock specimen="info-under" open />
+          </div>
+        </Specimen>
+      </Section>
+
       <Section title="NeedsYou">
-        <Specimen name="in a room: the first open, picks apply with undo, the next opens; later sets an item aside as one quiet line, answer now brings it back" full>
-          <NeedsYouDemo />
+        <Specimen name="chips: asks grouped by room; a pick or a yes answers at once and the row becomes its record with undo for 5 s; the clock sets an ask aside; rest on the i for its note" full>
+          <AsksBlock answers="chips" specimen="needs-you" />
+        </Specimen>
+        <Specimen name="plain: the same answers as marks and words" full>
+          <AsksBlock answers="plain" specimen="needs-you-plain" />
         </Specimen>
       </Section>
 
       <Section title="MessageRow, HoverBar, DayDivider">
+        <Specimen name="the column: three messages and a card; rows start at the left edge, text, card and write box share 620 px; a pin mark ends the name line; go to the pinned message marks it for a moment" full>
+          <ColumnDemo />
+        </Specimen>
         <Specimen name="attachments, reactions, a provisional answer with its fold, a thread line; hover a row for its actions" full>
           <MessagesDemo />
         </Specimen>
@@ -901,14 +955,26 @@ export function PatternSections() {
       </Section>
 
       <Section title="SplitPane">
-        <Specimen name="drag the edge: it leans to 25, 50 and 75; double-click resets; arrow keys move it. The thread pane's head: its title, outline, open as a room, close (Escape in the pane closes it); a WriteLine is its reply line" full>
+        <Specimen name="drag the edge: it leans to 25, 50 and 75; double-click resets; arrow keys move it. The thread pane's head: its title, outline, open as a room, close (Escape in the pane closes it); the small write box is its reply line" full>
           <SplitDemo />
         </Specimen>
       </Section>
 
       <Section title="Composer, OutsideLine">
-        <Specimen name="persona, add, a pointer and a chip, the outside line; empty, the button talks; type and it sends; write ultrathink for the boost line" full>
+        <Specimen name="the portrait in the gutter (its tooltip says who writes and where it is kept), add, a pointer and a chip, the crossing line; empty, the button talks; type and it sends; write ultrathink for the boost line" full>
           <ComposerDemo />
+        </Specimen>
+        <Specimen name="with text: the button sends" full>
+          <Composer
+            placeholder="Write to the room"
+            defaultValue="Check the supplier notes against the filings."
+            onVoice={() => {}}
+            onDictate={() => {}}
+            persona={<Composer.Persona initial="o" note="You write as Owen. Saved in Antevon’s vault." aria-label="Owen" />}
+            data-specimen="composer-text"
+          >
+            {composerAddMenu()}
+          </Composer>
         </Specimen>
         <Specimen name="narrow: the placeholder stays on one line and ends in an ellipsis" wide={1}>
           <div className="lib-composer-narrow" data-specimen="composer-narrow">
@@ -924,14 +990,18 @@ export function PatternSections() {
         </Specimen>
       </Section>
 
-      <Section title="WriteLine">
-        <Specimen name="Enter sends and clears; empty text does not send; Escape leaves the line" wide={1}>
-          <WriteLineDemo />
+      <Section title="Composer, small">
+        <Specimen name="tools on focus (the default): the field alone at rest" wide={1}>
+          <ComposerSmallDemo tools="on focus" specimen="composer-small-focus" />
         </Specimen>
-        <Specimen name="narrow: the placeholder ends in an ellipsis" wide={1}>
-          <div className="lib-composer-narrow">
-            <WriteLine placeholder="Reply to Metryon about the Q4 view" aria-label="reply, narrow" />
-          </div>
+        <Specimen name="tools on focus, with text: the tools show at the right" wide={1}>
+          <ComposerSmallDemo tools="on focus" text="Keep the promo weeks." specimen="composer-small-focus-text" />
+        </Specimen>
+        <Specimen name="tools always: add at the left, dictation and send at the right" wide={1}>
+          <ComposerSmallDemo tools="always" specimen="composer-small-always" />
+        </Specimen>
+        <Specimen name="tools always, with text" wide={1}>
+          <ComposerSmallDemo tools="always" text="Show week 44 on its own too." specimen="composer-small-always-text" />
         </Specimen>
       </Section>
 
