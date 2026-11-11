@@ -5,6 +5,7 @@ import { Tooltip } from '../overlays/Tooltip'
 import { StatusDot } from '../marks/StatusDot'
 import { Figure } from '../primitives/Figure'
 import { Icon } from '../primitives/Icon'
+import { soundPress } from '../lib/press'
 import { cx, mergeRefs, mergeSlotProps, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { AppFrameContext } from './app-frame-context'
 import { useReorder } from './use-reorder'
@@ -42,7 +43,7 @@ export interface MicroSidebarProps extends React.ComponentPropsWithRef<'nav'> {
 }
 
 /* The narrow strip at the far left that never hides: the places a person
-   goes to, one symbol each. Children: MicroSidebar.Item, .Divider,
+   goes to, one symbol each. Children: MicroSidebar.Item, .More, .Divider,
    .Pinned, and one .Foot at the bottom. */
 function MicroSidebarRoot({
   labels = 'none',
@@ -253,6 +254,92 @@ function MicroSidebarItem({
   )
 }
 
+/* ── more: the places that are not on the strip ─────────────────────────── */
+
+export interface MicroSidebarMoreProps
+  extends Omit<MicroSidebarItemProps, 'icon' | 'label' | 'asChild' | 'children' | 'onUnpin'> {
+  /* The symbol; three dots by default. */
+  icon?: React.ReactNode
+  label?: string
+  open?: boolean
+  defaultOpen?: boolean
+  onOpenChange?: (open: boolean) => void
+  /* MicroSidebar.MoreItem rows, one per place that is not fixed on the
+     strip. */
+  children?: React.ReactNode
+}
+
+/* The `more` item: a menu of the places that are not on the strip. Each
+   row opens its place and carries a pin toggle; a pinned place also shows
+   under the divider, in MicroSidebar.Pinned (the caller renders it). */
+function MicroSidebarMore({
+  id = 'more',
+  icon,
+  label = 'more',
+  open,
+  defaultOpen,
+  onOpenChange,
+  children,
+  ...props
+}: MicroSidebarMoreProps) {
+  return (
+    <Menu open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange}>
+      <Menu.Trigger asChild>
+        <MicroSidebarItem id={id} icon={icon ?? <Icon name="more" />} label={label} {...props} />
+      </Menu.Trigger>
+      <Menu.Content side="right" align="start" width="wide" className="sl-micro-more" aria-label={`${label} places`}>
+        {children}
+      </Menu.Content>
+    </Menu>
+  )
+}
+
+export interface MicroSidebarMoreItemProps extends Omit<React.ComponentPropsWithRef<'div'>, 'children'> {
+  /* The place's symbol. */
+  icon: React.ReactNode
+  /* The place's name. */
+  label: string
+  /* On the strip, under the divider. */
+  pinned?: boolean
+  /* With a handler the row shows the pin toggle at its right. */
+  onPinChange?: (pinned: boolean) => void
+  /* Choosing the row opens the place; the menu closes. */
+  onOpen?: () => void
+}
+
+/* One place in the `more` menu: its symbol and name (choosing it opens the
+   place), and at the right the pin toggle (tooltip `Pin to the strip` or
+   `Unpin from the strip`; the menu stays open). */
+function MicroSidebarMoreItem({ icon, label, pinned = false, onPinChange, onOpen, className, ...props }: MicroSidebarMoreItemProps) {
+  usePopoverContext('MicroSidebar.MoreItem')
+  return (
+    <div role="none" className={cx('sl-micro-more-row', className)} data-pinned={pinned ? '' : undefined} {...props}>
+      <Menu.Item icon={icon} className="sl-micro-more-open" onClick={() => onOpen?.()}>
+        {label}
+      </Menu.Item>
+      {onPinChange ? (
+        <Tooltip label={pinned ? 'Unpin from the strip' : 'Pin to the strip'} side="right">
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={pinned}
+            aria-label={`Pin ${label} to the strip`}
+            tabIndex={-1}
+            className="sl-icon-action sl-micro-more-pin"
+            data-size="sm"
+            onClick={(event) => {
+              soundPress(event)
+              onPinChange(!pinned)
+            }}
+          >
+            <Icon name={pinned ? 'pinned' : 'pin'} />
+          </button>
+        </Tooltip>
+      ) : null}
+    </div>
+  )
+}
+
 /* ── the divider, the pinned group, the foot ────────────────────────────── */
 
 export interface MicroSidebarDividerProps extends React.ComponentPropsWithRef<'div'> {}
@@ -309,9 +396,12 @@ function MicroSidebarFoot({ className, ...props }: MicroSidebarFootProps) {
   return <div className={cx('sl-micro-sidebar-foot', className)} {...props} />
 }
 
-/* Compound parts: MicroSidebar, .Item, .Divider, .Pinned, .Foot. */
+/* Compound parts: MicroSidebar, .Item, .More, .MoreItem, .Divider, .Pinned,
+   .Foot. */
 export const MicroSidebar = Object.assign(MicroSidebarRoot, {
   Item: MicroSidebarItem,
+  More: MicroSidebarMore,
+  MoreItem: MicroSidebarMoreItem,
   Divider: MicroSidebarDivider,
   Pinned: MicroSidebarPinned,
   Foot: MicroSidebarFoot,

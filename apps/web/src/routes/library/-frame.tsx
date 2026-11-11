@@ -611,13 +611,20 @@ interface PlaceFixture {
   icon: IconName
 }
 
-const LENSES: PlaceFixture[] = [
+/* The places that are not fixed on the strip: they live in `more`, and
+   the pinned ones also show under the divider. */
+const MORE_PLACES: PlaceFixture[] = [
   { id: 'pipeline', label: 'pipeline', icon: 'lens' },
   { id: 'today', label: 'today', icon: 'calendar' },
   { id: 'notes', label: 'notes', icon: 'note' },
+  { id: 'files', label: 'files', icon: 'files' },
+  { id: 'people', label: 'people', icon: 'users' },
+  { id: 'settings', label: 'settings', icon: 'gear' },
 ]
 
-const lensOf = (id: string) => LENSES.find((l) => l.id === id)!
+const PINNED_AT_START = ['pipeline', 'today', 'notes']
+
+const placeOf = (id: string) => MORE_PLACES.find((l) => l.id === id)!
 
 /* The head of a sidebar inside the frame: the place's name, search, a
    menu of what can be made here, and the fold control. */
@@ -739,7 +746,7 @@ function MicroSidebarDemo({
   specimen?: string
 }) {
   const [vault, setVault] = React.useState('antevon')
-  const [pinned, setPinned] = React.useState(LENSES.map((l) => l.id))
+  const [pinned, setPinned] = React.useState(PINNED_AT_START)
   const item = (id: string, label: string, icon: React.ReactNode, extra: { count?: number; needsYou?: boolean } = {}) => (
     <MicroSidebar.Item id={id} icon={icon} label={label} current={current === id} onClick={() => onCurrent(id)} {...extra} />
   )
@@ -758,26 +765,29 @@ function MicroSidebarDemo({
         {item('home', 'home', <Icon name="house" />)}
         {item('activity', 'activity', <Icon name="activity" />, { count: 3 })}
         {item('vault', 'vault', <Icon name="vault" />)}
-        <Menu>
-          <Menu.Trigger asChild>
-            <MicroSidebar.Item id="more" icon={<Icon name="more" />} label="more" />
-          </Menu.Trigger>
-          <Menu.Content side="right" aria-label="more places">
-            <Menu.Item icon={<Icon name="files" />}>files</Menu.Item>
-            <Menu.Item icon={<Icon name="users" />}>people</Menu.Item>
-            <Menu.Item icon={<Icon name="gear" />}>settings</Menu.Item>
-          </Menu.Content>
-        </Menu>
+        <MicroSidebar.More current={MORE_PLACES.some((m) => m.id === current) && !pinned.includes(current)}>
+          {MORE_PLACES.map((m) => (
+            <MicroSidebar.MoreItem
+              key={m.id}
+              icon={<Icon name={m.icon} />}
+              label={m.label}
+              pinned={pinned.includes(m.id)}
+              onPinChange={(on) => setPinned((l) => (on ? [...l, m.id] : l.filter((x) => x !== m.id)))}
+              onOpen={() => onCurrent(m.id)}
+              data-place-id={m.id}
+            />
+          ))}
+        </MicroSidebar.More>
         <MicroSidebar.Divider />
         <MicroSidebar.Pinned onReorder={setPinned}>
           {pinned.map((id) => {
-            const lens = lensOf(id)
+            const place = placeOf(id)
             return (
               <MicroSidebar.Item
                 key={id}
                 id={id}
-                icon={<Icon name={lens.icon} />}
-                label={lens.label}
+                icon={<Icon name={place.icon} />}
+                label={place.label}
                 current={current === id}
                 onClick={() => onCurrent(id)}
                 onUnpin={() => setPinned((l) => l.filter((x) => x !== id))}
@@ -798,9 +808,9 @@ function MicroSidebarDemo({
       </MicroSidebar>
       {specimen ? (
         <p className="lib-field-readout" data-specimen={`${specimen}-pinned`}>
-          pinned {pinned.join(' ') || 'none'}
-          {pinned.length < LENSES.length ? (
-            <button type="button" className="lib-pick lib-field-pick" onClick={() => setPinned(LENSES.map((l) => l.id))}>
+          pinned {pinned.join(' ') || 'none'}, current {current}
+          {pinned.join() !== PINNED_AT_START.join() ? (
+            <button type="button" className="lib-pick lib-field-pick" onClick={() => setPinned(PINNED_AT_START)}>
               pin them back
             </button>
           ) : null}
@@ -982,7 +992,7 @@ export function FieldSections() {
           <figure className="lib-field-specimen">
             <MicroSidebarAlone ground="field" specimen="micro-none" />
             <figcaption className="lib-field-caption">
-              the default: symbols, names in a tooltip; drag a pinned lens, or right-click it to unpin
+              the default: symbols, names in a tooltip; more lists the places off the strip, each with a pin toggle; drag a pinned place, or right-click it to unpin
             </figcaption>
           </figure>
           <figure className="lib-field-specimen">

@@ -179,6 +179,8 @@ export {
   MicroSidebar,
   type MicroSidebarProps,
   type MicroSidebarItemProps,
+  type MicroSidebarMoreProps,
+  type MicroSidebarMoreItemProps,
   type MicroSidebarDividerProps,
   type MicroSidebarPinnedProps,
   type MicroSidebarFootProps,
