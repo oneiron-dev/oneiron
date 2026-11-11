@@ -1940,40 +1940,6 @@ mod peer_fixture {
                 .get(&candidate.claim_id)
                 .expect("read proposed correction")
                 .expect("proposal bytes");
-            eprintln!(
-                "T0F-DIAG C14 correction={} source={:?} evidence_meet={:?}",
-                candidate.claim_id.to_hex(),
-                self.claim(candidate.claim_id).source,
-                candidate.evidence_meet
-            );
-            eprintln!(
-                "T0F-DIAG C14 evidence_refs={:?}",
-                candidate
-                    .evidence_turn_refs
-                    .iter()
-                    .chain(candidate.provenance_chain.iter().map(|hop| &hop.entity_ref))
-                    .map(|id| {
-                        let entity_type =
-                            self.vault.get_entity_type(id).expect("T0F-DIAG C14 type");
-                        if entity_type == Some(oneiron::registry::ENTITY_TYPE_CLAIM) {
-                            match self.vault.get_claim(id) {
-                                Ok(body) => (
-                                    id.to_hex(),
-                                    entity_type,
-                                    format!("claim source={:?}", body.map(|body| body.source)),
-                                ),
-                                Err(error) => (
-                                    id.to_hex(),
-                                    entity_type,
-                                    format!("claim read error={error:?}"),
-                                ),
-                            }
-                        } else {
-                            (id.to_hex(), entity_type, "non-claim ref".to_owned())
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            );
             self.vault
                 .approve_inbox_member_with_edit_at(&candidate.claim_id, &proposed, PEER_NOW + 1)
                 .expect("owner confirms attributed correction");
@@ -2865,10 +2831,6 @@ mod cb_x {
         assert_eq!(node.worker_kind, AGENT_DISPATCH_ATTEMPT_TYPE);
         let resumed = project_agent_run_status_with_park(node.status, is_parked);
         assert!(resumed.is_live_presence(), "working child presence");
-        eprintln!(
-            "T0F-DIAG C13 resumed node_status={:?} is_parked={} projected={:?}",
-            node.status, is_parked, resumed
-        );
         let resumed_to_working_after_input = usize::from(resumed == AgentRunStatus::Working);
         // The un-park returns the attempt to the queue; its worker leases it
         // again before it completes.

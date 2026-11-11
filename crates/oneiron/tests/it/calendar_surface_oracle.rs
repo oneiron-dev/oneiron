@@ -80,6 +80,12 @@ const SECRET_MEETING_LINK: &str = "https://meet.example/one-1791-board";
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    vault
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
     (dir, vault)
 }
 

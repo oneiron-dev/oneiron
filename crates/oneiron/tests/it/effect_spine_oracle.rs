@@ -43,8 +43,12 @@ fn test_config() -> VaultConfig {
 }
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
+    open_vault_with_config(test_config())
+}
+
+fn open_vault_with_config(config: VaultConfig) -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    let vault = Vault::open(dir.path(), config).unwrap();
     // The host installs this device's keystore after each open and loads the
     // install's signing keys from it (P6c): a topology op's seal is signed
     // with the install's machine key.
@@ -973,7 +977,7 @@ fn es06_deny_ruling_dispatches_nothing_and_records_denial() {
 // replays frozen bytes instead of minting anything.
 
 mod calendar_invite_fixture {
-    use super::{Vault, open_vault};
+    use super::{Vault, VaultConfig, open_vault_with_config, test_config};
 
     pub(super) const UID: &str = "one-1786-oracle@oneiron.test";
     pub(super) const RECIPIENT: &str = "guest@example.test";
@@ -995,7 +999,13 @@ mod calendar_invite_fixture {
     /// domain, the R7 booking-page standing grant, and the rendered invitation
     /// in the blob store.
     pub(super) fn admitted_vault() -> (tempfile::TempDir, Vault, String) {
-        let (dir, vault) = open_vault();
+        admitted_vault_with_config(test_config())
+    }
+
+    pub(super) fn admitted_vault_with_config(
+        config: VaultConfig,
+    ) -> (tempfile::TempDir, Vault, String) {
+        let (dir, vault) = open_vault_with_config(config);
         let actor = actor_ref();
         vault
             .put_entity(
@@ -1134,7 +1144,10 @@ fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
     use calendar_invite_fixture as fixture;
     use oneiron::outbound_intent_ledger::{IntentState, intent_ledger_records};
 
-    let (_dir, vault, blob_ref) = fixture::admitted_vault();
+    let clock = oneiron_store::ports::manual_clock::ManualClock::new(0);
+    let mut config = test_config();
+    config.store_clock = clock.bundle();
+    let (_dir, vault, blob_ref) = fixture::admitted_vault_with_config(config);
     vault
         .memory(fixture::actor_ref(), oneiron::EdgeActorClass::Human)
         .calendar_invite(&fixture::invite(&blob_ref))
@@ -1143,6 +1156,7 @@ fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
         uncertain_first: true,
         ..Default::default()
     };
+    clock.set(200);
     assert_eq!(
         vault
             .run_connector_task_executor(&mut sink, 200)
@@ -1161,6 +1175,7 @@ fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
 
     // The transport curve re-arms at 200+60. No new UID, SEQUENCE or method
     // may be minted when that durable attempt resumes.
+    clock.set(261);
     assert_eq!(
         vault
             .run_connector_task_executor(&mut sink, 261)
@@ -1758,6 +1773,7 @@ fn one1891_enrichment_validator_rejects_unattributable_bodies_on_every_door() {
 #[test]
 fn one1891_enrichment_validator_rejects_edge_subjects_on_every_door() {
     let (_dir, vault) = one1891::open_unseeded_vault();
+    vault.ensure_embedded_owner_actor().expect("fixture owner");
     let actor = one1891::put_person(&vault, 0xa2);
     let source = one1891::put_person(&vault, 0xb2);
     let target = one1891::put_person(&vault, 0xb3);
