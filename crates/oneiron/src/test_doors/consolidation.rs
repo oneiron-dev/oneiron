@@ -191,7 +191,7 @@ pub(super) fn shipped_policy_with_read_scope(
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -207,7 +207,7 @@ pub(super) fn shipped_policy_with_read_scope(
 /// The vault's.
 pub fn open_dreamer_vault(path: &std::path::Path, reader: &str) -> Result<Vault> {
     let vault = Vault::open(path, crate::VaultConfig::device())?;
-    crate::test_support::provision_engine_machines(&vault);
+    crate::test_fixtures::provision_engine_machines(&vault);
     allow_own_server_extraction(&vault)?;
     shipped_policy_with_reader(&vault, reader)?;
     Ok(vault)

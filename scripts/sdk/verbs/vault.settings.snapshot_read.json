@@ -1,0 +1,16 @@
+{
+  "name": "vault.settings.snapshot_read",
+  "description": "Reads the owner's bounds on snapshot handles: open handles per actor, the default and the most lifetime, rows and bytes per page, and rows per handle. Unset reads as the defaults.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::settings::snapshot_read::SnapshotReadSettings",
+  "call": "{ let _ = &input; crate::snapshot_read::read_snapshot_read_settings(memory)? }",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

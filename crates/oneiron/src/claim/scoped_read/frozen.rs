@@ -310,6 +310,15 @@ impl FrozenReadLane {
         if let Some(alternatives) = &self.grant_alternatives {
             key = key.within_grant_alternatives(alternatives);
         }
+        // The Grants of the save bind beside those of each snapshot that
+        // serves a row: a Grant revoked or lapsed since the save narrows the
+        // rebuilt lane (REVIEW-7051 P1). The principal is the credential's
+        // holder; a principal no Grant has ever named is not narrowed.
+        if (self.credential.is_some() || self.grant_alternatives.is_some())
+            && let Ok(holder) = EntityId::from_hex(key.actor_ref())
+        {
+            key = key.bound_by_live_agent_grants(holder);
+        }
         if !self.records.is_empty() {
             key = key.within_records(&self.records);
         }
