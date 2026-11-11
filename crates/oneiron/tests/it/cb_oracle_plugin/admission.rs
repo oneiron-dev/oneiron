@@ -71,8 +71,8 @@ impl Admission {
             .expect("activate native baseline");
         reserve(vault, &baseline, &record.skill_id);
         let configuration = SkillHubRecord::new(
-            SkillHubKind::LocalDir,
-            "/fixture/crm",
+            SkillHubKind::HttpIndex,
+            "https://example.invalid/index.json",
             SkillHubTrustTier::Community,
             HubSyncPolicy::ContentHashFrozen,
         )
@@ -275,6 +275,20 @@ fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
         else {
             panic!("claimable attempt");
         };
+        eprintln!(
+            "T0F-DIAG C15 row={:?} claimed_count={}",
+            queue
+                .get(attempt.id)
+                .expect("T0F-DIAG C15 read")
+                .as_ref()
+                .map(|record| (
+                    record.state,
+                    record.lease_owner.clone(),
+                    record.attempt_count,
+                    record.executor_model.clone()
+                )),
+            leased.attempt_count
+        );
         queue
             .set_executor_model(
                 attempt.id,

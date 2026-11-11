@@ -537,8 +537,7 @@ fn transfer_is_atomic() {
     let filler_payload = note(&vault);
     for index in 0..CODE_MEMORY_MAX_VALUES_PER_SLOT {
         let mut filler = value(filler_payload, id(0x39), 0x59, 2_000);
-        filler.content_hash[0] = u8::try_from(index % 251).expect("byte");
-        filler.content_hash[1] = u8::try_from(index / 251).expect("byte");
+        filler.content_hash[..std::mem::size_of::<usize>()].copy_from_slice(&index.to_le_bytes());
         attach(&vault, to, "src/after.rs", slot(), filler).expect("destination fills to the bound");
     }
     let before_destination = vault.code_memory_slots(to).expect("destination");

@@ -989,6 +989,25 @@ mod cb_a {
         ];
         let question = fixture.turn(0x7A);
         let facade = fixture.asker_facade();
+        let owner_actor = fixture.vault.ensure_embedded_owner_actor().expect("owner");
+        let owner = fixture
+            .vault
+            .authenticate_owner(
+                owner_actor,
+                "principal:owner",
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .expect("owner proof");
+        facade
+            .set_consult_fanout_policy(
+                &owner,
+                &oneiron::task_verb::ConsultFanOutPolicy {
+                    mode: oneiron::task_verb::ConsultFanOutMode::FullAccess,
+                    ..Default::default()
+                },
+            )
+            .expect("fixture full-access fan-out");
 
         let requested = peers.len();
         let receipt = facade

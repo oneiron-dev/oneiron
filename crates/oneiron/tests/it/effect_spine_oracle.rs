@@ -58,12 +58,54 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
+/// ES-02 send fixture under an explicit actor-scoped policy (Engine ruling
+/// T0F-SEEDED-SEND-BUILTIN-PACK = C), without the seeded built-in pack gate.
+fn open_send_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    vault
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
+    seam::reset_fan_out_oracle();
+    // schedule_send binds this human actor and the send verb; the executor
+    // keeps the TASK's actor class and actor reference.
+    let actor = oneiron::EntityId::from_bytes([0x71; 16]).expect("connector-task actor id");
+    let actor_ref = actor.to_hex();
+    let manifest = serde_json::json!({
+        "schema_version": "1.2",
+        "pack_id": "effect-spine-send",
+        "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"},
+        "rules": [],
+        "actor_ceilings": [
+            {"actor_class": "human", "actor_ref": actor_ref, "ceiling": "auto"}
+        ],
+        "scoped_grants": [{
+            "actor_ref": actor_ref,
+            "effector": "external:send",
+            "scope": oneiron::test_support::effect_preset(),
+            "selectors": {"channel": "email"},
+        }],
+    });
+    oneiron::test_support::put_policy_manifest_bytes(
+        &vault,
+        oneiron::EntityId::from_bytes([0x73; 16]).expect("send policy id"),
+        &rmp_serde::to_vec_named(&manifest).expect("encode send policy"),
+    )
+    .expect("put send policy");
+    (dir, vault)
+}
+
 /// ES-03 comm oracle opener. Skips the default policy manifest so the ARCH-0035
 /// projector's comm.* claim writes land instead of flooring to Critical/Pending
 /// under the default gate; the comm oracle runs cacheless without that gate.
 /// Gate-integrated comm semantics (default-manifest seed + the Recorded
-/// write-class door) re-arm in ONE-1752. Pre-existing spine legs (es02 send
-/// pipeline, later-armed tests) keep the seeded manifest via open_vault().
+/// write-class door) re-arm in ONE-1752. The es02 send pipeline uses an explicit
+/// actor-scoped manifest via open_send_vault(); later legs use open_vault().
 fn open_comm_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
@@ -792,7 +834,7 @@ mod seam {
 /// only record).
 #[test]
 fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_send_vault();
     seam::schedule_send(&vault, "party-Yuki", "email");
     // Scheduling alone must not send: zero receipts and zero wire
     // dispatches until the EXECUTOR runs (doc 13 §1/§9.2 — the pipeline is
@@ -1284,7 +1326,7 @@ fn calendar_invite_gate_and_intent_ledger_oracle() {
 
 mod one1891 {
     use super::{Vault, test_config};
-    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
     use oneiron::{
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
         EntityResolutionCandidate, EntityResolutionWaterfallDecision, TimeRange,
@@ -1331,7 +1373,7 @@ mod one1891 {
         id
     }
 
-    /// A PERSON carrying exactly the `provider_key` body the truth scan looks
+    /// A MACHINE carrying exactly the `provider_key` body the truth scan looks
     /// for. Minting actors HERE — rather than letting `write_provider_prior`
     /// mint them — is what lets these tests own the ids the shortcut rows are
     /// supposed to be disposable about.
@@ -1342,7 +1384,7 @@ mod one1891 {
             Value::from(provider),
         )]));
         vault
-            .put_entity(&id, ENTITY_TYPE_PERSON, at(100), 100, &body)
+            .put_entity(&id, ENTITY_TYPE_MACHINE, at(100), 100, &body)
             .expect("put provider actor");
         id
     }
@@ -1719,6 +1761,9 @@ fn one1891_enrichment_validator_rejects_edge_subjects_on_every_door() {
     let actor = one1891::put_person(&vault, 0xa2);
     let source = one1891::put_person(&vault, 0xb2);
     let target = one1891::put_person(&vault, 0xb3);
+    vault
+        .put_edge(&source, oneiron::EdgeKind::Mentions, &target, 1.0)
+        .expect("fixture edge");
     let edge_subject = oneiron::ClaimSubject::Edge {
         source,
         kind: oneiron::EdgeKind::Mentions,
