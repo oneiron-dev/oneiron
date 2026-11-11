@@ -191,6 +191,34 @@
   display: none;
 }
 
+/* The task line: the donut, who has the work, the count in words. */
+.sl-task-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 640px;
+  margin-top: 6px;
+  margin-left: -4px;
+  padding: 4px 8px 4px 4px;
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-do);
+  line-height: 1.4;
+  color: var(--sl-ink-2);
+  text-align: left;
+}
+
+.sl-task-line:hover,
+.sl-task-line:focus-visible {
+  color: var(--sl-ink-1);
+  background: var(--sl-hover);
+  outline: none;
+}
+
+.sl-task-line-who,
+.sl-task-line-count {
+  white-space: nowrap;
+}
+
 /* Reactions: the emoji and a figure; yours prints the figure brighter. */
 .sl-reactions {
   display: flex;
