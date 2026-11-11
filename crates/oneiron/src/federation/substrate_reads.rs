@@ -25,8 +25,9 @@ pub(crate) enum SubstrateRead {
     /// Rows the engine keeps about agents and their work: the Steward
     /// `read` verb.
     Evidence,
-    /// The learning dials, the read side of `engine.controls`: any of its
-    /// four classes reads them, since a read changes nothing.
+    /// The learning dials and the snapshot bounds (6.6f), the read side of
+    /// `engine.controls`: any of its four classes reads them, since a read
+    /// changes nothing.
     Dials,
     /// A project's intake goal (untangle 6.6d, F4): the Steward `read` verb.
     Goal,

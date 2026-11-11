@@ -14,6 +14,7 @@ use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::EngineControlActor;
 use oneiron::memory::{MemoryError, MemoryResult};
+use oneiron::settings::snapshot_read::SnapshotReadSettings;
 use oneiron::task_verb::sdk::{
     self, ConsolidationSelectionTimingSetRequest, ConsolidationStrengthSetRequest,
     CuratorCadenceSetRequest, DreamerProjectorSetRequest, EngineControlChangeEntry,
@@ -195,6 +196,22 @@ pub(crate) async fn vault_sieve_budgets_lower(
         auth,
         "vault.sieve.budgets.lower",
         move |server, actor| sdk::lower_sieve_budgets_as(server.vault(), actor, input),
+    )
+    .await;
+    (answer, Vec::new())
+}
+
+/// `vault.settings.snapshot_read.lower`.
+pub(crate) async fn vault_settings_snapshot_read_lower(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SnapshotReadSettings,
+) -> Listed<EngineControlChangeEntry> {
+    let answer = as_controller(
+        server,
+        auth,
+        "vault.settings.snapshot_read.lower",
+        move |server, actor| sdk::lower_snapshot_read_bounds_as(server.vault(), actor, input),
     )
     .await;
     (answer, Vec::new())
