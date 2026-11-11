@@ -1,0 +1,72 @@
+/* People as ledger rows: glyph, name, a guest's origin, the role word. */
+.sl-people-row {
+  --sl-people-indent: 0px;
+}
+
+.sl-people-row[data-depth="1"] {
+  --sl-people-indent: 24px;
+}
+
+.sl-people-row[data-depth="2"] {
+  --sl-people-indent: 48px;
+}
+
+.sl-people-who-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-left: var(--sl-people-indent);
+}
+
+.sl-people-fold {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-right: -2px;
+  border-radius: var(--sl-radius);
+  color: var(--sl-ink-2);
+}
+
+button.sl-people-fold:hover,
+button.sl-people-fold:focus-visible {
+  color: var(--sl-ink-1);
+  background: var(--sl-hover);
+}
+
+button.sl-people-fold .sl-icon {
+  transition: transform 160ms var(--sl-ease-out);
+}
+
+button.sl-people-fold[aria-expanded="false"] .sl-icon {
+  transform: rotate(-90deg);
+}
+
+.sl-people-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.sl-people-name {
+  color: var(--sl-ink-1);
+}
+
+.sl-people-origin {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--sl-ink-2);
+}
+
+.sl-people-role {
+  width: 1%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button.sl-people-fold .sl-icon {
+    transition: none;
+  }
+}
