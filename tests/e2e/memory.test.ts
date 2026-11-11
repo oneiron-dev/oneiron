@@ -3268,9 +3268,17 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
       },
     } satisfies FacadeInput<"vault.off_record.rooms.witness">);
 
-    // The vault must not see the room before a save: base get and recall.
+    // The room holds both turns (export is the talk-carrying read; status
+    // carries no talk), while the vault sees neither before a save. A room
+    // witness receipt's turn_short_id is a session-local s-alias ("s1:bd"),
+    // which the durable short-ref grammar rejects by design, so base
+    // absence is read through the native turn_id hex, which names no vault
+    // row until a save promotes it.
+    const roomBeforeSave = await guest.client.call("vault.off_record.rooms.export", roomRequest);
+    expect(museDura07RoomExportHas(roomBeforeSave, keptAlpha)).toBe(true);
+    expect(museDura07RoomExportHas(roomBeforeSave, keptBeta)).toBe(true);
     for (const receipt of [alphaReceipt, betaReceipt]) {
-      const row = await engine.client.call("vault.get", { entity_ref: receipt.turn_short_id });
+      const row = await engine.client.call("vault.get", { entity_ref: receipt.turn_id });
       expect(row.value).toBeNull();
     }
     expect(await museDura07BaseRecallHas(keptAlpha)).toBe(false);
@@ -3387,8 +3395,10 @@ suite.test(test, "MUSE-DURA-07", "Unsaved off-record turns vanish at close or re
       "POST", "/v1/core/facade/vault.off_record.status", { session_ref: soloSession },
     );
     expect(soloAfterClose.status).toBe(404);
+    // Base absence through the native turn_id hex: the solo receipt's
+    // turn_short_id is likewise a session-local s-alias, not a base ref.
     const vanishRow = await engine.client.call("vault.get", {
-      entity_ref: vanishReceipt.turn_short_id,
+      entity_ref: vanishReceipt.turn_id,
     });
     expect(vanishRow.value).toBeNull();
 
