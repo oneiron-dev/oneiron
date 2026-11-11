@@ -1145,38 +1145,37 @@ pub(super) fn put_tree_nodes<'a>(
 }
 
 /// Structurally-VALID `edge.provenance` ClaimBody for door tests: a real
-/// value record + the engine-owned actor-class evidence map. Since ONE-1159
-/// the write chokepoint validates provenance STRUCTURE (value record +
-/// persisted actor_class), so reserved-door tests can no longer carry an
-/// opaque junk `val`.
+/// value record carrying the persisted actor class. Since ONE-1159 the write
+/// chokepoint validates provenance STRUCTURE (value record + persisted
+/// actor_class), so reserved-door tests can no longer carry an opaque junk
+/// `val`.
 pub(super) fn valid_provenance_claim_body(
     actor: EntityId,
     source: EntityId,
     target: EntityId,
 ) -> ClaimBody {
-    let mut body = ClaimBody::new(
+    let mut record = crate::provenance::EdgeProvenanceClaimBody::new(
+        actor,
+        0.9,
+        crate::provenance::SupersessionStatus::Confirmed,
+    );
+    // The legacy `evid` actor-class codec was deleted by 06ff9d357d9 (#4249,
+    // FIX 8909): the class now rides in the value record, as the writer
+    // persists it, and the wrapper `evid` stays absent.
+    record.actor_class = Some(EdgeActorClass::Human);
+    ClaimBody::new(
         "edge.provenance",
         ClaimSubject::Edge {
             source,
             kind: EdgeKind::Mentions,
             target,
         },
-        crate::provenance::encode_edge_provenance_value(
-            &crate::provenance::EdgeProvenanceClaimBody::new(
-                actor,
-                0.9,
-                crate::provenance::SupersessionStatus::Confirmed,
-            ),
-        ),
+        crate::provenance::encode_edge_provenance_value(&record),
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )
-    .unwrap();
-    body.evidence = Some(crate::provenance::encode_actor_class_evidence(
-        EdgeActorClass::Human,
-    ));
-    body
+    .unwrap()
 }
 
 /// Baseline VALID claim-body map entries (the six required fields).

@@ -1,10 +1,17 @@
 use super::*;
+use crate::llm::decision::{
+    DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial, DecisionProvider,
+    DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
+};
 use crate::llm::{
     LlmCatalogCost, LlmCatalogEntry, ModelTierRef,
     manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot},
     registry::{ModelRegistryRow, ModelWireFormat},
 };
 use std::collections::BTreeMap;
+use std::ops::Deref;
+use std::sync::Arc;
+use std::time::Duration;
 
 fn model(name: &str) -> ModelId {
     ModelId::new(name).unwrap()
@@ -22,6 +29,8 @@ fn manifest() -> ModelManifest {
                         slot: ModelSlot::Llm,
                         tier: ModelTierRef("legacy".into()),
                         route_models: BTreeMap::new(),
+                        disposition: None,
+                        reads_audio: false,
                     },
                 )
             })
@@ -50,12 +59,16 @@ fn register(vault: &Vault, name: &str, locality: ModelLocality, facet: &str) -> 
                 output_per_million: "2".into(),
                 cache_read_per_million: None,
                 cache_write_per_million: None,
+                currency: None,
             }),
             capabilities: vec![LlmCapability::Reasoning, LlmCapability::ToolCalling],
             metadata: BTreeMap::new(),
         },
         scores: BTreeMap::new(),
         fetched_at: BTreeMap::new(),
+        tokens_per_o200k: None,
+        stale_since: None,
+        source_rows: None,
     })?;
     vault.set_model_description(&ModelDescription {
         model: id.clone(),
@@ -87,13 +100,82 @@ fn task() -> SeatTask {
         locality: ModelLocality::ThirdParty,
         override_model: None,
         override_effort: None,
+        listed: Vec::new(),
+        worlds: Vec::new(),
+        served: None,
+        learning: None,
     }
 }
+#[derive(Clone)]
 struct Judge {
     choice: ModelId,
 }
-impl SeatJudge for Judge {
-    fn judge(&self, task: &SeatTask, candidates: &[SeatCandidate]) -> Result<SeatJudgment> {
+/// The judge's pick, read through the host's ladder (`SeatDecisions`, which replaced
+/// `SeatJudge` in 4c541a578f5): its model for the model question, and the first rung
+/// ("default") for the effort question, as its `effort: None` kept the first rung.
+struct Pick {
+    choice: ModelId,
+}
+impl DecisionProvider for Pick {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Big,
+            model: "test-judge".into(),
+            version: "1".into(),
+        }
+    }
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        // The effort question's state names the chosen model; the model question's does not.
+        let label = if call.state["chosen"].is_null() {
+            self.choice.to_string()
+        } else {
+            "default".to_owned()
+        };
+        Ok(ProviderDecision {
+            answer: DecisionAnswer::Choice(label),
+            probability: Some(1.0),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        })
+    }
+}
+/// A birth reads the judge as its host's seat decisions: the judge's pick on the ladder's
+/// one rung, and the judge's note as the receipt's why. Each deref leaks one small value,
+/// so a call site keeps its `&Judge { choice }` argument.
+impl Deref for Judge {
+    type Target = SeatDecisions;
+    fn deref(&self) -> &SeatDecisions {
+        let mut ladder = HeldLadder::unstaffed();
+        ladder.big = Some(Arc::new(Pick {
+            choice: self.choice.clone(),
+        }));
+        Box::leak(Box::new(SeatDecisions {
+            ladder,
+            principal: crate::test_util::entity(0x5e),
+            dial: DecisionDial {
+                first: DecisionRung::Big,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: DecisionBandPolicy::default(),
+            model_wording: "Which model should this seat pin?".into(),
+            effort_wording: "Which effort should the chosen model run at?".into(),
+            budget: Duration::from_secs(60),
+            notes: Arc::new(self.clone()),
+        }))
+    }
+}
+impl SeatNotes for Judge {
+    fn why(
+        &self,
+        task: &SeatTask,
+        candidates: &[SeatCandidate],
+        _: &ModelId,
+        _: ReasoningEffort,
+        _: &RetrievalDeadline,
+    ) -> Result<String> {
         assert!(!task.task.is_empty());
         for candidate in candidates {
             assert!(
@@ -115,12 +197,7 @@ impl SeatJudge for Judge {
                 ]
             );
         }
-        Ok(SeatJudgment {
-            model: self.choice.clone(),
-            effort: None,
-            why: "This model's owner line and measured result match the task; low effort first."
-                .into(),
-        })
+        Ok("This model's owner line and measured result match the task; low effort first.".into())
     }
 }
 #[test]
@@ -147,7 +224,8 @@ fn route_facet_override_and_ineligible_judgment_fail_closed() -> Result<()> {
             &request,
             &Judge {
                 choice: local.clone()
-            }
+            },
+            None
         )
         .is_err()
     );
@@ -158,7 +236,8 @@ fn route_facet_override_and_ineligible_judgment_fail_closed() -> Result<()> {
             &request,
             &Judge {
                 choice: remote.clone()
-            }
+            },
+            None
         )
         .is_err()
     );
@@ -170,7 +249,8 @@ fn route_facet_override_and_ineligible_judgment_fail_closed() -> Result<()> {
             &request,
             &Judge {
                 choice: remote.clone()
-            }
+            },
+            None
         )
         .is_err()
     );
@@ -182,7 +262,8 @@ fn route_facet_override_and_ineligible_judgment_fail_closed() -> Result<()> {
             &request,
             &Judge {
                 choice: remote.clone()
-            }
+            },
+            None
         )
         .is_err()
     );
@@ -192,12 +273,12 @@ fn route_facet_override_and_ineligible_judgment_fail_closed() -> Result<()> {
         .insert(ModelSlot::Llm, ModelLocality::OnDevice);
     crate::test_util::pin_model_manifest(&vault, &pinned)?;
     assert!(
-        pool.birth(&vault, &task(), &Judge { choice: remote })
+        pool.birth(&vault, &task(), &Judge { choice: remote }, None)
             .is_err()
     );
     request = task();
     request.locality = ModelLocality::OnDevice;
-    let seat = pool.birth(&vault, &request, &Judge { choice: local })?;
+    let seat = pool.birth(&vault, &request, &Judge { choice: local }, None)?;
     assert_eq!(seat.locality(), ModelLocality::OnDevice);
     Ok(())
 }
@@ -250,7 +331,7 @@ fn run_seat_receipt_is_persisted_before_calls_and_reused_after_reopen() -> Resul
             ModelLocality::ThirdParty,
             "long-context reasoning",
         )?;
-        let seat = vault.birth_model_seat(run_id, &task(), &Judge { choice: a })?;
+        let seat = vault.birth_model_seat(run_id, &task(), &Judge { choice: a }, None)?;
         assert_eq!(
             vault.model_seat_receipt(run_id)?.unwrap().model,
             *seat.model()
@@ -264,6 +345,7 @@ fn run_seat_receipt_is_persisted_before_calls_and_reused_after_reopen() -> Resul
         &Judge {
             choice: model("provider/b@r2"),
         },
+        None,
     )?;
     assert_eq!(resumed.model(), first.model());
     assert_eq!(resumed.effort(), first.effort());
@@ -278,7 +360,8 @@ fn run_seat_receipt_is_persisted_before_calls_and_reused_after_reopen() -> Resul
                 &changed,
                 &Judge {
                     choice: model("provider/b@r2")
-                }
+                },
+                None
             )
             .is_err()
     );

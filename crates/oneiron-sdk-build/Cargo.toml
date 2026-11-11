@@ -11,3 +11,6 @@ publish = false
 
 [lib]
 doctest = false
+
+[dependencies]
+oneiron-sdk-generator = { path = "../oneiron-sdk-generator" }

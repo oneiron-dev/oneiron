@@ -108,7 +108,7 @@ fn rescan_entry_states(
 /// sequences that repeat, and parents that never arrive.
 pub(super) fn random_log(rng: &mut StdRng) -> Vec<AuthorityLogEntry> {
     let owner = ed_key(40);
-    let genesis = genesis_entry(40, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(40, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let agents: Vec<_> = (41..44).map(ed_key).collect();
     let stranger = ed_key(45);

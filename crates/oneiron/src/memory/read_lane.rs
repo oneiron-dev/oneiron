@@ -14,6 +14,7 @@ use crate::error::Error;
 use crate::vault::ReadMode;
 
 mod hydrate_filtered;
+mod revisions_read;
 
 /// One resolved read target: the entity a reference names, at its frontier.
 /// `None` is a reference that resolves to nothing, never a withheld row.
@@ -354,6 +355,36 @@ impl Memory<'_> {
         Ok(key)
     }
 
+    /// Proves this handle's read authority in `txn`, a snapshot its caller
+    /// holds, for a door that serves engine state no read lane reads (a
+    /// run's rows, slice 6.5a): the actor's binding, a bound host action,
+    /// and a bound credential, which must be its holder's, grant it a read
+    /// and be live (unexpired and unrevoked) in this snapshot. A read lane
+    /// proves the same as it reads each row; a door that reads none asks
+    /// here, so the proof and the rows it serves share one snapshot.
+    ///
+    /// # Errors
+    ///
+    /// `FORBIDDEN` for a credential that grants this actor no read, or one
+    /// that no longer holds; the binding's own refusals; storage errors.
+    pub(crate) fn prove_read_authority_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        let _key = self.identity_read_key_in_txn(txn)?;
+        // A host action's guard was proved with the key above; a credential's
+        // key is built whether or not the credential still holds, since a
+        // lane checks that as it reads.
+        if self.host_action.is_none()
+            && let Some(proof) = &self.read_proof
+            && !self.vault.capability_slip_is_live_in_txn(txn, proof)?
+        {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the bound read credential no longer holds",
+                &["Present a live credential: this one expired or was revoked."],
+            ));
+        }
+        Ok(())
+    }
+
     /// How a serving door hands the bound actor a file stored with keys in
     /// it (OF-560): the vault owner's own key reads the stored bytes, every
     /// other actor a copy with each key overwritten.
@@ -503,6 +534,36 @@ impl Memory<'_> {
         targets: &[ReadTargetSlot],
     ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
         self.read_views_after(lane, targets, || {})
+    }
+
+    /// The live views of `ids` on `lane` in the caller's snapshot `txn`, as
+    /// [`Self::read_views`] reads them, so a snapshot page versions each row
+    /// it serves in the same transaction (primitive A,
+    /// `crate::snapshot_read`). The caller prepared the lane's grant clock and
+    /// body pins before opening `txn`.
+    pub(crate) fn read_views_in_txn(
+        &self,
+        lane: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        ids: &[EntityId],
+    ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
+        let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+        lane.read_projected_in_txn(txn, &reads, None, |txn, rows| {
+            rows.into_iter()
+                .map(|row| match row {
+                    Some(row) => self.slot_view_in(lane, txn, row, ReadMode::Live, false),
+                    None => Ok(None),
+                })
+                .collect::<MemoryResult<Vec<_>>>()
+        })
+    }
+
+    /// When the read credential this handle is bound to ends, on the vault's
+    /// clock; `None` for a handle bound to none.
+    pub(crate) fn read_proof_expires_at(&self) -> Option<u64> {
+        self.read_proof
+            .as_ref()
+            .map(|proof| proof.claims().expires_at)
     }
 
     /// [`Self::read_views`] for a door whose output no read can follow

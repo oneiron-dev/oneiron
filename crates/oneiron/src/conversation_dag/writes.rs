@@ -109,9 +109,14 @@ pub(super) fn bound_to_thread(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityI
     )
 }
 
-/// The summary association is stamped only by the summary door. Reply
-/// revisions are captured from the target body, and a quote's anchor pinned,
-/// in this transaction.
+/// The gate check an appended record passes, labelled by who composed its
+/// words: [`policy::check_append_policy`] or
+/// [`policy::check_composed_append_policy`].
+type AppendPolicy = fn(&Vault, &mut RwTxn<'_>, &EntityId, &AppendRecord, &[u8]) -> Result<()>;
+
+/// Appends a record that holds its writer's own words. Reply revisions are
+/// captured from the target body, and a quote's anchor pinned, in this
+/// transaction.
 pub(crate) fn append_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -126,14 +131,35 @@ pub(crate) fn append_in_txn(
         summary,
         thread,
         vault.store.clock.entity_id()?,
+        policy::check_append_policy,
     )
 }
 
-/// [`append_in_txn`] under the record id `id` its caller allocated: a
-/// Retry's TURN lands at the id its reply's stream opened under, in the
-/// stream's terminal write (FIX 3152). An id any row or erase marker holds
-/// is refused.
-pub(crate) fn append_at_in_txn(
+/// [`append_in_txn`] for a record whose words the engine composed under its
+/// writer's actor, checked as generated whoever the writer is: a scope
+/// summary's reply. The summary association is stamped only by the summary
+/// door.
+pub(crate) fn append_composed_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    input: &AppendRecord,
+    summary: Option<EntityId>,
+    thread: bool,
+) -> Result<AppendedRecord> {
+    append_composed_at_in_txn(
+        vault,
+        txn,
+        input,
+        summary,
+        thread,
+        vault.store.clock.entity_id()?,
+    )
+}
+
+/// [`append_composed_in_txn`] under the record id `id` its caller
+/// allocated: a Retry's assistant TURN lands at the id its reply's stream
+/// opened under, in the stream's terminal write (FIX 3152).
+pub(crate) fn append_composed_at_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     input: &AppendRecord,
@@ -141,12 +167,37 @@ pub(crate) fn append_at_in_txn(
     thread: bool,
     id: EntityId,
 ) -> Result<AppendedRecord> {
+    append_at_in_txn(
+        vault,
+        txn,
+        input,
+        summary,
+        thread,
+        id,
+        policy::check_composed_append_policy,
+    )
+}
+
+/// Appends `input` at `id`, its record gate-checked by `check_policy`. An id
+/// any row or erase marker holds is refused.
+fn append_at_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    input: &AppendRecord,
+    summary: Option<EntityId>,
+    thread: bool,
+    id: EntityId,
+    check_policy: AppendPolicy,
+) -> Result<AppendedRecord> {
     if crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &id)?
         || vault.local_hard_delete_marker_exists_in_txn(txn, &id)?
     {
         return Err(invalid("retry TURN id is not fresh"));
     }
     actor_in_txn(&vault.store, txn, input.actor)?;
+    // The scope summary landing writer appends only the reply its landing
+    // admitted (SUMMARY-AS-RECORD-PERMIT-SHAPE = A).
+    crate::scope_summary::check_landing_append(&vault.store, input, summary)?;
     if !crate::conversation::room_person_write_allowed(
         &vault.store,
         txn,
@@ -157,7 +208,15 @@ pub(crate) fn append_at_in_txn(
     }
     // FIX 9771: a MESSAGE joins its TURN, never HEAD or the canonical line.
     if input.kind == ENTITY_TYPE_MESSAGE {
-        return messages::append_message_in_txn(vault, txn, input, summary, thread, id);
+        return messages::append_message_in_txn(
+            vault,
+            txn,
+            input,
+            summary,
+            thread,
+            id,
+            check_policy,
+        );
     }
     if thread && input.advance {
         return Err(invalid("HEAD never enters a thread"));
@@ -414,7 +473,7 @@ pub(crate) fn append_at_in_txn(
             body = crate::workspace_roster::stamp_thread(&body, &binding)?;
         }
     }
-    super::policy::check_append_policy(vault, txn, &id, input, &body)?;
+    check_policy(vault, txn, &id, input, &body)?;
     if let Some(quote) = &quote {
         super::quote::pin_in_txn(vault, txn, quote, input.actor)?;
     }

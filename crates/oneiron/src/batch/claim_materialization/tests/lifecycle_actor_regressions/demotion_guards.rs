@@ -32,6 +32,7 @@ fn demotion_binding_rejects_body_author_metadata_and_edge_rebinding() -> Result<
             entity_type: ENTITY_TYPE_CLAIM,
             occurred: TimeRange { start: 10, end: 20 },
             learned_at: 10,
+            row_version: None,
             data: encode_claim_body(&decayed)?,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -529,7 +530,7 @@ fn a_weakening_before_the_host_provisions_names_the_missing_setup() -> Result<()
     let vault = reopen(vault)?;
     let raw = vault.get_raw(&held)?.expect("held");
     let settle = |vault: &Vault| {
-        vault.with_write_txn(|txn| vault.complete_deferred_claim_in_txn(txn, &held, true, 23))
+        vault.with_write_txn(|txn| vault.complete_deferred_claim_in_txn(txn, &held, true, 23, None))
     };
     unprovisioned(settle(&vault).expect_err("no signer for the replay"));
     assert_eq!(vault.get_raw(&held)?.expect("unchanged"), raw);

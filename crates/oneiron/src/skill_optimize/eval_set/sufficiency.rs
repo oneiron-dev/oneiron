@@ -120,7 +120,9 @@ fn nonnegative(value: Option<f64>) -> Result<()> {
     Ok(())
 }
 
-/// Read a card from its measurements.
+/// Read a card from its measurements. A comparison that is not like for like
+/// (the set or rubric version moved, or the canary diverged) reads unknown
+/// even when the interval falls below the margin (FIX 4732).
 /// # Errors
 /// A negative or non-finite noise, margin or effect, or a reversed or
 /// non-finite interval.
@@ -169,7 +171,9 @@ pub fn sufficiency_card(input: SufficiencyInput) -> Result<SufficiencyCard> {
             }
         }
     }
-    let verdict = if worse {
+    let like_for_like =
+        !input.set_changed && !input.rubric_changed && input.canary_diverged != Some(true);
+    let verdict = if worse && like_for_like {
         SufficiencyVerdict::Worse
     } else if unknown.is_empty() {
         SufficiencyVerdict::NotWorse

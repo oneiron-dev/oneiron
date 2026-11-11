@@ -164,7 +164,8 @@ impl EngineNativeExecutor<'_> {
             &config.model,
             tracked_repairs,
             rejection_reason(&error),
-        );
+        )
+        .answered_by(answering_model(response));
         self.storage
             .put_uncommitted_code_run_correction(&rejected)?;
         Err(error)

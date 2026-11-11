@@ -4,8 +4,9 @@
 //! A saved question, or a queued summary, reads long after the caller that
 //! saved it has gone, and no credential travels with it. [`FrozenReadLane`]
 //! keeps the SCOPE the saver's live lane read under: its credential's id,
-//! read Scope and records caveat, the worlds it asked for and the room whose
-//! facets bound it. It never keeps a proof: nothing here deserializes into a
+//! read Scope and records caveat, each agent Grant alternative that bound
+//! it, the worlds it asked for and the room whose facets bound it. It never
+//! keeps a proof: nothing here deserializes into a
 //! `VerifiedSlip`, and a frozen lane authorizes nothing on its own.
 //!
 //! Each rebuild ([`FrozenReadLane::narrow_in_txn`]) starts from the
@@ -49,6 +50,14 @@ pub struct FrozenReadLane {
     /// a credential's; `None` on a lane held to none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     authority: Option<Scope>,
+    /// Set only on a lane the owner's agent Grants naming its credential's
+    /// holder bound (FIX AGENT-GRAPHFS-GRANT-WORLDS): the credential's Scope
+    /// met with each Grant that stood for `read` at the save, each alone.
+    /// `authority` holds their envelope, and a rebuilt key reads a row only
+    /// inside one of them, as the saving key did. Empty: none stood, and
+    /// the lane reads nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    grant_alternatives: Option<Vec<Scope>>,
     /// The credential's records caveat, as entity ids in hex; empty when it
     /// named none.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -64,8 +73,10 @@ pub struct FrozenReadLane {
     /// scope id from (FIX 12171, 12285), by name: `records` when the caveat
     /// names a row that reader does not read, `room_facets` when it does not
     /// read the room, and `authority.worlds`, `authority.facets`,
-    /// `authority.audience` or `worlds` when that axis names an id the
-    /// reader's own lane does not cover. Empty on every saved or rebuilt
+    /// `authority.audience`, `grant_alternatives.worlds`,
+    /// `grant_alternatives.facets`, `grant_alternatives.audience` or
+    /// `worlds` when that axis names an id the reader's own lane does not
+    /// cover. Empty on every saved or rebuilt
     /// lane: only [`Self::reader_view`] fills it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     withheld: Vec<String>,
@@ -90,8 +101,9 @@ impl FrozenReadLane {
     /// `lane`, frozen. A lane under no narrowing freezes as the principal's
     /// own, except a non-guest credential whose native key lacks the owner's
     /// full floor: its credential's id stays even with a top read Scope.
-    /// Otherwise the credential's id, read Scope and records caveat, the
-    /// asked worlds and the room facets are kept. A channel caveat the lane
+    /// Otherwise the credential's id, read Scope and records caveat, each
+    /// agent Grant alternative alone, the asked worlds and the room facets
+    /// are kept. A channel caveat the lane
     /// did not meet freezes as a Scope that reads nothing, as the live lane
     /// read nothing under it.
     ///
@@ -143,20 +155,28 @@ impl FrozenReadLane {
             && !channel_refused
             && worlds.is_none()
             && key.room_facets.is_none()
+            && key.grant_alternatives().is_none()
         {
             return Ok(Self::principal());
         }
         if claims.is_some_and(|claims| claims.grant_ref.is_some()) {
             return Err(Error::InvalidConfig(GUEST_LANE_NOT_SAVED.into()));
         }
-        let authority = if channel_refused {
-            Scope::default()
+        // A key agent Grants bind keeps each Grant's alternative, never their
+        // meet: two Grants on disjoint worlds meet to no world, and saved work
+        // must read what each one alone admits (FIX AGENT-GRAPHFS-GRANT-WORLDS).
+        let (authority, grant_alternatives) = if channel_refused {
+            (Scope::default(), None)
         } else {
-            key.authority_scope().cloned().unwrap_or_else(Scope::top)
+            (
+                key.authority_scope().cloned().unwrap_or_else(Scope::top),
+                key.grant_alternatives().map(<[Scope]>::to_vec),
+            )
         };
         Ok(Self {
             credential: claims.map(|claims| claims.slip_id),
             authority: Some(authority),
+            grant_alternatives,
             records,
             worlds,
             room_facets: key.room_facets,
@@ -181,8 +201,9 @@ impl FrozenReadLane {
     /// `bound` for the scope ids, the reader's own lane bound
     /// ([`ScopedRead::refs_readable_each_with_scope_id_bound`]): the records
     /// caveat keeps the rows the reader reads, and the room stays while the
-    /// reader reads it. The read Scope's worlds, facets and audience axes,
-    /// and the asked worlds, keep each id `bound` covers on that axis; base
+    /// reader reads it. The worlds, facets and audience axes of the read
+    /// Scope and of each frozen agent Grant alternative, and the asked
+    /// worlds, keep each id `bound` covers on that axis; base
     /// reality is the base world id there, so it stays while the reader
     /// reads base. An open or empty axis names no id and stays as it is.
     /// Each field that lost a row or an id is named in `withheld`, so an
@@ -215,6 +236,33 @@ impl FrozenReadLane {
                     lane.withheld.push(field.to_owned());
                 }
             }
+        }
+        if let Some(alternatives) = &mut lane.grant_alternatives {
+            let mut cut = BTreeSet::new();
+            for alternative in alternatives.iter_mut() {
+                for (field, axis, covered) in [
+                    (
+                        "grant_alternatives.worlds",
+                        &mut alternative.worlds,
+                        &bound.worlds,
+                    ),
+                    (
+                        "grant_alternatives.facets",
+                        &mut alternative.facets,
+                        &bound.facets,
+                    ),
+                    (
+                        "grant_alternatives.audience",
+                        &mut alternative.audience,
+                        &bound.audience,
+                    ),
+                ] {
+                    if keep_covered_ids(axis, covered) {
+                        cut.insert(field);
+                    }
+                }
+            }
+            lane.withheld.extend(cut.into_iter().map(str::to_owned));
         }
         if let Some(worlds) = &mut lane.worlds
             && keep_covered_ids(worlds, &bound.worlds)
@@ -259,6 +307,18 @@ impl FrozenReadLane {
             .ok_or(Error::InvariantViolation("frozen read lane actor"));
         }
         let mut key = key.within_authority(self.authority.clone().unwrap_or_else(Scope::top));
+        if let Some(alternatives) = &self.grant_alternatives {
+            key = key.within_grant_alternatives(alternatives);
+        }
+        // The Grants of the save bind beside those of each snapshot that
+        // serves a row: a Grant revoked or lapsed since the save narrows the
+        // rebuilt lane (REVIEW-7051 P1). The principal is the credential's
+        // holder; a principal no Grant has ever named is not narrowed.
+        if (self.credential.is_some() || self.grant_alternatives.is_some())
+            && let Ok(holder) = EntityId::from_hex(key.actor_ref())
+        {
+            key = key.bound_by_live_agent_grants(holder);
+        }
         if !self.records.is_empty() {
             key = key.within_records(&self.records);
         }

@@ -1,0 +1,15 @@
+{
+  "name": "vault.sieve.budgets.lower",
+  "description": "The owner, or a holder of engine.controls.work_budget, lowers the sieve's per-pass budgets, each at or below its value in force; raising one stays the owner's act at vault.sieve.policy.set.",
+  "input": "crate::task_verb::sdk::SieveBudgetsLowerRequest",
+  "output": "crate::task_verb::sdk::EngineControlChangeEntry",
+  "call": "crate::task_verb::sdk::lower_sieve_budgets_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "engine_controller"
+}

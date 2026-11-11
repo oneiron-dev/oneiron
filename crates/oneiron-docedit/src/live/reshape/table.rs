@@ -270,7 +270,7 @@ fn grid_patched(
         .iter()
         .enumerate()
         .map(|(slot, &at)| {
-            let value = kept.get(slot).map(&column).unwrap_or_default();
+            let value = kept.get(slot).map(column).unwrap_or_default();
             let range = tree.nodes[at].span.clone();
             (range.start - span.start..range.end - span.start, value)
         })

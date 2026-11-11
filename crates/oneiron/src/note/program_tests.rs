@@ -1,5 +1,6 @@
 //! NOTE caller-observable storage, cursor, fork and bridge laws.
 use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::error::Error;
 use crate::note::*;
 use crate::note::{NoteProgramEdit as NoteEdit, NoteProgramEditOutcome as NoteEditOutcome};
 use crate::registry::{ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_PERSON};

@@ -4,7 +4,7 @@ use crate::channel_identity::{
     ChannelIdentityBinding, ChannelIdentityState, ChannelIdentityStep, SelfHeldShape,
 };
 use crate::code_sandbox::microvm::{
-    CredentialEgressProxy, CredentialReadTransport, MicroVmExit, MicroVmHandle,
+    CredentialEgressProxy, CredentialReadTransport, MicroVmExit, MicroVmHandle, MicroVmOutputSink,
     collect_overlay_writes, prepare_overlay_handle,
 };
 use crate::code_sandbox::{
@@ -26,6 +26,35 @@ use crate::skill_hub::{
 use crate::{TimeRange, VaultConfig, test_util::entity};
 use std::{path::PathBuf, sync::Mutex};
 
+/// A spool floor with room for every append. The host lends its measured
+/// floor to each run since 2fcc616b8c6 (#5998); these runs stream no output.
+struct RoomyFloor(tempfile::TempDir);
+impl crate::code_sandbox::ProposalSpoolFloor for RoomyFloor {
+    fn spool_dir(&self) -> std::io::Result<PathBuf> {
+        Ok(self.0.path().to_path_buf())
+    }
+    fn claim(&self) -> Box<dyn crate::code_sandbox::ProposalSpoolClaim> {
+        Box::new(RoomyClaim)
+    }
+}
+struct RoomyClaim;
+impl crate::code_sandbox::ProposalSpoolClaim for RoomyClaim {
+    fn admit(&self, _: u64) -> std::result::Result<(), crate::code_sandbox::SpoolFloorRefusal> {
+        Ok(())
+    }
+    fn landed(&self) {}
+    fn full(&self, bytes: u64) -> crate::code_sandbox::SpoolAtFloor {
+        crate::code_sandbox::SpoolAtFloor {
+            needed: bytes,
+            available: 0,
+            reserve: 0,
+        }
+    }
+}
+fn roomy_floor() -> Arc<dyn crate::code_sandbox::ProposalSpoolFloor> {
+    Arc::new(RoomyFloor(tempfile::tempdir().expect("spool dir")))
+}
+
 const JS: &str = include_str!("../../../../tests/fixtures/echo_pack/scripts/adapter.js");
 struct Qualified(String, bool);
 impl super::super::PackQualifier for Qualified {
@@ -41,6 +70,7 @@ impl super::super::PackQualifier for Qualified {
                 runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.into(),
                 runtime_hash: self.0.clone(),
             }),
+            connector: None,
         })
     }
 }
@@ -154,6 +184,7 @@ fn setup_with_secret(
         name: secret_ref.into(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: true,
         value_bytes: b"host-only-secret".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1,
@@ -179,6 +210,9 @@ fn setup_with_secret(
         spends: false,
         sends_outward: true,
         legacy_ask: false,
+        read_only: false,
+        idempotent: false,
+        price: None,
     }];
     let slate = vault.store_connector_slate(
         &manifest,
@@ -347,6 +381,7 @@ impl MicroVmBackend for OutputBackend {
         image: &GuestImage,
         _: ExecutionBudget,
         proxy: &CredentialEgressProxy,
+        _: &mut dyn MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
         let (prefix, original) = image
             .source
@@ -382,6 +417,8 @@ impl MicroVmBackend for OutputBackend {
         Ok(MicroVmExit {
             status: 0,
             overlay_dirty: true,
+            result_json: None,
+            guest_error: None,
         })
     }
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>> {
@@ -434,7 +471,9 @@ fn out_of_manifest_grant_and_output_are_refused_before_any_event() -> Result<()>
                 grants: std::slice::from_ref(grant),
                 image: &image,
                 budget: ExecutionBudget::new(5, 128, 2),
+                output_floor: roomy_floor(),
                 now: 1_800_000_123,
+                type_feedback: None,
             },
             Box::new(OutputBackend {
                 root: scratch.path().to_path_buf(),
@@ -493,7 +532,9 @@ fn revoked_custody_refuses_a_script_before_any_inbound_handoff() -> Result<()> {
                     grants: std::slice::from_ref(&grant),
                     image: &image,
                     budget: ExecutionBudget::new(5, 128, 2),
+                    output_floor: roomy_floor(),
                     now: 1_800_000_123,
+                    type_feedback: None,
                 },
                 Box::new(OutputBackend {
                     root: scratch.path().to_path_buf(),
@@ -540,7 +581,9 @@ fn foreign_script_cannot_route_to_a_different_channel_agent() -> Result<()> {
                     grants: std::slice::from_ref(&grant),
                     image: &image,
                     budget: ExecutionBudget::new(5, 128, 2),
+                    output_floor: roomy_floor(),
                     now: 1_800_000_123,
+                    type_feedback: None,
                 },
                 Box::new(OutputBackend {
                     root: scratch.path().to_path_buf(),
@@ -574,7 +617,9 @@ fn malformed_wake_cannot_commit_preceding_inbound_or_wake() -> Result<()> {
                         grants: std::slice::from_ref(&grant),
                         image: &image,
                         budget: ExecutionBudget::new(5, 128, 2),
+                        output_floor: roomy_floor(),
                         now: 1_800_000_123,
+                        type_feedback: None,
                     },
                     Box::new(OutputBackend {
                         root: scratch.path().to_path_buf(),
@@ -638,7 +683,9 @@ fn pack_wake_never_fans_out_to_another_agents_matching_subscription() -> Result<
             grants: std::slice::from_ref(&grant),
             image: &image,
             budget: ExecutionBudget::new(5, 128, 2),
+            output_floor: roomy_floor(),
             now: 1_800_000_123,
+            type_feedback: None,
         },
         Box::new(OutputBackend {
             root: scratch.path().to_path_buf(),
@@ -675,7 +722,9 @@ fn key_revocation_between_guest_run_and_admission_refuses_all_output() -> Result
             grants: std::slice::from_ref(&grant),
             image: &image,
             budget: ExecutionBudget::new(5, 128, 2),
+            output_floor: roomy_floor(),
             now: 1_800_000_123,
+            type_feedback: None,
         },
         Box::new(OutputBackend {
             root: scratch.path().to_path_buf(),
@@ -718,7 +767,9 @@ fn stored_wake_id_conflict_rolls_back_new_inbound() -> Result<()> {
             grants: std::slice::from_ref(&grant),
             image: &image,
             budget: ExecutionBudget::new(5, 128, 2),
+            output_floor: roomy_floor(),
             now: 1_800_000_123,
+            type_feedback: None,
         },
         Box::new(OutputBackend {
             root: scratch.path().to_path_buf(),
@@ -746,6 +797,7 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
         name: "member-oauth".into(),
         class: CustodyClass::CrossVault,
         device_only: true,
+        model_reveal_allowed: true,
         value_bytes: b"member-token".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1_800_000_000,
@@ -796,7 +848,9 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
             grants: std::slice::from_ref(&grant),
             image: &image,
             budget: ExecutionBudget::new(5, 128, 2),
+            output_floor: roomy_floor(),
             now: 1_800_000_123,
+            type_feedback: None,
         },
         Box::new(OutputBackend {
             root: scratch.path().to_path_buf(),
@@ -889,7 +943,9 @@ fn replaced_install_after_source_selection_refuses_old_program_and_wake() -> Res
             grants: std::slice::from_ref(&grant),
             image: &image,
             budget: ExecutionBudget::new(5, 128, 2),
+            output_floor: roomy_floor(),
             now: 1_800_000_123,
+            type_feedback: None,
         },
         Box::new(OutputBackend {
             root: scratch.path().to_path_buf(),

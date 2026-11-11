@@ -317,7 +317,9 @@ fn goal_axis_anchor(
     let Some((project, _)) = goal.project else {
         return Ok(None);
     };
-    let Some(record) = vault.project_intake_goal(project)? else {
+    let Some(record) = vault
+        .project_intake_goal_as(oneiron::dreamer_runner::authority::coach_reader()?, project)?
+    else {
         return Ok(None);
     };
     let Some(stated) = record

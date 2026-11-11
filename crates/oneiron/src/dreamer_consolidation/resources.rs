@@ -17,7 +17,7 @@ mod pins;
 mod prior;
 mod restated;
 mod root;
-pub(super) use nightly_link_grant::require_nightly_link_write;
+pub(crate) use nightly_link_grant::require_nightly_link_write;
 pub use nightly_link_grant::{NightlyLinkGrantRequest, mint_nightly_link_grant};
 pub(super) use pins::{BranchPins, OwnedPins};
 pub(super) use prior::standing;
