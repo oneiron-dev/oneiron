@@ -61,14 +61,6 @@
   background: var(--sl-island);
 }
 
-/* The fold control in the microsidebar shows only while the sidebar is
-   folded; inside a peek, and where the place has no sidebar, never. */
-.sl-app-frame[data-sidebar="open"] .sl-micro-sidebar .sl-app-frame-fold,
-.sl-app-frame[data-sidebar="none"] .sl-app-frame-fold,
-.sl-app-frame-peek .sl-app-frame-fold {
-  display: none;
-}
-
 /* The peek: an item's sidebar raised over the sheet, 6 px inside the
    sheet's left, top and bottom edges, on the popover tone with the popover
    shadow (it floats; it is not a well). */

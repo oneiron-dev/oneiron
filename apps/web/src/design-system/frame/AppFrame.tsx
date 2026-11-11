@@ -4,7 +4,7 @@ import { IconAction, type IconActionProps } from '../primitives/IconAction'
 import { WindowGround } from '../ground/WindowGround'
 import { firstFocusable, isTopLayer, layerOpenFrom, onLayersChange, pushLayer, removeLayer } from '../lib/layer'
 import { cx, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
-import { AppFrameContext, type AppFrameContextValue } from './app-frame-context'
+import { AppFrameContext, AppFramePeekContext, type AppFrameContextValue } from './app-frame-context'
 import { PEEK_CLOSED, PEEK_DELAY_MS, PEEK_WARM_MS, peekReducer } from './frame-peek'
 
 /* The `[` key folds and opens one frame: the one the person last pressed
@@ -58,7 +58,7 @@ export interface AppFrameProps extends React.ComponentPropsWithRef<'div'> {
    from the window's top, right and bottom, holding the sidebar and the
    work area (the children) side by side. The sidebar folds with
    AppFrame.Fold in its head or the `[` key; the work area then fills the
-   sheet. While it is folded, resting the pointer on a microsidebar item
+   sheet. In the peek the same control keeps the sidebar open. While it is folded, resting the pointer on a microsidebar item
    shows that item's sidebar raised over the sheet after a short delay.
    The peek previews the place under the pointer: moving to another item
    switches it at once (the delay applies to the first show only); an item
@@ -331,7 +331,7 @@ function AppFrameRoot({
                 dispatch({ type: 'leave', to: leftFor(event), held: held() })
               }}
             >
-              {overlay}
+              <AppFramePeekContext.Provider value={true}>{overlay}</AppFramePeekContext.Provider>
             </div>
           ) : null}
         </div>
@@ -348,16 +348,16 @@ function AppFrameRoot({
 
 export interface AppFrameFoldProps extends Omit<IconActionProps, 'label' | 'children'> {}
 
-/* The control that folds the sidebar (in the sidebar's head) and opens it
-   again (placed in the microsidebar, where it shows only while the sidebar
-   is folded). Inside a peek it does not show. */
+/* The control in the sidebar's head: it folds the sidebar; in the peek of
+   a folded sidebar it shows too, and keeps the sidebar open. */
 function AppFrameFold({ className, onClick, ...props }: AppFrameFoldProps) {
   const frame = React.useContext(AppFrameContext)
+  const inPeek = React.useContext(AppFramePeekContext)
   if (!frame) throw new Error('AppFrame.Fold must be inside an AppFrame')
   const shown = frame.sidebarShown
   return (
     <IconAction
-      label={shown ? 'Fold the sidebar' : 'Open the sidebar'}
+      label={inPeek ? 'Keep the sidebar open' : shown ? 'Fold the sidebar' : 'Open the sidebar'}
       caption="press ["
       className={cx('sl-app-frame-fold', className)}
       onClick={(event) => {
