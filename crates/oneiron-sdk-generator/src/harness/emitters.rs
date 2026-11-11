@@ -59,6 +59,155 @@ pub(crate) const EMITTERS: &[Emitter] = &[
         },
         files: |value| text_file(crate::generate::CORE_VERB_NAMES_PATH, value),
     },
+    Emitter {
+        name: "core",
+        run: |generator, _| {
+            let facade_rows = generator.facade_rows.clone();
+            crate::generate::emit_core::core(generator, &facade_rows).map(Value::Str)
+        },
+        files: |value| text_file("crates/oneiron/src/verbs/generated/sdk_generated.rs", value),
+    },
+    Emitter {
+        name: "catalog",
+        run: |generator, _| {
+            let catalog = crate::generate::emit_core::catalog(generator)?;
+            // As the leave line logs `custody`: its rows' positions in ROWS.
+            let positions = catalog
+                .custody
+                .iter()
+                .filter_map(|id| generator.callable_rows.iter().position(|row| row == id))
+                .map(|at| Value::Int(i64::try_from(at).unwrap_or(-1)))
+                .collect();
+            Ok(Value::List(vec![
+                Value::Str(catalog.text),
+                Value::List(positions),
+            ]))
+        },
+        files: |value| {
+            item_file(
+                "crates/oneiron/src/verbs/generated/verb_catalog.rs",
+                value,
+                0,
+            )
+        },
+    },
+    Emitter {
+        name: "host_door_rows",
+        run: |generator, _| {
+            let facade_rows = generator.facade_rows.clone();
+            crate::generate::emit_server::host_door_rows(generator, &facade_rows).map(Value::Str)
+        },
+        files: |value| {
+            text_file(
+                "crates/oneiron-server/src/api/facade/generated/host_door_rows.rs",
+                value,
+            )
+        },
+    },
+    Emitter {
+        name: "facade_dispatch",
+        run: |generator, _| {
+            let facade_rows = generator.facade_rows.clone();
+            let texts = crate::generate::emit_server::facade_dispatch(generator, &facade_rows)?;
+            Ok(Value::List(vec![
+                Value::Str(texts.routes),
+                Value::Str(texts.dispatch),
+            ]))
+        },
+        files: |value| {
+            let mut files = item_file(
+                "crates/oneiron-server/src/api/facade/generated/agent_verbs.rs",
+                value,
+                0,
+            );
+            files.extend(item_file(
+                "crates/oneiron-server/src/api/facade/generated/dispatch.rs",
+                value,
+                1,
+            ));
+            files
+        },
+    },
+    Emitter {
+        name: "mcp_dispatch",
+        run: |generator, _| crate::generate::emit_mcp::mcp_dispatch(generator).map(Value::Str),
+        // generate.py:2525: the file is HEADER, `use super::*;` and the dispatch.
+        files: |value| {
+            value
+                .as_str()
+                .map(|text| {
+                    vec![(
+                        "crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs",
+                        format!("{}use super::*;\n{text}", crate::generate::HEADER),
+                    )]
+                })
+                .unwrap_or_default()
+        },
+    },
+    Emitter {
+        name: "remote",
+        run: |generator, _| {
+            let facade_rows = generator.facade_rows.clone();
+            crate::generate::emit_remote::remote(generator, &facade_rows).map(Value::Str)
+        },
+        files: |value| text_file("crates/oneiron-remote/src/generated/agent_verbs.rs", value),
+    },
+    Emitter {
+        name: "remote_boundary",
+        run: |generator, n| {
+            let id = facade_row(generator, n.wrapping_sub(1))?;
+            let boundary = crate::generate::emit_remote::remote_boundary(&generator.rows[id])?;
+            Ok(Value::List(vec![
+                Value::Str(boundary.declaration),
+                Value::Str(boundary.setup),
+                boundary.value,
+            ]))
+        },
+        files: |_| Vec::new(),
+    },
+    Emitter {
+        name: "napi_py",
+        run: |generator, _| {
+            let facade_rows = generator.facade_rows.clone();
+            let texts = crate::generate::emit_native::napi_py(generator, &facade_rows)?;
+            Ok(Value::List(vec![
+                Value::Str(texts.napi),
+                Value::Str(texts.py),
+            ]))
+        },
+        files: |value| {
+            let mut files = item_file(
+                "crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs",
+                value,
+                0,
+            );
+            // generate.py:2531: the PyO3 file wraps the methods.
+            if let Some(py) = value
+                .as_list()
+                .and_then(|items| items.get(1))
+                .and_then(Value::as_str)
+            {
+                files.push((
+                    "crates/oneiron-py/src/generated/agent_verbs.rs",
+                    format!(
+                        "{}#[pymethods]\nimpl NativeClient {{\n{py}}}\n",
+                        crate::generate::HEADER
+                    ),
+                ));
+            }
+            files
+        },
+    },
+    Emitter {
+        name: "native_boundary",
+        // outputs() calls it twice per facade row: napi, then py.
+        run: |generator, n| {
+            let id = facade_row(generator, n.wrapping_sub(1) / 2)?;
+            let language = if n % 2 == 1 { "napi" } else { "py" };
+            crate::generate::emit_native::native_boundary(generator, id, language).map(Value::Str)
+        },
+        files: |_| Vec::new(),
+    },
     // G3: generate.py:2902-2926. outputs()'s `facade_rows` (generate.py:2242) is FACADE_ROWS's expression
     // (generate.py:339) over the same rows, so it is `Generator::facade_rows`.
     Emitter {
@@ -84,6 +233,15 @@ pub(crate) const EMITTERS: &[Emitter] = &[
     },
 ];
 
+/// The facade row at `at` (`facade_rows[at]` in outputs()), for a port called once per row.
+fn facade_row(generator: &Generator, at: usize) -> Result<crate::generate::RowId, GenerateError> {
+    generator
+        .facade_rows
+        .get(at)
+        .copied()
+        .ok_or_else(|| GenerateError::exit(format!("port-harness replay: no facade row {at}")))
+}
+
 /// `port-harness emitters`: the registered names, one per line.
 pub(crate) fn list() {
     for emitter in EMITTERS {
@@ -96,6 +254,15 @@ fn text_file(path: &'static str, value: &Value) -> Vec<(&'static str, String)> {
     value
         .as_str()
         .map(|text| vec![(path, text.to_owned())])
+        .unwrap_or_default()
+}
+
+/// Item `at` of a list value, as one whole output file.
+fn item_file(path: &'static str, value: &Value, at: usize) -> Vec<(&'static str, String)> {
+    value
+        .as_list()
+        .and_then(|items| items.get(at))
+        .map(|item| text_file(path, item))
         .unwrap_or_default()
 }
 
