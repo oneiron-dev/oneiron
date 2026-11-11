@@ -204,6 +204,14 @@ impl Ladder {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<TypedDecision> {
+        let paired_question = DecisionQuestion {
+            id: EntityId::now(),
+            version: 1,
+            text: "Does this need more thinking?".into(),
+            class: DecisionClass::Judgment,
+            contract: AnswerContract::Noul,
+            accept_type: false,
+        };
         DecisionLadder {
             rule: None,
             local: None,
@@ -213,7 +221,7 @@ impl Ladder {
             human: &self.queue,
             human_pin: pin(DecisionRung::Human),
             ask_to: None,
-            paired: None,
+            paired: Some(&paired_question),
             person: None,
             presence: None,
             correlation: None,

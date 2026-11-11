@@ -37,12 +37,27 @@ fn designed_captured_and_generated_packs_belong_to_a_vault_identity() -> Result<
             vendor: "design-tool".into(),
         },
     );
+    vault.record_voice_render_consent(&VoiceRenderDecision {
+        event_id: "grant-voice-2".into(),
+        voice_id: "voice-2".into(),
+        subject: owner,
+        subject_kind: VoiceRefSubjectKind::Person,
+        recorded_by: owner,
+        occurred_at: 1,
+        reach: ModelLocality::OwnServer,
+        basis: Some(
+            oneiron::voice_identity::VoiceConsentBasis::ConversationalNotice {
+                notice: "grant".into(),
+            },
+        ),
+        state: oneiron::voice_identity::VoiceConsentState::Granted,
+    })?;
     let captured = pack(
         "capture",
         "voice-2",
         owner,
         VoiceRefOrigin::Captured {
-            consent_event_ref: Default::default(),
+            consent_event_ref: "grant-voice-2".into(),
         },
     );
     let generated = pack("generated", "voice-1", owner, VoiceRefOrigin::Generated);

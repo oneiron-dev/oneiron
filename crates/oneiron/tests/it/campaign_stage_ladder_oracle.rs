@@ -726,6 +726,7 @@ fn call_held_cites_the_claim_the_outcome_was_read_from() {
     )
     .expect("fixture");
     planted.valid_from = Some(OUTCOME_AT + 60);
+    planted.scope_facet = vault.default_facet().expect("vault default facet");
     vault
         .put_claim(
             &test_id(PLANTED_OUTCOME_SEED),

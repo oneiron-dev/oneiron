@@ -657,7 +657,8 @@ fn write_plan(
 #[test]
 fn membership_events_use_closed_causes() -> Result<()> {
     let (_dir, vault) = oracle_vault();
-    let (query, campaign, person) = (test_id(0x60), test_id(0x61), test_id(0x62));
+    let (query, person) = (test_id(0x60), test_id(0x62));
+    let campaign = active_campaign(&vault);
     put_person(&vault, &person);
 
     for (index, cause) in MembershipCause::ALL.into_iter().enumerate() {
@@ -709,7 +710,8 @@ fn membership_events_use_closed_causes() -> Result<()> {
 #[test]
 fn membership_commit_is_watermark_guarded_not_dedupe_guarded() -> Result<()> {
     let (_dir, vault) = oracle_vault();
-    let (query, campaign, person) = (test_id(0x66), test_id(0x67), test_id(0x68));
+    let (query, person) = (test_id(0x66), test_id(0x68));
+    let campaign = active_campaign(&vault);
     put_person(&vault, &person);
 
     let entered = write_plan(
@@ -815,7 +817,8 @@ fn live_member_heads(vault: &Vault, subject: EntityId, query: EntityId) -> Vec<(
 #[test]
 fn membership_transitions_leave_exactly_one_live_head() -> Result<()> {
     let (_dir, vault) = oracle_vault();
-    let (query, campaign, person) = (test_id(0xB0), test_id(0xB1), test_id(0xB2));
+    let (query, person) = (test_id(0xB0), test_id(0xB2));
+    let campaign = active_campaign(&vault);
     put_person(&vault, &person);
 
     for (epoch, transition, at) in [

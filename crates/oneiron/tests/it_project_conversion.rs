@@ -21,7 +21,7 @@ fn speak(
     message: EntityId,
     parent: Option<EntityId>,
 ) {
-    vault
+    let room_write = vault
         .memory(host, EdgeActorClass::Human)
         .rooms_speak(&WitnessTurn {
             conversation_ref: room.to_hex(),
@@ -43,8 +43,15 @@ fn speak(
             occurred_at: 2,
             thread_audience: None,
             assertions: Default::default(),
-        })
-        .expect("room speech");
+        });
+    eprintln!(
+        "T0F-DIAG C33 room write room={} thread={} parent={:?}: {:?}",
+        room.to_hex(),
+        turn.to_hex(),
+        parent.map(|id| id.to_hex()),
+        room_write
+    );
+    room_write.expect("room speech");
 }
 
 /// The host's slip issuer, rooted in `vault`'s authority log: the owner's
@@ -327,6 +334,12 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
         4,
     )?;
     let wrong = EntityId::now();
+    eprintln!(
+        "T0F-DIAG C33 conversion room={} thread={} sibling_thread={}",
+        room.to_hex(),
+        thread.to_hex(),
+        sibling.to_hex()
+    );
     assert!(
         card.clone()
             .on_thread(room, sibling)?
@@ -404,6 +417,9 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
 fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let host = EntityId::now();
     vault.put_entity(
         &host,
@@ -477,13 +493,16 @@ fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Re
         vault.authenticate_owner(owner_actor, "principal:owner", true, GateDecisionId::now())?;
     let issuer = host_issuer(&vault);
     let signer = vault.owner_project_signer(&issuer)?;
-    assert!(
-        vault
+    #[rustfmt::skip]
+    let duplicate_conversion = vault
             .convert_thread_to_project(
                 &owner, &signer, room, thread, message, second, None, None, 3
-            )
-            .is_err()
+            );
+    eprintln!(
+        "T0F-DIAG C32 duplicate conversion: {:?}",
+        duplicate_conversion.as_ref().err()
     );
+    assert!(duplicate_conversion.is_err());
     assert!(vault.project(second)?.is_none());
     // Common delete cleans the mapping; a new typed conversion can use the origin.
     assert!(vault.delete_entity(&id)?);
