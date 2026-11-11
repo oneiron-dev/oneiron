@@ -50,6 +50,8 @@ fn request() -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],

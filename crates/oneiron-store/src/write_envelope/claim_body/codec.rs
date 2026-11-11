@@ -109,7 +109,14 @@ pub fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 /// * `subj` must be a 16-byte entity id or 33-byte EdgeRef ([`ClaimSubject`]);
 /// * `pred` must satisfy the D17 grammar; reserved `edge.*` and `skill.*`
 ///   predicates are rejected unless `allow_reserved_predicate` is set
-///   (crate-private door / read path).
+///   (the engine's reserved write doors and every read path).
+///
+/// `pub`, flag included: the store's own codecs and core both decode claim
+/// bodies across the crate boundary. The flag only widens what this DECODE
+/// accepts; it writes nothing. A reserved predicate is WRITTEN only through
+/// core's crate-private doors (`Vault::put_reserved_claim_in_txn`, the
+/// replicated put, `validate_claim_body_bytes`), so no other crate can store
+/// one by passing `true` here.
 pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<ClaimBody> {
     #[cfg(test)]
     CLAIM_BODY_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
