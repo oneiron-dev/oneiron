@@ -29,7 +29,8 @@ impl Masker {
         {
             let mut tree = PlanTree(value);
             if cursor.position() == data.len() as u64 {
-                if !self.mask_value(&mut tree.0)? {
+                let changed = self.mask_value(&mut tree.0)?;
+                if !(self.mask_encoded_phrases(&mut tree.0)? || changed) {
                     return Ok(None);
                 }
                 let mut out = Vec::with_capacity(data.len());
