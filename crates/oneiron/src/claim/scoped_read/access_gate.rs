@@ -48,8 +48,11 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// admission refuses it, and what the read asked of its rows (FIX 7462).
 /// The fourth holds, for the same serving txn, each reader's verdict on each
 /// CLAIM access class it judged (FIX 11915). The fifth is set on the row
-/// checks of a record an `edge.provenance` Claim names beside its edge
-/// ([`Self::judge_cited`], FIX 3959): they do not re-enter that rule.
+/// checks of a record an `edge.provenance` or `core.coreference.status`
+/// Claim names ([`Self::judge_cited`]): the provenance rule is not re-entered.
+/// The sixth names the status claim whose endpoints a worklist judges
+/// ([`Self::judge_cited_coreference`]); only that row leaves its endpoint
+/// check to the walk.
 #[derive(Default)]
 pub(super) struct HeldAuthority(
     RefCell<Option<AccessContextSnapshot>>,
@@ -57,6 +60,7 @@ pub(super) struct HeldAuthority(
     HeldGrants,
     ClassVerdicts,
     bool,
+    Option<EntityId>,
 );
 
 impl HeldAuthority {
@@ -69,6 +73,7 @@ impl HeldAuthority {
             HeldGrants::fresh(AskedFilter::Known(requested.cloned())),
             ClassVerdicts::default(),
             false,
+            None,
         )
     }
 
@@ -82,6 +87,7 @@ impl HeldAuthority {
             HeldGrants::fresh(self.2.asked().clone()),
             ClassVerdicts::default(),
             self.4,
+            self.5,
         )
     }
 
@@ -97,6 +103,7 @@ impl HeldAuthority {
             self.2.clone(),
             self.3.clone(),
             self.4,
+            self.5,
         )
     }
 
@@ -111,33 +118,61 @@ impl HeldAuthority {
             self.2.shared_asking(AskedFilter::Known(None)),
             self.3.clone(),
             self.4,
+            self.5,
         )
     }
 
-    /// `judge` over the row checks of a record an `edge.provenance` Claim
-    /// names beside its edge (FIX 3959), in this serving txn: this read's
+    /// `judge` over the row checks of a record an `edge.provenance` or
+    /// `core.coreference.status` Claim names, in this serving txn: this read's
     /// relationship authority, Grants and class verdicts, under the key's own
-    /// floor alone, with no row's legal non-use conjunct asked, and with that
-    /// Claim's rule not re-entered, so a Claim citing another such Claim is
-    /// judged one level deep. The relationship authority is lent to `judge`
-    /// and taken back after it, whatever it answers.
+    /// floor alone, with no row's legal non-use conjunct asked. The provenance
+    /// rule is not re-entered; a status claim still meets its endpoint rule.
+    /// The relationship authority is lent to `judge` and taken back after it,
+    /// whatever it answers.
     pub(super) fn judge_cited<T>(&self, judge: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
+        self.judge_cited_with_coreference(None, judge)
+    }
+
+    /// [`Self::judge_cited`] for the status claim `id` whose endpoints the
+    /// worklist judges: its ordinary admission leaves only that row's
+    /// endpoint check to the walk.
+    pub(super) fn judge_cited_coreference<T>(
+        &self,
+        id: EntityId,
+        judge: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
+        self.judge_cited_with_coreference(Some(id), judge)
+    }
+
+    fn judge_cited_with_coreference<T>(
+        &self,
+        id: Option<EntityId>,
+        judge: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
         let cited = Self(
             RefCell::new(self.0.take()),
             None,
             self.2.shared_asking(AskedFilter::Known(None)),
             self.3.clone(),
             true,
+            id,
         );
         let judged = judge(&cited);
         *self.0.borrow_mut() = cited.0.into_inner();
         judged
     }
 
-    /// Whether these row checks judge a record an `edge.provenance` Claim
-    /// names ([`Self::judge_cited`]).
+    /// Whether these row checks judge a record an `edge.provenance` or
+    /// `core.coreference.status` Claim names ([`Self::judge_cited`]). This
+    /// skips only the provenance rule, not a status claim's endpoint rule.
     pub(super) fn judges_cited(&self) -> bool {
         self.4
+    }
+
+    /// Whether a worklist judges the endpoints of the status claim `id`,
+    /// leaving only that row's endpoint check out of its ordinary admission.
+    pub(super) fn judges_coreference_endpoints_of(&self, id: &EntityId) -> bool {
+        self.5.as_ref() == Some(id)
     }
 
     /// Whether the read leaves `id`'s legal non-use conjunct to the named
