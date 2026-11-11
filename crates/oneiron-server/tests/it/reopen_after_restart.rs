@@ -53,7 +53,10 @@ pub(super) fn stdout(mut command: Command) -> String {
 /// unauthenticated call must reach the auth extractor and be refused.
 pub(super) fn serve(config: &Path, port: u16, log: &Path) -> Server {
     let port_arg = port.to_string();
-    let command = oneiron(&["serve", "--host", "127.0.0.1", "--port", &port_arg], config);
+    let command = oneiron(
+        &["serve", "--host", "127.0.0.1", "--port", &port_arg],
+        config,
+    );
     serve_command(command, port, log)
 }
 

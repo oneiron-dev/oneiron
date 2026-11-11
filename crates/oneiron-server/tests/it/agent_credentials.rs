@@ -170,7 +170,9 @@ async fn whoami_names_the_principal_a_write_accepts_and_token_read_only_reads() 
                             == witnessed.message_short_ids.first())),
             "{pack:?}"
         );
-        let refused = reader.vault_witness(&turn("an agent may not write")).unwrap_err();
+        let refused = reader
+            .vault_witness(&turn("an agent may not write"))
+            .unwrap_err();
         assert_eq!(refused.code, "FORBIDDEN", "{refused:?}");
     })
     .await

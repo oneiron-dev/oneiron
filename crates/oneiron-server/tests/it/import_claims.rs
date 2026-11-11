@@ -123,9 +123,7 @@ fn extractor() -> Reply {
         let mut candidates = Vec::new();
         for (turn, text) in turns(request) {
             if text.contains(OWNER_SAID[0]) {
-                for (name, value) in
-                    [(CODE_NAMES[0], "Ana"), (CODE_NAMES[1], "Garden planner")]
-                {
+                for (name, value) in [(CODE_NAMES[0], "Ana"), (CODE_NAMES[1], "Garden planner")] {
                     if let Some(label) = names.get(name) {
                         candidates.push(candidate(label, value, &turn, OWNER_SAID[0]));
                     }
@@ -200,10 +198,7 @@ async fn imported_claims_wait_in_one_review_per_import_which_the_owner_approves_
     let (code, chat) = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         (
-            [
-                person(&vault, CODE_NAMES[0]),
-                person(&vault, CODE_NAMES[1]),
-            ],
+            [person(&vault, CODE_NAMES[0]), person(&vault, CODE_NAMES[1])],
             person(&vault, CHAT_NAME),
         )
     };

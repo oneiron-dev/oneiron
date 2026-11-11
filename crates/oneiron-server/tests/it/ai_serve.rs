@@ -141,7 +141,7 @@ fn extraction(request: &serde_json::Value) -> String {
             let (label, name) = line.strip_prefix("entity ")?.split_once(' ')?;
             (serde_json::from_str::<serde_json::Value>(name).ok()
                 == Some(serde_json::json!("Owen")))
-                .then_some(label)
+            .then_some(label)
         })
         .expect("the call lists the seeded Owen subject");
     let (turn, quote) = input
@@ -237,7 +237,10 @@ async fn a_dream_pass_killed_mid_call_runs_again_exactly_once_after_restart() {
         crate::reopen_after_restart::serve_command(command, port, &startup_log)
     })
     .await
-    .expect(&format!("the logged server startup completed; log {}", log.display()));
+    .expect(&format!(
+        "the logged server startup completed; log {}",
+        log.display()
+    ));
     tokio::time::timeout(Duration::from_secs(60), fake.wait_holding())
         .await
         .expect(&format!(
@@ -417,8 +420,8 @@ async fn serve_without_models_captures_finds_exports_and_reports_the_dreamer_idl
         panic!("an export with no delivery asked answers inline");
     };
     let reader = Vault::open_owned(&dir.path().join("archive-reader"), vault_config()).unwrap();
-    let document = serde_json::to_value(reader.read_whole_vault_archive(&export.archive).unwrap())
-        .unwrap();
+    let document =
+        serde_json::to_value(reader.read_whole_vault_archive(&export.archive).unwrap()).unwrap();
     assert!(document.to_string().contains("saffron"), "{exported:#}");
     // Chat says why it cannot answer; nothing that needs no model waited.
     let chat = root
