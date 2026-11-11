@@ -63,13 +63,16 @@ crate::side_table::side_tables! {
     /// agent) + u64 (recording time) + id16 (the grant revoked). A hard erase of the owner takes
     /// his records out.
     FEDERATION_SYSTEM_AGENT_NARROWING: VaultMeta b"federation:system_agent_narrowing:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical]
+        // Restore class: the record of the narrowings the owner applied stays as the live vault
+        // holds it, with the live grant rows: a restore never brings a narrowing back undone.
+        [restore: live] [family: unclassified] [tier: canonical]
         => crate::federation::erase_narrowing_actor_in_txn;
     /// The vault functions each system-critical grant keeps running (untangle 6.3c): narrowing
     /// one shows the one system-agent warning and waits for the owner's confirm. Key: id16 (the
     /// grant).
     FEDERATION_SYSTEM_CRITICAL_GRANT: VaultMeta b"federation:system_critical_grant:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        // Restore class: a mark names a live grant row and stays with it.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The facet a verified Connect origin position names for an imported ASSET or ASSET_TEXT. This
     /// vault holds no edge to the sender's FACET, so the facet is kept here, written beside the
     /// record-scope stamp and retired with it (FIX 22223). Key: id16 (record). Value: id16 (facet).
