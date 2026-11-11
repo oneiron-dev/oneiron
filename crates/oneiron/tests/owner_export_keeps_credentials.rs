@@ -20,17 +20,17 @@
 //!   CONS-09: a claim's credential evidence stays in its row and in its
 //!   derivation envelope, equal, and the archive reads back.
 //!
-//! Every test but the claim one also pins the nulling side: CONS-07's contact bundle and scoped
-//! record vector never carry the credential text. The scoped record vector
-//! asserts of CONS-06 and CONS-09 are held out in place under `#[cfg(any())]`
-//! (FIX row SCOPED-RECORD-EXPORT-SHIPS-SCAN-OFF-CREDENTIALS): on main the
-//! scoped door ships a credential that a scan-off write stored. Their contact
-//! bundle asserts are held out the same way (FIX row
-//! CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS): on main the contact bundle
-//! keeps a `signature` member, byte arrays that encode a credential map and
-//! JSON text that encodes a credential, and nulls every safe binary too.
-//! Custody is skipped: custody already travels in the owner's archive today,
-//! and `SecretCustodyRecord` value fields are crate-private, so no public door
+//! Every test but the claim one also pins the nulling side: CONS-07's contact
+//! bundle and scoped record vector never carry the credential text. The scoped
+//! record vector asserts of CONS-06 and CONS-09 are held out in place under
+//! `#[cfg(any())]` (FIX row SCOPED-RECORD-EXPORT-SHIPS-SCAN-OFF-CREDENTIALS):
+//! on main the scoped door ships a credential that a scan-off write stored.
+//! Their contact bundle asserts are held out the same way (FIX row
+//! CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS): on main the contact bundle keeps
+//! a `signature` member, byte arrays that encode a credential map and JSON text
+//! that encodes a credential, and nulls every safe binary too. Custody is
+//! skipped: custody already travels in the owner's archive today, and
+//! `SecretCustodyRecord` value fields are crate-private, so no public door
 //! seeds one here.
 //!
 //! Public doors only: no `#[cfg(test)]` helpers or crate-private items.
