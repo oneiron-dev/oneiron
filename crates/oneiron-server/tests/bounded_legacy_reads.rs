@@ -55,12 +55,17 @@ struct Holder {
 struct Reply {
     status: u16,
     receipt: Option<String>,
-    body: String,
+    /// The reply's bytes: JSON, or a raw entity body.
+    body: Vec<u8>,
 }
 
 impl Reply {
     fn json(&self) -> TestResult<Value> {
-        Ok(serde_json::from_str(&self.body)?)
+        Ok(serde_json::from_slice(&self.body)?)
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
     }
 }
 
@@ -82,7 +87,10 @@ struct Fixture {
 impl Fixture {
     fn new() -> TestResult<Self> {
         let dir = tempfile::tempdir()?;
-        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
+        let mut config = VaultConfig::device();
+        // A vector write needs the vault's embedding space named; no model runs.
+        config.embedding_model = Some("test/model@v1".to_owned());
+        let vault = Arc::new(Vault::open(dir.path(), config)?);
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
@@ -205,7 +213,7 @@ impl Fixture {
         Ok(Reply {
             status,
             receipt,
-            body: String::from_utf8(body.to_vec())?,
+            body: body.to_vec(),
         })
     }
 
@@ -238,6 +246,7 @@ impl Fixture {
     /// Nothing of the hidden world's row reaches a bounded reply: not its id,
     /// its value, its world's id or its world's name.
     fn assert_hidden_absent(&self, door: &str, reply: &Reply) {
+        let body = reply.text();
         for (what, secret) in [
             ("hidden claim id", self.hidden.to_hex()),
             ("hidden claim value", HIDDEN_TEXT.to_owned()),
@@ -245,9 +254,8 @@ impl Fixture {
             ("hidden world name", HIDDEN_WORLD_NAME.to_owned()),
         ] {
             assert!(
-                !reply.body.contains(&secret),
-                "{door}: the bounded reply names the {what}: {}",
-                reply.body
+                !body.contains(&secret),
+                "{door}: the bounded reply names the {what}: {body}"
             );
             if let Some(receipt) = &reply.receipt {
                 assert!(
@@ -351,25 +359,25 @@ async fn world_bounded_slip_and_the_legacy_routes() -> TestResult {
     // The owner, unchanged: every row, vector hit and edge exists.
     let owner = Caller::Owner;
     let reply = fixture.get(&owner, &fixture.vector_path()).await?;
-    assert_eq!(reply.status, 200, "owner vector search: {}", reply.body);
+    assert_eq!(reply.status, 200, "owner vector search: {}", reply.text());
     assert!(
-        reply.body.contains(&readable) && reply.body.contains(&hidden),
+        reply.text().contains(&readable) && reply.text().contains(&hidden),
         "the owner's vector search holds both probe rows: {}",
-        reply.body
+        reply.text()
     );
     let reply = fixture
-        .get(&owner, &format!("/api/entity/{hidden}"))
+        .get(&owner, &format!("/api/entity/{hidden}?view=full"))
         .await?;
-    assert_eq!(reply.status, 200, "owner entity read: {}", reply.body);
-    assert!(reply.body.contains(HIDDEN_TEXT), "{}", reply.body);
+    assert_eq!(reply.status, 200, "owner entity read: {}", reply.text());
+    assert!(reply.text().contains(&hidden), "{}", reply.text());
     let reply = fixture
         .get(&owner, &format!("/api/edges/{readable}"))
         .await?;
-    assert_eq!(reply.status, 200, "owner edges read: {}", reply.body);
+    assert_eq!(reply.status, 200, "owner edges read: {}", reply.text());
     assert!(
-        reply.body.contains(&neighbour) && reply.body.contains(&hidden),
+        reply.text().contains(&neighbour) && reply.text().contains(&hidden),
         "the owner's edges hold both targets: {}",
-        reply.body
+        reply.text()
     );
 
     // The reader: a distinct person's core:read slip, narrowed by its holder
@@ -378,40 +386,42 @@ async fn world_bounded_slip_and_the_legacy_routes() -> TestResult {
     let reader = fixture.base_world_holder(0x51, &["core:read"])?;
     let caller = Caller::Holder(&reader);
     let reply = fixture.facade_get(&caller, fixture.readable).await?;
-    assert_eq!(reply.status, 200, "reader facade get: {}", reply.body);
+    assert_eq!(reply.status, 200, "reader facade get: {}", reply.text());
     assert_eq!(
         reply.json()?["value"]["id_hex"],
         readable,
         "the facade serves the reader its base-world row: {}",
-        reply.body
+        reply.text()
     );
     let reply = fixture.facade_get(&caller, fixture.hidden).await?;
-    assert_eq!(reply.status, 200, "reader facade get: {}", reply.body);
+    assert_eq!(reply.status, 200, "reader facade get: {}", reply.text());
     assert!(
         reply.json()?["value"].is_null(),
         "the facade withholds the hidden-world row: {}",
-        reply.body
+        reply.text()
     );
 
     // The legacy reads now admit the same slip and clamp it the same way.
     let reply = fixture.get(&caller, &fixture.vector_path()).await?;
     assert_eq!(
-        reply.status, 200,
+        reply.status,
+        200,
         "a world-bounded core:read slip reads the legacy vector search: {}",
-        reply.body
+        reply.text()
     );
-    assert!(reply.body.contains(&readable), "{}", reply.body);
+    assert!(reply.text().contains(&readable), "{}", reply.text());
     fixture.assert_hidden_absent("vector search", &reply);
 
     let reply = fixture
-        .get(&caller, &format!("/api/entity/{readable}"))
+        .get(&caller, &format!("/api/entity/{readable}?view=full"))
         .await?;
     assert_eq!(
-        reply.status, 200,
+        reply.status,
+        200,
         "a world-bounded core:read slip reads its base-world entity: {}",
-        reply.body
+        reply.text()
     );
-    assert!(reply.body.contains(READABLE_TEXT), "{}", reply.body);
+    assert!(reply.text().contains(&readable), "{}", reply.text());
     assert!(
         reply.receipt.is_some(),
         "the legacy entity read carries its read receipt"
@@ -419,33 +429,36 @@ async fn world_bounded_slip_and_the_legacy_routes() -> TestResult {
     fixture.assert_hidden_absent("entity read", &reply);
 
     let reply = fixture
-        .get(&caller, &format!("/api/entity/{hidden}"))
+        .get(&caller, &format!("/api/entity/{hidden}?view=full"))
         .await?;
     assert_eq!(
-        reply.status, 404,
+        reply.status,
+        404,
         "the hidden-world entity is absent to the bounded reader: {}",
-        reply.body
+        reply.text()
     );
-    assert!(!reply.body.contains(HIDDEN_TEXT), "{}", reply.body);
+    assert!(!reply.text().contains(HIDDEN_TEXT), "{}", reply.text());
 
     let reply = fixture
         .get(&caller, &format!("/api/edges/{readable}"))
         .await?;
     assert_eq!(
-        reply.status, 200,
+        reply.status,
+        200,
         "a world-bounded core:read slip reads its base-world edges: {}",
-        reply.body
+        reply.text()
     );
-    assert!(reply.body.contains(&neighbour), "{}", reply.body);
+    assert!(reply.text().contains(&neighbour), "{}", reply.text());
     fixture.assert_hidden_absent("edges read", &reply);
 
     let reply = fixture
         .get(&caller, &format!("/api/edges/{hidden}"))
         .await?;
     assert_eq!(
-        reply.status, 404,
+        reply.status,
+        404,
         "a hidden-world anchor is absent to the bounded reader: {}",
-        reply.body
+        reply.text()
     );
 
     // A slip that holds no read stays out of every legacy read.
@@ -453,7 +466,7 @@ async fn world_bounded_slip_and_the_legacy_routes() -> TestResult {
     let writer = Caller::Holder(&writer);
     for path in [
         fixture.vector_path(),
-        format!("/api/entity/{readable}"),
+        format!("/api/entity/{readable}?view=full"),
         format!("/api/edges/{readable}"),
     ] {
         let reply = fixture.get(&writer, &path).await?;
@@ -461,9 +474,9 @@ async fn world_bounded_slip_and_the_legacy_routes() -> TestResult {
             matches!(reply.status, 401 | 403),
             "a slip without core:read is refused {path}: {} {}",
             reply.status,
-            reply.body
+            reply.text()
         );
-        assert!(!reply.body.contains(READABLE_TEXT), "{}", reply.body);
+        assert!(!reply.text().contains(READABLE_TEXT), "{}", reply.text());
     }
 
     // The grant is checked at each use: once its mint is revoked, the same
@@ -472,14 +485,14 @@ async fn world_bounded_slip_and_the_legacy_routes() -> TestResult {
         .vault
         .revoke_capability_slip(&fixture.issuer, reader.slip.claims.slip_id)?;
     let reply = fixture
-        .get(&caller, &format!("/api/entity/{readable}"))
+        .get(&caller, &format!("/api/entity/{readable}?view=full"))
         .await?;
     assert!(
         matches!(reply.status, 401 | 403),
         "a revoked slip is refused the legacy entity read: {} {}",
         reply.status,
-        reply.body
+        reply.text()
     );
-    assert!(!reply.body.contains(READABLE_TEXT), "{}", reply.body);
+    assert!(!reply.text().contains(READABLE_TEXT), "{}", reply.text());
     Ok(())
 }
