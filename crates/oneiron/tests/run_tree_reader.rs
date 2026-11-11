@@ -94,53 +94,136 @@ fn cancelled_branch(view: &RunBranchesView) -> Result<&RunBranchView, Box<dyn st
 
 #[test]
 fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestResult {
+    use oneiron::agent_dispatch::{AgentDispatchTarget, AgentSpawnContext, DispatchAgent};
+    use oneiron::attempt_queue::AttemptRecord;
+    use oneiron::policy_manifest_doors::{
+        ActorCeiling, PolicyCeiling, PolicyManifestPut, PolicyManifestRead,
+        policy_manifests_as_owner, put_policy_manifest_as_owner,
+    };
+    use oneiron::run_tree::{RunAskQuestion, RunSignalInput, RunSignalKind, RunTreeAdapter};
+    use oneiron::task_verb::HostBinding;
+
+    const ASK_PROMPT: &str = "Which branch should the run keep?";
+    const SIGNAL_INSTRUCTION: &str = "Keep the current branch until the owner answers.";
+
     let (_dir, vault) = open_vault()?;
-    // A TASK assigned to the seeded default agent runs as that agent.
     let (agent, _) = vault
         .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)?
         .ok_or("the default agent is seeded")?;
-    let creator = person(&vault, EntityId::from_bytes(CREATOR_BYTES)?)?;
-    let receipt = vault.memory(creator, EdgeActorClass::Agent).tasks_create(
-        &TaskCreateSpec::new(
-            rmpv::Value::Nil,
-            Some("read the run tree".to_owned()),
-            Some(creator),
-            None,
-        )
-        .with_assignee(TaskAssignee::AgentDef {
-            agent_def_ref: agent,
-        }),
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    // The creating run must be the default agent itself, not the unrelated
+    // first-party creator: grant that agent direct TASK creation explicitly.
+    let policy = policy_manifests_as_owner(&vault, &proof, &PolicyManifestRead::default())?;
+    let mut default = policy
+        .manifests
+        .into_iter()
+        .find(|manifest| manifest.manifest_ref == policy.default_manifest_ref)
+        .ok_or("the default policy manifest is seeded")?;
+    default.manifest.actor_ceilings.push(ActorCeiling {
+        actor_class: "agent".to_owned(),
+        actor_ref: Some(agent.to_hex()),
+        ceiling: PolicyCeiling::Auto,
+    });
+    put_policy_manifest_as_owner(
+        &vault,
+        &proof,
+        PolicyManifestPut {
+            manifest_ref: Some(default.manifest_ref),
+            expected_body_hash: Some(default.body_hash),
+            manifest: default.manifest,
+        },
     )?;
+
+    // A root dispatch carries the run tag. Its leased host binding makes
+    // the TASK's realizing attempt inherit that tag and its parent lineage.
+    let AgentDispatchOutcome::Dispatched(parent) = AgentDispatcher::new(&vault)
+        .dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: Some("run-tree-reader".to_owned()),
+                now: 1,
+            },
+            AgentSpawnContext::default().with_depth_remaining(1),
+        )?
+    else {
+        return Err("expected one fresh parent run".into());
+    };
+    let queue = AttemptQueue::new(&vault);
+    // Other runner rows the fresh vault queued are claimed past.
+    let claim_attempt =
+        |attempt_ref: AttemptId| -> Result<AttemptRecord, Box<dyn std::error::Error>> {
+            for _ in 0..32 {
+                let ClaimOutcome::Claimed(row) = queue.claim_kind(
+                    DREAMER_RUNNER_ATTEMPT_KIND,
+                    ClaimAttempt {
+                        lease_owner: "run-tree-reader".to_owned(),
+                        now: u64::MAX,
+                    },
+                )?
+                else {
+                    break;
+                };
+                if row.id == attempt_ref {
+                    return Ok(row);
+                }
+            }
+            Err("the run's attempt is ready to claim".into())
+        };
+    let parent = claim_attempt(parent.attempt.id)?;
+    let receipt = vault
+        .memory(agent, EdgeActorClass::Agent)
+        .with_task_host(HostBinding::from_leased(&parent, None)?)
+        .tasks_create(
+            &TaskCreateSpec::new(
+                rmpv::Value::Nil,
+                Some("read the run tree".to_owned()),
+                Some(agent),
+                None,
+            )
+            .with_assignee(TaskAssignee::AgentDef {
+                agent_def_ref: agent,
+            }),
+        )?;
     let task_ref = receipt.task_ref.ok_or("the TASK is minted")?;
     let Some(TaskRouteOutcome::AgentDispatch { attempt_ref, .. }) = receipt.route else {
         return Err("an agent-definition assignee routes to an agent dispatch".into());
     };
 
     // The try fails with the agent's own words and is retried: the TASK has
-    // two branches, the failed try and its scheduled retry. The dispatch
-    // rides the runner's queue kind; other rows the fresh vault queued are
-    // claimed past. (An agent dispatch's terminal failure takes the typed
-    // failure ladder; a retry records the try's last error the same way.)
-    let queue = AttemptQueue::new(&vault);
-    let mut claimed = None;
-    for _ in 0..32 {
-        let ClaimOutcome::Claimed(row) = queue.claim_kind(
-            DREAMER_RUNNER_ATTEMPT_KIND,
-            ClaimAttempt {
-                lease_owner: "run-tree-reader".to_owned(),
-                now: u64::MAX,
-            },
-        )?
-        else {
-            break;
-        };
-        if row.id == attempt_ref {
-            claimed = Some(row);
-            break;
-        }
-    }
-    let claimed = claimed.ok_or("the TASK's attempt is ready to claim")?;
+    // two branches, the failed try and its scheduled retry. The parent run
+    // has no backlink to this TASK. A retry retains the failed try's inbox.
+    let claimed = claim_attempt(attempt_ref)?;
     let claimed_at = claimed.claimed_at.ok_or("a claim records its time")?;
+    let run_id = claimed
+        .run_id
+        .as_deref()
+        .ok_or("the attempt has a run tag")?;
+    let run_tree = RunTreeAdapter::new(&vault);
+    let ask = run_tree.open_ask(
+        claimed.id,
+        run_id,
+        "run-tree-reader",
+        claimed.attempt_count,
+        "branch-question",
+        vec![RunAskQuestion {
+            who: owner.to_hex(),
+            prompt: ASK_PROMPT.to_owned(),
+            options: Vec::new(),
+            deadline: None,
+        }],
+    )?;
+    let signal = run_tree.signal(RunSignalInput {
+        branch: claimed.id,
+        run_id: run_id.to_owned(),
+        key: "branch-steer".to_owned(),
+        actor: owner.to_hex(),
+        kind: RunSignalKind::Steer {
+            instruction: SIGNAL_INSTRUCTION.to_owned(),
+        },
+    })?;
     queue.retry(RetryAttempt {
         id: claimed.id,
         lease_owner: "run-tree-reader".to_owned(),
@@ -153,8 +236,6 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
     let branch = hex(attempt_ref.as_bytes());
 
     // The vault is shared; one member is its Steward.
-    let owner = vault.ensure_embedded_owner_actor()?;
-    let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     vault.initialize_shared_vault(&proof, SHARED, None, &[], 1)?;
     let steward = person(&vault, EntityId::now())?;
     let member = person(&vault, EntityId::now())?;
@@ -170,6 +251,15 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
     assert_eq!(own.branches.len(), 2);
     let own_try = branch_of(&own, &branch)?;
     assert_eq!(own_try.last_error.as_deref(), Some(AGENT_ERROR));
+    assert_eq!(own_try.asks, vec![ask.clone()]);
+    assert_eq!(own_try.asks[0].questions[0].prompt, ASK_PROMPT);
+    assert_eq!(own_try.signals, vec![signal.clone()]);
+    assert_eq!(
+        own_try.signals[0].kind,
+        RunSignalKind::Steer {
+            instruction: SIGNAL_INSTRUCTION.to_owned(),
+        }
+    );
 
     // A Steward, no actor of the run, reads the branch by its role, without
     // its text.
@@ -206,6 +296,16 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
     assert_eq!(
         branch_of(&as_owner, &branch)?.last_error.as_deref(),
         Some(AGENT_ERROR)
+    );
+    let owner_try = branch_of(&as_owner, &branch)?;
+    assert_eq!(owner_try.asks, vec![ask]);
+    assert_eq!(owner_try.asks[0].questions[0].prompt, ASK_PROMPT);
+    assert_eq!(owner_try.signals, vec![signal]);
+    assert_eq!(
+        owner_try.signals[0].kind,
+        RunSignalKind::Steer {
+            instruction: SIGNAL_INSTRUCTION.to_owned(),
+        }
     );
 
     // The owner stops the TASK with words of its own, which the cancelled
