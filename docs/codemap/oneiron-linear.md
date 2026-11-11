@@ -18,5 +18,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/journal.rs` | src | m | 11 crate-vis | — | Host delivery state beneath the engine outbound dispatch, not a second gate |
 | `src/lib.rs` | src | s | 6 re-export | — | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror |
 | `src/source.rs` | src | s | 2 struct · 3 fn · 2 crate-vis | LinearHostChangeSource, LinearTrackerConfig | Linear issue snapshots from the team-scoped cursor-paged GraphQL connection |
-| `src/tests.rs` | test | m | — | — | — |
+| `src/tests.rs` | test | L | — | — | — |
 | `src/webhook.rs` | src | s | 1 fn | — | Normalizes one verified Linear webhook delivery for the engine (OF-427) |

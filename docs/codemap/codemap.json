@@ -5052,13 +5052,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/authority/machine_write.rs",
      "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 4
      }
     },
@@ -9443,6 +9443,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/claim_dependencies.rs",
+     "purpose": "The records an `esign.*` claim reads beside (FIX 6945 A): its signing document and every original artifact…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -9689,7 +9699,7 @@
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "mod": 2,
       "re-export": 25
      }
@@ -15965,7 +15975,7 @@
      "path": "src/claim/scoped_read/claim_admission.rs",
      "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -18247,7 +18257,7 @@
      "purpose": "Durable code-run correction records (CODE-RUNTIME-02 slice 1: FIX 4411, 4412, 4413)",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 2,
       "struct": 4
@@ -26981,7 +26991,7 @@
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -38390,7 +38400,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/repl/deadline.rs",
@@ -42113,7 +42123,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/gate/default_manifest.rs",
@@ -42697,6 +42707,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/house_grant.rs",
+     "purpose": "The house mind's read of a person's turn for its project question (OF-501, ARCH-0067)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -42767,7 +42787,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 92,
+      "crate-vis": 93,
       "mod": 2,
       "re-export": 8
      }
@@ -50505,19 +50525,21 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ModelStepReceipt",
-      "ModelStepReceiptRequest"
+      "ModelStepReceiptRequest",
+      "ModelStepSubmitRequest",
+      "RunStepCaller"
      ],
      "path": "src/llm/step/public.rs",
-     "purpose": "Owner-submitted durable model steps over the engine's existing step executor",
+     "purpose": "Durable model steps a caller submits over the engine's existing step executor: the vault owner on their…",
      "surface": {
       "crate-vis": 4,
-      "fn": 4,
+      "fn": 8,
       "re-export": 4,
-      "struct": 2
+      "struct": 4
      }
     },
     {
@@ -70805,7 +70827,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 6,
       "struct": 1
      }
@@ -70824,10 +70846,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/scope_summary/landing_reply.rs",
+     "purpose": "Shared admission of a reply against its stored, signed summary landing",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/landing_writer.rs",
+     "purpose": "The engine writer a scope summary lands under (Engine ruling SUMMARY-AS-RECORD-PERMIT-SHAPE = A): the merge…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 14,
       "re-export": 7
      }
     },
@@ -74019,14 +74061,6 @@
      "surface": {
       "crate-vis": 2
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/skill/call/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -77695,6 +77729,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/source_audience/binding_door.rs",
+     "purpose": "Test-only deletion of a live policy row without touching its restored binding",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/source_audience/carried.rs",
      "purpose": "The carried form of a binding and a policy revision (Engine A, 6 Nov 03:46): the keys and the bytes a…",
      "surface": {
@@ -77721,7 +77765,7 @@
      "path": "src/source_audience/mod.rs",
      "purpose": "Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A…",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "enum": 1,
       "struct": 1
      }
@@ -87161,13 +87205,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward.rs",
      "purpose": "Forward rematerialization of window state into the CRDT doc",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -87182,7 +87226,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward/edge_pass/apply.rs",
@@ -87252,7 +87296,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 6,
       "mod": 1,
       "re-export": 10,
@@ -90278,6 +90322,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/callable_skill.rs",
+     "purpose": "Doors for `tests/skill_call_caller_sandbox.rs`: exact source persistence and callable outcome evidence under…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/code_reply_healer.rs",
      "purpose": "Doors for `tests/code_reply_healer.rs` (CODE-RUNTIME-02 ruling B, the lead 10 Nov 10:32): the code-reply…",
      "surface": {
@@ -90344,7 +90398,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
-      "mod": 10
+      "mod": 13
      }
     },
     {
@@ -90365,6 +90419,26 @@
      "purpose": "Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override…",
      "surface": {
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/scope_summary.rs",
+     "purpose": "Doors for `tests/summary_as_record_permit.rs` (SUMMARY-AS-RECORD-PERMIT): a summary minted as the Dreamer…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/source_audience_binding.rs",
+     "purpose": "Test doors for a restored source-audience binding whose live policy is absent",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -96439,7 +96513,7 @@
      "purpose": "The project card a conversation proposes (OF-501, ARCH-0067)",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 7,
       "re-export": 1,
@@ -98377,6 +98451,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_append_provenance.rs",
+     "purpose": "Blob append provenance follows the bound writer class",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -98417,6 +98499,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/claim_declared_cardinality.rs",
+     "purpose": "E2E MUSE-RECALL-03: a declared multi-cardinality predicate keeps each distinct value standing",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -98430,6 +98520,14 @@
      "notable": [],
      "path": "tests/code_reply_healer.rs",
      "purpose": "CR02-T0: CODE-RUNTIME-02 repair-format checks through the library test door",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/code_run_correction_names_served_model.rs",
+     "purpose": "E2E CODE-RUNTIME-02: a code-run correction record names the model that answered",
      "surface": {}
     },
     {
@@ -98499,6 +98597,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/esign_audit_document_admission.rs",
+     "purpose": "`ESIGN-AUDIT-CLAIM-FACET`: an `esign.*` claim reads only with its document",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -98528,6 +98634,14 @@
      "notable": [],
      "path": "tests/git_smart_http.rs",
      "purpose": "Stock-git end-to-end coverage for the vault-as-origin serve wire (ARCH-0068 Phase A, ONE-1908)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_source_read.rs",
+     "purpose": "HOUSE-SOURCE-READ (OF-501; FIX 22357, #6857): the house mind's project question reads the person's turn it…",
      "surface": {}
     },
     {
@@ -99214,6 +99328,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/origin_register_host_git.rs",
+     "purpose": "Origin registration on the host's Git (E2E CODE-CUSTODY-06, `origin.register`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/owner_reason.rs",
      "purpose": "Public confirm → unsure re-ask → reconfirm → undo contract",
      "surface": {}
@@ -99262,6 +99384,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/recall_light_render_text.rs",
+     "purpose": "E2E MUSE-RECALL-08: light recall must return witnessed message text in both structured items and every…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recall_zero_match_returns_no_memory.rs",
+     "purpose": "E2E MUSE-RECALL-04: recall without query evidence returns no memory and records an empty serving run…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs",
      "purpose": "(a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor…",
      "surface": {}
@@ -99296,6 +99434,14 @@
      "notable": [],
      "path": "tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs",
      "purpose": "(c) External-privacy proof ONLY: the hosted-edge domain type is private to the crate, so it cannot even be…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/report_route_one_reader.rs",
+     "purpose": "Regression coverage for report routing with LMDB's one reader slot per thread",
      "surface": {}
     },
     {
@@ -99368,6 +99514,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/run_steps.rs",
+     "purpose": "Primitive D, slice 6.5c: a live agent run submits model steps under its own lease (`ai.steps.submit`…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/run_wait_agents.rs",
      "purpose": "Primitive D, slice 6.5b (SLICE6-MAP row D; ENGINE CALL S65-NAMES = A): `tasks.wait` keeps its name and gains…",
      "surface": {}
@@ -99402,6 +99556,22 @@
      "notable": [],
      "path": "tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs",
      "purpose": "(b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/skill_call_caller_sandbox.rs",
+     "purpose": "Pins callable execution in the caller's sandbox and lease",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/source_audience_unresolved_binding.rs",
+     "purpose": "FIX 22346: an image binding whose live policy is absent reads to no one and never travels",
      "surface": {}
     },
     {
@@ -99458,6 +99628,14 @@
      "notable": [],
      "path": "tests/store_split_compilefail/c_session_route_is_engine_only.rs",
      "purpose": "[SESSION-OVERLAY-ROUTE-OVERLAY-PUBLIC]: `SessionWriteRoute::overlay` is `pub` in the store, but the engine…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/summary_as_record_permit.rs",
+     "purpose": "The owner's summary-as-record lands on a default vault (Engine ruling SUMMARY-AS-RECORD-PERMIT-SHAPE = A)",
      "surface": {}
     },
     {
@@ -99642,7 +99820,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 88,
+     "files": 89,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100209,9 +100387,9 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 208,
+     "files": 209,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
@@ -100762,7 +100940,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100860,7 +101038,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 31,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -100923,7 +101101,7 @@
      "purpose": "Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of…"
     },
     "source_audience": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101021,7 +101199,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 11,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101189,10 +101367,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 241,
+   "over_bar": 244,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7255,
-   "test_files": 932
+   "source_files": 7263,
+   "test_files": 944
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -105131,6 +105309,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/e2e_approved_manifest_fixture.rs",
+     "purpose": "Runs the shipped bench flow to produce and check the approved E2E manifest fixture",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/teacher_probe_cli.rs",
      "purpose": "Run the shipped binary, not only its Rust scoring function, against CI fixtures",
      "surface": {}
@@ -105246,7 +105432,7 @@
    "over_bar": 1,
    "purpose": "oneiron-bench — benchmark harness drivers",
    "source_files": 159,
-   "test_files": 18
+   "test_files": 19
   },
   "oneiron-broker": {
    "files": [
@@ -108768,7 +108954,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 100,
+      "const": 101,
       "crate-vis": 1
      }
     },
@@ -114952,7 +115138,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -116904,9 +117090,9 @@
      "path": "src/llm/protocol.rs",
      "purpose": "Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "enum": 8,
-      "fn": 7,
+      "fn": 8,
       "struct": 8
      }
     },
@@ -125336,13 +125522,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/model_step_doors.rs",
-     "purpose": "Owner-proof model steps; HTTP, SDK and MCP reach the same typed door",
+     "purpose": "Model steps on the owner's proof, or on a live run's own actor (slice 6.5c); HTTP, SDK and MCP reach the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -126476,7 +126662,7 @@
      "path": "src/api/llm.rs",
      "purpose": "Owner-authenticated raw inference",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -137330,7 +137516,7 @@
      "path": "src/models/ladder/step_attempt.rs",
      "purpose": "The durable step executor owns retries; this door sends one gated attempt",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -139401,11 +139587,17 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ManualClockFile",
+      "RuntimeClock"
+     ],
      "path": "src/runtime/clock.rs",
-     "purpose": "Shared wall-clock time in Unix milliseconds",
+     "purpose": "Shared wall-clock time in Unix milliseconds, and `[runtime] clock`: the clock this server's vault reads",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -139417,8 +139609,8 @@
      "path": "src/runtime/config.rs",
      "purpose": "Resolved runtime config including the 163-line resolution impl",
      "surface": {
-      "crate-vis": 3,
-      "fn": 7,
+      "crate-vis": 4,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -139486,7 +139678,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 2,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -140113,7 +140305,7 @@
      "path": "src/server/live_runs/model_request.rs",
      "purpose": "Real model requests served on one held credential attachment (FIX 7176)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -141919,6 +142111,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/runtime_clock.rs",
+     "purpose": "The server's `[runtime] clock`, checked through public paths only: the shipped binaries, `build_app`, and…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/support/fake_llm.rs",
      "purpose": "A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and…",
      "surface": {
@@ -142514,7 +142714,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1827,
-   "test_files": 186
+   "test_files": 187
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -153262,7 +153462,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "Baseline",
@@ -153518,7 +153718,7 @@
     "lint": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3…"
     },
@@ -153558,7 +153758,7 @@
      "purpose": "A server process on a free port, started and stopped by the test"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
    "source_files": 20,
    "test_files": 7

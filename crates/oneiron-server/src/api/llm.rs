@@ -202,6 +202,18 @@ pub(super) fn admit_proxied(
     admit_owner(server, request)
 }
 
+/// [`admit_owner`] for a live run's own actor at the step door (slice
+/// 6.5c): the door has already held the caller's attached run, and the
+/// run's definition holds the model. This binds the named model under the
+/// vault's inference policy, as configured here or registered in the
+/// catalog.
+pub(super) fn admit_live_run(
+    server: &SyncServer,
+    request: &mut LlmRequest,
+) -> Result<(Arc<OfferLadder>, RunAdmission), Box<Response>> {
+    admit_owner(server, request)
+}
+
 /// [`admit`] past the owner check: the call is the owner's.
 fn admit_owner(
     server: &SyncServer,

@@ -236,11 +236,21 @@ impl Memory<'_> {
             content.len(),
         );
         let artifact_id = self.resolve_ref(artifact_ref)?;
-        let provenance = match run_ref {
-            Some(run_ref) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
+        // A machine's unlabelled append reserves its version claim's id as
+        // the proposal key; Keep uses that same id when the claim is born.
+        let claim_id = if run_ref.is_none() && self.actor_class != EdgeActorClass::Human {
+            Some(self.vault.store.clock.entity_id()?)
+        } else {
+            None
+        };
+        let provenance = match (run_ref, claim_id) {
+            (Some(run_ref), _) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
                 run_ref: run_ref.to_owned(),
             },
-            None => crate::blob_artifact::BlobVersionProvenance::UserUpload,
+            (None, Some(claim_id)) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
+                run_ref: claim_id.to_hex(),
+            },
+            (None, None) => crate::blob_artifact::BlobVersionProvenance::UserUpload,
         };
         let occurred = TimeRange {
             start: occurred_at,
@@ -263,6 +273,7 @@ impl Memory<'_> {
                     learned_at.unwrap_or(occurred_at),
                     self.birth_position(),
                     lane,
+                    claim_id,
                 )
             })?)
         })?;
