@@ -2,7 +2,8 @@
 //! agent's last Grant narrows its read (Engine RULINGs AGENT-PAIR-DEFAULT-GRANT
 //! = A, 11 Nov 04:47, and PAIR-GRANT-DESIGN Q1-Q4, 06:51; closes FIX
 //! AGENT-REVOKE-WIDENS). The owner and never-granted controls tell a withheld
-//! row from missing setup.
+//! row from missing setup. A lane held past a revoke, and a saved lane rebuilt
+//! after one, narrow with it (REVIEW-7051 P1).
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
@@ -10,7 +11,7 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, PairingPrincipal, VerifiedSlip};
-use oneiron::claim::{ScopedReadActorKey, base_world_id, default_project_id};
+use oneiron::claim::{FrozenReadLane, ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::consent::{AuthenticatedOwner, ConsentRegistryQuery, ConsentRegistryRow};
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::graph_fs::GraphFsOptions;
@@ -32,6 +33,7 @@ struct Fixture {
     owner: EntityId,
     issuer: HostSlipIssuer,
     owner_proof: AuthenticatedOwner,
+    other_world: EntityId,
     base_path: String,
     other_path: String,
 }
@@ -70,6 +72,7 @@ fn fixture() -> Fixture {
         owner,
         issuer,
         owner_proof,
+        other_world,
         base_path: format!("/worlds/base/claims/{}", base_claim.to_hex()),
         other_path: format!(
             "/worlds/{}/claims/{}",
@@ -208,6 +211,29 @@ fn grants_naming(vault: &Vault, holder: EntityId) -> Vec<ConsentRegistryRow> {
         .collect()
 }
 
+/// The owner mints `agent` a Grant that reads `world` alone.
+fn mint_world_read_grant(fixture: &Fixture, agent: EntityId, world: EntityId) -> EntityId {
+    let mut authority_scope = Scope::top();
+    authority_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(world)]));
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    mint_agent_grant_as(
+        &fixture.vault,
+        &fixture.owner_proof,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+        },
+    )
+    .expect("owner mints the agent a one-world read Grant")
+    .grant
+    .grant_ref
+}
+
 fn revoke(fixture: &Fixture, grant_ref: EntityId) {
     let revoked = revoke_agent_grant_as(
         &fixture.vault,
@@ -302,7 +328,10 @@ fn pairing_a_named_agent_mints_its_default_read_grant() {
     let _again = paired_agent_slip(&fixture, agent, 0x52);
     let after_second = grants_naming(&fixture.vault, agent);
     assert_eq!(
-        after_second.iter().map(|row| &row.grant_ref).collect::<Vec<_>>(),
+        after_second
+            .iter()
+            .map(|row| &row.grant_ref)
+            .collect::<Vec<_>>(),
         vec![&row.grant_ref],
         "actor=named agent {agent:?}; expected a second pairing to keep its one Grant; seen grants={after_second:?}"
     );
@@ -424,5 +453,117 @@ fn pairing_a_named_agent_keeps_its_reach() {
         reads,
         vec![base.to_owned(), other.to_owned()],
         "actor=named agent {agent:?}; expected readable names=[{base}, {other}]; seen names={reads:?}"
+    );
+}
+
+/// REVIEW-7051 P1: a read lane held from before a revoke reads under the
+/// holder's Grants that stand when it serves, not those its key was built
+/// with. Revoking one of two one-world Grants narrows the held lane to the
+/// other world; revoking the last leaves it reading nothing.
+#[test]
+fn a_held_lane_narrows_as_its_holders_grants_are_revoked() {
+    let fixture = fixture();
+    let base = fixture.base_path.as_str();
+    let other = fixture.other_path.as_str();
+    let agent = create_enabled_agent(&fixture, "pair_held_lane_agent");
+    let base_grant = mint_world_read_grant(&fixture, agent, base_world_id());
+    let other_grant = mint_world_read_grant(&fixture, agent, fixture.other_world);
+    let slip = paired_agent_slip(&fixture, agent, 0x91);
+    let key = fixture
+        .vault
+        .credential_read_key(&slip)
+        .expect("agent credential read key")
+        .expect("agent credential grants read");
+    let lane = fixture
+        .vault
+        .scoped_read(key)
+        .recorded_lane()
+        .expect("graph filesystem record lane");
+    let tree = lane.graph_fs(GraphFsOptions::default());
+    let held_reads = |paths: &[&str]| -> Vec<String> {
+        paths
+            .iter()
+            .filter(|path| {
+                tree.read_file(path)
+                    .expect("graph filesystem read")
+                    .value
+                    .is_some()
+            })
+            .map(|path| (*path).to_owned())
+            .collect()
+    };
+    let before = held_reads(&[base, other]);
+    assert_eq!(
+        before,
+        vec![base.to_owned(), other.to_owned()],
+        "actor=agent {agent:?}; expected its held lane to read [{base}, {other}] under its two Grants; seen names={before:?}"
+    );
+
+    revoke(&fixture, other_grant);
+    let after_one = held_reads(&[base, other]);
+    assert_eq!(
+        after_one,
+        vec![base.to_owned()],
+        "actor=agent {agent:?}; expected its held lane to read [{base}] once its second-world Grant is revoked; seen names={after_one:?}"
+    );
+
+    revoke(&fixture, base_grant);
+    let after_last = held_reads(&[base, other]);
+    assert!(
+        after_last.is_empty(),
+        "actor=agent {agent:?}; expected its held lane to read nothing once its last Grant is revoked; seen names={after_last:?}"
+    );
+    let owner = owner_reads(&fixture, &[base, other]);
+    assert_eq!(
+        owner,
+        vec![base.to_owned(), other.to_owned()],
+        "actor=owner {:?}; expected the owner to still read [{base}, {other}]; seen names={owner:?}",
+        fixture.owner,
+    );
+}
+
+/// REVIEW-7051 P1: a saved read lane (a saved question's, a queued
+/// summary's) rebuilt after the holder's last Grant is revoked reads nothing,
+/// although its credential still stands. Rebuilt before the revoke, it reads.
+/// The asker is an agent definition, rebuilt over its own principal key as
+/// a saved question's reader is.
+#[test]
+fn a_saved_lane_rebuilt_after_the_last_revoke_reads_nothing() {
+    let fixture = fixture();
+    let base = fixture.base_path.as_str();
+    let agent = create_enabled_agent(&fixture, "pair_saved_lane_agent");
+    let grant = mint_world_read_grant(&fixture, agent, base_world_id());
+    let slip = paired_agent_slip(&fixture, agent, 0xa1);
+    let key = fixture
+        .vault
+        .credential_read_key(&slip)
+        .expect("agent credential read key")
+        .expect("agent credential grants read");
+    let frozen: FrozenReadLane = fixture
+        .vault
+        .scoped_read(key)
+        .freeze()
+        .expect("the agent's credential read lane freezes");
+    let principal = || {
+        ScopedReadActorKey::with_actor_class(agent.to_hex(), "agent").expect("agent principal key")
+    };
+    let rebuilt_before = frozen
+        .narrow(&fixture.vault, principal())
+        .expect("the saved lane rebuilds before the revoke");
+    let before = readable(&fixture.vault, rebuilt_before, &[base]);
+    assert_eq!(
+        before,
+        vec![base.to_owned()],
+        "actor=agent {agent:?}; expected its saved lane to read [{base}] before the revoke; seen names={before:?}"
+    );
+
+    revoke(&fixture, grant);
+    let rebuilt_after = frozen
+        .narrow(&fixture.vault, principal())
+        .expect("the saved lane rebuilds after the revoke");
+    let after = readable(&fixture.vault, rebuilt_after, &[base]);
+    assert!(
+        after.is_empty(),
+        "actor=agent {agent:?}; expected its saved lane to read nothing after its last Grant's revoke; seen names={after:?}"
     );
 }
