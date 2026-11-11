@@ -901,7 +901,9 @@ suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the
   expect(saved.evidence.foreign_world_ref).toBe(foreignWorld);
   expect(saved.evidence.source).toBe("imported");
   expect(saved.evidence.first_party_corroboration).toBe(false);
-  expect(saved.evidence.writer_ref).not.toBe(receiver.pairedActor.principalRef);
+  // Independent vaults may bootstrap the same owner PERSON id; writer_ref
+  // preserves the source author. Foreign standing is the world/source/history above and below.
+  expect(saved.evidence.writer_ref).toBe(engine.pairedActor.principalRef);
   expect(saved.history).toHaveLength(1);
   const [origin] = saved.history;
   if (!origin) throw new Error("Delivered claim has no delivery origin");
@@ -915,6 +917,7 @@ suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the
   expect(ownEvidence.foreign_world_ref ?? null).toBeNull();
   expect(ownEvidence.source).toBe("user_stated");
   expect(ownEvidence.first_party_corroboration).toBe(true);
+  expect(ownEvidence.writer_ref).toBe(receiver.pairedActor.principalRef);
   expect(ownEvidence.delivery_history ?? []).toEqual([]);
 
   // Forged input: altered bytes, or a delivery relabelled as the receiver's own.
