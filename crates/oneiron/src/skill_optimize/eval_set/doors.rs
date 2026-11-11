@@ -382,3 +382,6 @@ pub fn pick_label(
         vault.now_recorded_at(),
     )
 }
+
+mod cohort_retire;
+pub use cohort_retire::{EvalCohortRetireRequest, retire_cohort};

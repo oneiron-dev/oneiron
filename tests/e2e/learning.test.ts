@@ -222,6 +222,8 @@ suite.todo(test, "LEARNING-05", "waits on typed campaign output-archive descript
 // summaries, rubrics or synthetic rows. Every derivative stays with its family.
 // New sealed cohorts use explicit dates. Exposed labels retire to development;
 // one fixed reference cohort stays. Near-copy similarity flags REVIEW only.
+// Retire: vault.evals.cohorts.retire (the owner, or an agent on a Grant that lists it)
+// retires a served non-reference cohort; its receipt names that caller.
 // Inspect counts of served candidates, queries and promotions independently.
 // Tiny rare slice, interval crossing margin, changed set, changed rubric and
 // divergent canary each yield unknown, never a confident invented number.
