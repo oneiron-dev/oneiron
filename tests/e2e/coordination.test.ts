@@ -3141,8 +3141,9 @@ const museLoop04CandidateId = `loop04_candidate/${museLoop04CandidateModel}@${mu
 const museLoop04CatalogRevision = "muse-loop-04-catalog-1";
 const museLoop04ScoreSource = "muse-loop-04-scores";
 const museLoop04Benchmark = "muse-loop-04-benchmark";
-const museLoop04OutcomePredicate = "muse_loop_04_outcome";
+const museLoop04OutcomePredicate = "profile.muse_loop_04.outcome";
 const museLoop04ProviderPath = "/v1/chat/completions";
+const museLoop04DecisionWording = "Answer the typed question about the supplied graph unit and sources.";
 
 function museLoop04Definition(
   units: readonly string[],
@@ -3337,6 +3338,14 @@ suite.test(
         "",
         `[models.roles.${museLoop04Role}]`,
         `model = "loop04_incumbent:${museLoop04IncumbentModel}"`,
+        "",
+        "[models.roles.checker]",
+        `model = "loop04_candidate:${museLoop04CandidateModel}"`,
+        "",
+        "[models.decisions.big]",
+        `role = "${museLoop04Role}"`,
+        `version = "${museLoop04Revision}"`,
+        `wording = ${JSON.stringify(museLoop04DecisionWording)}`,
       ].join("\n"),
     });
     const owner = engine.client;
@@ -3426,6 +3435,8 @@ suite.test(
         body: { name: `Muse Loop 04 Unit ${index}` },
         occurred_at: museLoop04OccurredAt,
       } satisfies FacadeInput<"vault.structural.put">);
+      expect((await owner.call("vault.get", { entity_ref: unit.id_hex })).value)
+        .toMatchObject({ kind: "PERSON", body: { name: `Muse Loop 04 Unit ${index}` } });
       unitIds.push(unit.id_hex);
     }
     const created = await owner.call("vault.questions.create", {
@@ -3457,9 +3468,11 @@ suite.test(
         confidence: 1,
         source: "user_stated",
         scope: claimScope,
-        occurred_at: museLoop04OccurredAt,
+        occurred_at: Math.max(answer.answered_at, Math.floor(Date.now() / 1000)),
       } satisfies FacadeInput<"vault.claims.upsert">);
       await engine.awaitReceipt(fact.receipt_ref);
+      expect((await owner.call("vault.get", { entity_ref: fact.claim_short_id })).value)
+        .toMatchObject({ kind: "CLAIM", body: { predicate: museLoop04OutcomePredicate, value: "yes" } });
     }
     await owner.call("vault.questions.outcomes.project", { id: questionId });
     const outcomes = await awaitPublic(
@@ -3475,7 +3488,7 @@ suite.test(
       }));
     expect(heldOut).toHaveLength(3);
 
-    // The trial goal: the goal record of the improver skill skill_optimize.
+    // The trial goal: the goal record of the seeded skill-optimize improver.
     let goalId: string | undefined;
     {
       let after: string | undefined;
@@ -3484,8 +3497,7 @@ suite.test(
           limit: 100,
           ...(after ? { after } : {}),
         } satisfies FacadeInput<"vault.skills.list">);
-        const skill = page.skills.find((row) => row.skill_id === "skill_optimize")
-          ?? page.skills.find((row) => row.skill_id.includes("optimize"));
+        const skill = page.skills.find((row) => row.skill_id === "skill-optimize");
         if (skill) {
           goalId = (await owner.call("vault.skills.optimize.goal.get", { skill: skill.entity })).goal_id;
           break;
@@ -3494,7 +3506,7 @@ suite.test(
         after = page.next_after;
       }
     }
-    if (!goalId) throw new Error("No skill_optimize goal is readable for the model trial");
+    if (!goalId) throw new Error("No skill-optimize goal is readable for the model trial");
     const trialGoal = goalId;
 
     const usageBound: FacadeInput<"vault.models.trials.nominate">["request"]["incumbent_usage_bound"] = {
@@ -3636,16 +3648,12 @@ suite.test(
 
     // The agent proposes; the owner approves or refuses. Before any grant,
     // the paired agent cannot propose the switch.
-    const agentRecord = await owner.call("vault.structural.put", {
-      kind: "PERSON",
-      body: { name: "Muse Loop 04 Agent" },
-      occurred_at: museLoop04OccurredAt,
-    } satisfies FacadeInput<"vault.structural.put">);
-    const agent = await engine.pairActor({
-      principalRef: agentRecord.id_hex,
-      actorClass: "agent",
-      scope: ["core:read", "core:write"],
+    const agent = await engine.mintAgentToken({
+      name: "muse-loop-04-agent",
+      tier: "propose-only",
     });
+    expect((await owner.call("vault.get", { entity_ref: agent.principalRef })).value)
+      .toMatchObject({ kind: "PERSON", body: { name: "muse-loop-04-agent" } });
     const proposeInputDefault = {
       question: questionId,
       trial: trialDefault.id,
@@ -3671,11 +3679,13 @@ suite.test(
         facets: { kind: "all" },
         bands: { kind: "all" },
         audience: { kind: "all" },
-        verbs: { kind: "some", values: ["vault.models.bindings.propose", "vault.models.bindings.get"] },
+        verbs: { kind: "some", values: ["read", "vault.models.bindings.propose", "vault.models.bindings.get"] },
         sensitivity: { kind: "all" },
       },
     } satisfies FacadeInput<"vault.agents.grants.mint">);
     expect(minted.grant.confers).toBe(true);
+    expect((await owner.call("vault.get", { entity_ref: minted.grant.grant_ref })).value)
+      .toMatchObject({ kind: "FEDERATION_GRANT" });
     const proposedCall = await museLoop04ProposeWithReceipt(agent.client, proposeInputDefault);
     const proposal = proposedCall.proposal;
     const proposeReceiptRef = proposedCall.receiptRef;
@@ -3805,6 +3815,8 @@ suite.test(
       body: { name: "Muse Loop 04 Future Unit" },
       occurred_at: museLoop04OccurredAt,
     } satisfies FacadeInput<"vault.structural.put">);
+    expect((await owner.call("vault.get", { entity_ref: futureUnit.id_hex })).value)
+      .toMatchObject({ kind: "PERSON", body: { name: "Muse Loop 04 Future Unit" } });
     const edited = await owner.call("vault.questions.edit", {
       id: questionId,
       expected_version: questionVersion,
@@ -3812,6 +3824,7 @@ suite.test(
     } satisfies FacadeInput<"vault.questions.edit">);
     const futureVersion = edited.definition.question.version;
     expect(futureVersion).not.toBe(questionVersion);
+    expect(await owner.call("vault.questions.read", { id: questionId })).toEqual(edited);
     const futureRefreshed = museLoop04GraphOnly(
       await owner.call("vault.questions.refresh", { id: questionId }),
     );
