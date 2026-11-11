@@ -362,6 +362,11 @@ struct Masker {
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,
+    /// The batch door's plan: a recovery phrase split over a file's parts
+    /// is marked word by word, one record for its words (LABEL-04). A
+    /// carrier's text is placed as before, such a phrase left unplaced: a
+    /// lifted text's handle stands for one value (`carrier::LiftedKeys`).
+    places_split_phrases: bool,
     /// Each file's key places by its bytes' hash: marked before, or by this
     /// plan.
     marked: HashMap<[u8; 32], KeyPlaces>,
