@@ -289,12 +289,15 @@ fn a_held_wake_rides_to_the_home_elected_after_it_was_held() {
     assert!(doors::hold_wake_on_lapsed_slip(&a.vault, turn, registration, now).unwrap());
     put_row(&a, registration);
 
-    // B is elected home, and the window opens on both machines.
+    // B is elected home. The arming rides its own month, separately from
+    // the TURN's March window; both must reach B before its pass.
     elect(&[&a, &b], home_b);
     put_row(&b, registration);
-    let doc_a = a.doc();
-    let doc_b = b.doc();
-    exchange(&doc_a, &doc_b);
+    for window in [WindowKey::new(WINDOW), WindowKey::from_timestamp(now - 60)] {
+        let doc_a = a.manager.open_window(&window).unwrap().doc.clone();
+        let doc_b = b.manager.open_window(&window).unwrap().doc.clone();
+        exchange(&doc_a, &doc_b);
+    }
     b.housekeeping();
 
     // The held wake rode to B with its hold: B owes it, and decides nothing
