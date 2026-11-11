@@ -108,7 +108,7 @@ fn seed(vault_path: &Path) -> (EntityId, EntityId) {
             ENTITY_TYPE_TURN,
             when,
             at,
-            &encode(serde_json::json!({"txt": "call me Oleksii", "spkr": "user", "at": at})),
+            &encode(serde_json::json!({"txt": "call me Owen", "spkr": "user", "at": at})),
         )
         .edge_checked(&turn, &conversation, 1.0)
         .commit()
@@ -135,7 +135,7 @@ fn extraction(subject: EntityId, turn: EntityId) -> String {
     serde_json::json!({"candidates": [{
         "subject": subject.to_hex(),
         "predicate": "profile.name",
-        "value": "Oleksii",
+        "value": "Owen",
         "confidence": 0.9,
         "evidence_refs": [{"source_id": turn.to_hex(), "byte_range": [0, 4]}],
     }]})

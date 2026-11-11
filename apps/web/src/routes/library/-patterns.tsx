@@ -33,6 +33,7 @@ import {
   type Step,
 } from '~/design-system'
 import { Section, Specimen } from './-gallery-frame'
+import { ChartCard, TableCard, TasksFlow } from './-cards'
 
 /* Pattern sections of the /library gallery: each demo works, on fixture
    data from the app's cast. */
@@ -232,6 +233,46 @@ function ColumnDemo() {
       <span className="lib-readout">
         <Verb onClick={() => setMarked(true)}>go to the pinned message</Verb>
         <span data-specimen="column-marked">{marked ? 'marked' : 'not marked'}</span>
+      </span>
+    </div>
+  )
+}
+
+/* ── cards an agent composes ─────────────────────────────────────────── */
+
+/* Three of Metryon's messages: the tasks it split the view into, the
+   stores it would put in the pilot, and the first cut of the Q4 view. */
+function CardsDemo() {
+  const [log, setLog] = React.useState<string[]>([])
+  const say = (line: string) => setLog((l) => [...l.slice(-2), line])
+  return (
+    <div className="lib-stack">
+      <div className="lib-messages lib-column" data-specimen="cards">
+        <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={24} />} name="Metryon" time="14:02">
+          <MessageRow.Text>I split the Q4 view in three.</MessageRow.Text>
+          <TasksFlow onOpen={(id) => say(`task ${id}: opened`)} />
+        </MessageRow>
+        <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={24} />} name="Metryon" time="14:20" data-specimen="card-table">
+          <MessageRow.Text>Here are the stores I would put in the pilot.</MessageRow.Text>
+          <TableCard onLog={say} />
+        </MessageRow>
+        <MessageRow
+          author={<Glyph glyph="ruler" label="Metryon" size={24} />}
+          name="Metryon"
+          time="14:31"
+          marks={
+            <span title="Pinned in this room" className="lib-pin-mark">
+              <Icon name="pin" size={14} />
+            </span>
+          }
+          data-specimen="card-chart"
+        >
+          <MessageRow.Text>First cut of the Q4 view. Your answer on weeks 44 to 46 decides which reading I keep.</MessageRow.Text>
+          <ChartCard onLog={say} specimen="chart-card" />
+        </MessageRow>
+      </div>
+      <span className="lib-readout" data-specimen="cards-log">
+        {log.length ? log.join(', ') : 'Toggle a store, switch the reading, or press a task.'}
       </span>
     </div>
   )
@@ -918,6 +959,23 @@ export function PatternSections() {
         </Specimen>
         <Specimen name="plain: the same answers as marks and words" full>
           <AsksBlock answers="plain" specimen="needs-you-plain" />
+        </Specimen>
+      </Section>
+
+      <Section title="ComposedCard, BarChart, TaskFlow">
+        <Specimen name="under messages: a task flow, a table card and a chart card; toggle a store, switch the reading, rest on the i for the note, rest on a column for its value" full>
+          <CardsDemo />
+        </Specimen>
+        <Specimen name="the chart card, the other reading chosen" full>
+          <div className="lib-column" data-specimen="chart-card-normal">
+            <ChartCard defaultReading="normal" />
+          </div>
+        </Specimen>
+        <Specimen name="bare, for the pane and for a view: the title at the section size, the note as text under the body" full>
+          <div className="lib-stack lib-column lib-cards-bare" data-specimen="cards-bare">
+            <TableCard bare />
+            <ChartCard bare />
+          </div>
         </Specimen>
       </Section>
 
