@@ -112,7 +112,7 @@ impl<'a> ServeAxisBandit<'a> {
             })
             .collect();
         if let Some((project, _)) = goal.project
-            && let Some(record) = vault.project_intake_goal(project)?
+            && let Some(record) = vault.project_intake_goal_for_coach(project)?
         {
             for axis in record
                 .primary_axes

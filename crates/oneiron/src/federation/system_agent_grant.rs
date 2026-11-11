@@ -24,6 +24,12 @@
 //! C): the fold's read row carries them, and each row a key reads is judged
 //! against them. A vault no host has opened keeps reading by its manifest
 //! rows, as before.
+//!
+//! The Coach holds one too (untangle 6.6, S66-1/S66-2): `read` and
+//! `engine.controls`, minted by the same host default with no rows to copy.
+//! Its `read` gives one core-read row in the fold, beside its own offer row,
+//! which stays; `engine.controls` lets it tune the engine's knobs
+//! ([`Vault::engine_control_allowed`]).
 
 use std::collections::BTreeSet;
 
@@ -73,11 +79,61 @@ pub(crate) enum SystemAgentGrantState {
     OptedOut,
 }
 
+/// A base agent whose reach a Steward grant carries once the host has
+/// minted it: the Dreamer (6.3) and the Coach (6.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SystemAgent {
+    Dreamer,
+    Coach,
+}
+
+impl SystemAgent {
+    /// Every base agent the host mints a Steward grant for.
+    pub(crate) const ALL: [Self; 2] = [Self::Dreamer, Self::Coach];
+
+    /// The agent's fixed principal.
+    pub(crate) fn actor_id(self) -> Result<EntityId> {
+        match self {
+            Self::Dreamer => crate::dreamer_runner::authority::dreamer_actor_id(),
+            Self::Coach => crate::dreamer_runner::authority::coach_actor_id(),
+        }
+    }
+
+    /// The base agent `actor` is, if any.
+    pub(crate) fn of(actor: EntityId) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|agent| agent.actor_id().is_ok_and(|id| id == actor))
+    }
+
+    /// The vault functions its grant keeps running, for the narrowing
+    /// warning.
+    fn functions(self) -> &'static [SystemFunction] {
+        match self {
+            Self::Dreamer => &narrowing::DREAMER_FUNCTIONS,
+            Self::Coach => &narrowing::COACH_FUNCTIONS,
+        }
+    }
+
+    /// The verbs its default grant holds: the whole Steward default for the
+    /// Dreamer; `read` and `engine.controls` for the Coach.
+    fn default_verbs(self) -> BTreeSet<String> {
+        let verbs: &[&str] = match self {
+            Self::Dreamer => &grant_scope::STEWARD_VERBS,
+            Self::Coach => &[
+                grant_scope::STEWARD_READ_VERB,
+                grant_scope::ENGINE_CONTROLS_VERB,
+            ],
+        };
+        verbs.iter().map(|verb| (*verb).to_owned()).collect()
+    }
+}
+
 /// Whether `actor` is a base agent whose reach a Steward grant carries once
-/// the host has minted it: the Dreamer (6.3); the Coach joins in 6.6.
+/// the host has minted it.
 #[must_use]
 pub(crate) fn holds_system_agent_grant(actor: EntityId) -> bool {
-    crate::dreamer_runner::authority::dreamer_actor_id().is_ok_and(|dreamer| dreamer == actor)
+    SystemAgent::of(actor).is_some()
 }
 
 /// Whether `row` is a base agent's Steward grant: role and preset Steward, an
@@ -136,7 +192,7 @@ pub(crate) fn standing_steward_verbs_in(
     Ok(match &row.authority_scope.verbs {
         ScopeAxis::Some(verbs) => verbs
             .iter()
-            .filter(|verb| grant_scope::STEWARD_VERBS.contains(&verb.as_str()))
+            .filter(|verb| grant_scope::STEWARD_CEILING_VERBS.contains(&verb.as_str()))
             .cloned()
             .collect(),
         ScopeAxis::All | ScopeAxis::Bottom => BTreeSet::new(),
@@ -167,25 +223,46 @@ pub(crate) fn standing_steward_read_scope_in(
     Ok(reads.then(|| row.authority_scope.meet(&super::scope_codec::read_preset())))
 }
 
-/// How the policy fold reads the Dreamer's rows in `txn`: `None` while no
-/// host has minted its grant (the manifest rows stand, as before); else the
-/// verbs its rows come from (empty for an opt-out or a grant that no longer
-/// stands), and the scope its read row carries
-/// ([`standing_steward_read_scope_in`]).
+/// One base agent's rows as the policy fold reads them from its grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StewardRows {
+    pub(crate) agent: SystemAgent,
+    /// The agent's principal, hex, as policy rows name it.
+    pub(crate) actor_ref: String,
+    /// The verbs its rows come from: empty for an opt-out or a grant that no
+    /// longer stands.
+    pub(crate) verbs: BTreeSet<String>,
+    /// The scope its read row carries ([`standing_steward_read_scope_in`]):
+    /// `None` for an opt-out or a grant that does not stand with `read`.
+    pub(crate) read_scope: Option<Scope>,
+}
+
+/// How the policy fold reads the base agents' rows in `txn`: one entry per
+/// agent a host has minted a grant for (or recorded the opt-out of). An
+/// agent with no marker is absent, and its manifest rows stand, as before.
 pub(crate) fn steward_rows_rewrite(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
-) -> Result<Option<(String, BTreeSet<String>, Option<Scope>)>> {
-    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
-    let (verbs, read_scope) = match SYSTEM_AGENT_GRANT.get(store, txn, &dreamer)? {
-        None => return Ok(None),
-        Some(SystemAgentGrantState::OptedOut) => (BTreeSet::new(), None),
-        Some(SystemAgentGrantState::Minted { grant }) => (
-            standing_steward_verbs_in(store, txn, grant, dreamer)?,
-            standing_steward_read_scope_in(store, txn, grant, dreamer)?,
-        ),
-    };
-    Ok(Some((dreamer.to_hex(), verbs, read_scope)))
+) -> Result<Vec<StewardRows>> {
+    let mut rewrites = Vec::new();
+    for agent in SystemAgent::ALL {
+        let actor = agent.actor_id()?;
+        let (verbs, read_scope) = match SYSTEM_AGENT_GRANT.get(store, txn, &actor)? {
+            None => continue,
+            Some(SystemAgentGrantState::OptedOut) => (BTreeSet::new(), None),
+            Some(SystemAgentGrantState::Minted { grant }) => (
+                standing_steward_verbs_in(store, txn, grant, actor)?,
+                standing_steward_read_scope_in(store, txn, grant, actor)?,
+            ),
+        };
+        rewrites.push(StewardRows {
+            agent,
+            actor_ref: actor.to_hex(),
+            verbs,
+            read_scope,
+        });
+    }
+    Ok(rewrites)
 }
 
 /// The Steward grant a base agent's marker names in `txn`: `None` with no
@@ -249,6 +326,17 @@ impl Vault {
         {
             return Ok(false);
         }
+        self.system_agent_binding_live_in(txn, agent)
+    }
+
+    /// Whether base agent `agent`'s MACHINE binding is Active on a roster
+    /// key that is not revoked, in `txn`: the live delegation its grant is
+    /// held to.
+    pub(super) fn system_agent_binding_live_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+    ) -> Result<bool> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         Ok(fold.actor_bindings.iter().any(|(key, binding)| {
             binding.actor_ref == agent
@@ -277,10 +365,11 @@ impl Vault {
     }
 
     /// The host's default for every base agent whose reach a Steward grant
-    /// carries (untangle 6.3): once per vault, the first mint copies the
-    /// agent's live policy rows into its grant as the embedded owner's signed
-    /// act, or records the opt-out when the owner had removed them all. A
-    /// vault already marked is left as it is: the host never mints again.
+    /// carries (untangle 6.3, 6.6): once per vault and agent, as the
+    /// embedded owner's signed act. The Dreamer's first mint copies its live
+    /// policy rows into its grant, or records the opt-out when the owner had
+    /// removed them all; the Coach's holds `read` and `engine.controls`. An
+    /// agent already marked is left as it is: the host never mints again.
     /// Hosts call it after `provision_engine_machine_identities`.
     ///
     /// A vault whose embedded owner cannot act here (no owner PERSON yet,
@@ -292,42 +381,62 @@ impl Vault {
     ///
     /// A store failure reading the marker or resolving the Dreamer.
     pub fn provision_system_agent_grants(&self) -> Result<()> {
+        // Both principals are seeded (immutable MACHINE rows) before a mint
+        // names them.
         let dreamer = self.dreamer_authority()?.entity_ref();
-        {
+        let coach = self.coach_authority()?.entity_ref();
+        let unmarked: Vec<(SystemAgent, EntityId)> = {
             let txn = self.store.env.read_txn()?;
-            if SYSTEM_AGENT_GRANT.contains(&self.store, &txn, &dreamer)? {
-                return Ok(());
+            let mut unmarked = Vec::new();
+            for (agent, actor) in [(SystemAgent::Dreamer, dreamer), (SystemAgent::Coach, coach)] {
+                if !SYSTEM_AGENT_GRANT.contains(&self.store, &txn, &actor)? {
+                    unmarked.push((agent, actor));
+                }
             }
+            unmarked
+        };
+        if unmarked.is_empty() {
+            return Ok(());
         }
         let Some(owner) = self.embedded_owner_proof()? else {
             return Ok(());
         };
-        let outcome = self.with_write_txn_grouped(|txn| {
-            if SYSTEM_AGENT_GRANT.contains(&self.store, &*txn, &dreamer)? {
-                return Ok(());
+        for (agent, actor) in unmarked {
+            let outcome = self.with_write_txn_grouped(|txn| {
+                if SYSTEM_AGENT_GRANT.contains(&self.store, &*txn, &actor)? {
+                    return Ok(());
+                }
+                let verbs = match agent {
+                    SystemAgent::Dreamer => {
+                        let policy = crate::gate::resolve_policy_manifest(&self.store, &*txn)?;
+                        let (reads, lands) =
+                            crate::gate::dreamer_rows_held(&policy, &actor.to_hex())?;
+                        copied_verbs(reads, lands)
+                    }
+                    SystemAgent::Coach => agent.default_verbs(),
+                };
+                let state = if verbs.is_empty() {
+                    SystemAgentGrantState::OptedOut
+                } else {
+                    let grant = self.mint_steward_grant_in_txn(txn, &owner, actor, verbs)?;
+                    SystemAgentGrantState::Minted { grant }
+                };
+                SYSTEM_AGENT_GRANT.put(&self.store, txn, &actor, &state)
+            });
+            match outcome {
+                Ok(()) => {
+                    // The fold's rows moved with the marker: a floor this
+                    // commit moved is judged again at once (FIX 5505).
+                    self.apply_pending_rebinds_after_commit();
+                }
+                // The embedded owner could not act here: the agent's reach
+                // stays as its rows give it.
+                Err(error) => tracing::warn!(
+                    agent = ?agent,
+                    kind = ?error.kind(),
+                    "a base agent's Steward grant was not minted at this open; its policy rows stand"
+                ),
             }
-            let policy = crate::gate::resolve_policy_manifest(&self.store, &*txn)?;
-            let (reads, lands) = crate::gate::dreamer_rows_held(&policy, &dreamer.to_hex())?;
-            let verbs = copied_verbs(reads, lands);
-            let state = if verbs.is_empty() {
-                SystemAgentGrantState::OptedOut
-            } else {
-                let grant = self.mint_steward_grant_in_txn(txn, &owner, dreamer, verbs)?;
-                SystemAgentGrantState::Minted { grant }
-            };
-            SYSTEM_AGENT_GRANT.put(&self.store, txn, &dreamer, &state)
-        });
-        match outcome {
-            Ok(()) => {
-                // The fold's rows moved with the marker: a floor this commit
-                // moved is judged again at once (FIX 5505).
-                self.apply_pending_rebinds_after_commit();
-            }
-            // The embedded owner could not act here: the rows stand.
-            Err(error) => tracing::warn!(
-                kind = ?error.kind(),
-                "the Dreamer's Steward grant was not minted at this open; its policy rows stand"
-            ),
         }
         Ok(())
     }
@@ -339,22 +448,48 @@ impl Vault {
     /// owner's signed act in the same writer, so the Dreamer holds one
     /// Steward grant and a later whole revoke leaves none.
     pub(crate) fn grant_dreamer_steward(&self, owner: &AuthenticatedOwner) -> Result<bool> {
-        let dreamer = self.dreamer_authority()?.entity_ref();
-        let full = copied_verbs(true, true);
+        self.grant_system_agent_default(owner, SystemAgent::Dreamer)
+    }
+
+    /// The owner's act: the Coach holds its default grant (`read`,
+    /// `engine.controls`) from now on, the way back after he narrowed or
+    /// revoked it (6.6). `false` when a grant the marker names already holds
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// An owner refusal; a store failure; `AuthorityRefused` when this
+    /// install cannot carry the owner's act.
+    pub fn grant_coach_steward(&self, owner: &AuthenticatedOwner) -> Result<bool> {
+        self.grant_system_agent_default(owner, SystemAgent::Coach)
+    }
+
+    /// Mints `agent`'s default Steward grant as `owner`'s act when no grant
+    /// its marker names stands with every default verb, and marks it.
+    fn grant_system_agent_default(
+        &self,
+        owner: &AuthenticatedOwner,
+        agent: SystemAgent,
+    ) -> Result<bool> {
+        let actor = match agent {
+            SystemAgent::Dreamer => self.dreamer_authority()?.entity_ref(),
+            SystemAgent::Coach => self.coach_authority()?.entity_ref(),
+        };
+        let full = agent.default_verbs();
         let minted = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
             if let Some(SystemAgentGrantState::Minted { grant }) =
-                SYSTEM_AGENT_GRANT.get(&self.store, &*txn, &dreamer)?
-                && standing_steward_verbs_in(&self.store, &*txn, grant, dreamer)? == full
+                SYSTEM_AGENT_GRANT.get(&self.store, &*txn, &actor)?
+                && standing_steward_verbs_in(&self.store, &*txn, grant, actor)? == full
             {
                 return Ok(false);
             }
-            self.revoke_standing_steward_grants_in_txn(txn, owner, dreamer)?;
-            let grant = self.mint_steward_grant_in_txn(txn, owner, dreamer, full.clone())?;
+            self.revoke_standing_steward_grants_in_txn(txn, owner, actor)?;
+            let grant = self.mint_steward_grant_in_txn(txn, owner, actor, full.clone())?;
             SYSTEM_AGENT_GRANT.put(
                 &self.store,
                 txn,
-                &dreamer,
+                &actor,
                 &SystemAgentGrantState::Minted { grant },
             )?;
             Ok(true)
@@ -363,6 +498,52 @@ impl Vault {
             self.apply_pending_rebinds_after_commit();
         }
         Ok(minted)
+    }
+
+    /// The owner's act (S66-1): `agent`, any agent principal that is not a
+    /// base agent, may tune the engine's knobs from now on. Mints it a
+    /// Steward grant naming `engine.controls` alone, as `owner`'s signed act,
+    /// and returns the grant. The Coach's own grant comes back through
+    /// [`Self::grant_coach_steward`].
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` for a base agent; an owner refusal; a store failure;
+    /// `AuthorityRefused` when this install cannot carry the owner's act.
+    pub fn grant_engine_controls(
+        &self,
+        owner: &AuthenticatedOwner,
+        agent: EntityId,
+    ) -> Result<EntityId> {
+        if SystemAgent::of(agent).is_some() {
+            return Err(crate::error::Error::InvalidConfig(
+                "a base agent's grant is its default grant".into(),
+            ));
+        }
+        let grant = self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
+            self.mint_steward_grant_in_txn(
+                txn,
+                owner,
+                agent,
+                BTreeSet::from([grant_scope::ENGINE_CONTROLS_VERB.to_owned()]),
+            )
+        })?;
+        self.apply_pending_rebinds_after_commit();
+        Ok(grant)
+    }
+
+    /// The vault root a Steward grant on this vault names: the shared vault,
+    /// else this install's own residence.
+    pub(super) fn steward_root_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<FederationGrantScope> {
+        Ok(self
+            .shared_vault_creation_in_txn(txn)?
+            .map_or_else(own_device_residence_scope, |shared| {
+                FederationGrantScope::vault(shared.vault_id)
+            }))
     }
 
     /// Every grant row that stands in `txn` as a Steward grant naming base
@@ -429,11 +610,7 @@ impl Vault {
         agent: EntityId,
         verbs: BTreeSet<String>,
     ) -> Result<EntityId> {
-        let scope = self
-            .shared_vault_creation_in_txn(txn)?
-            .map_or_else(own_device_residence_scope, |shared| {
-                FederationGrantScope::vault(shared.vault_id)
-            });
+        let scope = self.steward_root_scope_in_txn(txn)?;
         let mut grant = FederationGrant::new(
             scope,
             agent,
@@ -486,10 +663,10 @@ impl Vault {
             false,
             true,
         )?;
-        // The Dreamer's grant keeps the vault working: narrowing it warns
+        // A base agent's grant keeps the vault working: narrowing it warns
         // and waits for the owner's confirm (6.3c).
-        if crate::dreamer_runner::authority::dreamer_actor_id()? == agent {
-            self.mark_system_critical_in_txn(txn, id, &narrowing::DREAMER_FUNCTIONS)?;
+        if let Some(system_agent) = SystemAgent::of(agent) {
+            self.mark_system_critical_in_txn(txn, id, system_agent.functions())?;
         }
         Ok(id)
     }
@@ -567,8 +744,8 @@ impl Vault {
                 &agent,
                 &SystemAgentGrantState::Minted { grant: id },
             )?;
-            if crate::dreamer_runner::authority::dreamer_actor_id()? == agent {
-                self.mark_system_critical_in_txn(txn, id, &narrowing::DREAMER_FUNCTIONS)?;
+            if let Some(system_agent) = SystemAgent::of(agent) {
+                self.mark_system_critical_in_txn(txn, id, system_agent.functions())?;
             }
             Ok(id)
         })
