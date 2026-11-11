@@ -1,6 +1,15 @@
 //! Every struct, enum and alias of the engine crates, with each file's imports, and the heuristic resolver that
 //! finds the item a path names from a file.
+//!
+//! The index reads every file of each crate it loads, but a file's text reaches an output only through a lookup by
+//! key: the items of a name (in one file, or in every loaded file for the lookup by name), a file's imports, the file
+//! of a module, a file's text, the serde impls of a name, the macro calls that define a name and the macros they
+//! call. Each lookup records in [`Index::dependencies`] every file that holds an entry it read or could have chosen,
+//! and `oneiron-sdk-build` watches that set. An edit to a file outside it changes no output unless it adds an entry a
+//! lookup would read (a new item, serde impl or macro of a name looked up) or makes the generator refuse the file, and
+//! a new file is in no set at all: the limit `oneiron-sdk-build` documents.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -134,9 +143,15 @@ pub(crate) struct Index {
     pub(crate) macro_uses: IndexMap<String, Vec<(String, String, String)>>,
     /// macro name -> its `macro_rules!` text (a later definition replaces the text in place).
     pub(crate) macros: IndexMap<String, String>,
+    /// macro name -> each file that defines it with `macro_rules!`, in read order (any of them can hold the text
+    /// `macros` keeps).
+    pub(crate) macro_files: IndexMap<String, Vec<FileKey>>,
     pub(crate) use_cache: IndexMap<FileKey, Rc<Uses>>,
     /// Names `by_name` chose among candidates of more than one file (a set).
     pub(crate) guesses: IndexSet<String>,
+    /// The dependency set: every read file whose entries a lookup read (see the module doc), sorted. Nothing else of
+    /// the crate sources reaches an output.
+    pub(crate) dependencies: BTreeSet<FileKey>,
 }
 
 impl Index {
@@ -152,8 +167,10 @@ impl Index {
             de_impls: IndexMap::new(),
             macro_uses: IndexMap::new(),
             macros: IndexMap::new(),
+            macro_files: IndexMap::new(),
             use_cache: IndexMap::new(),
             guesses: IndexSet::new(),
+            dependencies: BTreeSet::new(),
         };
         for crate_name in EAGER {
             index.load(crate_name)?;
@@ -244,16 +261,38 @@ impl Index {
                     let body =
                         slice(text, whole.start(), close_of(text, whole.end() - 1)).to_owned();
                     self.macros.insert(found[1].to_owned(), body);
+                    self.macro_files
+                        .entry(found[1].to_owned())
+                        .or_default()
+                        .push((crate_name.to_owned(), relative.clone()));
                 }
             }
         }
         Ok(())
     }
 
+    // ---- the dependency set
+
+    /// Adds a file a lookup read to `dependencies`; a file the index did not read (no such file) is left out.
+    pub(crate) fn record_dependency(&mut self, crate_name: &str, file: &str) {
+        let key = (crate_name.to_owned(), file.to_owned());
+        if self.files.contains_key(&key) {
+            self.dependencies.insert(key);
+        }
+    }
+
+    /// `dependencies` as paths from the repository root (the crate's `CRATES` directory, then the file), sorted.
+    pub(crate) fn dependency_paths(&self) -> impl Iterator<Item = String> + '_ {
+        self.dependencies.iter().filter_map(|(crate_name, file)| {
+            crate_dir(crate_name).map(|dir| format!("{dir}/{file}"))
+        })
+    }
+
     // ---- resolution
 
     /// The file's imports, alias -> path, and its glob paths.
     pub(crate) fn uses(&mut self, crate_name: &str, file: &str) -> Result<Rc<Uses>, GenerateError> {
+        self.record_dependency(crate_name, file);
         let key = (crate_name.to_owned(), file.to_owned());
         if let Some(found) = self.use_cache.get(&key) {
             return Ok(Rc::clone(found));
@@ -345,12 +384,16 @@ impl Index {
         module: &[String],
         depth: usize,
     ) -> Result<(String, Vec<String>), GenerateError> {
-        if module.is_empty()
-            || depth > 12
-            || self
-                .modules
-                .contains_key(&(crate_name.to_owned(), module.to_vec()))
+        if module.is_empty() || depth > 12 {
+            return Ok((crate_name.to_owned(), module.to_vec()));
+        }
+        // A module with a file of its own sits there: the file found is a dependency (its removal moves the module).
+        if let Some(file) = self
+            .modules
+            .get(&(crate_name.to_owned(), module.to_vec()))
+            .cloned()
         {
+            self.record_dependency(crate_name, &file);
             return Ok((crate_name.to_owned(), module.to_vec()));
         }
         let (last, head) = module.split_last().ok_or_else(index_error)?;
@@ -390,6 +433,7 @@ impl Index {
             .get(&(crate_name.clone(), module.clone()))
             .cloned()
         {
+            self.record_dependency(&crate_name, &file);
             if let Some(item) = self.local(name, &crate_name, &file) {
                 return Ok(Some(Found::Item(item)));
             }
@@ -423,6 +467,7 @@ impl Index {
         module: &[String],
         depth: usize,
     ) -> Result<Option<Found>, GenerateError> {
+        self.record_dependency(crate_name, file);
         if let Some(item) = self.local(name, crate_name, file) {
             return Ok(Some(Found::Item(item)));
         }
@@ -457,9 +502,16 @@ impl Index {
         Some(Rc::clone(local.find(|item| item.top).unwrap_or(first)))
     }
 
-    /// A type a macro defines, a string when the macro writes it with `serialize_str`.
-    pub(crate) fn macro_token(&self, name: &str) -> Option<Ir> {
+    /// A type a macro defines, a string when the macro writes it with `serialize_str`. Each file that calls a macro
+    /// to define `name`, and each file that defines a macro so called, is a dependency.
+    pub(crate) fn macro_token(&mut self, name: &str) -> Option<Ir> {
         let uses = self.macro_uses.get(name)?;
+        for (crate_name, file, macro_name) in uses {
+            self.dependencies.insert((crate_name.clone(), file.clone()));
+            for definition in self.macro_files.get(macro_name).into_iter().flatten() {
+                self.dependencies.insert(definition.clone());
+            }
+        }
         uses.iter()
             .any(|(_, _, macro_name)| {
                 SERIALIZE_STR.is_match(self.macros.get(macro_name).map_or("", String::as_str))
@@ -467,7 +519,8 @@ impl Index {
             .then_some(STRING)
     }
 
-    /// The best candidate of that name, same crate, under `within`, nearest module; ties keep the first.
+    /// The best candidate of that name, same crate, under `within`, nearest module; ties keep the first. Every file
+    /// that holds an item of that name is a dependency, a candidate or not (an edit there can make it one).
     pub(crate) fn by_name(
         &mut self,
         name: &str,
@@ -476,6 +529,10 @@ impl Index {
         within: Option<&[String]>,
     ) -> Option<ItemRef> {
         let all = self.items.get(name)?;
+        self.dependencies.extend(
+            all.iter()
+                .map(|item| (item.crate_name.clone(), item.file.clone())),
+        );
         let mut candidates: Vec<&ItemRef> = all
             .iter()
             .filter(|item| item.kind != Kind::Type || item.top)

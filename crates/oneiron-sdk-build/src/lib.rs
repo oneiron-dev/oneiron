@@ -7,21 +7,41 @@
 //! into its `OUT_DIR`, where its `include!` reads them. A crate that ships generated sources in a package of its own
 //! (`oneiron-py`'s Python files) places them with [`place`].
 //!
-//! The digest covers every file the generator reads and the generator's identity: its source
-//! ([`GENERATOR_SOURCE_DIGEST`]), the lock file and manifests that decide its build, and the compiler. A change to
-//! any of them makes a new run. The run key covers the generator's source, `Cargo.lock`, the manifests and the
-//! compiler. It does not see a local override of the generator's dependencies (`[patch]` to a path, `paths` in
-//! `.cargo/config`, or `--config`). After changing one, delete `<target dir>/<profile>/sdk-generated`.
+//! The digest covers every file the generator may read (the `INPUTS` and every file under the `CRATES` source
+//! directories) and the generator's identity: its source ([`GENERATOR_SOURCE_DIGEST`]), the lock file and manifests
+//! that decide its build, and the compiler. A change to any of them makes a new run. The run key covers the
+//! generator's source, `Cargo.lock`, the manifests and the compiler. It does not see a local override of the
+//! generator's dependencies (`[patch]` to a path, `paths` in `.cargo/config`, or `--config`). After changing one,
+//! delete `<target dir>/<profile>/sdk-generated`.
+//!
+//! Cargo reruns a build script only when a file it watches changes, and the watched files are fewer than the files
+//! the digest reads: the run's dependency set ([`DEPENDENCIES_FILE`], which the generator writes into the run
+//! directory, read again whenever a run is reused). That set is the verb files, `type_names.json`, the hand-written
+//! inputs, every crate source file that defined an item the generator resolved (by path or by its crate-wide lookup
+//! by name), and every module file it walked. Besides the set, cargo watches the verb directory (a new verb file
+//! reruns), `Cargo.lock` and the two manifests, and the dependency file itself, whose time is set far in the past:
+//! deleting `sdk-generated` reruns the scripts, and writing the file does not. A body edit in a crate file the
+//! generator never resolved from reruns nothing.
+//!
+//! The limit: a new file, or a new same-named item in a file the generator did not resolve from, is not seen by an
+//! incremental build until a watched file changes; delete target/<profile>/sdk-generated to force. An item here is
+//! also a serde impl or a macro of a name the generator looked up, and an edit that makes the generator refuse a file
+//! it did not resolve from shows the same way. Whenever a script does rerun, the digest sees every change. A clean
+//! build always reruns the scripts, and the merge train regenerates the SDK outputs on every train top (TRAIN-REGEN).
 //!
 //! Each run also leaves the agent-SDK reference (`types.md`, `facade-types.md`, `verbs.md`) in
 //! `<target dir>/<profile>/sdk-generated/agent-sdk/`, the local copy of what CI publishes.
 
+use std::collections::BTreeSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 use std::{env, fs};
 
-use oneiron_sdk_generator::{CRATES, GENERATOR_SOURCE_DIGEST, INPUTS, write_out_dir};
+use oneiron_sdk_generator::{
+    CRATES, DEPENDENCIES_FILE, GENERATOR_SOURCE_DIGEST, INPUTS, write_out_dir,
+};
 
 /// Generated files the package builds write beside the generator's inputs (the generator's
 /// `PACKAGE_OUTPUTS`). They are outputs, never inputs: the digest and the rerun list leave them out, so a
@@ -38,6 +58,11 @@ const PACKAGE_OUTPUTS: &[&str] = &[
 
 /// The agent-SDK reference files each run writes under `docs/agent-sdk/`.
 const DOCS: &[&str] = &["types.md", "facade-types.md", "verbs.md"];
+
+/// How long after the Unix epoch a run's dependency file is dated. Cargo reruns a build script when a watched file
+/// is newer than the script's last run or is missing; dated here, the file is never newer, so the run that writes it
+/// does not rerun the scripts, and deleting `sdk-generated` (the file with it) does.
+const DEPENDENCIES_FILE_AGE: Duration = Duration::from_secs(86_400);
 
 /// Copies `outputs` (paths from the workspace root, as the generator names them) into this crate's `OUT_DIR`,
 /// each under its file name, running the generator first when no run for these inputs exists yet.
@@ -79,15 +104,6 @@ pub fn place(outputs: &[(&str, PathBuf)]) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("cargo sets OUT_DIR"));
     let roots = input_roots(&root);
     let files = input_files(&root, &roots);
-    for file in &files {
-        println!("cargo:rerun-if-changed={}", file.display());
-    }
-    // A new file (a verb, or a Rust file the type inventory reads) is in no list above, so every input directory is
-    // watched too: cargo scans a watched directory for any file added, removed or changed under it. Only directories
-    // that exist are named, because a missing path would rerun this on every build.
-    for dir in roots.iter().filter(|path| path.is_dir()) {
-        println!("cargo:rerun-if-changed={}", dir.display());
-    }
     let digest = digest(&root, &files);
     // OUT_DIR is <target dir>/[<triple>/]<profile>/build/<package>/out: the run is shared at the profile.
     let shared = out_dir
@@ -98,6 +114,10 @@ pub fn place(outputs: &[(&str, PathBuf)]) {
     let run = shared.join(format!("{digest:016x}"));
     if !run.join(".complete").is_file() {
         run_generator(&root, &shared, &run);
+    }
+    // A reused run states its dependency set as a fresh one does, so cargo watches the same files after either.
+    for path in watched(&root, &run, &roots) {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
     for (output, to) in outputs {
         let text = fs::read(run.join(output))
@@ -122,7 +142,7 @@ fn write_if_changed(to: &Path, text: &[u8]) {
     fs::write(to, text).unwrap_or_else(|error| panic!("write {} ({error})", to.display()));
 }
 
-/// What the generator reads: its fixed inputs (`INPUTS`, files and the verb directory) and the crate source
+/// What the generator may read: its fixed inputs (`INPUTS`, files and the verb directory) and the crate source
 /// directories its type inventory reads (`CRATES`).
 fn input_roots(root: &Path) -> Vec<PathBuf> {
     INPUTS
@@ -145,11 +165,38 @@ fn input_files(root: &Path, roots: &[PathBuf]) -> Vec<PathBuf> {
     files
 }
 
+/// The paths cargo watches for this run, sorted: the run's dependency set (the generator's `DEPENDENCIES_FILE`, paths
+/// from `root`) and that file itself (see `DEPENDENCIES_FILE_AGE`), the fixed inputs (`INPUTS`: the hand-written
+/// files, `type_names.json` and the verb directory, which cargo scans for any file added, removed or changed under
+/// it) and `GENERATOR_BUILD_FILES`. The `CRATES` directories are not watched: cargo scans a watched directory
+/// recursively, so any edit under them would rerun this. A run without the file (one this crate's generator did not
+/// write) is watched as the digest reads it: every input root that exists. Generated outputs (`PACKAGE_OUTPUTS`) are
+/// never watched.
+fn watched(root: &Path, run: &Path, roots: &[PathBuf]) -> BTreeSet<PathBuf> {
+    let mut paths: BTreeSet<PathBuf> = INPUTS
+        .iter()
+        .chain(GENERATOR_BUILD_FILES)
+        .map(|path| root.join(path))
+        .collect();
+    let dependencies = run.join(DEPENDENCIES_FILE);
+    match fs::read_to_string(&dependencies) {
+        Ok(text) => {
+            paths.extend(text.lines().map(|path| root.join(path)));
+            paths.insert(dependencies);
+        }
+        // Only paths that exist are named, because a missing path would rerun this on every build.
+        Err(_) => paths.extend(roots.iter().filter(|path| path.exists()).cloned()),
+    }
+    for output in PACKAGE_OUTPUTS {
+        paths.remove(&root.join(output));
+    }
+    paths
+}
+
 /// The files that decide how the generator was built, beside its source: the lock file (the resolved versions of its
-/// dependencies), the workspace manifest (their declared features, the profiles) and its own manifest. They are read
-/// here, not watched: a change to them that changes the generator rebuilds it, which rebuilds and reruns every build
-/// script that calls this crate, and the digest then names a new run. A change that rebuilds nothing changes no
-/// generator.
+/// dependencies), the workspace manifest (their declared features, the profiles) and its own manifest. The digest
+/// reads them, and they are watched, so a change to one reruns this and the digest names the run at once (a change
+/// that alters the generator also rebuilds it, which reruns every build script that calls this crate).
 const GENERATOR_BUILD_FILES: &[&str] = &[
     "Cargo.lock",
     "Cargo.toml",
@@ -241,6 +288,12 @@ fn run_generator(root: &Path, shared: &Path, run: &Path) {
     ));
     let _ = fs::remove_dir_all(&staging);
     write_out_dir(root, &staging).unwrap_or_else(|error| panic!("{error}"));
+    let dependencies = staging.join(DEPENDENCIES_FILE);
+    fs::File::options()
+        .write(true)
+        .open(&dependencies)
+        .and_then(|file| file.set_modified(SystemTime::UNIX_EPOCH + DEPENDENCIES_FILE_AGE))
+        .unwrap_or_else(|error| panic!("set the time of {} ({error})", dependencies.display()));
     fs::write(staging.join(".complete"), b"").expect("mark the SDK run complete");
     if fs::rename(&staging, run).is_err() {
         let _ = fs::remove_dir_all(&staging);
