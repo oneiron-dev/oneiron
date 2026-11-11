@@ -10,6 +10,7 @@ pub mod code_run_answer;
 pub mod consolidation;
 pub mod dag_append;
 pub mod feeds;
+pub mod graph_ask_centre;
 pub mod label_writers;
 pub mod lifted_text;
 pub mod live_run_claim_put;
