@@ -359,7 +359,7 @@ fn proposal(subject: &str) -> Value {
 fn recall(bridge: &mut Bridge, id: u64, version: &Value) -> Value {
     let (id, params) = tool_call(
         id,
-        "recall",
+        "vault.recall",
         version,
         json!({ "spec": { "query": "Vellichor ferry pier nine", "limit": 10 } }),
     );
@@ -509,7 +509,9 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
         .filter_map(|tool| tool["name"].as_str())
         .collect();
     assert!(
-        names.contains("witness") && names.contains("recall"),
+        // ONE-2510 (#1616): every verb sits at its canonical root; the bare
+        // names are gone with no aliases.
+        names.contains("vault.witness") && names.contains("vault.recall"),
         "{names:?}"
     );
     // WHO is the credential's: no tool asks the agent to name an actor.
@@ -517,12 +519,15 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
         let required = tool["inputSchema"]["required"].as_array().unwrap();
         assert!(!required.contains(&json!("actor")), "{tool:#}");
     }
-    let witness = tools.iter().find(|tool| tool["name"] == "witness").unwrap();
+    let witness = tools
+        .iter()
+        .find(|tool| tool["name"] == "vault.witness")
+        .unwrap();
     let version = witness["inputSchema"]["properties"]["schema_version"]["const"].clone();
 
     let (id, params) = tool_call(
         3,
-        "witness",
+        "vault.witness",
         &version,
         json!({ "spec": {
             "conversation_ref": "45454545454545454545454545454545",
@@ -549,7 +554,7 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
     );
     let (id, params) = tool_call(
         1,
-        "claim_upsert",
+        "vault.claims.upsert",
         &version,
         json!({ "spec": proposal(&principal) }),
     );
