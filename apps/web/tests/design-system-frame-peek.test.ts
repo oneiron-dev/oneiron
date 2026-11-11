@@ -65,6 +65,32 @@ describe('peekReducer, the pointer', () => {
     assert.deepEqual(s, PEEK_CLOSED)
   })
 
+  test('leaving both hides it even when a group label inside it is expanded', () => {
+    /* Only an open layer opened from inside the peek holds it, never an
+       attribute on its rows. */
+    const shown = { shownId: 'home', waitingId: null }
+    assert.deepEqual(peekReducer(shown, { type: 'leave', to: 'outside', held: false }), PEEK_CLOSED)
+  })
+
+  test('a layer opened from inside the peek holds it while the pointer is away', () => {
+    const shown = { shownId: 'home', waitingId: null }
+    assert.equal(peekReducer(shown, { type: 'leave', to: 'outside', held: true }), shown)
+    assert.equal(peekReducer(shown, { type: 'enter', id: 'activity', canPeek: true, held: true }), shown)
+    assert.equal(peekReducer(shown, { type: 'enter', id: 'more', canPeek: false, held: true }), shown)
+  })
+
+  test('once the held layer closes, the next leave hides it', () => {
+    const shown = { shownId: 'home', waitingId: null }
+    const stillHeld = peekReducer(shown, { type: 'leave', to: 'outside', held: true })
+    assert.deepEqual(peekReducer(stillHeld, { type: 'leave', to: 'outside', held: false }), PEEK_CLOSED)
+  })
+
+  test('held means nothing while no peek shows', () => {
+    assert.deepEqual(run([{ type: 'enter', id: 'home', canPeek: true, held: true }]), { shownId: null, waitingId: 'home' })
+    const waiting = { shownId: null, waitingId: 'home' }
+    assert.deepEqual(peekReducer(waiting, { type: 'leave', to: 'outside', held: true }), PEEK_CLOSED)
+  })
+
   test('a press stops the wait but keeps a shown overlay', () => {
     assert.deepEqual(run([{ type: 'enter', id: 'home', canPeek: true }, { type: 'press' }]), PEEK_CLOSED)
     const shown = { shownId: 'home', waitingId: null }
