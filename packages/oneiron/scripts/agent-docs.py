@@ -5,8 +5,8 @@ The mirror has two parts (untangle slice 4.3, D4 = a):
 - committed: quickstart.md, errors.md and the root llms.txt, made from authored text. `--check` checks them.
 - generated: types.md, facade-types.md and verbs.md, made from the verb table and the generated SDK outputs.
   They are not in git. CI publishes them at PUBLISHED (`--site`), and every build keeps a local copy
-  (the SDK generator's `--out-dir` writes them: the Rust generator the build runs writes them itself, and
-  `generate.py --out-dir` runs this with `--from` and `--out`; see README.md, "Building from source").
+  (the SDK generator's `--out-dir`, crates/oneiron-sdk-generator, writes the same text itself; see README.md,
+  "Building from source"). `generated_artifacts` below and the generator's `generate/docs.rs` must agree.
 """
 from pathlib import Path
 import argparse
@@ -49,7 +49,7 @@ def site_links(markdown, source):
 
 def generated_artifacts(src):
     """The mirror files made from the verb table and the generated SDK outputs, which `src` holds
-    (the tree after `generate.py`, or a `generate.py --out-dir` directory)."""
+    (the tree after the generator's `--package`, or an `oneiron-sdk-generator --out-dir` directory)."""
     ts = (ROOT / "packages/oneiron/src/types.ts").read_text()
     py = (ROOT / "crates/oneiron-py/python/oneiron/__init__.pyi").read_text()
     py += (src / "crates/oneiron-py/python/oneiron/_facade_verbs.pyi").read_text()

@@ -1,11 +1,11 @@
-//! Port of generate.py's TypeScript emitters (541-850): the verb tree every package emitter walks, the facade verbs
+//! The TypeScript emitters: the verb tree every package emitter walks, the facade verbs
 //! module (`packages/oneiron/src/facade-verbs.ts`), the native client's verb signatures and their module
 //! (`native-verbs.ts`), and the Python operations on row values the TypeScript, Python and HTTP emitters need beside
 //! `row_access`'s.
 //!
-//! The rows stay Python values (brief H1b): each operation keeps Python's evaluation order, so the first error a
-//! malformed row meets is Python's, and every call into the shared `Inventory` happens where Python makes it (H10).
-//! `ts_class_verbs` (generate.py:671-684) has no caller on main (the marked block it filled became
+//! The rows stay Python values: each operation keeps Python's evaluation order, so the first error a malformed row
+//! meets is Python's, and every call into the shared `Inventory` happens where Python makes it (the call order names
+//! its types). The Python generator's `ts_class_verbs` had no caller on main (the marked block it filled became
 //! `facade-verbs.ts` in 4.3), so it is not ported.
 
 use std::collections::BTreeSet;
@@ -158,7 +158,7 @@ pub(crate) fn row_of(generator: &Generator, id: RowId) -> Dict {
 
 // ---- patterns
 
-/// generate.py:795, 821, 838 `re.findall(r'\b([A-Z]\w*)\b', text)`: each word that starts with an ASCII capital.
+/// Python's `re.findall(r'\b([A-Z]\w*)\b', text)`: each word that starts with an ASCII capital.
 /// By hand, because Rust's Unicode `\b` is not Python's (`py::text::is_word` is): a match starts at a capital with no
 /// Python word character before it and takes the greedy run of word characters, after which Python's `\b` holds.
 pub(crate) fn capitalized_words(text: &str) -> BTreeSet<String> {
@@ -182,12 +182,12 @@ pub(crate) fn capitalized_words(text: &str) -> BTreeSet<String> {
     found
 }
 
-/// generate.py:798, 801, 826 `re.findall(r'^export (?:type|interface) (\w+)', text, re.M)`.
+/// Python's `re.findall(r'^export (?:type|interface) (\w+)', text, re.M)`.
 /// Rust: `(?m)^export (?:type|interface) ([\p{L}\p{N}_]+)` (`translate`; `(?m)^` matches after each `\n`, as `re.M`).
 static EXPORTED_TYPE: LazyLock<Regex> =
     LazyLock::new(|| compile(r"(?m)^export (?:type|interface) (\w+)"));
 
-/// generate.py:806 `re.findall(r'^export function (\w+)', text, re.M)`.
+/// Python's `re.findall(r'^export function (\w+)', text, re.M)`.
 /// Rust: `(?m)^export function ([\p{L}\p{N}_]+)`.
 static EXPORTED_FUNCTION: LazyLock<Regex> =
     LazyLock::new(|| compile(r"(?m)^export function (\w+)"));
@@ -222,8 +222,7 @@ pub(crate) struct VerbNode {
 /// The verb tree: segment name to node, in insertion order (Python's dict).
 pub(crate) type VerbTree = IndexMap<String, VerbNode>;
 
-/// Port of generate.py:644-652 (verb_tree): the rows as their path tree; a segment can name a verb and hold verbs at
-/// once.
+/// The rows as their path tree; a segment can name a verb and hold verbs at once.
 pub(crate) fn verb_tree(generator: &Generator, rows: &[RowId]) -> Result<VerbTree, GenerateError> {
     let mut tree = VerbTree::new();
     for &id in rows {
@@ -262,7 +261,7 @@ impl TsVerb {
     }
 }
 
-/// Port of generate.py:541-545 (ts_wire_type): a JSON-wire binding's result as the native client returns it.
+/// A JSON-wire binding's result as the native client returns it.
 fn ts_wire_type(generator: &mut Generator, row: &Dict) -> Result<String, GenerateError> {
     let fields = item(row, "binding")?.dict_get("output_fields")?;
     if let Some(fields) = fields.filter(|fields| fields.truthy()) {
@@ -280,8 +279,8 @@ fn ts_wire_type(generator: &mut Generator, row: &Dict) -> Result<String, Generat
     boundary_type(generator, output, "ts", true)
 }
 
-/// Port of generate.py:547-551 (ts_from_wire): the TypeScript expression that turns a wire value into its handle
-/// type (an `Option` is `null`-checked, a `Vec` mapped, a `KeyValueItem` converted).
+/// The TypeScript expression that turns a wire value into its handle type (an `Option` is `null`-checked, a `Vec`
+/// mapped, a `KeyValueItem` converted).
 fn ts_from_wire(kind: &str, value: &str) -> String {
     let (container, inner) = container_type(kind);
     if container == Some("Option") {
@@ -297,7 +296,7 @@ fn ts_from_wire(kind: &str, value: &str) -> String {
     }
 }
 
-/// Port of generate.py:553-555 (ts_doc): a row's description as the JSDoc of each TypeScript method that calls it.
+/// A row's description as the JSDoc of each TypeScript method that calls it.
 pub(crate) fn ts_doc(row: &Dict) -> String {
     match row.get("description") {
         Some(description) if description.truthy() => format!("/** {} */", description.str()),
@@ -305,8 +304,7 @@ pub(crate) fn ts_doc(row: &Dict) -> String {
     }
 }
 
-/// Port of generate.py:557-559 (ts_input): a whole-input parameter, its generated type, defaulted when the input
-/// names nothing.
+/// A whole-input parameter, its generated type, defaulted when the input names nothing.
 pub(crate) fn ts_input(generator: &mut Generator, row: &Dict) -> Result<String, GenerateError> {
     let input = item(row, "input")?;
     let typ = generator
@@ -320,7 +318,7 @@ pub(crate) fn ts_input(generator: &mut Generator, row: &Dict) -> Result<String, 
     Ok(format!("input: {typ}{empty}"))
 }
 
-/// Port of generate.py:561-595 (ts_facade): a typed binding's verb.
+/// A typed binding's verb.
 fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateError> {
     let binding = item(row, "binding")?;
     let method = js_method(str_receiver(item(row, "name")?, "replace")?);
@@ -431,7 +429,7 @@ fn ts_facade(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateEr
     })
 }
 
-/// generate.py:582-592, `ts_facade`'s JSON-wire branch: the call through `keyedJson` and the result read back.
+/// `ts_facade`'s JSON-wire branch: the call through `keyedJson` and the result read back.
 fn ts_wire_body(
     generator: &mut Generator,
     row: &Dict,
@@ -493,8 +491,7 @@ fn ts_wire_body(
     ))
 }
 
-/// Port of generate.py:601-612 (ts_handle_shape): a generic-door verb's TypeScript parameters and the input they
-/// send (its `handle_args`, or else its whole input).
+/// A generic-door verb's TypeScript parameters and the input they send (its `handle_args`, or else its whole input).
 fn ts_handle_shape(
     generator: &mut Generator,
     row: &Dict,
@@ -534,11 +531,10 @@ fn ts_handle_shape(
     Ok((params.join(", "), format!("{{{}}}", fields.join(", "))))
 }
 
-/// generate.py:634-635: the `ask` verb's overloaded parameters.
+/// The `ask` verb's overloaded parameters.
 const ASK_PARAMS: &str = "...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number | null, defaultBranch?: TaskAskDefault]";
 
-/// Port of generate.py:630-642 (ts_handle_verb): a facade verb on the generic door: its doc, parameters, result type
-/// and body.
+/// A facade verb on the generic door: its doc, parameters, result type and body.
 fn ts_handle_verb(generator: &mut Generator, row: &Dict) -> Result<TsVerb, GenerateError> {
     let name = item(row, "name")?;
     let method = js_method(str_receiver(name, "replace")?);
@@ -566,7 +562,7 @@ fn ts_handle_verb(generator: &mut Generator, row: &Dict) -> Result<TsVerb, Gener
     })
 }
 
-/// Port of generate.py:654-655 (ts_verb): the typed binding's verb, or the generic door's.
+/// The typed binding's verb, or the generic door's.
 fn ts_verb(generator: &mut Generator, id: RowId) -> Result<TsVerb, GenerateError> {
     let row = row_of(generator, id);
     if row.contains_key("binding") {
@@ -576,8 +572,8 @@ fn ts_verb(generator: &mut Generator, id: RowId) -> Result<TsVerb, GenerateError
     }
 }
 
-/// Port of generate.py:657-669 (ts_members): one object literal per namespace: an arrow per verb, a nested literal
-/// per child namespace. A node's children are emitted before its own verb, as Python evaluates them.
+/// One object literal per namespace: an arrow per verb, a nested literal per child namespace. A node's children are
+/// emitted before its own verb, as Python evaluates them.
 fn ts_members(
     generator: &mut Generator,
     tree: &VerbTree,
@@ -605,18 +601,17 @@ fn ts_members(
     Ok(out)
 }
 
-/// Port of generate.py:772-776 (FACADE_VERBS_TS_DOC).
+/// The head comment of `facade-verbs.ts`.
 const FACADE_VERBS_TS_DOC: &str = r#"// The facade verbs of `Oneiron` (untangle slice 4.3): its verb namespaces, made per
 // handle, and its top-level verbs, installed on its prototype. Both reach the
 // native client through the handle's `facadeCall`, which turns a native throw
 // into `OneironError`, and its `facadeClient`.
 "#;
 
-/// generate.py:808-816: the module's fixed tail around its namespaces and methods.
+/// The module's fixed tail around its namespaces and methods.
 const FACADE_CALL: &str = "\n/** A handle's guarded call: runs `operation` and turns a native throw into `OneironError`. */\nexport const facadeCall: unique symbol = Symbol(\"oneiron.facadeCall\")\n/** A handle's native client. */\nexport const facadeClient: unique symbol = Symbol(\"oneiron.facadeClient\")\n\n/** What the facade verbs need of a handle. */\nexport interface FacadeHost {\n  [facadeCall]<T>(operation: () => T): T\n  readonly [facadeClient]: NativeClient\n}\n\n/** One handle's verb namespaces, made when the handle is. */\nexport function facadeNamespaces(host: FacadeHost) {\n  return {\n";
 
-/// Port of generate.py:778-817 (ts_facade_module): the facade verbs as a module `Oneiron` imports: namespaces per
-/// handle, top-level verbs on its prototype.
+/// The facade verbs as a module `Oneiron` imports: namespaces per handle, top-level verbs on its prototype.
 pub(crate) fn ts_facade_module(
     generator: &mut Generator,
     tree: &VerbTree,
@@ -708,9 +703,8 @@ pub(crate) fn ts_facade_module(
     Ok(out)
 }
 
-/// Port of generate.py:819-830 (ts_native_module): the native client's generated verb signatures, as the interface
-/// `NativeClient` extends. The hand-written types first, as native.ts named them; a facade type of the same name is
-/// not imported twice.
+/// The native client's generated verb signatures, as the interface `NativeClient` extends. The hand-written types
+/// first, as native.ts named them; a facade type of the same name is not imported twice.
 pub(crate) fn ts_native_module(
     generator: &Generator,
     signatures: &str,
@@ -737,7 +731,7 @@ pub(crate) fn ts_native_module(
     Ok(out)
 }
 
-/// Port of generate.py:845-850 (ts_native_signature): one facade row's method on the native client's interface.
+/// One facade row's method on the native client's interface.
 pub(crate) fn ts_native_signature(
     generator: &mut Generator,
     id: RowId,

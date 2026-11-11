@@ -1,7 +1,7 @@
 //! Sets `GENERATOR_SOURCE_DIGEST` (exposed as `oneiron_sdk_generator::GENERATOR_SOURCE_DIGEST`): a digest of every
 //! file under this crate's `src/`, each file's path from `src/` and its bytes, in path order. `oneiron-sdk-build`
 //! mixes it into the digest that names a build's shared run directory, so a change to the generator's code makes a
-//! new run instead of reusing one the old code wrote. The Python generator had this for free: its `scripts/sdk/*.py`
+//! new run instead of reusing one the old code wrote. The Python generator had this for free: its source
 //! files were digest inputs.
 
 use std::collections::hash_map::DefaultHasher;

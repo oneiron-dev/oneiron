@@ -1,4 +1,4 @@
-//! Port of facade_types.py:121-364: the Rust-text scanner (strings, char literals, comments, brackets), the
+//! The Rust-text scanner (strings, char literals, comments, brackets), the
 //! attribute readers and the type parser.
 //!
 //! Every offset is a byte offset on a char boundary. Where the Python steps one character (`i + 1`, `x - 1`,
@@ -152,7 +152,7 @@ fn call_opens(text: &str, name: &str, bounded: bool) -> Vec<usize> {
 
 // ---------------------------------------------------------------- Rust text
 
-/// Port of facade_types.py:123-132 (`_raw_string_end`): if a raw string starts at `i`, the offset past its close
+/// If a raw string starts at `i`, the offset past its close
 /// (the end of the text when it does not close); else `None`.
 fn raw_string_end(text: &str, i: usize) -> Option<usize> {
     let bytes = text.as_bytes();
@@ -169,7 +169,7 @@ fn raw_string_end(text: &str, i: usize) -> Option<usize> {
     Some(find_from(text, &close, j + 1).map_or(bytes.len(), |at| at + 1 + hashes))
 }
 
-/// The string loop of `_skip` (facade_types.py:139-144), from the offset past the opening quote: past the close,
+/// The string loop of `_skip`, from the offset past the opening quote: past the close,
 /// or the end of the text.
 fn string_end(text: &str, mut j: usize) -> usize {
     let bytes = text.as_bytes();
@@ -190,7 +190,7 @@ fn string_end(text: &str, mut j: usize) -> usize {
     bytes.len()
 }
 
-/// The char-literal branch of `_skip` (facade_types.py:158-164) for a quote at Python offset `i`, where `after`
+/// The char-literal branch of `_skip` for a quote at Python offset `i`, where `after`
 /// is the offset of the char past the quote (`i + 1`). Every return is an offset Python counts from `i`: `i + 1`
 /// is `after`, `i + 3` the offset past the char at `i + 2`.
 fn char_literal_end(text: &str, after: usize) -> usize {
@@ -213,7 +213,7 @@ fn char_literal_end(text: &str, after: usize) -> usize {
     after
 }
 
-/// Port of facade_types.py:135-169 (`_skip`): past a string, char literal or comment at `i`; `i` itself when none
+/// Past a string, char literal or comment at `i`; `i` itself when none
 /// starts there. An unclosed string or comment runs to the end of the text.
 pub(crate) fn skip(text: &str, i: usize) -> usize {
     let bytes = text.as_bytes();
@@ -270,7 +270,7 @@ fn skip_from_minus_one(text: &str, last: char) -> Option<usize> {
     }
 }
 
-/// Port of facade_types.py:172-185 (`close_of`): the offset past the bracket that closes the one at `i`, skipping
+/// The offset past the bracket that closes the one at `i`, skipping
 /// strings and comments; bracket kinds are not checked, and an unclosed bracket runs to the end of the text.
 pub(crate) fn close_of(text: &str, i: usize) -> usize {
     close_of_with_depth(text, i, 0)
@@ -299,7 +299,7 @@ fn close_of_with_depth(text: &str, mut i: usize, mut depth: i64) -> usize {
     bytes.len()
 }
 
-/// Port of facade_types.py:188-196 (`strip_comments`): the text without its comments; strings are kept.
+/// The text without its comments; strings are kept.
 pub(crate) fn strip_comments(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
@@ -318,7 +318,7 @@ pub(crate) fn strip_comments(text: &str) -> String {
     out
 }
 
-/// Port of facade_types.py:199-215 (`split_top`): splits at `sep` outside brackets, angle brackets and strings;
+/// Splits at `sep` outside brackets, angle brackets and strings;
 /// the parts are stripped and empty ones dropped. `->` is stepped over; any other `>` closes an angle.
 pub(crate) fn split_top(text: &str, sep: u8) -> Vec<&str> {
     let bytes = text.as_bytes();
@@ -353,7 +353,7 @@ pub(crate) fn split_top(text: &str, sep: u8) -> Vec<&str> {
         .collect()
 }
 
-/// Port of facade_types.py:218-224 (`leading_attrs`): a chunk's leading `#[...]` attributes as one string, and the
+/// A chunk's leading `#[...]` attributes as one string, and the
 /// rest of it.
 pub(crate) fn leading_attrs(chunk: &str) -> (String, &str) {
     let mut attrs: Vec<&str> = Vec::new();
@@ -371,7 +371,7 @@ static PAIR: LazyLock<Regex> = LazyLock::new(|| compile(r"(?s)\A(\w+)\s*=\s*(.*)
 /// `re.match(r'(\w+)\s*\(', part)`
 static NESTED: LazyLock<Regex> = LazyLock::new(|| compile(r"\A(\w+)\s*\("));
 
-/// Port of facade_types.py:227-243 (`attr_args`): the merged `name(...)` arguments in the attributes, as key ->
+/// The merged `name(...)` arguments in the attributes, as key ->
 /// value: a quoted value read as JSON (a JSON error is Python's `JSONDecodeError`), any other value as its text, a
 /// nested `key(...)` as its own arguments (or `True` when it has none), a bare flag as `True`.
 pub(crate) fn attr_args(attrs: &str, name: &str) -> Result<Dict, GenerateError> {
@@ -417,7 +417,7 @@ fn attr_args_at_depth(attrs: &str, name: &str, depth: usize) -> Result<Dict, Gen
     Ok(found)
 }
 
-/// Port of facade_types.py:246-251 (`derives`): the last path segment of every name a `derive(...)` lists (a
+/// The last path segment of every name a `derive(...)` lists (a
 /// set; only membership is read).
 pub(crate) fn derives(attrs: &str) -> IndexSet<String> {
     let mut names = IndexSet::new();
@@ -434,7 +434,7 @@ pub(crate) fn derives(attrs: &str) -> IndexSet<String> {
     names
 }
 
-/// Port of facade_types.py:254-268 (`rename`): serde's `rename_all`, where a variant name is PascalCase and a field
+/// Serde's `rename_all`, where a variant name is PascalCase and a field
 /// name snake_case. A case that is not a string compares unequal to every spelling, so the name stays.
 pub(crate) fn rename(name: &str, case: Option<&Value>, variant: bool) -> String {
     let Some(case) = case.filter(|case| case.truthy()) else {
@@ -507,13 +507,13 @@ pub(crate) fn is_true(value: Option<&Value>) -> bool {
     matches!(value, Some(Value::Bool(true)))
 }
 
-/// Port of facade_types.py:271-273 (`codec_of`): the codec a field is read through, when it names one
+/// The codec a field is read through, when it names one
 /// (`serde.get('with') or serde.get('deserialize_with')`).
 pub(crate) fn codec_of(serde: &Dict) -> Option<&Value> {
     or_value(serde.get("with"), serde.get("deserialize_with"))
 }
 
-/// Port of facade_types.py:276-279 (`serialize_case`): a `rename_all`/`rename` value, or its `serialize = ...`
+/// A `rename_all`/`rename` value, or its `serialize = ...`
 /// half.
 pub(crate) fn serialize_case(value: Option<&Value>) -> Option<Value> {
     match value {
@@ -548,7 +548,7 @@ pub(crate) enum Ast {
     Raw(String),
 }
 
-/// Port of facade_types.py:284 (`TOKEN`): `re.compile(r"\s*(::|->|'[A-Za-z_]\w*|r#\w+|[A-Za-z_]\w*|\d+|.)", re.S)`.
+/// `TOKEN`: `re.compile(r"\s*(::|->|'[A-Za-z_]\w*|r#\w+|[A-Za-z_]\w*|\d+|.)", re.S)`.
 static TOKEN: LazyLock<Regex> =
     LazyLock::new(|| compile(r"(?s)\s*(::|->|'[A-Za-z_]\w*|r#\w+|[A-Za-z_]\w*|\d+|.)"));
 
@@ -571,7 +571,7 @@ fn no_progress(text: &str, token: &str) -> GenerateError {
     GenerateError::exception(
         "RuntimeError",
         format!(
-            "parse_type does not advance at `{token}` in `{text}` (facade_types.py:307-320 and 330-336 loop here without end)"
+            "parse_type does not advance at `{token}` in `{text}` (the Python generator looped here without end)"
         ),
     )
 }
@@ -747,7 +747,7 @@ impl<'t> TypeParser<'t> {
     }
 }
 
-/// Port of facade_types.py:287-364 (`parse_type`): a Rust type as a tree; lifetimes, associated assignments and
+/// A Rust type as a tree; lifetimes, associated assignments and
 /// const arguments are dropped, `dyn`/`impl`/`fn`/pointer/unknown syntax is raw, and leftover tokens make the
 /// whole type raw.
 pub(crate) fn parse_type(text: &str) -> Result<Ast, GenerateError> {
@@ -773,7 +773,7 @@ pub(crate) fn parse_type(text: &str) -> Result<Ast, GenerateError> {
 
 // ---------------------------------------------------------------- an alias body (read_item)
 
-/// Port of facade_types.py:466-471: a `type` alias body, from past the first `=` at or after `position` to the
+/// A `type` alias body, from past the first `=` at or after `position` to the
 /// first `;` outside brackets, strings and comments, stripped.
 pub(crate) fn alias_body(text: &str, position: usize) -> String {
     match find_from(text, "=", position) {
@@ -782,7 +782,7 @@ pub(crate) fn alias_body(text: &str, position: usize) -> String {
     }
 }
 
-/// The `while semi < len(text) and text[semi] != ';'` loop of facade_types.py:468-470, from `semi`.
+/// The Python loop `while semi < len(text) and text[semi] != ';'`, from `semi`.
 fn alias_semicolon(text: &str, mut semi: usize) -> usize {
     let bytes = text.as_bytes();
     while semi < bytes.len() && bytes[semi] != b';' {
@@ -798,7 +798,7 @@ fn alias_semicolon(text: &str, mut semi: usize) -> usize {
     semi
 }
 
-/// facade_types.py:466-471 when no `=` follows the header: `text.find` gives `-1`, so `semi` starts at `-1`,
+/// The alias body when no `=` follows the header: Python's `text.find` gives `-1`, so `semi` starts at `-1`,
 /// `text[-1]` is the last character, and the body is `text[0:semi]` (`text[0:-1]` when that last character is
 /// the `;`).
 fn alias_body_without_equals(text: &str) -> String {
@@ -822,8 +822,8 @@ fn alias_body_without_equals(text: &str) -> String {
 mod tests {
     use super::*;
 
-    // Every expected value is what Python 3.14.7 prints on nelly with main's facade_types.py, run from the checkout:
-    // python3 -c 'import sys; sys.path.insert(0, "scripts/sdk"); import facade_types as f; print(<call>)'
+    // Every expected value is what the Python generator printed (main, Python 3.14.7 on nelly) for the call in the
+    // comment above it; `f.` prefixes the generator's own functions.
     // Python's offsets count code points; the port's are UTF-8 bytes, so each is converted with
     // len(t[:i].encode()).
 
@@ -834,7 +834,7 @@ mod tests {
         assert_eq!(skip("\"unclosed", 0), 9);
         assert_eq!(skip("// c\nx", 0), 4);
         assert_eq!(skip("/* a /* b */ c */x", 0), 17);
-        // An unclosed block comment runs to the end (facade_types.py:157, which no corpus run reaches): 12, 4, 3.
+        // An unclosed block comment runs to the end (a Python branch no corpus run reaches): 12, 4, 3.
         assert_eq!(skip("/* a /* b */", 0), 12);
         assert_eq!(skip("/* …", 0), 6);
         assert_eq!(skip("/*/", 0), 3);
@@ -883,7 +883,10 @@ mod tests {
         assert_eq!(found["default"].as_str(), Some("f"));
         assert_eq!(found["with"].as_str(), Some("crate::x"));
         assert_eq!(
-            found["rename_all"].get("serialize").and_then(Value::as_str),
+            found["rename_all"]
+                .as_dict()
+                .and_then(|d| d.get("serialize"))
+                .and_then(Value::as_str),
             Some("camelCase")
         );
         assert!(found["tag"].is_true());
@@ -972,7 +975,7 @@ mod tests {
 
     #[test]
     fn nesting_past_the_recursion_limit_is_python_recursion_error() {
-        // python3 -c '...; f.parse_type("&" * n + "u8")': n = 19990 parses, n = 20001 raises
+        // The Python generator's f.parse_type("&" * n + "u8"): n = 19990 parses, n = 20001 raises
         // RecursionError: maximum recursion depth exceeded (the exact cut-off depends on the frames below it and is
         // not part of the contract; the outcome past it is).
         let outcomes = on_big_stack(|| {

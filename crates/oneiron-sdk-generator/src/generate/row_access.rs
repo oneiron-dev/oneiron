@@ -161,7 +161,7 @@ impl<T> ByName<T> {
     }
 }
 
-/// `{r['name']: variant(r['name']) for r in rows}` (generate.py:1589, 2462): each row's variant, by name.
+/// `{r['name']: variant(r['name']) for r in rows}`: each row's variant, by name.
 pub(crate) fn variants(rows: &[&Dict]) -> Result<ByName<String>, GenerateError> {
     let mut variants = ByName::default();
     for row in rows {

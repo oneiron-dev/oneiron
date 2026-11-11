@@ -1,5 +1,4 @@
-//! Port of `scripts/sdk/facade_types.py`: the facade's wire types, read from the Rust serde types every facade
-//! row names.
+//! The facade's wire types, read from the Rust serde types every facade row names.
 //!
 //! Each callable facade row in the verb table names an input and an output type. Those are the roots: the
 //! [`inventory::Inventory`] walks each root's Rust definition across the engine crates' sources (indexed by
@@ -8,7 +7,7 @@
 //! `unknown` (`Any` in Python) and is listed in the census with its reason; `serde_json::Value` is opaque by
 //! design and counted apart.
 //!
-//! The reader is a port of the Python heuristics as they are written (brief H12), not a Rust parser. Text
+//! The reader is a port of the Python heuristics as they are written, not a Rust parser. Text
 //! offsets are byte offsets on char boundaries; every Python `i + 1` or `x - 1` steps one code point.
 
 pub(crate) mod index;
@@ -25,8 +24,7 @@ use crate::py::value::Value;
 
 pub(crate) use inventory::Inventory;
 
-/// Port of facade_types.py:27-57 (`CRATES`): the crates a facade type can live in, by the name a Rust path gives
-/// them, in the Python dict's order.
+/// The crates a facade type can live in, by the name a Rust path gives them, in the Python dict's order.
 pub const CRATES: &[(&str, &str)] = &[
     ("oneiron", "crates/oneiron/src"),
     ("oneiron_base", "crates/oneiron-base/src"),
@@ -76,8 +74,7 @@ pub(crate) fn crate_dir(name: &str) -> Option<&'static str> {
         .map(|(_, dir)| *dir)
 }
 
-/// Port of facade_types.py:59 (`EAGER`): the crates read up front; any other is read the first time a path names
-/// it.
+/// The crates read up front; any other is read the first time a path names it.
 pub(crate) const EAGER: &[&str] = &[
     "oneiron",
     "oneiron_contracts",
@@ -86,16 +83,15 @@ pub(crate) const EAGER: &[&str] = &[
     "oneiron_retrieval",
 ];
 
-/// Port of facade_types.py:61 (`ROOT_CONTEXT`): a bare row type is named from the SDK module, as its generated fn
-/// names it.
+/// A bare row type is named from the SDK module, as its generated fn names it.
 pub(crate) const ROOT_CONTEXT: (&str, &str) = ("oneiron", "crates/oneiron/src/verbs/mod.rs");
 
-/// Port of facade_types.py:96-97 (`PRELUDE`): names a Rust file uses without importing them.
+/// Names a Rust file uses without importing them.
 pub(crate) const PRELUDE: &[&str] = &[
     "String", "Vec", "Option", "Box", "Result", "bool", "str", "char", "u8", "u16", "u32", "u64",
     "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32", "f64",
 ];
-/// Port of facade_types.py:98 (`WRAPPERS`).
+/// Wrapper types, read as their first type argument.
 pub(crate) const WRAPPERS: &[&str] = &[
     "Box",
     "Arc",
@@ -107,7 +103,7 @@ pub(crate) const WRAPPERS: &[&str] = &[
     "Cell",
     "RefCell",
 ];
-/// Port of facade_types.py:99 (`SEQUENCES`).
+/// Sequence types, read as an array of their first type argument.
 pub(crate) const SEQUENCES: &[&str] = &[
     "Vec",
     "VecDeque",
@@ -123,7 +119,7 @@ pub(crate) const SEQUENCES: &[&str] = &[
     "Bytes",
     "ByteBuf",
 ];
-/// Port of facade_types.py:100 (`MAPS`).
+/// Map types, read as a map of their second type argument.
 pub(crate) const MAPS: &[&str] = &[
     "HashMap",
     "BTreeMap",
@@ -132,7 +128,7 @@ pub(crate) const MAPS: &[&str] = &[
     "AHashMap",
     "Map",
 ];
-/// Port of facade_types.py:101-102 (`EXTERNAL`).
+/// Crates outside the engine: a path that starts with one is not resolved in the index.
 pub(crate) const EXTERNAL: &[&str] = &[
     "std",
     "core",
@@ -158,8 +154,7 @@ pub(crate) const EXTERNAL: &[&str] = &[
     "http",
     "nonempty",
 ];
-/// Port of facade_types.py:104-107 (`RESERVED`): names a declaration may not take, TypeScript globals and the
-/// stub's own imports.
+/// Names a declaration may not take, TypeScript globals and the stub's own imports.
 pub(crate) const RESERVED: &[&str] = &[
     "Record",
     "Partial",
@@ -207,7 +202,7 @@ pub(crate) const RESERVED: &[&str] = &[
     "None",
     "Self",
 ];
-/// Port of facade_types.py:112 (`PY_BUILTIN_PREFIX`).
+/// The prefix `py_name` gives a declaration named as a Python builtin.
 pub(crate) const PY_BUILTIN_PREFIX: &str = "Facade";
 
 /// Membership in one of the module's name sets (a Python `frozenset`/`set` literal; only membership is read).
@@ -215,8 +210,7 @@ pub(crate) fn holds(set: &[&str], name: &str) -> bool {
     set.contains(&name)
 }
 
-/// Port of facade_types.py:116-118 (`py_name`): the name Python spells a declaration with; a builtin's name takes
-/// `PY_BUILTIN_PREFIX` (FIX 6555).
+/// The name Python spells a declaration with; a builtin's name takes `PY_BUILTIN_PREFIX` (FIX 6555).
 pub(crate) fn py_name(name: &str) -> String {
     if crate::py::builtins::is_builtin(name) {
         format!("{PY_BUILTIN_PREFIX}{name}")
@@ -284,8 +278,8 @@ pub(crate) struct ItemKey {
 pub(crate) type Key = Rc<ItemKey>;
 
 impl ItemKey {
-    /// Python's `repr` of the key tuple, `('oneiron', 'verbs/mod.rs', 'Name', ('verbs',))` (`uniffi_types.py`
-    /// sorts declarations by it).
+    /// Python's `repr` of the key tuple, `('oneiron', 'verbs/mod.rs', 'Name', ('verbs',))` (the UniFFI types sort
+    /// declarations by it).
     pub(crate) fn repr(&self) -> String {
         format!(
             "({}, {}, {}, {})",
@@ -294,16 +288,6 @@ impl ItemKey {
             repr_str(&self.name),
             tuple_repr(&self.module)
         )
-    }
-
-    /// The key as the harness dumps it: `[crate, file, name, [module...]]`.
-    pub(crate) fn to_value(&self) -> Value {
-        Value::List(vec![
-            Value::Str(self.crate_name.clone()),
-            Value::Str(self.file.clone()),
-            Value::Str(self.name.clone()),
-            strings_value(&self.module),
-        ])
     }
 
     /// `'::'.join((crate,) + module + (name,))`: the Rust path of the declaration.
@@ -319,7 +303,7 @@ impl ItemKey {
     }
 }
 
-/// A wire-shape value (Python's IR tuples, facade_types.py:63-94 and 699-1008).
+/// A wire-shape value (Python's IR tuples).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Ir {
     /// `('prim', kind)`, or `('prim', 'int', width)` for an integer that names its Rust width.
@@ -354,20 +338,14 @@ pub(crate) enum Ir {
     Ref(Key, Vec<Ir>),
 }
 
-/// Port of facade_types.py:63 (`INT`).
 pub(crate) const INT: Ir = Ir::Prim(Prim::Int, None);
-/// Port of facade_types.py:68 (`FLOAT`).
 pub(crate) const FLOAT: Ir = Ir::Prim(Prim::Float, None);
-/// Port of facade_types.py:69 (`STRING`).
 pub(crate) const STRING: Ir = Ir::Prim(Prim::String, None);
-/// Port of facade_types.py:70 (`BOOL`).
 pub(crate) const BOOL: Ir = Ir::Prim(Prim::Bool, None);
-/// Port of facade_types.py:71 (`NULL`).
 pub(crate) const NULL: Ir = Ir::Prim(Prim::Null, None);
-/// Port of facade_types.py:72 (`OPAQUE`).
 pub(crate) const OPAQUE: Ir = Ir::Opaque;
 
-/// Port of facade_types.py:66-67 (`width`): an integer leaf that names its Rust width.
+/// An integer leaf that names its Rust width.
 pub(crate) fn width(name: &str) -> Ir {
     Ir::Prim(Prim::Int, Some(name.to_owned()))
 }
@@ -394,47 +372,7 @@ impl Ir {
         }
     }
 
-    /// The IR as `json.dumps` writes the Python tuple (tuples and lists both as JSON arrays): the harness dump.
-    pub(crate) fn to_value(&self) -> Value {
-        let tag = Value::Str(self.kind().to_owned());
-        let list = |items: &[Ir]| Value::List(items.iter().map(Ir::to_value).collect());
-        Value::List(match self {
-            Self::Prim(prim, width) => {
-                let mut out = vec![tag, Value::Str(prim.name().to_owned())];
-                if let Some(width) = width {
-                    out.push(Value::Str(width.clone()));
-                }
-                out
-            }
-            Self::Opaque | Self::Never => vec![tag],
-            Self::Unknown(text) | Self::Param(text) => vec![tag, Value::Str(text.clone())],
-            Self::Lit(value) => vec![tag, value.clone()],
-            Self::Array(item) | Self::Option(item) | Self::Map(item) | Self::Partial(item) => {
-                vec![tag, item.to_value()]
-            }
-            Self::Tuple(items) | Self::Union(items) | Self::And(items) => vec![tag, list(items)],
-            Self::Object(fields, hint) => vec![
-                tag,
-                Value::List(
-                    fields
-                        .iter()
-                        .map(|field| {
-                            Value::List(vec![
-                                field.key.clone(),
-                                field.value.to_value(),
-                                Value::Bool(field.optional),
-                            ])
-                        })
-                        .collect(),
-                ),
-                hint.as_ref()
-                    .map_or(Value::None, |hint| Value::Str(hint.clone())),
-            ],
-            Self::Ref(key, arguments) => vec![tag, key.to_value(), list(arguments)],
-        })
-    }
-
-    /// Python's `repr` of the IR tuple (`raise ValueError(node)` prints it; `uniffi_types.py` keys caches by it).
+    /// Python's `repr` of the IR tuple (`raise ValueError(node)` prints it; the UniFFI types key caches by it).
     pub(crate) fn repr(&self) -> String {
         let tag = repr_str(self.kind());
         let list = |items: &[Ir]| {
@@ -480,8 +418,7 @@ impl Ir {
     }
 }
 
-/// Port of facade_types.py:82-94 (`LEAVES`): types of std and of external crates, by the last segment of their
-/// path.
+/// Types of std and of external crates, by the last segment of their path.
 pub(crate) fn leaf(name: &str) -> Option<Ir> {
     Some(match name {
         "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
@@ -512,8 +449,8 @@ pub(crate) fn leaf(name: &str) -> Option<Ir> {
     })
 }
 
-/// Port of facade_types.py:76-79 (`BYTE_ID_CODECS`): field codecs that write an id's 16 bytes, by the (crate,
-/// module path) a codec path resolves to; serde_json writes `[u8; 16]` as an array of numbers.
+/// Field codecs that write an id's 16 bytes, by the (crate, module path) a codec path resolves to; serde_json writes
+/// `[u8; 16]` as an array of numbers.
 pub(crate) fn byte_id_codec(crate_name: &str, module: &[String]) -> Option<Ir> {
     let module: Vec<&str> = module.iter().map(String::as_str).collect();
     let known = crate_name == "oneiron"
@@ -526,7 +463,7 @@ pub(crate) fn byte_id_codec(crate_name: &str, module: &[String]) -> Option<Ir> {
 
 // ---------------------------------------------------------------- module-level helpers
 
-/// Port of facade_types.py:1257-1258 (`ts_key`): a wire key as a TypeScript property name.
+/// A wire key as a TypeScript property name.
 pub(crate) fn ts_key(key: &Value) -> Result<String, GenerateError> {
     let Value::Str(text) = key else {
         // `re.fullmatch` on a non-string.
@@ -544,9 +481,8 @@ pub(crate) fn ts_key(key: &Value) -> Result<String, GenerateError> {
     Ok(if bare { text.clone() } else { dumps(key) })
 }
 
-/// Port of facade_types.py:1261-1268 (`compound`): whether a TypeScript type has a top-level union or
-/// intersection. Every character it tests is ASCII, so it walks bytes; `text[n - 1:n + 2]` never equals
-/// `' | '` at `n == 0` in Python either.
+/// Whether a TypeScript type has a top-level union or intersection. Every character it tests is ASCII, so it walks
+/// bytes; `text[n - 1:n + 2]` never equals `' | '` at `n == 0` in Python either.
 pub(crate) fn compound(text: &str, operators: &str) -> bool {
     let bytes = text.as_bytes();
     let mut depth: i64 = 0;
@@ -566,8 +502,7 @@ pub(crate) fn compound(text: &str, operators: &str) -> bool {
     false
 }
 
-/// Port of facade_types.py:1271-1282 (`type_params`): the generic parameters an IR value names (a set; callers
-/// sort it).
+/// The generic parameters an IR value names (a set; callers sort it).
 pub(crate) fn type_params(node: &Ir) -> indexmap::IndexSet<String> {
     let mut found = indexmap::IndexSet::new();
     let mut stack = vec![node];
@@ -588,9 +523,9 @@ pub(crate) fn type_params(node: &Ir) -> indexmap::IndexSet<String> {
     found
 }
 
-/// Port of facade_types.py:372 (`TYPE_NAMES`): `scripts/sdk/type_names.json`, read (strict UTF-8, universal
-/// newlines) and decoded as the Python import does. `generate.py` imports `facade_types` before it reads any verb
-/// file, so `Generator::new` calls this first.
+/// `TYPE_NAMES`: `scripts/sdk/type_names.json`, read (strict UTF-8, universal newlines) and decoded as the Python
+/// import does. The Python generator imported `facade_types` before it read any verb file, so `Generator::new` calls
+/// this first.
 pub(crate) fn type_names(root: &Path) -> Result<Value, GenerateError> {
     let path = root.join("scripts/sdk/type_names.json");
     let text = crate::py::read_text(&path)?;
@@ -603,11 +538,6 @@ pub(crate) fn type_names(root: &Path) -> Result<Value, GenerateError> {
 pub(crate) fn tuple_repr(parts: &[String]) -> String {
     let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
     crate::py::text::repr_str_tuple(&parts)
-}
-
-/// A list of strings as a `Value`.
-pub(crate) fn strings_value(parts: &[String]) -> Value {
-    Value::List(parts.iter().map(|part| Value::Str(part.clone())).collect())
 }
 
 /// `json.dumps(value)` with the defaults.
@@ -632,16 +562,16 @@ pub(crate) fn recursion_error() -> GenerateError {
 }
 
 /// The depth past which a walk Python would recurse through without end stops with Python's `RecursionError`.
-/// Python's own limit is 20000 frames (`sys.setrecursionlimit(20000)`, facade_types.py:24); the recursion limit
-/// is not part of the contract (brief H12), only the outcome of an endless walk is.
+/// The Python generator set its limit to 20000 frames (`sys.setrecursionlimit(20000)`); the recursion limit is not
+/// part of the contract, only the outcome of an endless walk is.
 pub(crate) const RECURSION_LIMIT: usize = 20000;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // python3 -c 'import sys; sys.path.insert(0, "scripts/sdk"); import facade_types as f; print(<call>)' on nelly
-    // (Python 3.14.7), from the checkout.
+    // Expected: what the Python generator printed (Python 3.14.7 on nelly) for each call below, `f` being its
+    // `facade_types` module.
 
     #[test]
     fn ts_key_quotes_what_is_no_identifier() {

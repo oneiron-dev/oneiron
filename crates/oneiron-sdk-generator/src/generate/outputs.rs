@@ -1,11 +1,8 @@
-//! Port of generate.py:2194-2604: `BUILD_TIME_OUTPUTS`, `PACKAGE_OUTPUTS`, `PACKAGE_PATHS` and `outputs()`, in
-//! Python's call order (brief H10: the emitters share one `Inventory`, and the order they run in names its types);
-//! and the file operations of generate.py:2928-2983 (`main`) and agent-docs.py's `write`, with pathlib's errors.
+//! `BUILD_TIME_OUTPUTS`, `PACKAGE_OUTPUTS`, `PACKAGE_PATHS` and `outputs()`, which runs the emitters in a fixed
+//! order: they share one `Inventory`, and the order they run in decides the names it allocates, so the order is part
+//! of the output. Also the file operations of the binary's modes and agent-docs.py's `write`, with pathlib's errors.
 //!
-//! Not ported, both by the lane's design (DESIGN 9.1, CHECK-4.3 C2): `FORMAT`'s rustfmt pass (generate.py:2586-2589;
-//! no committed `.rs` output remains, so its text reaches no file), and the two dormant rewrites of generate.py:
-//! 2533-2557 (the MCP dispatch and board catalog markers, absent on main). Their two hosts are still read, as Python
-//! reads them, so a missing or undecodable host fails here as it does there.
+//! No rustfmt pass: every `.rs` output is a build-time output, which the tree modes neither write nor check.
 
 use std::fs;
 use std::io;
@@ -15,16 +12,14 @@ use indexmap::IndexMap;
 
 use super::emit_http::http_facade;
 use super::emit_py::python_facade_module;
-use super::emit_ts::{
-    VerbTree, row_of, ts_facade_module, ts_native_module, ts_native_signature, verb_tree,
-};
+use super::emit_ts::{row_of, ts_facade_module, ts_native_module, ts_native_signature, verb_tree};
 use super::row_access::context_is;
 use super::{Generator, RowId};
 use crate::error::GenerateError;
 use crate::py::read_text;
-use crate::py::value::{Dict, Value};
+use crate::py::value::Dict;
 
-/// Port of generate.py:2194-2211 (BUILD_TIME_OUTPUTS): the outputs crates/oneiron-sdk-build produces at build time
+/// The outputs crates/oneiron-sdk-build produces at build time
 /// (untangle slice 4.3); the default run neither writes nor checks them in the tree. A set, read for membership.
 pub(crate) const BUILD_TIME_OUTPUTS: &[&str] = &[
     "crates/oneiron-py/src/generated/agent_verbs.rs",
@@ -45,7 +40,7 @@ pub(crate) const BUILD_TIME_OUTPUTS: &[&str] = &[
     "crates/oneiron/src/generated/core_verb_names.rs",
 ];
 
-/// Port of generate.py:2215-2236 (PACKAGE_OUTPUTS): each package's outputs, which its build writes in the tree
+/// Each package's outputs, which its build writes in the tree
 /// (`--package <name>`), by package name in the literal's order.
 pub(crate) const PACKAGE_OUTPUTS: &[(&str, &[&str])] = &[
     (
@@ -90,39 +85,39 @@ pub(crate) fn package_outputs(name: &str) -> Option<&'static [&'static str]> {
         .map(|(_, paths)| *paths)
 }
 
-/// Port of generate.py:2237 (PACKAGE_PATHS): every package output path (a set, read for membership).
+/// `PACKAGE_PATHS`: whether `path` is a package output.
 pub(crate) fn is_package_path(path: &str) -> bool {
     PACKAGE_OUTPUTS
         .iter()
         .any(|(_, paths)| paths.contains(&path))
 }
 
-/// The outputs of one run, as generate.py's `outputs()` returns them: each repository path (`/`-separated, relative
-/// to the root) with its text, or `None` for an old home the default mode deletes, in the `files` dict's order.
+/// The outputs of one run: each repository path (`/`-separated, relative to the root) with its text, in the order the
+/// generator makes them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Outputs {
-    files: IndexMap<String, Option<String>>,
+    files: IndexMap<String, String>,
 }
 
 impl Outputs {
     /// `files[path] = text`: a new path goes last, a present one keeps its place (Python's dict).
-    pub(crate) fn insert(&mut self, path: &str, text: Option<String>) {
+    pub(crate) fn insert(&mut self, path: &str, text: String) {
         self.files.insert(path.to_owned(), text);
     }
 
-    /// Every output in order: its path, and its text or `None` for a deletion.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+    /// Every output in order: its path and its text.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.files
             .iter()
-            .map(|(path, text)| (path.as_str(), text.as_deref()))
+            .map(|(path, text)| (path.as_str(), text.as_str()))
     }
 
-    /// The output at `path`: `None` when there is none, `Some(None)` for a deletion.
-    pub fn get(&self, path: &str) -> Option<Option<&str>> {
-        self.files.get(path).map(Option::as_deref)
+    /// The text of the output at `path`, if there is one.
+    pub fn get(&self, path: &str) -> Option<&str> {
+        self.files.get(path).map(String::as_str)
     }
 
-    /// How many outputs there are, deletions included.
+    /// How many outputs there are.
     pub fn len(&self) -> usize {
         self.files.len()
     }
@@ -204,29 +199,8 @@ pub(crate) fn write_text(path: &Path, text: &str) -> Result<(), GenerateError> {
     fs::write(path, text).map_err(|error| GenerateError::os(&error, path))
 }
 
-/// generate.py:2590-2603: the outputs' old homes, which the default mode deletes, in the literal's order.
-pub(crate) const DELETIONS: [&str; 16] = [
-    "crates/oneiron/src/workspace_roster/rooms/verb_catalog.rs",
-    "crates/oneiron-server/src/mcp/agent_catalog.rs",
-    "crates/oneiron-py/python/oneiron/agent_verbs.py",
-    "crates/oneiron-py/python/oneiron/agent_verbs.pyi",
-    // FIX 8907: the whole-file outputs' homes before generated/.
-    "crates/oneiron/src/task_verb/verb_catalog.rs",
-    "crates/oneiron/src/task_verb/run_verb_catalog.rs",
-    "crates/oneiron/src/task_verb/sdk_generated.rs",
-    "crates/oneiron/src/task_verb/catalog_fragment_revision.rs",
-    "crates/oneiron-server/src/api/facade/agent_verbs.rs",
-    "crates/oneiron-server/src/api/facade/dispatch.rs",
-    "crates/oneiron-remote/src/agent_verbs.rs",
-    "crates/oneiron-napi/src/facade/client/agent_verbs.rs",
-    "crates/oneiron-uniffi/src/facade_generated.rs",
-    "crates/oneiron-uniffi/src/facade_types_generated.rs",
-    "crates/oneiron/src/task_verb/catalog_fragment.d.ts",
-    "crates/oneiron/src/task_verb/code-mode.d.ts",
-];
-
-/// generate.py:2563-2575: the types no verb row reaches that a hand-written route serves, rooted last (OF-181, FIX
-/// 7968, 9891, 365), in Python's order.
+/// The types no verb row reaches that a hand-written route serves, rooted last (OF-181, FIX 7968, 9891, 365), in this
+/// order.
 const EXTRA_ROOTS: [&str; 5] = [
     "crate::lens::GeneratedUiActionEvent",
     "crate::lens::GeneratedUiSegment",
@@ -235,8 +209,7 @@ const EXTRA_ROOTS: [&str; 5] = [
     "crate::memory::MessageResultAttachment",
 ];
 
-/// The interpreter generate.py's spawn of agent-docs.py names (`sys.executable`): `ONEIRON_PYTHON` when set, else
-/// `python3` (`python` on Windows), as crates/oneiron-sdk-build chose one.
+/// The interpreter that runs agent-docs.py: `ONEIRON_PYTHON` when set, else `python3` (`python` on Windows).
 fn python() -> String {
     std::env::var("ONEIRON_PYTHON").unwrap_or_else(|_| {
         if cfg!(windows) {
@@ -389,12 +362,12 @@ fn signal_text(cmd: &str, _status: std::process::ExitStatus) -> String {
     format!("Command '{cmd}' died with unknown signal 0.")
 }
 
-/// generate.py:2948 and 2982-2983: `subprocess.run([sys.executable, 'packages/oneiron/scripts/agent-docs.py',
-/// *flags], check=True)`, inheriting the standard streams. The script stays Python (SDKGEN-DOCS = A keeps its
-/// `--check` and `--generated`); the `--out-dir` mode, the build's, never comes here.
+/// `subprocess.run([python, 'packages/oneiron/scripts/agent-docs.py', *flags], check=True)`, inheriting the standard
+/// streams: the docs mirror's `--check` and `--generated`, which stay Python (SDKGEN-DOCS = A). The `--out-dir` mode,
+/// the build's, never comes here.
 #[allow(
     clippy::disallowed_methods,
-    reason = "generate.py's default mode, --check and --package docs run agent-docs.py, a Python CI and developer \
+    reason = "the default mode, --check and --package docs run agent-docs.py, a Python CI and developer \
               step; oneiron_spawn is the server's, and the build's mode (--out-dir) never spawns"
 )]
 pub(crate) fn agent_docs(root: &Path, flags: &[&str]) -> Result<(), GenerateError> {
@@ -415,127 +388,109 @@ pub(crate) fn agent_docs(root: &Path, flags: &[&str]) -> Result<(), GenerateErro
 }
 
 impl Generator {
-    /// Port of generate.py:2241-2604 (outputs): every output, in the `files` dict's order, each emitter run where
-    /// Python runs it (brief H10), then the sixteen deletions as `None`.
+    /// Every output, in the `files` dict's order, each emitter run at its fixed place in the order (the emitters
+    /// share the inventory, and the order they run in names its types).
     pub(crate) fn outputs(&mut self) -> Result<Outputs, GenerateError> {
-        // generate.py:2242
         let facade_rows = local_facade_rows(self);
-        // generate.py:2243-2385: sdk_generated.rs (G4a's segment).
+        // sdk_generated.rs.
         let core = super::emit_core::core(self, &facade_rows)?;
-        // generate.py:2386
         let super::emit_server::FacadeDispatch {
             routes: server,
             dispatch,
         } = super::emit_server::facade_dispatch(self, &facade_rows)?;
-        // generate.py:2387-2449: the remote client's typed methods (G4a's segment).
+        // The remote client's typed methods.
         let remote = super::emit_remote::remote(self, &facade_rows)?;
-        // generate.py:2450-2459: the napi and PyO3 methods, one row at a time (G4a's segment).
+        // The napi and PyO3 methods, one row at a time.
         let super::emit_native::NativeTexts { napi, py } =
             super::emit_native::napi_py(self, &facade_rows)?;
-        // generate.py:2460-2461
         let ts = format!("{}{}", super::HEADER, super::common::AGENT_VERBS_TS);
         let ts_native = ts_native(self, &facade_rows)?;
-        // generate.py:2462-2508: verb_catalog.rs and the custody rows (G4a's segment).
+        // verb_catalog.rs and the custody rows.
         let super::emit_core::Catalog {
             text: catalog,
             custody,
         } = super::emit_core::catalog(self)?;
-        // generate.py:2509-2510: UniFFI before the HTTP facade.
+        // UniFFI before the HTTP facade.
         let (uniffi, uniffi_types) = super::uniffi::uniffi_facade(self, &facade_rows)?;
         let http = http_facade(self)?;
-        // generate.py:2511-2532: the files dict, its values evaluated left to right.
+        // The files dict, its values evaluated left to right.
         let mut files = Outputs::default();
-        files.insert("packages/oneiron-client/src/facade.ts", Some(http));
+        files.insert("packages/oneiron-client/src/facade.ts", http);
         files.insert(
             "crates/oneiron/src/verbs/generated/run_verb_catalog.rs",
-            Some(super::emit_core::run_catalog(self)?),
+            super::emit_core::run_catalog(self)?,
         );
         files.insert(
             "crates/oneiron-uniffi/src/generated/facade_generated.rs",
-            Some(uniffi),
+            uniffi,
         );
         files.insert(
             "crates/oneiron-uniffi/src/generated/facade_types_generated.rs",
-            Some(uniffi_types),
+            uniffi_types,
         );
-        files.insert(
-            "crates/oneiron/src/verbs/generated/sdk_generated.rs",
-            Some(core),
-        );
+        files.insert("crates/oneiron/src/verbs/generated/sdk_generated.rs", core);
         files.insert(
             "crates/oneiron/src/verbs/generated/verb_catalog.rs",
-            Some(catalog),
+            catalog,
         );
         files.insert(
             super::CORE_VERB_NAMES_PATH,
-            Some(super::emit_core::core_verb_names(self, &custody)?),
+            super::emit_core::core_verb_names(self, &custody)?,
         );
         files.insert(
             "crates/oneiron-server/src/api/facade/generated/agent_verbs.rs",
-            Some(server),
+            server,
         );
         files.insert(
             "crates/oneiron-server/src/api/facade/generated/dispatch.rs",
-            Some(dispatch),
+            dispatch,
         );
         files.insert(
             "crates/oneiron-server/src/api/facade/generated/host_door_rows.rs",
-            Some(super::emit_server::host_door_rows(self, &facade_rows)?),
+            super::emit_server::host_door_rows(self, &facade_rows)?,
         );
-        files.insert(
-            "crates/oneiron-remote/src/generated/agent_verbs.rs",
-            Some(remote),
-        );
+        files.insert("crates/oneiron-remote/src/generated/agent_verbs.rs", remote);
         files.insert(
             "crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs",
-            Some(napi),
+            napi,
         );
         // FIX 8907: the MCP dispatch is a whole-file child of tasks_response.
         files.insert(
             "crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs",
-            Some(format!(
+            format!(
                 "{}use super::*;\n{}",
                 super::HEADER,
                 super::emit_mcp::mcp_dispatch(self)?
-            )),
+            ),
         );
-        files.insert("packages/oneiron/src/agent-verbs.ts", Some(ts));
+        files.insert("packages/oneiron/src/agent-verbs.ts", ts);
         // Untangle slice 4.3 (S4-3): what were marked blocks are whole files their hosts import.
         let tree = verb_tree(self, &facade_rows)?;
         files.insert(
             "packages/oneiron/src/facade-verbs.ts",
-            Some(ts_facade_module(self, &tree)?),
+            ts_facade_module(self, &tree)?,
         );
         let tree = verb_tree(self, &facade_rows)?;
         files.insert(
             "crates/oneiron-py/python/oneiron/_facade_verbs.py",
-            Some(python_facade_module(self, &tree, false)?),
+            python_facade_module(self, &tree, false)?,
         );
         let tree = verb_tree(self, &facade_rows)?;
         files.insert(
             "crates/oneiron-py/python/oneiron/_facade_verbs.pyi",
-            Some(python_facade_module(self, &tree, true)?),
+            python_facade_module(self, &tree, true)?,
         );
         files.insert(
             "crates/oneiron-py/src/generated/agent_verbs.rs",
-            Some(format!(
+            format!(
                 "{}#[pymethods]\nimpl NativeClient {{\n{py}}}\n",
                 super::HEADER
-            )),
+            ),
         );
-        // generate.py:2533-2557: the two dormant rewrites are not ported (their begin markers are absent on main);
-        // their hosts are read, as Python reads them whether or not a marker is there.
-        read_text(
-            &self
-                .root
-                .join("crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"),
-        )?;
-        read_text(&self.root.join("crates/oneiron/src/board_verb.rs"))?;
-        // generate.py:2563-2575: rendered last, once every emitter above has named the types it uses.
+        // Rooted last, once every emitter above has named the types it uses.
         for text in EXTRA_ROOTS {
             self.inventory_mut()?.root_ir(text)?;
         }
-        // generate.py:2576-2581
         let rows: Vec<Dict> = self
             .facade_rows
             .iter()
@@ -544,24 +499,15 @@ impl Generator {
         let refs: Vec<&Dict> = rows.iter().collect();
         let census = self.inventory_mut()?.census(&refs)?;
         let facade_types = self.inventory_mut()?.typescript(&census)?;
-        files.insert(
-            "packages/oneiron/src/facade-types.ts",
-            Some(facade_types.clone()),
-        );
+        files.insert("packages/oneiron/src/facade-types.ts", facade_types.clone());
         files.insert(
             "packages/oneiron/src/native-verbs.ts",
-            Some(ts_native_module(self, &ts_native, &facade_types)?),
+            ts_native_module(self, &ts_native, &facade_types)?,
         );
-        files.insert(
-            "packages/oneiron-client/src/facade-types.ts",
-            Some(facade_types),
-        );
+        files.insert("packages/oneiron-client/src/facade-types.ts", facade_types);
         let stubs = self.inventory_mut()?.python(&census)?;
-        files.insert(
-            "crates/oneiron-py/python/oneiron/facade_types.pyi",
-            Some(stubs),
-        );
-        // generate.py:2585: the code-mode catalog fragment over every row code mode serves, with its own inventory.
+        files.insert("crates/oneiron-py/python/oneiron/facade_types.pyi", stubs);
+        // The code-mode catalog fragment over every row code mode serves, with its own inventory.
         let code_mode: Vec<Dict> = self
             .code_mode_rows
             .iter()
@@ -574,36 +520,30 @@ impl Generator {
             super::HEADER,
             &self.type_names,
         )? {
-            files.insert(path, Some(text));
-        }
-        // generate.py:2586-2589: rustfmt (`FORMAT`) is not ported: no committed `.rs` output remains (CHECK-4.3 C2).
-        for path in DELETIONS {
-            files.insert(path, None);
+            files.insert(path, text);
         }
         Ok(files)
     }
 
-    /// Port of generate.py:2950-2958 (main's `--out-dir` mode): every output that is no deletion, under
-    /// `dir/<path>`; then the three generated docs (SDKGEN-DOCS = A: agent-docs.py's `generated_artifacts`, written
-    /// here rather than by a spawned `agent-docs.py --from <dir> --out <dir>`).
+    /// The `--out-dir` mode: every output under `dir/<path>`; then the three generated docs (SDKGEN-DOCS = A: the text
+    /// of agent-docs.py's `generated_artifacts`, written here, no process spawned).
     pub(crate) fn write_out_dir(&mut self, dir: &Path) -> Result<(), GenerateError> {
         let files = self.outputs()?;
         for (path, text) in files.iter() {
-            let Some(text) = text else { continue };
             let target = join(dir, path);
             if let Some(parent) = target.parent() {
                 mkdir_parents(parent)?;
             }
             write_text(&target, text)?;
         }
-        // agent-docs.py --from <dir> --out <dir>: its two outputs read back from `dir`.
+        // As `agent-docs.py --from <dir> --out <dir>` would: its two outputs read back from `dir`.
         let docs = super::docs::generated_artifacts(&self.root, dir)?;
         super::docs::write(&docs, dir)
     }
 
-    /// Port of generate.py:2934-2947 (main's `--package` mode): each named package's outputs written in the tree
-    /// where they differ (the docs mirror's need the TypeScript and Python packages' too). Whether `docs` was named:
-    /// the caller then runs `agent-docs.py --generated` (generate.py:2948).
+    /// The `--package` mode: each named package's outputs written in the tree where they differ (the docs mirror's
+    /// need the TypeScript and Python packages' too). Whether `docs` was named: the caller then runs
+    /// `agent-docs.py --generated`.
     pub(crate) fn write_packages(&mut self, names: &[String]) -> Result<bool, GenerateError> {
         let files = self.outputs()?;
         let mut packages: std::collections::BTreeSet<&str> =
@@ -620,10 +560,7 @@ impl Generator {
                 }
                 let target = self.root.join(path);
                 // `files[path]`: every package path is an output.
-                let text = files
-                    .get(path)
-                    .ok_or_else(|| GenerateError::key(path))?
-                    .unwrap_or_default();
+                let text = files.get(path).ok_or_else(|| GenerateError::key(path))?;
                 if !target.exists() || read_text(&target)? != text {
                     if let Some(parent) = target.parent() {
                         mkdir_parents(parent)?;
@@ -635,10 +572,9 @@ impl Generator {
         Ok(docs)
     }
 
-    /// Port of generate.py:2959-2979 (main's default mode and `--check`): the tree's outputs that are no build-time
-    /// output written where they differ (`--check`: none written, and the package outputs not compared), each old
-    /// home deleted (`--check`: reported), then `SDK-GENERATED-STALE` for `--check`. Returns what the default mode
-    /// prints on stdout: the census, each opaque leaf and each unread shape.
+    /// The default mode and `--check`: the tree's outputs that are no build-time output written where they differ
+    /// (`--check`: none written, and the package outputs not compared), then `SDK-GENERATED-STALE` for `--check`.
+    /// Returns what the default mode prints on stdout: the census, each opaque leaf and each unread shape.
     pub(crate) fn write_tree(&mut self, check: bool) -> Result<String, GenerateError> {
         let files = self.outputs()?;
         let mut stale: Vec<&str> = Vec::new();
@@ -647,16 +583,6 @@ impl Generator {
                 continue;
             }
             let target = self.root.join(path);
-            let Some(text) = text else {
-                if target.exists() {
-                    stale.push(path);
-                    if !check {
-                        fs::remove_file(&target)
-                            .map_err(|error| GenerateError::os(&error, &target))?;
-                    }
-                }
-                continue;
-            };
             if target.exists() && read_text(&target)? == text {
                 continue;
             }
@@ -697,9 +623,9 @@ impl Generator {
     }
 }
 
-// ---- outputs()'s locals, and the replay entry points of the ported emitters (DESIGN 9.3)
+// ---- outputs()'s locals
 
-/// generate.py:2242 `facade_rows`: `[r for r in ROWS if r.get("context", "memory") == "memory"] + BOARD_HOST_ROWS`,
+/// `outputs()`'s `facade_rows`: `[r for r in ROWS if r.get("context", "memory") == "memory"] + BOARD_HOST_ROWS`,
 /// recomputed as `outputs()` does (the same rows as `FACADE_ROWS`).
 pub(crate) fn local_facade_rows(generator: &Generator) -> Vec<RowId> {
     generator
@@ -711,116 +637,13 @@ pub(crate) fn local_facade_rows(generator: &Generator) -> Vec<RowId> {
         .collect()
 }
 
-/// generate.py:2461: `'\n'.join(ts_native_signature(r) for r in facade_rows)`.
+/// `'\n'.join(ts_native_signature(r) for r in facade_rows)`.
 fn ts_native(generator: &mut Generator, facade_rows: &[RowId]) -> Result<String, GenerateError> {
     let mut signatures = Vec::new();
     for &id in facade_rows {
         signatures.push(ts_native_signature(generator, id)?);
     }
     Ok(signatures.join("\n"))
-}
-
-/// The verb tree as Python's dicts: `{name: {'row': row, 'children': {...}}}` (the replay's logged value).
-fn tree_value(generator: &Generator, tree: &VerbTree) -> Value {
-    let mut out = Dict::new();
-    for (name, node) in tree {
-        let mut entry = Dict::new();
-        entry.insert(
-            "row".to_owned(),
-            node.row
-                .map_or(Value::None, |id| Value::Dict(row_of(generator, id))),
-        );
-        entry.insert("children".to_owned(), tree_value(generator, &node.children));
-        out.insert(name.clone(), Value::Dict(entry));
-    }
-    Value::Dict(out)
-}
-
-/// The replay's `ts_native_signature#n`: the nth facade row's signature (generate.py:2461).
-pub(crate) fn replay_ts_native_signature(
-    generator: &mut Generator,
-    n: usize,
-) -> Result<Value, GenerateError> {
-    let facade_rows = local_facade_rows(generator);
-    let id = n
-        .checked_sub(1)
-        .and_then(|at| facade_rows.get(at))
-        .copied()
-        .ok_or_else(|| GenerateError::exit(format!("port-harness replay: no facade row {n}")))?;
-    ts_native_signature(generator, id).map(Value::Str)
-}
-
-/// The replay's `http_facade#1` (generate.py:2510).
-pub(crate) fn replay_http_facade(
-    generator: &mut Generator,
-    _n: usize,
-) -> Result<Value, GenerateError> {
-    http_facade(generator).map(Value::Str)
-}
-
-/// The replay's `verb_tree#n`: the first call is `http_facade`'s over `FACADE_ROWS` (generate.py:1534), the next
-/// three `outputs()`'s over its `facade_rows` (2528-2530).
-pub(crate) fn replay_verb_tree(
-    generator: &mut Generator,
-    n: usize,
-) -> Result<Value, GenerateError> {
-    let rows = if n == 1 {
-        generator.facade_rows.clone()
-    } else {
-        local_facade_rows(generator)
-    };
-    let tree = verb_tree(generator, &rows)?;
-    Ok(tree_value(generator, &tree))
-}
-
-/// The replay's `ts_facade_module#1` (generate.py:2528).
-pub(crate) fn replay_ts_facade_module(
-    generator: &mut Generator,
-    _n: usize,
-) -> Result<Value, GenerateError> {
-    let rows = local_facade_rows(generator);
-    let tree = verb_tree(generator, &rows)?;
-    ts_facade_module(generator, &tree).map(Value::Str)
-}
-
-/// The replay's `python_facade_module#n`: the runtime module first (generate.py:2529), then the stub (2530).
-pub(crate) fn replay_python_facade_module(
-    generator: &mut Generator,
-    n: usize,
-) -> Result<Value, GenerateError> {
-    let rows = local_facade_rows(generator);
-    let tree = verb_tree(generator, &rows)?;
-    python_facade_module(generator, &tree, n == 2).map(Value::Str)
-}
-
-/// The replay's `ts_native_module#1` (generate.py:2579). Its arguments are recomputed at the call: by then every
-/// type the signatures and the census name is rooted, so neither call changes the inventory, and each gives the text
-/// `outputs()` passed.
-pub(crate) fn replay_ts_native_module(
-    generator: &mut Generator,
-    _n: usize,
-) -> Result<Value, GenerateError> {
-    let rows = local_facade_rows(generator);
-    let signatures = ts_native(generator, &rows)?;
-    let facade_rows: Vec<Dict> = generator
-        .facade_rows
-        .iter()
-        .map(|&id| row_of(generator, id))
-        .collect();
-    let refs: Vec<&Dict> = facade_rows.iter().collect();
-    let inventory = generator.inventory_mut()?;
-    let census = inventory.census(&refs)?;
-    let facade_types = inventory.typescript(&census)?;
-    ts_native_module(generator, &signatures, &facade_types).map(Value::Str)
-}
-
-/// The output a `python_facade_module` value is: the stub holds its `typing` import line.
-pub(crate) fn python_facade_module_path(text: &str) -> &'static str {
-    if text.contains("\nfrom typing import Any, overload\n") {
-        "crates/oneiron-py/python/oneiron/_facade_verbs.pyi"
-    } else {
-        "crates/oneiron-py/python/oneiron/_facade_verbs.py"
-    }
 }
 
 #[cfg(test)]

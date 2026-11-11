@@ -1,6 +1,6 @@
-//! Port of facade_types.py:619-695 (`Inventory`): the declarations every facade root reaches, and the census of
-//! what they read as. The walk (Rust type to IR), the census, and the TypeScript and Python renderers are this
-//! module's children, split by the Python class's section comments.
+//! The declarations every facade root reaches, and the census of what they read as. The walk (Rust type to IR), the
+//! census, and the TypeScript and Python renderers are this module's children, split by the Python class's section
+//! comments.
 
 mod census;
 mod python;
@@ -14,9 +14,7 @@ use indexmap::{IndexMap, IndexSet};
 
 use super::index::{Index, ItemRef};
 use super::reader::parse_type;
-use super::{
-    CRATES, Ir, Key, RECURSION_LIMIT, RESERVED, ROOT_CONTEXT, holds, recursion_error, type_names,
-};
+use super::{CRATES, Ir, Key, RECURSION_LIMIT, RESERVED, ROOT_CONTEXT, holds, recursion_error};
 use crate::error::GenerateError;
 use crate::py::value::{Dict, Value};
 
@@ -66,18 +64,7 @@ pub(crate) enum VariantShape {
     Struct,
 }
 
-impl VariantShape {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Unit => "unit",
-            Self::Newtype => "newtype",
-            Self::Tuple => "tuple",
-            Self::Struct => "struct",
-        }
-    }
-}
-
-/// One variant of a derived enum (facade_types.py:966-967).
+/// One variant of a derived enum.
 #[derive(Clone, Debug)]
 pub(crate) struct VariantMeta {
     pub(crate) name: String,
@@ -88,7 +75,7 @@ pub(crate) struct VariantMeta {
     pub(crate) member: Ir,
 }
 
-/// A derived enum's serde tagging and variants (facade_types.py:968-969), by declaration name.
+/// A derived enum's serde tagging and variants, by declaration name.
 #[derive(Clone, Debug)]
 pub(crate) struct EnumMeta {
     pub(crate) tag: Option<String>,
@@ -97,8 +84,8 @@ pub(crate) struct EnumMeta {
     pub(crate) variants: Vec<VariantMeta>,
 }
 
-/// Port of facade_types.py:619-1254 (`Inventory`). Fields keep the Python names; a Python `set` is an `IndexSet`
-/// whose order nothing reads.
+/// The facade types' inventory. Fields keep the Python names; a Python `set` is an `IndexSet` whose order nothing
+/// reads.
 #[derive(Debug)]
 pub(crate) struct Inventory {
     pub(crate) index: Index,
@@ -108,11 +95,6 @@ pub(crate) struct Inventory {
     pub(crate) order: Vec<Key>,
     /// Every name taken: the type_names.json pins, then each allocation (a set).
     pub(crate) names: IndexSet<String>,
-    /// The members of Python's `names` set that are not strings: the hashable type_names.json pins that are no
-    /// `str`, the first of equal values kept as a set keeps it (`7`, `True`, `1.0`, `None`). No name the inventory
-    /// allocates or looks up can equal one; they are kept so the state is Python's (a pin `allocate` returns is
-    /// refused there, a documented divergence).
-    pub(crate) names_not_str: Vec<Value>,
     /// (declaration, rust text, reason)
     pub(crate) fallbacks: Vec<(String, String, String)>,
     /// (declaration, rust text): serde_json values, opaque by design.
@@ -141,14 +123,9 @@ pub(crate) struct Inventory {
 }
 
 impl Inventory {
-    /// Port of facade_types.py:622-647 (`Inventory.__init__`), reading `TYPE_NAMES` as the Python import does.
-    pub(crate) fn new(root: &Path, rows: &[&Dict]) -> Result<Self, GenerateError> {
-        let names = type_names(root)?;
-        Self::with_type_names(root, rows, &names)
-    }
-
-    /// `Inventory.__init__` with `TYPE_NAMES` already read (by `Generator::new`, at the Python import's place):
-    /// the index first, then the pinned names, then each row's input and output, rooted in row order.
+    /// `Inventory.__init__`, with `TYPE_NAMES` already read (`Generator::new` reads type_names.json first, before
+    /// any verb file): the index first, then the pinned names, then each row's input and output, rooted in row
+    /// order.
     pub(crate) fn with_type_names(
         root: &Path,
         rows: &[&Dict],
@@ -159,19 +136,14 @@ impl Inventory {
         let Value::Dict(pins) = pins else {
             return Err(GenerateError::attribute(pins.type_name(), "values"));
         };
+        // `set(TYPE_NAMES.values())`: a pin that is not hashable is Python's `TypeError`. A hashable pin that is no
+        // `str` (`7`, `True`, `None`) can equal no name the inventory allocates or looks up, so only the strings are
+        // kept (a pin `allocate` returns is refused there, a documented divergence).
         let mut names = IndexSet::new();
-        let mut names_not_str: Vec<Value> = Vec::new();
         for value in pins.values() {
             value.check_hashable("a set element")?;
-            match value {
-                Value::Str(name) => {
-                    names.insert(name.clone());
-                }
-                // `True == 1 == 1.0`: a set keeps the first.
-                other if !names_not_str.iter().any(|kept| kept.py_eq(other)) => {
-                    names_not_str.push(other.clone());
-                }
-                _ => {}
+            if let Value::Str(name) = value {
+                names.insert(name.clone());
             }
         }
         let (crate_name, file) = ROOT_CONTEXT;
@@ -194,7 +166,6 @@ impl Inventory {
             decls: IndexMap::new(),
             order: Vec::new(),
             names,
-            names_not_str,
             fallbacks: Vec::new(),
             opaques: Vec::new(),
             variants: IndexMap::new(),
@@ -222,7 +193,7 @@ impl Inventory {
         Ok(inventory)
     }
 
-    /// Port of facade_types.py:649-653 (`Inventory.root_ir`): a row type, named as the SDK module names it.
+    /// A row type, named as the SDK module names it.
     pub(crate) fn root_ir(&mut self, text: &str) -> Result<Ir, GenerateError> {
         if let Some(found) = self.roots.get(text) {
             return Ok(found.clone());
@@ -239,15 +210,14 @@ impl Inventory {
         self.root_ir(type_text(text)?)
     }
 
-    /// Port of facade_types.py:655-657 (`Inventory.ts_type`): a row type as TypeScript spells it outside the
-    /// declarations module (Python's default prefix is `Facade.`).
+    /// A row type as TypeScript spells it outside the declarations module (Python's default prefix is `Facade.`).
     pub(crate) fn ts_type(&mut self, text: &str, prefix: &str) -> Result<String, GenerateError> {
         let node = self.root_ir(text)?;
         self.ts(&node, prefix)
     }
 
-    /// Port of facade_types.py:659-661 (`Inventory.py_type`): a row type as the Python stubs spell it outside the
-    /// declarations module (Python's default prefix is `Facade.`).
+    /// A row type as the Python stubs spell it outside the declarations module (Python's default prefix is
+    /// `Facade.`).
     pub(crate) fn py_type(&mut self, text: &str, prefix: &str) -> Result<String, GenerateError> {
         let node = self.root_ir(text)?;
         self.py_outer(&node, prefix)
@@ -283,17 +253,16 @@ impl Inventory {
 
     // ---- naming
 
-    /// Port of facade_types.py:665-682 (`Inventory.allocate`): a pinned name, else the item's (or its codec
-    /// module's) name; a name another type took is a contest the author settles in type_names.json; a reserved
-    /// name takes module-suffix prefixes, shortest first, then a number.
+    /// A pinned name, else the item's (or its codec module's) name; a name another type took is a contest the author
+    /// settles in type_names.json; a reserved name takes module-suffix prefixes, shortest first, then a number.
     fn allocate(&mut self, item: &ItemRef) -> Result<String, GenerateError> {
         let path = item.key.path();
         if let Some(pin) = self.type_names.get(&path) {
             return match pin {
                 Value::Str(name) => Ok(name.clone()),
                 // Documented divergence: Python returns the pin as the declaration's name and fails later, with
-                // whatever string operation first meets it (on main, `uniffi_types.py:290`'s `name + ...` for a
-                // reached pin); the port refuses it here, as a `TypeError` that names the pin.
+                // whatever string operation first meets it (the UniFFI types' `name + ...` for a reached pin); the
+                // port refuses it here, as a `TypeError` that names the pin.
                 other => Err(GenerateError::type_error(format!(
                     "scripts/sdk/type_names.json pins {path} to {}, which is not a str",
                     other.repr()
@@ -342,8 +311,8 @@ impl Inventory {
         Ok(name)
     }
 
-    /// Port of facade_types.py:684-691 (`Inventory.declare`): names the item when first reached, before its body is
-    /// walked (so a cycle meets the placeholder), and appends it to `order` after.
+    /// Names the item when first reached, before its body is walked (so a cycle meets the placeholder), and appends
+    /// it to `order` after.
     pub(crate) fn declare(&mut self, item: &ItemRef) -> Result<Key, GenerateError> {
         let key = Rc::clone(&item.key);
         if !self.decls.contains_key(&key) {
@@ -364,7 +333,7 @@ impl Inventory {
         Ok(key)
     }
 
-    /// Port of facade_types.py:693-695 (`Inventory.fallback`).
+    /// Lists a shape the walk cannot read in the census, with its reason; it reads as `('unknown', reason)`.
     pub(crate) fn fallback(&mut self, location: &str, text: &str, reason: &str) -> Ir {
         self.fallbacks.push((
             location.to_owned(),

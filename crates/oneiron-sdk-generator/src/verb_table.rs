@@ -1,4 +1,4 @@
-//! Port of verb_table.py: the verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read
+//! The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read
 //! in file-name order.
 
 use std::fs;
@@ -28,15 +28,15 @@ fn verb_files(directory: &Path) -> Vec<PathBuf> {
     files.into_iter().map(|(_, path)| path).collect()
 }
 
-/// Port of verb_table.py:10-18 (load_verbs): every verb row, in verb-name order; a file is named by the verb it holds.
+/// Every verb row, in verb-name order; a file is named by the verb it holds.
 pub(crate) fn load_verbs(directory: &Path) -> Result<Vec<Dict>, GenerateError> {
     let mut rows = Vec::new();
     for path in verb_files(directory) {
         let file_name = path.file_name().unwrap_or_default();
-        // verb_table.py:14 `json.loads(path.read_text())`
+        // Python: `json.loads(path.read_text())`
         let row = json::loads(&read_text(&path)?)
             .map_err(|error| error.into_error(&display_os_str(file_name)))?;
-        // verb_table.py:15-16: `row['name']` refuses a row that is no object as Python does.
+        // `row['name']` refuses a row that is no object as Python does.
         let name = row.getitem("name")?.str();
         if file_name.as_encoded_bytes() != format!("{name}.json").as_bytes() {
             return Err(GenerateError::value(format!(
@@ -103,7 +103,7 @@ mod tests {
         fs::remove_dir_all(&dir).expect("cleanup");
     }
 
-    // The traceback's last line of verb_table.load_verbs(D) on nelly (Python 3.14.7) for each file.
+    // The traceback's last line of the Python generator's load_verbs(D) on nelly (Python 3.14.7) for each file.
     #[test]
     fn refusals_match_python() {
         let cases: &[(&str, &[u8], &str)] = &[

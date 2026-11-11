@@ -527,19 +527,11 @@ pub(crate) fn loads(text: &str) -> Result<Value, JsonError> {
 pub(crate) struct DumpOptions {
     /// `ensure_ascii` (default `True`): escape every character outside `' '..='~'`, astral ones as a surrogate pair.
     pub(crate) ensure_ascii: bool,
-    /// `sort_keys` (default `False`).
-    pub(crate) sort_keys: bool,
-    /// `indent` (default `None`); with one, the item separator is `,` and each item takes its own line.
-    pub(crate) indent: Option<usize>,
 }
 
 impl Default for DumpOptions {
     fn default() -> Self {
-        Self {
-            ensure_ascii: true,
-            sort_keys: false,
-            indent: None,
-        }
+        Self { ensure_ascii: true }
     }
 }
 
@@ -572,15 +564,7 @@ fn push_json_str(out: &mut String, s: &str, ensure_ascii: bool) {
     out.push('"');
 }
 
-fn push_newline(out: &mut String, indent: Option<usize>, level: usize) {
-    if let Some(width) = indent {
-        out.push('\n');
-        out.push_str(&" ".repeat(width * level));
-    }
-}
-
-fn push_json(out: &mut String, value: &Value, opts: DumpOptions, level: usize) {
-    let item_separator = if opts.indent.is_some() { "," } else { ", " };
+fn push_json(out: &mut String, value: &Value, opts: DumpOptions) {
     match value {
         Value::None => out.push_str("null"),
         Value::Bool(true) => out.push_str("true"),
@@ -593,31 +577,23 @@ fn push_json(out: &mut String, value: &Value, opts: DumpOptions, level: usize) {
             out.push('[');
             for (at, item) in items.iter().enumerate() {
                 if at > 0 {
-                    out.push_str(item_separator);
+                    out.push_str(", ");
                 }
-                push_newline(out, opts.indent, level + 1);
-                push_json(out, item, opts, level + 1);
+                push_json(out, item, opts);
             }
-            push_newline(out, opts.indent, level);
             out.push(']');
         }
         Value::Dict(dict) if dict.is_empty() => out.push_str("{}"),
         Value::Dict(dict) => {
-            let mut entries: Vec<(&String, &Value)> = dict.iter().collect();
-            if opts.sort_keys {
-                entries.sort_by(|a, b| a.0.cmp(b.0));
-            }
             out.push('{');
-            for (at, (key, item)) in entries.into_iter().enumerate() {
+            for (at, (key, item)) in dict.iter().enumerate() {
                 if at > 0 {
-                    out.push_str(item_separator);
+                    out.push_str(", ");
                 }
-                push_newline(out, opts.indent, level + 1);
                 push_json_str(out, key, opts.ensure_ascii);
                 out.push_str(": ");
-                push_json(out, item, opts, level + 1);
+                push_json(out, item, opts);
             }
-            push_newline(out, opts.indent, level);
             out.push('}');
         }
     }
@@ -626,7 +602,7 @@ fn push_json(out: &mut String, value: &Value, opts: DumpOptions, level: usize) {
 /// `json.dumps(value, ...)` with the given keyword arguments.
 pub(crate) fn dumps(value: &Value, opts: DumpOptions) -> String {
     let mut out = String::new();
-    push_json(&mut out, value, opts, 0);
+    push_json(&mut out, value, opts);
     out
 }
 
@@ -1021,7 +997,7 @@ mod tests {
     const DUMPS_SAMPLE: &str = r#"{"z": 1, "a": [1.0, 1e16, 1e-7, -0.0, NaN, Infinity, -Infinity, true, false, null],
         "s": "é\u0000\b\t\n\f\r\u001f/\\\"😀 \u007f<>&'", "e": {}, "l": [], "n": {"b": [[]], "a": {"c": "x"}}}"#;
 
-    // python3 -c "import json; v = json.loads(SAMPLE); print(json.dumps(v)); print(json.dumps(v, ensure_ascii=False)); print(json.dumps(v, sort_keys=True)); print(json.dumps(v, indent=1))"
+    // python3 -c "import json; v = json.loads(SAMPLE); print(json.dumps(v)); print(json.dumps(v, ensure_ascii=False))"
     // with SAMPLE the text of DUMPS_SAMPLE.
     #[test]
     fn dumps_matches_python() {
@@ -1032,30 +1008,9 @@ mod tests {
                 &value,
                 DumpOptions {
                     ensure_ascii: false,
-                    ..DumpOptions::default()
                 }
             ),
             DUMPS_UNICODE
-        );
-        assert_eq!(
-            dumps(
-                &value,
-                DumpOptions {
-                    sort_keys: true,
-                    ..DumpOptions::default()
-                }
-            ),
-            DUMPS_SORTED
-        );
-        assert_eq!(
-            dumps(
-                &value,
-                DumpOptions {
-                    indent: Some(1),
-                    ..DumpOptions::default()
-                }
-            ),
-            DUMPS_INDENT
         );
         // python3 -c "import json; print(json.dumps('café \U0001f600 \x7f'))"
         assert_eq!(
@@ -1066,6 +1021,4 @@ mod tests {
 
     const DUMPS_DEFAULT: &str = "{\"z\": 1, \"a\": [1.0, 1e+16, 1e-07, -0.0, NaN, Infinity, -Infinity, true, false, null], \"s\": \"\\u00e9\\u0000\\b\\t\\n\\f\\r\\u001f/\\\\\\\"\\ud83d\\ude00\\u2028\\u007f<>&'\", \"e\": {}, \"l\": [], \"n\": {\"b\": [[]], \"a\": {\"c\": \"x\"}}}";
     const DUMPS_UNICODE: &str = "{\"z\": 1, \"a\": [1.0, 1e+16, 1e-07, -0.0, NaN, Infinity, -Infinity, true, false, null], \"s\": \"\u{e9}\\u0000\\b\\t\\n\\f\\r\\u001f/\\\\\\\"\u{1f600}\u{2028}\u{7f}<>&'\", \"e\": {}, \"l\": [], \"n\": {\"b\": [[]], \"a\": {\"c\": \"x\"}}}";
-    const DUMPS_SORTED: &str = "{\"a\": [1.0, 1e+16, 1e-07, -0.0, NaN, Infinity, -Infinity, true, false, null], \"e\": {}, \"l\": [], \"n\": {\"a\": {\"c\": \"x\"}, \"b\": [[]]}, \"s\": \"\\u00e9\\u0000\\b\\t\\n\\f\\r\\u001f/\\\\\\\"\\ud83d\\ude00\\u2028\\u007f<>&'\", \"z\": 1}";
-    const DUMPS_INDENT: &str = "{\u{a} \"z\": 1,\u{a} \"a\": [\u{a}  1.0,\u{a}  1e+16,\u{a}  1e-07,\u{a}  -0.0,\u{a}  NaN,\u{a}  Infinity,\u{a}  -Infinity,\u{a}  true,\u{a}  false,\u{a}  null\u{a} ],\u{a} \"s\": \"\\u00e9\\u0000\\b\\t\\n\\f\\r\\u001f/\\\\\\\"\\ud83d\\ude00\\u2028\\u007f<>&'\",\u{a} \"e\": {},\u{a} \"l\": [],\u{a} \"n\": {\u{a}  \"b\": [\u{a}   []\u{a}  ],\u{a}  \"a\": {\u{a}   \"c\": \"x\"\u{a}  }\u{a} }\u{a}}";
 }
