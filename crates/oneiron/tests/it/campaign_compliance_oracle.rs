@@ -298,7 +298,7 @@ fn campaign_compliance_gate_oracle() -> Result<()> {
         test_id(EMAIL_IDENTITY_SEED),
         &mut sink,
     );
-    assert_eq!(no_jurisdiction.gate_outcome, "deny");
+    assert_eq!(no_jurisdiction.gate_outcome, "pending");
     assert!(blocked_by_compliance(&no_jurisdiction));
     assert!(
         no_jurisdiction
@@ -371,7 +371,7 @@ fn campaign_compliance_gate_oracle_missing_message_elements_block_the_send() -> 
         test_id(EMAIL_IDENTITY_SEED),
         &mut sink,
     );
-    assert_eq!(unconfigured.gate_outcome, "deny");
+    assert_eq!(unconfigured.gate_outcome, "pending");
     assert!(blocked_by_compliance(&unconfigured));
 
     configure_message_elements(vault, EMAIL_ELEMENTS_SEED, test_id(EMAIL_IDENTITY_SEED))?;
@@ -439,7 +439,7 @@ fn campaign_compliance_gate_oracle_jurisdiction_rows_are_channel_local() -> Resu
         test_id(EMAIL_IDENTITY_SEED),
         &mut sink,
     );
-    assert_eq!(jp_email.gate_outcome, "deny");
+    assert_eq!(jp_email.gate_outcome, "pending");
     assert!(blocked_by_compliance(&jp_email));
 
     let jp_dm = dispatch(

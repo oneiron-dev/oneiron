@@ -2665,11 +2665,12 @@ mod cb_x {
         assert_eq!(contract.illegal_transitions_rejected, 5);
         assert_eq!(contract.illegal_transitions_accepted, 0);
 
-        assert_eq!(AgentRunStatus::TERMINAL.len(), 3);
+        assert_eq!(AgentRunStatus::TERMINAL.len(), 4);
         for status in [
             AgentRunStatus::Archived,
             AgentRunStatus::Failed,
             AgentRunStatus::Abandoned,
+            AgentRunStatus::Cancelled,
         ] {
             assert!(AgentRunStatus::TERMINAL.contains(&status));
         }
@@ -2708,7 +2709,7 @@ mod cb_x {
         );
         assert_eq!(
             project_agent_run_status(oneiron::run_tree::RunTreeStatus::Cancelled),
-            AgentRunStatus::Failed,
+            AgentRunStatus::Cancelled,
         );
         assert_eq!(
             project_abandoned_terminal(ExecutorTerminalCause::LeaseReclaimed),

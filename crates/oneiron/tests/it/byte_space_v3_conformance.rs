@@ -371,12 +371,16 @@ fn conversation_dag_edge_byte_census() {
         (28, EdgeKind::SpawnedBy),
         (29, EdgeKind::AddressedTo),
         (30, EdgeKind::RepliesTo),
+        (31, EdgeKind::Regenerates),
+        (32, EdgeKind::Calls),
+        (33, EdgeKind::Imports),
+        (34, EdgeKind::Refs),
     ] {
         assert_eq!(kind as u8, byte);
         assert_eq!(EdgeKind::try_from_u8(byte), Some(kind));
         assert_eq!(kind.default_weight(), None);
     }
-    for byte in 31..=u8::MAX {
+    for byte in 35..=u8::MAX {
         assert!(EdgeKind::try_from_u8(byte).is_none());
     }
 }

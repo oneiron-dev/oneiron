@@ -1809,6 +1809,7 @@ fn credential_canaries_never_escape_custody() {
         vec![
             "caldav:work-app-password".to_owned(),
             "caldav:work-app-password".to_owned(),
+            "caldav:work-app-password".to_owned(),
         ]
     );
 
