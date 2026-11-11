@@ -90,21 +90,24 @@ pub(in crate::sync::selector) fn filter_window_doc(
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
     // FIX SELECTOR-RELATIONSHIP-LABELS (OPUS-LEAKS): the grant's member
     // reads a row that names a relationship or a private scope only on its
-    // own live grants and memberships, as its delegated scoped read does. The
-    // vault owner's member reads every row, as the owner does; an owner check
-    // that fails gates.
-    let member_access =
-        if crate::memory::owner_exemption_holds_in_txn(vault, &rtxn, grant.member_ref)
+    // own live grants and memberships, as its delegated scoped read does: an
+    // export counts as a read (ARCH-0006a:363-364). Every Owner reads every
+    // row: the vault owner, and each co-Owner on an Owner-role grant
+    // (federation:G, co-ownership is direct access to the whole vault).
+    // Admin, Steward, Member, Viewer, Delegate and Guest grants are gated. An
+    // owner check that fails gates.
+    let member_access = if grant.role == crate::federation::FederationGrantRole::Owner
+        || crate::memory::owner_exemption_holds_in_txn(vault, &rtxn, grant.member_ref)
             .unwrap_or(false)
-        {
-            None
-        } else {
-            Some(crate::access_grant::AccessContext::load(
-                vault,
-                &rtxn,
-                Some(grant.member_ref),
-            )?)
-        };
+    {
+        None
+    } else {
+        Some(crate::access_grant::AccessContext::load(
+            vault,
+            &rtxn,
+            Some(grant.member_ref),
+        )?)
+    };
     // Credentials never leave through a selector, whatever the carrier says, and neither does
     // this vault's embedding setup (OF-370): a peer or a guest keeps its own.
     let mut custody_withheld = BTreeSet::new();
