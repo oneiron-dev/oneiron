@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { Icon } from '../primitives/Icon'
 import { IconAction, type IconActionProps } from '../primitives/IconAction'
-import { firstFocusable, isTopLayer, pushLayer, removeLayer } from '../lib/layer'
+import { firstFocusable, isTopLayer, layerOpenFrom, onLayersChange, pushLayer, removeLayer } from '../lib/layer'
 import { cx, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { AppFrameContext, type AppFrameContextValue } from './app-frame-context'
 import { PEEK_CLOSED, PEEK_DELAY_MS, peekReducer } from './frame-peek'
@@ -57,7 +57,9 @@ export interface AppFrameProps extends React.ComponentPropsWithRef<'div'> {
    AppFrame.Fold in its head or the `[` key; the work area then takes the
    freed width. While it is folded, resting the pointer on a microsidebar
    item shows that item's sidebar over the work area after a short delay;
-   it hides at once when the pointer leaves both, and on Escape. ArrowRight
+   it hides at once when the pointer leaves both, and on Escape. A menu or
+   popover opened from inside the peek holds it open while that layer is
+   open; when the layer closes the peek follows the pointer. ArrowRight
    on a focused item opens it with focus inside; on a touch screen a tap on
    the item opens it and a tap outside closes it. */
 function AppFrameRoot({
@@ -82,6 +84,8 @@ function AppFrameRoot({
   const microRef = React.useRef<HTMLDivElement | null>(null)
   const overlayRef = React.useRef<HTMLDivElement | null>(null)
   const focusOnShow = React.useRef(false)
+  /* The pointer's last position over the page, while a peek shows. */
+  const pointer = React.useRef<{ x: number; y: number } | null>(null)
 
   const hasSidebar = sidebar !== null && sidebar !== undefined
   const sidebarShown = hasSidebar && open
@@ -183,26 +187,59 @@ function AppFrameRoot({
       if (!target || microRef.current?.contains(target) || inOpenLayer(target)) return
       dispatch({ type: 'close' })
     }
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerType !== 'touch') pointer.current = { x: event.clientX, y: event.clientY }
+    }
+    /* A layer that held the peek closed: the peek now follows the pointer
+       (it stays over the peek, switches on another item, hides elsewhere).
+       Read after the frame, once the closed layer is off the page. */
+    let frame = 0
+    const recheck = () => {
+      const overlayEl = overlayRef.current
+      const at = pointer.current
+      if (!overlayEl || !at || layerOpenFrom(overlayEl)) return
+      const under = document.elementFromPoint(at.x, at.y)
+      if (under && overlayEl.contains(under)) return
+      const item = under && microRef.current?.contains(under) ? under.closest<HTMLElement>('[data-micro-sidebar-id]') : null
+      const focusInside = overlayEl.contains(document.activeElement)
+      if (item?.dataset.microSidebarId) {
+        const id = item.dataset.microSidebarId
+        dispatch({ type: 'enter', id, canPeek: canPeek(id) })
+        if (focusInside && !canPeek(id)) itemControl(shownId)?.focus({ preventScroll: true })
+        return
+      }
+      dispatch({ type: 'leave', to: 'outside' })
+      if (focusInside) itemControl(shownId)?.focus({ preventScroll: true })
+    }
+    const stopLayers = onLayersChange(() => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(recheck)
+    })
     document.addEventListener('keydown', onKeyDown)
     document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('pointermove', onPointerMove, { capture: true, passive: true })
     return () => {
+      cancelAnimationFrame(frame)
+      stopLayers()
       removeLayer(layer)
       document.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('pointermove', onPointerMove, { capture: true })
     }
-  }, [shownId, itemControl])
+  }, [shownId, itemControl, canPeek])
 
   /* Where the pointer went when it left an item or the overlay. */
-  const leftFor = React.useCallback((event: React.PointerEvent<HTMLElement>): 'overlay' | 'item' | 'outside' | 'layer' => {
+  const leftFor = React.useCallback((event: React.PointerEvent<HTMLElement>): 'overlay' | 'item' | 'outside' => {
     const to = event.relatedTarget as Node | null
     if (to && overlayRef.current?.contains(to)) return 'overlay'
     const el = to instanceof Element ? to : to?.parentElement
     if (el && microRef.current?.contains(el) && el.closest('[data-micro-sidebar-id]')) return 'item'
-    if (inOpenLayer(to)) return 'layer'
-    /* A menu opened from the overlay keeps it while the menu is open. */
-    if (overlayRef.current?.querySelector('[aria-expanded="true"]')) return 'layer'
     return 'outside'
   }, [])
+
+  /* A menu or popover opened from inside the overlay is open: the peek
+     stays while it is. */
+  const held = React.useCallback(() => layerOpenFrom(overlayRef.current), [])
 
   const ctx = React.useMemo<AppFrameContextValue>(
     () => ({
@@ -212,12 +249,12 @@ function AppFrameRoot({
       peekId: shownId,
       itemPointerEnter: (id, event) => {
         if (event.pointerType === 'touch' || event.buttons !== 0) return
-        dispatch({ type: 'enter', id, canPeek: canPeek(id) })
+        pointer.current = { x: event.clientX, y: event.clientY }
+        dispatch({ type: 'enter', id, canPeek: canPeek(id), held: held() })
       },
       itemPointerLeave: (_id, event) => {
         if (event.pointerType === 'touch') return
-        const to = leftFor(event)
-        if (to !== 'layer') dispatch({ type: 'leave', to })
+        dispatch({ type: 'leave', to: leftFor(event), held: held() })
       },
       itemPointerDown: (id, event) => {
         if (event.pointerType === 'touch') dispatch({ type: 'open', id, canPeek: canPeek(id) })
@@ -237,7 +274,7 @@ function AppFrameRoot({
         }
       },
     }),
-    [sidebarShown, hasSidebar, setOpen, shownId, canPeek, leftFor, peekState.shownId],
+    [sidebarShown, hasSidebar, setOpen, shownId, canPeek, leftFor, held, peekState.shownId],
   )
 
   const state = !hasSidebar ? 'none' : open ? 'open' : 'folded'
@@ -277,8 +314,7 @@ function AppFrameRoot({
               data-peek-id={shownId}
               onPointerLeave={(event) => {
                 if (event.pointerType === 'touch') return
-                const to = leftFor(event)
-                if (to !== 'layer') dispatch({ type: 'leave', to })
+                dispatch({ type: 'leave', to: leftFor(event), held: held() })
               }}
             >
               {overlay}

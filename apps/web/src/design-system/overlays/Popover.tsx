@@ -140,7 +140,7 @@ export function PopoverContent({
     }
     place()
 
-    const token = pushLayer()
+    const token = pushLayer(trigger)
     let alive = true
     let frame = 0
     const schedulePlace = () => {

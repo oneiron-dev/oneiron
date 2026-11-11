@@ -1,7 +1,7 @@
 /* The peek of a folded sidebar, as state: which microsidebar item's
    sidebar shows over the work area, and which item the pointer rests on
    while the delay runs. Pure, so it is tested without a DOM; the frame
-   runs the timer and reads the pointer. */
+   runs the timer and reads the pointer and the layer stack. */
 
 /* How long the pointer rests on an item before its sidebar shows. */
 export const PEEK_DELAY_MS = 150
@@ -17,13 +17,15 @@ export const PEEK_CLOSED: PeekState = { shownId: null, waitingId: null }
 
 export type PeekAction =
   /* The pointer came onto an item. `canPeek`: the sidebar is folded and
-     the item has a sidebar to show. */
-  | { type: 'enter'; id: string; canPeek: boolean }
+     the item has a sidebar to show. `held`: a menu or popover opened from
+     inside the shown peek is open, so the peek stays as it is. */
+  | { type: 'enter'; id: string; canPeek: boolean; held?: boolean }
   /* The delay ran out while the pointer stayed on the item. */
   | { type: 'elapsed'; id: string }
   /* The pointer left an item or the overlay: into the overlay, onto
-     another item (whose enter follows), or anywhere else. */
-  | { type: 'leave'; to: 'overlay' | 'item' | 'outside' }
+     another item (whose enter follows), or anywhere else. `held` as for
+     enter. */
+  | { type: 'leave'; to: 'overlay' | 'item' | 'outside'; held?: boolean }
   /* A press on an item: the pointer is acting, not resting. */
   | { type: 'press' }
   /* ArrowRight on a focused item, or a tap: show at once. */
@@ -34,6 +36,7 @@ export type PeekAction =
 export function peekReducer(state: PeekState, action: PeekAction): PeekState {
   switch (action.type) {
     case 'enter':
+      if (action.held && state.shownId !== null) return state
       if (!action.canPeek) return state === PEEK_CLOSED ? state : PEEK_CLOSED
       /* An overlay already up switches at once to the item now under the
          pointer; otherwise the delay starts. */
@@ -42,6 +45,7 @@ export function peekReducer(state: PeekState, action: PeekAction): PeekState {
     case 'elapsed':
       return state.waitingId === action.id ? { shownId: action.id, waitingId: null } : state
     case 'leave':
+      if (action.held && state.shownId !== null) return state
       if (action.to === 'outside') return state === PEEK_CLOSED ? state : PEEK_CLOSED
       if (action.to === 'overlay') return state.waitingId === null ? state : { ...state, waitingId: null }
       return state

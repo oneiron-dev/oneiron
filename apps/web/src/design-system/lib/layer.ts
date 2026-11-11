@@ -43,22 +43,54 @@ export function placeLayer(
   return placement.side
 }
 
-/* Open layers, newest last: Escape closes only the newest. */
-const openLayers: symbol[] = []
+/* Open layers, newest last: Escape closes only the newest. Each layer
+   records the element it was opened from (its trigger), so a surface can
+   ask whether a layer opened from inside it is still open. */
+interface OpenLayer {
+  token: symbol
+  origin: Node | null
+}
 
-export function pushLayer(): symbol {
+const openLayers: OpenLayer[] = []
+const listeners = new Set<() => void>()
+
+function notify() {
+  for (const listener of [...listeners]) listener()
+}
+
+/* Registers an open layer; `origin` is the element it was opened from. */
+export function pushLayer(origin: Node | null = null): symbol {
   const token = Symbol('layer')
-  openLayers.push(token)
+  openLayers.push({ token, origin })
+  notify()
   return token
 }
 
 export function removeLayer(token: symbol) {
-  const i = openLayers.indexOf(token)
-  if (i >= 0) openLayers.splice(i, 1)
+  const i = openLayers.findIndex((layer) => layer.token === token)
+  if (i < 0) return
+  openLayers.splice(i, 1)
+  notify()
 }
 
 export function isTopLayer(token: symbol): boolean {
-  return openLayers[openLayers.length - 1] === token
+  return openLayers[openLayers.length - 1]?.token === token
+}
+
+/* A layer opened from inside `container` (its origin is the container or a
+   descendant of it) is open. */
+export function layerOpenFrom(container: Pick<Node, 'contains'> | null | undefined): boolean {
+  if (!container) return false
+  return openLayers.some((layer) => layer.origin !== null && container.contains(layer.origin))
+}
+
+/* Calls `listener` after any layer opens or closes. Returns the
+   unsubscribe. */
+export function onLayersChange(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
 }
 
 const FOCUSABLE =

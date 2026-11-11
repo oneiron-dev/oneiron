@@ -488,8 +488,8 @@ const LENSES: PlaceFixture[] = [
 
 const lensOf = (id: string) => LENSES.find((l) => l.id === id)!
 
-/* The head of a sidebar inside the frame: the place's name, search, and
-   the fold control. */
+/* The head of a sidebar inside the frame: the place's name, search, a
+   menu of what can be made here, and the fold control. */
 function FrameSidebarHead({ title }: { title: string }) {
   return (
     <Sidebar.Head>
@@ -497,6 +497,17 @@ function FrameSidebarHead({ title }: { title: string }) {
       <IconAction label="Search" caption="press ⌘K">
         <Icon name="search" />
       </IconAction>
+      <Menu>
+        <Menu.Trigger asChild>
+          <IconAction label="New" data-specimen="frame-new">
+            <Icon name="plus" />
+          </IconAction>
+        </Menu.Trigger>
+        <Menu.Content aria-label="new">
+          <Menu.Item icon={<Icon name="hash" />}>a room</Menu.Item>
+          <Menu.Item icon={<Icon name="project" />}>a project</Menu.Item>
+        </Menu.Content>
+      </Menu>
       <AppFrame.Fold />
     </Sidebar.Head>
   )
