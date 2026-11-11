@@ -3,8 +3,8 @@
 //! `memory::code_doors::types` defines the records these take and return.
 
 use super::*;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SESSION};
-use crate::repo_mutation::proposal::{RepoProposal, RepoProposalReview};
+use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::repo_mutation::proposal::{OwnerRequestAttribution, RepoProposal, RepoProposalReview};
 use crate::store::repo_fork::RepoForkHash;
 use crate::{
     repo_mutation::RepoMutationRequest,
@@ -19,25 +19,35 @@ impl Memory<'_> {
     /// mints the proposal id; nothing is approved, queued, applied or retried.
     /// The answer names its submission admission receipt (FIX 4338); a
     /// `repair_of` source is linked to it as that failed proposal's
-    /// replacement in the same writer (FIX 4364).
+    /// replacement in the same writer (FIX 4364). Its session and
+    /// provenance claim are the engine's (NO-DOOR CODE-PROPOSAL-ATTRIBUTION).
     pub fn code_proposal_submit_as(
         &self,
         owner: &AuthenticatedOwner,
         input: CodeProposalSubmitRequest,
     ) -> MemoryResult<CodeProposalSubmitted> {
-        self.code_proposal_submit(owner, input, None)
+        let attribution = OwnerRequestAttribution::new("vault.code.proposal_submit", &input)?;
+        self.code_proposal_submit(owner, input, None, &attribution)
     }
 
     /// Submits a fresh review of an approved ordinary file's proved redacted
-    /// resolution. The existing input supplies fresh attribution, message and
-    /// review policy; its content is replaced by the engine's projection.
+    /// resolution. The existing input supplies the message and review
+    /// policy; its content is replaced by the engine's projection, which the
+    /// engine's attribution binds.
     pub fn code_proposal_rereview_as(
         &self,
         owner: &AuthenticatedOwner,
         original: EntityId,
         input: CodeProposalSubmitRequest,
     ) -> MemoryResult<CodeProposalSubmitted> {
-        self.code_proposal_submit(owner, input, Some(original))
+        let attribution = OwnerRequestAttribution::new(
+            "vault.code.proposal_rereview",
+            &CodeProposalRereviewRequest {
+                original,
+                change: input.clone(),
+            },
+        )?;
+        self.code_proposal_submit(owner, input, Some(original), &attribution)
     }
 
     fn code_proposal_submit(
@@ -45,6 +55,7 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeProposalSubmitRequest,
         original: Option<EntityId>,
+        attribution: &OwnerRequestAttribution,
     ) -> MemoryResult<CodeProposalSubmitted> {
         let actor = self.code_owner(owner)?;
         let repo_ref = self.code_repo(input.repo)?;
@@ -63,12 +74,22 @@ impl Memory<'_> {
             ));
         }
         let proposal = match original {
-            Some(original) => self
-                .vault
-                .propose_repo_rereview_as_owner(owner, repo, original, request, catalog)?,
-            None => self
-                .vault
-                .propose_repo_mutation_as_owner(owner, repo, request, catalog, repair_of)?,
+            Some(original) => self.vault.propose_repo_rereview_as_owner(
+                owner,
+                repo,
+                original,
+                request,
+                catalog,
+                attribution,
+            )?,
+            None => self.vault.propose_repo_mutation_as_owner(
+                owner,
+                repo,
+                request,
+                catalog,
+                repair_of,
+                attribution,
+            )?,
         };
         self.code_submitted(repo, actor, &proposal)
     }
@@ -124,18 +145,16 @@ impl Memory<'_> {
         })
     }
 
-    /// The CALL behind proposal provenance: an existing SESSION and an
-    /// existing `repo.provenance` CLAIM, each read through the caller's
-    /// credential, and every provenance ref present read likewise. They are
-    /// attribution only; the actor is the caller. A repair source is a
-    /// proposal the caller reads too (FIX 4364); the engine judges its
-    /// failure in the replacement's writer.
+    /// The CALL behind proposal provenance: every operation provenance ref
+    /// present read through the caller's credential. The session and the
+    /// `repo.provenance` claim are the engine's, bound in the proposal's
+    /// writer; the actor is the caller. A repair source is a proposal the
+    /// caller reads too (FIX 4364); the engine judges its failure in the
+    /// replacement's writer.
     pub(super) fn code_submission_sources(
         &self,
         input: &CodeProposalSubmitRequest,
     ) -> MemoryResult<()> {
-        self.code_readable(input.session, Some(ENTITY_TYPE_SESSION))?;
-        self.code_readable(input.provenance_claim, Some(ENTITY_TYPE_CLAIM))?;
         if let Some(source) = input.repair_of {
             self.code_readable(source, Some(ENTITY_TYPE_CLAIM))?;
         }
@@ -159,7 +178,8 @@ impl Memory<'_> {
 /// caller as actor, and the review is the explicit typed catalog the owner
 /// sent with this proposal, or with none the vault's review policy (FIX
 /// 8268). No built seed stands in for it and an agent never picks it; the
-/// engine validates a sent catalog at admission.
+/// engine validates a sent catalog at admission. The request names no
+/// session or provenance claim: the owner writer binds them.
 pub(super) fn owner_submission(
     repo_ref: RepoRef,
     actor: EntityId,
@@ -174,8 +194,6 @@ pub(super) fn owner_submission(
         },
     )
     .with_actor_id(actor)
-    .with_session_id(input.session)
-    .with_provenance_claim_id(input.provenance_claim)
     .with_op_provenance(input.op_provenance);
     let review = input.catalog.map_or(
         RepoProposalReview::VaultDefault,
