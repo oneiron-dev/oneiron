@@ -54,7 +54,7 @@ optional `detail` and `os_proxy` fields add context. A single-reader run exits 0
 Poppler versions: 22.02.0 is built from checksummed upstream source because conda-forge has no
 Linux package for that exact version. All four rows pin exact versions. In this run, 25.02.0 and
 26.05.0 are conda-forge builds under the task root, while 24.02.0 reuses the preinstalled
-exact-version binary at `<host-home>/w8-opus/poppler-2402/bin/pdfsig`. They are Linux builds and
+exact-version binary at `<host-home>/w8-opus/poppler-2402/bin/pdfsig` (passed in `SEAL_POPPLER_24_BIN`). They are Linux builds and
 version proxies for distro viewers, not direct runs on Ubuntu or Debian.
 Other pins: DSS 6.5, PDFBox 3.0.6, pyHanko 0.35.2 (the crate oracle lock), pypdfium2 4.30.0,
 pdfjs-dist 5.4.394, qpdf 12.3.2, Bouncy Castle 1.80 (PDFBox) / 1.85 (EU DSS). For Poppler 24/26, install.sh reuses an exact-version preinstalled host binary when present and otherwise installs the exact conda-forge package under the root. `reader-env.sh` sets `PDFSIG_EXTRA_BINARIES` to full executable paths (not directories) and omits unavailable versions. `pins.json` is the machine-readable list.
