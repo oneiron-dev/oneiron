@@ -157,25 +157,9 @@ jobs:
           # The deny-policy tests call the pinned cargo-deny.
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
-          python3 scripts/sdk/generate.py --check
-          python3 -m unittest discover -s scripts/tests -p 'test_agent_sdk.py' -v
+          cargo run --locked -p oneiron-sdk-generator -- --check
           python3 scripts/code-sandbox/generate.py --check
           python3 -m unittest discover -s scripts/tests -p 'test_microvm_artifacts.py' -v
-      # SDK-GENERATOR-RUST G5: temporary, G6 removes it.
-      # The build scripts and package builds run the Rust port of scripts/sdk/generate.py (crates/oneiron-sdk-generator).
-      # Until G6 deletes the Python, every run makes both generators' --out-dir trees from this head and compares them
-      # byte for byte: every SDK output and the three generated agent-SDK docs.
-      - name: SDK generator port (the Python and Rust generators write the same files)
-        if: ${{ !cancelled() }}
-        env:
-          RUSTC_WRAPPER: sccache
-        run: |
-          rm -rf "$RUNNER_TEMP/sdk-py" "$RUNNER_TEMP/sdk-rs"
-          python3 --version
-          python3 scripts/sdk/generate.py --out-dir "$RUNNER_TEMP/sdk-py"
-          cargo run --locked --release -q -p oneiron-sdk-generator -- --out-dir "$RUNNER_TEMP/sdk-rs"
-          diff -r "$RUNNER_TEMP/sdk-py" "$RUNNER_TEMP/sdk-rs"
-          echo "SDK generator port: $(find "$RUNNER_TEMP/sdk-py" -type f | wc -l) files equal"
       # Office oracle scripts are host tools CI never runs. These checks read only stored
       # inputs, synthetic packages and the archived-receipt pointer: no Office, network or receipt.
       - name: Test stored Office inputs and archived-receipt pointers (offline)

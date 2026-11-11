@@ -1,4 +1,4 @@
-//! Port of facade_types.py:1101-1254 (the `Python` section of `Inventory`): the declarations as the Python stubs
+//! The `Python` section of `Inventory`: the declarations as the Python stubs
 //! spell them (`facade_types.pyi`), and a row type as the stubs spell it outside that module.
 
 use indexmap::IndexSet;
@@ -15,7 +15,7 @@ use crate::py::value::Value;
 pub(crate) type PyDeclarations = (Vec<String>, IndexSet<String>, IndexSet<String>);
 
 impl Inventory {
-    /// Port of facade_types.py:1103-1113 (`Inventory.python`): the stubs module.
+    /// The stubs module.
     pub(crate) fn python(&mut self, census_lines: &[String]) -> Result<String, GenerateError> {
         let erased = self.py_erased()?;
         let (hoisted, typevars, _) = self.py_declarations(&erased)?;
@@ -50,7 +50,7 @@ impl Inventory {
         Ok(out)
     }
 
-    /// Port of facade_types.py:1115-1129 (`Inventory.py_erased`): the Python names the stubs spell as a shape that
+    /// The Python names the stubs spell as a shape that
     /// takes no type arguments (FIX 5706), found to a fixed point and kept until `order` grows.
     pub(crate) fn py_erased(&mut self) -> Result<IndexSet<String>, GenerateError> {
         if self.py_erased_cache.1 != Some(self.order.len()) {
@@ -67,7 +67,7 @@ impl Inventory {
         Ok(self.py_erased_cache.0.clone())
     }
 
-    /// Port of facade_types.py:1131-1221 (`Inventory.py_declarations`): every declaration as the stubs spell it,
+    /// Every declaration as the stubs spell it,
     /// with the type variables it uses and the names it erased.
     pub(crate) fn py_declarations(
         &self,
@@ -115,7 +115,7 @@ impl Inventory {
         Ok((writer.hoisted, writer.typevars, writer.found))
     }
 
-    /// Port of facade_types.py:1223-1231 (`Inventory.record_fields`): every key a record reference holds, its own
+    /// Every key a record reference holds, its own
     /// and its bases', each with its optionality (all optional under a `partial`).
     pub(crate) fn record_fields(&self, node: &Ir) -> Result<Vec<Field>, GenerateError> {
         self.record_fields_at(node, 0)
@@ -153,7 +153,7 @@ impl Inventory {
         Ok(fields)
     }
 
-    /// Port of facade_types.py:1233-1238 (`Inventory.is_record`): whether a reference names a declaration Python
+    /// Whether a reference names a declaration Python
     /// spells as a TypedDict class.
     pub(crate) fn is_record(&self, node: &Ir) -> Result<bool, GenerateError> {
         self.is_record_at(node, 0)
@@ -190,7 +190,7 @@ impl Inventory {
         })
     }
 
-    /// Port of facade_types.py:1240-1254 (`Inventory._py_outer`): a row type as the stubs spell it outside the
+    /// A row type as the stubs spell it outside the
     /// declarations module; unlike the inner renderer it neither folds `| None` nor groups literals, and a shape
     /// with no name of its own is a broad dict.
     pub(crate) fn py_outer(&mut self, node: &Ir, prefix: &str) -> Result<String, GenerateError> {
@@ -258,7 +258,7 @@ fn not_subscriptable(node: &Ir) -> GenerateError {
     GenerateError::exception("KeyError", node.repr())
 }
 
-/// facade_types.py:1218: `re.search(r'\b' + re.escape(param) + r'\b', text)`, for a parameter `re.match(r'\w+')`
+/// Python: `re.search(r'\b' + re.escape(param) + r'\b', text)`, for a parameter `re.match(r'\w+')`
 /// read, so all word characters: an occurrence with no word character on either side.
 fn names_word(text: &str, param: &str) -> bool {
     let mut from = 0;
@@ -296,7 +296,7 @@ impl StubWriter<'_> {
         name
     }
 
-    /// `py(node, owner)` (facade_types.py:1143-1177).
+    /// `py(node, owner)`: an IR value as the stubs spell it; an object becomes a hoisted class named from `owner`.
     fn py(&mut self, node: &Ir, owner: &str) -> Result<String, GenerateError> {
         Ok(match node {
             Ir::Prim(prim, _) => prim_py(*prim).to_owned(),
@@ -385,10 +385,10 @@ impl StubWriter<'_> {
                 format!("{name}{}", if bare { "" } else { arguments.as_str() })
             }
         })
-        // Every IR kind has its arm, so facade_types.py:1177 (`raise ValueError(node)`) has no port.
+        // Every IR kind has its arm, so the Python fallthrough (`raise ValueError(node)`) has no port.
     }
 
-    /// `klass(name, node, params, owner)` (facade_types.py:1179-1205): a TypedDict for an object (or an
+    /// `klass(name, node, params, owner)`: a TypedDict for an object (or an
     /// intersection of objects), or an alias when a dict cannot say it.
     fn klass(
         &mut self,

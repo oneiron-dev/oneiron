@@ -1,6 +1,5 @@
-//! Port of generate.py: the native bindings (G4a): the napi `agent_verbs.rs` and the PyO3 `#[pymethods]` file, built
-//! by one loop of `outputs()` (the `napi_py` segment, generate.py:2452-2459) over `native_boundary`
-//! (generate.py:485-539).
+//! The native bindings: the napi `agent_verbs.rs` and the PyO3 `#[pymethods]` file, built by one loop of `outputs()`
+//! (the `napi_py` segment) over `native_boundary`.
 
 use super::common::{
     ArgumentKind, LONG_SIGNATURE, argument_kind, boundary_type, container_type, long_signature,
@@ -11,7 +10,7 @@ use super::{Generator, HEADER, RowId};
 use crate::error::GenerateError;
 use crate::py::value::{Dict, Value};
 
-/// Port of generate.py:485-491 (napi_result): the napi conversion of an engine result, recursive over `Vec`.
+/// The napi conversion of an engine result, recursive over `Vec`.
 pub(crate) fn napi_result(value: &str, expression: &str) -> Result<String, GenerateError> {
     let (container, inner) = container_type(value);
     if container == Some("Vec") {
@@ -28,7 +27,7 @@ pub(crate) fn napi_result(value: &str, expression: &str) -> Result<String, Gener
     })
 }
 
-/// Port of generate.py:493-495 (native_args): the binding's `args`, or the one JSON `input` of the generic door.
+/// The binding's `args`, or the one JSON `input` of the generic door.
 pub(crate) fn native_args(row: &Dict) -> Result<Value, GenerateError> {
     match native_binding(row)? {
         Some(binding) if binding.truthy() => Ok(binding.getitem("args")?.clone()),
@@ -48,8 +47,7 @@ struct NativeArg {
     kind: &'static ArgumentKind,
 }
 
-/// Port of generate.py:496-539 (native_boundary): one facade row's method on the napi client (`language` `napi`) or
-/// the PyO3 one (`py`).
+/// One facade row's method on the napi client (`language` `napi`) or the PyO3 one (`py`).
 pub(crate) fn native_boundary(
     generator: &mut Generator,
     id: RowId,
@@ -214,15 +212,14 @@ pub(crate) fn native_boundary(
     Ok(head + &body + "}\n")
 }
 
-/// The `napi_py` segment's result: the napi file, and the PyO3 methods `outputs()` wraps into its own file
-/// (generate.py:2531).
+/// The `napi_py` segment's result: the napi file, and the PyO3 methods `outputs()` wraps into its own file.
 pub(crate) struct NativeTexts {
     pub(crate) napi: String,
     pub(crate) py: String,
 }
 
-/// Port of generate.py:2452-2459 (outputs: the `napi_py` segment): one loop over the facade rows feeds both native
-/// bindings, the napi method of each row before its PyO3 one.
+/// The `napi_py` segment of `outputs()`: one loop over the facade rows feeds both native bindings, the napi method of
+/// each row before its PyO3 one.
 pub(crate) fn napi_py(
     generator: &mut Generator,
     facade_rows: &[RowId],

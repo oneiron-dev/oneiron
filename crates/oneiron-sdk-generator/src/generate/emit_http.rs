@@ -1,6 +1,5 @@
-//! Port of generate.py:1419-1544 (http_members, http_facade): the one client artifact,
-//! `packages/oneiron-client/src/facade.ts`: the typed facade tree over an injected transport, with its row metadata
-//! (OF-246), and each call's invocation id and the pending ask a retry resends under it (OF-580).
+//! The one client artifact, `packages/oneiron-client/src/facade.ts`: the typed facade tree over an injected transport,
+//! with its row metadata (OF-246), and each call's invocation id and the pending ask a retry resends under it (OF-580).
 
 use std::sync::LazyLock;
 
@@ -14,13 +13,12 @@ use crate::py::json::dumps_str;
 use crate::py::re::compile_fullmatch;
 use crate::py::value::Value;
 
-/// generate.py:1423 `re.fullmatch(r'[A-Za-z_$][\w$]*', name)`: a segment TypeScript takes as a bare key.
+/// Python's `re.fullmatch(r'[A-Za-z_$][\w$]*', name)`: a segment TypeScript takes as a bare key.
 /// Rust: `\A(?:[A-Za-z_$][\p{L}\p{N}_$]*)\z` (`compile_fullmatch`).
 static BARE_KEY: LazyLock<Regex> = LazyLock::new(|| compile_fullmatch(r"[A-Za-z_$][\w$]*"));
 
-/// Port of generate.py:1419-1432 (http_members): the facade tree literal: an arrow per verb over the injected
-/// transport, a nested literal per namespace. A node's children are emitted before its own verb, as Python
-/// evaluates them.
+/// The facade tree literal: an arrow per verb over the injected transport, a nested literal per namespace. A node's
+/// children are emitted before its own verb, as Python evaluates them.
 fn http_members(
     generator: &mut Generator,
     tree: &VerbTree,
@@ -56,7 +54,7 @@ fn http_members(
     Ok(out)
 }
 
-/// generate.py:1446-1461: the row-metadata interface and the head of `FACADE_CATALOG`.
+/// The row-metadata interface and the head of `FACADE_CATALOG`.
 const CATALOG_HEAD: &str = r#"/** One row of the verb table, as a client reads it. */
 export interface FacadeVerbMeta {
   /** The row's one line, the same text the MCP tool list serves. */
@@ -74,8 +72,7 @@ export interface FacadeVerbMeta {
 export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
 "#;
 
-/// generate.py:1465-1533: the end of `FACADE_CATALOG`, the invocation and pending-ask types, and the head of
-/// `facadeTree`.
+/// The end of `FACADE_CATALOG`, the invocation and pending-ask types, and the head of `facadeTree`.
 const TREE_HEAD: &str = r#"};
 
 /**
@@ -146,7 +143,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
   return {
 "#;
 
-/// generate.py:1535-1543: the end of `facadeTree`, and `facadeRetry`.
+/// The end of `facadeTree`, and `facadeRetry`.
 const TREE_TAIL: &str = r#"  };
 }
 export type FacadeTree<K extends FacadeReturn, O = RequestInit> = ReturnType<typeof facadeTree<K, O>>;
@@ -166,8 +163,7 @@ fn json_flag(value: Option<&Value>) -> &'static str {
     }
 }
 
-/// Port of generate.py:1434-1544 (http_facade): the facade tree over `FACADE_ROWS`, its input and result maps, and
-/// its row metadata.
+/// The facade tree over `FACADE_ROWS`, its input and result maps, and its row metadata.
 pub(crate) fn http_facade(generator: &mut Generator) -> Result<String, GenerateError> {
     let facade_rows = generator.facade_rows.clone();
     let mut out = format!(

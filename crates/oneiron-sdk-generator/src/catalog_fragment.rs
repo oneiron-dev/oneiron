@@ -1,4 +1,4 @@
-//! Port of catalog_fragment.py (the code-mode catalog fragment and its revision, ONE-2510 S2): G2.
+//! The code-mode catalog fragment and its revision (ONE-2510 S2).
 //!
 //! The text declares every row code mode serves at its SDK path, with its typed input and reply, and every type they
 //! reach in one namespace, read through an `Inventory` of its own over the code-mode rows (so the facade's
@@ -17,18 +17,18 @@ use crate::py::json::dumps_str;
 use crate::py::text::{splitlines, strip};
 use crate::py::value::{Dict, Value};
 
-/// Port of catalog_fragment.py:35 (FRAGMENT).
+/// The fragment's path.
 pub(crate) const FRAGMENT: &str = "crates/oneiron/src/verbs/generated/catalog_fragment.d.ts";
-/// Port of catalog_fragment.py:36 (CODE_MODE).
+/// The second path the same text goes to.
 pub(crate) const CODE_MODE: &str = "crates/oneiron/src/verbs/generated/code-mode.d.ts";
-/// Port of catalog_fragment.py:37 (REVISION).
+/// The path of the revision constant.
 pub(crate) const REVISION: &str = "crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs";
 
-/// Port of catalog_fragment.py:69 (NAMESPACE): the one namespace every reached type sits in.
+/// The one namespace every reached type sits in.
 const NAMESPACE: &str = "Sdk";
-/// Port of catalog_fragment.py:70 (REVISION_ALGORITHM): the revision's digest, `sha256:<64 hex>` of the UTF-8 text.
+/// The revision's digest, `sha256:<64 hex>` of the UTF-8 text.
 const REVISION_ALGORITHM: &str = "sha256";
-/// Port of catalog_fragment.py:72-79 (REPLY_DOC).
+/// The head's comment lines on what a verb call resolves or rejects with.
 const REPLY_DOC: &[&str] = &[
     "Every verb call resolves with its row's output itself, or with a `StoredResult` card in its place past 512 KiB of JSON.",
     "A refused call rejects with a string, the refusal's JSON: JSON.parse gives `{denied, reasonCodes}` (`denied` the outcome word,",
@@ -37,17 +37,17 @@ const REPLY_DOC: &[&str] = &[
     r#"refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON"#,
     r#"cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask."#,
 ];
-/// Port of catalog_fragment.py:80 (COORDINATION): the rows code mode answers with the run's own coordination reply.
+/// The rows code mode answers with the run's own coordination reply.
 /// None today; Python tests membership in the tuple with `==` (no hash).
 const COORDINATION: &[&str] = &[];
-/// Port of catalog_fragment.py:81 (JSDOC): each verb carries its row's description as its JSDoc.
+/// Each verb carries its row's description as its JSDoc.
 const JSDOC: bool = true;
-/// Port of catalog_fragment.py:82 (VAULT_HOST).
+/// The interface that holds the `vault` root's members beside its verbs.
 const VAULT_HOST: &str = "VaultHost";
-/// Port of catalog_fragment.py:83-84 (VAULT_HOST_DOC).
+/// `VAULT_HOST`'s JSDoc.
 const VAULT_HOST_DOC: &str = "/** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */";
-/// Port of catalog_fragment.py:88-89 (POSITIONAL): `self.fold`, the one positional verb, and its two spellings. The
-/// second is Python's `f'(input: {NAMESPACE}.FoldByKind)'`.
+/// `self.fold`, the one positional verb, and its two spellings. The second is Python's
+/// `f'(input: {NAMESPACE}.FoldByKind)'`.
 const POSITIONAL: &[(&str, &[&str])] = &[(
     "self.fold",
     &[
@@ -55,7 +55,7 @@ const POSITIONAL: &[(&str, &[&str])] = &[(
         "(input: Sdk.FoldByKind)",
     ],
 )];
-/// Port of catalog_fragment.py:92 (TAKEN): names no reached type may take.
+/// Names no reached type may take.
 const TAKEN: &[&str] = &["StoredResult", VAULT_HOST];
 
 /// `POSITIONAL.get(name)` (and `name in POSITIONAL`): a dict lookup, so the name is hashed first.
@@ -87,7 +87,7 @@ fn outputs_by_input<'r>(
     }
 }
 
-/// `row['name']` where Python splits it on `.` (catalog_fragment.py:159): a name that is not a `str` has no `split`.
+/// `row['name']` where Python splits it on `.` (in `tree`): a name that is not a `str` has no `split`.
 fn name_str(row: &Dict) -> Result<&str, GenerateError> {
     match row_field(row, "name")? {
         Value::Str(name) => Ok(name),
@@ -116,17 +116,16 @@ impl<'r> Node<'r> {
     }
 }
 
-/// Port of catalog_fragment.py:95-255 (`Fragment`): the catalog fragment over the code-mode rows, its text, census
-/// and revision.
+/// The catalog fragment over the code-mode rows, its text, census and revision.
 pub(crate) struct Fragment<'r> {
     rows: Vec<&'r Dict>,
     inventory: Inventory,
 }
 
 impl<'r> Fragment<'r> {
-    /// Port of catalog_fragment.py:98-109 (`Fragment.__init__`): a fresh `Inventory(root, [])` (its index, then the
-    /// pins of `type_names`, the `TYPE_NAMES` the facade_types import read), `TAKEN` reserved, then each row's input,
-    /// its output, and each per-input reply in dict order, its field checked against the input first.
+    /// A fresh `Inventory(root, [])` (its index, then the pins of `type_names`, the `TYPE_NAMES` read from
+    /// type_names.json), `TAKEN` reserved, then each row's input, its output, and each per-input reply in dict order,
+    /// its field checked against the input first.
     pub(crate) fn new(
         root: &Path,
         rows: &[&'r Dict],
@@ -166,14 +165,14 @@ impl<'r> Fragment<'r> {
         Ok(fragment)
     }
 
-    /// Port of catalog_fragment.py:111-112 (`Fragment.ts`): a row type as TypeScript spells it outside the namespace.
+    /// A row type as TypeScript spells it outside the namespace.
     fn ts(&mut self, text: &Value) -> Result<String, GenerateError> {
         self.inventory
             .ts_type(type_text(text)?, &format!("{NAMESPACE}."))
     }
 
-    /// Port of catalog_fragment.py:114-118 (`Fragment.fields`): the wire field names of an input that reads as one
-    /// object (a set: every key is hashed before one is looked up).
+    /// The wire field names of an input that reads as one object (a set: every key is hashed before one is looked
+    /// up).
     fn fields(&mut self, text: &Value) -> Result<Vec<Value>, GenerateError> {
         let mut node = self.inventory.root_ir_value(text)?;
         if let Ir::Ref(key, _) = &node {
@@ -192,7 +191,7 @@ impl<'r> Fragment<'r> {
         Ok(keys)
     }
 
-    /// Port of catalog_fragment.py:120-122 (`Fragment.params`): a positional verb's spellings, else its one input.
+    /// A positional verb's spellings, else its one input.
     fn params(&mut self, row: &Dict) -> Result<Vec<String>, GenerateError> {
         if let Some(spellings) = positional(row_field(row, "name")?)? {
             return Ok(spellings
@@ -206,14 +205,13 @@ impl<'r> Fragment<'r> {
         )])
     }
 
-    /// Port of catalog_fragment.py:124-126 (`Fragment.reply`): what a call resolves with; `text` is `None` when the
-    /// row names no output.
+    /// What a call resolves with; `text` is `None` when the row names no output.
     fn reply(&mut self, text: Option<&Value>) -> Result<String, GenerateError> {
         let output = match text {
             Some(text) if text.truthy() => self.ts(text)?,
             _ => "unknown".to_owned(),
         };
-        // REPLY = 'Promise<{output} | StoredResult>' (catalog_fragment.py:71), formatted.
+        // REPLY = 'Promise<{output} | StoredResult>', formatted.
         Ok(if output == "unknown" {
             "Promise<unknown>".to_owned()
         } else {
@@ -221,7 +219,7 @@ impl<'r> Fragment<'r> {
         })
     }
 
-    /// Port of catalog_fragment.py:128-130 (`Fragment.result`).
+    /// The row's reply: `Promise<unknown>` for a coordination row, else its output's.
     fn result(&mut self, row: &Dict) -> Result<String, GenerateError> {
         if coordination(row_field(row, "name")?) {
             return Ok("Promise<unknown>".to_owned());
@@ -229,8 +227,8 @@ impl<'r> Fragment<'r> {
         self.reply(row.get("output"))
     }
 
-    /// Port of catalog_fragment.py:132-139 (`Fragment.signatures`): the row's call signatures, most specific first:
-    /// one per input field whose presence selects its own reply, then its own.
+    /// The row's call signatures, most specific first: one per input field whose presence selects its own reply, then
+    /// its own.
     fn signatures(&mut self, row: &Dict) -> Result<Vec<(String, String)>, GenerateError> {
         let mut own = Vec::new();
         for params in self.params(row)? {
@@ -257,8 +255,7 @@ impl<'r> Fragment<'r> {
         Ok(signatures)
     }
 
-    /// Port of catalog_fragment.py:141-145 (`Fragment.call`): the row as one call type, an arrow or a call-signature
-    /// literal over its overloads.
+    /// The row as one call type, an arrow or a call-signature literal over its overloads.
     fn call(&mut self, row: &Dict) -> Result<String, GenerateError> {
         let signatures = self.signatures(row)?;
         if let [(params, result)] = signatures.as_slice() {
@@ -271,7 +268,7 @@ impl<'r> Fragment<'r> {
         Ok(format!("{{ {} }}", literal.join(" ")))
     }
 
-    /// Port of catalog_fragment.py:147-149 (`Fragment.typed`): whether the row's reply names its output type.
+    /// Whether the row's reply names its output type.
     fn typed(row: &Dict) -> Result<bool, GenerateError> {
         Ok(!coordination(row_field(row, "name")?) && row.contains_key("output"))
     }
@@ -279,7 +276,7 @@ impl<'r> Fragment<'r> {
     // ---- verbs: `self` a namespace of constants, every other root a constant, a bare verb a function, so a row
     // named by a reserved word (`vault.export`) is a valid method: a namespace's `function export` does not parse.
 
-    /// Port of catalog_fragment.py:155-162 (`Fragment.tree`): the rows by their dotted names.
+    /// The rows by their dotted names.
     fn tree(&self) -> Result<IndexMap<String, Node<'r>>, GenerateError> {
         let mut root = Node::default();
         for &row in &self.rows {
@@ -292,8 +289,8 @@ impl<'r> Fragment<'r> {
         Ok(root.children)
     }
 
-    /// Port of catalog_fragment.py:164-170 (`Fragment.doc`): the row's description as its JSDoc line. A run row has no
-    /// description; one that names its grant class shows it.
+    /// The row's description as its JSDoc line. A run row has no description; one that names its grant class shows
+    /// it.
     fn doc(node: &Node<'_>, indent: &str) -> String {
         let text = match node.row() {
             Some(row) if JSDOC => match (row.get("description"), row.get("grant_class")) {
@@ -308,8 +305,7 @@ impl<'r> Fragment<'r> {
         format!("{indent}/** {text} */\n")
     }
 
-    /// Port of catalog_fragment.py:169-175 (`Fragment.kind`): a path segment's type, its call signature, the members
-    /// it holds, or both at once.
+    /// A path segment's type, its call signature, the members it holds, or both at once.
     fn kind(&mut self, node: &Node<'r>, depth: usize) -> Result<String, GenerateError> {
         let call = match node.row() {
             Some(row) => Some(self.call(row)?).filter(|call| !call.is_empty()),
@@ -329,7 +325,7 @@ impl<'r> Fragment<'r> {
         })
     }
 
-    /// Port of catalog_fragment.py:177-186 (`Fragment.members`): the members of a segment, in name order.
+    /// The members of a segment, in name order.
     fn members(
         &mut self,
         children: &IndexMap<String, Node<'r>>,
@@ -352,7 +348,7 @@ impl<'r> Fragment<'r> {
         Ok(out)
     }
 
-    /// Port of catalog_fragment.py:188-202 (`Fragment.verbs`): the verb layout, root by root in name order.
+    /// The verb layout, root by root in name order.
     fn verbs(&mut self) -> Result<String, GenerateError> {
         let tree = self.tree()?;
         let mut out = String::new();
@@ -381,8 +377,7 @@ impl<'r> Fragment<'r> {
         Ok(out)
     }
 
-    /// Port of catalog_fragment.py:204-211 (`Fragment.extends`): what a root's constant extends beside its own
-    /// members.
+    /// What a root's constant extends beside its own members.
     fn extends(&mut self, root: &str, node: &Node<'r>) -> Result<String, GenerateError> {
         if root == "vault" {
             return Ok(format!("{NAMESPACE}.{VAULT_HOST} & "));
@@ -392,7 +387,7 @@ impl<'r> Fragment<'r> {
             && let Some(row) = call.and_then(Node::row)
         {
             let result = self.result(row)?;
-            // CONNECTOR_TOOLS (catalog_fragment.py:85), formatted: Rust's `{{`/`}}` are Python's.
+            // CONNECTOR_TOOLS, formatted: Rust's `{{`/`}}` are Python's.
             return Ok(format!(
                 "{{ readonly [name: string]: {{ readonly [tool: string]: (args?: object) => {result} }} }} & "
             ));
@@ -402,7 +397,7 @@ impl<'r> Fragment<'r> {
 
     // ---- the text
 
-    /// Port of catalog_fragment.py:215-237 (`Fragment.census`): the four census lines of the text's head.
+    /// The four census lines of the text's head.
     fn census(&mut self) -> Result<Vec<String>, GenerateError> {
         let rows = self.rows.clone();
         let total = rows.len();
@@ -469,8 +464,7 @@ impl<'r> Fragment<'r> {
         ])
     }
 
-    /// Port of catalog_fragment.py:239-255 (`Fragment.text`): the head, the census, the type namespace (every
-    /// declaration in completion order), then the verb layout.
+    /// The head, the census, the type namespace (every declaration in completion order), then the verb layout.
     pub(crate) fn text(&mut self) -> Result<String, GenerateError> {
         let mut out = String::from(
             "// Generated by scripts/sdk/generate.py from scripts/sdk/verbs/ and the\n",
@@ -513,14 +507,13 @@ impl<'r> Fragment<'r> {
     }
 }
 
-/// Port of catalog_fragment.py:258-260 (`revision`): the revision of a fragment text, its digest named by its
-/// algorithm (`sha256:` and the lowercase hex SHA-256 of the text's UTF-8 bytes, brief H8).
+/// The revision of a fragment text, its digest named by its algorithm (`sha256:` and the lowercase hex SHA-256 of the
+/// text's UTF-8 bytes).
 pub(crate) fn revision(text: &str) -> String {
     format!("{REVISION_ALGORITHM}:{:x}", Sha256::digest(text.as_bytes()))
 }
 
-/// Port of catalog_fragment.py:269 (LAYOUT_LINE), for `re.match`: a line of the verb layout opens a root or a
-/// namespace, declares a verb, or both. Python's pattern:
+/// For `re.match`: a line of the verb layout opens a root or a namespace, declares a verb, or both. Python's pattern:
 /// `(?:declare (?:namespace|const|function) |const )?(\w+)(\(|: | \{$)`. `re.match` anchors at the start (`\A`); the
 /// line is stripped, so Python's `$` (the end, or before a final newline) is the end (`\z`); `\w` is Python's
 /// (`py::re::translate`).
@@ -533,8 +526,7 @@ fn layout_match<'l>(layout: &regex::Regex, line: &'l str) -> Option<(&'l str, &'
     Some((name.as_str(), form.as_str(), &line[whole.end()..]))
 }
 
-/// Port of catalog_fragment.py:272-285 (`declared`): the verb paths a fragment text declares, read back from its verb
-/// layout past the type namespace.
+/// The verb paths a fragment text declares, read back from its verb layout past the type namespace.
 pub(crate) fn declared(text: &str) -> Result<IndexSet<String>, GenerateError> {
     let layout = crate::py::re::compile(LAYOUT_LINE);
     let mut names = IndexSet::new();
@@ -569,9 +561,8 @@ pub(crate) fn declared(text: &str) -> Result<IndexSet<String>, GenerateError> {
     Ok(names)
 }
 
-/// Port of catalog_fragment.py:288-296 (`catalog_fragment`): the fragment at both its paths and its revision
-/// constant, in Python's dict order: the files `generate.py` writes and checks. `type_names` is facade_types.py's
-/// module global `TYPE_NAMES`, which the fragment's `Inventory` reads.
+/// The fragment at both its paths and its revision constant, in Python's dict order: the files the generator writes
+/// and checks. `type_names` is `TYPE_NAMES`, the parsed type_names.json, which the fragment's `Inventory` reads.
 pub(crate) fn catalog_fragment(
     root: &Path,
     rows: &[&Dict],
@@ -625,9 +616,8 @@ mod tests {
     use super::*;
     use crate::py::json::loads;
 
-    // The expected values below were printed by Python 3.14.7 on nelly, from a checkout's root, with
-    // `sys.path.insert(0, 'scripts/sdk'); from catalog_fragment import declared, revision, catalog_fragment, LAYOUT_LINE`
-    // and the calls each test names.
+    // The expected values below were printed by Python 3.14.7 on nelly with the Python generator's `declared`,
+    // `revision`, `catalog_fragment` and `LAYOUT_LINE` (main e79eb76df3e) and the calls each test names.
 
     #[test]
     fn revision_is_the_sha256_of_the_utf8_text() {

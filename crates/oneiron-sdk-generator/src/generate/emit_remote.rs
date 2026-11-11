@@ -1,5 +1,5 @@
-//! Port of generate.py: the remote client (G4a): `crates/oneiron-remote/src/generated/agent_verbs.rs`, the
-//! `remote` segment of `outputs()` (generate.py:2387-2449) and `remote_boundary` (generate.py:465-483).
+//! The remote client: `crates/oneiron-remote/src/generated/agent_verbs.rs`, the `remote` segment of `outputs()` and
+//! `remote_boundary`.
 
 use super::common::{argument_kind, long_signature, rust_type, str_format, str_receiver};
 use super::row_access::{
@@ -23,7 +23,7 @@ fn binding(row: &Dict) -> Option<&Value> {
     row.get("binding")
 }
 
-/// Port of generate.py:465-483 (remote_boundary): one facade row's typed method on the remote client.
+/// One facade row's typed method on the remote client.
 pub(crate) fn remote_boundary(row: &Dict) -> Result<RemoteBoundary, GenerateError> {
     let binding = binding(row);
     let args = match binding {
@@ -96,8 +96,7 @@ pub(crate) fn remote_boundary(row: &Dict) -> Result<RemoteBoundary, GenerateErro
     })
 }
 
-/// Port of generate.py:2387-2449 (outputs: the `remote` segment): the remote client's `agent_verb` door and one
-/// typed method per facade row.
+/// The `remote` segment of `outputs()`: the remote client's `agent_verb` door and one typed method per facade row.
 pub(crate) fn remote(
     generator: &Generator,
     facade_rows: &[RowId],
@@ -169,7 +168,7 @@ pub(crate) fn remote(
     Ok(remote)
 }
 
-/// generate.py:2388-2396.
+/// `remote_agent_verb_output`: one remote call, decoded as the verb's typed result and encoded back to JSON.
 const REMOTE_AGENT_VERB_OUTPUT: &str =
     "fn remote_agent_verb_output<R: serde::de::DeserializeOwned + serde::Serialize>(
         client: &RemoteClient, verb: &str, input: &serde_json::Value,
@@ -181,7 +180,7 @@ const REMOTE_AGENT_VERB_OUTPUT: &str =
     }
 ";
 
-/// generate.py:2398-2405.
+/// The head of `agent_verb`: its facade and input checks and its backend match, up to the remote verb arms.
 const AGENT_VERB_HEAD: &str = "pub fn agent_verb(&self, verb: &str, input: serde_json::Value) -> Result<serde_json::Value, MemoryError> {
         self.ensure_dispatch_pid()?;
         if !oneiron::task_verb::sdk::AgentVerb::from_name(verb).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_facade) { return Err(oneiron::task_verb::sdk::wrong_root(verb).unwrap_or_else(|| crate::error::bad_request(\"unknown SDK agent verb\", &[\"Use a verb from the SDK catalog.\"]))); }
@@ -191,14 +190,14 @@ const AGENT_VERB_HEAD: &str = "pub fn agent_verb(&self, verb: &str, input: serde
             Backend::Remote(client) => match verb {
 ";
 
-/// generate.py:2409-2413.
+/// The end of `agent_verb`: the remote unknown-verb arm and the closing braces.
 const AGENT_VERB_TAIL: &str = "_ => Err(crate::error::bad_request(\"unknown SDK agent verb\", &[\"Use a verb from the SDK catalog.\"])),
         },
     }
 }
 ";
 
-/// generate.py:2414-2429.
+/// `typed_agent_verb`: one typed call over either backend.
 const TYPED_AGENT_VERB: &str = "fn typed_agent_verb<R: serde::de::DeserializeOwned>(&self, verb: &str, input: serde_json::Value) -> Result<R, MemoryError> {
         match &self.backend {
             Backend::Remote(client) => {

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "The SDK generator: writes the verb table's generated SDK outputs (a port of scripts/sdk/generate.py)"
+description = "The SDK generator: writes the verb table's generated SDK outputs"
 repository.workspace = true
 homepage.workspace = true
 publish = false
@@ -22,7 +22,7 @@ path = "src/main.rs"
 # serde_json; declared here, never borrowed transitively.
 indexmap = "2"
 regex = { workspace = true }
-# catalog_fragment.py's revision (SHA-256). Named as crates/oneiron names it; not a workspace dependency.
+# The catalog fragment's revision (SHA-256). Named as crates/oneiron names it; not a workspace dependency.
 sha2 = "0.10"
 
 [lints]
