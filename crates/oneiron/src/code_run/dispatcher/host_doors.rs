@@ -3,9 +3,11 @@
 //! parent lease, planner, attenuation and project-write gates.
 use super::HostSelfDispatcher;
 use crate::EntityId;
+use crate::agent_dispatch::AgentWaitSetResult;
 use crate::code_run::{
     AgentSpawnInput, AgentSpawnOutput, LeaderSplitInput, LeaderSplitOutput, ReportBlockedInput,
     ReportBlockedOutput, SelfDispatchOutcome, TaskRefuseInput, TaskRefuseOutput,
+    TaskWaitAgentsRequest,
 };
 use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 
@@ -93,6 +95,33 @@ impl<'a> HostSelfDispatcher<'a> {
         let _tool = self.activity_tool();
         match self.dispatch_agents_spawn(input.into_call()?)? {
             SelfDispatchOutcome::AgentSpawn(spawn) => Ok(spawn.into()),
+            SelfDispatchOutcome::Failed(failed) => {
+                Err(MemoryError::new(&failed.error, &failed.error, &[]))
+            }
+            _ => Err(host_result_mismatch()),
+        }
+    }
+
+    /// The host door's `tasks.wait` over AGENT children (slice 6.5b), after
+    /// its credential and hooks admitted the call: the wait of this
+    /// dispatcher's own leased attempt over children it spawned. A host
+    /// caller has no executor step to park, so a wait that is not done
+    /// answers its reduction as it stands, and the caller asks again under
+    /// the same step key.
+    pub fn wait_agents_from_host(
+        &self,
+        input: TaskWaitAgentsRequest,
+    ) -> MemoryResult<AgentWaitSetResult> {
+        // An id-only binding is not a public host call's acquired lease.
+        self.live_parent()?;
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
+        let call = input.into_call();
+        let agents = call.agents.clone().unwrap_or_default();
+        match self.dispatch_agent_wait(&call, &agents, false)? {
+            SelfDispatchOutcome::AgentVerb(answer) => {
+                serde_json::from_value(answer.output).map_err(|_| host_result_mismatch())
+            }
             SelfDispatchOutcome::Failed(failed) => {
                 Err(MemoryError::new(&failed.error, &failed.error, &[]))
             }

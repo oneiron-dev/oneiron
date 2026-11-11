@@ -1,6 +1,5 @@
 //! Returned bytes and typed refusals; no assertions of PowerPoint visibility.
 pub(crate) mod support;
-use super::package::*;
 use super::xml::Xml;
 use super::*;
 use crate::entity_id::EntityId;

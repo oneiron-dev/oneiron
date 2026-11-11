@@ -301,6 +301,7 @@ mod tests {
     fn rollup_does_not_store_or_launder_unknown() {
         let mut r = VerifyReport {
             artifact_sha256: [0; 32],
+            active_content: ActiveContentFacts::default(),
             revisions: vec![],
             modifications: Modifications::NotRun,
             anomalies: vec![],
@@ -315,6 +316,7 @@ mod tests {
                     file_len: 0,
                 },
                 coverage: Coverage::Unclear,
+                revision_coverage: None,
                 digest: None,
                 profile: None,
                 integrity: VerifyVerdict::Indeterminate,
