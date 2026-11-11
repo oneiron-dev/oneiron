@@ -227,6 +227,21 @@ fn rebind_owed_wake(
                 "this wake is the elected home's to admit; rebind it on the home".to_owned(),
             ));
         }
+        // A turn's wake waits while its ChildOf edge is deferred here: its
+        // admission would hold it, so its rebind waits for the edge too.
+        #[cfg(feature = "sync")]
+        if wake.occurrence.is_none()
+            && crate::sync::bridge::has_deferred_child_of_source_in_txn(
+                vault,
+                &*txn,
+                &wake.turn.turn,
+            )?
+        {
+            return Err(Error::InvalidConfig(
+                "this wake waits for its turn's conversation; rebind it once that arrives"
+                    .to_owned(),
+            ));
+        }
         let (authority, rebind) =
             rebound_in_txn(vault, txn, &wake.authority, successor, actor, class)?;
         wake.authority = authority;

@@ -147,6 +147,15 @@ pub(crate) fn turn_packs_in_base_window_in_txn(
     {
         return Ok(false);
     }
+    entity_packs_in_base_window_in_txn(vault, txn, turn)
+}
+
+/// Whether the packing exclusion permits `entity` in its base month window.
+pub(crate) fn entity_packs_in_base_window_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity: &crate::EntityId,
+) -> Result<bool> {
     let withheld = crate::settings::device_local_worlds_at(
         vault,
         txn,
@@ -157,7 +166,7 @@ pub(crate) fn turn_packs_in_base_window_in_txn(
         vault,
         &mut lineage,
         &withheld,
-        turn,
+        entity,
     )?)
 }
 

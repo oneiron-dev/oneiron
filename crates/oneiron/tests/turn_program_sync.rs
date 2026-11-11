@@ -599,3 +599,314 @@ fn a_carried_arming_that_no_turn_wakes_is_refused() {
     b.housekeeping();
     assert!(!doors::program_armed_here(&b.vault, actor, registration).unwrap());
 }
+
+#[test]
+fn a_carried_wake_waits_for_its_turns_conversation() {
+    let a = Machine::open("owen");
+    let b = Machine::open("yuki");
+    doors::node_id(&a.vault).unwrap();
+    let home = doors::node_id(&b.vault).unwrap();
+    elect(&[&a, &b], home);
+
+    // The conversation lives in an older month than the TURN that names it.
+    let conversation = EntityId::from_bytes([0x62; 16]).unwrap();
+    let conversation_at = T0 - 100 * 86_400;
+    assert_ne!(
+        WindowKey::from_timestamp(conversation_at),
+        WindowKey::new(WINDOW)
+    );
+    a.vault
+        .put_entity(
+            &conversation,
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+            TimeRange {
+                start: conversation_at,
+                end: conversation_at,
+            },
+            conversation_at,
+            b"\x80",
+        )
+        .unwrap();
+    let (agent, slip, instrument) = agent_slip(&a);
+    let turn = put_turn(&a);
+    a.vault
+        .put_edge(&turn, oneiron::EdgeKind::ChildOf, &conversation, 1.0)
+        .unwrap();
+    let registration = doors::plant_slip_wake(
+        &a.vault,
+        agent,
+        &slip,
+        &instrument,
+        conversation,
+        turn,
+        T0 - 60,
+        T0,
+    )
+    .unwrap();
+    assert!(doors::wake_owed_here(&a.vault, turn, registration).unwrap());
+
+    // Only the TURN's window rides: the TURN, its edge, the arming and the
+    // owed wake, not the conversation's older month.
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+
+    // The pinned row is present before the home's first pass: only the
+    // conversation can keep the carried wake waiting.
+    put_row(&b, registration);
+
+    // B holds the TURN but neither the conversation nor its edge: the edge
+    // waits as a deferred ChildOf obligation.
+    let pending = format!(
+        "dc:w:{}:{}:{}",
+        WINDOW,
+        turn.to_hex(),
+        conversation.to_hex()
+    );
+    assert!(b.vault.get(&conversation).unwrap().is_none());
+    assert!(
+        b.vault
+            .targets(&turn, oneiron::EdgeKind::ChildOf, None)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(b.vault.sync_state_get(&pending).unwrap().is_some());
+
+    // B, the home, waits for the conversation: no decision while its edge
+    // is deferred.
+    b.housekeeping();
+    assert_eq!(
+        doors::wake_decisions_here(&b.vault, turn, registration).unwrap(),
+        0,
+        "the home decided a wake before its TURN's conversation arrived"
+    );
+
+    // The conversation's older window arrives and lands its edge.
+    let older = WindowKey::from_timestamp(conversation_at);
+    let older_a = a.manager.open_window(&older).unwrap().doc.clone();
+    let older_b = b.manager.open_window(&older).unwrap().doc.clone();
+    exchange(&older_a, &older_b);
+    b.housekeeping();
+    assert_eq!(
+        doors::wake_decisions_here(&b.vault, turn, registration).unwrap(),
+        1,
+        "the home did not decide the wake once its conversation arrived"
+    );
+    let refused = doors::wake_refusal_here(&b.vault, turn, registration).unwrap();
+    assert_ne!(
+        refused.as_deref(),
+        Some("the waking turn or occurrence does not match the program's trigger")
+    );
+    assert!(
+        b.vault
+            .targets(&turn, oneiron::EdgeKind::ChildOf, None)
+            .unwrap()
+            .contains(&conversation)
+    );
+    assert!(b.vault.sync_state_get(&pending).unwrap().is_none());
+
+    // B's decision rides back: A no longer owes the wake and never decides it.
+    exchange(&doc_a, &doc_b);
+    a.housekeeping();
+    assert!(
+        !doors::wake_owed_here(&a.vault, turn, registration).unwrap(),
+        "the machine that recorded the wake still owes it after the home decided it"
+    );
+    assert_eq!(
+        doors::wake_decisions_here(&a.vault, turn, registration).unwrap(),
+        0
+    );
+}
+
+#[test]
+fn a_wake_too_large_to_ride_is_admitted_where_it_was_recorded() {
+    let a = Machine::open("owen");
+    let b = Machine::open("yuki");
+    doors::node_id(&a.vault).unwrap();
+    let home = doors::node_id(&b.vault).unwrap();
+    elect(&[&a, &b], home);
+
+    // A valid slip whose binding is too large to ride: two caveats keep the
+    // effective records to one 512-byte name, so the slip stays within its
+    // wire cap while the binding's 96-record first caveat and 8192-byte
+    // challenge overflow the row cap.
+    let issuer = test_host_issuer();
+    let agent = a.vault.ensure_agent_principal("owen").unwrap();
+    let holder = SigningKey::from_bytes(&[7; 32]);
+    let mut claims = a.vault.ensure_host_root_slip(&issuer).unwrap().claims;
+    claims.slip_id = [0x5a; 32];
+    claims.parent_id = None;
+    claims.holder_ref = agent.to_hex();
+    claims.binding_key = holder.verifying_key().to_bytes();
+    claims.actor_class = Some("agent".into());
+    claims.scope.verbs = ScopeAxis::Some(["read".into(), "write".into()].into());
+    let mut slip = a.vault.mint_capability_slip(&issuer, claims).unwrap();
+    let mut record_names = std::collections::BTreeSet::new();
+    for record_index in 0..96 {
+        record_names.insert(format!("r{record_index:03}-{}", "x".repeat(507)));
+    }
+    assert_eq!(record_names.len(), 96);
+    let record_caveat = oneiron::authority::SlipCaveat {
+        records: Some(record_names.clone()),
+        ..Default::default()
+    };
+    slip.attenuate(record_caveat, &holder).unwrap();
+    let retained_record = record_names.iter().next().unwrap().clone();
+    let narrowing_caveat = oneiron::authority::SlipCaveat {
+        records: Some(std::collections::BTreeSet::from([retained_record])),
+        ..Default::default()
+    };
+    slip.attenuate(narrowing_caveat, &holder).unwrap();
+    let challenge = vec![255u8; 8192];
+    let signature = holder
+        .sign(&slip.binding_transcript(&challenge).unwrap())
+        .to_bytes();
+    let binding = a
+        .vault
+        .bind_invocation_slip(&slip, &challenge, &signature)
+        .unwrap();
+    let proof = a.vault.verify_invocation_slip(&binding).unwrap();
+
+    // 96 512-byte names: 96*(512+2)+95+2 = 49441; 8192 255s:
+    // 8192*3+8191+2 = 32769; together 82210 before any slip, binding or
+    // wake overhead, so the binding overflows while the slip stays valid.
+    let records_json = serde_json::to_vec(&record_names).unwrap();
+    assert_eq!(records_json.len(), 49441);
+    let challenge_json = serde_json::to_vec(&challenge).unwrap();
+    assert_eq!(challenge_json.len(), 32769);
+    let slip_json = serde_json::to_vec(&slip).unwrap();
+    assert!(
+        slip_json.len() <= 65536,
+        "the oversized slip itself must stay valid, got {}",
+        slip_json.len()
+    );
+    let binding_json = serde_json::to_vec(&binding).unwrap();
+    assert!(
+        binding_json.len() > 65536,
+        "the binding must overflow the row cap, got {}",
+        binding_json.len()
+    );
+
+    let turn = put_turn(&a);
+    let conversation = EntityId::from_bytes([0x62; 16]).unwrap();
+    let registration = doors::plant_slip_wake(
+        &a.vault,
+        agent,
+        &proof,
+        &binding,
+        conversation,
+        turn,
+        T0 - 60,
+        T0,
+    )
+    .unwrap();
+    assert!(doors::wake_owed_here(&a.vault, turn, registration).unwrap());
+
+    // A is not the home, but the wake is too large to ride: A admits it
+    // where it was recorded. No conversation was stored, so the trigger
+    // does not match, which is the valid local decision.
+    a.housekeeping();
+    assert_eq!(
+        doors::wake_decisions_here(&a.vault, turn, registration).unwrap(),
+        1,
+        "the machine that recorded a too-large wake did not admit it"
+    );
+    assert!(!doors::wake_owed_here(&a.vault, turn, registration).unwrap());
+
+    // The wake never rode: B, the home, decides nothing.
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    b.housekeeping();
+    assert_eq!(
+        doors::wake_decisions_here(&b.vault, turn, registration).unwrap(),
+        0
+    );
+    assert!(!doors::wake_owed_here(&b.vault, turn, registration).unwrap());
+}
+
+#[test]
+fn one_definition_armed_on_two_machines_runs_once_for_a_turn_both_recorded() {
+    let a = Machine::open("owen");
+    let b = Machine::open("yuki");
+    doors::node_id(&a.vault).unwrap();
+    let home = doors::node_id(&b.vault).unwrap();
+    elect(&[&a, &b], home);
+    let (actor, slip, instrument) = agent_slip(&a);
+    let conversation = EntityId::from_bytes([0x62; 16]).unwrap();
+    let skill = a.vault.new_entity_id().unwrap();
+    let pin = definition(skill);
+    let registration_a = doors::plant_arming(&a.vault, actor, conversation, &pin, T0 - 60).unwrap();
+    let registration_b = doors::plant_arming(&b.vault, actor, conversation, &pin, T0 - 60).unwrap();
+    assert_ne!(registration_a, registration_b);
+
+    // The same TURN lands on both machines before any window rides.
+    let turn_a = put_turn(&a);
+    let turn_b = put_turn(&b);
+    assert_eq!(turn_a, turn_b);
+    let turn = turn_a;
+    let landed = oneiron::dreamer_runner::LandedTurnRef {
+        turn,
+        conversation,
+        landed_at: T0,
+    };
+    assert_eq!(
+        doors::record_slip_turn_wakes(&a.vault, actor, &slip, &instrument, landed).unwrap(),
+        1
+    );
+    assert_eq!(
+        doors::record_slip_turn_wakes(&b.vault, actor, &slip, &instrument, landed).unwrap(),
+        1
+    );
+    assert!(doors::wake_owed_here(&a.vault, turn, registration_a).unwrap());
+    assert!(doors::wake_owed_here(&b.vault, turn, registration_b).unwrap());
+
+    // B, the home, decides its own wake first: no conversation was stored,
+    // so the trigger does not match.
+    put_row(&b, skill);
+    b.housekeeping();
+    assert_eq!(
+        doors::wake_decisions_here(&b.vault, turn, registration_b).unwrap(),
+        1
+    );
+
+    // A's arming and owed wake ride to B.
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    b.housekeeping();
+    assert_eq!(
+        doors::wake_decisions_here(&b.vault, turn, registration_a).unwrap(),
+        1,
+        "the home did not decide the carried wake"
+    );
+    assert_eq!(
+        doors::wake_refusal_here(&b.vault, turn, registration_a).unwrap(),
+        Some("the turn already woke this program under another arming of it".to_owned()),
+        "the carried wake was not refused as already woken"
+    );
+    // Exactly one decision stands on another reason: B's own wake, refused
+    // for its missing conversation.
+    let mut decisions_without_duplicate_refusal = 0;
+    for registration in [registration_a, registration_b] {
+        let refused = doors::wake_refusal_here(&b.vault, turn, registration).unwrap();
+        if refused.as_deref()
+            != Some("the turn already woke this program under another arming of it")
+        {
+            decisions_without_duplicate_refusal += 1;
+        }
+    }
+    assert_eq!(decisions_without_duplicate_refusal, 1);
+
+    // B's decision rides back: A no longer owes the wake and never decides it.
+    exchange(&doc_a, &doc_b);
+    a.housekeeping();
+    assert!(
+        !doors::wake_owed_here(&a.vault, turn, registration_a).unwrap(),
+        "the machine that recorded the wake still owes it after the home decided it"
+    );
+    assert_eq!(
+        doors::wake_decisions_here(&a.vault, turn, registration_a).unwrap(),
+        0
+    );
+}

@@ -21,8 +21,10 @@
 //!   that program is run where its secrets are.
 //! - A wake rides to the elected home when its authority verifies on any of
 //!   the vault's machines (a capability slip with its signed instrument) and
-//!   its arming rides, and its stored TURN can pack into a base window. A
-//!   TURN excluded by world settings, off-record membership or source audience
+//!   its arming rides, its encoded row fits, and its stored TURN can pack into
+//!   a base window. A stored conversation excluded from packing keeps the wake
+//!   local too; a carried wake waits while its TURN's ChildOf edge is deferred.
+//!   A TURN excluded by world settings, off-record membership or source audience
 //!   keeps its wake on the recording machine, which admits it there. A riding
 //!   wake travels in the base window of its TURN, as `Owed`; only the home
 //!   takes it, when it holds neither that wake nor its admission.
@@ -47,8 +49,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::sync::WindowKey;
 
-/// The largest row either map carries whole; an arming past it stays on its
-/// machine, as one that names a custody handle does.
+/// The largest row either map carries whole; an arming or wake past it stays
+/// on its machine, as an arming that names a custody handle does.
 pub(crate) const MAX_ROW_BYTES: usize = 1 << 16;
 
 fn refused(reason: &'static str) -> Error {
@@ -172,16 +174,27 @@ fn arming_rides(arming: &TurnProgramArming) -> bool {
 }
 
 /// Whether `wake` rides to the elected home: a turn owes it, its authority
-/// verifies on any machine, its arming held here rides, and its TURN can
-/// pack into a base window in this snapshot. An occurrence's wake names no
-/// TURN and is admitted where it was recorded.
+/// verifies on any machine, its arming held here rides, its row fits, and its
+/// TURN and any stored conversation can pack into base windows in this snapshot.
+/// An occurrence's wake names no TURN and is admitted where it was recorded.
 fn wake_rides_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, wake: &TurnProgramWake) -> Result<bool> {
-    if wake.occurrence.is_some() || !wake.authority.rides_to_home() {
+    if wake.occurrence.is_some()
+        || !wake.authority.rides_to_home()
+        || !encode(&WakeRow::Owed(wake.clone())).is_ok_and(|row| row.len() <= MAX_ROW_BYTES)
+    {
         return Ok(false);
     }
     if !ARM
         .get(vault, txn, &(wake.authority.actor(), wake.registration))?
         .is_some_and(|arming| arming_rides(&arming))
+    {
+        return Ok(false);
+    }
+    if let Some(conversation) =
+        crate::dreamer_consolidation::redirty::conversation_in_txn(vault, txn, &wake.turn.turn)?
+        && crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, &conversation)?
+            .is_some()
+        && !crate::sync::window::entity_packs_in_base_window_in_txn(vault, txn, &conversation)?
     {
         return Ok(false);
     }
@@ -346,9 +359,10 @@ pub(crate) fn merge_arming_row_in_txn(
 /// Merges one carried wake row, in the caller's writer. An `Owed` row is
 /// owed here on the elected home alone, when its arming is held here and
 /// wakes on it and neither the wake nor its admission is; before its
-/// arming, its pinned SKILL and its TURN arrive it is left in the window,
-/// and a held row keeps its hold. An `Admitted` row consumes the riding wake
-/// this machine recorded under its key, on any machine.
+/// arming, its pinned SKILL and its TURN arrive, or while the TURN's ChildOf
+/// edge is deferred here, it is left in the window, and a held row keeps its
+/// hold. An `Admitted` row consumes the riding wake this machine recorded
+/// under its key, on any machine.
 pub(crate) fn merge_wake_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -389,11 +403,10 @@ pub(crate) fn merge_wake_row_in_txn(
     if arming.revision != wake.revision || !arming.wakes_on(&wake.authority, &wake.turn) {
         return Ok(RowMerge::Refused("its arming here does not wake on it"));
     }
-    // Every record the admission reads must have arrived here first: the
-    // pinned SKILL and the TURN that owes the wake. Each syncs in its own
-    // window, and a record not here yet is no moved pin and no missing turn:
-    // the wake waits in the window and merges on a later pass. A record here
-    // and since deleted is the admission's to judge.
+    // The pinned SKILL and the TURN must arrive before admission, and a
+    // deferred ChildOf edge must settle first. They can ride different
+    // windows, so the wake waits in its window and merges on a later pass.
+    // A record here and since deleted is the admission's to judge.
     for record in [arming.definition.skill, wake.turn.turn] {
         if matches!(
             crate::vault::live_entity_row_in_txn(&vault.store, txn, &record)?,
@@ -401,6 +414,9 @@ pub(crate) fn merge_wake_row_in_txn(
         ) {
             return Ok(RowMerge::Held);
         }
+    }
+    if crate::sync::bridge::has_deferred_child_of_source_in_txn(vault, txn, &wake.turn.turn)? {
+        return Ok(RowMerge::Held);
     }
     WAKE.put(vault, txn, &wake.key(), &wake)?;
     super::index::index_wake_in_txn(vault, txn, actor, wake.key())?;

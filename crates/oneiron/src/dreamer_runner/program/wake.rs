@@ -39,7 +39,9 @@ pub(crate) fn turn_programs_armed_in_txn(
 /// once across armings with the same actor, class, conversation and revision.
 /// Any wake or decision under one of those registrations keeps an append
 /// from recording another. Otherwise the earliest arming, then smallest
-/// registration, records the group's wake. Answers how many it recorded.
+/// registration, records the group's wake. Admission refuses a second wake
+/// recorded under another registration before the machines exchanged their rows.
+/// Answers how many it recorded.
 pub(crate) fn record_turn_program_wakes_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -104,7 +106,8 @@ pub(crate) fn record_turn_program_wakes_in_txn(
 /// (FIX 12058) is passed by, taking no place in the batch, until its own
 /// expiry: before then only its rebind admits it, in the rebind's writer.
 /// A wake that rides to the elected home is passed by too while another
-/// machine is that home: the home admits it (FIX 5266).
+/// machine is that home: the home admits it (FIX 5266). A turn's wake whose
+/// ChildOf edge is deferred here also takes no place until that edge settles.
 pub(crate) fn drain_turn_program_wakes(vault: &Vault, now: u64) -> Result<TurnProgramDrain> {
     let pending = {
         let txn = vault.store.env.read_txn()?;
@@ -115,7 +118,14 @@ pub(crate) fn drain_turn_program_wakes(vault: &Vault, now: u64) -> Result<TurnPr
                 continue;
             }
             #[cfg(feature = "sync")]
-            if super::replica::wake_is_the_homes_in_txn(vault, &txn, &wake)? {
+            if super::replica::wake_is_the_homes_in_txn(vault, &txn, &wake)?
+                || (wake.occurrence.is_none()
+                    && crate::sync::bridge::has_deferred_child_of_source_in_txn(
+                        vault,
+                        &txn,
+                        &wake.turn.turn,
+                    )?)
+            {
                 continue;
             }
             pending.push(wake);

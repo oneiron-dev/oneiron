@@ -68,6 +68,20 @@ pub fn wake_decisions_here(vault: &Vault, turn: EntityId, registration: EntityId
     crate::dreamer_runner::turn_program_test_hooks::wake_decisions_here(vault, turn, registration)
 }
 
+/// How the wake TURN `turn` owes `registration` was refused here, when it
+/// was: the admission's reason. `None` when no admission refused it here.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn wake_refusal_here(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+) -> Result<Option<String>> {
+    crate::dreamer_runner::turn_program_test_hooks::wake_refusal_here(vault, turn, registration)
+}
+
 /// Holds the wake TURN `turn` owes `registration` on its lapsed slip, as the
 /// home's admission holds one whose slip lapsed: owed until its rebind or
 /// its expiry. Answers whether there was a wake to hold.
