@@ -62,8 +62,8 @@ pub(crate) async fn vault_projects_goal_get(
         auth,
         caller,
         VERB,
-        move |_, _, memory| match &reader {
-            Some(owner) => sdk::project_goal_get_as_owner(memory.vault(), owner, project),
+        move |server, _, memory| match &reader {
+            Some(owner) => sdk::project_goal_get_as_owner(server.vault(), owner, project),
             None => sdk::project_goal_get_as_reader(&memory, project),
         },
     )
