@@ -854,10 +854,11 @@ retry_backoff_secs = 0
             b"world",
         )
         .unwrap();
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
+    // The root the test host's install seed made (`rooted_vault`).
+    let (issuer, _) = crate::test_credentials::rooting_host_issuer(
+        &vault,
         super::test_support::TEST_SECRET.as_bytes(),
-    )
-    .unwrap();
+    );
     vault
         .keep_world_on_this_machine_under_for_test(&issuer, world, true)
         .unwrap();
