@@ -55,6 +55,19 @@ pub(super) fn preserved_world_acts(
     Ok(preserved)
 }
 
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static HISTORY_LOADS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread has loaded the past-standing history
+/// ([`load_history`]), for the integration test of a warm authority view's
+/// reads (FIX 22382). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn past_standing_history_loads_for_test() -> usize {
+    HISTORY_LOADS.with(std::cell::Cell::get)
+}
+
 /// Held rows plus adopted-covered history: immutable parents for every known
 /// row (to walk through unrelated ops) and canonical bodies where carried.
 struct LoadedHistory {
@@ -67,6 +80,8 @@ struct LoadedHistory {
 /// fault or conflicting same-hash metadata fails closed so the caller keeps
 /// the original list.
 fn load_history(store: &Store, txn: &heed::RoTxn<'_>) -> Result<LoadedHistory> {
+    #[cfg(oneiron_test_support)]
+    HISTORY_LOADS.with(|loads| loads.set(loads.get() + 1));
     let mut parents: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
     let mut bodies: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = BTreeMap::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
