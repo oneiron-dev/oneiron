@@ -48,7 +48,7 @@ policy are outside this model-input union.
 
 The stored card's new `source_rows` field is required and nullable. Missing
 fields are not default-filled; there is no migration or old-format reader.
-Generated SDK mirrors come from `python3 scripts/sdk/generate.py`.
+Generated SDK mirrors come from the SDK generator (`crates/oneiron-sdk-generator`).
 
 This implements only the Loop slice of FIX 7147 / FIX 6997. Other detectors,
 complete attempt-attribution witnesses and full guard-aware provenance remain
