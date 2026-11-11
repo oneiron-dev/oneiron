@@ -131,7 +131,7 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         DISCLOSURE_SCOPES.put(&self.store, wtxn, contact_id, scope)?;
         let claim_id = disclosure_scope_claim_id(contact_id)?;
-        let claim = ClaimBody::new(
+        let mut claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_SCOPE,
             ClaimSubject::Entity(*contact_id),
             disclosure_scope_body_value(scope)?,
@@ -139,6 +139,11 @@ impl Vault {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )?;
+        // [DISCLOSURE-SCOPE-CLAIM-FACET]: the contact's own substrate is no
+        // FACET, so the CLAIM birth gate refused every first clearance with
+        // InvalidFacet. The head is born in the vault default facet, as the
+        // contact's own heads are ([COUNTERPARTY-CONTACT-CLAIM-FACET]).
+        claim.scope_facet = self.default_facet_in_txn(wtxn)?;
         self.put_disclosure_claim_in_txn(wtxn, &claim_id, &claim, scope.updated_at)
     }
 
