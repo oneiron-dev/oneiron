@@ -83,7 +83,9 @@ pub(crate) async fn vault_consolidation_selection_timing_set(
         server,
         auth,
         "vault.consolidation.selection_timing.set",
-        move |server, actor| sdk::set_consolidation_selection_timing_as(server.vault(), actor, input),
+        move |server, actor| {
+            sdk::set_consolidation_selection_timing_as(server.vault(), actor, input)
+        },
     )
     .await;
     (answer, Vec::new())
