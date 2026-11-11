@@ -6,14 +6,22 @@
 //!
 //! A revoke deletes the Grant's row, and its bodyless shell no longer names
 //! the member; the signed mint in the authority log still does. So the index
-//! keeps (member, grant) -> the mint's entry hash, written in the writer that
-//! stages each authority-log row and never removed: ever means ever. The
-//! local append, a signed-history import and a sync ingest all stage their
-//! rows through the batch put, so the hook sees every mint this vault holds.
-//! A vault-checkpoint restore copies rows past that hook, so the restore
-//! rebuilds the index from the log, as open does for a vault older than it.
-//! A mint that an adopted authority checkpoint covers with no resident row is
-//! not indexed: the gap `counted_grant_acts_in_txn` documents.
+//! keeps a posting (member, grant, the mint's entry hash), written in the
+//! writer that stages each authority-log row and never removed: ever means
+//! ever. The local append, a signed-history import and a sync ingest all
+//! stage their rows through the batch put, so the hook sees every mint row
+//! this vault holds. A vault-checkpoint restore copies rows past that hook,
+//! so the restore rebuilds the index from the log, as open does for a vault
+//! older than it.
+//!
+//! The mint hash is part of the key, not the value: a second signed mint for
+//! the same (member, grant) that the fold refuses adds its own posting and
+//! never hides the counted one (REVIEW-3 P2).
+//!
+//! A mint that an adopted authority checkpoint carries with no resident row
+//! never passes the staging hook, and an adoption can land after open. The
+//! reader therefore also reads the adopted evidence's carried mints, as the
+//! funding check reads them beside the resident rows (REVIEW-3 P1).
 //!
 //! The index alone admits nothing and narrows nothing: a reader counts a
 //! posting only while the authority fold counts its mint, so a row no
@@ -32,8 +40,8 @@ use crate::side_table::{self, Raw, SideTable};
 
 use super::super::FederationGrantKind;
 
-/// (member, grant) -> the entry hash of the signed mint naming them.
-const MEMBER_INDEX: SideTable<(EntityId, EntityId), AuthorityEntryHash, Raw> =
+/// (member, grant, the entry hash of a signed mint naming them) -> ().
+const MEMBER_INDEX: SideTable<(EntityId, EntityId, AuthorityEntryHash), (), Raw> =
     SideTable::new(&side_table::FEDERATION_AGENT_GRANT_MEMBER);
 /// Schema-version byte gating the index's rebuild from the authority log.
 const SCHEMA_VERSION: SideTable<(), Vec<u8>, Raw> =
@@ -67,8 +75,8 @@ pub(crate) fn index_agent_grant_member_in_txn(
     entry: &AuthorityLogEntry,
     hash: &AuthorityEntryHash,
 ) -> Result<()> {
-    if let Some(key) = owner_agent_mint(entry) {
-        MEMBER_INDEX.put(store, wtxn, &key, hash)?;
+    if let Some((member, grant)) = owner_agent_mint(entry) {
+        MEMBER_INDEX.put(store, wtxn, &(member, grant, *hash), &())?;
     }
     Ok(())
 }
@@ -101,7 +109,7 @@ pub(crate) fn backfill_agent_grant_member_index(vault: &Vault, force: bool) -> R
     // Collect first, then write: the type-index cursor is dropped before any
     // vault_meta write, as the skill content-hash index's backfill does.
     let mut wtxn = store.env.write_txn()?;
-    let mut postings = Vec::<((EntityId, EntityId), AuthorityEntryHash)>::new();
+    let mut postings = Vec::<(EntityId, EntityId, AuthorityEntryHash)>::new();
     for id in store.port_entity_ids_by_type(&wtxn, ENTITY_TYPE_AUTHORITY_LOG, None)? {
         let id = id?;
         let Some(row) = store.port_entity_record(&wtxn, &id)? else {
@@ -113,12 +121,12 @@ pub(crate) fn backfill_agent_grant_member_index(vault: &Vault, force: bool) -> R
         let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
             continue;
         };
-        if let Some(key) = owner_agent_mint(&entry) {
-            postings.push((key, authority_entry_hash(&entry)?));
+        if let Some((member, grant)) = owner_agent_mint(&entry) {
+            postings.push((member, grant, authority_entry_hash(&entry)?));
         }
     }
-    for (key, hash) in &postings {
-        MEMBER_INDEX.put(store, &mut wtxn, key, hash)?;
+    for posting in &postings {
+        MEMBER_INDEX.put(store, &mut wtxn, posting, &())?;
     }
     SCHEMA_VERSION.put(store, &mut wtxn, &(), &vec![MEMBER_INDEX_SCHEMA_VERSION])?;
     wtxn.commit()?;
@@ -128,7 +136,8 @@ pub(crate) fn backfill_agent_grant_member_index(vault: &Vault, force: bool) -> R
 impl Vault {
     /// Whether a signed owner-agent Grant mint that the authority fold of
     /// `txn` counts has ever named `member`, whether or not its Grant still
-    /// stands (module docs).
+    /// stands: a resident mint through the index, or a mint the adopted
+    /// authority checkpoint carries (module docs).
     ///
     /// # Errors
     /// A store or fold failure.
@@ -137,22 +146,28 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         member: EntityId,
     ) -> Result<bool> {
-        let mut fold = None;
+        let mut mints = Vec::new();
         for posting in MEMBER_INDEX.iter_from(&self.store, txn, member.as_bytes())? {
-            let ((posted_member, _grant), hash) = posting?;
-            if posted_member != member {
-                continue;
-            }
-            if fold.is_none() {
-                fold = Some(self.authority_view_readonly_in_txn(txn)?);
-            }
-            if fold
-                .as_ref()
-                .is_some_and(|fold| fold.valid_entries.contains(&hash))
-            {
-                return Ok(true);
+            let ((posted_member, _grant, hash), ()) = posting?;
+            if posted_member == member {
+                mints.push(hash);
             }
         }
-        Ok(false)
+        if let Some(evidence) = crate::authority::adopted_evidence_in_txn(&self.store, txn)? {
+            mints.extend(
+                evidence
+                    .bodies()
+                    .iter()
+                    .filter(|(_, entry)| {
+                        owner_agent_mint(entry).is_some_and(|(named, _grant)| named == member)
+                    })
+                    .map(|(hash, _)| *hash),
+            );
+        }
+        if mints.is_empty() {
+            return Ok(false);
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        Ok(mints.iter().any(|hash| fold.valid_entries.contains(hash)))
     }
 }
