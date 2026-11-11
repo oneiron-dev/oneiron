@@ -2,16 +2,20 @@
 //! Run on a build host with `cargo test --locked -p oneiron-server --all-features
 //! --features oneiron/test-support --test room_pins_boards`.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use ed25519_dalek::{Signer, SigningKey};
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, holder_proof_challenge};
 use oneiron::conversation::{ConversationBody, ConversationKind, RoomPin};
 use oneiron::counterparty_contact::CounterpartyContactRecord;
-use oneiron::federation::Scope;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::policy_manifest_doors::{
     ActorCeiling, PolicyCeiling, PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow,
@@ -47,6 +51,34 @@ struct Fixture {
     short_ref_a: String,
     deleted: Option<EntityId>,
     _directory: tempfile::TempDir,
+}
+
+/// Each of `principals` reads `room`'s MESSAGEs under an active grant.
+fn grant_room_messages(vault: &Vault, room: EntityId, principals: &[EntityId]) -> TestResult {
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    for &principal in principals {
+        vault.create_access_grant(
+            &EntityId::now(),
+            &AccessGrant {
+                authority_scope: authority_scope.clone(),
+                principal_ref: principal,
+                scope: AccessGrantScope::ConversationMessages {
+                    conversation_ref: room,
+                },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at,
+                revoked_at: None,
+                expires_at: None,
+                companion_bounds: None,
+            },
+        )?;
+    }
+    Ok(())
 }
 
 impl Fixture {
@@ -180,6 +212,13 @@ impl Fixture {
             WriteActor::new(member, EdgeActorClass::Human),
             vault.now_recorded_at(),
         )?;
+        // A room read admits a row only when every reader of its audience
+        // may: each seated non-owner reads the room's MESSAGEs under a grant.
+        // Room B seats no agent.
+        let mut room_a_readers = vec![leader];
+        room_a_readers.extend(agents.iter().copied());
+        grant_room_messages(&vault, room_a, &room_a_readers)?;
+        grant_room_messages(&vault, room_b, &[leader])?;
 
         let (target_a, short_ref_a) = speak_trunk(&vault, leader, room_a)?;
         let (target_b, _) = speak_trunk(&vault, leader, room_b)?;
