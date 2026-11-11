@@ -33,18 +33,30 @@ pub(crate) fn route_extraction(vault: &Vault) {
 /// `route`, its extraction teacher probe-approved, as an owner pins one.
 pub(crate) fn pin_every_role(vault: &Vault, model: &str, route: oneiron::ModelLocality) {
     use oneiron::llm::manifest::{
-        MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot, TeacherProbeApproval,
+        MODEL_ROLES, ModelBinding, ModelManifest, ModelRole, ModelSlot, TeacherProbeApproval,
     };
     let manifest = ModelManifest {
         version: 2,
         roles: MODEL_ROLES
             .into_iter()
             .map(|role| {
+                let model = oneiron::ModelId::new(model).unwrap();
+                let (model, slot) = if role == ModelRole::ExtractionEncoder {
+                    let encoder = format!(
+                        "{}/{}-encoder@{}",
+                        model.provider(),
+                        model.name(),
+                        model.revision()
+                    );
+                    (oneiron::ModelId::new(encoder).unwrap(), ModelSlot::Oneironer)
+                } else {
+                    (model, ModelSlot::Llm)
+                };
                 (
                     role,
                     ModelBinding {
-                        model: oneiron::ModelId::new(model).unwrap(),
-                        slot: ModelSlot::Llm,
+                        model,
+                        slot,
                         tier: oneiron::ModelTierRef("pinned".into()),
                         route_models: Default::default(),
                         disposition: None,
