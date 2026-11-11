@@ -2,13 +2,13 @@
   "schema": "oneiron-fleet-process-v1",
   "terminal": true,
   "command": [
-    "/home/lexi/w7-build/wt/W7-C10/target/release/oneiron-bench",
+    "target/release/oneiron-bench",
     "fleet",
     "run",
     "--plan",
-    "/home/lexi/w7-build/wt/W7-C10/.w7/fleet-arch-plan.json",
+    ".w7/fleet-arch-plan.json",
     "--out",
-    "/home/lexi/w7-build/wt/W7-C10/target/fleet-evidence/arch-fleet.json"
+    "target/fleet-evidence/arch-fleet.json"
   ],
   "pid": 1472348,
   "exit_code": 1,

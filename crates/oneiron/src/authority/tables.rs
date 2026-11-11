@@ -81,27 +81,27 @@ crate::side_table::side_tables! {
     STEP_UP_CHALLENGE: VaultMeta b"step_up:challenge:v1:" Named
         // Restore class: A person's passkeys, open ceremonies and step-ups stand with the live
         // credentials they protect (FIX 11694).
-        [restore: live] [family: unregistered] [tier: canonical]
+        [restore: live] [family: unclassified] [tier: canonical]
         => crate::authority::erase_step_up_challenges_actor_in_txn;
     /// A person's enrolled passkey (FIX 11694): credential id, COSE algorithm, public key, RP id,
     /// origin, counter, label and times. Holds no secret. Key: id16 (the person) + SHA-256 (32) of
     /// the credential id.
     STEP_UP_PASSKEY: VaultMeta b"step_up:passkey:v1:" Named
-        [restore: live] [family: unregistered] [tier: canonical]
+        [restore: live] [family: unclassified] [tier: canonical]
         => crate::authority::erase_step_up_passkeys_actor_in_txn;
     /// A completed MFA step-up on one slip (FIX 11694): the person, the factor, the passkey and
     /// when. Key: the 32-byte slip id.
     STEP_UP_RECORD: VaultMeta b"step_up:record:v1:" Named
-        [restore: live] [family: unregistered] [tier: canonical]
+        [restore: live] [family: unclassified] [tier: canonical]
         => crate::authority::erase_step_up_records_actor_in_txn;
     /// Pending authenticator enrollment: the exact slip, sealed seed, key ref and expiry.
     /// Key: person id16 + enrollment id32; never replaces a confirmed enrollment.
     STEP_UP_TOTP_PENDING: VaultMeta b"step_up:totp:pending:v1:" Named Ciphertext
-        [restore: live] [family: unregistered] [tier: canonical]
+        [restore: live] [family: unclassified] [tier: canonical]
         => crate::authority::erase_step_up_totp_actor_in_txn;
     /// A person's confirmed authenticator: sealed seed, erasable key ref and spent step.
     /// Key: person id16 + enrollment id32. Seed bytes never rest in plaintext.
     STEP_UP_TOTP: VaultMeta b"step_up:totp:v1:" Named Ciphertext
-        [restore: live] [family: unregistered] [tier: canonical]
+        [restore: live] [family: unclassified] [tier: canonical]
         => crate::authority::erase_step_up_totp_actor_in_txn;
 }

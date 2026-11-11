@@ -1,0 +1,21 @@
+/* Confidence as ink. ink-4 is legal here only: a faint claim prints faint. */
+.sl-claim-text {
+  font-size: var(--sl-t-say);
+  line-height: 1.4;
+}
+
+.sl-claim-text[data-ink="1"] {
+  color: var(--sl-ink-1);
+}
+
+.sl-claim-text[data-ink="2"] {
+  color: var(--sl-ink-2);
+}
+
+.sl-claim-text[data-ink="3"] {
+  color: var(--sl-ink-3);
+}
+
+.sl-claim-text[data-ink="4"] {
+  color: var(--sl-ink-4);
+}

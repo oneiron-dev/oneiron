@@ -52,7 +52,7 @@ These rules outrank every other process line in this repo.
   comments need no answer.
 - No security sweeps, perf work, A/B tests, build-speed work or test work.
 - **Fix list.** An issue you notice but do not fix goes on the owner's fix list,
-  `/Users/olety/Desktop/temp/vibe-build-20261017/FIX-LIST.md` on the coordinator Mac, one line
+  `<workspace>/vibe-build-20261017/FIX-LIST.md` on the coordinator Mac, one line
   each: `- <MM-DD HH:MM> <lane>: <file:line or area> <issue>`.
 
 A later pass writes an end-to-end suite and straightens the code. The old tests get fixed or

@@ -1,0 +1,41 @@
+.sl-primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: none;
+  height: 36px;
+  padding: 0 18px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-primary);
+  color: var(--sl-on-primary);
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-primary-button:hover {
+  background: var(--sl-primary-hover);
+}
+
+.sl-primary-button:active {
+  transform: scale(0.96);
+}
+
+.sl-primary-button:disabled {
+  background: var(--sl-ink-4);
+  cursor: default;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-primary-button {
+    transition: none;
+  }
+  .sl-primary-button:active {
+    transform: none;
+  }
+}
