@@ -48,7 +48,9 @@ pub struct GoalPreferenceChange {
 }
 
 /// The learned preferences, matched by their (prefer, over) pair, in pair
-/// order.
+/// order. A pair held once on each side whose reason moved is changed; a
+/// pair held more than once on either side is matched entry by entry, and
+/// each entry with no equal partner is removed or added.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GoalPreferenceChanges {
@@ -140,36 +142,59 @@ fn preference_changes(
     before: &[GoalPreference],
     after: &[GoalPreference],
 ) -> GoalPreferenceChanges {
-    let pairs = |preferences: &[GoalPreference]| -> BTreeMap<(String, String), GoalPreference> {
-        preferences
-            .iter()
-            .map(|preference| {
-                (
-                    (preference.prefer.clone(), preference.over.clone()),
-                    preference.clone(),
-                )
-            })
-            .collect()
-    };
-    let before = pairs(before);
-    let after = pairs(after);
+    let before = preference_pairs(before);
+    let after = preference_pairs(after);
     let mut changes = GoalPreferenceChanges::default();
     for (pair, old) in &before {
-        match after.get(pair) {
-            None => changes.removed.push(old.clone()),
-            Some(new) if new.reason != old.reason => changes.changed.push(GoalPreferenceChange {
-                prefer: pair.0.clone(),
-                over: pair.1.clone(),
-                before: old.reason.clone(),
-                after: new.reason.clone(),
-            }),
-            Some(_) => {}
+        let new = after.get(pair).map_or(&[][..], Vec::as_slice);
+        match (old.as_slice(), new) {
+            // One entry on each side: its reason moved, or nothing did.
+            ([old], [new]) => {
+                if old.reason != new.reason {
+                    changes.changed.push(GoalPreferenceChange {
+                        prefer: pair.0.clone(),
+                        over: pair.1.clone(),
+                        before: old.reason.clone(),
+                        after: new.reason.clone(),
+                    });
+                }
+            }
+            // Otherwise every entry without an equal partner on the other
+            // side is removed or added, duplicates counted.
+            _ => {
+                let mut unmatched: Vec<&GoalPreference> = new.iter().collect();
+                for entry in old {
+                    match unmatched.iter().position(|candidate| *candidate == entry) {
+                        Some(index) => {
+                            unmatched.remove(index);
+                        }
+                        None => changes.removed.push(entry.clone()),
+                    }
+                }
+                changes.added.extend(unmatched.into_iter().cloned());
+            }
         }
     }
     for (pair, new) in &after {
         if !before.contains_key(pair) {
-            changes.added.push(new.clone());
+            changes.added.extend(new.iter().cloned());
         }
     }
     changes
+}
+
+/// Every entry of `preferences` under its (prefer, over) pair. A record may
+/// hold one pair more than once (the goal validator asks only for nonblank,
+/// non-self pairs), so each pair keeps every entry, in record order.
+fn preference_pairs(
+    preferences: &[GoalPreference],
+) -> BTreeMap<(String, String), Vec<GoalPreference>> {
+    let mut pairs: BTreeMap<(String, String), Vec<GoalPreference>> = BTreeMap::new();
+    for preference in preferences {
+        pairs
+            .entry((preference.prefer.clone(), preference.over.clone()))
+            .or_default()
+            .push(preference.clone());
+    }
+    pairs
 }

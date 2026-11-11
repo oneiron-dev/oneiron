@@ -567,18 +567,36 @@ fn check_evidence(evidence: &ProjectGoalProposalEvidence) -> MemoryResult<()> {
             "the cost spent names at most {LIST_MAX} spend scopes"
         )));
     }
+    if !evidence.cost_spent.iter().all(spend_scope_well_formed) {
+        return Err(bad_request(
+            "each spend scope of the cost spent is an attempt id (32 lowercase hex digits) or a launch id (1 to 128 printable bytes)",
+        ));
+    }
     Ok(())
 }
 
-/// `text` trimmed, refused when blank or over [`TEXT_MAX_BYTES`].
+/// Whether `scope` has a shape the engine mints a spend scope id in: an
+/// attempt's 32 lowercase hex digits, or a launch id [`SpendScopeId::launch`]
+/// takes. A deserialized id is not checked until here.
+fn spend_scope_well_formed(scope: &SpendScopeId) -> bool {
+    let id = scope.as_str();
+    (id.len() == 32
+        && id
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')))
+        || SpendScopeId::launch(id).is_ok()
+}
+
+/// `text` trimmed, refused when blank once trimmed or, as sent, over
+/// [`TEXT_MAX_BYTES`]: the bound holds for the text the row stores.
 fn bounded_text(what: &str, text: &str) -> MemoryResult<String> {
-    let text = text.trim();
-    if text.is_empty() || text.len() > TEXT_MAX_BYTES {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || text.len() > TEXT_MAX_BYTES {
         return Err(bad_request(&format!(
-            "{what} is a text of 1 to {TEXT_MAX_BYTES} bytes once trimmed"
+            "{what} is a text of at most {TEXT_MAX_BYTES} bytes, not blank"
         )));
     }
-    Ok(text.to_owned())
+    Ok(trimmed.to_owned())
 }
 
 /// One to [`LIST_MAX`] texts, each bounded.
