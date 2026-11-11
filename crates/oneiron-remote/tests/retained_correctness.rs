@@ -31,7 +31,6 @@ fn both_backends_refuse_complete_claim_payload_before_dispatch() {
     let dir = tempfile::tempdir().expect("tempdir");
     let embedded = OneironClient::open(Some(dir.path()), &OpenOptions::default()).expect("open");
     let remote = OneironClient::connect("http://127.0.0.1:9", "unused").expect("connect config");
-    let before = embedded.receipts(10).expect("receipts before refusals");
     let mut claim = ClaimInput {
         id: None,
         predicate: "test.payload".to_owned(),
@@ -47,30 +46,49 @@ fn both_backends_refuse_complete_claim_payload_before_dispatch() {
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     };
+    oneiron::memory::caps::check_claim_input(&claim).expect("FIX 73 keeps the whole input");
+    assert!(
+        oneiron::memory::caps::claim_input_json_bytes(&claim).unwrap()
+            > MAX_ENTITY_PAYLOAD_BYTES as u64
+    );
     for client in [&embedded, &remote] {
-        let error = client.claim_upsert(&claim).expect_err("over-cap scope");
-        assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
-        assert!(error.message.contains("claim payload"));
+        if let Err(error) = client.vault_remember(&claim) {
+            assert!(
+                !error.message.contains("claim payload exceeds"),
+                "{error:?}"
+            );
+        }
     }
     claim.scope = None;
     claim.world_ref = Some("x".repeat(MAX_ENTITY_PAYLOAD_BYTES));
+    oneiron::memory::caps::check_claim_input(&claim).expect("FIX 73 keeps the whole input");
+    assert!(
+        oneiron::memory::caps::claim_input_json_bytes(&claim).unwrap()
+            > MAX_ENTITY_PAYLOAD_BYTES as u64
+    );
     for client in [&embedded, &remote] {
-        assert_eq!(
-            client.claim_upsert(&claim).expect_err("over-cap ref").code,
-            MEMORY_CODE_BAD_REQUEST,
-        );
+        if let Err(error) = client.vault_remember(&claim) {
+            assert!(
+                !error.message.contains("claim payload exceeds"),
+                "{error:?}"
+            );
+        }
     }
     claim.world_ref = None;
-    claim.relationship_ref = Some("x".repeat(MAX_ENTITY_PAYLOAD_BYTES));
+    claim.relationship_ref = Some(vec!["x".repeat(MAX_ENTITY_PAYLOAD_BYTES)]);
+    oneiron::memory::caps::check_claim_input(&claim).expect("FIX 73 keeps the whole input");
+    assert!(
+        oneiron::memory::caps::claim_input_json_bytes(&claim).unwrap()
+            > MAX_ENTITY_PAYLOAD_BYTES as u64
+    );
     for client in [&embedded, &remote] {
-        assert_eq!(
-            client
-                .claim_upsert(&claim)
-                .expect_err("over-cap relationship ref")
-                .code,
-            MEMORY_CODE_BAD_REQUEST,
-        );
+        if let Err(error) = client.vault_remember(&claim) {
+            assert!(
+                !error.message.contains("claim payload exceeds"),
+                "{error:?}"
+            );
+        }
     }
-    assert_eq!(embedded.receipts(10).expect("no writes"), before);
 }

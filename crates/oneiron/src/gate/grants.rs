@@ -16,6 +16,7 @@ use super::constants::{
     EXTERNAL_EFFECT_SCOPE_POLICY_RISK_KEY, EXTERNAL_EFFECT_SCOPE_VERB_KEY,
     EXTERNAL_EFFECT_WILDCARD, SCOPED_READ_EFFECTOR_CORE_READ, SCOPED_READ_EFFECTOR_ONEIRON_READ,
 };
+use super::house_grant::is_shipped_house_read_row;
 use super::input::{ExternalEffectGateContext, ExternalEffectPolicyRisk, GateActor};
 use super::resolution::PolicyManifestResolution;
 
@@ -187,7 +188,9 @@ pub(crate) fn claim_read_policy_allows(
         .iter()
         .filter(|grant| scoped_read_grant_has_read_effector(grant))
     {
-        if !scoped_read_actor_matches(grant, actor_key) {
+        if !scoped_read_actor_matches(grant, actor_key)
+            || (explicit_scope.is_some() && is_shipped_house_read_row(grant))
+        {
             continue;
         }
         saw_core_read_grant = true;
@@ -272,6 +275,7 @@ pub(crate) fn scoped_read_note_world_witness(
     for grant in policy.scoped_grants().iter().filter(|grant| {
         scoped_read_grant_has_read_effector(grant)
             && scoped_read_actor_matches(grant, actor)
+            && (actor.authority_scope().is_none() || !is_shipped_house_read_row(grant))
             && !grant.receipt_required
             && grant.budget.is_none()
     }) {
@@ -340,7 +344,9 @@ fn record_allowed_held(
     }
     let mut matched = false;
     for grant in policy.scoped_grants().iter().filter(|grant| {
-        scoped_read_grant_has_read_effector(grant) && scoped_read_actor_matches(grant, actor)
+        scoped_read_grant_has_read_effector(grant)
+            && scoped_read_actor_matches(grant, actor)
+            && (explicit_scope.is_none() || !is_shipped_house_read_row(grant))
     }) {
         matched = true;
         if grant.receipt_required || grant.budget.is_some() {

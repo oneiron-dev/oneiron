@@ -8,6 +8,7 @@ fn fleet_small_profile_uses_real_writes_recalls_and_held_sockets() -> Result<()>
     plan.validate()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
+        .thread_stack_size(oneiron_server::ENGINE_THREAD_STACK_BYTES)
         .enable_all()
         .build()?;
     let observed = runtime.block_on(workload::measure(&plan))?;
