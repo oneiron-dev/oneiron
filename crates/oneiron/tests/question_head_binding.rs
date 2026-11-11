@@ -1,5 +1,6 @@
 //! FIX 3864: an unmeasured question head binds only on the owner's reason.
 //! The upstream trainer is a local fake; custody and every run write are real.
+//! No trial is recorded, so the host's answerer pins (`&[]`) never match one.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -334,6 +335,7 @@ async fn binds_on_an_owner_reason() -> Result<()> {
         question,
         question_version,
         SwapChoice::Evaluated,
+        &[],
     ));
     assert!(refused.contains("no won paired trial"), "{refused}");
     assert_eq!(
@@ -356,6 +358,7 @@ async fn binds_on_an_owner_reason() -> Result<()> {
         SwapChoice::ExplicitOverride {
             reason: "   ".to_owned(),
         },
+        &[],
     ));
     assert!(refused.contains("records the owner's reason"), "{refused}");
     assert_eq!(
@@ -379,6 +382,7 @@ async fn binds_on_an_owner_reason() -> Result<()> {
         question,
         question_version,
         choice.clone(),
+        &[],
     )?;
     assert_eq!(binding.run, run);
     assert_eq!(binding.question, question);
@@ -402,8 +406,14 @@ async fn binds_on_an_owner_reason() -> Result<()> {
         Some(&binding)
     );
 
-    let repeated =
-        vault.approve_training_question_head(&owner, &run, question, question_version, choice)?;
+    let repeated = vault.approve_training_question_head(
+        &owner,
+        &run,
+        question,
+        question_version,
+        choice,
+        &[],
+    )?;
     assert_eq!(repeated.id, binding.id);
     assert_eq!(repeated, binding);
     assert_eq!(
