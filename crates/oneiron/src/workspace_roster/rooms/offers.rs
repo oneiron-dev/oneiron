@@ -431,8 +431,9 @@ fn mint_in_txn(
             "an offer card asks for an AGENT_DEF",
         ));
     }
-    // A PERSON-anchored AGENT_DEF is its person's pen and takes part as that
-    // person, who joins by writing; only an agent asks by a card.
+    // An AGENT_DEF anchored to a PERSON other than its own model PERSON is
+    // that person's pen and takes part as that person, who joins by writing;
+    // only an agent asks by a card.
     if join_subject_for_actor_in_txn(vault, txn, draft.agent, now)?
         != JoinSubject::Agent(draft.agent)
     {

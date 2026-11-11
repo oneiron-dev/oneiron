@@ -16,8 +16,8 @@ pub(crate) mod topology;
 pub(crate) use admission::stored_body_pin_for_test;
 pub(crate) use admission::{
     exact_core_turn_retry_in_txn, guard_record_put, guard_room_membership_delete,
-    guard_room_turn_delete, keep_membership_pin, pin_membership, pin_typed_record,
-    record_is_append_only_in_txn, room_turn_owner, validate_local_membership,
+    guard_room_turn_delete, keep_membership_pin, landing_reply_waits_in, pin_membership,
+    pin_typed_record, record_is_append_only_in_txn, room_turn_owner, validate_local_membership,
 };
 #[cfg(feature = "sync")]
 pub(crate) use admission::{validate_received_edge, validate_received_parent_value};
@@ -54,6 +54,8 @@ pub(crate) use policy::{
     APPEND_ROW, AppendFailure, admit_append_prose, append_references, receipt_append_refusal,
     require_append_references_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use policy::{append_source, composed_append_source};
 pub(crate) use quote::{
     ProvenRoomQuote, QuotedReply, message_body_quotes, pin_arrived_body_quotes_in_txn,
     pin_body_quotes_at_message_birth_in_txn, require_quote_landing_in_txn, turn_body_quotes,
@@ -78,7 +80,9 @@ pub use types::{
     AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, DagReplyTarget, QuoteSpan,
     ResolvedScope, ScopePath, ScopeSelector,
 };
-pub(crate) use writes::{append_at_in_txn, append_in_txn, put_thread_event_in_txn};
+pub(crate) use writes::{
+    append_composed_at_in_txn, append_composed_in_txn, append_in_txn, put_thread_event_in_txn,
+};
 
 #[cfg(test)]
 pub(crate) mod fixtures;

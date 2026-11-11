@@ -60,6 +60,8 @@ fn the_executor_prompt_declares_the_memory_rows_from_the_verb_table() {
     }
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 fn real_guest() -> crate::code_sandbox::quickjs::QuickJsRuntimeFactory {
     use crate::code_sandbox::wasmtime_runtime::ComponentBudget;
@@ -81,6 +83,8 @@ fn real_guest() -> crate::code_sandbox::quickjs::QuickJsRuntimeFactory {
     .expect("first-party component")
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 /// One single-step run of `program` through the real guest; the step's
 /// `finish` text and its bridge rows as `effect kind`.
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -117,6 +121,8 @@ fn run_program(
     Ok((answer, rows))
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 /// A guest call through a memory row still works end to end: the run's search
 /// and its claim writes keep their effect, replay row, answer shape and gated
 /// write. Each row's typed call, `supersede_claim` and `put_edge` included, is
@@ -172,6 +178,8 @@ fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
     assert_eq!(stored.confidence, 1.0);
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 /// A guest call through a memory row is refused as before: a non-finite
 /// number (boxed or not), a time past JavaScript's safe range and an input
 /// JSON cannot carry never reach the gate, the guest sees a stable code for
@@ -238,6 +246,8 @@ fn a_guest_call_through_a_memory_row_is_refused_as_before() {
     );
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 /// A memory row's input is closed, as every row's is: a field it does not
 /// list is refused before the gate, never dropped and written, and the guest
 /// sees the refusal as a stable code.
@@ -260,6 +270,8 @@ fn a_memory_row_refuses_a_field_its_input_does_not_list() {
     assert!(vault.get_claim(&claim).expect("read").is_none());
 }
 
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 /// A row's input is encoded once and the call sends that text, so neither a
 /// getter nor an inherited `toJSON` can pass the finite check and then send a
 /// different value.

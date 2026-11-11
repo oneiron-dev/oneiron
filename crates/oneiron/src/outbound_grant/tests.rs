@@ -11,40 +11,66 @@ fn intent(scope: GrantMintIntentScope) -> GrantMintIntent {
     }
 }
 
-#[test]
-fn standing_outbound_grant_codec_round_trips_active_grant() -> Result<()> {
-    let grant = StandingOutboundGrant::from_grant_mint_intent(
-        &intent(GrantMintIntentScope::VerbClass {
-            verb_class: "send".to_owned(),
-        }),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
-    )?;
+fn mint_outbound_grant_row(
+    vault: &crate::Vault,
+    scope: StandingOutboundGrantScope,
+) -> Result<(StandingOutboundGrant, crate::consent::ConsentGrantRow)> {
+    let owner = crate::test_util::embedded_owner_proof(vault);
+    let grant = vault.with_write_txn(|wtxn| {
+        vault.mint_standing_outbound_grant_in_txn(wtxn, &owner, EntityId::now(), "owner", scope)
+    })?;
+    let row = vault.consent_grant(&grant.grant_ref())?.expect("grant row");
+    Ok((grant, row))
+}
 
-    let encoded = encode_standing_outbound_grant_body(&grant)?;
-    validate_standing_outbound_grant_body_bytes(&encoded)?;
-    let decoded = decode_standing_outbound_grant_body(&encoded)?;
+fn consent_row_with_selectors(
+    row: &crate::consent::ConsentGrantRow,
+    change: impl FnOnce(&mut Vec<String>),
+) -> Result<crate::consent::ConsentGrantRow> {
+    let mut bound = row.grant.bound().clone();
+    let crate::consent::BoundEnvelope::Action(envelope) = &mut bound.envelope else {
+        panic!("outbound grant must have an action envelope");
+    };
+    // Preserve hostile bytes: ActionEnvelope::new would trim padded selectors.
+    change(&mut envelope.selectors);
+    envelope.selectors.sort();
+    let mut changed = row.clone();
+    changed.grant = crate::consent::StandingConsentGrant::from_bound(bound)?;
+    Ok(changed)
+}
 
-    assert_eq!(decoded, grant);
-    assert_eq!(decoded.scope.dial_label(), "always_this_verb_class");
-    assert!(decoded.revoked_at.is_none());
-    assert!(decoded.last_used_at.is_none());
-    Ok(())
+fn consent_row_with_version(encoded: &[u8], version: Value) -> Vec<u8> {
+    let Value::Map(mut fields) =
+        rmpv::decode::read_value(&mut Cursor::new(encoded)).expect("decode consent grant fixture")
+    else {
+        panic!("consent grant row must be a map");
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("schema_version"))
+        .expect("schema version field")
+        .1 = version;
+    let mut changed = Vec::new();
+    rmpv::encode::write_value(&mut changed, &Value::Map(fields))
+        .expect("encode consent grant fixture");
+    changed
 }
 
 #[test]
 fn artifact_publish_grant_codec_round_trips_without_broad_send_authority() -> Result<()> {
-    let grant = StandingOutboundGrant::from_grant_mint_intent(
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let grant = vault.mint_standing_outbound_grant(
+        &crate::test_util::embedded_owner_proof(&vault),
+        EntityId::now(),
         &intent(GrantMintIntentScope::ArtifactPublish {
             artifact: "site".to_owned(),
         }),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
     )?;
-    let encoded = encode_standing_outbound_grant_body(&grant)?;
-    let decoded = decode_standing_outbound_grant_body(&encoded)?;
+    let row = vault.consent_grant(&grant.grant_ref())?.expect("grant row");
+    let encoded = crate::consent::encode_consent_grant_row(&row)?;
+    let decoded =
+        StandingOutboundGrant::from_row(&crate::consent::decode_consent_grant_row(&encoded)?)
+            .expect("outbound grant row");
     assert_eq!(decoded, grant);
     assert!(
         decoded
@@ -79,316 +105,115 @@ fn artifact_publish_grant_codec_round_trips_without_broad_send_authority() -> Re
 }
 
 #[test]
-fn scoped_mcp_grant_codec_round_trips_all_payload_axes() -> Result<()> {
-    let grant = StandingOutboundGrant {
-        authority_scope: crate::federation::scope_codec::effect_preset(),
-        principal_ref: "owner".to_owned(),
-        origin_component_id: "ask-mcp".to_owned(),
-        origin_action_id: "grant-scoped-mcp".to_owned(),
-        origin_receipt_ref: Some("gate:mcp".to_owned()),
-        scope: StandingOutboundGrantScope::ScopedMcp {
-            server: "files".to_owned(),
-            tool: "read_file".to_owned(),
-            data_class_ceiling: DataClass::Personal,
-            tool_data_classes: vec![
-                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-            ],
-            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-        },
-        status: StandingOutboundGrantStatus::Active,
-        created_at: 10,
-        revoked_at: None,
-        last_used_at: None,
-        binding_diff_handle: vec![0xA5; 32],
-        read_frontier_hash: [0xB6; 32],
-    };
-
-    let encoded = encode_standing_outbound_grant_body(&grant)?;
-    let value = rmpv::decode::read_value(&mut Cursor::new(&encoded)).unwrap();
-    let Value::Map(entries) = value else {
-        panic!("grant map");
-    };
-    assert!(
-        entries
-            .iter()
-            .any(|(key, _)| key == &Value::from("read_frontier_hash"))
-    );
-    let scope = entries
-        .iter()
-        .find(|(key, _)| key == &Value::from("scope"))
-        .expect("scope key");
-    let Value::Map(scope_entries) = &scope.1 else {
-        panic!("scope map");
-    };
-    for required in [
-        "server",
-        "tool",
-        "data_class_ceiling",
-        "endpoint_allowlist",
-        "tool_data_classes",
-    ] {
-        assert!(
-            scope_entries
-                .iter()
-                .any(|(key, _)| key == &Value::from(required))
-        );
-    }
-
-    let decoded = decode_standing_outbound_grant_body(&encoded)?;
-    assert_eq!(decoded.principal_ref, grant.principal_ref);
-    assert_eq!(decoded.origin_component_id, grant.origin_component_id);
-    assert_eq!(decoded.origin_action_id, grant.origin_action_id);
-    assert_eq!(decoded.origin_receipt_ref, grant.origin_receipt_ref);
-    assert_eq!(decoded.scope, grant.scope);
-    assert_eq!(decoded.status, grant.status);
-    assert_eq!(decoded.binding_diff_handle, grant.binding_diff_handle);
-    assert_eq!(decoded.read_frontier_hash, grant.read_frontier_hash);
-    assert_eq!(decoded.scope.dial_label(), "scoped_mcp");
-    Ok(())
-}
-
-#[test]
 fn schema_v1_contact_grant_with_five_key_scope_is_rejected() -> Result<()> {
-    let grant = StandingOutboundGrant::from_grant_mint_intent(
-        &intent(GrantMintIntentScope::Contact {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (grant, row) = mint_outbound_grant_row(
+        &vault,
+        StandingOutboundGrantScope::Contact {
             contact_ref: "contact:legacy".to_owned(),
-        }),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
+        },
     )?;
-    let mut legacy_value = Value::Map(vec![
-        (Value::from(KEY_SCHEMA_VERSION), Value::from(1_u64)),
-        (
-            Value::from(KEY_PRINCIPAL_REF),
-            Value::from(grant.principal_ref.clone()),
-        ),
-        (
-            Value::from(KEY_ORIGIN_COMPONENT_ID),
-            Value::from(grant.origin_component_id.clone()),
-        ),
-        (
-            Value::from(KEY_ORIGIN_ACTION_ID),
-            Value::from(grant.origin_action_id.clone()),
-        ),
-        (
-            Value::from(KEY_ORIGIN_RECEIPT_REF),
-            option_string_value(grant.origin_receipt_ref.as_deref()),
-        ),
-        (
-            Value::from(KEY_SCOPE),
-            Value::Map(vec![
-                (Value::from(SCOPE_KEYS[0]), Value::from(SCOPE_KIND_CONTACT)),
-                (Value::from(SCOPE_KEYS[1]), Value::from("contact:legacy")),
-                (Value::from(SCOPE_KEYS[2]), Value::Nil),
-                (Value::from(SCOPE_KEYS[3]), Value::Nil),
-                (Value::from(SCOPE_KEYS[4]), Value::Nil),
-            ]),
-        ),
-        (Value::from(KEY_STATUS), Value::from(grant.status.as_str())),
-        (Value::from(KEY_CREATED_AT), Value::from(grant.created_at)),
-        (Value::from(KEY_REVOKED_AT), Value::Nil),
-        (Value::from(KEY_LAST_USED_AT), Value::Nil),
-        (
-            Value::from(KEY_BINDING_DIFF_HANDLE),
-            Value::Binary(grant.binding_diff_handle.clone()),
-        ),
-        (
-            Value::from(KEY_READ_FRONTIER_HASH),
-            Value::Binary(grant.read_frontier_hash.to_vec()),
-        ),
-    ]);
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &legacy_value)
-        .expect("encode legacy schema-v1 grant fixture");
+    let encoded = crate::consent::encode_consent_grant_row(&row)?;
+    let decoded = crate::consent::decode_consent_grant_row(&encoded)?;
+    assert_eq!(decoded, row);
+    assert_eq!(StandingOutboundGrant::from_row(&decoded), Some(grant));
 
-    assert_eq!(
-        decode_standing_outbound_grant_body(&encoded)
-            .unwrap_err()
-            .kind(),
-        crate::ErrorKind::InvalidOutboundGrantBody
+    let wrong_version = consent_row_with_version(
+        &encoded,
+        Value::from(crate::consent::CONSENT_GRANT_SCHEMA_VERSION + 1),
     );
-    assert!(validate_standing_outbound_grant_body_bytes(&encoded).is_err());
-
-    // The version, not the pre-existing scope shape, causes the rejection.
-    let Value::Map(entries) = &mut legacy_value else {
-        panic!("map");
-    };
-    entries[0].1 = Value::from(OUTBOUND_GRANT_SCHEMA_VERSION);
-    entries.insert(
-        6,
-        (
-            Value::from("authority_scope"),
-            crate::federation::scope_codec::encode_scope_value(&grant.authority_scope)?,
-        ),
-    );
-    encoded.clear();
-    rmpv::encode::write_value(&mut encoded, &legacy_value).unwrap();
-    assert_eq!(decode_standing_outbound_grant_body(&encoded)?, grant);
+    assert!(crate::consent::decode_consent_grant_row(&wrong_version).is_err());
     Ok(())
 }
 
 #[test]
 fn contact_grant_decode_rejects_non_nil_scoped_mcp_field() -> Result<()> {
-    let grant = StandingOutboundGrant::from_grant_mint_intent(
-        &intent(GrantMintIntentScope::Contact {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (grant, row) = mint_outbound_grant_row(
+        &vault,
+        StandingOutboundGrantScope::Contact {
             contact_ref: "contact:injected".to_owned(),
-        }),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
+        },
     )?;
-    let encoded = encode_standing_outbound_grant_body(&grant)?;
-    let mut body = rmpv::decode::read_value(&mut std::io::Cursor::new(encoded))
-        .expect("decode contact grant fixture");
-    let Value::Map(body_entries) = &mut body else {
-        panic!("grant body must be a map");
-    };
-    let scope = &mut body_entries
-        .iter_mut()
-        .find(|(key, _)| key.as_str() == Some(KEY_SCOPE))
-        .expect("scope field")
-        .1;
-    let Value::Map(scope_entries) = scope else {
-        panic!("scope must be a map");
-    };
-    let server = &mut scope_entries
-        .iter_mut()
-        .find(|(key, _)| key.as_str() == Some(SCOPE_KEYS[5]))
-        .expect("server field")
-        .1;
-    *server = Value::from("files");
-    let mut injected = Vec::new();
-    rmpv::encode::write_value(&mut injected, &body).expect("encode injected contact grant fixture");
-
-    let error = decode_standing_outbound_grant_body(&injected)
-        .expect_err("non-applicable scoped MCP field must fail closed");
-    // Discriminating: without the applicability check, this decodes as a
-    // clean blind contact grant while silently ignoring `server`.
-    assert_eq!(error.kind(), crate::ErrorKind::InvalidOutboundGrantBody);
+    assert_eq!(StandingOutboundGrant::from_row(&row), Some(grant));
+    let injected = consent_row_with_selectors(&row, |selectors| {
+        selectors.push("server:files".to_owned());
+    })?;
+    assert!(StandingOutboundGrant::from_row(&injected).is_none());
     Ok(())
 }
 
 #[test]
 fn scoped_mcp_grant_decode_rejects_every_non_nil_legacy_scope_field() -> Result<()> {
-    let grant = StandingOutboundGrant {
-        authority_scope: crate::federation::scope_codec::effect_preset(),
-        principal_ref: "owner".to_owned(),
-        origin_component_id: "ask-mcp".to_owned(),
-        origin_action_id: "grant-scoped-mcp".to_owned(),
-        origin_receipt_ref: Some("gate:mcp".to_owned()),
-        scope: StandingOutboundGrantScope::ScopedMcp {
-            server: "files".to_owned(),
-            tool: "read_file".to_owned(),
-            data_class_ceiling: DataClass::Personal,
-            tool_data_classes: vec![
-                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-            ],
-            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-        },
-        status: StandingOutboundGrantStatus::Active,
-        created_at: 10,
-        revoked_at: None,
-        last_used_at: None,
-        binding_diff_handle: vec![0xA5; 32],
-        read_frontier_hash: [0xB6; 32],
-    };
-    let encoded = encode_standing_outbound_grant_body(&grant)?;
-
-    for (scope_key, injected_value) in [
-        (SCOPE_KEYS[1], Value::from("contact:injected")),
-        (SCOPE_KEYS[2], Value::from("send")),
-        (SCOPE_KEYS[3], Value::from("channel:injected")),
-        (SCOPE_KEYS[4], Value::from("brief:injected")),
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (grant, row) = mint_outbound_grant_row(&vault, scoped_mcp_scope("files"))?;
+    assert_eq!(StandingOutboundGrant::from_row(&row), Some(grant));
+    for selector in [
+        "contact:contact:injected",
+        "verb_class:send",
+        "channel:channel:injected",
+        "brief:brief:injected",
+        "artifact:site",
+        "page:91919191919191919191919191919191",
     ] {
-        let mut body = rmpv::decode::read_value(&mut std::io::Cursor::new(&encoded))
-            .expect("decode scoped MCP grant fixture");
-        let Value::Map(body_entries) = &mut body else {
-            panic!("grant body must be a map");
-        };
-        let scope = &mut body_entries
-            .iter_mut()
-            .find(|(key, _)| key.as_str() == Some(KEY_SCOPE))
-            .expect("scope field")
-            .1;
-        let Value::Map(scope_entries) = scope else {
-            panic!("scope must be a map");
-        };
-        let legacy_field = &mut scope_entries
-            .iter_mut()
-            .find(|(key, _)| key.as_str() == Some(scope_key))
-            .expect("legacy scope field")
-            .1;
-        *legacy_field = injected_value;
-        let mut injected = Vec::new();
-        rmpv::encode::write_value(&mut injected, &body)
-            .expect("encode injected scoped MCP grant fixture");
-
-        let error = decode_standing_outbound_grant_body(&injected)
-            .expect_err("non-applicable legacy scope field must fail closed");
-        assert_eq!(error.kind(), crate::ErrorKind::InvalidOutboundGrantBody);
+        let injected = consent_row_with_selectors(&row, |selectors| {
+            selectors.push(selector.to_owned());
+        })?;
+        assert!(
+            StandingOutboundGrant::from_row(&injected).is_none(),
+            "other-family selector {selector:?} must not read as a scoped MCP grant"
+        );
     }
     Ok(())
 }
 
 #[test]
 fn scoped_mcp_persisted_endpoint_padding_refuses_otherwise_valid_authority() -> Result<()> {
-    let grant = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-        &scoped_intent("files"),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
-    )?;
-    let canonical = encode_standing_outbound_grant_body(&grant)?;
-    assert_eq!(
-        decode_standing_outbound_grant_body(&canonical)?.scope,
-        grant.scope
-    );
-    let Value::Map(mut body) = rmpv::decode::read_value(&mut Cursor::new(&canonical)).unwrap()
-    else {
-        panic!("grant map")
-    };
-    let Value::Map(scope) = &mut body
-        .iter_mut()
-        .find(|(k, _)| k.as_str() == Some("scope"))
-        .unwrap()
-        .1
-    else {
-        panic!("scope map")
-    };
-    scope
-        .iter_mut()
-        .find(|(k, _)| k.as_str() == Some("endpoint_allowlist"))
-        .unwrap()
-        .1 = Value::Array(vec![Value::from("https://files.internal.example ")]);
-    let mut padded = Vec::new();
-    rmpv::encode::write_value(&mut padded, &Value::Map(body)).unwrap();
-    assert_eq!(
-        decode_standing_outbound_grant_body(&padded)
-            .unwrap_err()
-            .kind(),
-        crate::ErrorKind::InvalidOutboundGrantBody
-    );
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (grant, row) = mint_outbound_grant_row(&vault, scoped_mcp_scope("files"))?;
+    assert_eq!(StandingOutboundGrant::from_row(&row), Some(grant));
+    let padded = consent_row_with_selectors(&row, |selectors| {
+        *selectors
+            .iter_mut()
+            .find(|selector| selector.starts_with("endpoint:"))
+            .expect("endpoint selector") = "endpoint:https://files.internal.example ".to_owned();
+    })?;
+    assert!(StandingOutboundGrant::from_row(&padded).is_none());
     Ok(())
 }
 
 #[test]
 fn standing_outbound_grant_revoke_and_touch_validate_lifecycle() -> Result<()> {
-    let grant = StandingOutboundGrant::from_grant_mint_intent(
+    let clock = crate::ports::ManualClock::new(10);
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let grant = vault.mint_standing_outbound_grant(
+        &owner,
+        EntityId::now(),
         &intent(GrantMintIntentScope::Channel {
             channel: "line".to_owned(),
         }),
-        10,
-        vec![0xA5],
-        [0xB6; 32],
     )?;
 
-    let touched = grant.clone().touched(12)?;
-    assert_eq!(touched.last_used_at, Some(12));
-    let revoked = grant.revoked(20)?;
+    clock.set(12);
+    vault.record_standing_grant_use(&grant.grant_ref(), grant.bound().digest())?;
+    let touched = vault.standing_outbound_grants_lens(
+        crate::receipt::StandingOutboundGrantsLensQuery::new(1, 10),
+    )?;
+    assert_eq!(touched.grants[0].last_used_at, Some(12));
+    clock.set(20);
+    vault.revoke_consent_grant(&owner, &grant.grant_ref())?;
+    let revoked = vault
+        .get_standing_outbound_grant(&grant.id)?
+        .expect("grant");
+    let history = vault.standing_outbound_grants_lens(
+        crate::receipt::StandingOutboundGrantsLensQuery::new(1, 10),
+    )?;
     assert_eq!(revoked.status, StandingOutboundGrantStatus::Revoked);
-    assert_eq!(revoked.revoked_at, Some(20));
-    assert!(!revoked.is_active_under_policy(&[0xB6; 32]));
+    assert_eq!(history.grants[0].revoked_at, Some(20));
+    assert!(!revoked.is_active_under_policy(&grant.policy_frontier));
     Ok(())
 }
 
@@ -431,24 +256,20 @@ fn standing_outbound_grant_scope_matching_is_narrow() {
 
 #[test]
 fn standing_outbound_grant_rejects_non_standing_intent_scopes() {
-    let just_once = StandingOutboundGrant::from_grant_mint_intent(
+    let just_once = StandingOutboundGrantScope::from_grant_mint_scope(
         &intent(GrantMintIntentScope::JustOnce {
             effect_ref: Some("effect:send-1".to_owned()),
-        }),
-        10,
-        vec![0xA5],
-        [0xB6; 32],
+        })
+        .scope,
     )
     .expect_err("one-shot consent is not a standing grant scope");
     assert_eq!(just_once.kind(), crate::ErrorKind::InvalidOutboundGrantBody);
 
-    let exact_bundle = StandingOutboundGrant::from_grant_mint_intent(
+    let exact_bundle = StandingOutboundGrantScope::from_grant_mint_scope(
         &intent(GrantMintIntentScope::BundleExactSends {
             send_refs: vec!["send-1".to_owned()],
-        }),
-        10,
-        vec![0xA5],
-        [0xB6; 32],
+        })
+        .scope,
     )
     .expect_err("exact send bundles are not standing grant scopes");
     assert_eq!(
@@ -457,79 +278,16 @@ fn standing_outbound_grant_rejects_non_standing_intent_scopes() {
     );
 }
 
-#[test]
-fn standing_outbound_grant_decode_fails_closed_for_malformed_bodies() {
-    let err = decode_standing_outbound_grant_body(b"not-msgpack")
-        .expect_err("malformed body must fail closed");
-    assert_eq!(err.kind(), crate::ErrorKind::InvalidOutboundGrantBody);
-}
-
-#[test]
-fn standing_outbound_grant_schema_has_no_auto_expiry_field() {
-    let grant = StandingOutboundGrant::from_grant_mint_intent(
-        &intent(GrantMintIntentScope::VerbClass {
-            verb_class: "send".to_owned(),
-        }),
-        10,
-        vec![1; 32],
-        [2; 32],
-    )
-    .expect("grant");
-    let bytes = encode_standing_outbound_grant_body(&grant).expect("encoded grant");
-    let value = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
-    let Value::Map(entries) = value else {
-        panic!("grant map");
-    };
-    for forbidden in ["expires_at", "ttl"] {
-        assert!(
-            !entries
-                .iter()
-                .any(|(key, _)| key == &Value::from(forbidden))
-        );
-    }
-}
-
 // --- ONE-1885 one safe canonical scoped-server segment -----------------------
 
-fn scoped_intent(server: &str) -> ScopedMcpGrantMintIntent {
-    ScopedMcpGrantMintIntent {
-        principal_ref: "owner".to_owned(),
-        origin_component_id: "ask-mcp".to_owned(),
-        origin_action_id: "grant-scoped-mcp".to_owned(),
-        origin_receipt_ref: Some("gate:mcp".to_owned()),
+fn scoped_mcp_scope(server: &str) -> StandingOutboundGrantScope {
+    StandingOutboundGrantScope::ScopedMcp {
         server: server.to_owned(),
         tool: "read_file".to_owned(),
         data_class_ceiling: DataClass::Personal,
         tool_data_classes: vec![crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
         endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
     }
-}
-
-fn scoped_mcp_scope_value(server: &str) -> Value {
-    Value::Map(vec![
-        (
-            Value::from("tool_data_classes"),
-            Value::Array(vec![Value::from("arguments")]),
-        ),
-        (
-            Value::from(SCOPE_KEYS[0]),
-            Value::from(SCOPE_KIND_SCOPED_MCP),
-        ),
-        (Value::from(SCOPE_KEYS[1]), Value::Nil),
-        (Value::from(SCOPE_KEYS[2]), Value::Nil),
-        (Value::from(SCOPE_KEYS[3]), Value::Nil),
-        (Value::from(SCOPE_KEYS[4]), Value::Nil),
-        (Value::from(SCOPE_KEYS[5]), Value::from(server)),
-        (Value::from(SCOPE_KEYS[6]), Value::from("read_file")),
-        (
-            Value::from(SCOPE_KEYS[7]),
-            Value::from(DataClass::Personal.as_str()),
-        ),
-        (
-            Value::from(SCOPE_KEYS[8]),
-            Value::Array(vec![Value::from("https://files.internal.example")]),
-        ),
-    ])
 }
 
 fn scoped_server_of(grant: &StandingOutboundGrant) -> String {
@@ -543,29 +301,31 @@ fn scoped_server_of(grant: &StandingOutboundGrant) -> String {
 
 #[test]
 fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let policy_frontier = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?
+    };
+    let mint = |server: &str| {
+        vault.with_write_txn(|wtxn| {
+            vault.mint_standing_outbound_grant_in_txn(
+                wtxn,
+                &owner,
+                EntityId::now(),
+                "owner",
+                scoped_mcp_scope(server),
+            )
+        })
+    };
     let grant_id = EntityId::from_bytes([0x5C; 16]).expect("grant id");
 
-    let files = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-        &scoped_intent("files"),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
-    )?;
+    let files = mint("files")?;
     assert_eq!(scoped_server_of(&files), "files");
 
     // Hyphen and underscore remain separate canonical capability identities.
-    let hyphen = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-        &scoped_intent("my-server"),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
-    )?;
-    let underscore = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-        &scoped_intent("my_server"),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
-    )?;
+    let hyphen = mint("my-server")?;
+    let underscore = mint("my_server")?;
     assert_eq!(scoped_server_of(&hyphen), "my-server");
     assert_eq!(scoped_server_of(&underscore), "my_server");
     assert_ne!(scoped_server_of(&hyphen), scoped_server_of(&underscore));
@@ -581,23 +341,24 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
         )
     );
 
-    let encoded = encode_standing_outbound_grant_body(&hyphen)?;
-    let decoded = decode_standing_outbound_grant_body(&encoded)?;
+    let hyphen_row = vault
+        .consent_grant(&hyphen.grant_ref())?
+        .expect("grant row");
+    let encoded = crate::consent::encode_consent_grant_row(&hyphen_row)?;
+    let decoded =
+        StandingOutboundGrant::from_row(&crate::consent::decode_consent_grant_row(&encoded)?)
+            .expect("outbound grant row");
     assert_eq!(decoded.principal_ref, hyphen.principal_ref);
-    assert_eq!(decoded.origin_component_id, hyphen.origin_component_id);
-    assert_eq!(decoded.origin_action_id, hyphen.origin_action_id);
-    assert_eq!(decoded.origin_receipt_ref, hyphen.origin_receipt_ref);
     assert_eq!(decoded.scope, hyphen.scope);
     assert_eq!(decoded.status, hyphen.status);
-    assert_eq!(decoded.binding_diff_handle, hyphen.binding_diff_handle);
-    assert_eq!(decoded.read_frontier_hash, hyphen.read_frontier_hash);
+    assert_eq!(decoded.policy_frontier, policy_frontier);
 
-    let value = rmpv::decode::read_value(&mut Cursor::new(&encoded)).unwrap();
-    let Value::Map(entries) = value else {
-        panic!("grant map");
-    };
+    let files_row = vault.consent_grant(&files.grant_ref())?.expect("grant row");
+    assert_eq!(
+        StandingOutboundGrant::from_row(&files_row),
+        Some(files.clone())
+    );
 
-    // Exercise unsafe scope payloads inside complete persisted grant bodies.
     for unsafe_server in [
         "Files",
         "FILES",
@@ -617,59 +378,41 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
         "   ",
     ] {
         assert!(
-            StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-                &scoped_intent(unsafe_server),
-                10,
-                vec![0xA5; 32],
-                [0xB6; 32],
-            )
-            .is_err(),
+            mint(unsafe_server).is_err(),
             "unsafe scoped server {unsafe_server:?} must not mint a grant"
         );
-        let mut invalid = entries.clone();
-        invalid
-            .iter_mut()
-            .find(|(key, _)| key == &Value::from(KEY_SCOPE))
-            .expect("scope key")
-            .1 = scoped_mcp_scope_value(unsafe_server);
-        let mut invalid_bytes = Vec::new();
-        rmpv::encode::write_value(&mut invalid_bytes, &Value::Map(invalid)).unwrap();
-        assert_eq!(
-            decode_standing_outbound_grant_body(&invalid_bytes)
-                .unwrap_err()
-                .kind(),
-            crate::ErrorKind::InvalidOutboundGrantBody
+        let unsafe_row = consent_row_with_selectors(&files_row, |selectors| {
+            *selectors
+                .iter_mut()
+                .find(|selector| selector.starts_with("server:"))
+                .expect("server selector") = format!("server:{unsafe_server}");
+        })?;
+        assert!(
+            StandingOutboundGrant::from_row(&unsafe_row).is_none(),
+            "unsafe persisted scoped server {unsafe_server:?} must not read as a grant"
         );
     }
-
     for (server, expected) in [("my-server", &hyphen), ("my_server", &underscore)] {
-        let mut persisted = entries.clone();
-        persisted
-            .iter_mut()
-            .find(|(key, _)| key == &Value::from(KEY_SCOPE))
-            .expect("scope key")
-            .1 = scoped_mcp_scope_value(server);
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &Value::Map(persisted)).unwrap();
-        let decoded = decode_standing_outbound_grant_body(&bytes)?;
-        assert_eq!(decoded.scope, expected.scope);
-        assert_eq!(scoped_server_of(&decoded), server);
+        let row = vault
+            .consent_grant(&expected.grant_ref())?
+            .expect("grant row");
+        let encoded = crate::consent::encode_consent_grant_row(&row)?;
+        let decoded =
+            StandingOutboundGrant::from_row(&crate::consent::decode_consent_grant_row(&encoded)?)
+                .expect("outbound grant row");
+        assert_eq!(
+            decoded.scope,
+            StandingOutboundGrantScope::ScopedMcp {
+                server: server.to_owned(),
+                tool: "read_file".to_owned(),
+                data_class_ceiling: DataClass::Personal,
+                tool_data_classes: vec![
+                    crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
+                ],
+                endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+            }
+        );
     }
-
-    // An in-memory grant carrying an unsafe server can never be persisted.
-    let forged = StandingOutboundGrant {
-        scope: StandingOutboundGrantScope::ScopedMcp {
-            server: "files:extra".to_owned(),
-            tool: "read_file".to_owned(),
-            data_class_ceiling: DataClass::Personal,
-            tool_data_classes: vec![
-                crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments,
-            ],
-            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
-        },
-        ..hyphen
-    };
-    assert!(encode_standing_outbound_grant_body(&forged).is_err());
     Ok(())
 }
 
@@ -684,14 +427,15 @@ fn scoped_mcp_admission_shares_the_safe_server_rule() {
         }
     }
 
-    let grant = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-        &scoped_intent("my-server"),
-        10,
-        vec![0xA5; 32],
-        [0xB6; 32],
-    )
-    .expect("safe canonical server");
-    let scope = grant.scope.scoped_mcp_grant().expect("scoped grant");
+    let scope = StandingOutboundGrantScope::ScopedMcp {
+        server: "my-server".to_owned(),
+        tool: "read_file".to_owned(),
+        data_class_ceiling: DataClass::Personal,
+        tool_data_classes: vec![crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
+        endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+    };
+    scope.validate().expect("safe canonical server");
+    let scope = scope.scoped_mcp_grant().expect("scoped grant");
 
     assert_eq!(
         crate::outbound_consent::evaluate_scoped_mcp_call(scope, call("my-server")),
@@ -750,7 +494,7 @@ fn scoped_mcp_admission_shares_the_safe_server_rule() {
 
 #[test]
 fn schema_v3_carries_every_outbound_scope_and_rejects_other_versions() -> Result<()> {
-    use crate::test_util::entity;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let scopes = [
         StandingOutboundGrantScope::Contact {
             contact_ref: "contact:1".to_owned(),
@@ -765,6 +509,12 @@ fn schema_v3_carries_every_outbound_scope_and_rejects_other_versions() -> Result
             brief_ref: "brief:1".to_owned(),
             verb_class: "send".to_owned(),
         },
+        StandingOutboundGrantScope::ArtifactPublish {
+            artifact: "site".to_owned(),
+        },
+        StandingOutboundGrantScope::BookingPageInvites {
+            page_ref: EntityId::from_bytes([0x91; 16]).expect("page id"),
+        },
         StandingOutboundGrantScope::ScopedMcp {
             server: "files".to_owned(),
             tool: "read_file".to_owned(),
@@ -774,129 +524,32 @@ fn schema_v3_carries_every_outbound_scope_and_rejects_other_versions() -> Result
             ],
             endpoint_allowlist: vec!["https://files.example.test".to_owned()],
         },
-        StandingOutboundGrantScope::BookingPageInvites {
-            page_ref: entity(0x91),
-        },
-        StandingOutboundGrantScope::ChannelIdentityEnvelope {
-            identity_ref: entity(0x92),
-            envelope_ref: entity(0x93),
-            verb_class: "mail.send".to_owned(),
-        },
     ];
-    assert_eq!(OUTBOUND_GRANT_SCHEMA_VERSION, 3);
     for scope in scopes {
-        let mut grant = StandingOutboundGrant::from_grant_mint_intent(
-            &intent(GrantMintIntentScope::VerbClass {
-                verb_class: "send".to_owned(),
-            }),
-            10,
-            vec![1; 32],
-            [2; 32],
-        )?;
-        grant.scope = scope;
-        let bytes = encode_standing_outbound_grant_body(&grant)?;
-        let decoded = decode_standing_outbound_grant_body(&bytes)?;
-        assert_eq!(decoded.scope, grant.scope);
-        let value = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
-        let Value::Map(entries) = value else {
-            panic!("map");
-        };
-        assert_eq!(
-            entries
-                .iter()
-                .find(|(key, _)| key == &Value::from(KEY_SCHEMA_VERSION))
-                .expect("schema version key")
-                .1,
-            Value::from(3_u64)
-        );
+        let expected_scope = scope.clone();
+        let (grant, row) = mint_outbound_grant_row(&vault, scope)?;
+        assert_eq!(grant.scope, expected_scope);
+        let encoded = crate::consent::encode_consent_grant_row(&row)?;
+        let decoded = crate::consent::decode_consent_grant_row(&encoded)?;
+        assert_eq!(decoded, row);
+        assert_eq!(StandingOutboundGrant::from_row(&decoded), Some(grant));
+
         for version in [
             Value::from(0_u64),
-            Value::from(1_u64),
             Value::from(2_u64),
+            Value::from(3_u64),
             Value::from(4_u64),
             Value::from(-1),
             Value::from("2"),
             Value::from(2.0),
             Value::Nil,
         ] {
-            let mut invalid = entries.clone();
-            invalid
-                .iter_mut()
-                .find(|(key, _)| key == &Value::from(KEY_SCHEMA_VERSION))
-                .expect("schema version key")
-                .1 = version;
-            let mut invalid_bytes = Vec::new();
-            rmpv::encode::write_value(&mut invalid_bytes, &Value::Map(invalid)).unwrap();
-            assert_eq!(
-                decode_standing_outbound_grant_body(&invalid_bytes)
-                    .unwrap_err()
-                    .kind(),
-                crate::ErrorKind::InvalidOutboundGrantBody
-            );
-            assert!(validate_standing_outbound_grant_body_bytes(&invalid_bytes).is_err());
-        }
-        if matches!(
-            grant.scope,
-            StandingOutboundGrantScope::ChannelIdentityEnvelope { .. }
-        ) {
-            assert!(!grant.scope.matches_effect("mail.send", "email", None, None));
+            let invalid = consent_row_with_version(&encoded, version);
+            assert!(crate::consent::decode_consent_grant_row(&invalid).is_err());
         }
     }
     Ok(())
 }
-
-#[test]
-fn outbound_scope_migration_preserves_bounds_and_family_errors() -> Result<()> {
-    let grant = StandingOutboundGrant::from_grant_mint_intent(
-        &intent(GrantMintIntentScope::VerbClass {
-            verb_class: "send".into(),
-        }),
-        10,
-        vec![1; 32],
-        [2; 32],
-    )?;
-    let bytes = encode_standing_outbound_grant_body(&grant)?;
-    let Value::Map(entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
-        panic!("map")
-    };
-    let encode = |entries| {
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).unwrap();
-        bytes
-    };
-    let rejected = |entries| {
-        assert_eq!(
-            decode_standing_outbound_grant_body(&encode(entries))
-                .unwrap_err()
-                .kind(),
-            crate::ErrorKind::InvalidOutboundGrantBody
-        );
-    };
-    let mut legacy = entries.clone();
-    legacy.retain(|(k, _)| k.as_str() != Some("authority_scope"));
-    rejected(legacy.clone());
-    legacy[0].1 = Value::from(2_u64);
-    assert_eq!(decode_standing_outbound_grant_body(&encode(legacy))?, grant);
-    for scope in [
-        Value::Nil,
-        crate::federation::scope_codec::encode_scope_value(&crate::federation::Scope::default())?,
-    ] {
-        let mut changed = entries.clone();
-        changed
-            .iter_mut()
-            .find(|(k, _)| k.as_str() == Some("authority_scope"))
-            .unwrap()
-            .1 = scope.clone();
-        if scope == Value::Nil {
-            rejected(changed.clone());
-        }
-        changed[0].1 = Value::from(2_u64);
-        rejected(changed);
-    }
-    Ok(())
-}
-
-mod header_classes;
 
 /// SOL-9A-2-R2 F3: each use stamps the grant it ran under, and is no reason
 /// to refuse a restore over the vault; a revocation since the backup is.
@@ -904,19 +557,22 @@ mod header_classes;
 fn a_restore_goes_ahead_past_a_grant_use_and_refuses_a_revocation() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let id = EntityId::now();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let grant = vault.mint_standing_outbound_grant(
-        &id,
+        &owner,
+        id,
         &intent(GrantMintIntentScope::Channel {
             channel: "line".to_owned(),
         }),
-        10,
     )?;
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
+    let key = vault.checkpoint_key()?;
     let restore = |destination: &std::path::Path| {
         crate::Vault::restore_checkpoint_keeping_authority(
             &image,
+            &key,
             destination,
             crate::VaultConfig::device(),
             &vault,
@@ -925,18 +581,10 @@ fn a_restore_goes_ahead_past_a_grant_use_and_refuses_a_revocation() -> Result<()
         .map(|(restored, _)| restored)
     };
 
-    vault.with_write_txn(|txn| {
-        crate::ports::EntityStoreMaintenance::port_outbound_grant_touch(
-            &vault.store,
-            txn,
-            &id,
-            grant,
-            12,
-        )
-    })?;
+    vault.record_standing_grant_use(&grant.grant_ref(), grant.bound().digest())?;
     drop(restore(&backups.path().join("first"))?);
 
-    vault.revoke_standing_outbound_grant(&id, 20)?;
+    vault.revoke_consent_grant(&owner, &grant.grant_ref())?;
     let destination = backups.path().join("second");
     let error = restore(&destination)
         .err()

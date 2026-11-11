@@ -6,8 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use oneiron_seal::{
     FetchPolicy, NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine,
-    ProfileDegradeReason, SealConfig, SealError, SealRequest, SealResourceLimits, SealWarning,
-    TsaEndpoint,
+    ProfileDegradeReason, SealConfig, SealError, SealRequest, SealWarning, TsaEndpoint,
 };
 
 use crate::support::{
@@ -35,7 +34,7 @@ fn config_for(anchors: Vec<Vec<u8>>, with_tsa: bool) -> SealConfig {
             Vec::new()
         },
         fetch_policy: FetchPolicy::default(),
-        resource_limits: SealResourceLimits::default(),
+        resource_limits: support::grant_all_limits(),
     }
 }
 
@@ -343,8 +342,8 @@ impl oneiron_seal::SealFetcher for TwoTsaFetcher {
             None
         };
         body.map(|body| oneiron_seal::FetchResponse {
-            body,
-            content_type: Some("application/timestamp-reply".to_string()),
+            body: support::shared_bytes(&body),
+            content_type: Some(support::shared_str("application/timestamp-reply")),
         })
         .ok_or(oneiron_seal::FetchError::Unavailable)
     }
@@ -470,7 +469,7 @@ async fn seal_degrades_to_b_t_when_available_crl_issuer_lacks_crl_sign() {
     fetcher.responses.insert(
         "https://crl.example.test/root.crl".to_string(),
         oneiron_seal::FetchResponse {
-            body: crl,
+            body: support::shared_bytes(&crl),
             content_type: None,
         },
     );
@@ -528,7 +527,7 @@ async fn seal_achieves_b_lt_when_crl_issuer_asserts_crl_sign() {
     fetcher.responses.insert(
         "https://crl.example.test/root.crl".to_string(),
         oneiron_seal::FetchResponse {
-            body: crl,
+            body: support::shared_bytes(&crl),
             content_type: None,
         },
     );

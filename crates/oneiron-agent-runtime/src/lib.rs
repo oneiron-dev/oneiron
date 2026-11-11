@@ -2,7 +2,8 @@
 //! crate (core split slice 5b.1). Core keeps the sandbox contract and the
 //! selection law, and reaches these backends only through its traits:
 //! `oneiron::code_sandbox::microvm::SandboxBackends` (implemented here by
-//! [`code_sandbox::SANDBOX_BACKENDS`]), `MicroVmBackend` and
+//! [`code_sandbox::CompiledSandboxBackends`], which a host installs on each
+//! vault it builds), `MicroVmBackend` and
 //! `oneiron::engine_executor::JsCodeModeRuntime`.
 //!
 //! Every `crate::x` path in the moved code resolves through the glob below to
