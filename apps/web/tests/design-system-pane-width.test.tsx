@@ -9,9 +9,12 @@ import {
   SPLIT_EDGE_PX,
   THING_PANE_MAX_PX,
   THING_PANE_MIN_PX,
+  THING_OVER_GUTTER_PX,
   paneBounds,
   paneTrack,
   paneWidth,
+  thingLiesOver,
+  thingOverWidth,
   thingPlaceholder,
 } from '../src/design-system/patterns/pane-width'
 
@@ -97,5 +100,43 @@ describe('SplitPane.Thing', () => {
     const root = tagWith(thing(), 'class="sl-split-pane"')
     assert.match(root, /data-pane="thing"/)
     assert.match(root, /grid-template-columns:minmax\(0, 1fr\) 1px clamp\(380px/)
+  })
+})
+
+describe('a thing opened beside a narrow room', () => {
+  test('the pane lies over the room once the work area cannot hold the column, its gutter and the 380 px floor', () => {
+    assert.equal(THING_OVER_GUTTER_PX, 56)
+    /* 620 + 92 + 1 + 380 = 1093 px: the floor still fits beside the column. */
+    assert.equal(thingLiesOver(1093), false)
+    assert.equal(thingLiesOver(1092), true)
+    assert.equal(thingLiesOver(1440), false)
+    /* A sidebar inside the split is left out of the work area. */
+    assert.equal(thingLiesOver(1093 + 248, 248), false)
+    assert.equal(thingLiesOver(1092 + 248, 248), true)
+  })
+
+  test('over the room: 680 px at most, never wider than the work area less 56 px', () => {
+    assert.equal(thingOverWidth(1000), 680)
+    assert.equal(thingOverWidth(700), 644)
+    assert.equal(thingOverWidth(785), 680)
+    assert.equal(thingOverWidth(736), 680)
+    assert.equal(thingOverWidth(735), 679)
+    assert.equal(thingOverWidth(1040, 248), 680)
+    assert.equal(thingOverWidth(900, 248), 900 - 248 - 56)
+  })
+
+  test('at wider sizes nothing changes: the split draws the pane beside the room before measuring', () => {
+    const html = renderToStaticMarkup(
+      <SplitPane pane="thing">
+        <SplitPane.Pane>room</SplitPane.Pane>
+        <SplitPane.Handle />
+        <SplitPane.Thing title="Promo weeks or not moves the quarter by ¥2.0M" onClose={() => {}}>
+          <p>the chart</p>
+        </SplitPane.Thing>
+      </SplitPane>,
+    )
+    const root = tagWith(html, 'class="sl-split-pane"')
+    assert.doesNotMatch(root, /data-over/)
+    assert.match(root, /grid-template-columns:minmax\(0, 1fr\) 1px clamp/)
   })
 })
