@@ -10,21 +10,26 @@
 //! 6.5d-2 (answer typed waits): consent, peer and human parks each name their own code-run wait
 //! key, admit only a trap consume, ignore an unrelated budget top-up, and wake only on their own
 //! delivery: a consent reply, a peer TASK's terminal result, or a human answer.
+//!
+//! 6.5d-3 (seat typed waits): two tries parked on seat A and one on seat B name their seat, its
+//! refusal generation and its reset; only their own seat's available write or the owner's release
+//! resumes them, time alone wakes nothing, and a later refusal parks again at a new generation.
 #![cfg(oneiron_test_support)]
 
 use std::future::Future;
 use std::pin::pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState};
-use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
 use oneiron::code_run::{WaitDeliveries, WaitKey, park_and_bind_wait_trap};
 use oneiron::dreamer_runner::{
-    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DreamerConsolidationScope, DreamerParkWait,
-    DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
-    ParkResumer,
+    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_SERVER_PARK_OWNER, DreamerAttemptStatus,
+    DreamerConsolidationScope, DreamerParkWait, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt, ModelSeatAvailability, ModelSeatAvailableSource,
+    ModelSeatId, ParkResumer,
 };
 use oneiron::dreamer_runner::{
     DreamerParkWaitClass, DreamerParkedWait, ParkDreamerAttempt, ParkOwnerClass, ParkResume,
@@ -32,10 +37,16 @@ use oneiron::dreamer_runner::{
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm;
 use oneiron::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
+use oneiron::memory::DreamerParkCauseView;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::task_verb::{TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition};
 use oneiron::test_doors::park_typed_wait as doors;
-use oneiron::{DreamerParkCause, Vault, VaultConfig, WriteActor};
+use oneiron::test_doors::wake_d1_park_release as release_doors;
+use oneiron::{
+    DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, DreamerParkCause,
+    DreamerWakeDriver, RunWakePass, Vault, VaultConfig, WakeAttemptContext, WakeCancellation,
+    WakePassDeadline, WakePassStop, WakeTrigger, WriteActor,
+};
 use oneiron::{EntityId, TimeRange};
 
 /// The lease owner the fixture's tries claim under.
@@ -1609,6 +1620,746 @@ fn consent_peer_and_human_parks_wake_only_on_their_own_delivery()
     assert_eq!(
         status_h.attempt.attempt_count, row_h.attempt_count,
         "the human try keeps its lease generation"
+    );
+    Ok(())
+}
+
+/// The two seats of the 6.5d-3 fixture: neutral ids outside the reserved test-id range.
+const SEAT_A_BYTES: [u8; 16] = [0x71; 16];
+const SEAT_B_BYTES: [u8; 16] = [0x72; 16];
+/// The reset instant both seats report: the vault's recorded now, so the reset has passed with no
+/// watcher running, and no other fixture time is fixed.
+const SEAT_RESET_T: u64 = 1_000;
+
+/// One unclaimed micro try, so the wake pass leases it under its own owner, as the WAKE-D1
+/// `enqueue_micro` fixture does (`tests/wake_d1_park_release.rs`).
+fn enqueue_seat_try(
+    store: &DreamerRunnerStore<'_>,
+    tag: &str,
+    now: u64,
+) -> oneiron::Result<DreamerAttemptStatus> {
+    match store.enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
+        scope: DreamerConsolidationScope::Micro,
+        input: rmpv::Value::from(format!("input:{tag}")),
+        parent_attempt: None,
+        dedupe_key: Some(tag.to_owned()),
+        run_id: None,
+        now,
+    })? {
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => Ok(status),
+        // The outcome enum is `#[non_exhaustive]` outside the crate.
+        other => panic!("unexpected enqueue outcome {other:?}"),
+    }
+}
+
+/// A server Dreamer pass input at `now`, as `run_input` builds one, leased under the server's
+/// park owner so a parked try keeps its lease, as on a running server.
+fn seat_run_input(scope: DreamerConsolidationScope, local_node_id: u64, now: u64) -> RunWakePass {
+    RunWakePass {
+        trigger: WakeTrigger::Compaction,
+        scope,
+        local_node_id,
+        lease_owner: DREAMER_SERVER_PARK_OWNER.to_owned(),
+        budget_total_units: 10_000,
+        reserve_units: 100,
+        now,
+        host_scope: None,
+        destination_bound: None,
+    }
+}
+
+/// A frozen pass deadline, as the WAKE-D1 fixture builds one.
+fn frozen_deadline(elapsed_ms: u64, ceiling_ms: u64) -> WakePassDeadline {
+    let elapsed = Arc::new(AtomicU64::new(elapsed_ms));
+    WakePassDeadline::with_clock(ceiling_ms, Arc::new(move || elapsed.load(Ordering::SeqCst)))
+}
+
+/// A try's id as the owner's reads spell it: 32 lowercase hex digits.
+fn attempt_hex(status: &DreamerAttemptStatus) -> String {
+    status
+        .attempt
+        .id
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// A try's lease generation (`attempt_count`), as the owner's reads show it beside its park.
+fn attempt_count(
+    store: &DreamerRunnerStore<'_>,
+    queued: &DreamerAttemptStatus,
+) -> oneiron::Result<u32> {
+    Ok(store
+        .status(queued.attempt.id)?
+        .expect("the try")
+        .attempt
+        .attempt_count)
+}
+
+/// A stub seat executor: every admitted try ends refused on its own seat at the fixture reset, so
+/// the driver's grouped park write is what the test observes.
+struct SeatRefusalStub {
+    /// Each admitted try with the seat it refuses on.
+    seats: Vec<(AttemptId, [u8; 16])>,
+    /// The reset instant every refusal reports.
+    reset_at_s: u64,
+    /// Admitted tries answered, so a pass that must admit nothing proves it.
+    calls: AtomicUsize,
+    /// Whether a refusal also raises the pass's cancellation, so the pass stops after it.
+    stop_after_refusal: bool,
+}
+
+impl SeatRefusalStub {
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl DreamerAttemptExecutor for SeatRefusalStub {
+    async fn execute(
+        &mut self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &mut WakeAttemptContext<'_>,
+    ) -> oneiron::Result<DreamerAttemptExecution> {
+        let id = attempt.status.attempt.id;
+        let seat = self
+            .seats
+            .iter()
+            .find_map(|(known, seat)| (*known == id).then_some(*seat))
+            .expect("the stub refuses every admitted try on its own seat");
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let whose = if seat == SEAT_A_BYTES {
+            "seat A"
+        } else {
+            "seat B"
+        };
+        if self.stop_after_refusal {
+            ctx.cancel
+                .expect("a driven pass links its cancellation")
+                .cancel();
+        }
+        Ok(DreamerAttemptExecution::ParkOnSeat {
+            seat,
+            reset_at_s: Some(self.reset_at_s),
+            reason: format!("{whose} spent; work parked until {}", self.reset_at_s),
+        })
+    }
+}
+
+/// 6.5d-3: two tries parked on seat A and one on seat B wake only on their own seat's available
+/// write: every other resumer refuses, the reset passing alone wakes nothing, the writer for A
+/// resumes both A parks in its own write and not B's, a stale generation refuses, the owner's
+/// release frees one park, and a later refusal parks again at a new generation.
+#[test]
+fn seat_parks_wake_only_on_their_own_seat_available_write() -> Result<(), Box<dyn std::error::Error>>
+{
+    let _store_clock = oneiron_store::ports::manual_clock::ManualClock::new(SEAT_RESET_T);
+    let mut config = VaultConfig::device();
+    config.store_clock = _store_clock.bundle();
+    let (_dir, vault) = open_vault_with(config)?;
+    let store = DreamerRunnerStore::new(&vault);
+    let proof = embedded_owner_proof(&vault);
+    let seat_a = ModelSeatId::from_bytes(SEAT_A_BYTES).expect("seat A id");
+    let seat_b = ModelSeatId::from_bytes(SEAT_B_BYTES).expect("seat B id");
+
+    let queued_a1 = enqueue_seat_try(&store, "seat-park-a1", SEAT_RESET_T)?;
+    let queued_a2 = enqueue_seat_try(&store, "seat-park-a2", SEAT_RESET_T)?;
+    let queued_b1 = enqueue_seat_try(&store, "seat-park-b1", SEAT_RESET_T)?;
+    let a1 = queued_a1.attempt.id;
+    let a2 = queued_a2.attempt.id;
+    let b1 = queued_b1.attempt.id;
+    assert!(
+        a1 < a2 && a2 < b1,
+        "the manual clock mints attempt ids in enqueue order, so one pass parks A1, A2, B1 in order"
+    );
+    let mut stub = SeatRefusalStub {
+        seats: vec![(a1, SEAT_A_BYTES), (a2, SEAT_A_BYTES), (b1, SEAT_B_BYTES)],
+        reset_at_s: SEAT_RESET_T,
+        calls: AtomicUsize::new(0),
+        stop_after_refusal: false,
+    };
+
+    // 1. One pass parks all three tries on their seats: A1 and A2 at generations 1 and 2 of seat
+    // A, B1 at generation 1 of seat B.
+    let node_id = release_doors::load_or_mint_client_id(&vault)?;
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let report = block_on_ready(driver.run_wake_pass(
+        seat_run_input(DreamerConsolidationScope::Micro, node_id, SEAT_RESET_T),
+        &mut stub,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.parked, 3, "the pass parks all three tries");
+    assert_eq!(report.completed, 0, "no try completes on a spent seat");
+    assert_eq!(stub.calls(), 3, "the stub refuses each admitted try once");
+    let park_a1 = store.parked_attempt(a1)?.expect("try A1's park");
+    let count_a1 = attempt_count(&store, &queued_a1)?;
+    assert_eq!(
+        park_a1.cause,
+        DreamerParkCause::Signal,
+        "try A1's seat park waits on a signal"
+    );
+    assert_eq!(
+        park_a1.park_owner, DREAMER_SERVER_PARK_OWNER,
+        "try A1's seat park sits under the driver's owner"
+    );
+    assert_eq!(
+        park_a1.wait,
+        Some(DreamerParkedWait {
+            wait: DreamerParkWait::Seat {
+                seat: seat_a,
+                generation: 1,
+                reset_at_s: Some(SEAT_RESET_T),
+            },
+            lease_generation: count_a1,
+        }),
+        "try A1's park names seat A at generation 1 with its lease generation"
+    );
+    assert_eq!(
+        store
+            .status(a1)?
+            .expect("try A1's row")
+            .attempt
+            .state
+            .as_str(),
+        "leased",
+        "try A1 keeps its lease under its park"
+    );
+    assert_eq!(
+        release_doors::park_notice_seen(&vault, &park_a1)?,
+        Some(false),
+        "try A1's seat park raises the owner's notice"
+    );
+    let park_a2 = store.parked_attempt(a2)?.expect("try A2's park");
+    let count_a2 = attempt_count(&store, &queued_a2)?;
+    assert_eq!(
+        park_a2.cause,
+        DreamerParkCause::Signal,
+        "try A2's seat park waits on a signal"
+    );
+    assert_eq!(
+        park_a2.park_owner, DREAMER_SERVER_PARK_OWNER,
+        "try A2's seat park sits under the driver's owner"
+    );
+    assert_eq!(
+        park_a2.wait,
+        Some(DreamerParkedWait {
+            wait: DreamerParkWait::Seat {
+                seat: seat_a,
+                generation: 2,
+                reset_at_s: Some(SEAT_RESET_T),
+            },
+            lease_generation: count_a2,
+        }),
+        "try A2's park names seat A at generation 2 with its lease generation"
+    );
+    assert_eq!(
+        store
+            .status(a2)?
+            .expect("try A2's row")
+            .attempt
+            .state
+            .as_str(),
+        "leased",
+        "try A2 keeps its lease under its park"
+    );
+    assert_eq!(
+        release_doors::park_notice_seen(&vault, &park_a2)?,
+        Some(false),
+        "try A2's seat park raises the owner's notice"
+    );
+    let park_b1 = store.parked_attempt(b1)?.expect("try B1's park");
+    let count_b1 = attempt_count(&store, &queued_b1)?;
+    assert_eq!(
+        park_b1.cause,
+        DreamerParkCause::Signal,
+        "try B1's seat park waits on a signal"
+    );
+    assert_eq!(
+        park_b1.park_owner, DREAMER_SERVER_PARK_OWNER,
+        "try B1's seat park sits under the driver's owner"
+    );
+    assert_eq!(
+        park_b1.wait,
+        Some(DreamerParkedWait {
+            wait: DreamerParkWait::Seat {
+                seat: seat_b,
+                generation: 1,
+                reset_at_s: Some(SEAT_RESET_T),
+            },
+            lease_generation: count_b1,
+        }),
+        "try B1's park names seat B at generation 1 with its lease generation"
+    );
+    assert_eq!(
+        store
+            .status(b1)?
+            .expect("try B1's row")
+            .attempt
+            .state
+            .as_str(),
+        "leased",
+        "try B1 keeps its lease under its park"
+    );
+    assert_eq!(
+        release_doors::park_notice_seen(&vault, &park_b1)?,
+        Some(false),
+        "try B1's seat park raises the owner's notice"
+    );
+    let state_a = vault.model_seat_state(seat_a)?.expect("seat A's row");
+    assert_eq!(
+        state_a.availability,
+        ModelSeatAvailability::Unavailable,
+        "seat A is unavailable after its refusals"
+    );
+    assert_eq!(
+        state_a.generation, 2,
+        "seat A's second refusal parks it at generation 2"
+    );
+    assert_eq!(
+        state_a.reset_at_s,
+        Some(SEAT_RESET_T),
+        "seat A keeps its reported reset"
+    );
+    let state_b = vault.model_seat_state(seat_b)?.expect("seat B's row");
+    assert_eq!(
+        state_b.availability,
+        ModelSeatAvailability::Unavailable,
+        "seat B is unavailable after its refusal"
+    );
+    assert_eq!(
+        state_b.generation, 1,
+        "seat B's refusal parks it at generation 1"
+    );
+    assert_eq!(
+        state_b.reset_at_s,
+        Some(SEAT_RESET_T),
+        "seat B keeps its reported reset"
+    );
+    assert_eq!(
+        vault.next_model_seat_reset_due()?,
+        Some(SEAT_RESET_T),
+        "both seats' resets are due"
+    );
+
+    // 2. Only their seat's available write or the owner's release resumes a seat park; every other
+    // resumer refuses, and a later pass with no write leaves all three parked.
+    for resumer in ParkResumer::ALL {
+        let admitted =
+            resumer == ParkResumer::SeatAvailable || resumer == ParkResumer::OwnerRelease;
+        assert_eq!(
+            park_a1.resumable_by(resumer),
+            admitted,
+            "only its seat's available write or the owner's release resumes try A1's park ({resumer:?})"
+        );
+    }
+    for resumer in ParkResumer::ALL {
+        let admitted =
+            resumer == ParkResumer::SeatAvailable || resumer == ParkResumer::OwnerRelease;
+        assert_eq!(
+            park_a2.resumable_by(resumer),
+            admitted,
+            "only its seat's available write or the owner's release resumes try A2's park ({resumer:?})"
+        );
+    }
+    for resumer in ParkResumer::ALL {
+        let admitted =
+            resumer == ParkResumer::SeatAvailable || resumer == ParkResumer::OwnerRelease;
+        assert_eq!(
+            park_b1.resumable_by(resumer),
+            admitted,
+            "only its seat's available write or the owner's release resumes try B1's park ({resumer:?})"
+        );
+    }
+    let causes = [
+        DreamerParkCause::ProviderUnavailable,
+        DreamerParkCause::ExecutorError,
+        DreamerParkCause::Checkpoint,
+        DreamerParkCause::Retry,
+        DreamerParkCause::Paused,
+        DreamerParkCause::Cancelled,
+        DreamerParkCause::Signal,
+        DreamerParkCause::Other,
+    ];
+    for cause in causes {
+        for owner in ParkOwnerClass::ALL {
+            for resumer in ParkResumer::ALL {
+                assert_eq!(
+                    ParkResume::admits_wait(
+                        cause,
+                        owner,
+                        Some(DreamerParkWaitClass::Seat),
+                        resumer
+                    ),
+                    resumer == ParkResumer::SeatAvailable || resumer == ParkResumer::OwnerRelease,
+                    "a seat wait admits only its seat-available write or the owner's release, under any owner ({cause:?} {owner:?} {resumer:?})"
+                );
+            }
+        }
+    }
+    let other_waits = [
+        None,
+        Some(DreamerParkWaitClass::Budget),
+        Some(DreamerParkWaitClass::Consent),
+        Some(DreamerParkWaitClass::Peer),
+        Some(DreamerParkWaitClass::Human),
+    ];
+    for wait in other_waits {
+        for cause in causes {
+            for owner in ParkOwnerClass::ALL {
+                assert!(
+                    !ParkResume::admits_wait(cause, owner, wait, ParkResumer::SeatAvailable),
+                    "the seat-available resumer admits no wait but a seat wait ({wait:?} {cause:?} {owner:?})"
+                );
+            }
+        }
+    }
+    let calls_before_pass = stub.calls();
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let report = block_on_ready(driver.run_wake_pass(
+        seat_run_input(DreamerConsolidationScope::Micro, node_id, SEAT_RESET_T),
+        &mut stub,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(
+        report.parked, 0,
+        "a later pass parks nothing new without a write"
+    );
+    assert_eq!(
+        report.completed, 0,
+        "a later pass completes nothing without a write"
+    );
+    assert_eq!(
+        stub.calls(),
+        calls_before_pass,
+        "a later pass does not run a seat-parked try"
+    );
+    assert_eq!(
+        store.parked_attempt(a1)?,
+        Some(park_a1.clone()),
+        "a later pass leaves try A1's seat park parked"
+    );
+    assert_eq!(
+        store.parked_attempt(a2)?,
+        Some(park_a2.clone()),
+        "a later pass leaves try A2's seat park parked"
+    );
+    assert_eq!(
+        store.parked_attempt(b1)?,
+        Some(park_b1.clone()),
+        "a later pass leaves try B1's seat park parked"
+    );
+
+    // 3. The owner's release of A2 wakes only A2 and resolves its notice; the next pass claims A2
+    // again and its next refusal parks it at generation 3.
+    let released = release_doors::release_as_owner(
+        &vault,
+        &proof,
+        &attempt_hex(&queued_a2),
+        DreamerParkCauseView::Signal,
+        park_a2.parked_at,
+        attempt_count(&store, &queued_a2)?,
+    )?;
+    assert_eq!(
+        released.cause, "signal",
+        "the release receipts try A2's signal park"
+    );
+    assert!(
+        store.parked_attempt(a2)?.is_none(),
+        "the owner's release wakes only the park it names"
+    );
+    let status_a2 = store.status(a2)?.expect("try A2's row after its release");
+    assert_eq!(status_a2.attempt.id, a2, "the released try keeps its id");
+    assert_eq!(
+        status_a2.attempt.state.as_str(),
+        "queued",
+        "the released try queues again"
+    );
+    assert_eq!(
+        status_a2.attempt.attempt_count, count_a2,
+        "the released try keeps its lease generation"
+    );
+    assert_eq!(
+        store.parked_attempt(a1)?,
+        Some(park_a1.clone()),
+        "the release of A2 leaves try A1's seat park parked"
+    );
+    assert_eq!(
+        store.parked_attempt(b1)?,
+        Some(park_b1.clone()),
+        "the release of A2 leaves try B1's seat park parked"
+    );
+    assert_eq!(
+        release_doors::park_notice_seen(&vault, &park_a2)?,
+        Some(true),
+        "the release resolves try A2's notice"
+    );
+    let calls_before_repark = stub.calls();
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let report = block_on_ready(driver.run_wake_pass(
+        seat_run_input(DreamerConsolidationScope::Micro, node_id, SEAT_RESET_T),
+        &mut stub,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.parked, 1, "the next pass parks try A2 again");
+    assert_eq!(
+        stub.calls(),
+        calls_before_repark + 1,
+        "the next pass runs only the released try"
+    );
+    let park_a2 = store.parked_attempt(a2)?.expect("try A2's second park");
+    let count_a2 = attempt_count(&store, &queued_a2)?;
+    assert_eq!(
+        park_a2.wait,
+        Some(DreamerParkedWait {
+            wait: DreamerParkWait::Seat {
+                seat: seat_a,
+                generation: 3,
+                reset_at_s: Some(SEAT_RESET_T),
+            },
+            lease_generation: count_a2,
+        }),
+        "try A2's next refusal parks it again at generation 3"
+    );
+    let state_a = vault.model_seat_state(seat_a)?.expect("seat A's row");
+    assert_eq!(
+        state_a.availability,
+        ModelSeatAvailability::Unavailable,
+        "seat A is unavailable after try A2's next refusal"
+    );
+    assert_eq!(
+        state_a.generation, 3,
+        "try A2's next refusal parks seat A at generation 3"
+    );
+    assert_eq!(
+        release_doors::park_notice_seen(&vault, &park_a2)?,
+        Some(false),
+        "try A2's second park raises the owner's notice again"
+    );
+
+    // 4. An available write answering the older generation 2 is refused: nothing resumes.
+    let stale = vault.record_model_seat_available(seat_a, 2, ModelSeatAvailableSource::ResetPassed);
+    assert!(
+        stale.is_err(),
+        "an available write answering an older generation is refused"
+    );
+    assert_eq!(
+        store.parked_attempt(a1)?,
+        Some(park_a1.clone()),
+        "a refused available write leaves try A1 parked"
+    );
+    assert_eq!(
+        store.parked_attempt(a2)?,
+        Some(park_a2.clone()),
+        "a refused available write leaves try A2 parked"
+    );
+    assert_eq!(
+        store.parked_attempt(b1)?,
+        Some(park_b1.clone()),
+        "a refused available write leaves try B1 parked"
+    );
+    let state_a = vault.model_seat_state(seat_a)?.expect("seat A's row");
+    assert_eq!(
+        state_a.availability,
+        ModelSeatAvailability::Unavailable,
+        "a refused available write leaves seat A unavailable"
+    );
+    assert_eq!(
+        state_a.generation, 3,
+        "a refused available write leaves seat A at generation 3"
+    );
+
+    // 5. The writer at generation 3 resumes every park of seat A in its own write and not B's.
+    // The ruled option is the writer, not the sweep: the sweep would also release due seat B.
+    vault.record_model_seat_available(seat_a, 3, ModelSeatAvailableSource::ResetPassed)?;
+    assert!(
+        store.parked_attempt(a1)?.is_none(),
+        "the seat-available write resumes every park of its seat in its own write"
+    );
+    assert!(
+        store.parked_attempt(a2)?.is_none(),
+        "the same write resumes the seat's second park too"
+    );
+    let status_a1 = store.status(a1)?.expect("try A1's row after the wake");
+    assert_eq!(status_a1.attempt.id, a1, "the woken try A1 keeps its id");
+    assert_eq!(
+        status_a1.attempt.state.as_str(),
+        "queued",
+        "the woken try A1 queues again"
+    );
+    assert_eq!(
+        status_a1.attempt.attempt_count, count_a1,
+        "the woken try A1 keeps its lease generation"
+    );
+    let status_a2 = store.status(a2)?.expect("try A2's row after the wake");
+    assert_eq!(status_a2.attempt.id, a2, "the woken try A2 keeps its id");
+    assert_eq!(
+        status_a2.attempt.state.as_str(),
+        "queued",
+        "the woken try A2 queues again"
+    );
+    assert_eq!(
+        status_a2.attempt.attempt_count, count_a2,
+        "the woken try A2 keeps its lease generation"
+    );
+    assert_eq!(
+        store.parked_attempt(b1)?,
+        Some(park_b1.clone()),
+        "the seat-available write for A leaves try B1's seat park parked"
+    );
+    let state_a = vault.model_seat_state(seat_a)?.expect("seat A's row");
+    assert_eq!(
+        state_a.availability,
+        ModelSeatAvailability::Available,
+        "seat A is available after its own write"
+    );
+    assert_eq!(
+        state_a.generation, 3,
+        "seat A's available write answers generation 3"
+    );
+    assert_eq!(
+        vault.next_model_seat_reset_due()?,
+        Some(SEAT_RESET_T),
+        "seat A's due entry is gone; seat B's reset is next"
+    );
+    assert_eq!(
+        release_doors::park_notice_seen(&vault, &park_a1)?,
+        Some(true),
+        "the seat-available write resolves try A1's notice"
+    );
+    assert_eq!(
+        release_doors::park_notice_seen(&vault, &park_a2)?,
+        Some(true),
+        "the seat-available write resolves try A2's notice"
+    );
+    assert_eq!(
+        release_doors::park_notice_seen(&vault, &park_b1)?,
+        Some(false),
+        "try B1's notice stays raised"
+    );
+
+    // 6. A second available write for the same generation is refused.
+    let again = vault.record_model_seat_available(seat_a, 3, ModelSeatAvailableSource::ResetPassed);
+    assert!(
+        again.is_err(),
+        "a second available write for the same generation is refused"
+    );
+    assert_eq!(
+        store
+            .status(a1)?
+            .expect("try A1's row")
+            .attempt
+            .state
+            .as_str(),
+        "queued",
+        "the refused second write leaves try A1 queued"
+    );
+    assert_eq!(
+        store
+            .status(a2)?
+            .expect("try A2's row")
+            .attempt
+            .state
+            .as_str(),
+        "queued",
+        "the refused second write leaves try A2 queued"
+    );
+    assert_eq!(
+        store.parked_attempt(b1)?,
+        Some(park_b1.clone()),
+        "the refused second write leaves try B1 parked"
+    );
+    let state_a = vault.model_seat_state(seat_a)?.expect("seat A's row");
+    assert_eq!(
+        state_a.availability,
+        ModelSeatAvailability::Available,
+        "the refused second write leaves seat A available"
+    );
+    assert_eq!(
+        state_a.generation, 3,
+        "the refused second write leaves seat A at generation 3"
+    );
+
+    // 7. A later refusal on A1 parks again at generation 4, which the older answered
+    // generation no longer wakes; the stub's cancellation stops the pass after that one
+    // refusal, so A2 stays queued and B1 stays parked.
+    stub.stop_after_refusal = true;
+    let calls_before_final = stub.calls();
+    let final_cancel = WakeCancellation::new();
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let report = block_on_ready(driver.run_wake_pass(
+        seat_run_input(DreamerConsolidationScope::Micro, node_id, SEAT_RESET_T),
+        &mut stub,
+        &final_cancel,
+    ))?;
+    assert_eq!(
+        report.parked, 1,
+        "the final pass parks only the first queued try"
+    );
+    assert_eq!(
+        stub.calls(),
+        calls_before_final + 1,
+        "the final pass runs only the first queued try"
+    );
+    assert_eq!(
+        report.stop,
+        WakePassStop::Cancelled,
+        "the stub's cancellation stops the pass after its refusal"
+    );
+    let park_a1 = store.parked_attempt(a1)?.expect("try A1's second park");
+    let count_a1 = attempt_count(&store, &queued_a1)?;
+    assert_eq!(
+        park_a1.wait,
+        Some(DreamerParkedWait {
+            wait: DreamerParkWait::Seat {
+                seat: seat_a,
+                generation: 4,
+                reset_at_s: Some(SEAT_RESET_T),
+            },
+            lease_generation: count_a1,
+        }),
+        "try A1's later refusal parks it again at generation 4"
+    );
+    let state_a = vault.model_seat_state(seat_a)?.expect("seat A's row");
+    assert_eq!(
+        state_a.availability,
+        ModelSeatAvailability::Unavailable,
+        "seat A is unavailable after the later refusal"
+    );
+    assert_eq!(
+        state_a.generation, 4,
+        "seat A's row answers the latest refusal"
+    );
+    let stale_login =
+        vault.record_model_seat_available(seat_a, 3, ModelSeatAvailableSource::LoginRestored);
+    assert!(
+        stale_login.is_err(),
+        "an available write answering generation 3 after a later refusal is refused"
+    );
+    assert_eq!(
+        store.parked_attempt(a1)?,
+        Some(park_a1),
+        "the refused login-restored write leaves try A1 parked"
+    );
+    assert!(
+        store.parked_attempt(a2)?.is_none(),
+        "the final pass never parks try A2"
+    );
+    assert_eq!(
+        store
+            .status(a2)?
+            .expect("try A2's row")
+            .attempt
+            .state
+            .as_str(),
+        "queued",
+        "try A2 stays queued"
+    );
+    assert_eq!(
+        store.parked_attempt(b1)?,
+        Some(park_b1),
+        "a login-restored write for A leaves try B1 parked"
     );
     Ok(())
 }
