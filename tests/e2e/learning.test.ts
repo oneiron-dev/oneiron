@@ -54,9 +54,13 @@ type GoalRecord = {
 };
 
 // LEARNING-01 — Goal-vector admission and tradeoff should work. OF-495.
-// Waiting: human goal-intake WRITE of the complete vector record, plus typed
-// optimizer candidate/proposal submission and admission readback. ProjectGoalDraft
-// currently has goal, why, axes:string[]; goal.intake only READS interview context.
+// Waiting: the witnessed-intake and fixed-baseline production-judge fixture,
+// grounded proposal evidence, and HTTP/MCP flow wiring. The doors exist:
+// vault.projects.goal.intake.complete writes the full record after a witnessed
+// interview, vault.projects.goal.get reads it, vault.skills.optimize.* propose,
+// measure, score and admit, and vault.projects.goal.propose stores a full goal
+// revision proposal (base claim + generation, engine diff) that
+// vault.projects.goal.revisions and goal.intake show and goal.dismiss sets aside.
 // Existing HTTP: POST /v1/owner/skills/judge/measure {proposal,pulls_per_axis?},
 // GET /skills/judge/{preferences,tradeoff-asks,goal-revisions}, and
 // POST /skills/judge/tradeoff-asks/pick {proposal,question_digest,choice}.
@@ -77,7 +81,7 @@ type Learning01 = {
   goal_change: { proposed: GoalRecord; effective_goal_before: Ref; effective_goal_after: Ref };
 };
 type Learning01Current = PublicCall<"vault.projects.goal.intake">;
-suite.todo(test, "LEARNING-01", "waits on typed full goal-vector intake write and optimizer candidate admission/proposal calls");
+suite.todo(test, "LEARNING-01", "waits on the witnessed-intake and fixed-baseline production-judge fixture, grounded proposal evidence, and HTTP/MCP flow wiring; the full-goal proposal door and its Rust coverage do not arm it");
 
 // LEARNING-02 — Measured learning rows cannot be forged should work. OF-542.
 // Waiting: measured learning-cell view with explicit priors, outcome provenance

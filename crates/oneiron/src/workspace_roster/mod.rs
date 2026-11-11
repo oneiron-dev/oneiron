@@ -159,6 +159,14 @@ pub use project::{
     ProjectRoomChange, ProjectVerdict, ProjectWidenAsk, ProjectWidenAxis, ProjectWriteProof,
     RoomOriginCard,
 };
+pub use project::{
+    GoalAxisChange, GoalAxisChanges, GoalBudgetChange, GoalPreferenceChange, GoalPreferenceChanges,
+    GoalRecordDiff, GoalTextChange, ProjectGoalBase, ProjectGoalProposal,
+    ProjectGoalProposalDismissal, ProjectGoalProposalEvidence, ProjectGoalProposalImprovement,
+    ProjectGoalProposalRate, ProjectGoalProposalReasons, ProjectGoalProposalStatus,
+    ProjectGoalProposalView, ProjectGoalProposeRequest, ProjectGoalProposer,
+    ProjectGoalRevisionsView, project_goal_propose,
+};
 pub(crate) use project::{
     GoalLimits, HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, PROJECT_PACK, PROJECT_SHORT_ID_PREFIX,
     ProjectReader, admit_leader_chat_turn, admit_leader_chat_witness, deindex_project_room,
@@ -181,6 +189,10 @@ pub(crate) use project::{
 pub(crate) use project::{
     decode_revision, exportable_revisions_in_txn, forged_revision_in_txn,
     inadmissible_revision_carriers,
+};
+pub(crate) use project::{
+    dismiss_project_goal_proposal, project_goal_base_in_txn, project_goal_proposals_in_txn,
+    reads_goal_proposals_in_txn,
 };
 // Old paths of items the store layer now names at `store::project_kind` and
 // `batch::export`; only sync code still reads them here.
