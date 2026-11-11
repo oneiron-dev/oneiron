@@ -74,6 +74,8 @@ mod project_conversation;
 mod project_proposal;
 mod requester;
 pub use self::requester::{QueuedRequester, RequesterStanding, RequesterWithdrawn};
+mod research_root;
+pub(crate) use self::research_root::ResearchRootRequest;
 mod resident;
 mod room_join;
 mod run_effects;
