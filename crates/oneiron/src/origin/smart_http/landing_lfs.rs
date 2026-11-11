@@ -10,9 +10,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitOid, GitTreeEntry, GitWire, GitWireRepo};
-use crate::origin::lfs::{
-    DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPointerIntent, LfsPushedPointer,
-};
+use crate::origin::lfs::{LfsAdmission, LfsOid, LfsPointerIntent, LfsPushedPointer};
 
 /// The admitted LFS objects one advancing ref's own tree actually carries.
 ///
@@ -54,7 +52,8 @@ pub(super) fn admit_landing_lfs_pointers(
     if pointers.is_empty() {
         return Ok(Vec::new());
     }
-    let policy = DefaultRepositoryLargeLfsPathPolicy;
+    // The owner's path policy classifies; both classes keep their bytes.
+    let policy = vault.origin_lfs_path_policy(repo_id)?;
     let mut admitted = Vec::new();
     for pointer in pointers {
         let intent = pointer.intent(repo_id);

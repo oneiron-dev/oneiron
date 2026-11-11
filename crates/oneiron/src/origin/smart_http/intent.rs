@@ -17,9 +17,7 @@ use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, ErrorKind, Result};
 use crate::federation::git_push::GitPushStamp;
 use crate::git_wire::{GitOid, GitRefName, GitWire, lock_repository};
-use crate::origin::lfs::{
-    DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPushedPointer, lfs_repo_id,
-};
+use crate::origin::lfs::{LfsAdmission, LfsOid, LfsPushedPointer, lfs_repo_id};
 use crate::origin::publication::{OriginPublicationStatus, obligations_beyond_owner};
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::side_table::{self, Named, SideKey, SideTable};
@@ -282,13 +280,14 @@ impl Vault {
         };
         let root = Path::new(path).canonicalize()?;
         let repo_id = lfs_repo_id(&receive_pack_repo_identity_hex(self, &root)?)?;
+        let policy = self.origin_lfs_path_policy(repo_id)?;
         let mut lfs_objects = Vec::new();
         for pointer in pointers {
             let intent = pointer.intent(repo_id);
-            // Every pushed pointer requires its object, whatever its class
-            // (Engine CODECUSTODY-LFS Q2 = A).
-            let LfsAdmission::StoreInLfs =
-                self.admit_lfs_pointer(&DefaultRepositoryLargeLfsPathPolicy, &intent)?;
+            // The owner's path policy classifies; every pushed pointer
+            // requires its object, whatever its class (Engine
+            // CODECUSTODY-LFS Q2 = A).
+            let LfsAdmission::StoreInLfs = self.admit_lfs_pointer(&policy, &intent)?;
             lfs_objects.push(Some((intent.oid, intent.size_bytes)));
         }
         let mut reasons = RetainedReasons::default();
