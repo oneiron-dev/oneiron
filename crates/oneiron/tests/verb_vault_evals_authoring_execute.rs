@@ -6,13 +6,16 @@
 //! owner and an agent whose live owner Grant lists the verb are admitted; an agent with no
 //! Grant, or a revoked one, is refused FORBIDDEN and queues nothing. A second request while
 //! the pass is leased waits on it, and an attempt the door did not admit (a queued nightly
-//! pass) takes no record.
+//! pass) takes no record. An attempt leased again after its lease lapsed keeps its first
+//! request's caller, and once its pass ended runs no second pass; an apply after an end
+//! answers the first end.
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test verb_vault_evals_authoring_execute`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use oneiron::attempt_queue::{AttemptQueue, CleanupAttemptLeases};
 use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
@@ -42,6 +45,12 @@ const VERB: &str = "vault.evals.authoring.execute";
 
 /// The vault clock's fixed time for every test here: no wall time, no sleeps.
 const T0: u64 = 1_780_000_000;
+
+/// A time past the first lease's timeout: the lease lapsed, and the queue takes it back.
+const LATER: u64 = T0 + 100;
+
+/// The lease timeout the queue's cleanup applies at [`LATER`].
+const LEASE_TIMEOUT_SECS: u64 = 10;
 
 /// The Coach host queue's lease owner and budget line, as its worker admits.
 const COACH_HOST: &str = "coach.host";
@@ -159,9 +168,13 @@ fn owner_memory(fixture: &Fixture) -> Memory<'_> {
 
 /// The Coach host worker's admission input: its lease owner and budget line.
 fn coach_host_admission() -> AdmitDreamerAttempt {
+    coach_host_admission_at(T0)
+}
+
+fn coach_host_admission_at(now: u64) -> AdmitDreamerAttempt {
     AdmitDreamerAttempt {
         lease_owner: COACH_HOST.to_owned(),
-        now: T0,
+        now,
         budget_id: COACH_HOST.to_owned(),
         budget_total_units: 1 << 20,
         reserve_units: 1,
@@ -170,10 +183,14 @@ fn coach_host_admission() -> AdmitDreamerAttempt {
 }
 
 fn request(memory: &Memory<'_>) -> Result<EvalAuthoringAdmission, MemoryError> {
+    request_at(memory, T0)
+}
+
+fn request_at(memory: &Memory<'_>, now: u64) -> Result<EvalAuthoringAdmission, MemoryError> {
     admit_eval_authoring_execution(
         memory,
         EvalAuthoringExecuteRequest {},
-        coach_host_admission(),
+        coach_host_admission_at(now),
     )
 }
 
@@ -181,10 +198,25 @@ fn request(memory: &Memory<'_>) -> Result<EvalAuthoringAdmission, MemoryError> {
 fn admitted(memory: &Memory<'_>) -> (Box<DreamerAdmittedAttempt>, EvalAuthoringExecution) {
     match request(memory).expect("an admitted caller's request") {
         EvalAuthoringAdmission::Admitted { attempt, execution } => (attempt, *execution),
+        EvalAuthoringAdmission::Ended { execution, .. } => {
+            panic!("the request found an ended pass instead of running its own: {execution:?}")
+        }
         EvalAuthoringAdmission::Waiting { attempt } => {
             panic!("the request waited on {attempt:?} instead of running its own pass")
         }
     }
+}
+
+/// The queue's cleanup at [`LATER`]: the lapsed lease of the one leased pass goes back to
+/// the queue, as a host that stopped before it settled leaves it.
+fn lapse_the_lease(fixture: &Fixture) {
+    let report = AttemptQueue::new(&fixture.vault)
+        .cleanup_leases(CleanupAttemptLeases {
+            now: LATER,
+            lease_timeout_secs: LEASE_TIMEOUT_SECS,
+        })
+        .expect("the queue takes lapsed leases back");
+    assert_eq!(report.stale_requeued, 1, "the pass's lease lapsed");
 }
 
 fn attempt_id(attempt: &DreamerAdmittedAttempt) -> EntityId {
@@ -371,10 +403,115 @@ fn second_request_waits_on_the_leased_pass() {
                 "it waits on the pass that runs"
             );
         }
-        EvalAuthoringAdmission::Admitted { .. } => {
+        EvalAuthoringAdmission::Admitted { .. } | EvalAuthoringAdmission::Ended { .. } => {
             panic!("a second pass was admitted while the first holds the lease")
         }
     }
+}
+
+#[test]
+fn reclaimed_pass_that_ended_keeps_its_first_end_and_runs_no_second_pass() {
+    let fixture = rooted_vault();
+    let agent_id = requesting_agent(&fixture);
+    grant_execute(&fixture, agent_id);
+    let agent = fixture.vault.memory(agent_id, EdgeActorClass::Agent);
+    let (attempt, _) = admitted(&agent);
+    let ended = fixture
+        .vault
+        .end_requested_eval_authoring(&attempt, EvalAuthoringOutcome::NoWork, None, None, T0)
+        .expect("the agent's pass ends");
+    // Its host stops before it settles the lease; the lease lapses.
+    lapse_the_lease(&fixture);
+
+    match request_at(&owner_memory(&fixture), LATER).expect("the owner's later request") {
+        EvalAuthoringAdmission::Ended {
+            attempt: again,
+            execution,
+        } => {
+            assert_eq!(attempt_id(&again), attempt_id(&attempt), "the same attempt");
+            assert_eq!(
+                *execution, ended,
+                "the first request's caller and end stand"
+            );
+        }
+        EvalAuthoringAdmission::Admitted { execution, .. } => {
+            panic!("an ended pass was admitted to run again: {execution:?}")
+        }
+        EvalAuthoringAdmission::Waiting { attempt } => {
+            panic!("the request waited on {attempt:?} instead of taking the lapsed lease")
+        }
+    }
+    assert_eq!(result(&fixture, ended.attempt).execution, Some(ended));
+}
+
+#[test]
+fn reclaimed_running_pass_keeps_its_first_caller() {
+    let fixture = rooted_vault();
+    let (attempt, first) = admitted(&owner_memory(&fixture));
+    // The owner's host stops before the pass ends; the lease lapses.
+    lapse_the_lease(&fixture);
+
+    let agent_id = requesting_agent(&fixture);
+    grant_execute(&fixture, agent_id);
+    let agent = fixture.vault.memory(agent_id, EdgeActorClass::Agent);
+    let (again, kept) = match request_at(&agent, LATER).expect("the agent's later request") {
+        EvalAuthoringAdmission::Admitted { attempt, execution } => (attempt, *execution),
+        other => panic!("the lapsed pass is admitted to run on its record: {other:?}"),
+    };
+    assert_eq!(attempt_id(&again), attempt_id(&attempt), "the same attempt");
+    assert_eq!(kept, first, "the record stays the owner's request");
+
+    let (plan, inventory) = empty_plan(&fixture);
+    let applied = fixture
+        .vault
+        .apply_requested_eval_authoring(&again, plan, &inventory, skill(), LATER)
+        .expect("the pass runs on the lease the agent's request took");
+    assert_eq!(applied.outcome, EvalAuthoringOutcome::Applied);
+    assert_eq!(
+        applied.caller,
+        EvalAuthoringCaller::Owner {
+            person: fixture.owner
+        }
+    );
+    assert_eq!(applied.requested_at, T0);
+    assert_eq!(applied.ended_at, Some(LATER));
+}
+
+#[test]
+fn apply_after_an_end_keeps_the_first_end() {
+    let fixture = rooted_vault();
+    let owner = owner_memory(&fixture);
+    let (attempt, _) = admitted(&owner);
+    let ended = fixture
+        .vault
+        .end_requested_eval_authoring(
+            &attempt,
+            EvalAuthoringOutcome::NoPlan,
+            Some(skill()),
+            None,
+            T0,
+        )
+        .expect("the pass ends with no plan");
+    assert_eq!(ended.outcome, EvalAuthoringOutcome::NoPlan);
+
+    let (plan, inventory) = empty_plan(&fixture);
+    let again = fixture
+        .vault
+        .apply_requested_eval_authoring(&attempt, plan, &inventory, skill(), T0)
+        .expect("an apply after the end answers it");
+    assert_eq!(again, ended, "the first end stands; no report is added");
+
+    let (mut other, inventory) = empty_plan(&fixture);
+    other.inventory_digest = "another inventory".to_owned();
+    let answered = fixture
+        .vault
+        .apply_requested_eval_authoring(&attempt, other, &inventory, skill(), T0)
+        .expect("an ended pass answers before it reads a plan");
+    assert_eq!(
+        answered, ended,
+        "the plan for another inventory is never read"
+    );
+    assert_eq!(result(&fixture, ended.attempt).execution, Some(ended));
 }
 
 #[test]

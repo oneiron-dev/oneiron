@@ -6,7 +6,11 @@
 //! The pass's effects stay the Coach's acts, as at night: the same stamp,
 //! lease, budget line and skill provenance (LEARN-EXEC-SHAPE = A). The kept
 //! record names the caller and the attempt; only an attempt this door
-//! admitted takes one, and its first end stands.
+//! admitted takes one, and its first end stands. A plan's effects run under
+//! a claim on that record, so no effect runs once it has ended. An attempt
+//! leased again after its lease lapsed keeps its first request's record: it
+//! runs on that record while it is running, and runs no second pass once it
+//! has ended.
 
 use serde::{Deserialize, Serialize};
 
@@ -56,8 +60,13 @@ pub enum EvalAuthoringCaller {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalAuthoringOutcome {
-    /// Admitted and not ended: running, or its host stopped first.
+    /// Admitted and no plan applying: the pass runs, or its host stopped
+    /// first; the next lease of the attempt runs it on this record.
     Running,
+    /// The plan's effects began and have not ended. A host that stopped
+    /// here leaves it so until the attempt is leased again, which ends it
+    /// `Failed`: what the effects did is not known.
+    Applying,
     /// The inventory held nothing new to decide: no model call.
     NoWork,
     /// No Coach seat, no loadable approved skill, or no seat took the call.
@@ -114,8 +123,16 @@ pub enum EvalAuthoringExecuteAnswer {
 #[derive(Debug)]
 pub enum EvalAuthoringAdmission {
     /// The request's own Coach attempt, leased to the host that asked, and
-    /// the record that names its caller.
+    /// the record that names its caller: this request's, or the running
+    /// record of the request that first admitted the attempt.
     Admitted {
+        attempt: Box<DreamerAdmittedAttempt>,
+        execution: Box<EvalAuthoringExecution>,
+    },
+    /// The attempt an earlier request admitted, leased again after its pass
+    /// ended and before its host settled the lease. No pass runs again: the
+    /// host settles the lease by the kept end.
+    Ended {
         attempt: Box<DreamerAdmittedAttempt>,
         execution: Box<EvalAuthoringExecution>,
     },
@@ -129,7 +146,8 @@ pub enum EvalAuthoringAdmission {
 /// same writer, queues the Coach's eval-authoring job (coalescing with the
 /// one queued, as `vault.evals.author_now` does) and admits that very job on
 /// `admit`'s lease and budget line. An admitted request's record is written
-/// in that writer, naming the caller.
+/// in that writer, naming the caller; an attempt an earlier request admitted
+/// keeps that request's record.
 ///
 /// # Errors
 ///
@@ -164,6 +182,20 @@ pub fn admit_eval_authoring_execution(
         let attempt = EntityId::from_bytes(*id.as_bytes())?;
         match store.admit_requested_attempt_in_txn(txn, COACH_HOST_QUEUE_KIND, id, admit)? {
             DreamerAdmissionOutcome::Admitted(admitted) => {
+                if let Some(kept) = recover_in_txn(vault, txn, &attempt, requested_at)? {
+                    let execution = Box::new(kept);
+                    return Ok(if execution.outcome == EvalAuthoringOutcome::Running {
+                        EvalAuthoringAdmission::Admitted {
+                            attempt: admitted,
+                            execution,
+                        }
+                    } else {
+                        EvalAuthoringAdmission::Ended {
+                            attempt: admitted,
+                            execution,
+                        }
+                    });
+                }
                 let execution = EvalAuthoringExecution {
                     attempt,
                     caller,
@@ -215,13 +247,17 @@ pub fn eval_authoring_execution(
 impl Vault {
     /// Applies the Coach's `plan` on a requested pass, as
     /// [`Self::run_coach_eval_authoring`] does at night, and ends the pass's
-    /// record with what it did: `Applied` with its report, or `Refused` for
-    /// a plan the engine refused, which applied nothing.
+    /// record with what it did: `Applied` with its report, `Refused` for a
+    /// plan the engine refused, which applied nothing, or `Failed` for an
+    /// error once the effects began. The effects run under a claim on the
+    /// record: a record that is not running (it ended, or another apply holds
+    /// it) is answered as it stands, and no effect runs.
     ///
     /// # Errors
     ///
     /// An attempt that is not a requested eval-authoring Coach attempt;
-    /// storage errors, which leave the record running.
+    /// storage errors; an error from the plan's effects, after the record
+    /// ended `Failed`.
     pub fn apply_requested_eval_authoring(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -230,23 +266,41 @@ impl Vault {
         skill: (EntityId, String),
         now: u64,
     ) -> Result<EvalAuthoringExecution> {
-        self.requested_execution(attempt)?;
-        let ran = EvalAuthoringSkillRun {
+        let id = self.requested_execution(attempt)?;
+        if let Some(kept) = self.claim_execution(&id)? {
+            return Ok(kept);
+        }
+        let ran = Some(EvalAuthoringSkillRun {
             skill: skill.0,
             revision: skill.1.clone(),
-        };
-        let digest = inventory.inventory_digest.clone();
-        let (outcome, report) =
+        });
+        let inventory_digest = Some(inventory.inventory_digest.clone());
+        let (outcome, report, error) =
             match self.run_coach_eval_authoring(attempt, plan, inventory, skill, now) {
-                Ok(report) => (EvalAuthoringOutcome::Applied, Some(report)),
-                Err(Error::Artifact(_)) => (EvalAuthoringOutcome::Refused, None),
-                Err(error) => return Err(error),
+                Ok(report) => (EvalAuthoringOutcome::Applied, Some(report), None),
+                Err(Error::Artifact(_)) => (EvalAuthoringOutcome::Refused, None, None),
+                // The claim admits no other end, so the record ends here.
+                Err(error) => (EvalAuthoringOutcome::Failed, None, Some(error)),
             };
-        self.end_execution(attempt, outcome, Some(ran), Some(digest), report, now)
+        let end = ExecutionEnd {
+            outcome,
+            skill: ran,
+            inventory_digest,
+            report,
+        };
+        let ended = self.end_execution(&id, EvalAuthoringOutcome::Applying, end, now);
+        let Some(error) = error else {
+            return ended;
+        };
+        if let Err(record) = ended {
+            tracing::warn!(%record, "a requested eval-authoring pass could not record its failure");
+        }
+        Err(error)
     }
 
     /// Ends a requested pass that applied no plan: `NoWork`, `Unavailable`,
-    /// `NoPlan` or `Failed`, with the skill and inventory it got to.
+    /// `NoPlan` or `Failed`, with the skill and inventory it got to. Only a
+    /// running record ends so; any other answers as it stands.
     ///
     /// # Errors
     ///
@@ -264,6 +318,7 @@ impl Vault {
         if matches!(
             outcome,
             EvalAuthoringOutcome::Running
+                | EvalAuthoringOutcome::Applying
                 | EvalAuthoringOutcome::Applied
                 | EvalAuthoringOutcome::Refused
         ) {
@@ -271,52 +326,117 @@ impl Vault {
                 "a requested eval-authoring pass ends so only when it applied no plan",
             ));
         }
-        self.requested_execution(attempt)?;
-        let ran = skill.map(|(skill, revision)| EvalAuthoringSkillRun { skill, revision });
-        self.end_execution(attempt, outcome, ran, inventory_digest, None, now)
+        let id = self.requested_execution(attempt)?;
+        let end = ExecutionEnd {
+            outcome,
+            skill: skill.map(|(skill, revision)| EvalAuthoringSkillRun { skill, revision }),
+            inventory_digest,
+            report: None,
+        };
+        self.end_execution(&id, EvalAuthoringOutcome::Running, end, now)
+    }
+
+    /// The kept record of a requested pass that a worker's ordinary
+    /// admission leased again, after its lease lapsed; `None` for an attempt
+    /// no request admitted. A record whose host stopped while its plan
+    /// applied ends `Failed` here.
+    ///
+    /// # Errors
+    ///
+    /// An attempt that is not the eval-authoring facet's Coach attempt;
+    /// storage errors.
+    pub fn recover_requested_eval_authoring(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        now: u64,
+    ) -> Result<Option<EvalAuthoringExecution>> {
+        self.require_coach_attempt(attempt, COACH_EVAL_AUTHORING_FACET)?;
+        let id = EntityId::from_bytes(*attempt.status.attempt.id.as_bytes())?;
+        self.with_write_txn_grouped(|txn| recover_in_txn(self, txn, &id, now))
     }
 
     /// `attempt` is the eval-authoring facet's Coach attempt and a request
-    /// admitted it.
-    fn requested_execution(&self, attempt: &DreamerAdmittedAttempt) -> Result<()> {
+    /// admitted it: its record's id.
+    fn requested_execution(&self, attempt: &DreamerAdmittedAttempt) -> Result<EntityId> {
         self.require_coach_attempt(attempt, COACH_EVAL_AUTHORING_FACET)?;
         let id = EntityId::from_bytes(*attempt.status.attempt.id.as_bytes())?;
         if eval_authoring_execution(self, &id)?.is_none() {
-            return Err(invalid(
-                "the attempt was not requested through vault.evals.authoring.execute",
-            ));
+            return Err(not_requested());
         }
-        Ok(())
+        Ok(id)
     }
 
-    /// Writes the end of `attempt`'s record, in one writer; a record that
-    /// already ended keeps its first end.
+    /// Moves `id`'s record from `Running` to `Applying`, in one writer:
+    /// `None` when this call took the claim, else the record as it stands.
+    fn claim_execution(&self, id: &EntityId) -> Result<Option<EvalAuthoringExecution>> {
+        self.with_write_txn_grouped(|txn| {
+            let mut execution = EXECUTIONS.get(self, txn, id)?.ok_or_else(not_requested)?;
+            if execution.outcome != EvalAuthoringOutcome::Running {
+                return Ok(Some(execution));
+            }
+            execution.outcome = EvalAuthoringOutcome::Applying;
+            EXECUTIONS.put(self, txn, id, &execution)?;
+            Ok(None)
+        })
+    }
+
+    /// Ends `id`'s record with `end` when it stands at `from`, in one
+    /// writer; a record at any other state keeps it, so its first end stands.
     fn end_execution(
         &self,
-        attempt: &DreamerAdmittedAttempt,
-        outcome: EvalAuthoringOutcome,
-        skill: Option<EvalAuthoringSkillRun>,
-        inventory_digest: Option<String>,
-        report: Option<EvalAuthoringReport>,
+        id: &EntityId,
+        from: EvalAuthoringOutcome,
+        end: ExecutionEnd,
         now: u64,
     ) -> Result<EvalAuthoringExecution> {
-        let id = EntityId::from_bytes(*attempt.status.attempt.id.as_bytes())?;
         self.with_write_txn_grouped(|txn| {
-            let mut execution = EXECUTIONS.get(self, txn, &id)?.ok_or_else(|| {
-                invalid("the attempt was not requested through vault.evals.authoring.execute")
-            })?;
-            if execution.outcome != EvalAuthoringOutcome::Running {
+            let mut execution = EXECUTIONS.get(self, txn, id)?.ok_or_else(not_requested)?;
+            if execution.outcome != from {
                 return Ok(execution);
             }
-            execution.outcome = outcome;
+            execution.outcome = end.outcome;
             execution.ended_at = Some(now);
-            execution.skill = skill;
-            execution.inventory_digest = inventory_digest;
-            execution.report = report;
-            EXECUTIONS.put(self, txn, &id, &execution)?;
+            execution.skill = end.skill;
+            execution.inventory_digest = end.inventory_digest;
+            execution.report = end.report;
+            EXECUTIONS.put(self, txn, id, &execution)?;
             Ok(execution)
         })
     }
+}
+
+/// What a requested pass's end writes on its record.
+struct ExecutionEnd {
+    outcome: EvalAuthoringOutcome,
+    skill: Option<EvalAuthoringSkillRun>,
+    inventory_digest: Option<String>,
+    report: Option<EvalAuthoringReport>,
+}
+
+/// `attempt`'s kept record in `txn`, for a worker that leased the attempt
+/// again; `None` for an attempt no request admitted. A record whose host
+/// stopped while its plan applied ends `Failed` at `now`: what its effects
+/// did is not known.
+fn recover_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: &EntityId,
+    now: u64,
+) -> Result<Option<EvalAuthoringExecution>> {
+    let Some(mut execution) = EXECUTIONS.get(vault, txn, attempt)? else {
+        return Ok(None);
+    };
+    if execution.outcome == EvalAuthoringOutcome::Applying {
+        execution.outcome = EvalAuthoringOutcome::Failed;
+        execution.ended_at = Some(now);
+        EXECUTIONS.put(vault, txn, attempt, &execution)?;
+    }
+    Ok(Some(execution))
+}
+
+/// The refusal of an attempt no request admitted.
+fn not_requested() -> Error {
+    invalid("the attempt was not requested through vault.evals.authoring.execute")
 }
 
 /// The caller an admitted request runs for, in `txn`: the vault owner while

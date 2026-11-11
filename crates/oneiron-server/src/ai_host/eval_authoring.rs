@@ -12,9 +12,9 @@ use oneiron::dreamer_runner::{AdmitDreamerAttempt, DreamerAdmittedAttempt, Dream
 use oneiron::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 use oneiron::skill_optimize::{
     EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringExecuteAnswer,
-    EvalAuthoringExecuteRequest, EvalAuthoringInventory, EvalAuthoringOutcome, EvalAuthoringPlan,
-    admit_eval_authoring_execution, eval_authoring_inventory_sourced, eval_authoring_skill_id,
-    union_source_rows,
+    EvalAuthoringExecuteRequest, EvalAuthoringExecution, EvalAuthoringInventory,
+    EvalAuthoringOutcome, EvalAuthoringPlan, admit_eval_authoring_execution,
+    eval_authoring_inventory_sourced, eval_authoring_skill_id, union_source_rows,
 };
 use oneiron::{EntityId, Error, LlmMessageRole};
 
@@ -62,12 +62,23 @@ impl PassEnd {
     }
 }
 
-/// Runs one eval-authoring pass.
+/// Runs one eval-authoring pass. A requested pass's attempt, leased here
+/// after its lease lapsed, keeps its request's record: it runs to that
+/// record's end while it is running, and runs no second pass once it ended.
 pub(super) fn run(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
     now: u64,
 ) -> oneiron::Result<()> {
+    if let Some(kept) = server
+        .vault()
+        .recover_requested_eval_authoring(admitted, now)?
+    {
+        return match kept.outcome {
+            EvalAuthoringOutcome::Running => finish(server, admitted, now).map(drop),
+            outcome => settled_by(outcome),
+        };
+    }
     let PassEnd::Plan {
         plan,
         inventory,
@@ -125,39 +136,23 @@ pub(crate) fn execute(
         },
     )? {
         EvalAuthoringAdmission::Admitted { attempt, .. } => attempt,
+        // An earlier request's pass ended before its host settled the lease:
+        // its end stands, and no pass runs again.
+        EvalAuthoringAdmission::Ended { attempt, execution } => {
+            settle(
+                vault,
+                &store,
+                &attempt,
+                settled_by(execution.outcome),
+                COACH_HOST_BUDGET_ID,
+            )?;
+            return Ok(EvalAuthoringExecuteAnswer::Ran { execution });
+        }
         EvalAuthoringAdmission::Waiting { attempt } => {
             return Ok(EvalAuthoringExecuteAnswer::Waiting { attempt });
         }
     };
-    let ended = pass(server, &admitted, now).and_then(|end| match end {
-        PassEnd::Plan {
-            plan,
-            inventory,
-            skill,
-        } => vault.apply_requested_eval_authoring(&admitted, plan, &inventory, skill, now),
-        PassEnd::NoWork => vault.end_requested_eval_authoring(
-            &admitted,
-            EvalAuthoringOutcome::NoWork,
-            None,
-            None,
-            now,
-        ),
-        PassEnd::Unavailable { skill, digest } => vault.end_requested_eval_authoring(
-            &admitted,
-            EvalAuthoringOutcome::Unavailable,
-            skill,
-            Some(digest),
-            now,
-        ),
-        PassEnd::NoPlan { skill, digest } => vault.end_requested_eval_authoring(
-            &admitted,
-            EvalAuthoringOutcome::NoPlan,
-            Some(skill),
-            Some(digest),
-            now,
-        ),
-    });
-    match ended {
+    match finish(server, &admitted, now) {
         Ok(execution) => {
             settle(vault, &store, &admitted, Ok(()), COACH_HOST_BUDGET_ID)?;
             Ok(EvalAuthoringExecuteAnswer::Ran {
@@ -165,17 +160,6 @@ pub(crate) fn execute(
             })
         }
         Err(error) => {
-            // The record ends Failed before the attempt fails with the
-            // error's kind; a record that already ended keeps its end.
-            if let Err(record) = vault.end_requested_eval_authoring(
-                &admitted,
-                EvalAuthoringOutcome::Failed,
-                None,
-                None,
-                vault.now_recorded_at(),
-            ) {
-                tracing::warn!(%record, "a requested eval-authoring pass could not record its failure");
-            }
             let kind = error.kind();
             settle(vault, &store, &admitted, Err(error), COACH_HOST_BUDGET_ID)?;
             Err(MemoryError::new(
@@ -185,6 +169,69 @@ pub(crate) fn execute(
             ))
         }
     }
+}
+
+/// Runs a requested pass on `admitted` and ends its record by what the pass
+/// came to. A pass that errs ends its record `Failed` before the error
+/// returns, and the attempt fails with the error's kind; a record that
+/// already ended keeps its end.
+fn finish(
+    server: &SyncServer,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> oneiron::Result<EvalAuthoringExecution> {
+    let vault = server.vault();
+    let ended = pass(server, admitted, now).and_then(|end| match end {
+        PassEnd::Plan {
+            plan,
+            inventory,
+            skill,
+        } => vault.apply_requested_eval_authoring(admitted, plan, &inventory, skill, now),
+        PassEnd::NoWork => vault.end_requested_eval_authoring(
+            admitted,
+            EvalAuthoringOutcome::NoWork,
+            None,
+            None,
+            now,
+        ),
+        PassEnd::Unavailable { skill, digest } => vault.end_requested_eval_authoring(
+            admitted,
+            EvalAuthoringOutcome::Unavailable,
+            skill,
+            Some(digest),
+            now,
+        ),
+        PassEnd::NoPlan { skill, digest } => vault.end_requested_eval_authoring(
+            admitted,
+            EvalAuthoringOutcome::NoPlan,
+            Some(skill),
+            Some(digest),
+            now,
+        ),
+    });
+    if ended.is_err()
+        && let Err(record) = vault.end_requested_eval_authoring(
+            admitted,
+            EvalAuthoringOutcome::Failed,
+            None,
+            None,
+            vault.now_recorded_at(),
+        )
+    {
+        tracing::warn!(%record, "a requested eval-authoring pass could not record its failure");
+    }
+    ended
+}
+
+/// How the lease of a requested pass that ended before its host settled it
+/// settles now: failed for a `Failed` pass, else completed.
+fn settled_by(outcome: EvalAuthoringOutcome) -> oneiron::Result<()> {
+    if outcome == EvalAuthoringOutcome::Failed {
+        return Err(Error::InvariantViolation(
+            "a requested eval-authoring pass failed before its host settled its lease",
+        ));
+    }
+    Ok(())
 }
 
 /// One pass up to its plan: the inventory, the Coach's seat, the skill it
