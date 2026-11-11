@@ -308,6 +308,9 @@ trybuild = "1"
 # Integration tests forge/sign attested receipts independently of the
 # engine's signer (contract-grounded test vectors, ONE-1140).
 ed25519-dalek = { workspace = true }
+# The door tests' kit: fixture vault copies, the fake clock, the scripted
+# model, the hashing embedder (Fable's test verdict, PR 3). Tests only.
+oneiron-testkit = { path = "../oneiron-testkit" }
 
 # The fixture-dependent cluster belongs to the rolling tier. The single-session
 # trybuild target `tests/type_boundaries_compilefail.rs` is auto-discovered.
