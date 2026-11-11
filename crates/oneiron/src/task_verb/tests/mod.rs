@@ -65,7 +65,7 @@ mod consult_party_migration;
 mod create_admission;
 mod magistrate_route_result;
 mod presence_scan;
-pub(super) mod support;
+pub(crate) mod support;
 
 mod addressable_consults;
 

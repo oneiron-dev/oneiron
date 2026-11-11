@@ -193,7 +193,8 @@ impl Vault {
     }
 
     /// CLAIM ids that still read as `origin`'s after its splits: everything
-    /// subject-bound to it MINUS everything a split assigned to a head.
+    /// subject-bound to it, or to an entity merged into it, MINUS everything
+    /// a split assigned to a head.
     ///
     /// The subtraction is why this is not [`Vault::claims_for_subject`]: a
     /// fully-mapped split assigns every claim away and leaves ZERO here,
@@ -210,11 +211,16 @@ impl Vault {
         origin: &EntityId,
     ) -> Result<Vec<EntityId>> {
         let assigned = self.assigned_away_from_in_txn(&rtxn, origin)?;
-        Ok(self
-            .claims_for_subject_in_txn(&rtxn, origin)?
-            .into_iter()
-            .filter(|claim| !assigned.contains(claim))
-            .collect())
+        let mut seen = BTreeSet::new();
+        let mut remaining = Vec::new();
+        for member in super::reassignment_map::merged_members_in_txn(&self.store, rtxn, origin)? {
+            for claim in self.claims_for_subject_in_txn(rtxn, &member)? {
+                if !assigned.contains(&claim) && seen.insert(claim) {
+                    remaining.push(claim);
+                }
+            }
+        }
+        Ok(remaining)
     }
 
     /// The claims some split routed AWAY from `origin` to a head.
