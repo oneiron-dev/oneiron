@@ -125,6 +125,51 @@ function PickRow() {
   )
 }
 
+/* The colour tokens, each on a swatch: the grounds from the window inward,
+   the inks, the tone steps, the marks. */
+const COLOUR_TOKENS = [
+  'bg',
+  'island',
+  'well',
+  'sunk',
+  'pop',
+  'chip',
+  'disc',
+  'rule',
+  'track',
+  'ink-1',
+  'ink-2',
+  'ink-3',
+  'ink-4',
+  'hover',
+  'lit',
+  'safelight',
+  'outside',
+  'healthy',
+  'near-limit',
+] as const
+
+function TokenSections() {
+  return (
+    <Section title="Tokens">
+      {COLOUR_TOKENS.map((token) => (
+        <Specimen key={token} name={token}>
+          <span className="lib-swatch" data-token={token} style={{ background: `var(--sl-${token})` }} />
+        </Specimen>
+      ))}
+      <Specimen name="card-shadow">
+        <span className="lib-swatch" data-shadow="card" />
+      </Specimen>
+      <Specimen name="pop-shadow">
+        <span className="lib-swatch" data-shadow="pop" />
+      </Specimen>
+      <Specimen name="image-line">
+        <span className="lib-swatch" data-shadow="image" />
+      </Specimen>
+    </Section>
+  )
+}
+
 /* ── the gallery ──────────────────────────────────────────────────────── */
 
 function LibraryPage() {
@@ -140,6 +185,8 @@ function LibraryPage() {
       </header>
 
       <Island className="lib-island">
+        <TokenSections />
+
         <Section title="SafelightRoot">
           <Specimen name="place">
             <span className="lib-t-place">acme-forecast</span>
@@ -185,12 +232,12 @@ function LibraryPage() {
         </Section>
 
         <Section title="Well">
-          <Specimen name="sunk">
+          <Specimen name="well">
             <Well className="lib-well">
               <span className="lib-t-say">Acme’s week 44 dip comes back every year</span>
             </Well>
           </Specimen>
-          <Specimen name="island tone on sunk">
+          <Specimen name="island tone in a well">
             <Well className="lib-well">
               <Well tone="island" className="lib-well">
                 <span className="lib-t-say">Edit Acme store sales</span>

@@ -152,6 +152,33 @@
   color: var(--sl-ink-2);
 }
 
+/* A token on a swatch, edged with a hairline so a ground the size of the
+   page still shows where it ends. */
+.lib-swatch {
+  display: block;
+  width: 56px;
+  height: 36px;
+  border-radius: var(--sl-radius);
+  box-shadow: inset 0 0 0 1px var(--sl-rule);
+}
+
+.lib-swatch[data-shadow="card"] {
+  background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
+}
+
+.lib-swatch[data-shadow="pop"] {
+  background: var(--sl-pop);
+  box-shadow: var(--sl-pop-shadow);
+}
+
+.lib-swatch[data-shadow="image"] {
+  background: var(--sl-disc);
+  box-shadow: none;
+  outline: 1px solid var(--sl-image-line);
+  outline-offset: -1px;
+}
+
 .lib-t-place {
   font-size: var(--sl-t-place);
   font-weight: 500;
@@ -390,7 +417,7 @@
 }
 
 .lib-split-pane + .sl-split-handle + .lib-split-pane {
-  background: var(--sl-sunk);
+  background: var(--sl-well);
 }
 
 .lib-thread-pane {

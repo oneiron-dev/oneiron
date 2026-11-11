@@ -1,6 +1,7 @@
-/* The write box: what rides along above, then one sunk bar with the
-   persona, the add menu, the field, the tool icons, the microphone and the
-   one filled button; under the bar, one quiet line. */
+/* The write box: what rides along above, then one bar with the persona,
+   the add menu, the field, the tool icons, the microphone and the one
+   filled button; under the bar, one quiet line. The bar is a text field:
+   the sunk tone and a 1 px inset hairline. */
 .sl-composer {
   display: flex;
   flex-direction: column;
@@ -15,10 +16,12 @@
   padding: 6px;
   border-radius: var(--sl-radius);
   background: var(--sl-sunk);
+  box-shadow: inset 0 0 0 1px var(--sl-rule);
 }
 
 .sl-composer-bar:focus-within {
   background: var(--sl-sunk-focus);
+  box-shadow: inset 0 0 0 1px var(--sl-ink-4);
 }
 
 .sl-composer-field-box {

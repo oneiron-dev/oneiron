@@ -46,10 +46,11 @@
   --sl-activity-ink: var(--sl-ink-3);
 }
 
-/* The open needs-you row is a sunk well. */
+/* The open needs-you row holds an ask: a raised card. */
 .sl-activity-row[data-open] {
   --sl-mark-ground: var(--sl-sunk);
   background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
 }
 
 /* The row whose item is open elsewhere on the screen: the lit tone. */
