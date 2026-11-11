@@ -200,6 +200,12 @@ export { OutsideLine, type OutsideLineProps, type OutsideLineGroupProps, type Ou
 export { ConnectionRow, type ConnectionRowProps } from './patterns/ConnectionRow'
 export { FileRow, type FileRowProps, type FileRowListProps } from './patterns/FileRow'
 export { PinnedList, PINNED_LIST_NOTE, type PinnedListProps } from './patterns/PinnedList'
+export {
+  RoomOutline,
+  type RoomOutlineProps,
+  type RoomOutlineGroupProps,
+  type RoomOutlineRowProps,
+} from './patterns/RoomOutline'
 export { FileGroup, type FileGroupProps } from './patterns/FileGroup'
 export {
   LedgerTable,
