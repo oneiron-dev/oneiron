@@ -51,6 +51,7 @@
 @import './frame/Sidebar.css';
 @import './frame/MicroSidebar.css';
 @import './frame/AppFrame.css';
+@import './frame/PlaceHead.css';
 @import './frame/VaultSwitch.css';
 @import './frame/ActivityMark.css';
 @import './frame/ActivityList.css';

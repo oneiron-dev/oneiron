@@ -185,6 +185,7 @@ export {
 } from './frame/MicroSidebar'
 export { splitChildRows, SIDEBAR_CHILD_ROWS_SHOWN, type ChildRowSplit } from './frame/sidebar-tree'
 export { AppFrame, type AppFrameProps, type AppFrameFoldProps } from './frame/AppFrame'
+export { PlaceHead, type PlaceHeadProps } from './frame/PlaceHead'
 export { peekReducer, PEEK_CLOSED, PEEK_DELAY_MS, PEEK_WARM_MS, type PeekState, type PeekAction } from './frame/frame-peek'
 export { moveItem, dropIndex, leadingEdge, shiftFor } from './frame/reorder'
 export { VaultSwitch, type VaultSwitchProps, type VaultSwitchVault } from './frame/VaultSwitch'

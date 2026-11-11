@@ -7,6 +7,7 @@ import {
   ActivityMark,
   ActivityRow,
   AppFrame,
+  CrewStack,
   Glyph,
   Icon,
   IconAction,
@@ -15,12 +16,14 @@ import {
   MicroSidebar,
   NeedsYou,
   PeopleTable,
+  PlaceHead,
   Sidebar,
   RolePicker,
   RoleWord,
   SortCycle,
   StatusDot,
   VaultSwitch,
+  Verb,
   Figure,
   type ActivityAge,
   type ActivityKind,
@@ -314,6 +317,51 @@ function ActivityCompactDemo({ specimen, readout = true }: { specimen: string; r
         </span>
       ) : null}
     </div>
+  )
+}
+
+/* ── the head of the work area ─────────────────────────────────────────── */
+
+/* A place head with the crew and two actions at the right. */
+function PlaceHeadDemo({ specimen, origin = false, title }: { specimen: string; origin?: boolean; title?: string }) {
+  const [back, setBack] = React.useState(0)
+  return (
+    <PlaceHead
+      level={2}
+      icon={origin ? <Icon name="thread" /> : <Icon name="hash" />}
+      title={title ?? (origin ? 'fit the Q4 forecast' : 'acme-forecast')}
+      origin={
+        origin ? (
+          <>
+            a task of
+            <Verb onClick={() => setBack((n) => n + 1)}>the Q4 view</Verb>
+            {back ? <Figure>{back}</Figure> : null}
+          </>
+        ) : undefined
+      }
+      data-specimen={specimen}
+    >
+      <CrewStack aria-label="crew" max={3}>
+        <CrewStack.Member name="Owen, you">
+          <Glyph initial="o" label="Owen" />
+        </CrewStack.Member>
+        <CrewStack.Member name="Metryon">
+          <Glyph glyph="ruler" label="Metryon" />
+        </CrewStack.Member>
+        <CrewStack.Member name="Tory">
+          <Glyph glyph="owl" label="Tory" />
+        </CrewStack.Member>
+        <CrewStack.Member name="Yuki, a guest">
+          <Glyph initial="y" label="Yuki" guest />
+        </CrewStack.Member>
+      </CrewStack>
+      <IconAction label="Outline">
+        <Icon name="tree" />
+      </IconAction>
+      <IconAction label="More">
+        <Icon name="more" />
+      </IconAction>
+    </PlaceHead>
   )
 }
 
@@ -825,6 +873,25 @@ export function FrameSections() {
         </Specimen>
         <Specimen name="open: vaults, a new vault, then the account" tall={6} wide={1}>
           <VaultSwitchDemo defaultOpen specimen="vault-switch" />
+        </Specimen>
+      </Section>
+
+      <Section title="PlaceHead">
+        <Specimen name="a room: its symbol and title; the crew and actions at the right" full>
+          <PlaceHeadDemo specimen="place-head" />
+        </Specimen>
+        <Specimen name="a task opened as a room: the origin line goes back" full>
+          <PlaceHeadDemo specimen="place-head-origin" origin />
+        </Specimen>
+        <Specimen name="420 px: the right slot shrinks first, the title keeps every letter" full>
+          <div className="lib-place-narrow" data-width="420">
+            <PlaceHeadDemo specimen="place-head-420" origin title="fit the Q4 forecast for Acme stores" />
+          </div>
+        </Specimen>
+        <Specimen name="220 px: the right slot is gone, then the title ends in an ellipsis" full>
+          <div className="lib-place-narrow" data-width="220">
+            <PlaceHeadDemo specimen="place-head-220" origin title="fit the Q4 forecast for Acme stores" />
+          </div>
         </Specimen>
       </Section>
 
