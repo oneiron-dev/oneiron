@@ -155,8 +155,8 @@ pub(crate) enum ReleasedBody {
 /// [`ReleasedBody::Unchanged`]. Otherwise it is the Nulled typed body, only if
 /// the raw check leaves that body's bytes alone. A changed ASSET or
 /// proof-bound body is withheld, never rewritten. So is a changed body that is
-/// Nulled, is a file reference, cannot encode, or no longer decodes as its
-/// native CLAIM or SKILL record.
+/// Nulled, is a file reference, cannot encode, or no longer reads as its own
+/// kind's record ([`native_body_refused`]).
 ///
 /// # Errors
 /// A failed raw release check.
@@ -181,14 +181,7 @@ pub(crate) fn released_body(entity_type: u8, body: &[u8]) -> Result<ReleasedBody
     if redacted_memory_payload(rewritten.clone())? != rewritten {
         return Ok(ReleasedBody::Withheld);
     }
-    if entity_type == crate::registry::ENTITY_TYPE_CLAIM
-        && crate::write_envelope::claim_body::decode_claim_body(&rewritten, true).is_err()
-    {
-        return Ok(ReleasedBody::Withheld);
-    }
-    if entity_type == crate::registry::ENTITY_TYPE_SKILL
-        && crate::skill::decode_skill_record(&rewritten).is_err()
-    {
+    if native_body_refused(entity_type, &rewritten) {
         return Ok(ReleasedBody::Withheld);
     }
     Ok(ReleasedBody::Rewritten {
@@ -252,6 +245,36 @@ fn released_bundle_body(entity_type: u8, body: &[u8]) -> Result<Option<(Value, b
     };
     let nulled = included.as_ref() != Some(&json);
     Ok(Some((json, nulled)))
+}
+
+/// Whether a rewritten body no longer reads as its own kind's record, as a
+/// receiving vault's native admission reads it (`sync/selector/admission`,
+/// `validate_admitted_replicated_body`). Such a row is withheld, never sent
+/// to be refused there, where one refused row can fail the whole update
+/// (EXPORTDOORS-SHAPE Q1 = A, 12 Nov 02:40).
+fn native_body_refused(entity_type: u8, body: &[u8]) -> bool {
+    use crate::registry::{
+        ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM,
+        ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+    };
+
+    match entity_type {
+        ENTITY_TYPE_CLAIM => {
+            crate::write_envelope::claim_body::decode_claim_body(body, true).is_err()
+        }
+        ENTITY_TYPE_SKILL => crate::skill::decode_skill_record(body).is_err(),
+        ENTITY_TYPE_TASK => {
+            crate::write_envelope::task_body::task_role_from_body_bytes(body).is_err()
+        }
+        ENTITY_TYPE_CODE_ARTIFACT => {
+            crate::code_artifact::validate_code_artifact_body_bytes(body).is_err()
+        }
+        ENTITY_TYPE_BLOB_ARTIFACT => {
+            crate::blob_artifact::validate_blob_artifact_body_bytes(body).is_err()
+        }
+        ENTITY_TYPE_AGENT_DEF => crate::agent_def::decode_agent_definition(body).is_err(),
+        _ => false,
+    }
 }
 
 fn proof_bound_body(entity_type: u8, body: &[u8]) -> bool {
