@@ -175,6 +175,8 @@ mod world_privacy;
 mod world_privacy_door;
 mod world_refold;
 mod world_strength;
+#[cfg(oneiron_test_support)]
+pub(crate) mod world_undo_door;
 mod write_authorization;
 
 #[cfg(test)]
