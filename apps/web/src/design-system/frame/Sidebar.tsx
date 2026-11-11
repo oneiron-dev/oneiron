@@ -175,7 +175,8 @@ export interface SidebarRowProps extends Omit<React.ComponentPropsWithRef<'butto
   /* Or a resident's mark: a Glyph (line form). */
   glyph?: React.ReactNode
   label: React.ReactNode
-  /* A short word at the right in a quieter ink. */
+  /* A short word at the right in a quieter ink. When the label and the
+     caption do not fit on one line, the caption wraps under the label. */
   caption?: React.ReactNode
   /* A badge figure at the right. */
   count?: number | string
@@ -225,8 +226,10 @@ function SidebarRow({
         {glyph ?? icon}
       </span>
       <span className="sl-sidebar-row-words">
-        <span className="sl-sidebar-row-label">{label}</span>
-        {shared ? <SharedMark /> : null}
+        <span className="sl-sidebar-row-name">
+          <span className="sl-sidebar-row-label">{label}</span>
+          {shared ? <SharedMark /> : null}
+        </span>
         {caption !== undefined ? <span className="sl-sidebar-row-caption">{caption}</span> : null}
       </span>
       {count !== undefined ? (
