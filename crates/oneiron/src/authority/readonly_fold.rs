@@ -85,12 +85,15 @@ impl AuthorityView {
     /// scope does not match its signed commitment under the live opening it
     /// holds (FIX 11730, [`super::pact_openings`]). Neither row moves the
     /// authority generation, so every read judges them in its own snapshot,
-    /// a cache hit as a miss.
+    /// a cache hit as a miss. `preserved_world_acts` answers the
+    /// past-standing check of the refused world acts (FIX 4703), which reads
+    /// the signed log alone.
     fn live_overlay(
         &self,
         store: &Store,
         txn: &heed::RoTxn<'_>,
         use_past_standing: bool,
+        preserved_world_acts: impl FnOnce(&[AuthorityEntryHash]) -> Result<BTreeSet<AuthorityEntryHash>>,
     ) -> LiveOverlay {
         LiveOverlay {
             refused: super::carried_act::grant_refused_agent_acts(
@@ -98,6 +101,7 @@ impl AuthorityView {
                 txn,
                 &self.fold,
                 use_past_standing,
+                preserved_world_acts,
             ),
             mismatched: super::pact_openings::scope_commitment_mismatches(store, txn, &self.fold),
         }
@@ -135,7 +139,9 @@ impl AuthorityView {
         txn: &heed::RoTxn<'_>,
         use_past_standing: bool,
     ) -> Self {
-        let overlay = self.live_overlay(store, txn, use_past_standing);
+        let overlay = self.live_overlay(store, txn, use_past_standing, |candidates| {
+            super::past_grant_standing::preserved_world_acts(store, txn, &self.fold, candidates)
+        });
         self.overlaid(&overlay)
     }
 
@@ -169,6 +175,12 @@ pub(crate) struct AuthorityCachedFold {
     /// later hit whose snapshot reads the same overlay takes it instead of
     /// copying the fold again.
     overlaid: Option<(LiveOverlay, AuthorityView)>,
+    /// The past-standing answer (FIX 4703) the last hit computed over
+    /// `view`, with the NOW-refused world acts it was asked about. It reads
+    /// the signed log alone (the held rows, the adopted image, causal
+    /// points), so it holds for every snapshot of `key`'s generation; the
+    /// Grant rows that choose those acts are read again on each hit.
+    preserved_world_acts: Option<(Vec<AuthorityEntryHash>, BTreeSet<AuthorityEntryHash>)>,
 }
 
 /// The rows a caller's snapshot holds over a signed-log view
@@ -377,6 +389,7 @@ fn cache_fold_if_committed(
                             view: view.clone(),
                             continuation: None,
                             overlaid: None,
+                            preserved_world_acts: None,
                         }
                         .matches(committed)
                     })
@@ -391,6 +404,7 @@ fn cache_fold_if_committed(
             view: view.clone(),
             continuation: continuation.map(Arc::new),
             overlaid: None,
+            preserved_world_acts: None,
         });
     }
 }
@@ -457,7 +471,28 @@ fn overlay_hit(
     view: AuthorityView,
     use_past_standing: bool,
 ) -> AuthorityView {
-    let overlay = view.live_overlay(store, txn, use_past_standing);
+    let overlay = view.live_overlay(store, txn, use_past_standing, |candidates| {
+        let cached = store.authority_fold_cache.lock().ok().and_then(|cache| {
+            cache
+                .as_ref()
+                .filter(|cached| cached.matches(key))
+                .and_then(|cached| cached.preserved_world_acts.as_ref())
+                .filter(|(asked, _)| asked.as_slice() == candidates)
+                .map(|(_, preserved)| preserved.clone())
+        });
+        if let Some(preserved) = cached {
+            return Ok(preserved);
+        }
+        let preserved =
+            super::past_grant_standing::preserved_world_acts(store, txn, &view.fold, candidates)?;
+        if let Ok(mut cache) = store.authority_fold_cache.lock()
+            && let Some(cached) = cache.as_mut()
+            && cached.matches(key)
+        {
+            cached.preserved_world_acts = Some((candidates.to_vec(), preserved.clone()));
+        }
+        Ok(preserved)
+    });
     if overlay.is_empty() {
         return view;
     }
