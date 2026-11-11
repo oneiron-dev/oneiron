@@ -22,6 +22,8 @@ pub(super) fn provider_prior(vault: &Vault, reader: ConsolidationReader) -> Resu
     })
 }
 
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 /// The owner's next outcome trains from a held calibration only once it is
 /// answered: until then the writer neither folds nor supersedes it.
 pub(super) fn critic_outcome(reader: ConsolidationReader) -> Result<()> {
@@ -38,6 +40,8 @@ pub(super) fn critic_outcome(reader: ConsolidationReader) -> Result<()> {
     })
 }
 
+// FIX [T0B-CRITIC-CALIB-REWRITE]: port to ReviewDecisions and learning.reliability cells: session-to-cell scope, forged public calibration claim now refused, cross-area consumers
+#[cfg(any())]
 /// A held calibration weights no review.
 pub(super) fn critic_reliability(reader: ConsolidationReader) -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());

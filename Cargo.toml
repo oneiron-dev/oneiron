@@ -8,12 +8,15 @@ members = ["crates/*", "apps/macos/src-tauri"]
 # `crates/heed/PROVENANCE.md`.
 exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/heed/vendor/lmdb-master3-sys-0.2.6", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron-docedit/vendor/stemma-engine", "crates/oneiron-docedit/vendor/stemma-diff", "crates/loro", "crates/loro/vendor/loro-1.16.2", "crates/loro/vendor/loro-internal-1.16.2", "crates/oneiron-seal/vendor/lopdf-0.44.0", "apps/web/src-tauri"]
 
-# Limited debug information keeps file/line backtraces while reducing build CPU,
-# peak memory and target size. Tests inherit this profile. For debugger locals:
-# CARGO_PROFILE_DEV_DEBUG=2 cargo ... . Release adds thin LTO only (below).
+# Dev and test builds keep line tables only: backtraces and panics still name
+# file and line, while type and local-variable debug information is left out to
+# cut codegen, link time and target size. The test profile inherits this one.
+# Full debug information for one run: CARGO_PROFILE_DEV_DEBUG=full cargo ...
+# or cargo ... --config 'profile.dev.debug="full"'. Perf work uses the
+# `profiling` profile below. Release adds thin LTO only (below).
 # Measurements and tradeoffs: docs/ops/build-performance.md.
 [profile.dev]
-debug = 1
+debug = "line-tables-only"
 
 # Optimize non-workspace dependencies in dev/test builds while leaving workspace
 # members at the dev default. See docs/ops/build-performance.md for timings.
@@ -43,6 +46,19 @@ lto = "thin"
 inherits = "release"
 incremental = true
 codegen-units = 256
+lto = "off"
+
+# Perf work (profilers, flame graphs, annotated assembly): release optimization
+# with full debug information, so inlined frames and locals resolve, and no LTO,
+# so a rebuild relinks quickly. Frame pointers are a rustc flag, not a stable
+# profile key, so a profiling build sets them for its own run:
+#   RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling
+# Outputs land in target/profiling. Publish measurements from release, which
+# keeps thin LTO.
+[profile.profiling]
+inherits = "release"
+debug = "full"
+strip = "none"
 lto = "off"
 
 [workspace.package]
@@ -107,6 +123,9 @@ oxc_transformer = "=0.152.0"
 unsafe_op_in_unsafe_fn = "deny"
 unreachable_pub = "deny"
 single_use_lifetimes = "deny"
+# The test-door cfg (Engine 19:23 HARNESS-GUARD): only the integration test command sets
+# `--cfg oneiron_test_support`; never a cargo feature, so no `--all-features` build reaches the doors.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oneiron_test_support)'] }
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "deny"
@@ -127,6 +146,10 @@ items_after_statements = "deny"
 unwrap_used = "deny"
 cognitive_complexity = "deny"
 too_many_lines = "deny"
+# Clippy 1.99 also checks async fns: +3,019 hits, all MemoryError (14k on main). FIX [MEMORY-ERROR-SIZE].
+result_large_err = "allow"
+# New in Clippy 1.99 (130 sites); the as_chunks rewrite waits for the untangle. FIX [AS-CHUNKS-REWRITE].
+chunks_exact_to_as_chunks = "allow"
 
 # ONE-218 (existing-only open door): `heed` 0.20.5, vendored locally and pinned.
 #

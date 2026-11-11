@@ -194,7 +194,8 @@ impl Memory<'_> {
     /// preparation or launch, so every way out of the run after it keeps
     /// the program's feedback on the vault's rows and answers it, beside the
     /// result or beside the refusal. A host that lends no service answers
-    /// that no checker is attached.
+    /// that no checker is attached. It runs on the isolating backend the
+    /// vault's installed backends carry for the Foreign tier (F1-6).
     ///
     /// # Errors
     ///
@@ -278,7 +279,9 @@ impl Memory<'_> {
             crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
         // A failed program's own error is masked with this vault's custody
         // values before it is answered (FIX 9209).
+        let backends = self.vault.runtime().sandbox_backends();
         let outcome = execute_foreign_code(
+            &*backends,
             prepared,
             mounts,
             artifact,

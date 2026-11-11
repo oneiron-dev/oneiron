@@ -110,6 +110,7 @@ pub(crate) fn append_queue_check_output_in_txn(
         None,
         crate::federation::record_scope::BirthPosition::default(),
         crate::core_write::CoreWriteLaneRef::Unbound,
+        None,
     )?;
 
     crate::federation::record_scope::stamp_queue_check_exhaust_birth(&vault.store, txn, token)?;

@@ -1,8 +1,8 @@
 use std::io::Read;
 
 use oneiron_docedit::{
-    ArchiveLimits, DoceditError, Document, preflight_with_limits, revise, validate_blocking,
-    validate_blocking_with_limits, validate_revision_transaction,
+    ArchiveLimits, DoceditError, Document, parse_limit_refusal, preflight_with_limits, revise,
+    validate_blocking, validate_blocking_with_limits, validate_revision_transaction,
 };
 
 const INPUT: &[u8] = include_bytes!("../vendor/stemma-engine/testdata/simple-text/before.docx");
@@ -143,31 +143,47 @@ fn archive_preflight_refuses_entry_part_and_cumulative_inflation() {
         max_total_bytes: 160,
     };
     assert!(preflight_with_limits(&bytes, generous).is_ok());
-    assert!(
-        preflight_with_limits(
-            &bytes,
-            ArchiveLimits {
-                max_entries: ArchiveLimits::DEFAULT.max_entries + 1,
-                ..ArchiveLimits::DEFAULT
-            }
-        )
-        .is_err()
-    );
+    // The entry count is an observation, never a reason to refuse, and the
+    // shipped DEFAULT bounds no dimension (Rule 5; FIX 8570, 8763, 5355): a
+    // package with more entries than `max_entries`, under a ceiling above
+    // DEFAULT, still reads.
     for limits in [
         ArchiveLimits {
             max_entries: 1,
             ..generous
         },
         ArchiveLimits {
-            max_part_bytes: 32,
-            ..generous
-        },
-        ArchiveLimits {
-            max_total_bytes: 100,
-            ..generous
+            max_entries: ArchiveLimits::DEFAULT.max_entries + 1,
+            ..ArchiveLimits::DEFAULT
         },
     ] {
-        assert!(preflight_with_limits(&bytes, limits).is_err());
-        assert!(validate_blocking_with_limits(&bytes, limits).is_err());
+        assert!(preflight_with_limits(&bytes, limits).is_ok(), "{limits:?}");
+    }
+    // One entry's part bytes past `max_part_bytes`, and the entries' bytes
+    // together past `max_total_bytes`, are refused at both doors as the
+    // ceiling they passed, before the linker reads the package.
+    for (limits, refusal) in [
+        (
+            ArchiveLimits {
+                max_part_bytes: 32,
+                ..generous
+            },
+            "docx refused: max_part_bytes=32 exceeded (64)",
+        ),
+        (
+            ArchiveLimits {
+                max_total_bytes: 100,
+                ..generous
+            },
+            "docx refused: max_total_bytes=100 exceeded (128)",
+        ),
+    ] {
+        for result in [
+            preflight_with_limits(&bytes, limits),
+            validate_blocking_with_limits(&bytes, limits),
+        ] {
+            let error = result.unwrap_err();
+            assert_eq!(parse_limit_refusal(&error), Some(refusal), "{error}");
+        }
     }
 }
