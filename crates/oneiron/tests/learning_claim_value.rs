@@ -1,7 +1,8 @@
 //! FIX LEARNING-CELL-POSITIONAL-DECODE: a learning claim value is written
 //! with named fields, so a cell with skipped qualifiers reads back; a value
-//! written positionally before still decodes to its cell, and compares equal
-//! to the named value the projector writes for it.
+//! written positionally before, down to the first encoder's five fields,
+//! still decodes to its cell, reads back as the cell's head, and compares
+//! equal to the named value the projector writes for the same claim.
 #![cfg(oneiron_test_support)]
 
 use oneiron::learning::{
@@ -115,12 +116,27 @@ fn a_positional_claim_value_written_before_named_fields_decodes_to_its_cell() {
         .executor("model@1")
         .type_ref(TypeRef::root(1))
         .axis("quality");
-    for (shape, cell) in [
-        ("every qualifier set", every_qualifier),
-        ("vault cell, no consent scope", vault_cell),
-    ] {
-        let bytes =
-            door::positional_claim_bytes(&cell, &estimate).expect("positional claim value bytes");
+    let shapes = [
+        (
+            "every qualifier set",
+            door::positional_claim_bytes(&every_qualifier, &estimate),
+            every_qualifier,
+        ),
+        (
+            "vault cell, no consent scope",
+            door::positional_claim_bytes(&vault_cell, &estimate),
+            vault_cell.clone(),
+        ),
+        // The first encoder's spelling, before cells had a project and
+        // claims a donor tally or a frozen fold: five fields.
+        (
+            "five fields, vault cell, no consent scope",
+            door::five_field_claim_bytes(&vault_cell, &estimate),
+            vault_cell,
+        ),
+    ];
+    for (shape, bytes, cell) in shapes {
+        let bytes = bytes.unwrap_or_else(|error| panic!("{shape}: encode: {error:?}"));
         let (decoded_cell, decoded_estimate) = door::decode_claim_bytes(&bytes)
             .unwrap_or_else(|error| panic!("{shape}: the positional value decodes: {error:?}"));
         assert_eq!(decoded_cell, cell, "{shape}: the same cell");
@@ -129,13 +145,66 @@ fn a_positional_claim_value_written_before_named_fields_decodes_to_its_cell() {
 }
 
 #[test]
-fn a_positional_head_compares_equal_to_the_named_projection_of_the_same_claim() {
+fn a_five_field_head_reads_back_and_a_reprojection_gives_it_a_frozen_fold() {
     let dir = tempfile::tempdir().expect("temporary vault");
     let (vault, person) = vault_with_person(dir.path());
     let cell = reliability_cell(&vault, person, None);
-    record_runs(&vault, &cell);
-    let twin = door::respell_head_positional(&vault, &cell, NOW)
-        .expect("replace the head with its positional twin");
+    let recorded = record_runs(&vault, &cell);
+    let twin = door::respell_head_five_field(&vault, &cell, NOW)
+        .expect("replace the head with its five-field twin");
+    assert_eq!(
+        door::active_head_ids(&vault, &cell).expect("active heads"),
+        vec![twin],
+        "the five-field twin is the cell's one head",
+    );
+    assert_eq!(
+        oneiron::learning::learning_estimate(&vault, &cell).expect("read the cell"),
+        Some(recorded.clone()),
+        "the five-field head reads back the estimate the fold recorded",
+    );
+    oneiron::learning::reproject_all_cells(&vault, NOW).expect("reproject every cell");
+    let heads = door::active_head_ids(&vault, &cell).expect("active heads");
+    assert_eq!(heads.len(), 1, "one head after the reprojection");
+    assert_ne!(
+        heads,
+        vec![twin],
+        "a Beta head without the frozen fold is not the claim the projector writes: a new head \
+         supersedes it",
+    );
+    assert_eq!(
+        oneiron::learning::learning_estimate(&vault, &cell).expect("read the cell"),
+        Some(recorded),
+        "the new head reads the same estimate",
+    );
+}
+
+#[test]
+fn a_five_field_counts_head_is_kept_by_a_reprojection_that_moves_nothing() {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let (vault, person) = vault_with_person(dir.path());
+    let tree = oneiron::task_type::type_tree(&vault, None).expect("vault type tree");
+    let task_type = TaskTypeRef::seed(SeedTaskType::Build, tree.version());
+    // No qualifier is skipped before a set one, so the five-field spelling
+    // keeps every qualifier in its place. A counts cell projects no donor
+    // tally and no frozen fold: its five-field head is the whole claim.
+    let cell = LearningCell::new(LearningPredicate::EditCost, person)
+        .executor(person.to_hex())
+        .type_ref(TypeRef::from(&task_type))
+        .axis("quality")
+        .consent_scope("owner");
+    for category in ["untouched", "amended"] {
+        let evidence = LearningEvidence::anchored(
+            EntityId::now().to_hex(),
+            NOW,
+            Anchor::HeldOut,
+            Observation::Category(category.to_owned()),
+        );
+        oneiron::learning::record_evidence(&vault, &cell, &evidence, NOW)
+            .expect("record edit-cost evidence")
+            .expect("the cell has own runs");
+    }
+    let twin = door::respell_head_five_field(&vault, &cell, NOW)
+        .expect("replace the head with its five-field twin");
     assert_eq!(
         door::active_head_ids(&vault, &cell).expect("active heads"),
         vec![twin],
@@ -144,7 +213,7 @@ fn a_positional_head_compares_equal_to_the_named_projection_of_the_same_claim() 
     assert_eq!(
         door::active_head_ids(&vault, &cell).expect("active heads"),
         vec![twin],
-        "a reprojection that moves nothing keeps the positional head: it decodes to the claim \
+        "a reprojection that moves nothing keeps the five-field head: it decodes to the claim \
          the projector would write",
     );
 }

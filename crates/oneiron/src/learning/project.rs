@@ -58,7 +58,14 @@ pub(crate) struct StoredEstimateClaim {
     pub(crate) cell: LearningCell,
     pub(crate) estimate: Estimate,
     pub(crate) untested: bool,
+    /// The default reads a claim value written before the field existed
+    /// (#4322): the first encoder wrote five fields, so a head projected
+    /// then reads with no donor tally.
+    #[serde(default)]
     pub(crate) donor_tally: Option<(f64, f64)>,
+    /// The default reads a claim value written before the field existed
+    /// (#4923) with no frozen fold.
+    #[serde(default)]
     pub(crate) frozen: Option<FrozenFold>,
 }
 

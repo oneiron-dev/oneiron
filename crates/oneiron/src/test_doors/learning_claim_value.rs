@@ -1,6 +1,6 @@
 //! Doors for `tests/learning_claim_value.rs` (FIX
 //! LEARNING-CELL-POSITIONAL-DECODE): the learning claim value codec, the
-//! positional spelling written before named fields, and the active heads of
+//! positional spellings written before named fields, and the active heads of
 //! a cell.
 
 use crate::Vault;
@@ -18,10 +18,20 @@ use crate::temporal::TimeRange;
 ///
 /// [`Error::InvariantViolation`] when the claim does not encode.
 pub fn positional_claim_bytes(cell: &LearningCell, estimate: &Estimate) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &positional_value(&claim(cell, estimate))?)
-        .map_err(|_| Error::InvariantViolation("positional learning claim bytes"))?;
-    Ok(bytes)
+    value_bytes(&positional_value(&claim(cell, estimate))?)
+}
+
+/// The claim value of `cell` and `estimate` in the five-field positional
+/// spelling the first encoder wrote, before cells had a project (#4089) and
+/// claims a donor tally (#4322) or a frozen fold (#4923): kind, form, cell,
+/// estimate and the UNTESTED mark.
+///
+/// # Errors
+///
+/// [`Error::InvariantViolation`] when `cell` has a project or the claim does
+/// not encode.
+pub fn five_field_claim_bytes(cell: &LearningCell, estimate: &Estimate) -> Result<Vec<u8>> {
+    value_bytes(&five_field_value(&claim(cell, estimate))?)
 }
 
 /// Decodes stored claim value bytes as every reader does and returns the
@@ -37,24 +47,25 @@ pub fn decode_claim_bytes(bytes: &[u8]) -> Result<(LearningCell, Estimate)> {
     Ok((stored.cell, stored.estimate))
 }
 
-/// Replaces the one active head of `cell` with its positional twin: a new
-/// claim with the head's estimate, evidence and source, spelled positionally,
-/// supersedes the head at `now`. Returns the twin's id.
+/// Replaces the one active head of `cell` with its five-field twin: a new
+/// claim with the head's estimate, evidence and source, in the spelling of
+/// [`five_field_claim_bytes`], supersedes the head at `now`. Returns the
+/// twin's id.
 ///
 /// # Errors
 ///
-/// [`Error::InvariantViolation`] when the cell has no single active head;
-/// storage and claim write errors.
-pub fn respell_head_positional(vault: &Vault, cell: &LearningCell, now: u64) -> Result<EntityId> {
+/// [`Error::InvariantViolation`] when the cell has no single active head or
+/// has a project; storage and claim write errors.
+pub fn respell_head_five_field(vault: &Vault, cell: &LearningCell, now: u64) -> Result<EntityId> {
     vault.with_write_txn_grouped(|wtxn| {
         let heads = active_heads_in_txn(vault, wtxn, cell)?;
         let [(head_id, body, head_start)] = heads.as_slice() else {
             return Err(Error::InvariantViolation(
-                "a positional respell takes a cell with one active head",
+                "a five-field respell takes a cell with one active head",
             ));
         };
         let mut twin = body.clone();
-        twin.value = positional_value(&StoredEstimateClaim::from_value(&body.value)?)?;
+        twin.value = five_field_value(&StoredEstimateClaim::from_value(&body.value)?)?;
         let twin_id = vault.store.clock.entity_id()?;
         vault.put_reserved_claim_in_txn(
             wtxn,
@@ -87,6 +98,30 @@ pub fn active_head_ids(vault: &Vault, cell: &LearningCell) -> Result<Vec<EntityI
 fn positional_value(claim: &StoredEstimateClaim) -> Result<rmpv::Value> {
     rmpv::ext::to_value(claim)
         .map_err(|_| Error::InvariantViolation("positional learning claim encode"))
+}
+
+/// The positional value cut to the first encoder's five fields. A cell with
+/// no project already writes no project element.
+fn five_field_value(claim: &StoredEstimateClaim) -> Result<rmpv::Value> {
+    if claim.cell.project.is_some() {
+        return Err(Error::InvariantViolation(
+            "a five-field learning claim value keys no project",
+        ));
+    }
+    let rmpv::Value::Array(mut fields) = positional_value(claim)? else {
+        return Err(Error::InvariantViolation(
+            "a positional learning claim value is an array",
+        ));
+    };
+    fields.truncate(5);
+    Ok(rmpv::Value::Array(fields))
+}
+
+fn value_bytes(value: &rmpv::Value) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value)
+        .map_err(|_| Error::InvariantViolation("positional learning claim bytes"))?;
+    Ok(bytes)
 }
 
 fn claim(cell: &LearningCell, estimate: &Estimate) -> StoredEstimateClaim {
