@@ -614,6 +614,48 @@ impl Vault {
         Ok(grant)
     }
 
+    /// The owner's act: takes back every `engine.controls` grant he gave
+    /// `agent` ([`Self::grant_engine_controls`]), by his signed revoke of
+    /// each, and returns them. No membership door moves such a grant of a
+    /// principal that is no Steward member, so this door is its way out. A
+    /// base agent's grant is narrowed through its own door
+    /// ([`Self::narrow_system_agent_grant`]).
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` for a base agent; an owner refusal; a store failure;
+    /// `AuthorityRefused` when this install cannot carry the owner's act.
+    pub fn revoke_engine_controls(
+        &self,
+        owner: &AuthenticatedOwner,
+        agent: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        if SystemAgent::of(agent).is_some() {
+            return Err(crate::error::Error::InvalidConfig(
+                "a base agent's grant is narrowed through its own door".into(),
+            ));
+        }
+        let revoked = self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
+            let mut grants = Vec::new();
+            for grant in self.standing_steward_grants_of_in(txn, agent)? {
+                if standing_steward_grant_in(&self.store, txn, grant, agent)?
+                    .is_some_and(|row| super::is_engine_controls_grant(&row))
+                {
+                    grants.push(grant);
+                }
+            }
+            for grant in &grants {
+                self.revoke_steward_grant_in_txn(txn, owner, *grant)?;
+            }
+            Ok(grants)
+        })?;
+        if !revoked.is_empty() {
+            self.apply_pending_rebinds_after_commit();
+        }
+        Ok(revoked)
+    }
+
     /// The vault root a Steward grant on this vault names: the shared vault,
     /// else this install's own residence.
     pub(super) fn steward_root_scope_in_txn(
@@ -627,8 +669,8 @@ impl Vault {
             }))
     }
 
-    /// Every grant row that stands in `txn` as a Steward grant naming base
-    /// agent `agent` ([`standing_steward_grant_in`]), an opt-out's record
+    /// Every grant row that stands in `txn` as a Steward grant naming
+    /// `agent` ([`standing_steward_grant_in`]), a base agent's opt-out record
     /// among them.
     pub(crate) fn standing_steward_grants_of_in(
         &self,
@@ -662,21 +704,32 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         let standing = self.standing_steward_grants_of_in(txn, agent)?;
         for grant in &standing {
-            let acknowledged_topology =
-                crate::identity_topology::acknowledged_grant_seals_in_txn(&self.store, txn, *grant)
-                    .unwrap_or_default();
-            self.append_agent_grant_act_in_txn(
-                txn,
-                owner,
-                ActSurface::ThisInstall,
-                AgentGrantAct::Revoke {
-                    grant: *grant,
-                    acknowledged_topology,
-                },
-            )?;
-            self.delete_agent_grant_row_in_txn(txn, *grant)?;
+            self.revoke_steward_grant_in_txn(txn, owner, *grant)?;
         }
         Ok(standing)
+    }
+
+    /// Revokes the Steward grant row `grant` as `owner`'s signed act, in the
+    /// caller's writer: the revoke and the row delete land together.
+    fn revoke_steward_grant_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        grant: EntityId,
+    ) -> Result<()> {
+        let acknowledged_topology =
+            crate::identity_topology::acknowledged_grant_seals_in_txn(&self.store, txn, grant)
+                .unwrap_or_default();
+        self.append_agent_grant_act_in_txn(
+            txn,
+            owner,
+            ActSurface::ThisInstall,
+            AgentGrantAct::Revoke {
+                grant,
+                acknowledged_topology,
+            },
+        )?;
+        self.delete_agent_grant_row_in_txn(txn, grant)
     }
 
     /// Mints `agent`'s Steward grant with `verbs` as `owner`'s signed act, in

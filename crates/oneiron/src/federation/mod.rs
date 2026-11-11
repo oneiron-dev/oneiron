@@ -221,6 +221,7 @@ pub(crate) use system_agent_grant::{
 mod engine_controls;
 mod substrate_reads;
 pub(crate) use engine_controls::erase_engine_control_actor_in_txn;
+pub(crate) use engine_controls::is_engine_controls_grant;
 pub(crate) use engine_controls::rendered_change;
 pub use engine_controls::{
     ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,

@@ -307,6 +307,26 @@ enum GrantReach {
     WholeVault,
 }
 
+/// Whether `row` is an owner's `engine.controls` grant
+/// ([`Vault::grant_engine_controls`]): a Steward grant row whose verbs are
+/// `engine.controls` classes and nothing else. It is the owner's grant to a
+/// principal, minted by its own door and taken back by its own
+/// ([`Vault::revoke_engine_controls`]), never a membership: a Steward
+/// membership row holds the Steward default, which names no such class.
+#[must_use]
+pub(crate) fn is_engine_controls_grant(row: &super::FederationGrant) -> bool {
+    row.role == FederationGrantRole::Steward
+        && row.preset == FederationGrantPreset::Steward
+        && row.kind == FederationGrantKind::Access
+        && matches!(
+            &row.authority_scope.verbs,
+            ScopeAxis::Some(verbs) if !verbs.is_empty()
+                && verbs
+                    .iter()
+                    .all(|verb| grant_scope::ENGINE_CONTROLS_VERBS.contains(&verb.as_str()))
+        )
+}
+
 /// Whether a grant's scope reaches the whole vault: no axis but `verbs` is
 /// narrowed. A vault or holder override row narrows a member's grant by a
 /// meet (worlds, facets, bands, audience, sensitivity), and a member works
