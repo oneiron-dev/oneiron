@@ -30,7 +30,7 @@ import {
   type DonutArc,
   type Theme,
 } from '~/design-system'
-import { CHART_NOTE, CHART_TITLE, ChartCard } from './-cards'
+import { CHART_TITLE, ChartCard } from './-cards'
 import { Face, OWEN, YUKI, type Person } from './-faces'
 import { HomeSidebar, MicroSidebarDemo } from './-frame'
 import { ANTEVON, EIRI, METRYON, TORY, type Resident } from './-identity'
@@ -195,7 +195,6 @@ function ThingPane({ id, onClose, specimen }: { id: 'q4' | 'stores'; onClose: ()
     <SplitPane.Thing
       key={id}
       title={id === 'q4' ? CHART_TITLE : 'Which stores are in?'}
-      note={id === 'q4' ? CHART_NOTE : undefined}
       onClose={onClose}
       onSend={(text) => setThread((t) => [...t, { who: OWEN, text, time: formatAnswerTime(new Date()) }])}
       writeBox={{
@@ -215,6 +214,7 @@ function ThingPane({ id, onClose, specimen }: { id: 'q4' | 'stores'; onClose: ()
         </MessageRow>
       ))}
     >
+      {/* The chart card bare carries its own note under it. */}
       {id === 'q4' ? (
         <ChartCard bare />
       ) : (
