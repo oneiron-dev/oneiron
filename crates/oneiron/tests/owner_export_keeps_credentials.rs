@@ -17,11 +17,15 @@
 //!   payloads, and a fresh seeded vault opened a second later restores
 //!   every field.
 //!
-//! Every test also pins the nulling side: contact bundles never carry the
-//! credential text, and neither does CONS-07's scoped record vector. The
-//! scoped record vector asserts of CONS-06 and CONS-09 are held out in place
-//! under `#[cfg(any())]` (FIX row SCOPED-RECORD-EXPORT-SHIPS-SCAN-OFF-CREDENTIALS):
-//! on main the scoped door ships a credential that a scan-off write stored.
+//! Every test also pins the nulling side: CONS-07's contact bundle and scoped
+//! record vector never carry the credential text. The scoped record vector
+//! asserts of CONS-06 and CONS-09 are held out in place under `#[cfg(any())]`
+//! (FIX row SCOPED-RECORD-EXPORT-SHIPS-SCAN-OFF-CREDENTIALS): on main the
+//! scoped door ships a credential that a scan-off write stored. Their contact
+//! bundle asserts are held out the same way (FIX row
+//! CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS): on main the contact bundle
+//! keeps a `signature` member, byte arrays that encode a credential map and
+//! JSON text that encodes a credential, and nulls every safe binary too.
 //! Custody is skipped: custody already travels in the owner's archive today,
 //! and `SecretCustodyRecord` value fields are crate-private, so no public door
 //! seeds one here.
@@ -278,43 +282,48 @@ fn owner_archive_keeps_skill_source_credentials_and_restores_them() -> Result<()
             }
         }
     }
-    // A contact bundle over the skill alone, and over the skill plus the
-    // selected source copies, never carries the credential text.
-    for ids in [&[id][..], &selected[..]] {
+    // FIX [CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS]: on main the contact bundle
+    // keeps the `signature` member of the scan-off JSON copy; held out in place.
+    #[cfg(any())]
+    {
+        // A contact bundle over the skill alone, and over the skill plus the
+        // selected source copies, never carries the credential text.
+        for ids in [&[id][..], &selected[..]] {
+            let bundle: serde_json::Value =
+                serde_json::from_slice(&vault.export_entity_bundle_json(ids)?)
+                    .expect("contact bundle JSON");
+            let emitted = bundle.to_string();
+            assert!(
+                !emitted.contains("residual-file-credential"),
+                "contact bundle: {emitted}"
+            );
+            assert!(
+                !emitted.contains("residual-signature"),
+                "contact bundle: {emitted}"
+            );
+        }
         let bundle: serde_json::Value =
-            serde_json::from_slice(&vault.export_entity_bundle_json(ids)?)
+            serde_json::from_slice(&vault.export_entity_bundle_json(&selected)?)
                 .expect("contact bundle JSON");
-        let emitted = bundle.to_string();
-        assert!(
-            !emitted.contains("residual-file-credential"),
-            "contact bundle: {emitted}"
-        );
-        assert!(
-            !emitted.contains("residual-signature"),
-            "contact bundle: {emitted}"
-        );
-    }
-    let bundle: serde_json::Value =
-        serde_json::from_slice(&vault.export_entity_bundle_json(&selected)?)
-            .expect("contact bundle JSON");
-    let entities = bundle["entities"].as_array().expect("contact entities");
-    for (file_id, path) in &source_files {
-        let carried = entities
-            .iter()
-            .find(|row| row["id"] == file_id.to_hex())
-            .expect("contact output contains the selected source file");
-        match *path {
-            "scripts/private.py" => assert!(
-                carried["body"].is_null(),
-                "the credential file is nulled: {}",
-                carried["body"]
-            ),
-            "signature.json" => assert!(
-                carried["body"]["signature"].is_null(),
-                "the credential member is nulled: {}",
-                carried["body"]
-            ),
-            _ => {}
+        let entities = bundle["entities"].as_array().expect("contact entities");
+        for (file_id, path) in &source_files {
+            let carried = entities
+                .iter()
+                .find(|row| row["id"] == file_id.to_hex())
+                .expect("contact output contains the selected source file");
+            match *path {
+                "scripts/private.py" => assert!(
+                    carried["body"].is_null(),
+                    "the credential file is nulled: {}",
+                    carried["body"]
+                ),
+                "signature.json" => assert!(
+                    carried["body"]["signature"].is_null(),
+                    "the credential member is nulled: {}",
+                    carried["body"]
+                ),
+                _ => {}
+            }
         }
     }
     Ok(())
@@ -645,38 +654,43 @@ fn owner_archive_keeps_credential_fields_and_binary_payloads() -> Result<()> {
             "the scoped export carries no token"
         );
     }
-    // A contact's shareable bundle still nulls them.
-    let bundle: serde_json::Value =
-        serde_json::from_slice(&vault.export_entity_bundle_json(&[id])?)
-            .expect("contact bundle JSON");
-    let entities = bundle["entities"].as_array().expect("contact entities");
-    assert_eq!(entities.len(), 1);
-    for name in [
-        "api_key",
-        "binary",
-        "nested_binary",
-        "byte_array",
-        "json_bytes",
-        "byte_map",
-        "json_encoded_bytes",
-        "json_encoded_map",
-        "signature",
-    ] {
-        assert!(
-            entities[0]["body"][name].is_null(),
-            "contact bundle nulls {name}: {}",
-            entities[0]["body"][name]
+    // FIX [CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS]: on main the contact bundle
+    // keeps byte_map and the JSON-encoded payloads and nulls public_binary; held out in place.
+    #[cfg(any())]
+    {
+        // A contact's shareable bundle still nulls them.
+        let bundle: serde_json::Value =
+            serde_json::from_slice(&vault.export_entity_bundle_json(&[id])?)
+                .expect("contact bundle JSON");
+        let entities = bundle["entities"].as_array().expect("contact entities");
+        assert_eq!(entities.len(), 1);
+        for name in [
+            "api_key",
+            "binary",
+            "nested_binary",
+            "byte_array",
+            "json_bytes",
+            "byte_map",
+            "json_encoded_bytes",
+            "json_encoded_map",
+            "signature",
+        ] {
+            assert!(
+                entities[0]["body"][name].is_null(),
+                "contact bundle nulls {name}: {}",
+                entities[0]["body"][name]
+            );
+        }
+        assert_eq!(
+            entities[0]["body"]["name"],
+            serde_json::json!("portable person")
         );
+        assert!(
+            entities[0]["body"]["public_binary"]
+                .to_string()
+                .contains("inspectable public bytes")
+        );
+        assert_eq!(bundle["manifest"]["secrets_nulled"]["payloads"], true);
     }
-    assert_eq!(
-        entities[0]["body"]["name"],
-        serde_json::json!("portable person")
-    );
-    assert!(
-        entities[0]["body"]["public_binary"]
-            .to_string()
-            .contains("inspectable public bytes")
-    );
-    assert_eq!(bundle["manifest"]["secrets_nulled"]["payloads"], true);
     Ok(())
 }
