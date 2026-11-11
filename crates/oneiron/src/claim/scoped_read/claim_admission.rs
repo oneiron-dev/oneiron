@@ -234,7 +234,7 @@ impl ScopedRead<'_> {
         Ok(allowed
             && self.provenance_cited_readable_in(rtxn, policy, body, authority)?
             && self.esign_document_readable_in(rtxn, policy, body)?
-            && self.coreference_endpoints_readable_in(rtxn, policy, body, authority)?)
+            && self.coreference_endpoints_readable_in(rtxn, policy, id, body, authority)?)
     }
 
     /// Whether this lane reads every record the claim `body` names when it is
@@ -332,27 +332,31 @@ impl ScopedRead<'_> {
     }
 
     /// Whether this lane reads both records the `core.coreference.status`
-    /// claim `body` names in its edge subject. One of the three trailing
-    /// conjuncts of every CLAIM's admission, beside
+    /// claim `body` of `id` names in its edge subject, at every depth. One of
+    /// the three trailing conjuncts of every CLAIM's admission, beside
     /// [`Self::provenance_cited_readable_in`] and
     /// [`Self::esign_document_readable_in`], on the row path and the class
     /// path alike, and never a class's: the endpoints are the row's own.
-    /// A missing or withheld endpoint withholds the Claim whole, and so
-    /// does a subject that is not an edge. No applied edge is required.
-    /// Every other predicate passes, and so do the vault owner and a record
-    /// judged as one such Claim names. The endpoints meet this lane's own
-    /// floor and ordinary admission under `HeldAuthority::judge_cited`, so
-    /// the rule runs one level deep and is not re-entered for a cited Claim.
+    /// A missing or withheld endpoint, an undecodable CLAIM body, or a status
+    /// claim whose subject is not an edge withholds the Claim whole. No
+    /// applied edge is required. Every other predicate and the vault owner
+    /// pass. A worklist judges each nested status claim once at this lane's
+    /// own floor and ordinary admission under `HeldAuthority::judge_cited`,
+    /// without recursion through status claims. Its row admission leaves its
+    /// endpoints to this walk alone, so cycles and shared status ends are
+    /// judged once. This also applies to a status claim a provenance Claim
+    /// cites; the provenance rule itself still runs one level deep.
     pub(super) fn coreference_endpoints_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
+        id: &EntityId,
         body: &ClaimBody,
         authority: &HeldAuthority,
     ) -> Result<bool> {
         if body.predicate != crate::claim::PREDICATE_COREFERENCE_STATUS
             || self.actor_key.vault_owner_ref().is_some()
-            || authority.judges_cited()
+            || authority.judges_coreference_endpoints_of(id)
         {
             return Ok(true);
         }
@@ -360,8 +364,35 @@ impl ScopedRead<'_> {
             return Ok(false);
         };
         let floor = self.actor_retrieval_floor(policy)?;
+        let mut status_claims = HashSet::from([*id]);
+        let mut ends = vec![source, target];
         authority.judge_cited(|cited| {
-            for end in [source, target] {
+            while let Some(end) = ends.pop() {
+                if status_claims.contains(&end) {
+                    continue;
+                }
+                let Some(row) = self.entity_record_in(rtxn, &end)? else {
+                    return Ok(false);
+                };
+                if row.entity_type == ENTITY_TYPE_CLAIM {
+                    let Ok(body) = decode_claim_body(&row.body, true) else {
+                        return Ok(false);
+                    };
+                    if body.predicate == crate::claim::PREDICATE_COREFERENCE_STATUS {
+                        status_claims.insert(end);
+                        if !cited.judge_cited_coreference(end, |cited| {
+                            self.is_entity_readable_held_in(rtxn, policy, &end, &floor, cited)
+                        })? {
+                            return Ok(false);
+                        }
+                        let crate::claim::ClaimSubject::Edge { source, target, .. } = body.subject
+                        else {
+                            return Ok(false);
+                        };
+                        ends.extend([source, target]);
+                        continue;
+                    }
+                }
                 if !self.is_entity_readable_held_in(rtxn, policy, &end, &floor, cited)? {
                     return Ok(false);
                 }
