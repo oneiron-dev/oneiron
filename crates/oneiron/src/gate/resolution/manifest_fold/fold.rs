@@ -102,11 +102,13 @@ pub(super) fn fold_policy_manifest(
             continue;
         }
         // The grant's rows replace the manifest's rows for the Dreamer in
-        // every trusted pack, so they read as the shipped rows did. A pack
-        // that does not decode keeps its own bytes and its own diagnostic.
+        // every trusted pack, so they read as the shipped rows did, the read
+        // row inside the grant's own data axes. A pack that does not decode
+        // keeps its own bytes and its own diagnostic.
         let steward_body = match &steward_rows {
-            Some((actor_ref, verbs)) => {
-                crate::gate::body_with_steward_rows(body, actor_ref, verbs).unwrap_or(None)
+            Some((actor_ref, verbs, read_scope)) => {
+                crate::gate::body_with_steward_rows(body, actor_ref, verbs, read_scope.as_ref())
+                    .unwrap_or(None)
             }
             None => None,
         };

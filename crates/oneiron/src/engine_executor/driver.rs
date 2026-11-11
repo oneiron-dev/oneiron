@@ -401,7 +401,7 @@ impl<'a> EngineNativeExecutor<'a> {
         // Relaxed ordering is sufficient: the atomic protects only uniqueness
         // of the returned integer, not publication of any other memory.
         self.next_witness_order
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |order| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |order| {
                 if order <= u64::from(u32::MAX) {
                     Some(order + 1)
                 } else {

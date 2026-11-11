@@ -39,7 +39,7 @@ pub(super) fn shape_of(body: &dyn ResultBody, mut head: Vec<u8>) -> Result<Value
         Err(error) => std::str::from_utf8(&head[..error.valid_up_to()]).unwrap_or_default(),
     };
     if first_lines(text, false).len() >= 2
-        && [b'\t', b',']
+        && b"\t,"
             .iter()
             .all(|&d| first_table_rows(text, false, d).len() >= 2)
     {

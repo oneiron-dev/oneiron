@@ -7,6 +7,7 @@ use crate::critic::{
     CritiqueVerdict, LensCatalog,
 };
 use crate::edge::EdgeActorClass;
+use crate::learning::{LearningCell, LearningPredicate, TypeRef};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteProvenance;
@@ -72,17 +73,26 @@ fn critique(
     severity: CritiqueSeverity,
     hard_check_passed: Option<bool>,
 ) -> Result<CritiqueArtifact> {
+    let provenance = CritiqueProvenance::new(
+        WriteActor::new(EntityId::now(), EdgeActorClass::Agent),
+        "fixture-model",
+        Some("rev1".to_owned()),
+    )?;
+    let calibration = LearningCell::new(LearningPredicate::Reliability, candidate.claim_id)
+        .executor(provenance.executor()?)
+        .type_ref(TypeRef {
+            node_id: "claim_authoring".to_owned(),
+            tree_version: 1,
+        })
+        .axis("quality");
     CritiqueArtifact::new(
         artifact_id,
         "run-fixture",
         candidate.branch_attempt,
         candidate.candidate_ref.clone(),
         lens,
-        CritiqueProvenance::new(
-            format!("critic:{}", lens.id),
-            "fixture-model",
-            Some("rev1".to_owned()),
-        )?,
+        provenance,
+        calibration,
         verdict,
         severity,
         hard_check_passed,
@@ -639,7 +649,10 @@ fn refined_winner_persists_exact_selected_candidate_with_reused_identity() -> Re
         21,
     )?;
     let result = run_dreamer_claim_tournament(&vault, run)?;
-    assert_eq!(result.winner.claim_id, shared_claim_id);
+    assert_eq!(
+        result.winner.map(|winner| winner.claim_id),
+        Some(shared_claim_id)
+    );
     let stored = vault
         .get_claim(&shared_claim_id)?
         .expect("refined winner stored");
