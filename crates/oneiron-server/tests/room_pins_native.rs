@@ -3,12 +3,16 @@
 //! Run on a build host with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test room_pins_native`.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use oneiron::claim::{CallerLocality, ScopedReadActorKey};
 use oneiron::conversation::RoomPin;
 use oneiron::counterparty_contact::CounterpartyContactRecord;
-use oneiron::federation::Scope;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::policy_manifest_doors::{
     ActorCeiling, PolicyCeiling, PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow,
@@ -39,6 +43,34 @@ struct Fixture {
     pin_a: RoomPin,
     project_a: EntityId,
     _directory: tempfile::TempDir,
+}
+
+/// Each of `principals` reads `room`'s MESSAGEs under an active grant.
+fn grant_room_messages(vault: &Vault, room: EntityId, principals: &[EntityId]) -> TestResult {
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    for &principal in principals {
+        vault.create_access_grant(
+            &EntityId::now(),
+            &AccessGrant {
+                authority_scope: authority_scope.clone(),
+                principal_ref: principal,
+                scope: AccessGrantScope::ConversationMessages {
+                    conversation_ref: room,
+                },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at,
+                revoked_at: None,
+                expires_at: None,
+                companion_bounds: None,
+            },
+        )?;
+    }
+    Ok(())
 }
 
 impl Fixture {
@@ -169,6 +201,12 @@ impl Fixture {
         vault.put_project(project_b, &record_b, vault.now_recorded_at())?;
         let room_b = EntityId::from_hex(&record_b.home_room)?;
         assert_ne!(room_a, room_b, "the two project rooms differ");
+        // A room read admits a row only when every reader of its audience
+        // may: the leader and the agent read each room's MESSAGEs under a
+        // grant. The member is the vault's owner and needs none.
+        for room in [room_a, room_b] {
+            grant_room_messages(&vault, room, &[leader, agent])?;
+        }
 
         let (trunk_a, target_t) = speak_trunk(&vault, leader, room_a)?;
         let (_, target_u) = speak_trunk(&vault, leader, room_b)?;
