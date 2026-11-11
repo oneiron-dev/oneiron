@@ -19,6 +19,7 @@ pub mod derive_verbs;
 pub mod dreamer_stage_line;
 pub mod fanout_admission;
 pub mod feeds;
+pub mod grant_roles;
 pub mod graph_ask_centre;
 pub mod label_writers;
 pub mod learning_claim_value;

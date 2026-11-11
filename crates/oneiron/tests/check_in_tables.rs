@@ -355,7 +355,7 @@ fn grant_roles_map_to_seven_presets() {
         (FederationGrantRole::Steward, RolePreset::Steward),
         (FederationGrantRole::Member, RolePreset::Member),
         (FederationGrantRole::Viewer, RolePreset::Member),
-        (FederationGrantRole::Auditor, RolePreset::Member),
+        (FederationGrantRole::Deputy, RolePreset::Deputy),
         (FederationGrantRole::Delegate, RolePreset::Delegate),
         (FederationGrantRole::Guest, RolePreset::Guest),
     ] {
