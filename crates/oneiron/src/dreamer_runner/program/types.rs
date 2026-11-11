@@ -63,9 +63,10 @@ impl ProgramRecipePin {
     }
 }
 
-/// What an actor arms for its own future turns: a callable SKILL, the
-/// executor revision that runs it, the arguments it is called with, and the
-/// conversation whose turns wake it (any of the actor's own when `None`).
+/// What an actor arms: a callable SKILL, the executor revision that runs it,
+/// the arguments it is called with, what wakes it (its own turns unless
+/// `trigger` says otherwise), and, for a turn program, the conversation
+/// whose turns wake it (any of the actor's own when `None`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArmTurnProgram {
@@ -76,9 +77,14 @@ pub struct ArmTurnProgram {
     /// The arguments it is called with, as its call contract takes them.
     pub args: serde_json::Value,
     /// The conversation whose turns wake it; any of the actor's own when
-    /// absent.
+    /// absent. Only a turn program names one.
     #[serde(default)]
     pub conversation: Option<EntityId>,
+    /// What wakes it: the actor's own turns when absent, or a due time, the
+    /// host turning idle, or one of the actor's own change feed
+    /// subscriptions moving (untangle slice 6.8).
+    #[serde(default, skip_serializing_if = "ProgramTrigger::is_turn")]
+    pub trigger: ProgramTrigger,
 }
 
 /// Which of the caller's own armed programs to disarm.
