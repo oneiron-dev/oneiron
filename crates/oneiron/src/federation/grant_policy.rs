@@ -244,8 +244,9 @@ pub(crate) fn resolved_scope(
 
 /// The Connect guest ceiling (FIX 3016): the meet of every
 /// `connect_guest_ceiling` row under the precedence row, then the structural
-/// guest ceiling (read and propose only). No row is a refusal: there is no
-/// top-scope fallback.
+/// Connect guest ceiling (read, propose and inquire only; the Ask guest's
+/// scope is not this one). No row is a refusal: there is no top-scope
+/// fallback.
 pub(crate) fn connect_guest_ceiling(rows: &[GrantPolicyRow]) -> Result<Scope> {
     if !rows
         .iter()
@@ -261,7 +262,7 @@ pub(crate) fn connect_guest_ceiling(rows: &[GrantPolicyRow]) -> Result<Scope> {
             _ => None,
         })
         .reduce(|left, right| left.meet(&right))
-        .map(|ceiling| ceiling.meet(&super::grant::guest_authority_scope()))
+        .map(|ceiling| ceiling.meet(&super::connect_grant::connect_guest_structural_ceiling()))
         .ok_or_else(|| Error::InvalidConfig("connect guest ceiling row missing".into()))
 }
 

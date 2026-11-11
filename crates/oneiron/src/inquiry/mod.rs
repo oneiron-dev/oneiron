@@ -1,7 +1,7 @@
 //! Inquiry: a company vault asks a member's vault (federation.md #inquiry,
 //! ARCH-0082 #inquiry; owner ASK-YOUR-VAULT = A, 2026-11-11). INQUIRE-1,
-//! PR 1: the records, their stores and the company setting. Nothing sends,
-//! answers or admits an inquiry yet.
+//! PRs 1 and 2: the records, their stores, the company setting and the
+//! edge. Nothing sends, answers or admits an inquiry yet.
 //!
 //! * [`Inquiry`] and [`InquiryAnswer`], with the one wire shape both vaults
 //!   read: statement text and its source, never a hit, score, vector or
@@ -13,15 +13,28 @@
 //! * The company setting `inquiry_keep` ([`InquiryKeep`]), a versioned row
 //!   of the policy manifest ([`InquiryPolicy`]); no row means `task`.
 //!
-//! The inquiry edge and its opened scope (PR 2), the member-side answer on
-//! the check-in ladder (PR 3), the asking side's send and task-held answer
-//! (PR 4), the verbs (PR 5) and the copy landing (PR 6) are later builds.
+//! * The inquiry edge (PR 2): the member's Connect guest grant to one
+//!   company, verbs `inquire` alone, with its terms ([`InquiryTerms`]), the
+//!   company's reciprocal grant, and the opened scope "What <company> can
+//!   ask about" ([`InquiryScopeItem`]).
+//!
+//! The member-side answer on the check-in ladder (PR 3), the asking side's
+//! send and task-held answer (PR 4), the verbs (PR 5) and the copy landing
+//! (PR 6) are later builds.
 
+mod edge;
 mod log;
 mod policy;
 mod receipt;
 mod record;
 pub(crate) mod tables;
+mod terms;
+
+pub(crate) use edge::drop_inquiry_scope_links_in_txn;
+pub use edge::{
+    INQUIRY_STATEMENT_PREDICATE, InquiryEdge, InquiryEdgeReciprocalGrant, InquiryEdgeRequest,
+    InquiryScopeItem,
+};
 
 pub(crate) use log::erase_inquiry_log_actor_in_txn;
 pub use log::{InquiryDecider, InquiryLogEntry};
@@ -36,3 +49,4 @@ pub use record::{
     Inquiry, InquiryAnswer, InquiryAsker, InquiryKeep, InquiryOutcome, InquiryStatement,
     InquiryTask, StatementSource,
 };
+pub use terms::{InquiryCheckInMode, InquiryTerms, InquiryTierCeiling};
