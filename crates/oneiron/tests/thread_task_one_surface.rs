@@ -3,28 +3,33 @@
 //! holder of the thread's bound TASK in its own write, and never answers an
 //! ask or steers a run.
 //!
-//! Fixture: a project whose roster seats owen and two agents, A and B; a
-//! private thread rooted on a witness turn whose audience is owen and A; two
-//! open TASKs owen owns and binds to that thread, one assigned to A and one
-//! to B. owen replies through `Vault::reply_in_thread`, the REST thread
-//! reply's door.
+//! Fixture: a project whose roster seats owen, the vault's owner, and two
+//! agents, A and B, each holding a grant over the room's messages; a private
+//! thread rooted on a witness turn whose audience is owen and A; two open
+//! TASKs owen owns and binds to that thread, one assigned to A and one to B.
+//! owen replies through `Vault::reply_in_thread`, the REST thread reply's
+//! door. owen is the owner because a PERSON with no contact clearance reads
+//! only public rows, and a room's TURNs and MESSAGEs are born Sensitive.
 //!
 //! Public paths only; no test door.
 //! `cargo test --locked -p oneiron --all-features --test thread_task_one_surface`.
 
 use std::collections::BTreeSet;
 
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use oneiron::attempt_queue::{
     AttemptQueue, ClaimAttempt, ClaimOutcome, EnqueueAttempt, EnqueueOutcome,
 };
 use oneiron::conversation_dag::{AddressMode, AppendRecord, QuoteSpan, ReplyStripsRequest};
-use oneiron::federation::Scope;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::policy_manifest_doors::{
     ActorCeiling, PolicyCeiling, PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow,
     policy_manifests_as_owner, put_policy_manifest_as_owner,
 };
-use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use oneiron::run_tree::RunTreeAdapter;
 use oneiron::task_verb::{
     ConsultPayloadRef, TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion,
@@ -129,18 +134,7 @@ fn open_fixture() -> TestResult<Fixture> {
     let proof = vault
         .memory(owner, EdgeActorClass::Human)
         .embedded_owner("vault.agents.create")?;
-    let owen = EntityId::now();
-    let now = vault.now_recorded_at();
-    vault.put_entity(
-        &owen,
-        ENTITY_TYPE_PERSON,
-        TimeRange {
-            start: now,
-            end: now,
-        },
-        now,
-        b"owen",
-    )?;
+    let owen = owner;
     let agent_a = EntityId::now();
     let agent_b = EntityId::now();
     for (agent, name) in [(agent_a, "yuki"), (agent_b, "yuki-two")] {
@@ -160,7 +154,7 @@ fn open_fixture() -> TestResult<Fixture> {
             },
         )?;
     }
-    // A asks under its own Auto ceiling; owen and A read the vault's
+    // A asks under its own Auto ceiling; owen, A and B read the vault's
     // records. The shipped rows stay.
     let view =
         policy_manifests_as_owner(&vault, &proof, &PolicyManifestRead { manifest_ref: None })?;
@@ -176,7 +170,7 @@ fn open_fixture() -> TestResult<Fixture> {
         ceiling: PolicyCeiling::Auto,
     });
     let mut rows = manifest.scoped_grants.clone().unwrap_or_default();
-    for actor in [owen, agent_a] {
+    for actor in [owen, agent_a, agent_b] {
         rows.push(PolicyScopedGrantRow {
             // Bare census keys carry no actor class.
             actor_class: None,
@@ -204,6 +198,30 @@ fn open_fixture() -> TestResult<Fixture> {
     project.roster.extend([agent_a.to_hex(), agent_b.to_hex()]);
     vault.put_project(project_id, &project, vault.now_recorded_at())?;
     let room = EntityId::from_hex(&project.home_room)?;
+    // A room read admits a row only when every reader of its audience may:
+    // A and B each read the room's MESSAGEs under a grant.
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    for principal in [agent_a, agent_b] {
+        vault.create_access_grant(
+            &EntityId::now(),
+            &AccessGrant {
+                authority_scope: authority_scope.clone(),
+                principal_ref: principal,
+                scope: AccessGrantScope::ConversationMessages {
+                    conversation_ref: room,
+                },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs(),
+                revoked_at: None,
+                expires_at: None,
+                companion_bounds: None,
+            },
+        )?;
+    }
     let anchor = EntityId::now();
     speak_turn(&vault, owen, room, anchor, None, None)?;
     let thread = EntityId::now();
@@ -225,6 +243,16 @@ fn open_fixture() -> TestResult<Fixture> {
         agent_b,
         "thread task for yuki-two",
     )?;
+    // owen reads the thread's root row and its MESSAGE before any reply, so
+    // a reader that cannot see the thread never passes for a missing row.
+    let rows = vault
+        .memory(owen, EdgeActorClass::Human)
+        .rooms_messages(room)?;
+    if !rows.iter().any(|row| {
+        row.turn_id == thread.to_hex() && row.message_ids.contains(&root_message.to_hex())
+    }) {
+        return Err("fixture: owen reads no room row for the thread's root".into());
+    }
     Ok(Fixture {
         vault,
         owen,
@@ -356,6 +384,18 @@ fn plain_quoted_reply_keeps_its_quote_strip() -> TestResult {
             end: 4,
         }),
     )?;
+    // The reply keeps a room row with no MESSAGE and so no row quote: the
+    // strip below comes from the reply TURN itself.
+    let rows = fixture
+        .vault
+        .memory(fixture.owen, EdgeActorClass::Human)
+        .rooms_messages(fixture.room)?;
+    let row = rows
+        .iter()
+        .find(|row| row.turn_id == reply.to_hex())
+        .ok_or("the quoted plain reply keeps no room row")?;
+    assert!(row.message_ids.is_empty());
+    assert!(row.quotes.is_empty());
     let page = fixture
         .vault
         .memory(fixture.owen, EdgeActorClass::Human)
