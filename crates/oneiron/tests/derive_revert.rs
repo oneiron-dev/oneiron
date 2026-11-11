@@ -9,14 +9,16 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use oneiron::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derivation_floor::define_agent;
 use oneiron::test_doors::derive::{
     Claim, Derived, Named, SameAs, Supersede, claim_lifecycle, commit, commit_claims,
-    define_auto_agent, grant_derive_rows, mint_nightly_links, revert, revert_as_owner,
-    same_as_edge,
+    mint_nightly_links, revert, revert_as_owner, same_as_edge,
 };
 use oneiron::test_doors::steward::dreamer;
 use oneiron::{EdgeActorClass, EntityId, Vault};
@@ -98,6 +100,30 @@ fn fixture() -> Fixture {
 
 fn active(fixture: &Fixture, claim: EntityId) -> bool {
     claim_lifecycle(&fixture.vault, claim).expect("read") == Some("active".to_owned())
+}
+
+/// Writes an observed claim about the fixture's person through the raw claim
+/// door; its id. The supersede inverse reopens such a claim: its re-put names
+/// no actor, and an observed claim stands at `auto` with no actor's permit.
+/// A generated claim does not (FIX row DERIVE-REVERT-GENERATED-CLAIM).
+fn observed_claim(fixture: &Fixture, predicate: &str, value: &str) -> EntityId {
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(fixture.person),
+        rmpv::Value::from(value),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("a claim body");
+    body.source = Some(ClaimSource::Observed);
+    let id = EntityId::now();
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .put_claim(&id, &body, TimeRange { start: at, end: at }, at)
+        .expect("an observed claim");
+    id
 }
 
 #[test]
@@ -253,30 +279,11 @@ fn reverting_a_repeated_same_as_leaves_the_edge_the_first_batch_applied() {
 #[test]
 fn reverting_a_batch_whose_items_share_a_row_takes_back_every_item() {
     let fixture = fixture();
-    // An ordinary agent's claims: the lifecycle reopens them, as it reopens
-    // no claim the Dreamer signed.
-    let agent = define_auto_agent(&fixture.vault).expect("an agent");
-    grant_derive_rows(&fixture.vault, &[agent]).expect("the agent's derive rows");
-    let seeded = commit_claims(
-        &fixture.vault,
-        agent,
-        EdgeActorClass::Agent,
-        "run-seed-shared-row",
-        &[
-            claim(fixture.person, fixture.turn, "a", "preference.snack"),
-            claim(fixture.person, fixture.turn, "b", "preference.breakfast"),
-            claim(fixture.person, fixture.turn, "c", "preference.dinner"),
-        ],
-    )
-    .expect("the agent's claims commit");
-    let [a, b, c] = seeded.items.as_slice() else {
-        panic!("three items: {:?}", seeded.items);
-    };
-    for item in [a, b, c] {
-        assert!(item.landed, "{item:?}");
-        assert_eq!(item.approval.as_deref(), Some("auto"));
-    }
-    let (a, b, c) = (a.rows[0], b.rows[0], c.rows[0]);
+    // Observed claims, which the lifecycle reopens. It reopens no claim the
+    // Dreamer signed and no generated claim (`observed_claim`).
+    let a = observed_claim(&fixture, "preference.snack", "a");
+    let b = observed_claim(&fixture, "preference.breakfast", "b");
+    let c = observed_claim(&fixture, "preference.dinner", "c");
     let supersessions = commit(
         &fixture.vault,
         fixture.dreamer,
