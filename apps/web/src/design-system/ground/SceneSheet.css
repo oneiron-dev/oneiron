@@ -1,0 +1,37 @@
+/* The scene in full behind one centred sheet. The picture is the stage's
+   own background, so it holds still while the sheet scrolls. */
+.sl-scene-sheet-stage {
+  position: absolute;
+  inset: 0;
+  z-index: var(--sl-z-work);
+  display: grid;
+  overflow: auto;
+  padding: 24px;
+  background: var(--sl-ground-a) center / cover no-repeat;
+}
+
+/* One sheet: the island's tone, the well radius, no shadow, no ring.
+   Auto margins centre it both ways and let a tall sheet start at the top
+   of the scroll. */
+.sl-scene-sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  margin: auto;
+  padding: 28px 30px 22px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-island);
+  color: var(--sl-ink-2);
+}
+
+.sl-scene-sheet-brand {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 22px;
+  color: var(--sl-ink-1);
+}
+
+.sl-scene-sheet-brand[data-align="center"] {
+  justify-content: center;
+}

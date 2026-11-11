@@ -7,6 +7,7 @@ import {
   Icon,
   IconAction,
   MessageRow,
+  PinMark,
   PinnedList,
   RoomHead,
   ROOM_VIEWS,
@@ -22,11 +23,7 @@ import { GALLERY_THEMES } from './-themes'
    lists behind its tabs: a room of the cast with its pins, its files and
    its crew. Every tab works; the readout under each says what happened. */
 
-const PIN_MARK = (
-  <span title="Pinned in this room" className="lib-pin-mark">
-    <Icon name="pin" size={14} />
-  </span>
-)
+const PIN_MARK = <PinMark />
 
 const FILES: Array<{ kind: IconName; name: string; who: React.ReactNode; author: string; time: string; pinned?: boolean }> = [
   { kind: 'chart', name: 'Q4 view', who: <Glyph glyph="ruler" label="Metryon" size={18} />, author: 'Metryon', time: '14:31', pinned: true },
