@@ -1,0 +1,75 @@
+/* The head line of a room: the name, the tabs after it, the tasks and the
+   crew at the right. */
+.sl-room-head {
+  min-height: 40px;
+}
+
+/* The tabs on the head line: 28 px after the name, 20 px apart, the line
+   of the chosen tab 4 px under the words. */
+.sl-room-head-tabs {
+  align-items: center;
+  gap: 20px;
+}
+
+.sl-room-head-tabs > .sl-tab {
+  align-items: center;
+  height: 36px;
+  padding: 0;
+}
+
+.sl-room-head-tabs > .sl-tab[aria-selected="true"]::after,
+.sl-room-head-tabs > .sl-tab:focus-visible::after {
+  bottom: 4px;
+}
+
+/* The room's tasks: the donut and their count. */
+.sl-room-head-tasks {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--sl-radius);
+  color: var(--sl-ink-3);
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-room-head-tasks:hover,
+.sl-room-head-tasks:focus-visible {
+  background: var(--sl-lit);
+  outline: none;
+}
+
+.sl-room-head-tasks:hover > .sl-figure,
+.sl-room-head-tasks:focus-visible > .sl-figure {
+  color: var(--sl-ink-1);
+}
+
+.sl-room-head-tasks:active {
+  transform: scale(0.96);
+}
+
+.sl-room-head-crew {
+  display: flex;
+  align-items: center;
+}
+
+.sl-room-head-outline {
+  color: var(--sl-ink-3);
+}
+
+/* Narrower than 520 px the crew goes first. */
+@container (max-width: 519.98px) {
+  .sl-room-head .sl-place-head-part:has(> .sl-room-head-crew) {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-room-head-tasks {
+    transition: none;
+  }
+  .sl-room-head-tasks:active {
+    transform: none;
+  }
+}
