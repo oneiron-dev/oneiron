@@ -154,12 +154,7 @@ impl Fixture {
         body.scope_facet = self.server.vault.default_facet().expect("default facet");
         self.server
             .vault
-            .put_claim(
-                &claim_id,
-                &body,
-                TimeRange { start: 1, end: 1 },
-                1,
-            )
+            .put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)
             .expect("config claim");
     }
 
