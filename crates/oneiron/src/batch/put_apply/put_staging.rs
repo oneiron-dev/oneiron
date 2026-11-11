@@ -179,6 +179,7 @@ pub(crate) fn delete_entity_index_rows(
 /// overlay's edge readers asymmetric and promote a half-edge.
 pub(in crate::batch) fn stage_edge_rows(
     store: &impl ManifestDbs,
+    authority: &Store,
     wtxn: &mut RwTxn<'_>,
     src: &EntityId,
     kind: EdgeKind,
@@ -188,7 +189,7 @@ pub(in crate::batch) fn stage_edge_rows(
     let weight = crate::edge::decode_edge_value_for_kind(kind, value)?.weight;
     crate::workspace_roster::validate_project_edge_put(store, wtxn, *src, kind, *tgt, weight)?;
     store.port_stage_edge_rows(wtxn, src, kind, tgt, value)?;
-    crate::conversation_dag::pin_membership(store, wtxn, src, kind, tgt)?;
+    crate::conversation_dag::pin_membership(store, authority, wtxn, src, kind, tgt)?;
     if kind == EdgeKind::DerivedFrom {
         crate::ports::record_derived_edge_in_txn(store, wtxn, src, tgt)?;
     }
