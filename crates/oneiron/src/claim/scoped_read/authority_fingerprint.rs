@@ -101,6 +101,17 @@ impl ScopedReadActorKey {
                 fold_scope(&mut hasher, alternative)?;
             }
         }
+        // A key that names its holder also reads inside one of that holder's
+        // agent Grants that stand in this snapshot (REVIEW-7051 P1); a holder
+        // no Grant has ever named folds nothing more.
+        if let Some(holder) = self.agent_grant_holder()
+            && let Some(bounds) = vault.agent_grant_read_bounds_in_txn(&txn, holder)?
+        {
+            fold_len(&mut hasher, bounds.len());
+            for bound in &bounds {
+                fold_scope(&mut hasher, bound)?;
+            }
+        }
         Ok(hasher.finalize().into())
     }
 }
@@ -313,6 +324,7 @@ impl ScopedReadActorKey {
         key_fold_owner_proof(&mut hasher, self.owner_proof_guard());
         hasher.update(&[u8::from(self.owner_by_census())]);
         key_fold_record_bound(&mut hasher, self.record_bound.as_ref());
+        key_fold_id(&mut hasher, self.system_agent_guard());
         // Last, and only when set, so a key no agent Grants bind keeps its
         // fingerprint (FIX AGENT-GRAPHFS-GRANT-WORLDS).
         if let Some(alternatives) = self.grant_alternatives() {
@@ -320,6 +332,11 @@ impl ScopedReadActorKey {
             for alternative in alternatives {
                 key_fold_json(&mut hasher, alternative);
             }
+        }
+        // Last, and only when set: the holder whose live agent Grants bind
+        // the key in each snapshot (REVIEW-7051 P1).
+        if let Some(holder) = self.agent_grant_holder() {
+            key_fold_id(&mut hasher, Some(holder));
         }
         *hasher.finalize().as_bytes()
     }
