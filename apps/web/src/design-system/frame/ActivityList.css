@@ -1,0 +1,196 @@
+/* The activity list: one row per live thread, in five fixed slots. The who
+   and where columns have set widths so they line up down the list. */
+.sl-activity-list {
+  --sl-activity-who: 9.5em;
+  --sl-activity-where: 10em;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  container-type: inline-size;
+}
+
+.sl-activity-day {
+  padding: 14px 0 4px;
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--sl-ink-2);
+}
+
+.sl-activity-day:first-child {
+  padding-top: 0;
+}
+
+/* Each age prints its words one or two steps down the ink ladder, never
+   below ink-3 (ink-4 is never text). */
+.sl-activity-row {
+  --sl-activity-name-ink: var(--sl-ink-1);
+  --sl-activity-ink: var(--sl-ink-2);
+  --sl-mark-ground: var(--sl-island);
+  display: grid;
+  grid-template-rows: 1fr;
+  margin: 0 -8px;
+  border-radius: var(--sl-radius);
+  transition:
+    grid-template-rows 260ms var(--sl-ease-out),
+    opacity 200ms ease;
+}
+
+.sl-activity-row[data-age="yesterday"] {
+  --sl-activity-name-ink: var(--sl-ink-2);
+  --sl-activity-ink: var(--sl-ink-3);
+}
+
+.sl-activity-row[data-age="older"] {
+  --sl-activity-name-ink: var(--sl-ink-3);
+  --sl-activity-ink: var(--sl-ink-3);
+}
+
+/* The open needs-you row is a sunk well. */
+.sl-activity-row[data-open] {
+  --sl-mark-ground: var(--sl-sunk);
+  background: var(--sl-sunk);
+}
+
+/* A settled answer folds the row away. */
+.sl-activity-row[data-settle="settled"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.sl-activity-row-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sl-activity-row-main {
+  display: grid;
+  grid-template-columns: 22px var(--sl-activity-who) var(--sl-activity-where) minmax(0, 1fr) auto;
+  column-gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px;
+  border-radius: var(--sl-radius);
+  text-align: left;
+  transition: background-color 120ms ease;
+}
+
+.sl-activity-row-main:hover,
+.sl-activity-row-main:focus-visible {
+  background: var(--sl-hover);
+  outline: none;
+}
+
+.sl-activity-row[data-open] .sl-activity-row-main:hover {
+  background: none;
+}
+
+.sl-activity-slot {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sl-activity-slot[data-slot="what"] {
+  justify-content: center;
+}
+
+.sl-activity-slot[data-slot="who"] {
+  gap: 9px;
+}
+
+.sl-activity-slot[data-slot="where"] {
+  gap: 4px;
+  color: var(--sl-activity-ink);
+}
+
+.sl-activity-slot[data-slot="where"] > .sl-icon {
+  flex: none;
+}
+
+.sl-activity-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.sl-activity-name,
+.sl-activity-where,
+.sl-activity-slot[data-slot="say"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-activity-name {
+  font-size: var(--sl-t-say);
+  line-height: 1.4;
+  color: var(--sl-activity-name-ink);
+}
+
+.sl-activity-where {
+  font-size: var(--sl-t-do);
+}
+
+.sl-activity-slot[data-slot="say"] {
+  display: block;
+  font-size: var(--sl-t-say);
+  line-height: 1.4;
+  color: var(--sl-activity-ink);
+}
+
+.sl-activity-slot[data-slot="when"] {
+  justify-content: flex-end;
+}
+
+/* Marks: a ring waits on you, half-tone runs, a symbol for the rest. */
+.sl-activity-mark {
+  display: grid;
+  place-items: center;
+  color: var(--sl-activity-ink);
+}
+
+.sl-activity-mark[data-kind="running"] svg {
+  display: block;
+  fill: var(--sl-ink-2);
+}
+
+.sl-activity-mark[data-kind="done"] {
+  color: var(--sl-ink-3);
+}
+
+.sl-status-dot.sl-activity-mark,
+.sl-guest-ring.sl-activity-mark {
+  display: inline-block;
+}
+
+/* The second line of an open needs-you row sits under the sentence. */
+.sl-activity-row-line {
+  padding: 0 8px 8px calc(8px + 22px + 12px);
+}
+
+/* A narrow list gives the who and where columns less room. */
+@container (max-width: 640px) {
+  .sl-activity-row {
+    --sl-activity-who: 6.5em;
+    --sl-activity-where: 6.5em;
+  }
+}
+
+@container (max-width: 480px) {
+  .sl-activity-row {
+    --sl-activity-who: 6em;
+    --sl-activity-where: 4.5em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-activity-row,
+  .sl-activity-row-main {
+    transition: none;
+  }
+}
