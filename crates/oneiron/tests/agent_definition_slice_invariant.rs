@@ -5,9 +5,12 @@
 //!
 //! The doors: the guest's `self.*` `vault.agents.put` (`SelfCall::AgentsPut`
 //! through the leased host dispatcher), the same host's public
-//! `put_agent_definition` called directly, and an agent's local pack carrying
-//! a travelling AgentPack. Each wider draft must be a proposal or a refusal;
-//! an in-slice draft through the self.* door stays Active.
+//! `put_agent_definition` called directly, an agent's local pack carrying a
+//! travelling AgentPack (`vault.packs.put` as the agent), and the owner's
+//! `vault.packs.put` of the same folder. Each wider draft must be a proposal
+//! or a refusal; an in-slice draft through the self.* door and an in-slice
+//! local pack through the agent door land Active at the author's ceiling.
+//! The owner's put of the same in-slice folder stays inert.
 //!
 //! `revoked_author_and_its_active_definition` is an observation for NOTE
 //! AGENTDEF-REVOKE: it prints whether an author's Active definition keeps its
@@ -322,9 +325,47 @@ fn direct_host_put_lands_no_wider_draft_active() -> TestResult {
     assert_no_wider_draft_lands_active("U1b-host-method", put_through_host_method, 0x60)
 }
 
+/// The door a local-pack put takes: the writer agent's `local` put or the
+/// owner's `vault.packs.put` of the same folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalPackDoor {
+    Agent,
+    Owner,
+}
+
+impl LocalPackDoor {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Agent => "U5-local-agent-pack",
+            Self::Owner => "U5-local-owner-pack",
+        }
+    }
+}
+
+fn provenance_entry(def: &AgentDefinition, key: &str) -> Option<String> {
+    match &def.provenance {
+        Value::Map(entries) => entries.iter().find_map(|(entry_key, entry_value)| {
+            if entry_key.as_str() == Some(key) {
+                entry_value.as_str().map(str::to_owned)
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    }
+}
+
 /// U5: an Approved agent at Base and ceiling Proposed puts its local pack as a
-/// travelling AgentPack named `local` that asks for `scope` and `ceiling`.
-fn put_local_agent_pack(case: &str, scope: AgentScope, ceiling: AgentCeiling) -> TestResult<bool> {
+/// travelling AgentPack named `local` that asks for `scope` and `ceiling`,
+/// through `door`. The writer id is `[writer_seed; 16]`. Returns the minted
+/// definition, if any, its dispatch standing, and the writer id.
+fn put_local_agent_pack(
+    case: &str,
+    door: LocalPackDoor,
+    writer_seed: u8,
+    scope: AgentScope,
+    ceiling: AgentCeiling,
+) -> TestResult<(Option<AgentDefinition>, String, EntityId)> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
@@ -332,7 +373,7 @@ fn put_local_agent_pack(case: &str, scope: AgentScope, ceiling: AgentCeiling) ->
     let owner_id = vault.ensure_embedded_owner_actor()?;
     let owner =
         vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
-    let writer_id = EntityId::from_bytes([0x81; 16])?;
+    let writer_id = EntityId::from_bytes([writer_seed; 16])?;
     vault.create_agent_definition_as(
         &owner,
         &writer_id,
@@ -357,7 +398,10 @@ fn put_local_agent_pack(case: &str, scope: AgentScope, ceiling: AgentCeiling) ->
         BornWith::new(),
     )?
     .files()?;
-    let outcome = vault.put_local_pack_as_agent(&agent, files);
+    let outcome = match door {
+        LocalPackDoor::Agent => vault.put_local_pack_as_agent(&agent, files),
+        LocalPackDoor::Owner => vault.put_pack(&owner, files),
+    };
     let target_hex = match &outcome {
         Ok(
             PackInstallDisposition::Installed(receipt) | PackInstallDisposition::Candidate(receipt),
@@ -370,19 +414,7 @@ fn put_local_agent_pack(case: &str, scope: AgentScope, ceiling: AgentCeiling) ->
         None => None,
     };
     let dispatch = match target {
-        Some(id) => match AgentDispatcher::new(&vault).dispatch(DispatchAgent {
-            target: AgentDispatchTarget::Custom(id),
-            parent_attempt: None,
-            dedupe_key: None,
-            run_id: None,
-            now: 2,
-        }) {
-            Ok(AgentDispatchOutcome::Dispatched(_)) => "dispatched".to_owned(),
-            Ok(AgentDispatchOutcome::Existing(_)) => "existing".to_owned(),
-            Ok(AgentDispatchOutcome::ProposedWiden(_)) => "proposed-widen".to_owned(),
-            Ok(_) => "workflow".to_owned(),
-            Err(error) => format!("refused: {error}"),
-        },
+        Some(id) => dispatch_kind(&vault, id, 2),
         None => "no-definition".to_owned(),
     };
     let outcome_kind = match &outcome {
@@ -392,11 +424,12 @@ fn put_local_agent_pack(case: &str, scope: AgentScope, ceiling: AgentCeiling) ->
         Err(error) => format!("error: {error}"),
     };
     println!(
-        "SLICE door=U5-local-agent-pack case={case} outcome={outcome_kind} target={} stored=[{}] dispatch={dispatch}",
+        "SLICE door={} case={case} outcome={outcome_kind} target={} stored=[{}] dispatch={dispatch}",
+        door.label(),
         target.map_or_else(|| "none".to_owned(), |id| id.to_hex()),
         brief(stored.as_ref())
     );
-    Ok(stored.as_ref().is_some_and(lands_active) || dispatch == "dispatched")
+    Ok((stored, dispatch, writer_id))
 }
 
 #[test]
@@ -414,7 +447,9 @@ fn agent_local_agent_pack_lands_no_wider_definition_active() -> TestResult {
             AgentCeiling::Proposed,
         ),
     ] {
-        if put_local_agent_pack(case, scope, ceiling)? {
+        let (stored, dispatch, _) =
+            put_local_agent_pack(case, LocalPackDoor::Agent, 0x81, scope, ceiling)?;
+        if stored.as_ref().is_some_and(lands_active) || dispatch == "dispatched" {
             active.push(case);
         }
     }
@@ -422,12 +457,56 @@ fn agent_local_agent_pack_lands_no_wider_definition_active() -> TestResult {
         active.is_empty(),
         "U5: wider-than-slice local agent packs landed Active: {active:?}"
     );
-    // Observation only (no assertion): an in-slice local agent pack. The
-    // ruled rule would land it Active at the writer's ceiling; print what
-    // main does.
-    let in_slice =
-        put_local_agent_pack("in-slice-observe", AgentScope::Base, AgentCeiling::Proposed)?;
-    println!("SLICE door=U5-local-agent-pack case=in-slice-observe lands_active={in_slice}");
+    Ok(())
+}
+
+#[test]
+fn agent_local_agent_pack_in_slice_lands_active() -> TestResult {
+    let (stored, dispatch, writer_id) = put_local_agent_pack(
+        "in-slice",
+        LocalPackDoor::Agent,
+        0x82,
+        AgentScope::Base,
+        AgentCeiling::Proposed,
+    )?;
+    let def = stored.as_ref().expect("the in-slice definition");
+    assert!(lands_active(def), "in-slice {}", brief(Some(def)));
+    assert_eq!(dispatch, "dispatched");
+    let writer_hex = writer_id.to_hex();
+    let author = provenance_entry(def, "author");
+    assert_eq!(author.as_deref(), Some(writer_hex.as_str()));
+    let defined_via = provenance_entry(def, "definedVia");
+    assert_eq!(defined_via.as_deref(), Some("vault.packs.put"));
+    Ok(())
+}
+
+#[test]
+fn owner_local_agent_pack_stays_inert() -> TestResult {
+    let (stored, dispatch, _) = put_local_agent_pack(
+        "in-slice-owner",
+        LocalPackDoor::Owner,
+        0x83,
+        AgentScope::Base,
+        AgentCeiling::Proposed,
+    )?;
+    let def = stored.as_ref().expect("the owner-put definition");
+    assert!(
+        !def.enabled,
+        "owner put stays disabled: {}",
+        brief(Some(def))
+    );
+    assert_eq!(
+        def.approval_status,
+        ClaimApprovalStatus::Proposed,
+        "owner put stays proposed: {}",
+        brief(Some(def))
+    );
+    assert!(
+        !lands_active(def),
+        "owner put stays inert: {} dispatch={dispatch}",
+        brief(Some(def))
+    );
+    assert_ne!(dispatch, "dispatched");
     Ok(())
 }
 
