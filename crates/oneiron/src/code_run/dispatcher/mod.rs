@@ -4,6 +4,7 @@
 
 mod admission;
 mod agent_verb;
+mod agent_wait;
 mod binding;
 mod browser_admission;
 mod connector_answer;
@@ -11,6 +12,7 @@ mod coordination;
 mod dispatch;
 mod emission;
 mod envelope;
+mod executor_reply;
 mod fold_verbs;
 mod host_doors;
 mod human_speech;
@@ -20,15 +22,16 @@ mod memory_verbs;
 mod program_step;
 mod read_worlds;
 mod reader_spawn;
+mod record_refs;
+mod refusal_output;
 mod repo;
 mod repo_sources;
 mod routed_entry;
 mod session_verbs;
+mod skill_bodies;
 mod spawn_capture;
 mod summarize;
 mod team_submit;
-mod team_submit_entity;
-mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
 mod wake_policy;
@@ -53,18 +56,22 @@ use crate::off_record::OffRecordSession;
 use crate::vault::VaultId;
 use crate::{ClaimSource, Vault, WriteActor};
 
-use self::admission::gate_rejection;
+use self::admission::{admit_recorded_answer, gate_rejection};
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
+pub(crate) use self::agent_verb::write_receipt_may_have_run;
+pub(crate) use self::coordination::agent_attempt_run_ref;
 pub(crate) use self::envelope::check_write_gate_against_vault;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
+pub(crate) use self::executor_reply::{ExecutorReply, ExecutorReplyPublisher};
 use self::human_speech::HumanWaitDispatchTarget;
 pub use self::leader::{HostPlannerBinding, HostPlannerDecisions};
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
 pub(crate) use self::reader_spawn::{
     ReaderChildBinding, delegated_input, delegated_occurrence_input,
 };
+pub use self::repo_sources::RepoRequestWitness;
 
 /// Host-bound dispatcher for one first-party code run.
 ///
@@ -120,18 +127,24 @@ pub struct HostSelfDispatcher<'a> {
     /// it (ARCH-0080 §3): a Redact, or a blocking hook that hid it. The
     /// executor's host takes it for its reply; the run records the result.
     pub(super) hook_view: RefCell<Option<serde_json::Value>>,
+    /// This call's released reason, taken once by its executor recorder.
+    pub(super) task_refusal_output: RefCell<Option<Vec<u8>>>,
+    /// Where the last call's native producer witnessed the skill bodies its
+    /// answer carries (FIX 3608): the executor's host takes them with the
+    /// call's answer. Host-internal: no guest call reaches it.
+    pub(super) skill_bodies: RefCell<Option<crate::skill::SkillBodyCapture>>,
     /// The public fold boundary's completed pre chain, for its exact Mark only.
     pub(super) pre_hooked_fold: Option<crate::code_run::actions::PreHookedFold>,
+    /// An action's input whose base64 member its host holds as a file (FIX
+    /// 22096), for the action's own call only: its door takes the file, and
+    /// its receipt keeps the whole input's digests.
+    pub(super) action_blob: Option<crate::code_run::actions::ActionBlobInput>,
     /// The calls a verb hook's ask parked, as the run's history shows them,
     /// with the invocation each ask waits under and the ask's handle, which
-    /// the same call names as the pause it resumes (FIX 5526).
-    pub(super) parked_hooks: RefCell<
-        Vec<(
-            verb_hooks::ParkedCall,
-            crate::runtime_hooks::InvocationId,
-            Option<EntityId>,
-        )>,
-    >,
+    /// the same call names as the pause it resumes (FIX 5526). Each keeps
+    /// the row that parked it, so a call whose row an erase took the words
+    /// of is still known (FIX 6534).
+    pub(super) parked_hooks: RefCell<Vec<verb_hooks::ParkedHook>>,
     /// The seat the host lent the run to spawn reader children under, if
     /// any (ARCH-0079 #reader-forks).
     pub(super) reader_spawn: Option<crate::code_run::SpawnHostSeat>,
@@ -144,6 +157,8 @@ pub struct HostSelfDispatcher<'a> {
     /// start the host reads through it on its route (FIX 2594, FIX 7507);
     /// `None` until a host binds one. No guest call reaches it.
     bound_run: Option<EntityId>,
+    /// Actual host-bound write placement, never a requested read-world set.
+    birth_world: Option<EntityId>,
     /// The host's planner (OF-541, OF-389): what a planned spawn and the
     /// leader's calls read. Host configuration; no guest call reaches it.
     pub(super) planner: Option<HostPlannerBinding<'a>>,
@@ -179,10 +194,10 @@ pub struct HostSelfDispatcher<'a> {
     /// call's own capture noted its answer. Host-internal: no guest call
     /// reaches it.
     read_worlds: Cell<read_worlds::ReadWorldLive>,
-    /// Whether the run's task is its caller's own text (FIX 6130): only
-    /// [`Self::with_caller_task`] sets it, as the host binds the run. No
-    /// guest call reaches it.
-    caller_task: bool,
+    /// The run and the exact task text its host declared the caller's own
+    /// (FIX 6130, FIX 7087): only [`Self::with_caller_task`] sets it, as the
+    /// host binds the run. No guest call reaches it.
+    caller_task: Option<(EntityId, String)>,
     /// The host's review policy for the run's repo proposals (FIX 6867):
     /// only [`Self::with_repo_review_policy`] binds it. No guest call
     /// reaches it.
@@ -196,6 +211,11 @@ pub struct HostSelfDispatcher<'a> {
     /// The seats each open spawn call resolved (FIX 9180): host-only, one
     /// frame per call, taken by the recorder of the call's row.
     spawn_capture: spawn_capture::SpawnCapture,
+    /// The admitted MCP caller the host bound the run for (FIX 4606): only
+    /// [`Self::with_code_consent_origin`] sets it, from the request the
+    /// host admitted. A code consent wait the run mints keeps it. No guest
+    /// call reaches it.
+    code_consent_origin: Option<crate::code_run::CodeConsentRunOrigin>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -208,6 +228,7 @@ pub(crate) struct ExecutorCallSite<'h> {
     pub(crate) step_start: u64,
     /// This attempt's earlier calls in the step, as recorded.
     pub(crate) earlier: &'h [CodeRunBridgeCall],
+    pub(crate) reply_publisher: Option<&'h dyn ExecutorReplyPublisher>,
 }
 
 /// Explicit first-party GatedActorWrite trap surface for engine-native code.

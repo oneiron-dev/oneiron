@@ -26,7 +26,9 @@
 use core::assert_matches;
 use std::sync::Arc;
 
+use crate::sync_harness::bulk_state_envelope;
 use crate::sync_harness::make_entity_blob;
+use crate::sync_harness::open_vault_with_memory_keystore;
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::affect::Vad;
 use oneiron::edge::EdgeKind;
@@ -59,7 +61,7 @@ fn test_config() -> VaultConfig {
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let vault = Arc::new(open_vault_with_memory_keystore(temp.path(), test_config()));
     (temp, vault)
 }
 
@@ -175,7 +177,10 @@ fn bulk_hostile_snapshot_soft_over_effective_hard_is_blocked() {
     let manager = make_manager(&vault);
     let (mut client, _rx) = make_client(&manager);
     client
-        .handle_server_message(&transport::encode_bulk_transfer_done(WINDOW, &snapshot))
+        .handle_server_message(&transport::encode_bulk_transfer_done(
+            WINDOW,
+            &bulk_state_envelope(&snapshot),
+        ))
         .unwrap();
 
     // LMDB: the entity stays purged; dt: is never modified by replay/drain.
@@ -256,7 +261,10 @@ fn bulk_hostile_snapshot_live_body_over_hard_deleted_id_not_materialized() {
     let manager = make_manager(&vault);
     let (mut client, _rx) = make_client(&manager);
     client
-        .handle_server_message(&transport::encode_bulk_transfer_done(WINDOW, &snapshot))
+        .handle_server_message(&transport::encode_bulk_transfer_done(
+            WINDOW,
+            &bulk_state_envelope(&snapshot),
+        ))
         .unwrap();
 
     // No materialization: the dt: gate refused the body before any byte
@@ -356,7 +364,10 @@ fn bulk_valid_snapshot_positive_control() {
     );
 
     client
-        .handle_server_message(&transport::encode_bulk_transfer_done(WINDOW, &snapshot))
+        .handle_server_message(&transport::encode_bulk_transfer_done(
+            WINDOW,
+            &bulk_state_envelope(&snapshot),
+        ))
         .unwrap();
 
     // Observer B materialized the entity (the old raw-write arm never did).

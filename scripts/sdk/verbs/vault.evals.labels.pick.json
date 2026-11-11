@@ -1,0 +1,16 @@
+{
+  "name": "vault.evals.labels.pick",
+  "description": "Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses.",
+  "input": "crate::skill_optimize::eval_doors::EvalLabelPickRequest",
+  "output": "crate::skill_optimize::EvalCase",
+  "call": "crate::skill_optimize::eval_doors::pick_label(memory.vault(), &memory.embedded_owner(\"vault.evals.labels.pick\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

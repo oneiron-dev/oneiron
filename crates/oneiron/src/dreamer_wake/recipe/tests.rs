@@ -316,6 +316,7 @@ fn committed_result_resumes_without_runtime_skill_or_evidence() -> Result<()> {
             reserve_units: 100,
             now: now + 2,
             host_scope: None,
+            destination_bound: None,
         },
         &mut worker,
         &crate::dreamer_wake::WakeCancellation::new(),

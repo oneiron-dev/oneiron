@@ -79,44 +79,70 @@ impl AuthorityView {
         self.generation
     }
 
-    /// This view with each agent-carried setting or export act held back
-    /// whose Grant `txn` holds refused (contract §4, FIX 4624, FIX 5660;
-    /// [`super::carried_act`]). With none, the view as it was.
-    fn with_agent_grant_standing(
+    /// What `txn` holds over this view's signed log (FIX 22382): each
+    /// agent-carried act whose Grant it holds refused (contract §4, FIX
+    /// 4624, FIX 5660, [`super::carried_act`]), and each pact whose folded
+    /// scope does not match its signed commitment under the live opening it
+    /// holds (FIX 11730, [`super::pact_openings`]). Neither row moves the
+    /// authority generation, so every read judges them in its own snapshot,
+    /// a cache hit as a miss. `preserved_world_acts` answers the
+    /// past-standing check of the refused world acts (FIX 4703), which reads
+    /// the signed log alone.
+    fn live_overlay(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        use_past_standing: bool,
+        preserved_world_acts: impl FnOnce(&[AuthorityEntryHash]) -> Result<BTreeSet<AuthorityEntryHash>>,
+    ) -> LiveOverlay {
+        LiveOverlay {
+            refused: super::carried_act::grant_refused_agent_acts(
+                store,
+                txn,
+                &self.fold,
+                use_past_standing,
+                preserved_world_acts,
+            ),
+            mismatched: super::pact_openings::scope_commitment_mismatches(store, txn, &self.fold),
+        }
+    }
+
+    /// This view with `overlay` applied: each refused act held back, and
+    /// each mismatched pact held inactive. The two touch disjoint parts of
+    /// the fold. With neither, the view as it was.
+    fn overlaid(self, overlay: &LiveOverlay) -> Self {
+        if overlay.is_empty() {
+            return self;
+        }
+        let mut fold = (*self.fold).clone();
+        if !overlay.refused.is_empty() {
+            super::carried_act::hold_back_agent_acts(&mut fold, &overlay.refused);
+        }
+        if overlay.mismatched.is_empty() {
+            return Self {
+                fold: Arc::new(fold),
+                ..self
+            };
+        }
+        super::pact_openings::hold_mismatched_pacts(&mut fold, &overlay.mismatched);
+        Self {
+            fold: Arc::new(fold),
+            scope_commitment_mismatches: Arc::new(overlay.mismatched.clone()),
+            ..self
+        }
+    }
+
+    /// This view as `txn` reads it ([`Self::live_overlay`]).
+    fn with_live_overlays(
         self,
         store: &Store,
         txn: &heed::RoTxn<'_>,
         use_past_standing: bool,
     ) -> Self {
-        let refused =
-            super::carried_act::grant_refused_agent_acts(store, txn, &self.fold, use_past_standing);
-        if refused.is_empty() {
-            return self;
-        }
-        let mut fold = (*self.fold).clone();
-        super::carried_act::hold_back_agent_acts(&mut fold, &refused);
-        Self {
-            fold: Arc::new(fold),
-            ..self
-        }
-    }
-
-    /// This view with each pact held inactive whose folded scope does not
-    /// match its signed commitment under the live opening `store` holds for
-    /// it in `txn` (FIX 11730, [`super::pact_openings`]). With none, the
-    /// view as it was.
-    fn with_scope_commitments(self, store: &Store, txn: &heed::RoTxn<'_>) -> Self {
-        let mismatched = super::pact_openings::scope_commitment_mismatches(store, txn, &self.fold);
-        if mismatched.is_empty() {
-            return self;
-        }
-        let mut fold = (*self.fold).clone();
-        super::pact_openings::hold_mismatched_pacts(&mut fold, &mismatched);
-        Self {
-            fold: Arc::new(fold),
-            scope_commitment_mismatches: Arc::new(mismatched),
-            ..self
-        }
+        let overlay = self.live_overlay(store, txn, use_past_standing, |candidates| {
+            super::past_grant_standing::preserved_world_acts(store, txn, &self.fold, candidates)
+        });
+        self.overlaid(&overlay)
     }
 
     /// The pacts this install holds inactive for a scope commitment
@@ -138,9 +164,37 @@ impl std::ops::Deref for AuthorityView {
 pub(crate) struct AuthorityCachedFold {
     key: AuthorityCacheKey,
     next_deadline_secs: Option<u64>,
+    /// The signed log's fold alone, before any overlay a caller's snapshot
+    /// judges (FIX 22382): a Grant's standing and a pact's live opening are
+    /// rows no authority generation counts, so a hit applies them again
+    /// ([`AuthorityView::live_overlay`]).
     view: AuthorityView,
     /// What the fold of a later generation resumes from.
     continuation: Option<Arc<AuthorityContinuation>>,
+    /// The last view a hit made of `view` and the overlay it applied: a
+    /// later hit whose snapshot reads the same overlay takes it instead of
+    /// copying the fold again.
+    overlaid: Option<(LiveOverlay, AuthorityView)>,
+    /// The past-standing answer (FIX 4703) the last hit computed over
+    /// `view`, with the NOW-refused world acts it was asked about. It reads
+    /// the signed log alone (the held rows, the adopted image, causal
+    /// points), so it holds for every snapshot of `key`'s generation; the
+    /// Grant rows that choose those acts are read again on each hit.
+    preserved_world_acts: Option<(Vec<AuthorityEntryHash>, BTreeSet<AuthorityEntryHash>)>,
+}
+
+/// The rows a caller's snapshot holds over a signed-log view
+/// ([`AuthorityView::live_overlay`]).
+#[derive(Clone, PartialEq, Eq)]
+struct LiveOverlay {
+    refused: Vec<AuthorityEntryHash>,
+    mismatched: BTreeSet<[u8; 32]>,
+}
+
+impl LiveOverlay {
+    fn is_empty(&self) -> bool {
+        self.refused.is_empty() && self.mismatched.is_empty()
+    }
 }
 
 /// A successful local-checkpoint coverage check, carried only in this cache.
@@ -334,6 +388,8 @@ fn cache_fold_if_committed(
                             next_deadline_secs,
                             view: view.clone(),
                             continuation: None,
+                            overlaid: None,
+                            preserved_world_acts: None,
                         }
                         .matches(committed)
                     })
@@ -347,6 +403,8 @@ fn cache_fold_if_committed(
             next_deadline_secs,
             view: view.clone(),
             continuation: continuation.map(Arc::new),
+            overlaid: None,
+            preserved_world_acts: None,
         });
     }
 }
@@ -390,22 +448,73 @@ pub(crate) fn authority_view_readonly_for_store_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<AuthorityView> {
     let key = authority_cache_key(store, posture, txn)?;
+    let use_past_standing = posture == store.privacy_posture;
     if let Some(fold) = cached_fold(store, key) {
         tracing::trace!(target: "oneiron::authority::cache", generation = fold.generation(), "exact authority fold cache hit");
-        return Ok(fold);
+        return Ok(overlay_hit(store, txn, key, fold, use_past_standing));
     }
     // A miss resumes from the last committed generation's fold where it can.
     let continuation = resumable_continuation(store, key.generation);
-    let (view, next_deadline_secs, continuation) = fold_view_for_key(
-        store,
-        posture,
-        txn,
-        key,
-        continuation.as_deref(),
-        posture == store.privacy_posture,
-    )?;
+    let (view, next_deadline_secs, continuation) =
+        fold_view_for_key(store, posture, txn, key, continuation.as_deref())?;
     cache_fold_if_committed(store, key, next_deadline_secs, &view, continuation);
-    Ok(view)
+    Ok(view.with_live_overlays(store, txn, use_past_standing))
+}
+
+/// The cached signed-log `view` behind `key` as `txn` reads it: the view the
+/// last hit made when `txn` reads the same overlay, else a new one, kept for
+/// the next hit while the cache still holds `key`'s fold.
+fn overlay_hit(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: AuthorityCacheKey,
+    view: AuthorityView,
+    use_past_standing: bool,
+) -> AuthorityView {
+    let overlay = view.live_overlay(store, txn, use_past_standing, |candidates| {
+        let cached = store.authority_fold_cache.lock().ok().and_then(|cache| {
+            cache
+                .as_ref()
+                .filter(|cached| cached.matches(key))
+                .and_then(|cached| cached.preserved_world_acts.as_ref())
+                .filter(|(asked, _)| asked.as_slice() == candidates)
+                .map(|(_, preserved)| preserved.clone())
+        });
+        if let Some(preserved) = cached {
+            return Ok(preserved);
+        }
+        let preserved =
+            super::past_grant_standing::preserved_world_acts(store, txn, &view.fold, candidates)?;
+        if let Ok(mut cache) = store.authority_fold_cache.lock()
+            && let Some(cached) = cache.as_mut()
+            && cached.matches(key)
+        {
+            cached.preserved_world_acts = Some((candidates.to_vec(), preserved.clone()));
+        }
+        Ok(preserved)
+    });
+    if overlay.is_empty() {
+        return view;
+    }
+    let reused = store.authority_fold_cache.lock().ok().and_then(|cache| {
+        cache
+            .as_ref()
+            .filter(|cached| cached.matches(key))
+            .and_then(|cached| cached.overlaid.as_ref())
+            .filter(|(made_from, _)| *made_from == overlay)
+            .map(|(_, made)| made.clone())
+    });
+    if let Some(made) = reused {
+        return made;
+    }
+    let made = view.overlaid(&overlay);
+    if let Ok(mut cache) = store.authority_fold_cache.lock()
+        && let Some(cached) = cache.as_mut()
+        && cached.matches(key)
+    {
+        cached.overlaid = Some((overlay, made.clone()));
+    }
+    made
 }
 
 /// The cached continuation a fold at `generation` may resume from: only one
@@ -448,13 +557,17 @@ pub(super) fn authority_view_under_pin_for_store_in_txn(
         ..authority_cache_key(store, posture, txn)?
     };
     // Causal grant points use the installed pin, not this proposed pin.
-    Ok(fold_view_for_key(store, posture, txn, key, None, false)?.0)
+    Ok(fold_view_for_key(store, posture, txn, key, None)?
+        .0
+        .with_live_overlays(store, txn, false))
 }
 
 /// The full fold behind `key`, resumed past `baseline` where it can be, the
 /// next stale-roster deadline it holds, and what the next generation
-/// resumes from. History the vault no longer holds fails closed: no fold,
-/// and the typed refusal names the fold's request
+/// resumes from. The view is the signed log's alone: the caller applies
+/// [`AuthorityView::live_overlay`] in its own snapshot. History the vault
+/// no longer holds fails closed: no fold, and the typed refusal names the
+/// fold's request
 /// ([`RecordError::AuthorityHistoryRequired`]);
 /// [`Vault::authority_history_request`] names the same hashes.
 fn fold_view_for_key(
@@ -463,7 +576,6 @@ fn fold_view_for_key(
     txn: &heed::RoTxn<'_>,
     key: AuthorityCacheKey,
     baseline: Option<&AuthorityContinuation>,
-    use_past_standing: bool,
 ) -> Result<(AuthorityView, Option<u64>, Option<AuthorityContinuation>)> {
     match fold_authority_checkpoint_tail_in_txn(
         store,
@@ -478,12 +590,7 @@ fn fold_view_for_key(
             view,
             next_deadline_secs,
             continuation,
-        } => Ok((
-            view.with_agent_grant_standing(store, txn, use_past_standing)
-                .with_scope_commitments(store, txn),
-            next_deadline_secs,
-            continuation,
-        )),
+        } => Ok((view, next_deadline_secs, continuation)),
         AuthorityTailFold::NeedHistory(request) => Err(history_required(&request)),
     }
 }
@@ -501,7 +608,7 @@ pub(super) fn history_required(request: &AuthorityHistoryRequest) -> Error {
 
 /// Whether `error` is a fold's refusal for history this vault does not hold,
 /// which an import of that history may close, rather than a fault.
-pub(super) fn is_history_incomplete(error: &Error) -> bool {
+pub(crate) fn is_history_incomplete(error: &Error) -> bool {
     matches!(
         error,
         Error::Record(RecordError::AuthorityHistoryRequired { .. })

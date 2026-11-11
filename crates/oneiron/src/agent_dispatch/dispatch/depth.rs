@@ -116,6 +116,8 @@ impl AgentDispatcher<'_> {
         let mut parent_limit = UNBOUNDED_DEPTH;
         let mut cursor = Some(parent_attempt);
         let mut distance = 0_u64;
+        // The dispatch level whose parent the walk goes to next.
+        let mut below = None;
         while let Some(attempt) = cursor {
             if !seen.insert(attempt) {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -148,7 +150,14 @@ impl AgentDispatcher<'_> {
                     .and_then(|input| input.project_ref)
                     .unwrap_or(root);
             } else if input.is_none() {
-                if row.is_none() {
+                // A run that outlived its root (REVIEW-6638) is a root of its
+                // own on a machine that took it over, which holds no row of
+                // its settled parent: its own slice ends the walk there.
+                if row.is_none()
+                    && !below.map_or(Ok(false), |below| {
+                        super::super::run_task::attempt_outlived_root_in(self.vault, txn, below)
+                    })?
+                {
                     return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "project depth ancestor is missing",
                     )));
@@ -175,6 +184,7 @@ impl AgentDispatcher<'_> {
                 }
                 _ => None, // A schema-v1/non-dispatch parent ends the walk.
             };
+            below = Some(attempt);
             distance += 1;
         }
         Ok((parent_project, has_parent_input, parent_limit))

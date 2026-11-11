@@ -61,6 +61,9 @@ impl ReadSetProducer {
     /// A review explainer's proposal, fork and live-entity inputs (FIX 7020).
     pub const REVIEW_BUNDLE: Self = Self("entity_doc.review_bundle");
 
+    /// A resident graph workflow's prepared text inputs (FIX 9070).
+    pub const SKILL_GRAPH_INPUT: Self = Self("skill.graph_input");
+
     /// The key the record keeps.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

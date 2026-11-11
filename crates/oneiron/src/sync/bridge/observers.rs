@@ -531,6 +531,27 @@ pub(crate) fn register_room_facts_observer(
     )
 }
 
+/// Observer B for a window's source audience map (Engine A, 6 Nov 03:46),
+/// base or world: each policy revision and late binding an import brings
+/// lands here.
+pub(crate) fn register_source_audiences_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let map = doc.get_map(crate::sync::source_audiences::SOURCE_AUDIENCES_MAP);
+    subscribe_map_observer(
+        doc,
+        &map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::source_audiences::materialize_from_delta,
+        ("source_audiences", None),
+    )
+}
+
 /// Observer B for the base window's document pin map (FIX 853): each pin
 /// an import brings is installed here.
 pub(crate) fn register_document_pins_observer(
@@ -568,6 +589,46 @@ pub(crate) fn register_message_docs_observer(
         window_key,
         crate::sync::message_docs::materialize_message_docs_from_delta,
         ("message_docs", None),
+    )
+}
+
+/// Observer B for the base window's office proposal map (FIX 2691): each
+/// proposal an import brings is merged into this vault's.
+pub(crate) fn register_office_proposals_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let office_proposals_map = doc.get_map(crate::sync::office_proposals::OFFICE_PROPOSALS_MAP);
+    subscribe_map_observer(
+        doc,
+        &office_proposals_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::office_proposals::materialize_office_proposals_from_delta,
+        ("office_proposals", None),
+    )
+}
+
+/// Observer B for the base window's typed body row map (FIX 12470): each
+/// receipt an import brings is merged into this vault's.
+pub(crate) fn register_typed_body_rows_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let typed_body_rows_map = doc.get_map(crate::sync::typed_body_rows::TYPED_BODY_ROWS_MAP);
+    subscribe_map_observer(
+        doc,
+        &typed_body_rows_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::typed_body_rows::materialize_typed_body_rows_from_delta,
+        ("typed_body_rows", None),
     )
 }
 

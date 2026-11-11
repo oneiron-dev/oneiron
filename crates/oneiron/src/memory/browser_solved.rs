@@ -122,7 +122,7 @@ impl Memory<'_> {
                 .get_raw_in(content.read(), &evidence.id)?
                 .is_some()
             {
-                content.update_claim(evidence.id, |txn| {
+                content.update_claim(evidence.id, |txn, _lane| {
                     refresh_witness_in_txn(self.vault, txn, &evidence.id, &caller)
                 })?;
                 return Ok(SolvedCaptureReceipt::Captured {

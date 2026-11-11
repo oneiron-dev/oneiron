@@ -8,6 +8,7 @@
 use heed::RwTxn;
 
 use crate::Vault;
+use crate::code_run::release_settled_for_caller_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::secret_custody::{
@@ -88,7 +89,10 @@ pub(super) fn delete_pending_call_in_txn(
 /// every acknowledged caller that names the actor. A send stays in the
 /// intent ledger, so dropping its row never sends it again, and a held call
 /// of the actor's is never resumed. Runs in the erase's own transaction;
-/// housekeeping finishes the staged key retirements.
+/// housekeeping finishes the staged key retirements. Before each row goes,
+/// the actor's hold on its call's settled reply is released in this writer
+/// (FIX 19257). A settle that lands after the row is gone applies that
+/// release.
 pub(crate) fn erase_connector_call_actor_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -102,6 +106,7 @@ pub(crate) fn erase_connector_call_actor_in_txn(
         .map(|(call_ref, _)| call_ref)
         .collect();
     for call_ref in pending {
+        release_settled_for_caller_in_txn(&vault.store, wtxn, call_ref, *actor)?;
         delete_pending_call_in_txn(&vault.store, wtxn, &call_ref)?;
     }
     let acknowledged: Vec<EntityId> = ACKNOWLEDGED_CALLS
@@ -111,6 +116,7 @@ pub(crate) fn erase_connector_call_actor_in_txn(
         .map(|(call_ref, _)| call_ref)
         .collect();
     for call_ref in acknowledged {
+        release_settled_for_caller_in_txn(&vault.store, wtxn, call_ref, *actor)?;
         ACKNOWLEDGED_CALLS.delete(&vault.store, wtxn, &call_ref)?;
     }
     Ok(())

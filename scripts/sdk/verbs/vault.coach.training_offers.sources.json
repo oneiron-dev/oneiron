@@ -1,0 +1,16 @@
+{
+  "name": "vault.coach.training_offers.sources",
+  "description": "Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far.",
+  "input": "crate::task_verb::sdk::ReservoirSourcesRequest",
+  "output": "crate::edit_distance::reservoir::ReservoirSourcePreview",
+  "call": "crate::task_verb::sdk::reservoir_sources_as(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.sources\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

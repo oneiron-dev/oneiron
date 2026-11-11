@@ -343,6 +343,23 @@ impl AttemptQueue<'_> {
         self.working_rows_in_txn(&rtxn, ids)
     }
 
+    /// The working rows of `kind` alone, read through the kind index (FIX
+    /// 11318) so no row of another kind is decoded: a reader that wants one
+    /// kind's live tries pays for that kind's rows, never the whole ledger
+    /// (FIX 7870). Creation order.
+    pub(crate) fn working_kind_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+    ) -> Result<Vec<AttemptRecord>> {
+        let ids = crate::attempt_queue::index::kind_ids_in_txn(self.store, txn, kind)?;
+        Ok(self
+            .working_rows_in_txn(txn, ids)?
+            .into_iter()
+            .filter(|record| record.kind == kind)
+            .collect())
+    }
+
     /// Every row of `kind` through the kind index (FIX 11318), archived ones too, creation order.
     pub(crate) fn kind_rows_in_txn(
         &self,

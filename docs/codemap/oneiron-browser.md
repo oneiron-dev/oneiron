@@ -76,7 +76,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/progress.rs` | src | s | 1 fn · 1 const · 6 crate-vis | — | A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]… |
 | `src/receipt_evidence.rs` | src | s | 1 enum · 1 trait | ReceiptEvidence, ReceiptEvidenceSink | An effect receipt's screenshot kept past its session (FIX 2150) |
 | `src/replay.rs` | src | s | 1 struct · 3 enum · 1 fn | OperandGap, ReplayAction, StepStop, TypeOperand | What an effect's receipt keeps for a replay program (CUA E7): the act's own operands as its verb took them… |
-| `src/request.rs` | src | s | 3 struct · 2 trait · 6 crate-vis | BrowserBody, BrowserRequestHandler, DestinationRefusal, RenderedDocument, SpooledResponse | A host's custody of a browser session's requests (FIX 7122) |
+| `src/request.rs` | src | s | 3 struct · 1 enum · 2 trait · 6 crate-vis | BrowserBody, BrowserRequestHandler, DestinationRefusal, NavigationFrame, RenderedDocument, SpooledResponse | A host's custody of a browser session's requests (FIX 7122) |
 | `src/retention.rs` | src | s | 1 trait · 1 crate-vis | HandleRetention | The host's memory floor, as a browser session's live-handle registry meets it (C013) |
 | `src/row.rs` | src | s | 2 struct · 2 enum · 1 crate-vis | Row, RowFieldGap, RowGapField, RowGapReason | A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX… |
 | `src/secret.rs` | src | m | 1 enum · 1 trait · 1 fn · 14 crate-vis | SecretCustody, SecretUse | The host's secret custody, as a browser or desktop session holds it (FIX 8028, OF-560; ARCH-0069) |

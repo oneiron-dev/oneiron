@@ -46,8 +46,18 @@ pub(super) fn mask_crossing_runs(keys: &LiftedKeys, view: &mut OfficeBodyView) {
     if keys.is_empty() {
         return;
     }
-    for block in &mut body.blocks {
-        let Some((_, before)) = block.runs.split_last() else {
+    for (text, runs) in body
+        .blocks
+        .iter_mut()
+        .map(|block| (&block.text, &mut block.runs))
+        .chain(
+            body.stories
+                .iter_mut()
+                .flat_map(|story| &mut story.paragraphs)
+                .map(|paragraph| (&paragraph.text, &mut paragraph.runs)),
+        )
+    {
+        let Some((_, before)) = runs.split_last() else {
             continue;
         };
         // Where each run but the first starts in the stored text.
@@ -58,13 +68,13 @@ pub(super) fn mask_crossing_runs(keys: &LiftedKeys, view: &mut OfficeBodyView) {
                 Some(*at)
             })
             .collect();
-        let Some(pieces) = keys.masked_text(&block.text).split_at_stored(&cuts) else {
+        let Some(pieces) = keys.masked_text(text).split_at_stored(&cuts) else {
             continue;
         };
-        for (run, piece) in block.runs.iter_mut().zip(pieces) {
+        for (run, piece) in runs.iter_mut().zip(pieces) {
             run.text = piece;
         }
-        block.runs = canonical_runs(std::mem::take(&mut block.runs));
+        *runs = canonical_runs(std::mem::take(runs));
     }
 }
 
@@ -76,18 +86,22 @@ pub(super) fn join_unmasked_runs(view: &mut OfficeBodyView) {
     let OfficeBodyView::Docx { body } = view else {
         return;
     };
-    for block in &mut body.blocks {
-        if block.runs.is_empty()
-            || block
-                .runs
-                .iter()
-                .map(|run| run.text.as_str())
-                .collect::<String>()
-                == block.text
+    for (text, runs) in body
+        .blocks
+        .iter_mut()
+        .map(|block| (&block.text, &mut block.runs))
+        .chain(
+            body.stories
+                .iter_mut()
+                .flat_map(|story| &mut story.paragraphs)
+                .map(|paragraph| (&paragraph.text, &mut paragraph.runs)),
+        )
+    {
+        if runs.is_empty() || runs.iter().map(|run| run.text.as_str()).collect::<String>() == *text
         {
             continue;
         }
-        block.runs.truncate(1);
-        block.runs[0].text = block.text.clone();
+        runs.truncate(1);
+        runs[0].text = text.clone();
     }
 }

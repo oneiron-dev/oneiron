@@ -4,20 +4,18 @@ use crate::Vault;
 use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::learning::Estimate;
+use crate::learning::ranking::rank_by_estimate;
 use crate::skill::{SkillLifecycle, resident_of};
 
-use super::{SkillReliabilityPosterior, SkillReliabilityQuery, read_skill_reliability};
+use super::posterior::SELECTION_EXPLORATION;
+use super::{SkillReliabilityQuery, read_skill_reliability};
 
 /// Rank active versions owned by ONE resident. Every candidate must be from
 /// the same skill family; a foreign/unowned candidate is a refusal rather
 /// than an arm whose foreign outcomes silently influence the ranking.
-/// Scores use each version's own posterior and the shared UCB exploration
-/// horizon. Ties break by entity id for replay-stable selection.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "positive, bounded posterior pull counts feed the UCB horizon as u32"
-)]
+/// Scores use the shared ranking over each version's estimate. Ties break
+/// by entity id for replay-stable selection.
 pub fn rank_resident_skill_versions(
     vault: &Vault,
     resident: &EntityId,
@@ -27,7 +25,7 @@ pub fn rank_resident_skill_versions(
 ) -> Result<Vec<(EntityId, f32)>> {
     let mut family = None;
     let mut seen = std::collections::HashSet::new();
-    let mut arms: Vec<(EntityId, SkillReliabilityPosterior)> = Vec::new();
+    let mut arms: Vec<(EntityId, Estimate)> = Vec::new();
     for skill in versions {
         if !seen.insert(*skill) {
             return Err(Error::InvalidConfig(
@@ -51,19 +49,16 @@ pub fn rank_resident_skill_versions(
         }
         family = Some(record.skill_id);
         let estimate = read_skill_reliability(vault, skill, executor_model, query)?.estimate;
-        let posterior = super::read::posterior_from_estimate(&estimate)?;
-        arms.push((*skill, posterior));
+        arms.push((*skill, estimate));
     }
-    let total = arms.iter().fold(0_u32, |count, (_, posterior)| {
-        count.saturating_add(posterior.observations().max(0.0) as u32)
-    });
-    let mut ranked: Vec<_> = arms
-        .into_iter()
-        .map(|(id, posterior)| (id, posterior.ucb(total)))
-        .collect();
-    ranked.sort_by(|(a_id, a), (b_id, b)| {
-        b.total_cmp(a)
-            .then_with(|| a_id.as_bytes().cmp(b_id.as_bytes()))
-    });
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "shared f64 ranking scores narrow to the f32 the signature keeps"
+    )]
+    let ranked: Vec<(EntityId, f32)> =
+        rank_by_estimate(arms, SELECTION_EXPLORATION, |arm| &arm.1, |arm| arm.0)
+            .into_iter()
+            .map(|((id, _), score)| (id, score as f32))
+            .collect();
     Ok(ranked)
 }

@@ -90,8 +90,18 @@ pub fn checkpoint_as_owner(
     owner: &AuthenticatedOwner,
     input: &CheckpointReadRequest,
 ) -> MemoryResult<Option<CheckpointView>> {
+    owner.revalidate(memory.vault())?;
+    checkpoint_projection(memory, input)
+}
+
+/// [`checkpoint_as_owner`]'s page once its caller is admitted: the owner on
+/// its proof, or the run's own actor (`crate::snapshot_read`, slice 6.4c).
+/// Every source is read through `memory`'s own lane, as before.
+pub(crate) fn checkpoint_projection(
+    memory: &Memory<'_>,
+    input: &CheckpointReadRequest,
+) -> MemoryResult<Option<CheckpointView>> {
     let vault = memory.vault();
-    owner.revalidate(vault)?;
     let run = EntityId::from_hex(input.run_ref.trim())
         .map_err(|_| MemoryError::bad_request("run_ref must be a 32-hex code-run id"))?;
     let limit = match input.limit {
@@ -126,35 +136,9 @@ fn project(
     };
     let completed_steps = u64::try_from(record.step_checkpoints.len())
         .map_err(|_| Error::ArithmeticOverflow("executor step count"))?;
-    let ledger = storage.code_run_folds(run)?;
-    let epochs = storage.code_run_compaction_epochs(run)?;
-    let mut sources = record.agent_verb_rows().ok_or_else(|| {
-        Error::InvalidConfig("run history contains an answer with unlisted sources".into())
-    })?;
-    sources.extend(
-        ledger
-            .folds
-            .iter()
-            .flat_map(|fold| fold.sources.iter().copied()),
-    );
-    sources.extend(epochs.iter().map(|(row, _)| row.summary_id()));
-    sources.sort_unstable();
-    sources.dedup();
     let end = from.saturating_add(u64::from(limit)).min(completed_steps);
     let page = from..end;
-    // The same withdrawal law as history and an executor unfold: raw turns
-    // whose derived fold was withdrawn are not brought back by a read.
-    for step in page.clone() {
-        if ledger
-            .covering(step)
-            .is_some_and(|fold| fold.summary.is_none())
-            || epochs
-                .iter()
-                .any(|(row, text)| row.covers(run, step) && text.is_none())
-        {
-            return Err(Error::InvalidConfig("checkpoint source was withdrawn".into()).into());
-        }
-    }
+    let sources = owner_read_sources(&storage, &record, page.clone(), "checkpoint")?;
     let steps = record
         .step_checkpoints
         .iter()
@@ -186,6 +170,47 @@ fn project(
         },
         sources,
     )))
+}
+
+/// The rows an owner's read of stored run `record` derives from: those its
+/// answers were served from, its folds' sources and its compaction epochs'
+/// summaries, sorted once. The same withdrawal law as history and an
+/// executor unfold applies before any byte is read: a read of a step in
+/// `steps` whose derived fold or epoch was withdrawn refuses, so no read
+/// brings its raw turn back. `read` names the read in that refusal.
+pub(super) fn owner_read_sources(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    steps: impl IntoIterator<Item = u64>,
+    read: &str,
+) -> crate::Result<Vec<EntityId>> {
+    let run = record.run_id;
+    let ledger = storage.code_run_folds(run)?;
+    let epochs = storage.code_run_compaction_epochs(run)?;
+    let mut sources = record.agent_verb_rows().ok_or_else(|| {
+        Error::InvalidConfig("run history contains an answer with unlisted sources".into())
+    })?;
+    sources.extend(
+        ledger
+            .folds
+            .iter()
+            .flat_map(|fold| fold.sources.iter().copied()),
+    );
+    sources.extend(epochs.iter().map(|(row, _)| row.summary_id()));
+    sources.sort_unstable();
+    sources.dedup();
+    for step in steps {
+        if ledger
+            .covering(step)
+            .is_some_and(|fold| fold.summary.is_none())
+            || epochs
+                .iter()
+                .any(|(row, text)| row.covers(run, step) && text.is_none())
+        {
+            return Err(Error::InvalidConfig(format!("{read} source was withdrawn")));
+        }
+    }
+    Ok(sources)
 }
 
 /// One resumed reply as the injector frames it: inline when small and clean

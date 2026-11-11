@@ -149,8 +149,17 @@ fn write_publication(out: &mut impl std::io::Write, wire: &PublicationWire) -> R
         .map_err(|_| Error::InvariantViolation("artifact publication encode"))
 }
 
+/// A receipt that does not read: the sync protocol's admission refusal.
+#[cfg(feature = "sync")]
 fn denied() -> Error {
     Error::sync_protocol(crate::error::SyncProtocolValidation::DocumentAdmissionDenied)
+}
+
+/// A receipt that does not read. A build without sync has no sync peer to
+/// send one, so the bytes refuse as malformed.
+#[cfg(not(feature = "sync"))]
+fn denied() -> Error {
+    Error::InvalidKey
 }
 
 /// An outbox row that reads as a marker, or `None` for one that does not
@@ -381,12 +390,7 @@ impl Vault {
             return Ok(Refused);
         };
         // The fork hash is recomputed from the manifest, never taken on trust.
-        let Ok(rebuilt) = CodebaseSnapshot::new(
-            snapshot.project_id.clone(),
-            snapshot.repo_ref.clone(),
-            snapshot.commit_hash.clone(),
-            snapshot.files.clone(),
-        ) else {
+        let Ok(rebuilt) = snapshot.rebuilt_with_files(snapshot.files.clone()) else {
             return Ok(Refused);
         };
         if rebuilt.fork_hash != hash
@@ -425,8 +429,16 @@ impl Vault {
             return Ok(Staged);
         }
         for file in &snapshot.files {
-            // Checks the ASSET is there and hashes to the manifest's name.
-            if crate::codebase::read_asset_blob_in_txn(self, wtxn, &file.content_hash).is_err() {
+            // Checks the ASSET is there and hashes to the manifest's name,
+            // its bytes streamed through the checked reader and never held
+            // whole (FIX 7202).
+            let checked = crate::codebase::with_asset_blob_reader_in_txn(
+                self,
+                wtxn,
+                &file.content_hash,
+                |_| Ok(()),
+            );
+            if checked.is_err() {
                 return Ok(Staged);
             }
         }

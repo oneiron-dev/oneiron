@@ -10,6 +10,7 @@ pub mod edge;
 pub mod entity_id;
 pub mod error;
 pub mod gate;
+pub mod host_descriptors;
 pub mod host_memory;
 pub mod identity_topology;
 pub mod limit_ask;
@@ -25,6 +26,7 @@ pub mod secret_custody;
 pub mod secret_lease;
 pub mod serialize;
 pub mod temporal;
+pub mod wallet;
 pub mod write_envelope;
 
 // The same root aliases `oneiron` has, so moved code keeps its `crate::` paths.

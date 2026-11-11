@@ -211,6 +211,7 @@ fn project(
                     "an anchored pack outcome cannot be rescored",
                 ));
             }
+            super::credit_judge::capture_in_txn(vault, txn, &previous, &fields, now);
             return Ok(previous);
         }
         let routed = super::codec::CURSOR

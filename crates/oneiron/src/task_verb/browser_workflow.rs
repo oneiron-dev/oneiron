@@ -36,7 +36,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::ActorContentTxn;
-use crate::note::{NoteActor, NoteBody, NoteKind, encode_note_body};
+use crate::note::{NoteActor, NoteCore, NoteKind, encode_note_core};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -441,14 +441,14 @@ pub fn record_task_workflow_outcome(
             .ok_or(Error::InvariantViolation("a bound try names no actor"))?;
         if vault.get_entity_type_in_txn(wtxn, &note)?.is_none() {
             let author = actor.entity_ref();
-            let body = encode_note_body(&NoteBody {
+            let body = encode_note_core(&NoteCore {
                 kind: NoteKind::parse(RECEIPT_NOTE_KIND).ok_or(Error::InvariantViolation(
                     "the research NOTE kind is not shipped",
                 ))?,
                 author_ref: NoteActor::Actor(author),
-                markdown: receipt_markdown(&record, &row, &outcome, &report)?,
                 source_revision_ref: *note.as_bytes(),
             })?;
+            let markdown = receipt_markdown(&record, &row, &outcome, &report)?;
             let batch = vault
                 .batch_in()
                 .put_authored_note(
@@ -460,10 +460,16 @@ pub fn record_task_workflow_outcome(
                     },
                     now,
                     &body,
+                    &markdown,
                 )
                 .edge(&note, EdgeKind::AuthoredBy, &author, 1.0)
                 .edge(&note, EdgeKind::About, &row.task_ref, 1.0);
-            let mut content = ActorContentTxn::new(vault, wtxn, actor)?;
+            let mut content = ActorContentTxn::new(
+                vault,
+                wtxn,
+                actor,
+                crate::core_write::CoreWriteLaneRef::Unbound,
+            )?;
             content.apply_batch(batch)?;
             content.finish()?;
         }

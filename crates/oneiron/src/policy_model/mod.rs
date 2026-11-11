@@ -116,8 +116,10 @@ pub use owner_rows::{
     policy_row_grant_target,
 };
 pub(crate) use owner_rows::{
-    holds_vault_policy_power_in_txn, is_live_vault_owner_for_store_in_txn,
-    is_live_vault_owner_in_txn, owners_for_store_in_txn, owners_in_txn, sole_recorded_owner_in_txn,
+    holds_live_ownership_in_txn, holds_vault_policy_power_in_txn,
+    is_live_vault_owner_for_store_in_txn, is_live_vault_owner_in_txn,
+    is_live_writing_member_for_store_in_txn, owners_for_store_in_txn, owners_in_txn,
+    sole_recorded_owner_in_txn,
 };
 mod notes;
 mod notice;
@@ -141,8 +143,9 @@ pub use pattern::{
     POLICY_PATTERN_ID_MAX_LEN, POLICY_PATTERN_MAX_LEN, PolicyPatternRole, PolicyPatternRule,
 };
 pub use planes::{
-    HostedLegalAction, HostedLegalPolicy, HostedLegalRow, POLICY_DOCUMENT_MAX_LEN,
-    POLICY_HOSTED_CATEGORY_MAX_LEN, PolicyPlane, PolicyRubricRow,
+    HostedLegalAction, HostedLegalBasis, HostedLegalBasisKind, HostedLegalPolicy, HostedLegalRow,
+    HostedLegalRowBound, POLICY_DOCUMENT_MAX_LEN, POLICY_HOSTED_CATEGORY_MAX_LEN, PolicyPlane,
+    PolicyRubricRow,
 };
 pub use prompt::PolicyClassifyPrompt;
 pub use relay::{
@@ -160,6 +163,7 @@ pub use verdict::{
     PolicyHedgeBucket, PolicyPassAudit, PolicyReadError, PolicySkipReason, PolicyVerdictCategory,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

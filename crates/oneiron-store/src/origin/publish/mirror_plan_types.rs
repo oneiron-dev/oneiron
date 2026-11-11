@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_model::llm::BrokerIsolation;
 
 /// What one authenticated read saw at a mirror's ref before the plan froze.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -145,6 +146,13 @@ pub struct MirrorBatchProgress {
     pub outcomes: Vec<MirrorRefOutcome>,
     /// The redacted cause of its last child that did not succeed.
     pub detail: Option<String>,
+    /// How the credential broker the last push of its refs went through is
+    /// kept apart from the daemon (ARCH-0069 `#broker-isolation`; FIX
+    /// 19083): `same_user` shows the unproven badge. `None` until a broker
+    /// carried one: an embedded vault pushes directly, and a push that never
+    /// reached the broker names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_isolation: Option<BrokerIsolation>,
 }
 
 /// How the plan a mirror settled last ended.

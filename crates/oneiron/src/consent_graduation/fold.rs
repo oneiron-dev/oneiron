@@ -93,6 +93,16 @@ pub(super) fn derive_state_in_txn(
     if active_grant_ref_in_txn(vault, txn, scope)?.is_some() {
         return Ok(RampState::Graduated);
     }
+    // CONSENT-RAMP: the mint refuses a catastrophe-floor bound
+    // (`create_standing_grant_in_txn`), so a scope whose grant bound names a
+    // floor class is never offered: an offer is one a tap can accept. The
+    // same predicate decides both; the counters still move (measurement stays
+    // universal).
+    if let Ok(bound) = scope.to_grant_bound()
+        && crate::consent::bound_catastrophe_class(&bound).is_some()
+    {
+        return Ok(RampState::Propose);
+    }
     let policy =
         crate::edit_distance::graduation::graduation_policy_in_txn(&vault.store, txn, scope)?;
     let corrections = counters.amended.saturating_add(counters.rejected);

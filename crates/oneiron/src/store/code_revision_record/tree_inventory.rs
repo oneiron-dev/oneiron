@@ -2,7 +2,7 @@
 
 use super::CodeRevision;
 use crate::error::{ArtifactError, Error, Result};
-use crate::git_wire::GitOid;
+use crate::git_wire::{GitOid, git_path_bytes};
 use crate::store::code_document_values::CodeDocumentFrontier;
 use crate::store::code_tree_blob::{CodeTreeBlob, MODE_GITLINK};
 use std::collections::{BTreeMap, BTreeSet};
@@ -47,7 +47,9 @@ impl CodeTreeInventory {
             if documents.contains(path.as_str())
                 || path.is_empty()
                 || path.split('/').any(|part| {
-                    part.is_empty() || matches!(part, "." | ".." | ".git") || part.contains('\0')
+                    part.is_empty()
+                        || matches!(part, "." | ".." | ".git")
+                        || git_path_bytes(part).is_err()
                 })
                 || GitOid::parse_hex(blob.git_oid.clone()).is_err()
                 || !matches!(blob.mode, 0o100_644 | 0o100_755 | 0o120_000 | MODE_GITLINK)
@@ -130,7 +132,9 @@ fn validate_import_fields(revision: &CodeRevision, documents: &BTreeSet<&str>) -
             || revision.blob_frontiers.contains_key(path)
             || path.is_empty()
             || path.split('/').any(|part| {
-                part.is_empty() || matches!(part, "." | ".." | ".git") || part.contains('\0')
+                part.is_empty()
+                    || matches!(part, "." | ".." | ".git")
+                    || git_path_bytes(part).is_err()
             })
             || GitOid::parse_hex(previous.git_oid.clone()).is_err()
             || crate::store::code_snapshot::validate_code_file_mode(previous.mode).is_err()

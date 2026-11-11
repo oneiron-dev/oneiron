@@ -2,9 +2,11 @@
 //! #guest-grants, #relationship-lifecycle).
 //!
 //! Each owner mints, for the peer vault, one FEDERATION_GRANT of purpose
-//! [`FederationGrantScope::Connect`] and role Guest: read and propose inside
-//! explicit local named worlds, never base and never a received foreign
-//! world. The grant names a vault-resident guest actor for that peer, never a
+//! [`FederationGrantScope::Connect`] and role Guest: read, propose or both
+//! inside explicit local named worlds, never base and never a received
+//! foreign world. A propose-only grant stands and confers no read (FIX
+//! 8734): mint and binding judge its liveness, each door its verb. The grant
+//! names a vault-resident guest actor for that peer, never a
 //! host key or a vault id, and that actor's row carries the origin vault.
 //!
 //! A minted grant is inert until one Active pact binds it: every reader asks
@@ -19,8 +21,8 @@ use rmpv::Value;
 
 use super::codec::{encode_msgpack_value, invalid_grant, required_value};
 use super::{
-    FederationDirectionScope, FederationGrant, FederationGrantPreset, FederationGrantRole,
-    FederationGrantScope, Scope, ScopeAxis, SelectorRange, selector_range_of,
+    ConnectMemberLeaveBinding, FederationDirectionScope, FederationGrant, FederationGrantPreset,
+    FederationGrantRole, FederationGrantScope, Scope, ScopeAxis, SelectorRange, selector_range_of,
 };
 use crate::Vault;
 use crate::authority::{
@@ -33,6 +35,9 @@ use crate::registry::{
     ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD,
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+
+mod standing;
+pub(crate) use standing::{connect_grant_stands_in_txn, connect_guest_standing_in_txn};
 
 /// Scope kind of a Connect guest grant on disk.
 pub(super) const SCOPE_KIND_CONNECT: &str = "connect";
@@ -49,10 +54,17 @@ const GUEST_ACTOR_SCHEMA_VERSION: u64 = 1;
 const GUEST_ACTOR_KIND: &str = "connect_guest";
 const GUEST_ACTOR_KEYS: [&str; 4] = ["schema_version", "kind", "name", "origin_vault"];
 
-/// How many guest actor generations a (this vault, peer vault) pair may use
-/// up: each deleted actor moves the next mint to the next generation. Never
-/// reached in practice; the mint refuses past it.
-const GUEST_ACTOR_GENERATIONS: u64 = 1024;
+/// A person's authenticated choice to release this local Connect grant when
+/// they leave one shared vault. The mint's Owner still authorizes the grant;
+/// this separate proof chooses its member-leave binding, not its scope or peer.
+/// Both proofs must belong to this vault and hold in the minting writer.
+pub struct ConnectMemberLeaveConsent<'proof> {
+    /// The shared vault whose genuine member departure releases the grant.
+    pub shared_vault_id: u64,
+    /// The member making the local release choice. This can be the minting
+    /// Owner, as on the served Owner door, or a distinct authenticated person.
+    pub member: &'proof AuthenticatedOwner,
+}
 
 /// What [`Vault::mint_connect_grant`] wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,17 +77,23 @@ pub struct ConnectGrantMinted {
     pub resolved_scope: Scope,
     /// The second the grant stops conferring; `None` until revoked.
     pub expires_at: Option<u64>,
+    /// The authenticated member's detach-on-member-leave binding actually
+    /// persisted by this Owner-authorized mint (FIX 12555).
+    pub detach_on_member_leave: Option<ConnectMemberLeaveBinding>,
 }
 
 impl FederationGrant {
     /// The guest grant a Connect with `peer_vault_id` governs, naming
     /// `guest_actor`: role and preset Guest, no Ask payload, no delegator,
     /// an explicit read/propose scope over named worlds, optional expiry.
+    /// `detach_on_member_leave` is the owner's local release setting the mint
+    /// writer verified, when they chose one (FIX 12555).
     pub fn connect_guest(
         peer_vault_id: AuthorityVaultId,
         guest_actor: EntityId,
         authority_scope: Scope,
         expires_at: Option<u64>,
+        detach_on_member_leave: Option<ConnectMemberLeaveBinding>,
     ) -> Result<Self> {
         let grant = Self {
             authority_scope,
@@ -90,6 +108,9 @@ impl FederationGrant {
             repo_bounds: None,
             kind: super::FederationGrantKind::Access,
             git_push_bounds: None,
+            detach_on_member_leave,
+            verb_classes: std::collections::BTreeSet::new(),
+            wallet_ref: None,
         };
         grant.validate()?;
         Ok(grant)
@@ -213,8 +234,9 @@ pub(crate) fn pact_admits_grant(
 
 /// Refuses unless `grant_ref` is a live Connect guest grant here for
 /// `peer_vault_id`, unexpired now, whose scope projects exactly to
-/// `outbound`, the pact half this vault shares. Ask, membership, own-device
-/// and Delegate rows all refuse.
+/// `outbound`, the pact half this vault shares. Liveness asks no verb, so a
+/// propose-only grant binds (FIX 8734). Ask, membership, own-device and
+/// Delegate rows all refuse.
 pub(crate) fn require_connect_grant_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -235,7 +257,7 @@ pub(crate) fn require_connect_grant_in_txn(
             peer_vault_id: *peer_vault_id,
         })
         || !grant.role.is_guest()
-        || !grant.confers_at(vault.store.clock.now_recorded_at())
+        || !grant.is_live_at(vault.store.clock.now_recorded_at())
     {
         return Err(refused(
             "the grant is not a live Connect grant for that peer vault",
@@ -325,20 +347,34 @@ impl Vault {
     /// approved by `owner` (FIX 3016). In one writer: a live Owner and an
     /// unconflicted local root; not this vault; no live Connect with that
     /// peer; worlds that are this vault's live named worlds, never base or a
-    /// received foreign world; verbs read/propose only; the request inside
-    /// the manifest's Connect guest ceiling (an excess refuses, never a
-    /// clamp); an expiry, when given, in the future. The grant names the
+    /// received foreign world; verbs read/propose only, propose alone
+    /// included (FIX 8734); the request inside the manifest's Connect guest
+    /// ceiling (an excess refuses, never a clamp); an expiry, when given, in
+    /// the future; the resolved grant live. The grant names the
     /// peer's vault-resident guest actor, resolved or created here. It is
-    /// inert until both owners' Connect makes its pact Active.
+    /// inert until both owners' Connect makes its pact Active. With
+    /// `detach`, the authenticated member's local detach-on-member-leave
+    /// setting for one shared vault: the same writer revalidates that person
+    /// and their membership before storing the binding (FIX 12555). A
+    /// distinct member consents to the release, never to minting authority;
+    /// the original Owner check and grant ceiling still apply.
     pub fn mint_connect_grant(
         &self,
         owner: &AuthenticatedOwner,
         peer_vault_id: AuthorityVaultId,
         authority_scope: Scope,
         expires_at: Option<u64>,
+        detach: Option<ConnectMemberLeaveConsent<'_>>,
     ) -> Result<ConnectGrantMinted> {
         self.with_write_txn_grouped(|txn| {
-            self.mint_connect_grant_in_txn(txn, owner, peer_vault_id, authority_scope, expires_at)
+            self.mint_connect_grant_in_txn(
+                txn,
+                owner,
+                peer_vault_id,
+                authority_scope,
+                expires_at,
+                detach,
+            )
         })
     }
 
@@ -349,8 +385,9 @@ impl Vault {
         peer_vault_id: AuthorityVaultId,
         requested: Scope,
         expires_at: Option<u64>,
+        detach: Option<ConnectMemberLeaveConsent<'_>>,
     ) -> Result<ConnectGrantMinted> {
-        owner.revalidate_in_txn(self, txn)?;
+        let actor = owner.revalidate_in_txn(self, txn)?;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         if fold.vault_root_is_conflicted() {
             return Err(refused("this vault's authority root is in conflict"));
@@ -375,6 +412,10 @@ impl Vault {
         if expires_at.is_some_and(|expires| expires <= now) {
             return Err(refused("a Connect grant's expiry must be in the future"));
         }
+        let detach_on_member_leave = match detach {
+            None => None,
+            Some(consent) => Some(self.require_detach_binding_in_txn(txn, consent, actor)?),
+        };
         let resolved = requested.meet(&ceiling);
         let guest_actor = self.connect_guest_actor_in_txn(txn, &local, &peer_vault_id, now)?;
         let grant = FederationGrant::connect_guest(
@@ -382,10 +423,11 @@ impl Vault {
             guest_actor,
             resolved.clone(),
             expires_at,
+            detach_on_member_leave,
         )?;
-        if !grant.confers_at(now) {
+        if !grant.is_live_at(now) {
             return Err(refused(
-                "the requested scope confers no read: name its bands, audience and sensitivity",
+                "the requested scope reaches no record: name its bands, audience and sensitivity",
             ));
         }
         let id = self.store.clock.entity_id()?;
@@ -402,6 +444,50 @@ impl Vault {
             guest_actor,
             resolved_scope: resolved,
             expires_at,
+            detach_on_member_leave,
+        })
+    }
+
+    /// Stores the person's own release setting in the Owner-authorized mint
+    /// (FIX 12555). The shared vault must be this vault's creation. The
+    /// original Owner-self choice keeps its roster check; a distinct person
+    /// must have actual current membership, not just a stored roster row.
+    fn require_detach_binding_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        consent: ConnectMemberLeaveConsent<'_>,
+        minting_owner: EntityId,
+    ) -> Result<ConnectMemberLeaveBinding> {
+        let vault_id = consent.shared_vault_id;
+        if vault_id == 0 {
+            return Err(refused("a detach setting names its shared vault"));
+        }
+        let creation = self.shared_vault_creation_in_txn(txn)?;
+        if creation.as_ref().is_none_or(|row| row.vault_id != vault_id) {
+            return Err(refused("a detach setting names this vault's shared vault"));
+        }
+        let actor = consent.member.revalidate_person_in_txn(self, txn)?;
+        if actor == minting_owner {
+            let owner_here = self
+                .shared_members_in_txn(txn, vault_id)?
+                .into_iter()
+                .any(|(member, role)| member == actor && role == FederationGrantRole::Owner);
+            if !owner_here {
+                return Err(refused(
+                    "a detach setting is the shared vault's live owner's choice",
+                ));
+            }
+        } else if !matches!(
+            self.membership_standing_in_txn(txn, vault_id, &actor)?,
+            Some(super::MembershipStanding::Member { .. })
+        ) {
+            return Err(refused(
+                "a detach setting is the shared vault's live member's choice",
+            ));
+        }
+        Ok(ConnectMemberLeaveBinding {
+            shared_vault_id: vault_id,
+            person_ref: actor,
         })
     }
 
@@ -410,7 +496,9 @@ impl Vault {
     /// carrying the origin vault. The first generation whose id was never
     /// deleted is the actor (FIX 3685): resolved when present with the same
     /// body, created when absent; any other row there refuses. A deleted
-    /// actor stays deleted, and older grants keep naming it.
+    /// actor stays deleted, and older grants keep naming it. Each deleted
+    /// actor moves the next mint one generation on, with no fixed ceiling
+    /// (FIX 8733): the walk ends at the first generation never deleted.
     fn connect_guest_actor_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -419,7 +507,8 @@ impl Vault {
         now: u64,
     ) -> Result<EntityId> {
         let body = guest_actor_body(peer_vault_id)?;
-        for generation in 0..GUEST_ACTOR_GENERATIONS {
+        let mut generation: u64 = 0;
+        loop {
             let actor = EntityId::derive(
                 derived_domains::CONNECT_GUEST_ACTOR,
                 &[&local[..], &peer_vault_id[..], &generation.to_be_bytes()],
@@ -427,6 +516,9 @@ impl Vault {
             if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &actor)?
                 .deleted
             {
+                generation = generation.checked_add(1).ok_or_else(|| {
+                    refused("the peer vault's guest actor generations are used up")
+                })?;
                 continue;
             }
             match live_entity_row_in_txn(&self.store, txn, &actor)? {
@@ -445,9 +537,6 @@ impl Vault {
                 }
             }
         }
-        Err(refused(
-            "the peer vault's guest actor generations are used up",
-        ))
     }
 
     fn put_connect_row_in_txn(
@@ -492,26 +581,7 @@ impl Vault {
     /// Connect guest actor here.
     pub fn connect_guest_origin_vault(&self, actor: &EntityId) -> Result<Option<AuthorityVaultId>> {
         let txn = self.store.env.read_txn()?;
-        let LiveEntityRow::Live {
-            entity_type: ENTITY_TYPE_PERSON,
-            body,
-        } = live_entity_row_in_txn(&self.store, &txn, actor)?
-        else {
-            return Ok(None);
-        };
-        let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut body.as_slice()) else {
-            return Ok(None);
-        };
-        let field = |key: &str| {
-            entries
-                .iter()
-                .find(|(name, _)| name.as_str() == Some(key))
-                .and_then(|(_, value)| value.as_str())
-        };
-        if field(GUEST_ACTOR_KEYS[1]) != Some(GUEST_ACTOR_KIND) {
-            return Ok(None);
-        }
-        Ok(field(GUEST_ACTOR_KEYS[3]).and_then(canonical_vault_id))
+        standing::guest_actor_origin_in_txn(self, &txn, actor)
     }
 }
 

@@ -190,6 +190,9 @@ pub struct ExportSecretSupplement {
     /// The machine the copy is sealed to: only it opens the copy.
     pub recipient: EntityId,
     pub status: OwnerWorkStatus,
+    /// Whether an admitted import mark is present in the authority fold.
+    /// This is not the local custody import's outcome.
+    pub marked_imported: bool,
     /// BLAKE3 of the sealed copy, lowercase hex, as its signed result names
     /// it; `None` before the holder sealed it.
     #[serde(skip_serializing_if = "Option::is_none")]

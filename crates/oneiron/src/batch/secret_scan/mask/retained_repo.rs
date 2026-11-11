@@ -49,7 +49,7 @@ use crate::store::file_key_masks::MaskedFile;
 use crate::store::file_key_masks::masked_file_in_txn;
 use crate::store::known_value_index::KnownValues;
 use crate::store::repo_environment::{
-    REPO_ENV_VALUE_REASON, dotenv_value_lifts, repo_env_entries, repo_env_file,
+    REPO_ENV_VALUE_REASON, dotenv_value_lifts, repo_env_entries, repo_env_file_bytes,
 };
 
 pub(crate) mod read;
@@ -67,8 +67,8 @@ pub(crate) struct RetainedRepoBlobPlan {
     opaque: Option<&'static str>,
 }
 
-/// Plans the marks of `bytes`, one retained repository blob at `path` (the
-/// door's label) the receive door's scan named under `proved`. A dotenv
+/// Plans the marks of `bytes`, one retained repository blob at `path` (exact
+/// Git tip bytes, or the original non-tip label) named under `proved`. A dotenv
 /// blob's every value [`dotenv_value_lifts`] takes is a key too,
 /// token-shaped or not (FIX 7608 slice 6, CALL DOTENV-IMPORT). `known` is
 /// the index a pass read now; `origin` is the record a plan's stand-ins
@@ -80,7 +80,7 @@ pub(crate) struct RetainedRepoBlobPlan {
 /// An engine failure while reading. A stop the blob's own bytes cause is
 /// opaque residue, never an error.
 pub(crate) fn plan_retained_repo_blob(
-    path: &str,
+    path: &[u8],
     bytes: &[u8],
     known: Option<&KnownValues>,
     proved: &'static str,
@@ -119,8 +119,8 @@ pub(crate) fn plan_retained_repo_blob(
 
 /// Each value span of the dotenv blob at `path` that receive lifts, under
 /// the dotenv reason; none for any other blob.
-fn dotenv_value_spans(path: &str, bytes: &[u8]) -> Vec<(Range<usize>, &'static str)> {
-    if repo_env_file(path).is_none() {
+fn dotenv_value_spans(path: &[u8], bytes: &[u8]) -> Vec<(Range<usize>, &'static str)> {
+    if repo_env_file_bytes(path).is_none() {
         return Vec::new();
     }
     repo_env_entries(bytes)
@@ -524,6 +524,11 @@ fn put_step(out: &mut Vec<u8>, step: MemberStep) {
             out.extend_from_slice(&entry.to_be_bytes());
         }
         MemberStep::Xz => out.push(5),
+        // FIX 11575: a 7z entry.
+        MemberStep::SevenZip { entry } => {
+            out.push(7);
+            out.extend_from_slice(&entry.to_be_bytes());
+        }
         MemberStep::PdfStream { object, generation } => {
             out.push(2);
             out.extend_from_slice(&object.to_be_bytes());
@@ -587,6 +592,8 @@ impl<'b> Spooled<'b> {
             // FIX 2471: a tar entry and an xz payload.
             4 => MemberStep::Tar { entry: self.u32()? },
             5 => MemberStep::Xz,
+            // FIX 11575: a 7z entry.
+            7 => MemberStep::SevenZip { entry: self.u32()? },
             2 => MemberStep::PdfStream {
                 object: self.u32()?,
                 generation: self.u16()?,

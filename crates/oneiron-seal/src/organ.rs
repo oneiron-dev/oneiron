@@ -823,7 +823,7 @@ fn engine(
         config,
         Arc::new(AskedBackend {
             asks: Arc::clone(&asks),
-            identity: Mutex::new(None),
+            algorithm: Mutex::new(None),
         }),
         Arc::new(AskedFetcher { asks, memory }),
         Arc::new(CallClock { now_ms, began }),
@@ -917,8 +917,8 @@ impl SealMemory for AskedMemory {
 /// The signer, as asks: the key never leaves the engine.
 struct AskedBackend {
     asks: Arc<CallAsks>,
-    /// The identity the engine gave, asked once per call.
-    identity: Mutex<Option<SigningIdentity>>,
+    /// Assembly owns the identity; signing retries need only its algorithm.
+    algorithm: Mutex<Option<SignatureAlgorithm>>,
 }
 
 #[derive(Deserialize)]
@@ -956,10 +956,7 @@ fn backend_error(refusal: &AskRefusal, rejected: BackendRejectCode) -> BackendEr
 #[async_trait]
 impl SealBackend for AskedBackend {
     fn signing_identity(&self) -> Result<SigningIdentity, BackendError> {
-        let mut held = lock(&self.identity);
-        if let Some(identity) = held.as_ref() {
-            return Ok(identity.clone());
-        }
+        let mut held = lock(&self.algorithm);
         let reply = self
             .asks
             .ask(ASK_IDENTITY, Value::Map(Vec::new()))
@@ -973,7 +970,7 @@ impl SealBackend for AskedBackend {
             signer_certificate_der: answer.signer_certificate.into_vec(),
             certificate_chain_der: answer.chain.into_iter().map(ByteBuf::into_vec).collect(),
         };
-        *held = Some(identity.clone());
+        *held = Some(identity.algorithm);
         Ok(identity)
     }
 
@@ -991,7 +988,14 @@ impl SealBackend for AskedBackend {
         &self,
         request: SignRevisionRequest,
     ) -> Result<BackendSignature, BackendError> {
-        let algorithm = self.signing_identity()?.algorithm;
+        let cached_algorithm = {
+            let algorithm = lock(&self.algorithm);
+            *algorithm
+        };
+        let algorithm = match cached_algorithm {
+            Some(algorithm) => algorithm,
+            None => self.signing_identity()?.algorithm,
+        };
         let revision_id = request.revision_id.ok_or(BackendError::Rejected {
             code: BackendRejectCode::Unauthorized,
         })?;
@@ -1070,11 +1074,14 @@ impl SealFetcher for AskedFetcher {
         }
         let body = match reply.data {
             // A region's bytes came reserved before the runtime copied them
-            // (FIX 8454): that copy is adopted whole with what holds it, and
-            // nothing copies it again. Inline bytes take a lease of their own.
+            // (FIX 8454), and inline bytes came in a frame this call's host funded,
+            // decoded value included, before it sent it (`reserve_read`, held to the
+            // call's end): either is adopted whole with what holds it, and only the
+            // shared header takes a lease of its own, which fails where the call has
+            // no floor (FIX 22070). Unreserved bytes take a lease of their own.
             Some(data) => {
                 let (bytes, memory) = data.into_parts();
-                let held = matches!(memory, AnswerMemory::Reserved { .. })
+                let held = matches!(memory, AnswerMemory::Reserved { .. } | AnswerMemory::Inline)
                     .then(|| Box::new(memory) as Box<dyn Send>);
                 AdmittedBytes::adopt(&self.memory, bytes, held).map_err(FetchError::Memory)?
             }

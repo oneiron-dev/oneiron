@@ -10,7 +10,9 @@
 //!   vector stages in the room's overlay as one segment, every op or none,
 //!   after the refusals its base write meets: the public raw-put and edge
 //!   checks, the actor's proof, the caller's write lane over stored rows,
-//!   an agent definition's owner-only widening, a claim's gate on base
+//!   an agent definition's owner-only widening, an identity row's
+//!   owner-only source audience over the room's rows (review of #7006),
+//!   a claim's gate on base
 //!   policy, whose decision the room does not keep, and, under a read lane,
 //!   a claim's typed record refs resolved over the room (FIX 11062). It rides no turn of the room, so close drops it with the room;
 //!   nothing reaches base unless the vault comes to hold it.
@@ -42,7 +44,7 @@ use crate::memory::Memory;
 use crate::off_record::OffRecordSession;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarget};
-use crate::store::SessionStoreView;
+use crate::store::{RoomGateDecision, SessionStoreView};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use oneiron_contracts::affect::Vad;
@@ -144,12 +146,18 @@ impl Memory<'_> {
         let source_run = crate::skill_attribution::current_run_write_token();
         let mut entries = Vec::with_capacity(ops.len());
         let mut agent_puts = Vec::new();
+        let mut identity_puts = Vec::new();
+        // Each staged claim's gate decision, kept beside it (FIX 9967).
+        let mut decisions = Vec::new();
         for op in ops {
             let (row, occurred, learned_at, op) = match *op {
                 RawOp::Put(put) => {
-                    self.admit_staged_put(&session, put)?;
+                    decisions.extend(self.admit_staged_put(&session, put)?);
                     if put.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF {
                         agent_puts.push(put);
+                    }
+                    if crate::tagging::label_kind_admitted(put.entity_type) {
+                        identity_puts.push(put);
                     }
                     let op = BatchOp::Put {
                         id: put.id,
@@ -233,6 +241,40 @@ impl Memory<'_> {
             if !lane.admits_puts_in(wtxn, &put_ids)? {
                 return Err(Error::EntityNotFound);
             }
+            // A put that changes or drops the source audience an identity
+            // row names, as the room composes that row before this segment,
+            // is the owner's act, refused as on base (review of #7006).
+            if !identity_puts.is_empty() {
+                let view = session.read_view()?;
+                // The lane above judged base alone. An identity row the room
+                // holds that the caller does not read there answers as
+                // missing too, as on base (FIX 6068), before its audience is
+                // compared: the refusal below must tell no unread row apart.
+                if let CoreWriteLane::Read(reader) | CoreWriteLane::Target(reader) = &lane
+                    && !self.vault().turn_doors_owner_in(reader, wtxn)?
+                {
+                    let room = self
+                        .vault()
+                        .scoped_read_in_session(reader.actor_key().clone(), &view);
+                    for put in &identity_puts {
+                        let held = !matches!(
+                            crate::vault::live_entity_row_in_txn(&view, wtxn, &put.id)?,
+                            crate::vault::LiveEntityRow::Absent
+                        );
+                        if held && !room.is_entity_readable_in(wtxn, &put.id)? {
+                            return Err(Error::EntityNotFound);
+                        }
+                    }
+                }
+                for put in &identity_puts {
+                    if crate::claim::identity_put_moves_source_audience_in_txn(
+                        &view, wtxn, &put.id, put.data,
+                    )? {
+                        refusal = Some(crate::claim::owner_only_audience_change().into());
+                        return Err(Error::InvariantViolation("a bound raw write was refused"));
+                    }
+                }
+            }
             for entry in entries {
                 apply(wtxn, entry)?;
             }
@@ -247,6 +289,14 @@ impl Memory<'_> {
                     if crate::gate::unresolved_claim_reference(&room, wtxn, body)?.is_some() {
                         return Err(unresolved_reference());
                     }
+                }
+            }
+            // Each claim's gate decision, in the segment that stages the
+            // claim: never in base, and gone with the room (FIX 9967).
+            if !decisions.is_empty() {
+                let view = session.read_view()?;
+                for decision in &decisions {
+                    crate::store::stage_room_gate_decision_in_txn(&view, wtxn, decision)?;
                 }
             }
             Ok(())
@@ -337,20 +387,21 @@ impl Memory<'_> {
 
     /// The refusals a put meets on base before its room stages it: the
     /// public raw-put door's, and a claim's gate on base policy under its
-    /// caller's envelope, whose decision is not kept.
+    /// caller's envelope, whose decision it answers for the room to stage
+    /// beside the claim (FIX 9967).
     fn admit_staged_put(
         &self,
         session: &OffRecordSession<'_>,
         put: RawEntityPut<'_>,
-    ) -> MemoryResult<()> {
+    ) -> MemoryResult<Option<RoomGateDecision>> {
         crate::batch::validate_staged_raw_put(put.entity_type, put.data, put.learned_at)?;
         if put.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             && let Some(envelope) = self.raw_claim_envelope(put.data)?
         {
             let body = crate::claim::validate_claim_body_and_decode(put.data, false)?;
-            session.session_gate_check(put.id, &body, &envelope)?;
+            return Ok(session.session_gate_decision(put.id, &body, &envelope)?);
         }
-        Ok(())
+        Ok(None)
     }
 
     /// `put` on `batch`, its claim under its verified caller's envelope.
@@ -579,7 +630,8 @@ fn staged_claims(
 }
 
 /// The claim gate's unresolved-record-reference refusal, as the base batch
-/// words it; the room keeps no gate decision, so none is receipted.
+/// words it; the refused write stages nothing in the room, its claims'
+/// decisions included, so none is receipted.
 fn unresolved_reference() -> Error {
     Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",

@@ -32,11 +32,12 @@ export function memoryTools(memory) {
       inputSchema: schema({
         query: { type: "string" },
         options: { type: "object", additionalProperties: false, properties: {
-          effort: { type: "string", enum: ["minimal", "standard", "deep"] },
+          effort: { type: "string", enum: ["light", "medium", "high", "xhigh", "max", "call"] },
           limit: { type: "integer", minimum: 1, maximum: 1000 },
           format: { type: "string", enum: ["json", "yaml", "toon", "md", "txt"] },
           scope: { type: "object", additionalProperties: false, properties: {
             worldRef: { type: "string" }, facet: { type: "string" },
+            kinds: { type: "array", items: { type: "string" } },
             conversationRefs: { type: "array", items: { type: "string" } }, personRef: { type: "string" },
           } },
         } },

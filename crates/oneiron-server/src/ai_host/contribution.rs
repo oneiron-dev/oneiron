@@ -17,6 +17,12 @@
 //! through a project goal's axis (FIX 3611, [`audit`]). An `OwnerVerdict`
 //! anchor's pair is judged by the owner's own word, never by a model: its
 //! route only freezes the criterion (FIX 3609, [`owner`]).
+//!
+//! Each pair declares who reads its source once the Coach processed it,
+//! and why, beside the scorer it picks (FIX 20607): the held-out judge
+//! under the judge's own principal, the audit's judge, or the owner the
+//! pair asks. The engine admits each read under that reader's own
+//! authority; this declaration admits none.
 
 mod audit;
 mod owner;
@@ -25,8 +31,9 @@ mod program;
 use std::sync::Weak;
 
 use oneiron::code_run::{
-    ContributionForkModel, ContributionForkScorer, ContributionReplayUnavailable, ReplayAnchor,
-    ReplayRung, ScoredFork, run_contribution_forks,
+    ContributionForkModel, ContributionForkScorer, ContributionReplayUnavailable,
+    ContributionSourceConsumer as Consumer, ContributionSourcePurpose as Purpose,
+    ContributionSourceReadRequest, ReplayAnchor, ReplayRung, ScoredFork, run_contribution_forks,
 };
 use oneiron::dreamer_runner::maintenance::{ContributionForks, ContributionReplayHost};
 use oneiron::learning::Anchor;
@@ -122,14 +129,18 @@ impl ContributionReplayHost for HostContributionReplay {
         let owner = OwnerScorer { judge: self.judge };
         // An audit's pair is scored by its stored checker contract (FIX
         // 3611), an owner verdict's by the owner's word (FIX 3609), and
-        // every other anchor's by the replay judge's goal axis.
+        // every other anchor's by the replay judge's goal axis. Each names
+        // its reader before any source is read (FIX 20607).
         let scorer: &dyn ContributionForkScorer = match candidate.anchor {
             Anchor::Audit { .. } => &audit,
             Anchor::OwnerVerdict => &owner,
             _ => &held_out,
         };
+        let request = source_read_request(&candidate.anchor, self.judge);
         Ok(
-            match run_contribution_forks(vault, candidate, &model, &program, scorer, clock)? {
+            match run_contribution_forks(
+                vault, candidate, request, &model, &program, scorer, clock,
+            )? {
                 Ok(forks) => Some(forks),
                 Err(reason) => {
                     tracing::debug!(reason = reason.as_str(), "contribution forks unavailable");
@@ -138,6 +149,23 @@ impl ContributionReplayHost for HostContributionReplay {
             },
         )
     }
+}
+
+/// Who reads `anchor`'s pair's source once the Coach processed it, and why
+/// (FIX 20607): the audit's judge for an audit, the owner it asks for an
+/// owner verdict, and the held-out judge for any other anchor. The held-out
+/// judge keeps its own principal. These are facts: the engine admits each
+/// read under that reader's own authority.
+fn source_read_request(anchor: &Anchor, judge: &ServeReplayJudge) -> ContributionSourceReadRequest {
+    let (consumer, purpose) = match anchor {
+        Anchor::Audit { .. } => (Consumer::Audit, Purpose::ForkScoring),
+        Anchor::OwnerVerdict => (Consumer::OwnerReview, Purpose::OwnerVerdict),
+        _ => {
+            let principal = judge.principal();
+            (Consumer::HeldOutJudge { principal }, Purpose::ForkScoring)
+        }
+    };
+    ContributionSourceReadRequest { consumer, purpose }
 }
 
 /// A fork's call: the capsule's model alone, on the one rung that answered
@@ -289,7 +317,9 @@ fn goal_axis_anchor(
     let Some((project, _)) = goal.project else {
         return Ok(None);
     };
-    let Some(record) = vault.project_intake_goal(project)? else {
+    let Some(record) = vault
+        .project_intake_goal_as(oneiron::dreamer_runner::authority::coach_reader()?, project)?
+    else {
         return Ok(None);
     };
     let Some(stated) = record
@@ -389,7 +419,7 @@ fn task_text(vault: &Vault, task: &LlmRequest) -> String {
         .filter(|message| message.role != LlmMessageRole::System)
         .flat_map(|message| &message.content)
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -421,7 +451,7 @@ fn answer_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()

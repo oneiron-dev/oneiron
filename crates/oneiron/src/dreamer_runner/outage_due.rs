@@ -6,7 +6,7 @@ use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 
 use super::store::DreamerRunnerStore;
-use super::types::{DreamerParkCause, DreamerParkedAttemptRecord};
+use super::types::DreamerParkedAttemptRecord;
 
 const OUTAGE_PARK_REASON: &str = "agent_run_provider_unavailable";
 const OUTAGE_DUE: SideTable<(u64, AttemptId), (), Named> =
@@ -31,7 +31,7 @@ pub fn outage_retry_after(reason: &str) -> Option<u64> {
 }
 
 fn outage_due_at(record: &DreamerParkedAttemptRecord) -> Option<u64> {
-    if record.cause != DreamerParkCause::ProviderUnavailable {
+    if !super::ParkResume::cause_may_resume(record.cause, super::ParkResumer::OutageSweep) {
         return None;
     }
     outage_retry_after(&record.reason)

@@ -85,6 +85,11 @@ pub struct CodeRunLiveRunBinding {
 }
 
 impl CodeRunLiveRunBinding {
+    /// The actor the live run was attached under.
+    pub(crate) fn actor(&self) -> WriteActor {
+        WriteActor::new(self.actor, self.actor_class)
+    }
+
     /// The handle id the host issued at attach.
     #[must_use]
     pub const fn issued(&self) -> [u8; LIVE_RUN_ISSUED_LEN] {
@@ -214,5 +219,5 @@ pub fn live_run_lease_holds(vault: &Vault, proof: &HostBinding) -> Result<bool> 
 #[must_use]
 pub fn is_live_run_verb(verb: &str) -> bool {
     RunVerb::from_name(verb)
-        .is_some_and(|verb| super::run_verb_call::LIVE_RUN_VERBS.contains(&verb))
+        .is_some_and(|verb| crate::task_verb::sdk::RunVerb::LIVE_RUN.contains(&verb))
 }

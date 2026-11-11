@@ -59,13 +59,16 @@ mod claim_stale;
 pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
+pub(crate) use conflict_settle::conflict_review_held_in;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
 mod core_write_doors;
+pub mod device_succession;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
+mod edge_provenance;
 mod people_verbs;
 mod plugin_sections;
 pub mod run_review;
@@ -79,6 +82,7 @@ pub(crate) mod booking_publication;
 mod campaign;
 mod campaign_actions;
 pub mod campaign_records;
+mod can;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
@@ -100,6 +104,7 @@ pub mod erase_sweep;
 mod export;
 mod export_audit;
 mod export_kept;
+mod feeds;
 pub mod query_records;
 // FIX 11176: a kept export read and let go through verbs.
 mod export_transfer_read;
@@ -151,9 +156,11 @@ mod shape_doors;
 pub(crate) use shape_doors::AFTER_NEEDS_HANDLE;
 pub use shape_doors::DescribeRequest;
 mod signal_extraction;
+mod skill_bodies;
 mod structural;
 mod subscriptions;
 mod support;
+pub(crate) use support::TranscriptRetainedCaller;
 mod transcript;
 pub mod usage_repair;
 pub use oneiron_web_fetch::web_acquisition;
@@ -190,6 +197,7 @@ pub(crate) use authorship::{
     require_claim_self_grant_in_txn,
 };
 pub use booking::EmergencyInstructionInput;
+pub use can::{CanAnswer, CanEffectAnswer, CanEffectVerdict};
 pub use chat::{ChatAbstentionReason, ChatDepth, ChatOptions, ChatResponse, ChatScope};
 pub use chat_composer::{ChatComposeRequest, ChatComposer, ComposedChatAnswer};
 pub use claim_admission::{
@@ -234,6 +242,10 @@ pub use dreamer_wake_read::{
     DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeClaimAuthoringFallbackView,
     DreamerWakeEndView, DreamerWakeGenerationView, DreamerWakeHeaderView, DreamerWakeLeaseView,
     DreamerWakeLiveCallView, DreamerWakeLiveView, DreamerWakeResumeView, DreamerWakeView,
+};
+pub use edge_provenance::{
+    EdgeProvenanceActorClass, EdgeProvenanceLifecycle, EdgeProvenanceRequest,
+    EdgeProvenanceSupersession, EdgeProvenanceView,
 };
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
@@ -370,6 +382,7 @@ pub use support::{
     HostWriteOrigin, Memory, RewriteAdmit, SigningRequestTransport, parse_actor_key,
     resolve_entity_ref,
 };
+pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
@@ -387,12 +400,14 @@ pub use witness::{
     StreamSyncVisibility,
 };
 pub use witness::{
-    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamOutcome,
-    SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome,
+    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamFinished,
+    SessionStreamOutcome, SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext,
+    SessionWitnessOutcome,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
-    message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
+    message_stream_finality_in_txn, message_stream_held_generations_in_txn,
+    scrub_stream_seed_actor_in_txn,
 };
 pub use witness::{
     TurnProgramWakeOutcome, UnpersistedWakeReason, WitnessAssertions, WitnessAuthor,
@@ -439,3 +454,4 @@ pub mod voice_actor;
 pub(crate) mod resolved_recall_scope;
 
 pub mod claim_cluster;
+pub(crate) mod tables;

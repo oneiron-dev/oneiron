@@ -23,9 +23,11 @@ use super::serve::{ServeReport, ServeSink, ServeTerms, serve_request, unpinned_r
 use super::serve_cmd::ServeRequest;
 use crate::Vault;
 use crate::credential_door::CredentialDoorService;
+use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::federation::GitPushCaller;
 use crate::federation::git_push::{GitPushStamp, ServedPushRepo};
+use crate::origin::RepoPortableId;
 use crate::origin::residence::OriginAuthorityLease;
 
 /// Who a serve invocation pushes as: the pusher a host transport proved
@@ -54,6 +56,7 @@ pub fn serve_bounded_as(
     bounds: ExchangeBounds,
     authority: Option<&OriginAuthorityLease>,
     caller: Option<&GitPushCaller>,
+    push_selection: Option<(RepoPortableId, EntityId)>,
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
@@ -67,6 +70,7 @@ pub fn serve_bounded_as(
         push_wait: Some(bounds.repository_wait),
         caller: ServeCaller::Host(caller),
         read: None,
+        push_selection,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -84,6 +88,7 @@ pub fn admit_receive_pack(
     repo_name: &str,
     request: &ServeRequest,
     caller: Option<&GitPushCaller>,
+    push_selection: Option<(RepoPortableId, EntityId)>,
 ) -> Result<()> {
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     admit_push(
@@ -92,6 +97,7 @@ pub fn admit_receive_pack(
         repo_name,
         &repo_dir,
         ServeCaller::Host(caller),
+        push_selection,
     )
     .map(drop)
 }
@@ -105,6 +111,7 @@ pub(super) fn admit_push(
     repo_name: &str,
     repo_dir: &Path,
     caller: ServeCaller<'_>,
+    push_selection: Option<(RepoPortableId, EntityId)>,
 ) -> Result<Option<GitPushStamp>> {
     if !request.is_push() {
         return Ok(None);
@@ -134,7 +141,15 @@ pub(super) fn admit_push(
         .find_map(|pair| pair.strip_prefix("checkout-lease="));
     let served = ServedPushRepo::resolve(vault, repo_name, repo_dir);
     let txn = vault.store.env.read_txn()?;
-    let admission = vault.admit_git_receive_pack_in_txn(&txn, &pusher, &served, ticket)?;
+    let admission = vault.admit_git_receive_pack_with_portable_in_txn(
+        &txn,
+        &pusher,
+        &served,
+        ticket,
+        push_selection
+            .as_ref()
+            .map(|(portable, project)| (portable, *project)),
+    )?;
     Ok(Some(admission.into_stamp()))
 }
 

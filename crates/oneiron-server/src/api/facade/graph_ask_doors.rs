@@ -29,6 +29,8 @@ use std::sync::Arc;
 mod question_answers;
 mod question_outcomes;
 mod saved_lane;
+mod standing_admit;
+pub(crate) use standing_admit::{vault_questions_admit, vault_questions_prepare};
 
 pub(crate) use self::question_answers::vault_questions_answers;
 pub(crate) use self::question_outcomes::{
@@ -92,7 +94,7 @@ async fn vault_graph_ask_answer(
     let server = Arc::clone(server);
     let auth = auth.clone();
     super::clock_ingress::run_blocking(move || -> MemoryResult<GraphAskOutcome> {
-        let lane = asker_lane(server.vault(), &auth, asker.entity_ref(), VERB)?;
+        let lane = asker_lane(server.vault(), &auth, VERB)?;
         let units = match input.select {
             Some(select) => select_graph_units_by_type(&lane, select.entity_type, select.limit)?,
             None => input.units,
@@ -153,7 +155,7 @@ async fn vault_graph_admit_answer(
     let server = Arc::clone(server);
     let auth = auth.clone();
     super::clock_ingress::run_blocking(move || -> MemoryResult<GraphAskOutcome> {
-        let lane = asker_lane(server.vault(), &auth, asker.entity_ref(), VERB)?;
+        let lane = asker_lane(server.vault(), &auth, VERB)?;
         let mut answerer = AdmittedAnswerer {
             decision: Some(input.decision),
         };
@@ -342,7 +344,7 @@ async fn vault_questions_backfill_answer(
     let auth = auth.clone();
     super::clock_ingress::run_blocking(move || -> MemoryResult<ScheduledBackfill> {
         let now = oneiron_vault_contract::now_ts();
-        let lane = asker_lane(server.vault(), &auth, principal, VERB)?;
+        let lane = asker_lane(server.vault(), &auth, VERB)?;
         Ok(schedule_backfill_in_lane(
             server.vault(),
             &lane,
@@ -384,7 +386,7 @@ async fn vault_questions_read_answer(
     let server = Arc::clone(server);
     let auth = auth.clone();
     super::clock_ingress::run_blocking(move || -> MemoryResult<Option<QuestionRecord>> {
-        let lane = asker_lane(server.vault(), &auth, principal, VERB)?;
+        let lane = asker_lane(server.vault(), &auth, VERB)?;
         Ok(read_question_in_lane(
             server.vault(),
             &lane,
@@ -435,7 +437,7 @@ async fn vault_questions_refresh_answer(
     super::clock_ingress::run_blocking(move || -> MemoryResult<Vec<QuestionAnswer>> {
         let vault = server.vault();
         let now = oneiron_vault_contract::now_ts();
-        let lane = asker_lane(vault, &auth, asker.entity_ref(), VERB)?;
+        let lane = asker_lane(vault, &auth, VERB)?;
         let bands = server.decision_host().bands();
         let asked = refresh_artifact_question_now(
             vault,
@@ -602,8 +604,13 @@ fn question_answer_rows(answer: &QuestionAnswer) -> Vec<EntityId> {
 /// Whom `verb` is asked for, by `ai.verdict`'s rule: the slip's principal
 /// with its actor class, or the vault's own owner (class human) for an
 /// owner-grade credential that names none. The writer is made here, never
-/// read from the request.
-fn asker(auth: &CoreAuth, server: &SyncServer, verb: &str) -> MemoryResult<WriteActor> {
+/// read from the request. The facade runs it before these doors' pre chain
+/// too (FIX 1817).
+pub(in crate::api::facade) fn asker(
+    auth: &CoreAuth,
+    server: &SyncServer,
+    verb: &str,
+) -> MemoryResult<WriteActor> {
     let refused = || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
@@ -629,28 +636,22 @@ fn asker(auth: &CoreAuth, server: &SyncServer, verb: &str) -> MemoryResult<Write
 }
 
 /// The caller's own read lane, the one `ai.verdict` reads an image under:
-/// its verified slip's key, or the key its principal reads under. An
-/// owner-grade credential that names no principal reads as `asker`, the
-/// owner the door resolved, with the same owner-grade key.
+/// its verified slip's key, or the key its principal reads under. A
+/// self-hosted root or the dev mode, which names no principal, reads under
+/// its host action's guarded owner key, the owner `asker` resolved; a bare
+/// owner actor key would hold no read grant and read no unit.
 fn asker_lane<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
-    asker: EntityId,
     verb: &str,
 ) -> MemoryResult<oneiron::claim::ScopedRead<'a>> {
-    let refused = || {
+    crate::api::scoped_read_for_core_auth(vault, auth).map_err(|_| {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{verb} reads under the caller's scoped read"),
             &["Present a credential that can read the units."],
         )
-    };
-    if auth.verified_slip().is_none() && auth.principal_ref().is_none() {
-        let key = oneiron::claim::ScopedReadActorKey::with_actor_class(asker.to_hex(), "human")
-            .ok_or_else(refused)?;
-        return Ok(vault.scoped_read(key.at(auth.locality())));
-    }
-    crate::api::scoped_read_for_core_auth(vault, auth).map_err(|_| refused())
+    })
 }
 
 /// A standing question's dial, checked inside the host's own: the dial the

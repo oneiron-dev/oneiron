@@ -1,0 +1,16 @@
+{
+  "name": "vault.agents.verb_classes.configure",
+  "description": "The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once.",
+  "input": "crate::policy_manifest_doors::AgentVerbClassesConfigureRequest",
+  "output": "crate::policy_manifest_doors::AgentVerbClassesReceipt",
+  "call": "crate::policy_manifest_doors::configure_agent_verb_classes_as_owner(memory.vault(), &memory.embedded_owner(\"vault.agents.verb_classes.configure\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "scope": "Write",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

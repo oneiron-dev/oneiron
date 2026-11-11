@@ -12,6 +12,9 @@
 //! A fork is written only by its opener and lands only through a merge by
 //! someone else against the head that someone reviewed. Erasing the entity
 //! erases its body, every fork of it and their receipts ([`erase_in_txn`]).
+//! A fork's row and an open fork's document ride to the owner's other
+//! machines beside the body (`carried_fork`, FIX 12470), each write of a
+//! fork queuing its body for that window mirror.
 
 use crate::Vault;
 use crate::edge::EdgeActorClass;
@@ -28,18 +31,32 @@ use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
 use serde::{Deserialize, Serialize};
 
 mod body_actor;
+#[cfg(feature = "sync")]
+mod carried_fork;
 pub(crate) mod checkpoint;
 mod discard;
 mod lift;
+mod mask;
 mod receipts;
 pub(crate) mod reviewed_fork;
+#[cfg(feature = "sync")]
+pub(crate) mod sync_frame;
+pub(crate) mod tables;
 pub use self::body_actor::BodyActor;
 pub(crate) use self::body_actor::{erase_fork_actor_in_txn, names_no_actor};
+#[cfg(feature = "sync")]
+pub(crate) use self::carried_fork::{
+    CarriedFork, ForkSnapshot, carried_forks_in_txn, merge_carried_fork_in_txn,
+};
 pub(crate) use self::discard::{
     discard_admitted_typed_body_fork_in_txn, discard_typed_body_fork_in_txn,
 };
 pub(crate) use self::lift::{
     LiftedSources, TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use self::receipts::carried::{
+    CarriedReceipt, carried_receipts_in_txn, merge_carried_receipt_in_txn,
 };
 pub(crate) use self::receipts::{erase_receipt_actor_in_txn, receipt_actor_in_txn};
 
@@ -96,6 +113,14 @@ pub struct TypedBodyFork {
     pub commits: u64,
     pub opened_at: u64,
     pub state: TypedForkState,
+    /// The fork document's version vector at its latest authored state,
+    /// encoded (`oplog_vv().encode()`), and kept once the fork is merged or
+    /// discarded: what orders two machines' copies of the fork, since a
+    /// version vector compares without the other machine's operations (FIX
+    /// 12470). Empty for a fork stored before it was recorded, which keeps
+    /// the spelling it was stored in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub version: Vec<u8>,
 }
 
 /// Who writes one commit, and the body shape the writer expects.
@@ -134,9 +159,9 @@ pub(crate) fn birth_typed_body_in_txn<T>(
     if HEADS.contains(&vault.store, txn, entity)? {
         return Err(invalid("the entity already has a typed body"));
     }
-    let doc = LoroDoc::new();
+    let mut doc = LoroDoc::new();
     doc.set_record_timestamp(true);
-    let (value, receipt) = commit_as(vault, txn, &doc, *entity, writer, "birth", init)?;
+    let (value, receipt) = commit_as(vault, txn, &mut doc, *entity, writer, "birth", init)?;
     let frontier = doc.oplog_frontiers().encode();
     DOCS.put(&vault.store, txn, entity, &snapshot(&doc)?)?;
     let head = TypedBodyHead {
@@ -164,13 +189,13 @@ pub(crate) fn edit_typed_body_in_txn<T>(
     edit: impl FnOnce(&LoroDoc) -> Result<T>,
 ) -> Result<(T, TypedBodyCommit)> {
     let mut head = head_in_txn(&vault.store, txn, entity, writer.schema)?;
-    let live = load(DOCS.get(&vault.store, txn, entity)?, Some(&head.frontier))?;
+    let mut live = load(DOCS.get(&vault.store, txn, entity)?, Some(&head.frontier))?;
     let (value, receipt) = match base {
-        None => commit_as(vault, txn, &live, *entity, writer, "edit", edit)?,
+        None => commit_as(vault, txn, &mut live, *entity, writer, "edit", edit)?,
         Some(base) => {
-            let target = fork_at(&live, base)?;
+            let mut target = fork_at(&live, base)?;
             let before = target.oplog_vv();
-            let out = commit_as(vault, txn, &target, *entity, writer, "edit", edit)?;
+            let out = commit_as(vault, txn, &mut target, *entity, writer, "edit", edit)?;
             let updates = target
                 .export(ExportMode::updates(&before))
                 .map_err(|_| invalid("typed body update export"))?;
@@ -234,10 +259,12 @@ pub(crate) fn open_typed_body_fork_in_txn(
         commits: 0,
         opened_at: vault.now_recorded_at(),
         state: TypedForkState::Open,
+        version: live.oplog_vv().encode(),
     };
     let key = (*entity, fork.fork);
     FORK_DOCS.put(&vault.store, txn, &key, &snapshot(&live)?)?;
     FORKS.put(&vault.store, txn, &key, &fork)?;
+    queue_fork_mirror(vault, txn, entity);
     Ok(fork)
 }
 
@@ -258,11 +285,13 @@ pub(crate) fn edit_typed_body_fork_in_txn<T>(
     if record.state != TypedForkState::Open || !record.opener.is(writer.actor.entity_ref()) {
         return Err(invalid("only the opener writes to its open fork"));
     }
-    let doc = load(FORK_DOCS.get(&vault.store, txn, &key)?, None)?;
-    let (value, receipt) = commit_as(vault, txn, &doc, *entity, writer, "fork", edit)?;
+    let mut doc = load(FORK_DOCS.get(&vault.store, txn, &key)?, None)?;
+    let (value, receipt) = commit_as(vault, txn, &mut doc, *entity, writer, "fork", edit)?;
     FORK_DOCS.put(&vault.store, txn, &key, &snapshot(&doc)?)?;
     record.commits += 1;
+    record.version = doc.oplog_vv().encode();
     FORKS.put(&vault.store, txn, &key, &record)?;
+    queue_fork_mirror(vault, txn, entity);
     Ok((
         value,
         TypedBodyCommit {
@@ -384,8 +413,10 @@ fn land_typed_body_fork_in_txn(
         at,
         head: head.frontier.clone(),
     };
+    record.version = proposal.oplog_vv().encode();
     FORKS.put(&vault.store, txn, &key, &record)?;
     FORK_DOCS.delete(&vault.store, txn, &key)?;
+    queue_fork_mirror(vault, txn, entity);
     Ok(head)
 }
 
@@ -467,7 +498,12 @@ impl Vault {
         writer: TypedBodyWriter<'_>,
         init: impl FnOnce(&LoroDoc) -> Result<T>,
     ) -> Result<(T, TypedBodyCommit)> {
-        self.with_write_txn_grouped(|txn| birth_typed_body_in_txn(self, txn, entity, writer, init))
+        let born = self.with_write_txn_grouped(|txn| {
+            birth_typed_body_in_txn(self, txn, entity, writer, init)
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*entity);
+        Ok(born)
     }
 
     /// The writer's operations on the live body, read against `base` when
@@ -479,9 +515,12 @@ impl Vault {
         writer: TypedBodyWriter<'_>,
         edit: impl FnOnce(&LoroDoc) -> Result<T>,
     ) -> Result<(T, TypedBodyCommit)> {
-        self.with_write_txn_grouped(|txn| {
+        let edited = self.with_write_txn_grouped(|txn| {
             edit_typed_body_in_txn(self, txn, entity, base, writer, edit)
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*entity);
+        Ok(edited)
     }
 
     /// Opens a fork of the live body at its head for `actor`'s work.
@@ -518,9 +557,12 @@ impl Vault {
         expected_head: &[u8],
         actor: WriteActor,
     ) -> Result<TypedBodyHead> {
-        self.with_write_txn_grouped(|txn| {
+        let merged = self.with_write_txn_grouped(|txn| {
             merge_typed_body_fork_in_txn(self, txn, entity, fork, expected_head, actor)
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*entity);
+        Ok(merged)
     }
 
     /// Abandons an open fork's unlanded work.
@@ -538,11 +580,14 @@ impl Vault {
 
 /// Runs one call's operations under a fresh peer bound to the writer's actor
 /// and commits them under a message naming no one; the peer's receipt row
-/// keeps the writer's receipt (FIX 4513).
+/// keeps the writer's receipt (FIX 4513). A call whose body would read a new
+/// secret lands masked instead (FIX 2372, the `mask` module): `doc` is then
+/// the body as the call found it, with the call's masked changes committed
+/// under the same peer, and no operation holds the value.
 fn commit_as<T>(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
-    doc: &LoroDoc,
+    doc: &mut LoroDoc,
     entity: EntityId,
     writer: TypedBodyWriter<'_>,
     verb: &str,
@@ -564,14 +609,33 @@ fn commit_as<T>(
     let before = doc.state_frontiers();
     let value = edit(doc)?;
     let message = receipts::commit_message(verb);
-    doc.commit_with(CommitOptions::new().commit_msg(&message).timestamp(at));
+    let options = || CommitOptions::new().commit_msg(&message).timestamp(at);
+    doc.commit_with(options());
+    if doc.oplog_vv().get(&peer).copied().unwrap_or(0) <= 0 {
+        return Err(invalid("the call changed nothing"));
+    }
+    let stood = match admit_body(vault, txn, doc, &before) {
+        Ok(stood) => stood,
+        Err(refusal) => {
+            // A new secret (FIX 2372): the body as the call found it takes
+            // the call's changes with each string admitted, under the same
+            // peer. A secret no string's admission places refuses as before.
+            let Some(masked) = mask::masked_call_diff(vault, txn, entity, doc, &before)? else {
+                return Err(refusal);
+            };
+            let landed = mask::land_masked(doc, &before, peer, masked, options())?;
+            let stood = admit_body(vault, txn, &landed, &before)?;
+            *doc = landed;
+            stood
+        }
+    };
     let end = doc.oplog_vv().get(&peer).copied().unwrap_or(0);
     if end <= 0 {
         return Err(invalid("the call changed nothing"));
     }
     // A body that read as secret before the call and still does: the texts
     // it leaves are marked, a lifted value keeping its record (OF-067).
-    if admit_body(vault, txn, doc, &before)? {
+    if stood {
         lift::remark_typed_body_in_txn(vault, txn, &entity, doc)?;
     }
     bind_peer(vault, txn, peer, actor, made_by.at)?;
@@ -591,9 +655,10 @@ fn commit_as<T>(
 /// The body as one call left it, read whole by the write door under the
 /// owner's switch before it is serialized (OF-067). A typed body's history is
 /// its receipt ledger, so no handle can replace what an operation wrote: a
-/// hit refuses the call, unless the body read the same way before it.
-/// `true` when the door let a hit stand because the body read as secret
-/// before the call too.
+/// hit refuses, unless the body read the same way before the call, and
+/// [`commit_as`] then lands the call masked when it can (FIX 2372). `true`
+/// when the door let a hit stand because the body read as secret before the
+/// call too.
 fn admit_body(vault: &Vault, txn: &RoTxn<'_>, doc: &LoroDoc, before: &Frontiers) -> Result<bool> {
     let read = |doc: &LoroDoc| {
         serde_json::to_vec(&doc.get_deep_value())
@@ -653,6 +718,14 @@ pub(crate) fn bind_peer(
     )?;
     body.valid_from = Some(at);
     body.source = Some(ClaimSource::Observed);
+    // A MACHINE (a folder's importer, the Dreamer) has no substrate facet, so
+    // its binding is born in the vault default facet, as its actor-stamp token
+    // is. A PERSON's stays in its own substrate.
+    if vault.get_entity_type_in_txn(&*txn, &actor.entity_ref())?
+        == Some(crate::registry::ENTITY_TYPE_MACHINE)
+    {
+        body.scope_facet = vault.default_facet_in_txn(&*txn)?;
+    }
     vault.put_reserved_claim_in_txn(
         txn,
         &EntityId::now(),
@@ -727,6 +800,29 @@ fn import(doc: &LoroDoc, updates: &[u8]) -> Result<()> {
         return Err(Error::CorruptedIndex("typed body update dependencies"));
     }
     Ok(())
+}
+
+/// The version vector of the fork document `key`'s row holds, encoded;
+/// `None` when the row is gone or does not read (FIX 12470).
+fn fork_doc_version(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    key: &(EntityId, EntityId),
+) -> Result<Option<Vec<u8>>> {
+    Ok(FORK_DOCS
+        .get(store, txn, key)?
+        .and_then(|bytes| LoroDoc::from_snapshot(&bytes).ok())
+        .map(|doc| doc.oplog_vv().encode()))
+}
+
+/// Queues `entity` for the owner's post-commit live-window mirror: its fork
+/// rows ride beside it to the owner's other machines once this write
+/// commits (FIX 12470). A rolled-back write queues nothing.
+fn queue_fork_mirror(vault: &Vault, txn: &RwTxn<'_>, entity: &EntityId) {
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, txn, std::collections::BTreeSet::from([*entity]));
+    #[cfg(not(feature = "sync"))]
+    let _ = (vault, txn, entity);
 }
 
 fn fork_at(doc: &LoroDoc, frontier: &[u8]) -> Result<LoroDoc> {

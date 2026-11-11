@@ -79,7 +79,8 @@ impl DreamerWakeDriver<'_> {
         let stop = report.ok().map(|report| report.stop);
         let fallback = report
             .ok()
-            .and_then(|report| report.claim_authoring_fallback.clone());
+            .and_then(|report| report.claim_authoring_fallback.clone())
+            .or_else(|| self.claim_authoring_fallback_stash.take());
         observation::finish_wake_observation(self.vault, &self.deadline, stop, fallback);
         self.deadline.bind_wake(None);
         if report.is_ok_and(|report| report.parked > 0) {
@@ -124,6 +125,7 @@ impl DreamerWakeDriver<'_> {
             self.vault,
             input.scope,
             input.host_scope.as_ref(),
+            input.destination_bound.as_ref(),
             &self.deadline,
             cancel,
         )?

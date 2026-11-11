@@ -11,6 +11,8 @@ mod editor_budget;
 pub(crate) mod hold_worker;
 mod ingress;
 pub(crate) mod notice_worker;
+#[cfg(unix)]
+pub(crate) mod page_inspector;
 mod parse_lease;
 mod presentation;
 #[cfg(unix)]
@@ -97,15 +99,15 @@ async fn action(
             Ok(request) => request,
             Err(response) => return response,
         };
-    match server.vault.execute_signing_action_as(
-        &token,
-        &request.action,
-        caller,
-        verified_actor,
-        ip,
-        ua,
-    ) {
-        Ok(outcome) => (
+    // The act blocks, its writer and the inspection of the PDFs it lays
+    // fields on (FIX 9609) alike, so it runs off the async runtime.
+    let vault = Arc::clone(&server.vault);
+    let acted = tokio::task::spawn_blocking(move || {
+        vault.execute_signing_action_as(&token, &request.action, caller, verified_actor, ip, ua)
+    })
+    .await;
+    match acted {
+        Ok(Ok(outcome)) => (
             [
                 (header::CACHE_CONTROL, "no-store"),
                 (header::REFERRER_POLICY, "no-referrer"),
@@ -114,7 +116,7 @@ async fn action(
             Json(outcome),
         )
             .into_response(),
-        Err(_) => refused(),
+        Ok(Err(_)) | Err(_) => refused(),
     }
 }
 /// Who the signing call shows itself to be. A browser signer sends no
@@ -291,7 +293,8 @@ async fn image(
         };
         // A peak past u64 fits no machine: the lease refuses it at its floor.
         let peak = plan.peak_bytes(bytes).unwrap_or(u64::MAX);
-        let mut lease = match memory.lease(peak, Instant::now() + ingress::MEMORY_WAIT) {
+        let deadline = Instant::now() + ingress::MEMORY_WAIT;
+        let mut lease = match memory.lease(peak, deadline) {
             Ok(lease) => lease,
             Err(refusal) => return ImageUpload::Memory(refusal),
         };
@@ -305,7 +308,32 @@ async fn image(
         // pending on the lease until the upload returns.
         let read = u64::try_from(image.len()).unwrap_or(u64::MAX);
         lease.materialized(read, read);
-        match vault.upload_esign_signature_image_as(&token, &image, caller, verified_actor) {
+        let mut memory_refusal = None;
+        let uploaded = vault.upload_esign_signature_image_admitted_as(
+            &token,
+            &image,
+            caller,
+            verified_actor,
+            &mut |plan, header_allocated| {
+                if header_allocated != 0 {
+                    lease.materialized(header_allocated, header_allocated);
+                }
+                let peak = plan.peak_bytes(read).unwrap_or(u64::MAX);
+                let more = peak.saturating_sub(lease.bytes());
+                if more == 0 {
+                    return Ok(());
+                }
+                lease
+                    .grow_pending(more, deadline, &|| false)
+                    .inspect_err(|refusal| {
+                        memory_refusal = Some(*refusal);
+                    })
+            },
+        );
+        if let Some(refusal) = memory_refusal {
+            return ImageUpload::Memory(refusal);
+        }
+        match uploaded {
             Ok(image_ref) => ImageUpload::Stored(image_ref),
             Err(_) => ImageUpload::Refused,
         }
@@ -384,7 +412,6 @@ fn unavailable() -> Response {
     )
         .into_response()
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

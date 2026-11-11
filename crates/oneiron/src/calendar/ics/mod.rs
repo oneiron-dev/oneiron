@@ -35,6 +35,7 @@
 //! against the IANA database first. See [`emit_imip_ics`] and
 //! [`ImipEmitRequest`].
 
+mod calendar_timezone;
 mod emit;
 mod parse;
 
@@ -43,8 +44,12 @@ pub use self::emit::{
 };
 pub use self::parse::{ParsedCalendarProperties, ParsedIcsFeed, ParsedVEvent, parse_ics_feed};
 
+pub(crate) use self::calendar_timezone::{ics_vtimezone_tzid, ics_with_calendar_timezone};
 pub(crate) use self::emit::emit_imip_ics_with_organizer_zones;
-pub(crate) use self::parse::{InviteIcsIdentity, invite_identity};
+pub(crate) use self::parse::{
+    InviteIcsIdentity, ics_calendar_timezone, invite_identity, plain_zone_name,
+    push_collection_zone_line,
+};
 
 // Lets the moved bodies keep their `super::...` paths verbatim.
 pub(super) use super::{invite, tz};

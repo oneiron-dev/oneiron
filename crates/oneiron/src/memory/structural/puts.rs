@@ -166,6 +166,10 @@ impl Memory<'_> {
     /// later AgentRun output waits beside the live artifact as a proposal;
     /// its authorized Keep appends the version and its ledger claim.
     ///
+    /// The ledger claim is born at this surface's birth position, which its
+    /// host bound (`with_birth_position`, FIX 3171), never at a place the
+    /// caller names. A proposal keeps that position for its Keep.
+    ///
     /// Exempt from the hard-delete recreation refusal BY CONSTRUCTION: no
     /// caller-supplied id is written here — the ASSET id is content-derived
     /// inside the engine (module-private derivation) and the LEDGER claim
@@ -173,6 +177,10 @@ impl Memory<'_> {
     /// integrity for content-addressed storage remains: a hard-deleted
     /// ASSET can be re-materialized by re-supplying identical bytes to a
     /// live artifact.
+    ///
+    /// The content's size is measured against `blob_content_bytes`
+    /// (FIX 76): past it the row asks, and the content is stored whole, as
+    /// one version, never refused for its size.
     pub fn append_blob_version(
         &self,
         artifact_ref: &str,
@@ -181,27 +189,91 @@ impl Memory<'_> {
         occurred_at: u64,
         learned_at: Option<u64>,
     ) -> MemoryResult<BlobVersionAppendOutcome> {
+        self.append_blob_content(
+            artifact_ref,
+            crate::blob_artifact::BlobContent::Bytes(bytes),
+            run_ref,
+            occurred_at,
+            learned_at,
+        )
+    }
+
+    /// [`Self::append_blob_version`] of a body file an ingress door decoded
+    /// before any writer opened (FIX 22074): a body no longer than the asset
+    /// plane's inline size is read once and appended as a slice; a longer
+    /// one is staged from the file inside the content writer, and waits in
+    /// its own body file when it is proposed, never held whole.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::append_blob_version`]'s errors and the file's read errors.
+    pub fn append_blob_version_file(
+        &self,
+        artifact_ref: &str,
+        body: &crate::blob_artifact::BlobBodyFile<'_>,
+        run_ref: Option<&str>,
+        occurred_at: u64,
+        learned_at: Option<u64>,
+    ) -> MemoryResult<BlobVersionAppendOutcome> {
+        let inline = body.inline_bytes()?;
+        let content = match &inline {
+            Some(bytes) => crate::blob_artifact::BlobContent::Bytes(bytes),
+            None => crate::blob_artifact::BlobContent::File(body),
+        };
+        self.append_blob_content(artifact_ref, content, run_ref, occurred_at, learned_at)
+    }
+
+    fn append_blob_content(
+        &self,
+        artifact_ref: &str,
+        content: crate::blob_artifact::BlobContent<'_>,
+        run_ref: Option<&str>,
+        occurred_at: u64,
+        learned_at: Option<u64>,
+    ) -> MemoryResult<BlobVersionAppendOutcome> {
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::BlobContentBytes,
+            content.len(),
+        );
         let artifact_id = self.resolve_ref(artifact_ref)?;
-        let provenance = match run_ref {
-            Some(run_ref) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
+        // A machine's unlabelled append reserves its version claim's id as
+        // the proposal key; Keep uses that same id when the claim is born.
+        let claim_id = if run_ref.is_none() && self.actor_class != EdgeActorClass::Human {
+            Some(self.vault.store.clock.entity_id()?)
+        } else {
+            None
+        };
+        let provenance = match (run_ref, claim_id) {
+            (Some(run_ref), _) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
                 run_ref: run_ref.to_owned(),
             },
-            None => crate::blob_artifact::BlobVersionProvenance::UserUpload,
+            (None, Some(claim_id)) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
+                run_ref: claim_id.to_hex(),
+            },
+            (None, None) => crate::blob_artifact::BlobVersionProvenance::UserUpload,
         };
         let occurred = TimeRange {
             start: occurred_at,
             end: occurred_at,
         };
-        let outcome = self.with_actor_content_write_txn(|content| {
-            Ok(content.update_artifact(artifact_id, |txn| {
+        // A landing version or a waiting proposal past the inline size goes
+        // to its body file under an instance minted before the writer opens;
+        // its hold outlives the commit (FIX 20812).
+        let mint = self.vault.asset_body_mint([content.len()])?;
+        let (outcome, _hold) = self.with_actor_content_write_txn(|content_txn| {
+            Ok(content_txn.update_artifact(artifact_id, |txn, lane| {
                 self.vault.append_blob_artifact_version_checked_in_txn(
                     txn,
                     &artifact_id,
-                    bytes,
+                    content,
+                    mint.as_ref(),
                     &provenance,
                     self.write_actor(),
                     occurred,
                     learned_at.unwrap_or(occurred_at),
+                    self.birth_position(),
+                    lane,
+                    claim_id,
                 )
             })?)
         })?;

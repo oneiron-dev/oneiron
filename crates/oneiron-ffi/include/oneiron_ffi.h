@@ -788,7 +788,10 @@ enum OneironStatus oneiron_vault_put_entity(struct OneironVault *vault,
  *
  * `entities` may be null only when `entities_len == 0`. Each payload pointer
  * inside the array must be non-null for its byte length. A bound handle
- * stores them as its caller (`oneiron_vault_bind`).
+ * stores them as its caller (`oneiron_vault_bind`). `entities_len` is
+ * measured against `legacy_batch_entities` before any input is read
+ * (FIX 72): past it the row asks, and every input is still stored in the
+ * one transaction.
  *
  * # Safety
  *

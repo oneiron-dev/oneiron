@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 
 use oneiron::llm::media::wav::{WavClip, pcm16_wav};
 use oneiron::llm::media::{
-    AiOperation, MediaBackend, MediaFuture, MediaPart, MediaRequest, MediaResponse, MediaUsage,
-    MediaVoice,
+    AiOperation, InterruptedMediaCall, MediaBackend, MediaFuture, MediaPart, MediaProgressFuture,
+    MediaRequest, MediaResponse, MediaUsage, MediaVoice,
 };
 use oneiron::llm::run_admission::{CallOutcome, PaidConnector, RunAdmission};
 use oneiron::voice_identity::ref_bank::VoiceRegisterClip;
@@ -22,7 +22,7 @@ use reqwest::multipart::{Form, Part};
 use serde_json::{Value as JsonValue, json};
 
 use super::host_budgets::ModelHostBudgets;
-use super::http::{MediaSend, ProviderHttp, holding_replies};
+use super::http::{HttpReleaseError, MediaSend, ProviderHttp, holding_replies};
 use super::rerank::transport;
 
 /// The rate both wires are asked to speak at.
@@ -47,13 +47,27 @@ pub(super) struct HostedSpeech {
 }
 
 impl HostedSpeech {
-    async fn speak(&self, mut request: MediaRequest) -> LlmResult<MediaResponse> {
+    async fn speak(
+        &self,
+        mut request: MediaRequest,
+        dispatch: Option<(oneiron::llm::DispatchRelease<'_>, &BudgetLease)>,
+    ) -> LlmResult<MediaResponse> {
         let (text, path, body) = build(self.wire, &self.models, &mut request)?;
-        let reply = self
-            .http
-            .send_media(&path, MediaSend::Json(body))
-            .await
-            .map_err(transport)?;
+        let reply = match dispatch {
+            Some((release, lease)) => self
+                .http
+                .send_json_released(&path, body, release, lease)
+                .await
+                .map_err(|error| match error {
+                    HttpReleaseError::Transport(error) => transport(error),
+                    HttpReleaseError::Release(error) => error,
+                })?,
+            None => self
+                .http
+                .send_media(&path, MediaSend::Json(body))
+                .await
+                .map_err(transport)?,
+        };
         parse(
             reply.status,
             &reply.headers,
@@ -171,7 +185,20 @@ impl MediaBackend for HostedSpeech {
         request: MediaRequest,
         _lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse> {
-        Box::pin(self.speak(request))
+        Box::pin(self.speak(request, None))
+    }
+
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        Box::pin(async move {
+            self.speak(request, release.map(|release| (release, lease)))
+                .await
+                .map_err(InterruptedMediaCall::nothing)
+        })
     }
 }
 

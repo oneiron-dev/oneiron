@@ -224,6 +224,28 @@ impl Vault {
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, true)
     }
 
+    pub(crate) fn put_reserved_claim_with_setup_owner_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        owner: crate::agent_def::PreparedSetupOwner,
+    ) -> Result<()> {
+        let ops = self.claim_put_ops_in_txn(wtxn, id, body, occurred, learned_at, true)?;
+        apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            ApplyOpsGateMode::new(false, true).with_prepared_setup_owner(Some(owner)),
+        )
+    }
+
     fn put_claim_in_txn_with_reserved(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -330,7 +352,11 @@ impl Vault {
         // Current source edge metadata, including its claim_of weight and
         // stamp, replaces the native default for that same edge.
         ops.extend(edges);
-        crate::batch::BatchBuilder::promotion_replay(self, ops, grant).apply_actor(txn, &saver)
+        crate::batch::BatchBuilder::promotion_replay(self, ops, grant).apply_actor(
+            txn,
+            &saver,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )
     }
 
     /// `landing` runs first in the write transaction; its refusal writes

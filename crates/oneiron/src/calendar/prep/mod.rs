@@ -55,9 +55,11 @@ mod lens;
 mod pack;
 mod wake;
 
-pub(in crate::calendar) use self::home_node::live_prep_event;
 pub use self::home_node::{
     PrepHomeNodeJob, run_due_home_node_prep, run_due_home_node_prep_with_sources,
+};
+pub(in crate::calendar) use self::home_node::{
+    live_prep_event, person_lane, run_due_person_prep_with_sources,
 };
 pub use self::lens::{PrepLensCopy, render_prep_lens};
 pub(crate) use self::pack::build_prep_pack_scoped;

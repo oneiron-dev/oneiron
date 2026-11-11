@@ -23,7 +23,17 @@ impl SyncClient {
         query: &str,
         limit: usize,
     ) -> Result<ResidenceSearch, TransportError> {
-        search_resident(&self.vault, &self.config, query, limit, None, None, None).await
+        search_resident(
+            &self.vault,
+            &self.config,
+            query,
+            limit,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     /// One page of a home search of at most `limit` hits in all (FIX 9258):
@@ -97,6 +107,15 @@ async fn search_resident_page(
 /// the scope the device's recall resolved before its candidate cut, and a
 /// forwarded caller's proof binds the scope too. A scoped search never
 /// falls back to this device's own scan either: its recall already read it.
+///
+/// With `filter`, the caller's own retrieval filter (FIX 3977), the home
+/// binds it on its reader before the candidate cut and signs it with the
+/// request. A filtered search never falls back to this device's unfiltered
+/// offline scan.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a home search carries every field its signed request names"
+)]
 pub(crate) async fn search_resident(
     vault: &crate::Vault,
     config: &SyncClientConfig,
@@ -104,6 +123,7 @@ pub(crate) async fn search_resident(
     limit: usize,
     scope: Option<&crate::sync::residence::ResolvedRecallSelection>,
     as_of: Option<u64>,
+    filter: Option<&crate::memory::ReadFilterInput>,
     caller: Option<(
         &crate::authority::ForwardedCallerProof,
         crate::claim::CallerLocality,
@@ -128,11 +148,12 @@ pub(crate) async fn search_resident(
                 &selector_wire,
                 scope,
                 as_of,
+                filter,
                 caller,
             )
             .await
         }
-        None if caller.is_some() || scope.is_some() => Err(refused()),
+        None if caller.is_some() || scope.is_some() || filter.is_some() => Err(refused()),
         None => Ok(ResidenceSearch {
             hits: local_only_hits(vault, &budgets, query, limit)?,
             source: SearchSource::LocalOnly,

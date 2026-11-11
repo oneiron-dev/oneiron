@@ -2,9 +2,13 @@
 //! the row's birth and, for a NOTE, its document's birth, in the segment and
 //! on the transaction that stage the row, so each commits or aborts with it.
 //!
-//! Both are the room's bookkeeping. A birth spends none of the room's byte
-//! budget (`session_overlay::keyspace::unbudgeted_row`); a NOTE's document,
-//! which repeats text its row already holds, is marked as the write's own
+//! A claim's gate decision (FIX 9967) stages beside it the same way, as
+//! the base ledger's own row and indexes in the room's RAM, never sealed and
+//! never in base; unlike a birth it spends the room's budget.
+//!
+//! The births are the room's bookkeeping. A birth spends none of the room's
+//! byte budget (`session_overlay::keyspace::unbudgeted_row`); a NOTE's document,
+//! born from the birth text its write carries, is marked as the write's own
 //! bookkeeping before it is put, so a room at its limit takes exactly the
 //! NOTE it took before (N2). The host's own memory accounting still counts
 //! their bytes. Neither is a journal entry, so no promote or save replays
@@ -14,7 +18,7 @@ use heed::RwTxn;
 
 use super::session::OffRecordSession;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ports::{DocumentRowStore, DocumentSlot, EntityStoreRead};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::birth::room::{SuppliedEvidence, stamp_room_birth_in_txn};
@@ -22,7 +26,7 @@ use crate::provenance::made_by::MadeByClass;
 use crate::scan_check::EngineScan;
 use crate::session_overlay::OverlayKeyspace;
 use crate::side_table::{self, SideKey};
-use crate::store::SessionStoreView;
+use crate::store::{RoomGateDecision, SessionStoreView};
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 
 /// The door identity of a claim a room's run stages for its executor
@@ -30,12 +34,13 @@ use crate::write_envelope::{WriteActor, WriteEnvelope};
 const STAGED_CLAIM_DOOR: &str = "off_record.claims.stage";
 
 /// The door identity of a claim a room derives from its sources
-/// (`OffRecordSession::stage_session_derived_claim`).
+/// (`OffRecordSession::prepare_session_derived_claim`).
 const DERIVED_CLAIM_DOOR: &str = "off_record.claims.derive";
 
 /// What a room write stages beside its row: who wrote it, its class, the
 /// door it came in by and when, the rows it derives from, the evidence its
-/// caller supplied, and whether it is a NOTE whose document is born with it.
+/// caller supplied, for a NOTE the birth text its document is born from
+/// with it, and a claim's gate decision.
 pub(crate) struct RoomRowAttachments {
     actor: WriteActor,
     class: MadeByClass,
@@ -43,17 +48,20 @@ pub(crate) struct RoomRowAttachments {
     at: u64,
     sources: Vec<EntityId>,
     evidence: Vec<SuppliedEvidence>,
-    note_document: bool,
+    note_document: Option<String>,
+    gate_decision: Option<RoomGateDecision>,
 }
 
 impl RoomRowAttachments {
     /// A NOTE `actor` wrote through `door` at `at`, naming `evidence` as its
-    /// caller supplied it: its document is born beside it.
+    /// caller supplied it: its document is born beside it from `markdown`,
+    /// its explicit birth text (FIX 7783).
     pub(crate) fn note(
         actor: WriteActor,
         door: &'static str,
         evidence: Vec<SuppliedEvidence>,
         at: u64,
+        markdown: String,
     ) -> Self {
         Self {
             actor,
@@ -62,7 +70,8 @@ impl RoomRowAttachments {
             at,
             sources: Vec::new(),
             evidence,
-            note_document: true,
+            note_document: Some(markdown),
+            gate_decision: None,
         }
     }
 
@@ -81,7 +90,8 @@ impl RoomRowAttachments {
             at,
             sources: Vec::new(),
             evidence,
-            note_document: false,
+            note_document: None,
+            gate_decision: None,
         }
     }
 
@@ -100,18 +110,30 @@ impl RoomRowAttachments {
             ..Self::claim(envelope, DERIVED_CLAIM_DOOR, Vec::new(), at)
         }
     }
+
+    /// These attachments with `decision`, the decision the claim's gate
+    /// judged (FIX 9967): it stages beside the claim, in its segment, never
+    /// in base, and evaporates with the room.
+    pub(crate) fn with_gate_decision(self, decision: Option<RoomGateDecision>) -> Self {
+        Self {
+            gate_decision: decision,
+            ..self
+        }
+    }
 }
 
 impl OffRecordSession<'_> {
     /// Stages `attachments` beside `row`, a row the segment's transaction
     /// `wtxn` has just staged: a NOTE's document birth, then the row's birth,
-    /// each read on a fresh view of the room so it sees the row.
+    /// then a claim's gate decision, each on a fresh view of the room so it
+    /// sees the row.
     ///
     /// # Errors
     ///
-    /// A stored NOTE body that does not decode; storage errors. A caller's
-    /// evidence never refuses here, and a row stamped before keeps its first
-    /// birth ([`stamp_room_birth_in_txn`]).
+    /// A stored NOTE body that does not decode; a gate decision about
+    /// another claim, or one the ledger or the room's budget refuses; storage
+    /// errors. A caller's evidence never refuses here, and a row stamped
+    /// before keeps its first birth ([`stamp_room_birth_in_txn`]).
     pub(super) fn stage_row_attachments(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -119,8 +141,8 @@ impl OffRecordSession<'_> {
         attachments: &RoomRowAttachments,
     ) -> Result<()> {
         let view = self.read_view()?;
-        if attachments.note_document {
-            self.stage_note_document(&view, wtxn, row)?;
+        if let Some(markdown) = &attachments.note_document {
+            self.stage_note_document(&view, wtxn, row, markdown)?;
         }
         let mut inputs = Vec::with_capacity(attachments.sources.len());
         for source in &attachments.sources {
@@ -136,22 +158,33 @@ impl OffRecordSession<'_> {
             &attachments.evidence,
             attachments.at,
         );
-        stamp_room_birth_in_txn(&view, wtxn, &row, &birth)
+        stamp_room_birth_in_txn(&view, wtxn, &row, &birth)?;
+        if let Some(decision) = &attachments.gate_decision {
+            if decision.record.claim_id != Some(*row.as_bytes()) {
+                return Err(Error::InvariantViolation(
+                    "a room's gate decision judged another claim",
+                ));
+            }
+            crate::store::stage_room_gate_decision_in_txn(&view, wtxn, decision)?;
+        }
+        Ok(())
     }
 
-    /// Stages the document birth of `note`, the NOTE row `view`'s room has
-    /// just staged: its snapshot and state vector, each marked as the
-    /// write's bookkeeping before it is put (N2). Its body's bytes are
-    /// measured against their threshold row, the check waiting with the
-    /// room ([`Self::pending_scan_checks`]); no size refuses it (rule 5).
-    fn stage_note_document(
+    /// Stages the document birth of `note`, the NOTE core `view`'s room has
+    /// just staged, from `markdown`, its explicit birth text: its snapshot
+    /// and state vector, each marked as the write's bookkeeping before it is
+    /// put (N2). Its body's bytes are measured against their threshold row,
+    /// the check waiting with the room ([`Self::pending_scan_checks`]); no
+    /// size refuses it (rule 5).
+    pub(crate) fn stage_note_document(
         &self,
         view: &SessionStoreView<'_>,
         wtxn: &mut RwTxn<'_>,
         note: EntityId,
+        markdown: &str,
     ) -> Result<()> {
         let Some(document) =
-            crate::note::room_birth_document_in_txn(self.vault, view, &*wtxn, note)?
+            crate::note::room_birth_document_in_txn(self.vault, view, &*wtxn, note, markdown)?
         else {
             return Ok(());
         };

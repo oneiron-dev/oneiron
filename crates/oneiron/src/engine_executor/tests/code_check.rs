@@ -2,17 +2,27 @@
 //! oracle fixtures read, is the verb table's rendering of `self.memory`; a
 //! shadow check never changes how a step ends; and a step's record names the
 //! checker whose answer it holds.
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 use super::*;
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 use crate::engine_executor::code_check::ShadowStep;
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 use oneiron_code_check::{
     BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, Diagnostic, Fallback, ShadowCheck,
 };
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 use std::collections::BTreeMap;
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 use std::sync::Arc;
 
 /// Substrate invariant (ARCH-0028, one table): the checked-in code-mode
 /// declarations are exactly what the verb table renders. A row added, dropped
-/// or retyped in `scripts/sdk/agent-verbs.json` fails here until the file is
+/// or retyped in `scripts/sdk/verbs/` fails here until the file is
 /// regenerated with `ONEIRON_UPDATE_TEST_FIXTURES=1`.
 #[test]
 fn code_mode_declarations_file_is_the_verb_table() {
@@ -28,11 +38,15 @@ fn code_mode_declarations_file_is_the_verb_table() {
     );
 }
 
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 /// A checker that finds one diagnostic in every program, or panics.
 struct FixtureCheck {
     panics: bool,
 }
 
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 impl CodeCheck for FixtureCheck {
     fn backend(&self) -> BackendId {
         BackendId {
@@ -58,6 +72,8 @@ impl CodeCheck for FixtureCheck {
     }
 }
 
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 /// The step of `executor_preserves_durable_wait_when_runtime_errors_after_wait`
 /// parks its run on the wait its program recorded before failing. With a
 /// shadow check attached, even one that panics, the step still parks the run,
@@ -103,12 +119,16 @@ fn a_shadow_check_leaves_a_parked_step_parked() {
     }
 }
 
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 /// A checker that takes no program.
 struct FailingCheck {
     name: &'static str,
     failure: CheckFailure,
 }
 
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 impl CodeCheck for FailingCheck {
     fn backend(&self) -> BackendId {
         BackendId {
@@ -122,6 +142,8 @@ impl CodeCheck for FailingCheck {
     }
 }
 
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 /// A busy tsc-rs hands the program to the fallback; when the fallback fails
 /// too, the step's record holds the fallback's failure under the fallback's
 /// name, not tsc-rs's.

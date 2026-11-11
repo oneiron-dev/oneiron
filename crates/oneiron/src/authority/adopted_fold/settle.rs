@@ -38,6 +38,21 @@ pub(super) struct SettledTail {
     pub(super) fold: AuthorityFold,
     /// The projection's final merge.
     pub(super) final_merged: Option<FoldState>,
+    /// The restrictive facts the projection applied: the image's, with each
+    /// serial tail actor revocation's (FIX 11760).
+    pub(super) revoke_facts: crate::authority::revoke_proof::RevokeFacts,
+}
+
+/// Whether `op` is a withdrawal the tail folds past the image only serially,
+/// every covered row in its causal past (FIX 11760,
+/// [`super::serial_withdrawal`]).
+pub(super) fn serial_withdrawal_op(op: &AuthorityOp) -> bool {
+    matches!(
+        op,
+        AuthorityOp::RevokeActor { .. }
+            | AuthorityOp::SlipRevoke { .. }
+            | AuthorityOp::SlipGrantRevoke { .. }
+    )
 }
 
 /// The tail's fold on the image's frontier states, merged into the image's
@@ -156,6 +171,26 @@ pub(super) fn settle_tail(
     {
         return Ok(None);
     }
+    // A serial withdrawal's tail folds whole, every row of it on its own
+    // parents' states (FIX 11760): a row the fold rejects could still carry
+    // a withdrawal its branch proves past it, which only the whole history
+    // proves. The image's facts then gain each actor revocation's own.
+    let serial = tail.values().any(|entry| serial_withdrawal_op(&entry.op));
+    if serial && tail.keys().any(|hash| !states.contains_key(hash)) {
+        return Ok(None);
+    }
+    let revoke_facts = if serial {
+        image.safety.revoke_facts.with_serial_actor_revokes(
+            image
+                .rows
+                .iter()
+                .map(|(hash, row)| (hash, &row.signer, row.seq)),
+            &judged,
+            &states,
+        )
+    } else {
+        image.safety.revoke_facts.clone()
+    };
     let mut merged = image.aggregate.merged.clone();
     let mut writers = image.safety.writers.clone();
     for state in states.values() {
@@ -206,7 +241,7 @@ pub(super) fn settle_tail(
             merged: Some(merged.clone()),
             valid_entries,
             by_hash: &projected,
-            revoke_facts: &image.safety.revoke_facts,
+            revoke_facts: &revoke_facts,
             retired_keys: image.safety.retired_keys.clone(),
             closed_handoffs: image.safety.closed_handoffs.clone(),
             unsettled: image.safety.unsettled,
@@ -241,6 +276,7 @@ pub(super) fn settle_tail(
         projected,
         fold,
         final_merged,
+        revoke_facts,
     }))
 }
 

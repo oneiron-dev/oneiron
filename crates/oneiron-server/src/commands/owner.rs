@@ -30,6 +30,8 @@ use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{hooked_row, imports, local_owner, memory_refusal, note_imports};
 
 mod control_commands;
+mod meeting_audio;
+pub use self::meeting_audio::{MeetingTranscriptArgs, meeting_transcript};
 mod doctor;
 mod pack_commands;
 mod recovery_commands;
@@ -280,6 +282,7 @@ fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Resul
     let issuer = host_issuer(config, vault, true)?;
     vault.ensure_host_root_slip(&issuer)?;
     vault.provision_engine_machine_identities(&issuer)?;
+    vault.provision_system_agent_grants()?;
     Ok(())
 }
 

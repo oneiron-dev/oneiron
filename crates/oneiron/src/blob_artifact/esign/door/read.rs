@@ -6,7 +6,7 @@
 use super::super::delivery_settlement::delivery_receipts_in;
 use super::super::document_view::{EsignDocumentTrail, EsignDocumentView, EsignSealTrail};
 use super::super::ledger::trail_read_in;
-use super::super::seal::CANONICAL;
+use super::super::seal::{CANONICAL, EsignSealAttemptResult, RESULT};
 use super::{
     EsignGetRequest, EsignSealAttemptView, EsignSealGetRequest, EsignSealView, EsignSealedItemView,
     EsignSealedView, document_id,
@@ -76,18 +76,27 @@ impl Memory<'_> {
             .list_kind_bounded_in_txn(&txn, super::super::ESIGN_SEAL_ATTEMPT_KIND, usize::MAX)?
             .into_iter()
             .filter(|record| record.payload.as_slice() == document.as_bytes().as_slice())
-            .map(|record| EsignSealAttemptView {
-                attempt_ref: crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
-                kind: record.kind,
-                state: record.state.as_str().to_owned(),
-                dedupe_key: record.dedupe_key,
-                lease_owner: record.lease_owner,
-                attempt_count: record.attempt_count,
-                created_at: record.created_at,
-                updated_at: record.updated_at,
-                last_error: record.last_error,
+            .map(|record| -> crate::Result<EsignSealAttemptView> {
+                let verify_reasons = match RESULT.get(&vault.store, &txn, record.id.as_bytes())? {
+                    Some(EsignSealAttemptResult::VerificationFailed { verify_reasons }) => {
+                        verify_reasons
+                    }
+                    Some(EsignSealAttemptResult::Sealed(_)) | None => Vec::new(),
+                };
+                Ok(EsignSealAttemptView {
+                    attempt_ref: crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                    kind: record.kind,
+                    state: record.state.as_str().to_owned(),
+                    dedupe_key: record.dedupe_key,
+                    lease_owner: record.lease_owner,
+                    attempt_count: record.attempt_count,
+                    created_at: record.created_at,
+                    updated_at: record.updated_at,
+                    last_error: record.last_error,
+                    verify_reasons,
+                })
             })
-            .collect();
+            .collect::<crate::Result<Vec<_>>>()?;
         let trail = match trail_read_in(vault, &txn, document)? {
             Ok((state, _, _)) => {
                 scope.admit_draft_in(&txn, &state.document)?;
@@ -119,6 +128,7 @@ impl Memory<'_> {
                     sealed_version: item.sealed_version,
                     sha256: crate::entity_id::bytes_to_hex_lower(item.sha256.as_slice()),
                     profile: item.profile,
+                    active_content: item.active_content,
                 })
                 .collect(),
         });

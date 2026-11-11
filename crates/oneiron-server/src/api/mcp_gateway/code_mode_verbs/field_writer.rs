@@ -167,7 +167,7 @@ impl FieldWriter for RunFieldWriter {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect::<String>();
@@ -218,17 +218,22 @@ fn writer_request(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: vec![
             LlmMessage {
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: FIELD_WRITER_PROMPT.to_owned(),
+                    signature: None,
                 }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: data }],
+                content: vec![ContentPart::Text {
+                    text: data,
+                    signature: None,
+                }],
             },
         ],
         tools: Vec::new(),

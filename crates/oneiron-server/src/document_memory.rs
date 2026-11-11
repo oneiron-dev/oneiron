@@ -24,7 +24,9 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use oneiron::office_body::{DocumentMemory, RESERVE_STEP, ResourcePort, ResourceRefusal};
+use oneiron::office_body::{
+    DocumentMemory, RESERVE_STEP, ResourceAllocation, ResourcePort, ResourceRefusal,
+};
 
 use crate::machine::{MachineMemory, MemoryLease, MemoryRefusal};
 
@@ -47,6 +49,7 @@ impl DocumentMemory for DocumentFloor {
 }
 
 /// One document operation's port on the line.
+#[derive(Clone)]
 struct DocumentLease {
     memory: MachineMemory,
     wait: Duration,
@@ -87,10 +90,8 @@ impl DocumentLease {
         let wait = Instant::now() + self.wait;
         self.deadline.map_or(wait, |deadline| deadline.min(wait))
     }
-}
 
-impl ResourcePort for DocumentLease {
-    fn reserve(&self, bytes: u64, measured: u64) -> Result<Box<dyn Send + Sync>, ResourceRefusal> {
+    fn reserve_lease(&self, bytes: u64, measured: u64) -> Result<MemoryLease, ResourceRefusal> {
         let until = self.until();
         let leased = match self.memory.lease(bytes, until) {
             // Only the estimate past the measured need can never fit: the
@@ -101,10 +102,7 @@ impl ResourcePort for DocumentLease {
             leased => leased,
         };
         match leased {
-            Ok(lease) => Ok(Box::new(DocumentHold {
-                lease: Some(lease),
-                allocated: Arc::clone(&self.allocated),
-            })),
+            Ok(lease) => Ok(lease),
             Err(MemoryRefusal::Floor { available, .. }) => Err(ResourceRefusal::MemoryFloor {
                 needed: measured,
                 available,
@@ -112,11 +110,60 @@ impl ResourcePort for DocumentLease {
             Err(MemoryRefusal::WaitedOut { .. }) => Err(ResourceRefusal::Deadline),
         }
     }
+}
+
+impl ResourcePort for DocumentLease {
+    fn reserve(&self, bytes: u64, measured: u64) -> Result<Box<dyn Send + Sync>, ResourceRefusal> {
+        Ok(Box::new(DocumentHold {
+            lease: Some(self.reserve_lease(bytes, measured)?),
+            allocated: Arc::clone(&self.allocated),
+        }))
+    }
+
+    fn allocation(&self) -> Box<dyn ResourceAllocation> {
+        Box::new(DocumentAllocation {
+            port: self.clone(),
+            pending: Vec::new(),
+            live: self.memory.empty_lease(),
+        })
+    }
 
     fn checkpoint(&self) -> Result<(), ResourceRefusal> {
         match self.deadline {
             Some(deadline) if Instant::now() >= deadline => Err(ResourceRefusal::Deadline),
             _ => Ok(()),
+        }
+    }
+}
+
+/// An explicit allocation scope owns its leases until the corresponding
+/// structures are freed. No lease goes to the operation's opaque-hold
+/// fallback on drop, so a temporary is released without a live reading too.
+struct DocumentAllocation {
+    port: DocumentLease,
+    pending: Vec<MemoryLease>,
+    live: MemoryLease,
+}
+
+impl ResourceAllocation for DocumentAllocation {
+    fn grow(&mut self, bytes: u64, measured: u64) -> Result<(), ResourceRefusal> {
+        if bytes != 0 {
+            self.pending.push(self.port.reserve_lease(bytes, measured)?);
+        }
+        Ok(())
+    }
+
+    fn materialized(&mut self, bytes: u64) {
+        for lease in self.pending.drain(..) {
+            self.live.absorb_allocated(lease);
+        }
+        let charged = self.live.bytes();
+        if bytes < charged {
+            self.live.shrink(charged - bytes);
+        } else if bytes > charged {
+            // The allocation's measured capacity or an ownership transfer
+            // may differ from its estimate; no new allocation happens here.
+            self.live.materialized(0, bytes - charged);
         }
     }
 }

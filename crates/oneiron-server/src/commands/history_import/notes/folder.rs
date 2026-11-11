@@ -97,8 +97,8 @@ impl HeldServer {
         let url = format!("{}{path}", self.base);
         let secret = self.secret.clone();
         std::thread::scope(|scope| {
-            scope
-                .spawn(move || -> anyhow::Result<Value> {
+            crate::engine_thread("history-import-folder".into())
+                .spawn_scoped(scope, move || -> anyhow::Result<Value> {
                     let client = reqwest::blocking::Client::builder()
                         // The bearer and holder proof stay off every environment proxy.
                         .no_proxy()
@@ -131,6 +131,7 @@ impl HeldServer {
                     serde_json::from_str(&text)
                         .map_err(|_| anyhow::anyhow!("{url} answered {status} with no JSON"))
                 })
+                .expect("failed to spawn thread")
                 .join()
                 .map_err(|_| anyhow::anyhow!("the call to {path} stopped"))?
         })

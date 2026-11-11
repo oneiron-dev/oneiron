@@ -53,6 +53,7 @@ struct ScopeSkeleton {
     parent: Option<SpendScopeId>,
     unit: LeaseUnit,
     cap_units: u64,
+    ceiling_units: Option<u64>,
     hard: bool,
     spent_units: u64,
     held_units: u64,
@@ -121,6 +122,7 @@ fn partition(scopes: Vec<SpendScope>) -> Result<Partitioned<FreeTimeSpendRows, S
             parent: scope.parent,
             unit: scope.unit,
             cap_units: scope.cap_units,
+            ceiling_units: scope.ceiling_units,
             hard: scope.hard,
             spent_units: scope.spent_units,
             held_units: scope.held_units,
@@ -215,6 +217,7 @@ fn rejoin_in_txn(
             parent: skeleton.parent,
             unit: skeleton.unit,
             cap_units: skeleton.cap_units,
+            ceiling_units: skeleton.ceiling_units,
             hard: skeleton.hard,
             spent_units: skeleton.spent_units,
             held_units: skeleton.held_units,
@@ -226,6 +229,9 @@ fn rejoin_in_txn(
             agent,
             calibration_sample,
             payer,
+            // A free-time cycle's root opens with no funding Grant (FIX
+            // 7766), and every scope below reads its root's: none moves.
+            funding: None,
         });
     }
     Ok(scopes)
@@ -235,7 +241,7 @@ impl HomeTable for FreeTimeSpendRows {
     type Rows = Self;
     type Actor = SpendCompartment;
     const TABLE: &'static SideTableDecl = &side_table::AGENT_DISPATCH_SPEND_SCOPE;
-    const SCHEMA_VERSION: u16 = 4;
+    const SCHEMA_VERSION: u16 = 5;
 
     /// No try still spends under an open scope of a free-time tree: each has
     /// ended, or is a free-time item that never started, which the move
@@ -514,6 +520,7 @@ fn follows(here: &SpendScope, carried: &SpendScope) -> bool {
     here.parent == carried.parent
         && here.unit == carried.unit
         && here.hard == carried.hard
+        && here.ceiling_units == carried.ceiling_units
         && here.opened_at == carried.opened_at
         && here.agent == carried.agent
         && here.payer == carried.payer
@@ -524,55 +531,4 @@ fn follows(here: &SpendScope, carried: &SpendScope) -> bool {
         && (here.closed_at.is_none() || here.closed_at == carried.closed_at)
         && (here.exploration_attempt.is_none()
             || here.exploration_attempt == carried.exploration_attempt)
-}
-
-/// Forgets `actor` in every local spend scope, in its erase's transaction
-/// (FIX 11777): an erased agent or payer party leaves `None`, and an erased
-/// grantor leaves `granted_by` as `None` with the party kept, its spend still
-/// on the party's standing. A row that does not read is passed over with a
-/// WARN and never fails the erase.
-pub(crate) fn erase_spend_scope_actor_in_txn(
-    vault: &crate::Vault,
-    txn: &mut RwTxn<'_>,
-    actor: &EntityId,
-) -> crate::error::Result<()> {
-    let mut scrubbed = Vec::new();
-    for row in SCOPE.iter_raw_from(&vault.store, txn, &[])? {
-        let (key, value) = row?;
-        let scope = <String as crate::side_table::SideKey>::decode_key(&key)
-            .ok_or_else(|| crate::error::Error::InvalidConfig("unreadable key".to_owned()))
-            .and_then(|id| SCOPE.decode_value(&value).map(|scope| (id, scope)));
-        let (id, mut scope) = match scope {
-            Ok(row) => row,
-            Err(error) => {
-                tracing::warn!(%error, "an actor erase passed over a spend scope that does not read");
-                continue;
-            }
-        };
-        let mut hit = false;
-        if scope.agent == Some(*actor) {
-            scope.agent = None;
-            hit = true;
-        }
-        if scope
-            .payer
-            .as_ref()
-            .is_some_and(|payer| payer.party == *actor)
-        {
-            scope.payer = None;
-            hit = true;
-        } else if let Some(payer) = &mut scope.payer
-            && payer.granted_by == Some(*actor)
-        {
-            payer.granted_by = None;
-            hit = true;
-        }
-        if hit {
-            scrubbed.push((id, scope));
-        }
-    }
-    for (id, scope) in &scrubbed {
-        SCOPE.put(&vault.store, txn, id, scope)?;
-    }
-    Ok(())
 }

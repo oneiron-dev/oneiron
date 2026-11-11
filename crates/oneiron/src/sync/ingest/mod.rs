@@ -13,6 +13,8 @@ mod message_writer;
 mod order;
 mod own_device;
 mod peer_import;
+// FIX 3656: a guest's carried birth placements, landed beside their rows.
+mod placement;
 mod promotion;
 mod task_pairs;
 mod tombstone;
@@ -25,7 +27,8 @@ pub(in crate::sync) use self::delivery::{
 #[cfg(test)]
 pub(in crate::sync) use self::entity::ingest_entity_in_savepoint;
 pub(in crate::sync) use self::entity::{
-    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_txn, waits_for_sibling_row,
+    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_txn, land_source_audience_in,
+    waits_for_sibling_row,
 };
 pub(in crate::sync) use self::message_writer::{
     MESSAGE_WRITER_MAP, admit_writer_proof_carrier, admit_writer_proof_map, copy_writer_proofs,
@@ -42,6 +45,7 @@ pub(in crate::sync) use self::peer_import::{
     carried_origin_in_txn, carry_peer_rows, copy_peer_origins, forget_peer_origin,
     forget_peer_rows, peer_row_in_txn, record_peer_rows,
 };
+pub(in crate::sync) use self::placement::{AdmittedPlacements, with_placements};
 pub(in crate::sync) use self::promotion::{
     first_promotion_open, with_first_promotion_open, with_promotion,
 };

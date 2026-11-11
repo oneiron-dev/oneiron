@@ -3,7 +3,8 @@
 use super::base::SyncClient;
 use crate::authority::PeerMachine;
 use crate::batch::export::{
-    StagedVaultImport, VaultImportConfirmation, VaultImportStageReceipt, VaultImportStageStatus,
+    OwedBody, StagedImportBodyWork, StagedVaultImport, VaultImportConfirmation,
+    VaultImportStageReceipt, VaultImportStageStatus,
 };
 use crate::error::SyncProtocolValidation;
 use crate::federation::PactDelivery;
@@ -12,7 +13,7 @@ use crate::sync::asset_body::session::{AssetBodyLane, land_carried_body, with_ma
 use crate::sync::federation_burst::{
     FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
-use crate::sync::ingest::{Delivery, watch_births, with_delivery};
+use crate::sync::ingest::{Delivery, watch_births, with_delivery, with_placements};
 use crate::sync::selector::{
     AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update_as,
     encode_selector_vv_request, revalidate_admitted_facet_stamps,
@@ -205,9 +206,10 @@ impl SyncClient {
             FederationAdmissionRole::Member => WorkKind::MemberUpdate,
             FederationAdmissionRole::Guest => WorkKind::GuestUpdate,
         };
-        let identity = crate::sync::federation_burst::DeferredWork::new(&peer, &key, kind, update)
-            .map_err(map_federated_admission_err)?;
-        let batch_ref = blake3::Hash::from(identity.id).to_hex().to_string();
+        let (batch_id, _) =
+            crate::sync::federation_burst::DeferredWork::identity(&peer, &key, kind, update)
+                .map_err(map_federated_admission_err)?;
+        let batch_ref = blake3::Hash::from(batch_id).to_hex().to_string();
         match self.vault.federation_burst_disposition(&peer, &batch_ref) {
             Ok(receipt) if receipt.state.is_settled() => return Ok(receipt),
             Ok(_) | Err(crate::Error::EntityNotFound) => {}
@@ -320,9 +322,12 @@ impl SyncClient {
     /// body landing door; successful births release their staged facet stamps.
     ///
     /// Missing bodies and failed or withheld landings keep today's pending-row
-    /// behavior and do not fail confirmation. This door fetches no body over a
-    /// socket. An already-confirmed receipt returns its existing result without
-    /// attempting later body delivery.
+    /// behavior and do not fail confirmation. Each body still owed afterwards
+    /// stays owed under the receipt (FIX 12408): the confirmation keeps the
+    /// admitted content and staged stamps for
+    /// [`Self::deliver_staged_vault_import_bodies`]. This door fetches no body
+    /// over a socket. An already-confirmed receipt returns its existing
+    /// result, delivering any supplied bodies it still owes.
     pub fn confirm_staged_vault_import_with_bodies(
         &mut self,
         staged: StagedVaultImport,
@@ -357,6 +362,11 @@ impl SyncClient {
                 if durable.confirmed_by == Some(confirmation.actor)
                     && durable.confirmed_at_secs == Some(confirmation.confirmed_at_secs)
                 {
+                    // The same confirmation again imports nothing; bodies it
+                    // brings land where the receipt still owes them.
+                    if !bodies.is_empty() {
+                        self.deliver_staged_bodies_locked(&durable, bodies)?;
+                    }
                     return Ok(durable);
                 }
                 return Err(TransportError::InvalidPayload("conflicting confirmation"));
@@ -426,28 +436,36 @@ impl SyncClient {
         // operator installs the missing permit. Leaving the receipt Pending lets a
         // re-stage under the same receipt id re-evaluate once policy relaxes.
         let mut carried = Vec::with_capacity(parts.len());
+        // Each part's by-ref bodies, and every row the parts carry: the
+        // bodies left unlanded stay owed under the receipt (FIX 12408).
+        let mut part_refs = Vec::with_capacity(parts.len());
+        let mut carried_rows = Vec::new();
         for part in &parts {
             let (admission_key, update) = (&part.key, &part.update);
             revalidate_admitted_federated_claims(&self.vault, admission_key, update, durable.role)
                 .map_err(map_federated_admission_err)?;
             revalidate_admitted_facet_stamps(admission_key, update)
                 .map_err(map_federated_admission_err)?;
-            let carried_bodies = if bodies.is_empty() {
-                Vec::new()
-            } else {
-                let admitted = crate::sync::schema::create_window_doc(
-                    "federation-staged-bodies",
-                    admission_key,
-                );
-                admitted.import(update).map_err(|_| {
-                    TransportError::InvalidPayload("admitted body references unreadable")
-                })?;
-                bound_refs(&admitted)
-                    .into_iter()
-                    .filter_map(|body| bodies.get(&body.id).map(|bytes| (body, bytes.as_slice())))
-                    .collect()
-            };
+            let admitted =
+                crate::sync::schema::create_window_doc("federation-staged-bodies", admission_key);
+            admitted.import(update).map_err(|_| {
+                TransportError::InvalidPayload("admitted body references unreadable")
+            })?;
+            crate::sync::loro_support::map_for_each_value_bytes(
+                &admitted.get_map("entities"),
+                |key, _| carried_rows.extend(crate::EntityId::from_hex(key).ok()),
+            );
+            let refs = bound_refs(&admitted);
+            let carried_bodies: Vec<_> = refs
+                .iter()
+                .filter_map(|body| {
+                    bodies
+                        .get(&body.id)
+                        .map(|bytes| (body.clone(), bytes.as_slice()))
+                })
+                .collect();
             carried.push(carried_bodies);
+            part_refs.push(refs);
         }
         let births = staged_births(
             &self.vault,
@@ -488,6 +506,25 @@ impl SyncClient {
                 .map_err(map_federated_admission_err)?;
             self.import_released_stamps(admission_key.as_str(), released)?;
         }
+        // Every by-ref body whose row is still absent is owed: a later
+        // delivery under this receipt lands it (FIX 12408).
+        let mut owed = Vec::new();
+        for (part, refs) in parts.iter().zip(&part_refs) {
+            for body in refs {
+                if self
+                    .vault
+                    .get_raw(&body.id)
+                    .map_err(map_federated_admission_err)?
+                    .is_none()
+                {
+                    owed.push(OwedBody {
+                        window: part.key.as_str().to_owned(),
+                        entity: *body.id.as_bytes(),
+                    });
+                }
+            }
+        }
+        let work = StagedImportBodyWork::new(owed, carried_rows);
         let expected_receipt = durable;
         let mut receipt = expected_receipt.clone();
         receipt.status = VaultImportStageStatus::Confirmed;
@@ -497,6 +534,7 @@ impl SyncClient {
             &self.vault,
             &expected_receipt,
             &receipt,
+            Some(&work),
         )
         .map_err(|e| TransportError::Storage(e.to_string()))?
         {
@@ -590,9 +628,12 @@ impl SyncClient {
         }
         let window = self.ensure_window(window_key)?;
         let vault = std::sync::Arc::clone(&self.vault);
+        // FIX 3656: each row's carried birth placement lands with its row.
         let born = watch_births(&vault, part.births(), || {
             with_delivery(delivery, || {
-                self.import_accepted_window_update(window_key, &window, part.bytes())
+                with_placements(&vault, key, part.placements(), || {
+                    self.import_accepted_window_update(window_key, &window, part.bytes())
+                })
             })
         })?;
         part.keep_born_with(&self.vault)
@@ -665,7 +706,7 @@ impl SyncClient {
     /// copies. A failure in between leaves them held, so they never count.
     /// The release is this vault's own update, not the peer's: one the window
     /// refuses drops its stamps, and the peer learns nothing from it.
-    fn import_released_stamps(
+    pub(super) fn import_released_stamps(
         &mut self,
         window_key: &str,
         released: Option<crate::sync::selector::ReleasedStamps>,
@@ -708,34 +749,9 @@ pub(super) fn map_federated_admission_err(e: crate::error::Error) -> TransportEr
         crate::error::Error::Sync(crate::error::SyncError::SyncProtocolError {
             context: SyncProtocolValidation::FederatedTombstoneAdmission,
         }) => TransportError::InvalidPayload("federated tombstone update rejected"),
-        e if is_local_federated_admission_failure(&e) => {
+        e if transport::is_own_vault_fault(&e) => {
             TransportError::Storage(format!("federated admission failed: {e}"))
         }
         _ => TransportError::InvalidPayload("federated update admission failed"),
     }
-}
-
-fn is_local_federated_admission_failure(e: &crate::error::Error) -> bool {
-    // A fault reading this vault's own admission state is this device's,
-    // never the peer's refused update (FIX 5926).
-    if transport::is_window_admission_read_fault(e) {
-        return true;
-    }
-    matches!(
-        e,
-        crate::error::Error::Storage(_)
-            | crate::error::Error::Io(_)
-            | crate::error::Error::MapFull
-            | crate::error::Error::InvalidConfig(_)
-            | crate::error::Error::Store(crate::error::StoreError::EmbeddingModelChanged { .. })
-            | crate::error::Error::Store(crate::error::StoreError::HnswConfigChanged { .. })
-            | crate::error::Error::Store(crate::error::StoreError::StorageAbiVersionChanged { .. })
-            | crate::error::Error::Store(
-                crate::error::StoreError::StorageSchemaVersionChanged { .. }
-            )
-            | crate::error::Error::Store(crate::error::StoreError::DbManifestMismatch { .. })
-            | crate::error::Error::Store(crate::error::StoreError::VaultRootPreflight { .. })
-            | crate::error::Error::Sync(crate::error::SyncError::WindowNotFound { .. })
-            | crate::error::Error::Sync(crate::error::SyncError::WindowBusy { .. })
-    )
 }

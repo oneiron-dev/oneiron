@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.permissions.approve",
+  "description": "The owner answers one imported skill permission ask at its exact hub source.",
+  "input": "HubSkillPermissionRequest",
+  "output": "crate::task_verb::sdk::HubConsentReceipt",
+  "call": "crate::task_verb::sdk::hub_skill_permissions_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.permissions.approve\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

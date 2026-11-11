@@ -14,10 +14,12 @@
 //! A Switch moves a MESSAGE to its fork's document. The head it leaves names
 //! the document it moved from and the version it forked at, so another
 //! machine holding that document moves the same way (FIX 3554). Only such a
-//! head moves a document here; any other stands as a conflict.
+//! head moves a document here, or a canonical restore's successor over the
+//! incarnation it replaces (FIX 3553); any other stands as a conflict.
 
 use super::document::decode_frontier;
 use super::storage::{self, ENTITY_DOC_HEAD, Head};
+use super::succession::Succession;
 use super::{EntityDoc, ForkStatus, TextField};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{ArtifactError, Error, Result};
@@ -43,6 +45,10 @@ pub(crate) struct CarriedDocument {
     /// The Switch that moved the message to this document, when one did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) switched: Option<SwitchedFrom>,
+    /// The history this incarnation replaces, when a canonical restore
+    /// rebuilt the document (FIX 3553).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) succeeds: Option<Succession>,
 }
 
 /// The document a Switch moved a MESSAGE from (FIX 3554).
@@ -127,7 +133,23 @@ impl CarriedDocument {
             named(&from.document)?;
             decode_frontier(&from.base).ok()?;
         }
+        if let Some(from) = &self.succeeds {
+            named(&from.incarnation)?;
+            VersionVector::decode(&from.version).ok()?;
+        }
         named(&self.entity)
+    }
+
+    /// Whether this head is a canonical restore's successor of `other`
+    /// (FIX 3553): the same message and document, under an incarnation that
+    /// names `other`'s as the one it replaces.
+    pub(crate) fn supersedes(&self, other: &Self) -> bool {
+        self.succeeds
+            .as_ref()
+            .is_some_and(|from| from.incarnation == other.incarnation)
+            && self.incarnation != other.incarnation
+            && self.document == other.document
+            && self.entity == other.entity
     }
 
     /// Whether this head is a Switch's over `other`: the same message and
@@ -232,6 +254,7 @@ fn local_in(
         version,
         shallow,
         switched,
+        succeeds: head.succeeds.clone(),
     };
     Ok(Some((head, carried)))
 }
@@ -269,8 +292,11 @@ impl Vault {
     /// so its pins and citation floors resolve here. Where it holds the same
     /// document, the snapshot's operations join it, and a newer history floor
     /// drops its history to that floor ([`purged_at_carried_floor`]). A
-    /// Switch's head over the document held here moves it ([`switched_in`]).
-    /// Where it holds another document or incarnation, that one stands.
+    /// Switch's head over the document held here moves it ([`switched_in`]),
+    /// and a canonical restore's successor of the incarnation held here
+    /// takes its place ([`superseded_in`]); a held successor of the carried
+    /// incarnation stands as held (FIX 3553). Where it holds another document
+    /// or incarnation, that one stands.
     pub(crate) fn merge_carried_message_document_in_txn(
         &self,
         txn: &mut RwTxn<'_>,
@@ -307,7 +333,13 @@ impl Vault {
         if let Some((_, held)) = &local
             && !switched
         {
-            if held.document != carried.document || held.incarnation != carried.incarnation {
+            // The window takes this vault's successor from here.
+            if held.supersedes(carried) {
+                return Ok(DocumentMerge::Held);
+            }
+            if (held.document != carried.document || held.incarnation != carried.incarnation)
+                && !carried.supersedes(held)
+            {
                 return Ok(DocumentMerge::Conflict);
             }
             if held.holds(carried) && !carried.purges(held) {
@@ -329,12 +361,14 @@ impl Vault {
             None => {
                 let mut head = Head {
                     entity: carried.entity.clone(),
+                    owner_kind: storage::DocumentOwnerKind::Entity,
                     incarnation: carried.incarnation.clone(),
                     document: carried.document.clone(),
                     field: content(),
                     generation: 0,
                     pending: 0,
                     birth_frontier: None,
+                    succeeds: carried.succeeds.clone(),
                 };
                 storage::persist(self, txn, &message, &mut head, &incoming, None)?;
                 if incoming.doc.is_shallow() {
@@ -348,6 +382,12 @@ impl Vault {
             Some((head, _)) if switched => {
                 if let Some(stands) =
                     switched_in(self, txn, &message, head, carried, snapshot, &incoming)?
+                {
+                    return Ok(stands);
+                }
+            }
+            Some((head, held)) if carried.supersedes(&held) => {
+                if let Some(stands) = superseded_in(self, txn, &message, head, carried, &incoming)?
                 {
                     return Ok(stands);
                 }
@@ -452,6 +492,43 @@ fn purged_at_carried_floor(
         return waits("the history here does not cut at its floor");
     }
     Ok(Ok(shallow))
+}
+
+/// Takes `carried`, a canonical restore's successor of the incarnation
+/// `head` names here, in place of it, under the carried incarnation (FIX
+/// 3553; Engine 11-06 20:16, A), by the rules of [`super::adoption`]. `None`
+/// once it is taken; otherwise what the head does.
+fn superseded_in(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    message: &EntityId,
+    mut head: Head,
+    carried: &CarriedDocument,
+    incoming: &EntityDoc,
+) -> Result<Option<DocumentMerge>> {
+    let Some(replaced) = carried
+        .succeeds
+        .as_ref()
+        .and_then(|succeeds| VersionVector::decode(&succeeds.version).ok())
+    else {
+        return Ok(Some(DocumentMerge::Refused("not a whole head")));
+    };
+    let old = storage::load(&vault.store, txn, &head)?;
+    let pins = match super::adoption::twins_in(vault, txn, message, &old, incoming, &replaced)? {
+        Ok(pins) => pins,
+        Err(super::adoption::Stands::Deferred(reason)) => {
+            return Ok(Some(DocumentMerge::Deferred(reason)));
+        }
+        Err(super::adoption::Stands::Refused(reason)) => {
+            return Ok(Some(DocumentMerge::Refused(reason)));
+        }
+    };
+    head.incarnation.clone_from(&carried.incarnation);
+    head.birth_frontier = None;
+    head.succeeds = carried.succeeds.clone();
+    storage::persist(vault, txn, message, &mut head, incoming, None)?;
+    super::adoption::complete_in_txn(vault, txn, message, &head, &old, incoming, &replaced, &pins)?;
+    Ok(None)
 }
 
 /// Takes `carried`, a Switch's head over `head`, the document this vault

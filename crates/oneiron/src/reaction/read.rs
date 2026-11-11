@@ -93,11 +93,14 @@ pub fn reaction_line(glyph: &str, count: usize, names: &[String]) -> String {
 
 /// One grouped line per glyph for the reactions `admit` lets through. A
 /// record carrying more claims than one read may walk yields no lines rather
-/// than failing the recall or pack that returned it.
+/// than failing the recall or pack that returned it. Each reactor a line
+/// names is added to `named`: the line's name is read from that row
+/// (FIX 1435).
 pub(crate) fn grouped_lines_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: EntityId,
+    named: &mut Vec<EntityId>,
     admit: impl FnMut(&StoredReaction) -> Result<bool>,
 ) -> Result<Vec<String>> {
     let fold = admission_in(vault, txn)?;
@@ -120,10 +123,10 @@ pub(crate) fn grouped_lines_in(
     pills
         .iter()
         .map(|pill| {
-            let names = pill
-                .by
+            let shown = &pill.by[..pill.by.len().min(NAMED_REACTORS)];
+            named.extend_from_slice(shown);
+            let names = shown
                 .iter()
-                .take(NAMED_REACTORS)
                 .map(|person| display_name_in(vault, txn, *person))
                 .collect::<Result<Vec<_>>>()?;
             Ok(reaction_line(&pill.glyph, pill.count, &names))

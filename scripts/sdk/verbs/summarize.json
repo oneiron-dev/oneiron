@@ -1,0 +1,7 @@
+{
+  "name": "summarize",
+  "input": "crate::code_run::SummarizeInput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "Summarize"
+}

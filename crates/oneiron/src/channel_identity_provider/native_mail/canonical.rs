@@ -4,7 +4,7 @@ use super::canonical_recipient;
 use crate::gate::{
     ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles,
 };
-use crate::outbound::OutboundDispatchRequest;
+use crate::outbound::{OutboundDispatchRequest, OutboundRecipient};
 use crate::{EntityId, Error, Result};
 
 /// One stable logical mail send, independent of approval availability and
@@ -15,7 +15,12 @@ use crate::{EntityId, Error, Result};
 pub(crate) struct CanonicalMailSend {
     pub(crate) actor: EntityId,
     pub(crate) identity: EntityId,
+    /// The message's first recipient, in To: its target and counterparty.
     pub(crate) recipient: String,
+    /// Fix list row 17645: every recipient of one message to several,
+    /// canonical, in its role and place, `recipient` first; empty for a send
+    /// to `recipient` alone, whose operation is as before.
+    pub(crate) recipients: Vec<OutboundRecipient>,
     pub(crate) logical_ref: String,
     pub(crate) content_ref: Option<String>,
     pub(crate) brief_ref: Option<String>,
@@ -43,6 +48,19 @@ impl CanonicalMailSend {
                 "native-mail target and counterparty differ".into(),
             ));
         }
+        let recipients = request
+            .intent
+            .recipients
+            .iter()
+            .map(|named| -> Result<OutboundRecipient> {
+                Ok(OutboundRecipient::new(
+                    named.role,
+                    canonical_recipient(&named.address)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        OutboundRecipient::check_list(&recipient, &recipients)
+            .map_err(|reason| Error::InvalidConfig(format!("native-mail recipients: {reason}")))?;
         if request.intent_ref.trim().is_empty() {
             return Err(Error::InvalidConfig("missing native-mail send ref".into()));
         }
@@ -50,6 +68,7 @@ impl CanonicalMailSend {
             actor,
             identity,
             recipient,
+            recipients,
             logical_ref: request.intent_ref.clone(),
             content_ref: request.intent.content_ref.clone(),
             brief_ref: request.intent.job_ref.clone(),
@@ -64,10 +83,32 @@ impl CanonicalMailSend {
         {
             return None;
         }
+        let counterparty = canonical_recipient(effect.counterparty.as_deref()?).ok()?;
+        let recipients = effect
+            .provenance
+            .mail_recipients
+            .iter()
+            .map(|named| {
+                canonical_recipient(&named.address)
+                    .ok()
+                    .map(|address| OutboundRecipient::new(named.role, address))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        // Fix list row 17645: each recipient of a message to several is
+        // judged as its counterparty, under the one message's operation.
+        let recipient = match recipients.first() {
+            Some(first) if recipients.iter().any(|named| named.address == counterparty) => {
+                first.address.clone()
+            }
+            Some(_) => return None,
+            None => counterparty,
+        };
+        OutboundRecipient::check_list(&recipient, &recipients).ok()?;
         Some(Self {
             actor,
             identity: effect.channel_identity_ref?,
-            recipient: canonical_recipient(effect.counterparty.as_deref()?).ok()?,
+            recipient,
+            recipients,
             logical_ref: effect.send_ref.as_ref()?.clone(),
             content_ref: effect.provenance.mail_content_ref.clone(),
             brief_ref: effect.brief_ref.clone(),
@@ -105,6 +146,19 @@ impl CanonicalMailSend {
         {
             return None;
         }
+        // Fix list row 17645: a message to several freezes its whole list,
+        // canonical, beside its first recipient.
+        let recipients: Vec<OutboundRecipient> = match value.get("recipients") {
+            None => Vec::new(),
+            Some(list) => serde_json::from_value(list.clone()).ok()?,
+        };
+        if recipients
+            .iter()
+            .any(|named| canonical_recipient(&named.address).ok().as_ref() != Some(&named.address))
+        {
+            return None;
+        }
+        OutboundRecipient::check_list(&recipient, &recipients).ok()?;
         let logical_ref = value.get("native_mail_logical_ref")?.as_str()?.to_owned();
         if logical_ref.trim().is_empty() {
             return None;
@@ -113,6 +167,7 @@ impl CanonicalMailSend {
             actor,
             identity,
             recipient,
+            recipients,
             logical_ref,
             content_ref: Self::optional_string(&value, "content_ref")?,
             brief_ref: Self::optional_string(&value, "job_ref")?,
@@ -141,6 +196,18 @@ impl CanonicalMailSend {
                 hasher.update(&[0]);
             }
         }
+        // Fix list row 17645: a message to several names every recipient in
+        // its role and place, counted; a send to one names it as before.
+        if !self.recipients.is_empty() {
+            hasher.update(b"recipients");
+            hasher.update(&(self.recipients.len() as u64).to_le_bytes());
+            for named in &self.recipients {
+                for part in [named.role.as_str(), named.address.as_str()] {
+                    hasher.update(&(part.len() as u64).to_le_bytes());
+                    hasher.update(part.as_bytes());
+                }
+            }
+        }
         format!("external:email:send:once:{}", hasher.finalize().to_hex())
     }
 }
@@ -161,6 +228,7 @@ pub(crate) fn approval_digest_from_frozen_payload(
         provenance: GateProvenanceHandles {
             actor_entity_ref: Some(operation.actor),
             mail_content_ref: operation.content_ref,
+            mail_recipients: operation.recipients,
             ..GateProvenanceHandles::default()
         },
         verb: "send".into(),

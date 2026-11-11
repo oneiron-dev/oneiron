@@ -380,5 +380,6 @@ fn activation_risk_threshold_in_txn(
         .unwrap_or(DEFAULT_ACTIVATION_RISK_THRESHOLD))
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

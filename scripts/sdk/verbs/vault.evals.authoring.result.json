@@ -1,0 +1,16 @@
+{
+  "name": "vault.evals.authoring.result",
+  "description": "Read the eval-authoring host attempt's actual state and terminal error; a completed pass may author nothing.",
+  "input": "crate::skill_optimize::eval_doors::EvalAuthoringRef",
+  "output": "Option<crate::skill_optimize::eval_doors::EvalAuthoringResult>",
+  "call": "crate::skill_optimize::eval_doors::authoring_result(memory.vault(), &memory.embedded_owner(\"vault.evals.authoring.result\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

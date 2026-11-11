@@ -321,7 +321,7 @@ impl Vault {
     /// Missing or modified historical evidence is an error, never a fallback to
     /// today's vectors. This cannot sign or authorize a T1 detector run. A
     /// source erased since the snapshot makes the replay unavailable
-    /// (FIX 10094): `EntityNotFound`, the erased inputs never read, whether
+    /// (FIX 10094): typed `ResponseErased`, the erased inputs never read, whether
     /// the erase already left the snapshot its erased marker or not. The
     /// marker answers the erase with no copy of the run (FIX 10822).
     pub fn replay_centroid_finding(&self, event_id: &EntityId) -> Result<CentroidReplay> {
@@ -348,7 +348,7 @@ impl Vault {
             }
             return Err(
                 if erase::erased_source_in_txn(&self.store, &txn, &sources)?.is_some() {
-                    Error::EntityNotFound
+                    crate::code_run::response_erased_error("centroid evidence")
                 } else {
                     Error::CorruptedIndex("centroid evidence missing")
                 },
@@ -357,11 +357,7 @@ impl Vault {
         // A snapshot a source's erase reached holds its erased marker, live
         // or restored from an image: unavailable.
         let key = EVIDENCE.key_bytes(&event.replay.content_hash);
-        let ResponseRead::Present(raw) =
-            ResponseRead::of(ResponseFamily::CentroidEvidence, &key, &raw)
-        else {
-            return Err(Error::EntityNotFound);
-        };
+        let raw = ResponseRead::of(ResponseFamily::CentroidEvidence, &key, &raw).present()?;
         if *blake3::hash(raw).as_bytes() != event.replay.content_hash {
             return Err(Error::CorruptedIndex("centroid evidence hash"));
         }
@@ -373,7 +369,7 @@ impl Vault {
             return Err(Error::CorruptedIndex("centroid evidence canonical form"));
         }
         if erase::erased_source_in_txn(&self.store, &txn, &evidence.sources())?.is_some() {
-            return Err(Error::EntityNotFound);
+            return Err(crate::code_run::response_erased_error("centroid evidence"));
         }
         let mut refs = vec![
             EntityId::from_bytes(evidence.run.run_id.as_bytes())?,

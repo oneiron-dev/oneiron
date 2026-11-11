@@ -83,9 +83,8 @@ impl BaselineCalibration {
     /// Starts it on its own thread, which ends once the measured baseline
     /// serves and its platform admission has started.
     pub(crate) fn start(self) {
-        let spawned = std::thread::Builder::new()
-            .name("oneironer calibration".to_owned())
-            .spawn(move || self.run());
+        let spawned =
+            crate::engine_thread("oneironer calibration".to_owned()).spawn(move || self.run());
         if let Err(error) = spawned {
             tracing::warn!(
                 %error,

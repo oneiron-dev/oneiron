@@ -38,7 +38,7 @@ impl GeminiAccumulator {
             let count = |key| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
             let text = count("candidatesTokenCount");
             let reasoning = count("thoughtsTokenCount");
-            self.usage = Some(LlmUsage {
+            let mut measured = LlmUsage {
                 input: LlmInputUsage {
                     total: count("promptTokenCount"),
                     cache_read: count("cachedContentTokenCount"),
@@ -51,7 +51,16 @@ impl GeminiAccumulator {
                 },
                 raw_provider: usage.clone(),
                 call_metadata: None,
+            };
+            measured.set_provider_token_measurement(oneiron::llm::ProviderTokenMeasurement {
+                input: usage.get("promptTokenCount").and_then(Value::as_u64),
+                output: usage
+                    .get("candidatesTokenCount")
+                    .and_then(Value::as_u64)
+                    .zip(usage.get("thoughtsTokenCount").and_then(Value::as_u64))
+                    .and_then(|(text, reasoning)| text.checked_add(reasoning)),
             });
+            self.usage = Some(measured);
         }
         // Candidates or a candidate of a shape this decoder cannot walk could
         // hold a tool request, so they fail the decode rather than read as
@@ -84,6 +93,7 @@ impl GeminiAccumulator {
             Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
         };
         if let Some(parts) = parts {
+            let mut seen_text = false;
             for part in parts {
                 // A part holds one piece of data. A second beside its text, a
                 // function call above all, would vanish behind a tool-free
@@ -96,6 +106,10 @@ impl GeminiAccumulator {
                     return Err(FatalLlmError::InvalidRequest.into());
                 }
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    if seen_text {
+                        self.end_text(&mut events)?;
+                    }
+                    seen_text = true;
                     let reasoning = part.get("thought").and_then(Value::as_bool) == Some(true);
                     let part_id = self.text_part(reasoning, &mut events)?;
                     if reasoning {
@@ -109,7 +123,15 @@ impl GeminiAccumulator {
                             )?,
                         );
                     } else {
-                        events.extend(self.assembly.text(&part_id, text)?);
+                        events.extend(
+                            self.assembly.text_with_signature(
+                                &part_id,
+                                text,
+                                part.get("thoughtSignature")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned),
+                            )?,
+                        );
                     }
                 } else if let Some(call) = part.get("functionCall") {
                     self.end_text(&mut events)?;
@@ -127,13 +149,35 @@ impl GeminiAccumulator {
                         .cloned()
                         .unwrap_or_else(|| serde_json::json!({}));
                     let part_id = format!("tool-{id}");
-                    events.extend(self.assembly.tool(&part_id, &id, name, &args.to_string())?);
+                    let signature = part
+                        .get("thoughtSignature")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    events.extend(self.assembly.tool_with_signature(
+                        &part_id,
+                        &id,
+                        name,
+                        &args.to_string(),
+                        signature,
+                    )?);
                     events.push(self.assembly.end(&part_id)?);
                 } else if part.as_object().is_some_and(|fields| fields.len() == 1)
                     && part.get("thoughtSignature").is_some_and(Value::is_string)
                 {
-                    // Signature-only metadata is not unsupported content.
-                    continue;
+                    // Keep the standalone signature at its own position, without
+                    // assigning it to or overwriting an earlier part's signature.
+                    self.end_text(&mut events)?;
+                    let part_id = self.text_part(true, &mut events)?;
+                    events.extend(
+                        self.assembly.reasoning(
+                            &part_id,
+                            "",
+                            part.get("thoughtSignature")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                        )?,
+                    );
+                    self.end_text(&mut events)?;
                 } else {
                     return Err(FatalLlmError::InvalidRequest.into());
                 }

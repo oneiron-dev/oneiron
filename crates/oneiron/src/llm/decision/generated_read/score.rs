@@ -60,6 +60,7 @@ pub(super) fn answer(
             paired,
             person: None,
             served: None,
+            cost_per_thousand: None,
         },
         None => ProviderDecision {
             answer: DecisionAnswer::Abstain,
@@ -67,6 +68,7 @@ pub(super) fn answer(
             paired,
             person: None,
             served: None,
+            cost_per_thousand: None,
         },
     }
 }

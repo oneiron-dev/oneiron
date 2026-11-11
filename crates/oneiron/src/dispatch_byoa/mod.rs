@@ -145,6 +145,7 @@ pub use self::validate::validate_connector;
 /// accepts it as the original reason.
 pub(crate) const ERASED_TASK_FAILURE_REASON: &str = "byoa_task_erased";
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

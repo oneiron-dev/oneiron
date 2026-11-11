@@ -118,6 +118,28 @@ impl<'v> ResidenceReadContext<'v> {
             && self.row_may_leave(txn, id)?)
     }
 
+    /// Whether this credential's world ceiling covers the complete metadata
+    /// set. World ids are scope facts, not entity ids to probe as records.
+    pub(crate) fn covers_worlds_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        worlds: &BTreeSet<EntityId>,
+    ) -> Result<bool> {
+        if worlds.iter().any(|world| self.withheld.contains(world)) {
+            return Ok(false);
+        }
+        self.read.every_lane_in(txn, |read| {
+            read.owner_live_in(txn)?;
+            if !read.proof_live_in(txn)? {
+                return Ok(false);
+            }
+            let ceiling = read.actor_key.world_ceiling();
+            Ok(worlds
+                .iter()
+                .all(|world| ceiling.worlds.contains(&crate::federation::ScopeId(*world))))
+        })
+    }
+
     /// Whether every row of `rows` may go to the destination machine: none
     /// sits in a world it may not read, and each row's world can be placed.
     pub fn rows_may_leave(&self, txn: &heed::RoTxn<'_>, rows: &[EntityId]) -> Result<bool> {

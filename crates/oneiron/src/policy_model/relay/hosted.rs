@@ -195,6 +195,7 @@ impl Vault {
         );
         if let Some(decisions) = config.hosted_decisions.as_deref() {
             let verdict = decisions.classify(
+                self,
                 request,
                 &prompt,
                 AnswerPlane::Hosted(policy),
@@ -441,6 +442,7 @@ fn hosted_row_verdict(
             jurisdiction: policy.jurisdiction.clone(),
             policy_version: policy.version.clone(),
             row_ref: row.row_ref.clone(),
+            basis: row.basis.clone(),
         },
         PolicyConfidence::CERTAIN,
         binding,

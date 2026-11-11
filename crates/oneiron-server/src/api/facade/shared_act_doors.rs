@@ -38,8 +38,9 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, ActAnswer, EmptyRequest, HandoffAlarmRequest, SharedActExecuted, SharedActRequest,
-    SharedMemberAddRequest, SharedMemberInvited, SharedMemberRequest, SharedMemberRoleRequest,
-    SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
+    SharedAddOwnerRequest, SharedMemberAddRequest, SharedMemberRequest, SharedMemberRoleRequest,
+    SharedOwnerChangeWaitSetRequest, SharedReceiptRequest, SharedRemoveOwnerRequest,
+    SharedTransferRequest, SharedVaultRequest,
 };
 
 use super::clock_ingress;
@@ -139,7 +140,7 @@ fn owner_proof(
 
 /// `act` under the host's slip issuer, the one `api/pairing.rs` builds for
 /// its own slip doors.
-fn with_slips<T>(
+pub(super) fn with_slips<T>(
     server: &SyncServer,
     verb: &str,
     act: impl FnOnce(&HostSlipIssuer) -> MemoryResult<T>,
@@ -243,6 +244,59 @@ pub(crate) async fn vault_shared_propose_remove_owner(
     .await
 }
 
+/// `vault.shared.propose_add_owner`: start an `add_owner` act.
+pub(crate) async fn vault_shared_propose_add_owner(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SharedAddOwnerRequest,
+) -> MaybeListed<PendingAuthorityAct> {
+    const VERB: &str = "vault.shared.propose_add_owner";
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, starter| sdk::propose_shared_add_owner(server.vault(), &starter, input),
+        |_| Some(Vec::new()),
+    )
+    .await
+}
+
+/// `vault.shared.owner_change_wait.set`: one live Owner sets the common
+/// wait; answers the effective wait in seconds. Names no listed row.
+pub(crate) async fn vault_shared_owner_change_wait_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SharedOwnerChangeWaitSetRequest,
+) -> MaybeListed<Option<u64>> {
+    const VERB: &str = "vault.shared.owner_change_wait.set";
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, owner| sdk::set_shared_owner_change_wait(server.vault(), &owner, input),
+        |_| Some(Vec::new()),
+    )
+    .await
+}
+
+/// `vault.shared.owner_change_wait.get`: the common wait in seconds, for
+/// the owner. Names no listed row.
+pub(crate) async fn vault_shared_owner_change_wait_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> MaybeListed<Option<u64>> {
+    const VERB: &str = "vault.shared.owner_change_wait.get";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(server, auth, VERB),
+        move |server, owner| sdk::read_shared_owner_change_wait(server.vault(), &owner),
+        |_| Some(Vec::new()),
+    )
+    .await
+}
+
 /// `vault.shared.execute`: a live Owner runs a matured act, with the host's
 /// slip issuer. Beside it, the rows it was derived from
 /// ([`sdk::execute_shared_act_listing`]): `None` for an export-first
@@ -330,28 +384,21 @@ pub(crate) async fn vault_shared_deletion(
 }
 
 /// `vault.members.add`: an Admin's `add_member` power, checked by the engine
-/// against the live roster. Given the invitee's own device key, the host's
-/// slip issuer signs the invitee's slip for the invitation (FIX 1925).
+/// against the live roster. It only creates the invitation: the invitee binds
+/// a key of their own to it (FIX 8745).
 pub(crate) async fn vault_members_add(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedMemberAddRequest,
-) -> MaybeListed<SharedMemberInvited> {
+) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.add";
     let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
         person(server, auth, VERB),
-        move |server, admin| {
-            if input.holder_key.is_none() {
-                return sdk::add_shared_member_as(server.vault(), &admin, None, input);
-            }
-            with_slips(server, VERB, |slips| {
-                sdk::add_shared_member_as(server.vault(), &admin, Some(slips), input)
-            })
-        },
-        move |invited| receipt_rows(vault.vault(), &invited.receipt),
+        move |server, admin| sdk::add_shared_member_as(server.vault(), &admin, input),
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }

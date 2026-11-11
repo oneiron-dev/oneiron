@@ -209,6 +209,7 @@ pub(super) fn draft(
     for (role, model, locality, usage) in seats {
         let Some(brief) = Brief::gather(
             vault,
+            runtime,
             &registry,
             &runs,
             role,
@@ -245,7 +246,7 @@ pub(super) fn draft(
         };
         // An exact Final paired measurement of this pair supplies its own
         // card (FIX 574); without one the grounded evidence stands.
-        super::eval_measurement::attach_measured_card(vault, &mut draft, now)?;
+        super::eval_measurement::attach_measured_card(server, &mut draft, now)?;
         // The offer also reads the pilots its options were grounded on, each
         // its own option's exact pilot from the brief (FIX 7021, 9469): its
         // set, `None` when any such pilot's measurement set is unknown.
@@ -328,6 +329,7 @@ impl Brief {
     #[allow(clippy::too_many_arguments)]
     fn gather(
         vault: &Vault,
+        runtime: &crate::models::ModelRuntime,
         registry: &[ModelRegistryRow],
         runs: &[TrainingRun],
         role: ModelRole,
@@ -368,7 +370,15 @@ impl Brief {
             sources.set(row.source_rows.as_deref());
         }
         let baseline_monthly = monthly(current, &workload, &usage);
-        let stock = stock_choices(registry, current, &workload, &usage);
+        let mut stock = stock_choices(registry, current, &workload, &usage);
+        for choice in &mut stock {
+            let weights = runtime.stock_weights(&choice.pin.model);
+            if weights.is_some() {
+                // Configuration and local files have no vault source row.
+                sources.set(None);
+            }
+            choice.data["verified_local_weights"] = weights.unwrap_or(serde_json::Value::Null);
+        }
         let (recipes, seat_runs) = recipe_choices(runs, registry, role, &seat, &mut sources);
         let mut choices: Vec<Choice> = stock.into_iter().chain(recipes).collect();
         if choices.is_empty() {
@@ -419,6 +429,7 @@ impl Brief {
                 .filter(|revision| !revision.trim().is_empty()),
             // No measured card for the seat: unknown, never not-worse.
             card: None,
+            paired_measurement: None,
             losses: Vec::new(),
             risk: None,
         };

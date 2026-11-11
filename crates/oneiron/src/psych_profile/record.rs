@@ -6,8 +6,10 @@ pub(super) use crate::write_envelope::profile_snapshot::record::{
     MAX_COMPACT_BYTES, MAX_NARRATIVE_BYTES, MAX_TEXT_BYTES,
 };
 pub use crate::write_envelope::profile_snapshot::record::{
-    PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,
-    PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileStaleReason, PsychProfileState,
+    PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PSYCH_PROFILE_WORDS_PIN_DOMAIN,
+    PsychProfile, PsychProfileByteRange, PsychProfileConfidence, PsychProfileSnapshotStatus,
+    PsychProfileSource, PsychProfileSourceWords, PsychProfileSpanText, PsychProfileStaleReason,
+    PsychProfileState, PsychProfileWordsPin, psych_profile_words_pin,
 };
 pub(crate) use crate::write_envelope::profile_snapshot::record::{
     PSYCH_PROFILE_FIELDS_FULL, PSYCH_PROFILE_FIELDS_MINIMAL, PSYCH_PROFILE_FIELDS_STANDARD,

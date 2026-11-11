@@ -1,7 +1,6 @@
 //! Directed edges, type scans and graph walks under one serving snapshot.
 
 use super::*;
-use crate::claim::scoped_read::access_gate::HeldAuthority;
 use crate::store::{EngineScan, scan_count::ScanCount};
 
 impl NativeRawRead<'_> {
@@ -80,7 +79,7 @@ impl NativeRawRead<'_> {
         let (filter, policy) = lane.resolve_retrieval_filter_in(&txn, None)?;
         let store = lane.store_read();
         let mut count = ScanCount::start(&store, &txn, EngineScan::TypeIndexRows, &[entity_type])?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = lane.held_for(None);
         let mut kept = Vec::new();
         let mut suppressed = 0;
         for id in store.port_entity_ids_by_type(&txn, entity_type, None)? {

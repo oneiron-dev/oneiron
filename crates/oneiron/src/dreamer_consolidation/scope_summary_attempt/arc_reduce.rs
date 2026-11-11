@@ -19,7 +19,7 @@ use super::arc_chunks::MemberText;
 use super::arc_output::{ArcLines, arc_wire};
 use super::arc_part_merge::{PartLine, merge_part};
 use super::arc_review::{Observation, store_exit};
-use super::arc_synopsis::{ARC_SYNOPSIS, Synopsis};
+use super::arc_synopsis::Synopsis;
 use super::output::reply_text;
 use super::{ScopeSummaryExecutor, compose_again};
 use crate::attempt_queue::AttemptId;
@@ -258,7 +258,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             }
             Err(error) => return Ok(Landing::Exit(run.charges.park_on_error(&error))),
         };
-        let lines = if ARC_SYNOPSIS {
+        let synopsis = match ctx.vault.dreamer_recipe_policy() {
+            Ok(policy) => policy.arc_synopsis_enabled,
+            Err(error) => return Ok(Landing::Exit(run.charges.park_on_error(&error))),
+        };
+        let lines = if synopsis {
             match self.lead_with_synopsis(run, ctx, step_ctx, lines).await? {
                 Synopsis::Lines(lines) => lines,
                 Synopsis::Exit(exit) => return Ok(Landing::Exit(exit)),
@@ -302,13 +306,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         ) {
             Ok(_) => DreamerAttemptExecution::Completed {
                 completed_units: run.charges.units,
-                step_hashes: run.charges.step_hashes.clone(),
+                step_bindings: run.charges.step_bindings.clone(),
             },
             Err(Error::ConcurrentWrite(_)) => compose_again(&run.charges, ctx.now_ms),
             Err(error) if waits_on_residency(&error) => residency_deferral(
                 ctx.now_ms,
                 run.charges.units,
-                run.charges.step_hashes.clone(),
+                run.charges.step_bindings.clone(),
             ),
             Err(error) => run
                 .charges

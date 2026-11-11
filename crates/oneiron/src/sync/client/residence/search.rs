@@ -66,6 +66,8 @@ struct PageRequest<'a> {
     selector_wire: &'a [u8],
     scope: Option<&'a ResolvedRecallSelection>,
     as_of: Option<u64>,
+    /// The caller's own retrieval filter (FIX 3977), signed with the request.
+    filter: Option<&'a crate::memory::ReadFilterInput>,
     caller: Option<(&'a crate::authority::ForwardedCallerProof, CallerLocality)>,
 }
 
@@ -85,6 +87,7 @@ async fn ask_page(
         selector_wire,
         scope,
         as_of,
+        filter,
         caller,
     } = *request;
     let selector = base64::engine::general_purpose::STANDARD.encode(selector_wire);
@@ -94,6 +97,9 @@ async fn ask_page(
     }
     if let Some(as_of) = as_of {
         params["as_of"] = json!(as_of);
+    }
+    if let Some(filter) = filter {
+        params["filter"] = serde_json::to_value(filter).map_err(|_| refused())?;
     }
     if let Some(page) = page {
         params["page"] = serde_json::to_value(page).map_err(|_| refused())?;
@@ -107,6 +113,7 @@ async fn ask_page(
             selector_wire,
             scope,
             as_of,
+            filter,
             locality,
             page,
             |request| vault.forwarding_machine_proof(request, caller),
@@ -161,7 +168,12 @@ async fn ask_page(
 }
 
 /// Asks the home for `limit` hits a page at a time over `rpc`, as the caller
-/// a forwarded search names, at its locality, within `scope`.
+/// a forwarded search names, at its locality, within `scope`, under the
+/// caller's own retrieval `filter` (FIX 3977).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a paged search carries every field its signed request names"
+)]
 pub(super) async fn search_pages(
     vault: &crate::Vault,
     rpc: &mut ResidenceRpc,
@@ -170,6 +182,7 @@ pub(super) async fn search_pages(
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
     as_of: Option<u64>,
+    filter: Option<&crate::memory::ReadFilterInput>,
     caller: Option<(&crate::authority::ForwardedCallerProof, CallerLocality)>,
 ) -> Result<ResidenceSearch, TransportError> {
     let request = PageRequest {
@@ -178,6 +191,7 @@ pub(super) async fn search_pages(
         selector_wire,
         scope,
         as_of,
+        filter,
         caller,
     };
     let mut hits: Vec<ResidenceHit> = Vec::new();
@@ -224,6 +238,7 @@ pub(super) async fn search_page(
         selector_wire,
         scope: None,
         as_of: None,
+        filter: None,
         caller: None,
     };
     let mut asked = cursor;

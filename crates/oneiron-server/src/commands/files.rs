@@ -105,7 +105,11 @@ pub fn files(command: FilesCommand) -> anyhow::Result<()> {
             emit(&sdk::files_source_files_as(
                 &vault,
                 &owner,
-                FilesSourceFilesRequest { source },
+                FilesSourceFilesRequest {
+                    source,
+                    cursor: None,
+                    limit: None,
+                },
             )?)
         }
     }

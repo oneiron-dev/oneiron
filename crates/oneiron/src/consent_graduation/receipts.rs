@@ -74,6 +74,31 @@ pub(crate) fn ramp_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<R
     Ok(out)
 }
 
+/// The receipt id of the graduation demotion in `txn` that revoked `grant_ref` after `issued` (the decision
+/// that created the grant's current issuance), if one did. A demotion records the grant it revoked, and its
+/// row id and the decision id come from the store's one monotonic id source, so a later id is a later write.
+pub(crate) fn demotion_revoking_grant(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    grant_ref: &str,
+    issued: crate::store::GateDecisionId,
+) -> Result<Option<String>> {
+    let mut revoking = None;
+    ramp_rows_to_end(
+        vault,
+        txn,
+        RAMP_DEMOTION,
+        RAMP_DEMOTION_ROW_LABEL,
+        b"ramp_demotion",
+        |id, row: StoredDemotion| {
+            if row.grant_ref.as_deref() == Some(grant_ref) && id.as_bytes()[..] > issued.bytes[..] {
+                revoking = Some(id);
+            }
+        },
+    )?;
+    Ok(revoking.map(|id| format!("{RAMP_DEMOTION_RECEIPT_PREFIX}{}", id.to_hex())))
+}
+
 /// Hands `visit` every row of one append-only ramp log, oldest first, each
 /// validated, the log read to its end with no count cutting it short (FIX
 /// 3582). Past its threshold row the walk raises one check for `scope` and

@@ -1,0 +1,16 @@
+{
+  "name": "vault.vectors.put",
+  "description": "Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically.",
+  "input": "crate::memory::VectorPutRequest",
+  "output": "crate::memory::VectorPutReceipt",
+  "call": "memory.put_vector_as_owner(&memory.embedded_owner(\"vault.vectors.put\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

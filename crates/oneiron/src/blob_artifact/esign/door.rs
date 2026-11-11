@@ -44,7 +44,10 @@ use serde::{Deserialize, Serialize};
 
 mod draft;
 mod links;
+mod preview;
 mod read;
+
+pub use preview::{EsignSigningPreviewRequest, EsignSigningPreviewView, layout_esign_preview};
 
 /// A signing document to draft on an existing artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -273,6 +276,10 @@ pub struct EsignSealAttemptView {
     pub updated_at: u64,
     /// The failure a failed attempt kept; the backstop queues it again.
     pub last_error: Option<String>,
+    /// Native finding and sub-indication codes of a failed self-verification,
+    /// including `validation_material_possible_tampering`. Empty when none was
+    /// supplied; an empty list never means "verification passed".
+    pub verify_reasons: Vec<String>,
 }
 
 /// One sealed item's provenance: the frozen original it came from and the
@@ -287,6 +294,7 @@ pub struct EsignSealedItemView {
     pub sha256: String,
     /// Actual profiles and every native degradation reason from this item's seal.
     pub profile: super::sealer::SealProfileEvidence,
+    pub active_content: super::sealer::SealActiveContentFacts,
 }
 
 /// A sealed document's manifest: which attempt sealed it, over which

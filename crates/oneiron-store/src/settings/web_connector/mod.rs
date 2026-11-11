@@ -82,11 +82,9 @@ impl WebConnectorSetting {
             WebProviderKey::Secret { name } if name.trim().is_empty() => Err(Error::InvalidConfig(
                 "web connector: a secret key names its custody record".into(),
             )),
-            WebProviderKey::Hub { connector }
-                if connector.trim().is_empty() || connector == WEB_CONNECTOR_NAME =>
-            {
+            WebProviderKey::Hub { connector } if connector.trim().is_empty() => {
                 Err(Error::InvalidConfig(
-                    "web connector: a hub key names another installed connector".into(),
+                    "web connector: a hub key names an installed connector".into(),
                 ))
             }
             _ => Ok(()),

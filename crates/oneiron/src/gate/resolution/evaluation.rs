@@ -334,6 +334,7 @@ impl PolicyManifestResolution {
             GateContentKind::Claim
             | GateContentKind::EdgeProvenanceClaim
             | GateContentKind::Repair
+            | GateContentKind::AgentDefinitionSetup
             | GateContentKind::WitnessMessage => {}
             GateContentKind::PolicyManifest => {
                 pending.push(GateReasonCode::PendingPolicyManifestAuthority);
@@ -395,6 +396,30 @@ impl PolicyManifestResolution {
             lineage,
         )
         .is_ok()
+    }
+
+    /// Whether the owner's press on this one effect would supply its missing
+    /// external-effect authority (ARCH-0046 "a press per send"): the
+    /// per-send mail press when `mail_press`, the publish press when
+    /// `publish_press`, each with the consent Auto that exact approval gives.
+    /// The same rule as the Gate's, on `input` with that press applied.
+    pub(in crate::gate) fn press_supplies_external_effect_authority(
+        &self,
+        input: &GateEvaluatorInput,
+        mail_press: bool,
+        publish_press: bool,
+    ) -> bool {
+        let mut pressed = input.clone();
+        let Some(effect) = pressed.external_effect.as_mut() else {
+            return false;
+        };
+        effect.mail_approve_once = mail_press;
+        effect.artifact_publish_approve_once = publish_press;
+        if let Some(consent) = pressed.consent.as_mut() {
+            consent.decision = crate::consent::ConsentDecision::Auto;
+            consent.reason = None;
+        }
+        self.external_effect_allows_auto(&pressed)
     }
 
     fn external_effect_allows_auto(&self, input: &GateEvaluatorInput) -> bool {
@@ -465,11 +490,11 @@ impl PolicyManifestResolution {
 }
 
 /// ARCH-0027 trust tier: imported material never auto-approves. A Dreamer
-/// write whose source or lineage is `Imported` waits for the owner's import
-/// review whatever any source_trust row grants, so no manifest can land it
-/// Auto.
+/// write, or a `vault.derive` commit's, whose source or lineage is
+/// `Imported` waits for the owner's review whatever any source_trust row
+/// grants, so no manifest can land it Auto.
 fn dreamer_writes_from_import(input: &GateEvaluatorInput, lineage: Option<&SourceLineage>) -> bool {
-    input.provenance.dreamer_run_id.is_some()
+    (input.provenance.dreamer_run_id.is_some() || input.provenance.derive_commit)
         && (input.source == Some(ClaimSource::Imported)
             || lineage.is_some_and(|lineage| lineage.contains(ClaimSource::Imported)))
 }

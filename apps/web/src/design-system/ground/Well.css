@@ -1,0 +1,8 @@
+.sl-well {
+  background: var(--sl-well);
+  border-radius: var(--sl-radius);
+}
+
+.sl-well[data-tone="island"] {
+  background: var(--sl-island);
+}

@@ -11,8 +11,10 @@
 //! the host, its copy of the key already wiped, and only then starts the
 //! engine: supplementary groups cleared, then the GID and the UID set to the
 //! binding's, with no environment but `PATH` (and the guests' fence launcher
-//! once their runtime is provisioned) and no descriptor beyond the standard
-//! three. The engine dials its own credential connection and
+//! once their runtime is provisioned). A delivered public checkpoint
+//! recipient uses its own pipe; the restore and custody-anchor pipes below
+//! are also retained explicitly, and no other descriptor is inherited.
+//! The engine dials its own credential connection and
 //! reports its own readiness after the unchanged managed gates; nothing here
 //! stands in for either.
 //!
@@ -61,6 +63,7 @@
 //! off.
 
 mod anchor;
+mod checkpoint_recipient;
 mod config_drive;
 pub(in crate::managed) mod fscrypt;
 mod guest_runtime;
@@ -76,11 +79,11 @@ use self::profile::VmManagedProfile;
 use anyhow::Context as _;
 use oneiron_vault_contract::host_adapters::connect_blocking;
 use oneiron_vault_contract::vm::{
-    MAX_VM_FRAME, VM_BOOT_PORT, VM_GUEST_CONFIG_DIR, VM_GUEST_DATA_DIR, VM_GUEST_KEYS_DIR,
-    VM_HOST_CID, decode_vm_frame, encode_vm_frame,
+    VM_BOOT_PORT, VM_GUEST_CONFIG_DIR, VM_GUEST_DATA_DIR, VM_GUEST_KEYS_DIR, VM_HOST_CID,
 };
 use oneiron_vault_contract::vm_provision::{
-    VM_PROVISION_REVISION, VmFscryptKey, VmProvision, VmProvisionFailure, VmProvisionReply,
+    MAX_VM_PROVISION_FRAME, VM_PROVISION_REVISION, VmFscryptKey, VmProvision, VmProvisionFailure,
+    VmProvisionReply, decode_vm_provision_frame, encode_vm_provision_frame,
 };
 use oneiron_vault_contract::vm_restore::VmRestoreBoot;
 use oneiron_vault_contract::{CONTRACT_VERSION, hex};
@@ -212,10 +215,11 @@ fn run() -> anyhow::Result<ExitCode> {
             revision: frame.revision,
             vault: frame.vault.clone(),
             binding: frame.binding.clone(),
+            checkpoint_host_holds_recipient: frame.checkpoint_host_holds_recipient.clone(),
         },
         Err(refusal) => VmProvisionReply::refused(refusal.code, &refusal.detail),
     };
-    let answered = encode_vm_frame(&reply)
+    let answered = encode_vm_provision_frame(&reply)
         .and_then(|line| channel.write_all(line.as_bytes()).map_err(Into::into))
         .context("answering the host's provision connection");
     drop(channel);
@@ -235,13 +239,20 @@ fn run() -> anyhow::Result<ExitCode> {
     let status = match boot {
         VmRestoreBoot::Open => {
             drop(restore_channel);
-            run_engine(&args, provisioned.uid, &provisioned.guest.profile, None)
+            run_engine(
+                &args,
+                provisioned.uid,
+                &provisioned.guest.profile,
+                None,
+                frame.checkpoint_host_holds_recipient.as_ref(),
+            )
         }
         VmRestoreBoot::Restore { .. } => run_engine(
             &args,
             provisioned.uid,
             &provisioned.guest.profile,
             Some(restore_channel),
+            frame.checkpoint_host_holds_recipient.as_ref(),
         ),
         VmRestoreBoot::InspectMarker { identity } => {
             let observation =
@@ -271,7 +282,10 @@ fn read_line(channel: &mut File) -> anyhow::Result<String> {
     let mut line = Vec::new();
     let mut byte = [0u8; 1];
     while line.last() != Some(&b'\n') {
-        anyhow::ensure!(line.len() < MAX_VM_FRAME, "the frame is over its bound");
+        anyhow::ensure!(
+            line.len() < MAX_VM_PROVISION_FRAME,
+            "the frame is over its bound"
+        );
         channel.read_exact(&mut byte)?;
         line.push(byte[0]);
     }
@@ -304,7 +318,7 @@ fn provision(
     // The revision is read alone first, so a frame of another revision is
     // answered as one whatever fields it carries, before its key frame is
     // read (FIX 6630); this revision's frame takes no field it does not know.
-    let revision = decode_vm_frame::<ProvisionRevision>(&line)
+    let revision = decode_vm_provision_frame::<ProvisionRevision>(&line)
         .map_err(malformed)?
         .revision;
     if revision != VM_PROVISION_REVISION {
@@ -313,7 +327,7 @@ fn provision(
             "the provision frame is of another revision",
         ));
     }
-    let frame: VmProvision = decode_vm_frame(&line).map_err(malformed)?;
+    let frame: VmProvision = decode_vm_provision_frame(&line).map_err(malformed)?;
     let key = VmFscryptKey::read_from(&mut *channel).map_err(malformed)?;
     frame
         .validate()
@@ -446,6 +460,9 @@ fn run_engine(
     uid: u32,
     profile: &VmManagedProfile,
     restore_channel: Option<File>,
+    checkpoint_host_holds_recipient: Option<
+        &oneiron_vault_contract::checkpoint_recipient::CheckpointHostHoldsRecipient,
+    >,
 ) -> anyhow::Result<ExitStatus> {
     // Whatever the engine leaves behind is reparented here, not to PID 1, so
     // it is reaped before the key goes. Any nonzero argument sets it.
@@ -463,25 +480,58 @@ fn run_engine(
     flags.extend(anchor.flags());
     flags.extend(profile.engine_flags());
     flags.extend(runtime.engine_flags());
-    let anchor_fds = anchor.fds();
+    let recipient = checkpoint_recipient::RecipientPipe::prepare(checkpoint_host_holds_recipient);
+    if let Some(recipient) = &recipient {
+        flags.extend(recipient.flags());
+    }
+    let mut engine_fds = anchor.fds();
+    if let Some(recipient) = &recipient {
+        engine_fds.extend(recipient.fds());
+    }
     // A pipe the engine reads that broke before its end comes back here.
     let (lost_sender, lost) = mpsc::channel();
     let mut restoring = None;
     let mut anchored = None;
+    let mut source = match super::vm_source_control::Prepared::new(&args.vault) {
+        Ok(source) => Some(source),
+        Err(error) => {
+            eprintln!("oneiron-vm-init: source control unavailable: {error:#}");
+            None
+        }
+    };
+    let mut source_owner = None;
+    let mut spawn = |fds: &[(RawFd, RawFd)],
+                     flags: &[OsString]|
+     -> anyhow::Result<std::process::Child> {
+        let engine = start_engine(args, uid, flags, fds, &runtime)?;
+        if let Some(prepared) = source.take() {
+            match prepared.start(&engine) {
+                Ok(owner) => source_owner = Some(owner),
+                Err(error) => eprintln!("oneiron-vm-init: source control unavailable: {error:#}"),
+            }
+        }
+        Ok(engine)
+    };
     let mut refresh_companion = || {
         if let Some(companion) = companion.as_mut() {
             companion.refresh(&args.vault, uid, ENGINE_PATH);
         }
     };
     let status = match restore_channel {
-        None => start_engine(args, uid, &flags, &anchor_fds, &runtime).and_then(|mut engine| {
-            anchored = Some(anchor.start(lost_sender)?);
-            restore::supervise(&mut engine, &lost, &mut refresh_companion)
-        }),
+        None => {
+            let started = spawn(&engine_fds, &flags);
+            drop(recipient);
+            started.and_then(|mut engine| {
+                anchored = Some(anchor.start(lost_sender)?);
+                restore::supervise(&mut engine, &lost, &mut refresh_companion)
+            })
+        }
         Some(channel) => restore::start(channel, lost_sender.clone(), |fds, restore_flags| {
-            let fds = [fds, &anchor_fds[..]].concat();
+            let fds = [fds, &engine_fds[..]].concat();
             let flags = [&flags[..], restore_flags].concat();
-            start_engine(args, uid, &flags, &fds, &runtime)
+            let started = spawn(&fds, &flags);
+            drop(recipient);
+            started
         })
         .and_then(|started| {
             let restoring = restoring.insert(started);
@@ -489,6 +539,8 @@ fn run_engine(
             restoring.wait(&lost, &mut refresh_companion)
         }),
     };
+    // End the original-child source owner before the existing cleanup.
+    drop(source_owner);
     // The anchor's socket goes with the engine.
     drop(anchored);
     // The companion goes first, while the key is in: it may be writing into

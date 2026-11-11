@@ -35,3 +35,11 @@ hold. It does not add a retry count, timeout, quiet interval, policy cap, schema
 provider replay or automatic acceptance. The existing policy controls the wake.
 Byte staging can still report its existing workbook-change or resource errors;
 this path does not replace those errors or claim bounded native execution time.
+
+## Answer-count batches
+
+The answer-count policy bounds each write batch, not the total answers held by
+one proposal. Keep no longer re-applies that number as a total-count refusal.
+The original held proposal, source pins and retryable source-conflict behavior
+above remain. See [typed sheet-answer write batches](typed-sheet-answer-batches.md)
+for the write path and the remaining decided-but-unstaged retry work.

@@ -1,0 +1,17 @@
+{
+  "name": "vault.off_record.witness",
+  "description": "The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close.",
+  "input": "crate::task_verb::sdk::OffRecordWitnessRequest",
+  "output": "crate::memory::WitnessReceipt",
+  "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.witness\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "no_record": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "off_record"
+}

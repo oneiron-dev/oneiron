@@ -11,6 +11,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 
+/// The decision policy's questions-per-call value until the vault sets one.
+pub const DEFAULT_DECISION_QUESTIONS_PER_CALL: usize = 16;
+
 /// What a memory-derived row comes to when the machine's memory cannot be
 /// read.
 const MEMORY_FALLBACK_BYTES: u64 = 256 << 20;
@@ -28,6 +31,59 @@ pub enum EngineLimit {
     /// Serialized bytes of one keyed-memory search filter
     /// (`vault.kv.search`).
     KeyedFilterJsonBytes,
+    /// Segments of one keyed-memory namespace, prefix or suffix a caller
+    /// names (`vault.kv`). Past it the namespace is kept and served whole.
+    KeyedNamespaceSegments,
+    /// UTF-8 bytes of one keyed-memory namespace, prefix or suffix, its
+    /// segments together. Past it the namespace is kept and served whole.
+    KeyedNamespaceBytes,
+    /// UTF-8 bytes of one keyed-memory key. Past it the key is kept and
+    /// served whole.
+    KeyedKeyBytes,
+    /// UTF-8 bytes of the booker email one authenticated booking confirm
+    /// carries. Past it the address is kept and served whole.
+    BookingEmailBytes,
+    /// Intake answers one authenticated booking confirm carries. Past it
+    /// every answer is kept.
+    BookingIntakeAnswers,
+    /// UTF-8 bytes of the largest intake answer value one authenticated
+    /// booking confirm carries. Past it the answer is kept whole.
+    BookingIntakeValueBytes,
+    /// Distinct local time windows one booking constraint carries once
+    /// canonical (sorted, duplicates gone). Past it every window is solved.
+    BookingLocalTimeWindows,
+    /// Serialized JSON bytes of one claim input as it reaches the vault's
+    /// claim door, scope and refs included. Past it the claim is written
+    /// whole.
+    ClaimInputJsonBytes,
+    /// Entities one core batch write carries (`POST /v1/core/batch` and the
+    /// vault's core batch door). Past it every entity is written in the same
+    /// one atomic batch.
+    CoreBatchEntities,
+    /// Entities one legacy `batch_put_entities` call carries (N-API, or the
+    /// C FFI's `oneiron_vault_batch_put_entities`), counted before any
+    /// element is read. Past it every entity is written in the same one
+    /// atomic transaction.
+    LegacyBatchEntities,
+    /// Raw bytes of one blob artifact version or asset an engine door
+    /// stores (`vault.artifacts.append`, asset ingest), decoded. Past it the
+    /// content is stored whole, as one version.
+    BlobContentBytes,
+    /// Availability listings one authenticated booking actor asks for in one
+    /// minute (the owner's slot-list windows govern anonymous visitors only).
+    /// Past it every listing is served.
+    BookingAvailabilityCallsPerMinute,
+    /// Holds one authenticated booking actor requests in one minute (the
+    /// owner's hold windows govern anonymous visitors only). Past it every
+    /// hold is served.
+    BookingHoldCallsPerMinute,
+    /// Confirms and amendments (cancel, reschedule) one authenticated booking
+    /// actor sends in one minute, counted together (the owner's book windows
+    /// govern anonymous visitors only). Past it every write is served.
+    BookingWriteCallsPerMinute,
+    /// Quarantined confirms one authenticated booking actor submits in one
+    /// minute. Past it every submission is kept for the owner's review.
+    BookingQuarantineCallsPerMinute,
     /// Bytes of one code-mode result kept inline in its LMDB row. A body past
     /// it is written to the vault's file-backed body store instead; the row
     /// picks where a result lives and never refuses one.
@@ -103,6 +159,16 @@ pub enum EngineLimit {
     /// Bytes those decoded messages hold, ids and titles included. Past it
     /// the import lands whole.
     ImportDecodedBytes,
+    /// Metadata nodes one MESSAGE carries, keys and values together, counted
+    /// apart for each of its three metadata parts (an import's provenance and
+    /// the source row's own carried apart from the rest). Measured at every
+    /// put of the row, local or replicated; past it the metadata is kept
+    /// whole.
+    WitnessMetadataNodes,
+    /// Canonical MessagePack bytes of one MESSAGE's metadata, each of its
+    /// three parts counted apart. Measured at every put of the row; past it
+    /// the metadata is kept whole.
+    WitnessMetadataBytes,
     /// Bytes one signature image decode (`POST /sign/image`) may allocate,
     /// its decoded raster included: the decoder's own alloc bound is set from
     /// it. An image whose header declares a raster past it asks whether
@@ -240,6 +306,9 @@ pub enum EngineLimit {
     /// envelope's sender is asked whether everything is okay, and the image
     /// is decoded, stored and bound.
     EsignSignatureInputBytes,
+    /// Pixels on either axis of an uploaded signature image. Past it the
+    /// envelope's sender is asked, and the image is decoded whole.
+    EsignSignatureImageDimensionPx,
     /// Bytes of one signature image's canonical PNG re-encoding. Past it the
     /// envelope's sender is asked, and the image is stored and bound.
     EsignSignaturePngBytes,
@@ -250,6 +319,15 @@ pub enum EngineLimit {
     /// Signature images one recipient of a signing document holds. Past it
     /// the envelope's sender is asked, and the image is stored and bound.
     EsignSignatureRecipientImages,
+    /// UTF-8 bytes of a signing rejection reason. Past it the envelope's
+    /// sender is asked, and the whole reason is kept.
+    EsignRejectReasonBytes,
+    /// UTF-8 bytes of a signing email field. Past it the envelope's sender
+    /// is asked, and the whole field is kept.
+    EsignEmailFieldBytes,
+    /// UTF-8 bytes of a signing name or server-computed date field. Past it
+    /// the envelope's sender is asked, and the whole field is kept.
+    EsignNameFieldBytes,
     /// Bytes of one request body a public signing door spools once its
     /// capability is admitted: an act, a PDF or preview read, a signature
     /// image or its read-back. Past it the envelope's sender is asked whether
@@ -525,15 +603,35 @@ pub enum EngineLimit {
     /// (FIX 5218). Past it the row asks whether everything is okay and
     /// the merge scores over every receipt.
     SharedMergeEvidenceRows,
+    /// Third-party interlocutors one context-pack request names: the
+    /// submitted `interlocutors.third_parties` list whole, label-only
+    /// parties included, measured after its shape checks and before contact
+    /// resolution (physical65 ABC14). Past it the row asks whether
+    /// everything is okay and every party is resolved and served whole.
+    ContextThirdParties,
+    /// Explicit pinned refs one board or pack request names: the submitted
+    /// `pinned_refs` list, measured where it is read and before its
+    /// resolution (physical68 ABC17). Manifest, hook and voice pins are
+    /// separate policies and are not counted here. Past it the row asks
+    /// whether everything is okay and every ref is resolved and served
+    /// whole.
+    MemoryPinnedRefs,
     /// Files one legacy codebase snapshot manifest names (FIX 74). Past
     /// it the row asks whether everything is okay and the manifest is
     /// kept whole.
     CodebaseManifestFiles,
+    /// Original UTF-8 bytes of one recall or text-search query. Past it the
+    /// row asks and the query is served whole; model windows are separate.
+    RecallQueryBytes,
     /// Result rows one search, recall or context-pack door was asked for:
     /// the caller's requested count, measured where the door serves it.
     /// Past it the row asks whether everything is okay and the whole
     /// requested count is served.
     RequestedResultRows,
+    /// Ancestor rows one tournament-start check walks, resumed across calls
+    /// (FIX 9581). Past it the row asks whether everything is okay and the
+    /// check still completes, one hop budget at a time; depth never refuses.
+    TournamentLineageRows,
     /// Embedding vector dimensions one vault opened with, measured once
     /// where its host serves it. Past it the row asks whether everything
     /// is okay and the vault serves as opened.
@@ -548,6 +646,9 @@ pub enum EngineLimit {
     /// past it the row asks whether everything is okay and the whole budget
     /// is offered to the existing execution path.
     MemoryReasonTokens,
+    /// Questions in one logical decision pack. The producer reports its actual
+    /// policy's questions-per-call bound; larger packs are still served whole.
+    DecisionQuestionsPerCall,
     /// Edge-walk depth one context pack hydrates neighbors over (FIX 62).
     /// Past it the row asks whether everything is okay and the pack is
     /// still served whole; nothing is refused or clamped.

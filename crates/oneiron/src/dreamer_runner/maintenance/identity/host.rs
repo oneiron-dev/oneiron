@@ -14,12 +14,13 @@ use super::{
 use crate::authority::{ActAuthority, ActSurface};
 use crate::claim::{ClaimSource, ScopedRead};
 use crate::consent::AuthenticatedOwner;
-use crate::identity_topology::TopologySeal;
+use crate::error::{GateError, SyncError};
+use crate::identity_topology::{IdentityTopologyRejection, TopologySeal};
 use crate::lens::GeneratedUiCard;
 use crate::limit_ask::EngineLimit;
 use crate::model_decision::catalogue::IDENTITY_SETTLE;
 use crate::model_decision::{AnswerContract, DecisionAnswer, Reversibility};
-use crate::{Result, Vault};
+use crate::{Error, Result, Vault};
 
 impl Vault {
     /// Open asks the host decides now, act-now ones first, up to `limit`,
@@ -218,7 +219,7 @@ impl Vault {
                 return Ok(IdentityRuling::Retry);
             }
         };
-        self.with_write_txn_grouped(|txn| {
+        match self.with_write_txn_grouped(|txn| {
             // Against the ask as stored, not as `read` saw it, and only while
             // `read` still reads it whole under its policy now.
             let Some(current) = admission::open_ask_in_txn(self, read, txn, &key, true)? else {
@@ -254,7 +255,39 @@ impl Vault {
                     Ok(IdentityRuling::NeedsPerson)
                 }
             }
-        })
+        }) {
+            Err(error)
+                if matches!(answer, Some(Answer::SomeoneNew))
+                    && matches!(
+                        &error,
+                        Error::Sync(SyncError::IdentityTopologyRejected(
+                            IdentityTopologyRejection::NotActive { .. }
+                        )) | Error::Gate(GateError::SourceNotTrustedForAuto {
+                            claim_source: "inferred"
+                        })
+                    ) =>
+            {
+                // The failed settlement discarded its transaction. Pace
+                // only the same still-open ask in a fresh write.
+                self.with_write_txn_grouped(|txn| {
+                    let Some(current) = admission::open_ask_in_txn(self, read, txn, &key, true)?
+                    else {
+                        return Ok(IdentityRuling::Gone);
+                    };
+                    let mut row = current.stored;
+                    if row.candidates != stored.candidates
+                        || row.escalated_at.is_some()
+                        || row.kept_separate_at.is_some()
+                    {
+                        return Ok(IdentityRuling::Gone);
+                    }
+                    row.retry_at = now.saturating_add(RETRY_SECS);
+                    ASKS.put(&self.store, txn, &key, &row)?;
+                    Ok(IdentityRuling::Retry)
+                })
+            }
+            result => result,
+        }
     }
 
     /// Sends each ask that waits on the person again where its name was

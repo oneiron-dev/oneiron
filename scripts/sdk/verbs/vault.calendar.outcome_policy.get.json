@@ -1,0 +1,16 @@
+{
+  "name": "vault.calendar.outcome_policy.get",
+  "description": "Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists.",
+  "input": "EmptyRequest",
+  "output": "crate::calendar::meeting::CalendarOutcomePolicy",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.calendar.outcome_policy.get\", &_input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

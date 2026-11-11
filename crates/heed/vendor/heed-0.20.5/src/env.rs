@@ -115,6 +115,36 @@ pub struct EnvOpenOptions {
     page_key: Option<PageKey>,
 }
 
+/// ONEIRON FORK (FIX 22101): one line of `mdb_reader_list`, `pid thread
+/// txnid` for a live slot: keeps the lowest reader transaction id in `ctx`.
+/// The header, an idle slot's `-` and the no-reader notes are not ids.
+unsafe extern "C" fn oldest_reader_line(
+    message: *const std::ffi::c_char,
+    ctx: *mut c_void,
+) -> std::ffi::c_int {
+    if message.is_null() || ctx.is_null() {
+        return 0;
+    }
+    // SAFETY: LMDB passes a NUL-terminated line it owns for this call, and
+    // `ctx` is the `Option<usize>` `oldest_reader_txn_id` lends it.
+    let (line, oldest) = unsafe {
+        (
+            std::ffi::CStr::from_ptr(message).to_bytes(),
+            &mut *ctx.cast::<Option<usize>>(),
+        )
+    };
+    let txnid = line
+        .split(u8::is_ascii_whitespace)
+        .filter(|token| !token.is_empty())
+        .nth(2)
+        .and_then(|token| std::str::from_utf8(token).ok())
+        .and_then(|token| token.parse::<usize>().ok());
+    if let Some(txnid) = txnid {
+        *oldest = Some(oldest.map_or(txnid, |held| held.min(txnid)));
+    }
+    0
+}
+
 /// ONEIRON FORK (OF-570): a sealed environment's page key. It never prints or
 /// serializes, and the bytes are wiped when the last copy drops.
 #[derive(Clone)]
@@ -1199,6 +1229,34 @@ impl Env {
         // safety: The reader_check function asks for an i32, initialize it to zero
         //         and never decrements it. It is safe to use either an u32 or u64 (usize).
         Ok(dead as usize)
+    }
+
+    /// ONEIRON FORK (FIX 22101): the oldest transaction id a live read
+    /// transaction of this environment holds, in any process, once the slots
+    /// of readers whose process died are cleared; `None` when no read
+    /// transaction is live. A read transaction's id is that of the last
+    /// write transaction it sees ([`RoTxn::id`]), so a write committed as
+    /// id `t` is seen by every live reader exactly when this is `None` or at
+    /// least `t`.
+    pub fn oldest_reader_txn_id(&self) -> Result<Option<usize>> {
+        self.clear_stale_readers()?;
+        let mut oldest: Option<usize> = None;
+        // SAFETY: `oldest_reader_line` reads only the NUL-terminated line
+        // LMDB hands it and writes only the `Option<usize>` behind `ctx`,
+        // which lives on this frame for the whole call.
+        let listed = unsafe {
+            ffi::mdb_reader_list(
+                self.0.env,
+                Some(oldest_reader_line),
+                (&mut oldest as *mut Option<usize>).cast::<c_void>(),
+            )
+        };
+        if listed < 0 {
+            return Err(Error::Io(io::Error::other(
+                "the LMDB reader table did not list",
+            )));
+        }
+        Ok(oldest)
     }
 
     /// Resize the memory map to a new size.

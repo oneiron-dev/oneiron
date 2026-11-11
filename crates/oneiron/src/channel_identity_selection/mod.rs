@@ -66,6 +66,7 @@ pub(crate) use self::selection_storage::{
     channel_identity_selection_rules_in_txn, erase_rule_actor_in_txn,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

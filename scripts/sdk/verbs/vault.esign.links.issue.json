@@ -1,0 +1,20 @@
+{
+  "name": "vault.esign.links.issue",
+  "description": "The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient.",
+  "refs": [
+    "/document_ref"
+  ],
+  "input": "crate::blob_artifact::esign::EsignLinksIssueRequest",
+  "output": "crate::blob_artifact::esign::EsignLinksView",
+  "call": "memory.esign_links_issue(&input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "filtered",
+  "section": false
+}

@@ -14,6 +14,7 @@ mod codec;
 mod envelope;
 mod error;
 mod keys;
+pub mod legal_clone;
 mod nonce;
 mod record;
 #[cfg(all(
@@ -25,10 +26,11 @@ mod record;
 pub mod stack_probe;
 mod stretch;
 mod suite;
+pub mod totp;
 
 pub use crate::envelope::{
     Envelope, Header, Kdf, ONEV_HEADER_PREFIX_MAX, ONEV_HEADER_PREFIX_MIN, OpenKey, OpenPolicy,
-    Purpose, SealKey, SealParams, WrapParams, WrapType, seal, seal_with_aad,
+    Purpose, SealKey, SealParams, WrapParams, WrapType, seal, seal_with_aad, seal_with_aad_into,
 };
 pub use crate::error::{Error, Result};
 pub use crate::keys::{

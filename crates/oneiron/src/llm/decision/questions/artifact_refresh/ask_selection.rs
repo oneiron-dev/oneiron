@@ -2,7 +2,8 @@
 
 use super::{Changed, Selection};
 use crate::edit_roundtrip::{
-    ArtifactAsk, ArtifactAskRun, FolderAsk, FolderItem, ParagraphAsk, SheetRowsAsk,
+    ArtifactAsk, ArtifactAskRun, FolderAsk, FolderItem, ParagraphAsk, SheetRowSelection,
+    SheetRowsAsk,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -15,6 +16,7 @@ pub(super) fn ask_selection(
     selection: &Selection<'_>,
     files: &[EntityId],
     only: Option<&Changed>,
+    selected_rows: Option<&SheetRowSelection>,
     ask: ArtifactAsk<'_>,
     sight: crate::secret_custody::SecretSight,
 ) -> Result<ArtifactAskRun> {
@@ -34,14 +36,15 @@ pub(super) fn ask_selection(
                 answer_col: *answer_col,
                 header_row: *header_row,
                 max_count_override: *max_count,
-                only_rows: match only {
+                only_rows: selected_rows.or_else(|| match only {
                     Some(Changed::Rows(rows)) => Some(rows),
                     _ => None,
-                },
+                }),
             },
         ),
         Selection::Paragraphs {
             blocks,
+            scope,
             author,
             labels,
         } => vault.ask_blob_artifact_paragraphs(
@@ -52,6 +55,7 @@ pub(super) fn ask_selection(
                     Some(Changed::Blocks(changed)) => changed.as_slice(),
                     _ => *blocks,
                 },
+                scope: *scope,
                 author,
                 labels,
             },
@@ -74,9 +78,12 @@ pub(super) fn ask_selection(
             if items.is_empty() {
                 return Ok(ArtifactAskRun {
                     proposal: None,
+                    sheet_answers: None,
+                    deferred_floor: None,
                     abstained: Vec::new(),
                     refused: Vec::new(),
                     read_rows: Vec::new(),
+                    next_sheet_row: None,
                 });
             }
             vault.ask_folder_items_into_sheet(

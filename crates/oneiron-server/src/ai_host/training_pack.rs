@@ -169,8 +169,7 @@ fn train(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result<()
         .clone();
     let vault = Arc::clone(vault);
     let id = run.id;
-    std::thread::Builder::new()
-        .name(format!("training-run-{}", id.to_hex()))
+    crate::engine_thread(format!("training-run-{}", id.to_hex()))
         .spawn(move || dispatch(&vault, &id, &admission, &binding, connector.as_ref()))
         .map_err(|_| Error::InvalidConfig("the training run's thread did not start".into()))?;
     Ok(())

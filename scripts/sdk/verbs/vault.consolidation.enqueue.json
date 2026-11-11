@@ -1,0 +1,22 @@
+{
+  "name": "vault.consolidation.enqueue",
+  "description": "Enqueues one consolidation attempt and returns its durable job reference.",
+  "uniffi": {
+    "args": {
+      "input": "ConsolidationJobInput"
+    },
+    "output": "DreamerJobRef"
+  },
+  "input": "ConsolidationEnqueueRequest",
+  "output": "crate::memory::DreamerAttemptRef",
+  "call": "memory_requests::enqueue_consolidation(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

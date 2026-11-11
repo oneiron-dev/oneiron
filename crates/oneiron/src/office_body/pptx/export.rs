@@ -11,7 +11,8 @@
 //! head moved, and no bytes merge.
 
 use super::super::{
-    EXPORTS, OfficeBodyExportRecord, OfficeBodyKind, SOURCES, invalid, version_key, writer,
+    EXPORTS, HeldDeckId, OfficeBodyExportRecord, OfficeBodyKind, SOURCES, invalid, version_key,
+    writer,
 };
 use super::{PptxExport, doc, export_gate, live};
 use crate::Vault;
@@ -29,6 +30,7 @@ use crate::temporal::TimeRange;
 use crate::typed_body::{BodyActor, edit_typed_body_in_txn};
 use crate::write_envelope::WriteActor;
 use heed::RwTxn;
+use oneiron_docedit::graphic::GraphicLimits;
 use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{ExportOutcome, ExportProfile, HeldAssets, effect_receipt, project};
 use oneiron_docedit::retained_opc::Package;
@@ -38,11 +40,18 @@ impl Vault {
     /// source, or the version the last landed export made). Until the
     /// profile's export gate opens the result is a proposal artifact: nothing
     /// lands, and the caller proposes the bytes through the edit rails.
-    pub fn export_pptx_body(&self, artifact: &EntityId) -> Result<PptxExport> {
+    pub fn export_pptx_body(
+        &self,
+        artifact: &EntityId,
+        graphics: Option<GraphicLimits>,
+    ) -> Result<PptxExport> {
         let source = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let profile = ExportProfile::default();
+        let profile = ExportProfile {
+            graphics,
+            ..ExportProfile::default()
+        };
         let (head, body, gate, assets) = {
             let txn = self.store.env.read_txn()?;
             let (head, body) = self.deck_head(&txn, artifact)?;
@@ -111,7 +120,7 @@ impl Vault {
             ));
         }
         let at = self.now_recorded_at();
-        self.with_write_txn_grouped(|wtxn| {
+        let landed = self.with_write_txn_grouped(|wtxn| {
             let key = &export.outcome.key;
             if key.projector != PROJECTOR_VERSION
                 || !export_gate(&self.store, wtxn, &key.profile)?.is_open()
@@ -151,6 +160,7 @@ impl Vault {
             let record = export_record(
                 (artifact, version.version, export.frontier.clone()),
                 Some(rebind_frontier(&rebind.receipt)),
+                None,
                 export.base_version,
                 actor,
                 at,
@@ -167,7 +177,10 @@ impl Vault {
             )?;
             let reconciliation = VersionReconciliation::of(fork_parent, replaced.as_ref());
             Ok((version, reconciliation))
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*artifact);
+        Ok(landed)
     }
 
     /// Offer a proposal export (its profile's gate closed) to the artifact as
@@ -228,6 +241,7 @@ impl Vault {
             (actor, self.now_recorded_at()),
             (export.base_version, export.base_hash),
             hold,
+            None,
         )
     }
 
@@ -240,7 +254,8 @@ impl Vault {
     /// edits made since stay as they are and the next export projects them
     /// over the kept version. A deck bound to another version since, or one
     /// whose state at that frontier is not the exported one, keeps its
-    /// binding, as a Keep left it before.
+    /// binding, as a Keep left it before. Whether the deck was rebound
+    /// (its head moved).
     pub(crate) fn keep_deck_export_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -249,12 +264,12 @@ impl Vault {
         (base_version, base_hash): (Option<u64>, Option<[u8; 32]>),
         version: &BlobArtifactVersion,
         (actor, made_by, at): (WriteActor, Option<&MadeBy>, u64),
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let Some(source) = SOURCES.get(&self.store, wtxn, artifact)? else {
-            return Ok(());
+            return Ok(false);
         };
         if source.kind != OfficeBodyKind::Pptx {
-            return Ok(());
+            return Ok(false);
         }
         let (head, body) = self.deck_head(wtxn, artifact)?;
         let bound = body
@@ -284,9 +299,21 @@ impl Vault {
             })?;
             rebound = Some(rebind_frontier(&rebind.receipt));
         }
+        let did_rebind = rebound.is_some();
+        let held_ids = rebound.is_none().then(|| {
+            hold.bindings
+                .iter()
+                .map(|(node, binding)| HeldDeckId {
+                    node: node.0,
+                    native_id: binding.native_id,
+                    creation_id: binding.creation_id.clone(),
+                })
+                .collect()
+        });
         let record = export_record(
             (artifact, version.version, hold.frontier.clone()),
             rebound,
+            held_ids,
             base_version.unwrap_or(source.source_version),
             actor,
             at,
@@ -297,7 +324,8 @@ impl Vault {
             wtxn,
             &version_key(artifact, version.version),
             &record,
-        )
+        )?;
+        Ok(did_rebind)
     }
 }
 
@@ -339,6 +367,7 @@ fn rebind_frontier(receipt: &TextCommitReceipt) -> Vec<u8> {
 fn export_record(
     (artifact, version, frontier): (&EntityId, u64, Vec<u8>),
     rebind_frontier: Option<Vec<u8>>,
+    held_ids: Option<Vec<HeldDeckId>>,
     source_version: u64,
     actor: WriteActor,
     at: u64,
@@ -349,6 +378,7 @@ fn export_record(
         version,
         frontier,
         rebind_frontier,
+        held_ids,
         source_version,
         actor: BodyActor::Actor(actor.entity_ref()),
         author: actor.entity_ref().to_hex(),
@@ -356,6 +386,7 @@ fn export_record(
         at,
         changes,
         recalc: None,
+        recalc_failure: None,
         recalc_zone: None,
         effects,
     }

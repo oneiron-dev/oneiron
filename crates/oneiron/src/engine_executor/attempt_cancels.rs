@@ -108,7 +108,10 @@ impl Drop for AttemptRoot<'_> {
 /// holds no vault and signals nothing.
 pub(crate) fn stop_attempt_step(vault: Option<&Vault>, attempt: AttemptId, generation: u32) {
     if let Some(vault) = vault {
-        vault.attempt_cancels.cancel(attempt, generation);
+        vault
+            .runtime()
+            .attempt_cancels()
+            .cancel(attempt, generation);
     }
 }
 
@@ -121,7 +124,10 @@ impl<'a> EngineNativeExecutor<'a> {
         match (&self.storage, self.gated_write.replay_capture()) {
             (ExecutorStorage::Canonical(vault), Some((attempt, generation, _))) => {
                 let vault: &'a Vault = *vault;
-                vault.attempt_cancels.register(attempt, generation)
+                vault
+                    .runtime()
+                    .attempt_cancels()
+                    .register(attempt, generation)
             }
             _ => AttemptRoot::unbound(),
         }

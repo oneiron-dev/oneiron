@@ -79,15 +79,21 @@ impl Memory<'_> {
                 &["Pass an inclusive range with start <= end."],
             ));
         }
+        // Each person's pack calendar is busy/free to the vault, its details
+        // theirs (FIX 12559, MAIL-SHARE = A): its occupancy joins the
+        // caller's own, intervals only.
+        let sources = crate::mail_pack::calendar_source_occupancy(self, calendars, range)?;
         Ok(
             crate::calendar::freebusy_scoped(&lane, calendars, range)?.map(|union| {
-                union
-                    .into_iter()
-                    .map(|interval| CalendarFreebusyIntervalDto {
-                        start_utc: interval.start_utc,
-                        end_utc: interval.end_utc,
-                    })
-                    .collect()
+                crate::mail_pack::merge_busy(
+                    union
+                        .into_iter()
+                        .map(|interval| (interval.start_utc, interval.end_utc))
+                        .chain(sources),
+                )
+                .into_iter()
+                .map(|(start_utc, end_utc)| CalendarFreebusyIntervalDto { start_utc, end_utc })
+                .collect()
             }),
         )
     }

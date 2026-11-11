@@ -1,0 +1,12 @@
+{
+  "name": "connector.list",
+  "description": "Every matching live catalogued connector and first-party web interface, distinguished by source.",
+  "input": "ConnectorListRequest",
+  "output": "Vec<crate::task_verb::sdk::ConnectorEntry>",
+  "call": "crate::task_verb::sdk::connector_catalog(memory, input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}

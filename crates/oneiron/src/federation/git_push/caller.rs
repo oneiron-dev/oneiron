@@ -167,6 +167,17 @@ impl GitPushArm {
     }
 }
 
+/// The checkout lease a push named (FIX 8729): its ticket, the run's CODE
+/// and PROJECT over the served store, and the run's class. A push that names
+/// one is held to it whatever arm admits it. It holds no secret bytes: the
+/// ticket is the checkout's id and epoch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GitPushCheckout {
+    pub(super) ticket: String,
+    pub(super) repo: GitPushRepo,
+    pub(super) class: u8,
+}
+
 /// What one admitted push stands on: the arm, the pusher, the Grant and the
 /// repo it names, the checkout of a lease push, the Grant that admitted each
 /// of its ref moves at the final writer, and the credential's revocable
@@ -185,9 +196,7 @@ pub(crate) struct GitPushStamp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) anchor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) checkout: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) class: Option<u8>,
+    pub(super) checkout: Option<GitPushCheckout>,
     /// A checkout push's ref moves, each by its full ref name, with the
     /// Grant (hex) that admitted it at the final writer (FIX 7138): any
     /// live Grant of the pusher's over this repo, `grant` or another.
@@ -211,7 +220,6 @@ impl GitPushStamp {
             repo: None,
             anchor: None,
             checkout: None,
-            class: None,
             ref_grants: BTreeMap::new(),
             slip: caller.credential.slip,
             revoked_marker: caller.credential.revoked_marker.clone(),
@@ -260,10 +268,22 @@ impl GitPushStamp {
         self.repo.as_ref()
     }
 
-    /// Whether this push was admitted on a checkout's run Grant: its ref
-    /// moves and changed paths are judged again in the final writer.
+    /// Whether this push was admitted on a checkout's run Grant.
     pub(crate) const fn is_checkout(&self) -> bool {
         matches!(self.arm, GitPushArm::Checkout)
+    }
+
+    /// Whether this push named a checkout lease, whatever arm admitted it
+    /// (FIX 8729): its ref moves and changed paths are listed and judged
+    /// again in the final writer, under the lease and the run's Grant.
+    pub(crate) const fn names_checkout(&self) -> bool {
+        self.checkout.is_some()
+    }
+
+    /// This stamp held to `checkout`, the lease its push named (FIX 8729).
+    pub(super) fn with_checkout(mut self, checkout: GitPushCheckout) -> Self {
+        self.checkout = Some(checkout);
+        self
     }
 
     /// The Grant this push was admitted under, when its arm names one (FIX
@@ -297,7 +317,23 @@ impl GitPushStamp {
                     .repo
                     .map_or(Value::Nil, |repo| Value::from(repo.project.to_hex())),
             ),
-            (Value::from("checkout"), text(stamp.checkout.as_ref())),
+            (
+                Value::from("checkout"),
+                stamp.checkout.as_ref().map_or(Value::Nil, |checkout| {
+                    Value::Map(vec![
+                        (Value::from("ticket"), Value::from(checkout.ticket.as_str())),
+                        (
+                            Value::from("repo"),
+                            Value::from(checkout.repo.repo.to_hex()),
+                        ),
+                        (
+                            Value::from("project"),
+                            Value::from(checkout.repo.project.to_hex()),
+                        ),
+                        (Value::from("class"), Value::from(checkout.class)),
+                    ])
+                }),
+            ),
             (
                 Value::from("credential_binding"),
                 stamp.binding.map_or(Value::Nil, |digest| {

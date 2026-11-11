@@ -1,0 +1,16 @@
+{
+  "name": "vault.artifacts.live_preview.invite",
+  "description": "Invites one named principal to a private live preview under the lease owner proof; no public audience is created.",
+  "input": "crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest",
+  "output": "crate::artifact_hosting::door_types::ArtifactPreviewInvitation",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.invite\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::{GmailReplyThread, GmailSendPlan};
 use crate::Vault;
 use crate::error::Result;
+use crate::outbound::OutboundRecipient;
 use crate::side_table::{self, Named, SideTable};
 use crate::thread_passport::{CanonicalMessageId, canonical_message_id};
 
@@ -22,8 +23,13 @@ struct StoredPlan {
     from_mailbox: String,
     from_display_name: Option<String>,
     to: String,
+    /// Every recipient of a plan to several (fix list row 17645).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    recipients: Vec<OutboundRecipient>,
     subject: String,
     body_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    body_html: Option<String>,
     date: String,
     message_id: String,
     reply: Option<StoredReply>,
@@ -50,8 +56,10 @@ impl GmailSendPlan {
             from_mailbox: self.from_mailbox.clone(),
             from_display_name: self.from_display_name.clone(),
             to: self.to.clone(),
+            recipients: self.recipients.clone(),
             subject: self.subject.clone(),
             body_text: self.body_text.clone(),
+            body_html: self.body_html.clone(),
             date: self.date.clone(),
             message_id: self.message_id.as_str().to_owned(),
             reply: self.reply.as_ref().map(|reply| StoredReply {
@@ -96,8 +104,10 @@ impl GmailSendPlan {
             from_mailbox: stored.from_mailbox,
             from_display_name: stored.from_display_name,
             to: stored.to,
+            recipients: stored.recipients,
             subject: stored.subject,
             body_text: stored.body_text,
+            body_html: stored.body_html,
             date: stored.date,
             message_id: canonical_message_id(&stored.message_id)?,
             reply,
@@ -108,7 +118,7 @@ impl GmailSendPlan {
     }
 
     /// Drops the row kept under `content_ref`, once its send was delivered.
-    pub(super) fn drop_kept(vault: &Vault, content_ref: &str) -> Result<()> {
+    pub(crate) fn drop_kept(vault: &Vault, content_ref: &str) -> Result<()> {
         vault.with_write_txn_grouped(|txn| {
             SEND_PLANS.delete(&vault.store, txn, &content_ref.to_owned())?;
             Ok(())

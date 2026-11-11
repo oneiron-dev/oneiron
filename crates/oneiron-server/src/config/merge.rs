@@ -129,12 +129,22 @@ pub(crate) fn layer_serve_config(
         .or_else(|| env.config_path.clone())
         .or(default_config_path);
     let explicit_config = args.config.is_some() || env.config_path.is_some();
+    // A config path whose existence cannot be checked (a parent this process
+    // may not search) is not taken as absent, even the default one: its file
+    // may set what the defaults do not, such as a manual `[runtime] clock`.
     let file_values = match config_path {
-        Some(path) if path.exists() => load_file_config(&path)?,
-        Some(path) if explicit_config => {
-            anyhow::bail!("config file {} does not exist", path.display());
-        }
-        _ => PartialServeConfig::default(),
+        Some(path) => match path.try_exists() {
+            Ok(true) => load_file_config(&path)?,
+            Ok(false) if explicit_config => {
+                anyhow::bail!("config file {} does not exist", path.display());
+            }
+            Ok(false) => PartialServeConfig::default(),
+            Err(error) => {
+                let path = path.display();
+                anyhow::bail!("config file {path} cannot be checked: {error}");
+            }
+        },
+        None => PartialServeConfig::default(),
     };
     // The owner's settings file (`--settings-file`, FIX 5016), in the config
     // file's schema as a managed vault reads it: one more vault file layer,
@@ -329,7 +339,6 @@ struct FileServeConfig {
     max_windows_per_connection: Option<usize>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
-    max_ephemeral_payload_bytes: Option<usize>,
     max_ephemeral_snapshot_bytes: Option<usize>,
     max_entity_blob: Option<usize>,
     max_lfs_object_bytes: Option<u64>,
@@ -350,6 +359,7 @@ struct FileServeConfig {
     models: Option<ModelsFile>,
     browser: Option<super::BrowserConfig>,
     desktop: Option<super::DesktopConfig>,
+    artifact_backend: Option<super::ArtifactBackendConfig>,
     merge_queue: Option<super::MergeQueueCheckerConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
     native_mail: Option<super::NativeMailConfig>,
@@ -403,7 +413,6 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_windows_per_connection: value.max_windows_per_connection,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
             max_entity_blob: value.max_entity_blob,
             max_lfs_object_bytes: value.max_lfs_object_bytes,
@@ -424,6 +433,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             models: None,
             browser: value.browser,
             desktop: value.desktop,
+            artifact_backend: value.artifact_backend,
             merge_queue: value.merge_queue,
             gpu: value.gpu,
             native_mail: value.native_mail,
@@ -483,7 +493,6 @@ struct PartialServeConfig {
     max_windows_per_connection: Option<usize>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
-    max_ephemeral_payload_bytes: Option<usize>,
     max_ephemeral_snapshot_bytes: Option<usize>,
     max_entity_blob: Option<usize>,
     max_lfs_object_bytes: Option<u64>,
@@ -507,6 +516,8 @@ struct PartialServeConfig {
     browser: Option<super::BrowserConfig>,
     /// `[desktop]` is file-only, as `[browser]` is.
     desktop: Option<super::DesktopConfig>,
+    /// `[artifact_backend]` is host-owned and file-only.
+    artifact_backend: Option<super::ArtifactBackendConfig>,
     /// `[merge_queue]` is file-only, as `[browser]` is.
     merge_queue: Option<super::MergeQueueCheckerConfig>,
     /// `[gpu]` is file-only, as `[browser]` is.
@@ -592,10 +603,6 @@ impl fmt::Debug for PartialServeConfig {
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
-            .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
             .field(
                 "max_ephemeral_snapshot_bytes",
                 &self.max_ephemeral_snapshot_bytes,
@@ -694,7 +701,6 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_windows_per_connection: value.max_windows_per_connection,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
             max_entity_blob: value.max_entity_blob,
             max_lfs_object_bytes: value.max_lfs_object_bytes,
@@ -722,6 +728,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             models: None,
             browser: None,
             desktop: None,
+            artifact_backend: None,
             merge_queue: None,
             gpu: None,
             native_mail: None,

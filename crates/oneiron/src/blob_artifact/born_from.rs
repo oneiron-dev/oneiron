@@ -15,8 +15,8 @@ use crate::error::Result;
 use crate::provenance::made_by::MadeByTrigger;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, Named, SideTable};
-use crate::store::Store;
 use crate::store::record_ref::RecordRef;
+use crate::store::{ManifestDbs, Store};
 
 use super::versions::{BlobArtifactVersion, VERSIONS};
 
@@ -96,9 +96,11 @@ pub struct BornFromArtifact {
     pub claim: RecordRef,
 }
 
-/// Indexes one freshly appended version under each source it names.
+/// Indexes one freshly appended version under each source it names, on
+/// the write target the version's chain rows go to (FIX 4818: a room's
+/// view for a room's response version).
 pub(super) fn index_version_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     artifact_id: &EntityId,
     version: &BlobArtifactVersion,

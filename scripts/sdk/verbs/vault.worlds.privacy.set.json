@@ -1,0 +1,8 @@
+{
+  "name": "vault.worlds.privacy.set",
+  "input": "crate::policy_model::WorldPrivacySetInput",
+  "output": "crate::policy_model::WorldPrivacySetOutput",
+  "scope": "Write",
+  "context": "run",
+  "effect": "WorldPrivacySet"
+}

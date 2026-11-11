@@ -70,6 +70,7 @@ impl BodySink {
                 dir: self.dir.dir.try_clone()?,
                 sealed: self.dir.sealed.clone(),
                 session: self.dir.session,
+                live_spill: self.dir.live_spill.clone(),
             };
             Ok((facts, file, dir))
         });

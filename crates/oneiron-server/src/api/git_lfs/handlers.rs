@@ -2,9 +2,9 @@
 
 use super::gate::{LfsAccess, authorize_request, require_lfs_write};
 use super::support::{
-    LFS_BATCH_NOT_FOUND, LFS_BATCH_UNPROCESSABLE, LFS_OBJECT_MEDIA_TYPE, LfsMarkedRead,
-    declared_size, href_base, lfs_disk_floor, lfs_engine_error, lfs_json_response, lfs_waited_out,
-    now_secs, read_whole,
+    ChargedBody, LFS_BATCH_NOT_FOUND, LFS_BATCH_UNPROCESSABLE, LFS_OBJECT_MEDIA_TYPE,
+    LfsMarkedRead, declared_size, href_base, lfs_disk_floor, lfs_engine_error, lfs_json_response,
+    lfs_waited_out, now_secs,
 };
 use super::wire::{
     LfsAction, LfsBatchObject, LfsBatchOperation, LfsBatchRequest, LfsBatchResponse,
@@ -335,9 +335,6 @@ fn marked_read(
     LfsMarkedRead::of(&server.vault, auth, oid, None)
 }
 
-/// A verify body is one `{oid, size}`; this is room for it many times over.
-const VERIFY_BODY_BYTES: usize = 64 * 1024;
-
 /// `POST /git/{repo}/info/lfs/objects/{oid}/verify` — the stored-bytes verdict.
 pub(crate) async fn lfs_verify(
     State(server): State<Arc<SyncServer>>,
@@ -350,25 +347,44 @@ pub(crate) async fn lfs_verify(
         .map_err(EnvelopedApiError::from)?;
     // It waits on its headers and reads its body at its turn, so a request
     // in line holds none of it. Its room in memory is its route's object's,
-    // the only one it may read, sized before it waits.
+    // the only one it may read, and its body's, by the length it declares,
+    // sized before it waits. Its body is decoded as it arrives, never held
+    // whole and never refused for its length (FIX 144).
     let sized = match LfsOid::parse_hex(&route_oid) {
         Ok(oid) => Transfers::read_room(&server.vault, oid)
             .map_err(|error| lfs_engine_error("lfs object lookup failed", &error))?,
         Err(_) => None,
     };
-    let Some(room) = server
-        .transfers
-        .lfs_read_room(sized.unwrap_or(crate::api::transfer::READ_ROOM))
-        .await
-    else {
+    let declared = declared_size(&parts.headers);
+    let room_taken = Transfers::verify_room(sized, declared);
+    let Some(room) = server.transfers.lfs_read_room(room_taken).await else {
         return Ok(lfs_waited_out());
     };
     let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
         return Ok(lfs_waited_out());
     };
-    let body = read_whole(body, VERIFY_BODY_BYTES).await?;
-    let request: LfsVerifyRequest = serde_json::from_slice(&body)
-        .map_err(|_| ApiError::bad_request("lfs verify body is not {oid, size}", None))?;
+    let mut reading = ChargedBody::feed(
+        body,
+        &server.transfers,
+        (room, room_taken),
+        declared.unwrap_or(0),
+    );
+    let (decoded, reading, permit) = crate::api::transfer::spawn_worker(move || {
+        let decoded =
+            serde_json::from_reader::<_, LfsVerifyRequest>(std::io::BufReader::new(&mut reading));
+        (decoded, reading, permit)
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("lfs verify worker failed"))?;
+    let failed = reading.failed();
+    let (room, _) = reading.into_room();
+    let request = decoded.map_err(|_| {
+        if failed {
+            ApiError::bad_request("the request body ended before it was whole", None)
+        } else {
+            ApiError::bad_request("lfs verify body is not {oid, size}", None)
+        }
+    })?;
     let oid = LfsOid::parse_hex(&request.oid)
         .map_err(|error| lfs_engine_error("lfs oid is not a 64-character sha256", &error))?;
     // The route and the body both name an object; a verdict about a THIRD one

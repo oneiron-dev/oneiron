@@ -1,0 +1,16 @@
+{
+  "name": "vault.slim.drop_heavy",
+  "description": "Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required.",
+  "input": "crate::slim::public::SlimDropRequest",
+  "output": "crate::slim::public::SlimDropReceipt",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.slim.drop_heavy\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

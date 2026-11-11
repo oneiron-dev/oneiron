@@ -153,11 +153,13 @@ impl Memory<'_> {
     /// What a verb hook's ask saves so settlement runs this call again as its
     /// caller, with no credential (ARCH-0080 §3 Ask): the sitting, the room
     /// turn's room, where the caller reads from, the transport mark, the
-    /// origin conversation and the host action, beside the actor, class and
-    /// invocation the ask keeps. The drain takes its own task-work turn, and
-    /// the credential instrument and door name nothing without a credential.
+    /// origin conversation, the host action and the ask guest's grant (FIX
+    /// 4743), beside the actor, class and invocation the ask keeps. The
+    /// drain takes its own task-work turn, and the credential instrument and
+    /// door name nothing without a credential. The grant is kept by its ids
+    /// alone; the ask's write and the drain prove that exact grant again.
     /// `None` when this surface holds what only its host could rebuild: a
-    /// credential, read proof, slip or task grant, a thread's turn, owner
+    /// credential, read proof or slip, a thread's turn, owner
     /// authorship, a host origin, a machine signer, a producer list, a birth
     /// position, a TASK host, a decision path, an off-record session or a
     /// door's rewrite admission. Where the caller sits decides nothing here.
@@ -169,7 +171,6 @@ impl Memory<'_> {
         let rebuilt = !self.credential
             && self.read_proof.is_none()
             && self.invocation_slip.is_none()
-            && self.task_grant.is_none()
             && self
                 .room_turn
                 .as_ref()
@@ -194,6 +195,7 @@ impl Memory<'_> {
                 self.host_action.as_ref(),
                 self.owner_surface,
             )
+            .with_task_grant(self.task_grant)
         })
     }
 
@@ -252,9 +254,11 @@ impl Memory<'_> {
                 Error::InvalidClaimBody("content actor does not match bound facade").into(),
             );
         }
+        let lane = self.core_write_lane()?;
         self.vault.try_with_write_txn_grouped(|wtxn| {
             verify_actor_binding_in_txn(self.vault, wtxn, self.actor, self.actor_class)?;
-            let mut content = crate::federation::ActorContentTxn::new(self.vault, wtxn, actor)?;
+            let mut content =
+                crate::federation::ActorContentTxn::new(self.vault, wtxn, actor, lane.as_ref())?;
             let result = write(&mut content)?;
             content.finish()?;
             Ok(result)

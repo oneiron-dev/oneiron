@@ -50,9 +50,9 @@ use oneiron::agent_def::{
     note_unbound_listed_run,
 };
 use oneiron::agent_dispatch::{
-    AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, LeaderStarterSkills, PlannerSeat,
-    PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
-    agent_dispatch_actor, agent_dispatch_run_actor, resident_attempt_reviews_diary,
+    AgentDispatchStatus, AgentDispatcher, AgentRun, AgentRunFence, AgentRunLeaseReap, HealerSlot,
+    LeaderStarterSkills, PlannerSeat, PlannerSkills, ProjectConversationSkills, ResidentAgentSpec,
+    SpendScopeId, agent_dispatch_actor, agent_dispatch_run_actor, resident_attempt_reviews_diary,
     resident_attempt_wakes_for_room,
 };
 use oneiron::attempt_queue::{
@@ -108,7 +108,7 @@ use crate::mcp::{
 
 /// The pump's lease owner, and the owner of the park a run stopped by a
 /// provider outage holds (FIX 3194), which a provider's recovery resumes.
-pub(crate) const LEASE_OWNER: &str = "oneiron-server-agent-runs";
+pub(crate) const LEASE_OWNER: &str = oneiron::dreamer_runner::AGENT_RUNS_PARK_OWNER;
 /// The park a run waiting on a durable signal holds its lease under, owned
 /// by the trap its wait's reply wakes; a restart is not that signal, so
 /// recovery keeps the lease.
@@ -176,6 +176,9 @@ struct Claimed {
     /// What started the run, from its dispatch (FIX 15011); `None` for a
     /// run no event started.
     wake: Option<TurnWake>,
+    /// The fence its claim took on its run TASK (FIX 4747); `None` for a
+    /// resident's run and a run with no run TASK, which run as before.
+    fence: Option<AgentRunFence>,
 }
 
 impl Claimed {
@@ -207,6 +210,33 @@ impl Claimed {
 }
 
 impl SyncServer {
+    /// Releases the agent-run executor leases this machine holds (FIX 4747
+    /// slice 5), beside its send executor leases, as serve stops gracefully
+    /// and before its device-sync link stops
+    /// ([`oneiron::Vault::release_agent_run_leases`]). A release that fails
+    /// leaves each lease to expire, logged with its kind.
+    pub(crate) async fn release_agent_run_leases(&self) {
+        let vault = Arc::clone(self.vault());
+        match tokio::task::spawn_blocking(move || vault.release_agent_run_leases()).await {
+            Ok(Ok(0)) => {}
+            Ok(Ok(released)) => {
+                tracing::info!(
+                    released,
+                    "agent run executor leases released for another machine"
+                );
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "agent run executor lease release failed");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "agent run executor lease release task failed"
+                );
+            }
+        }
+    }
+
     /// Starts the pump, or returns `None` when no engine-native code host
     /// serves this vault.
     pub(crate) fn spawn_resident_pump(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
@@ -415,14 +445,12 @@ impl SyncServer {
         // on its own thread with its own reactor, as `execute_code` does.
         // The admission goes with it, held through its claim, its run and
         // its settlement.
-        let spawned = std::thread::Builder::new()
-            .name("oneiron-agent-run".to_owned())
-            .spawn(move || {
-                let leave = server.run_agent_blocking(id, of, &key, runtime);
-                drop(admission);
-                drop(permit);
-                let _ = sender.send(leave);
-            });
+        let spawned = crate::engine_thread("oneiron-agent-run".to_owned()).spawn(move || {
+            let leave = server.run_agent_blocking(id, of, &key, runtime);
+            drop(admission);
+            drop(permit);
+            let _ = sender.send(leave);
+        });
         if let Err(error) = spawned {
             tracing::warn!(%error, attempt = ?id, "an agent run thread did not start");
             return false;
@@ -494,6 +522,9 @@ impl SyncServer {
         }) {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
         }
+        // FIX 4747: the run left this host; its next claim takes a fence
+        // again.
+        AgentDispatcher::new(vault).forget_agent_run_fence(id);
         self.desktop_seats.run_settled(run, waits);
         self.browser_seats.run_settled(run, waits);
         if let Some(run) = completed_run {
@@ -526,6 +557,7 @@ fn claim(
                     wake: Some(resident_wake(&status, agent)),
                     status,
                     objectives: Vec::new(),
+                    fence: None,
                 };
                 (claimed, briefing)
             }),
@@ -535,6 +567,7 @@ fn claim(
                 |AgentRun {
                      status,
                      qa_thread_ref,
+                     fence,
                  }| {
                     let briefing = briefing(&dispatcher, &status);
                     let claimed = Claimed {
@@ -545,6 +578,7 @@ fn claim(
                         wake: status.attempt.task_ref.as_ref().map(|_| TurnWake::Task),
                         status,
                         objectives: Vec::new(),
+                        fence,
                     };
                     (claimed, briefing)
                 },
@@ -689,10 +723,13 @@ fn resume_due_outage_parks(vault: &Vault, now: u64) -> oneiron::Result<usize> {
             clear_stale_outage_marker(&runner, due_at, attempt);
             continue;
         };
-        if park.park_owner != LEASE_OWNER {
+        if !oneiron::dreamer_runner::ParkResume::owner_may_resume(
+            oneiron::dreamer_runner::ParkOwnerClass::of(&park.park_owner),
+            oneiron::dreamer_runner::ParkResumer::OutageSweep,
+        ) {
             continue;
         }
-        if park.cause != DreamerParkCause::ProviderUnavailable {
+        if !park.resumable_by(oneiron::dreamer_runner::ParkResumer::OutageSweep) {
             clear_stale_outage_marker(&runner, due_at, attempt);
             continue;
         }
@@ -711,6 +748,42 @@ fn resume_due_outage_parks(vault: &Vault, now: u64) -> oneiron::Result<usize> {
         }
     }
     Ok(resumed)
+}
+
+/// One agent run lease reaper pass (FIX 4747 slice 6), on the housekeeping
+/// tick beside the send reaper: an agent run whose lease expired is taken
+/// here, in the ruled order, when it can run here
+/// ([`Vault::reap_agent_run_leases`]). The host's part of that check is this
+/// pump's own: an engine-native code host to run the run on, which every
+/// claim of the pump needs first.
+pub(super) fn reap_agent_run_leases(server: &SyncServer) {
+    let runs_here = |_: &AgentDefinition| {
+        server
+            .code_execution_host()
+            .and_then(|host| host.engine_native())
+            .is_some()
+    };
+    match server.vault().reap_agent_run_leases(&runs_here) {
+        Ok(AgentRunLeaseReap {
+            taken: 0,
+            renewed: 0,
+            waiting,
+        }) => {
+            if waiting > 0 {
+                tracing::debug!(waiting, "agent run reaper left expired runs waiting");
+            }
+        }
+        Ok(AgentRunLeaseReap {
+            taken,
+            waiting,
+            renewed,
+        }) => {
+            tracing::info!(taken, renewed, waiting, "agent run reaper ran");
+        }
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "agent run reaper failed");
+        }
+    }
 }
 
 /// Whether a run stopped on a model call no provider answered (FIX 3194):

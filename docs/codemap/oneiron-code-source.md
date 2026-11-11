@@ -12,4 +12,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/lib.rs` | src | s | 1 mod · 1 crate-vis | — | Host-side preparation of a code-mode program in the oneiron engine: TypeScript stripped by Oxc in process… |
-| `src/source.rs` | src | m | 3 struct · 2 enum · 17 fn · 2 const | GuestPosition, PreparationNote, PreparedSource, SourceLanguage, TranspiledSource | Code-mode source preparation (FIX 8276, owner ruling CODE-MODE-TS = A) |
+| `src/source.rs` | src | m | 3 struct · 2 enum · 18 fn · 2 const | GuestPosition, PreparationNote, PreparedSource, SourceLanguage, TranspiledSource | Code-mode source preparation (FIX 8276, owner ruling CODE-MODE-TS = A) |

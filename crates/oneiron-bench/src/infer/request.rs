@@ -109,7 +109,10 @@ fn thinking_knob(
 fn text(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }
 
@@ -123,7 +126,7 @@ fn bust_cache(messages: &mut Vec<LlmMessage>, nonce: &str) {
         .filter(|first| first.role == LlmMessageRole::System)
         .and_then(|first| first.content.first_mut())
     {
-        Some(ContentPart::Text { text: head }) => head.insert_str(0, &line),
+        Some(ContentPart::Text { text: head, .. }) => head.insert_str(0, &line),
         _ => messages.insert(0, text(LlmMessageRole::System, line)),
     }
 }
@@ -171,6 +174,7 @@ impl Shape {
                 }),
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages,
             tools: Vec::new(),

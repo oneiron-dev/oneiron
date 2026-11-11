@@ -1,0 +1,16 @@
+{
+  "name": "vault.projects.goal.get",
+  "description": "The owner, or a holder of a Steward grant naming read, reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it.",
+  "input": "ProjectRefRequest",
+  "output": "crate::task_verb::sdk::ProjectGoalView",
+  "call": "crate::task_verb::sdk::project_goal_get_embedded(memory, crate::EntityId::from_hex(&input.project_ref)?)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "substrate_reader"
+}

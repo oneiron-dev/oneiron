@@ -241,7 +241,7 @@ impl RevokeFacts {
             }
             let restriction = match &entry.op {
                 AuthorityOp::SlipRevoke { slip_id } => Restriction::SlipRevoke(*slip_id),
-                AuthorityOp::SlipGrantRevoke { grant_ref } => {
+                AuthorityOp::SlipGrantRevoke { grant_ref, .. } => {
                     Restriction::SlipGrantRevoke(grant_ref.to_hex())
                 }
                 AuthorityOp::MembershipExecution(record) if !record.withdrawn_grants.is_empty() => {
@@ -276,6 +276,86 @@ impl RevokeFacts {
                 },
             );
         }
+    }
+}
+
+impl RevokeFacts {
+    /// These facts with each actor revocation a whole fold proves in `tail`,
+    /// an adopted image's tail that folded past it serially (FIX 11760):
+    /// every tail row has its ordinary state in `states`, and every covered
+    /// row (`covered`, by hash, primary signer and sequence) is in the causal
+    /// past of each tail withdrawal. On a branch whose every row folds, the
+    /// whole fold's proof of a `RevokeActor` ([`verify_signed_branch`])
+    /// differs from the ordinary fold only in refusing a branch that holds
+    /// two rows of one signer at one sequence: such a revocation still binds
+    /// through its ordinary state and adds no fact here, as there. Each other
+    /// takes its fact on its ordinary state's vault and owner-anchor rows. A
+    /// slip or Grant withdrawal adds none: the ordinary fold applied it, and
+    /// only a dropped one is proved on its own.
+    pub(super) fn with_serial_actor_revokes<'a>(
+        &self,
+        covered: impl IntoIterator<Item = (&'a AuthorityEntryHash, &'a AuthorityKey, u64)>,
+        tail: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    ) -> Self {
+        let mut facts = self.clone();
+        let mut covered_seqs = BTreeMap::new();
+        let mut covered_twice = false;
+        for (hash, signer, seq) in covered {
+            covered_twice |= covered_seqs
+                .insert((signer.clone(), seq), *hash)
+                .is_some_and(|other| other != *hash);
+        }
+        // Every covered row is in each candidate's branch.
+        if covered_twice {
+            return facts;
+        }
+        for (hash, entry) in tail {
+            let AuthorityOp::RevokeActor {
+                authority_key,
+                epoch,
+            } = &entry.op
+            else {
+                continue;
+            };
+            let Some(state) = states.get(hash) else {
+                continue;
+            };
+            // The branch's tail rows: the candidate and every tail row it
+            // descends from; its covered rows are counted already.
+            let mut seqs = covered_seqs.clone();
+            let mut seen = BTreeSet::new();
+            let mut stack = vec![*hash];
+            let mut twice = false;
+            while let Some(at) = stack.pop() {
+                let Some(row) = tail.get(&at) else {
+                    continue;
+                };
+                if !seen.insert(at) {
+                    continue;
+                }
+                twice |= seqs
+                    .insert((row.signer_key().clone(), row.seq), at)
+                    .is_some_and(|other| other != at);
+                stack.extend(row.parent_hashes.iter().copied());
+            }
+            if twice {
+                continue;
+            }
+            facts.by_hash.insert(
+                *hash,
+                VerifiedRestriction {
+                    vault_id: state.vault_id,
+                    entry_hash: *hash,
+                    kind: Restriction::Actor {
+                        authority_key: authority_key.clone(),
+                        epoch: *epoch,
+                    },
+                    routed: state.anchor_entries.clone(),
+                },
+            );
+        }
+        facts
     }
 }
 

@@ -1,0 +1,17 @@
+{
+  "name": "vault.notes.bless_brief_kind",
+  "description": "A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority.",
+  "input": "EmptyRequest",
+  "output": "crate::note::BriefKindStamp",
+  "call": "memory.bless_brief_kind()?.into()",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "openapi": true
+}

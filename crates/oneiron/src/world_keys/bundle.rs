@@ -53,6 +53,7 @@ mod authority;
 mod bodies;
 mod carrier;
 mod codec;
+mod frame_seal;
 mod holder_policy;
 mod key_erase;
 mod pad_objects;
@@ -63,7 +64,6 @@ mod retirement;
 mod sections;
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use getrandom::SysRng;
@@ -89,28 +89,29 @@ use crate::store::Store;
 pub use self::admission::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub(crate) use self::authority::{BundleCarry, SealedWorldAuthority};
 use self::bodies::{
-    PadsBody, decode_bundle_body, decode_pads_body, decode_section_body, encode_bundle_body,
-    encode_pads_body, encode_section_body, section_digest, section_digest_into, section_kek,
-    section_padded_len, signed_digest,
+    PadsBody, decode_bundle_body, decode_pads_body, decode_section_body, encode_pads_body,
+    section_digest, section_digest_into, section_kek,
 };
-pub use self::carrier::{SealedVaultUpload, WorldCapsuleImport};
+pub use self::carrier::{SealedVaultUpload, UnmergedSection, UnmergedStage, WorldCapsuleImport};
 use self::codec::{
     AEAD, BODY_RECIPIENT, BUNDLE, BUNDLE_LABEL, CHUNK, Cursor, DeletedWorldPads, FRAME_VERSION,
     Frame, HYBRID, KEM, KEY_ID_LEN, Kind, OpenedOuter, PADS, PADS_LABEL, PART_HEADER_LEN,
     PART_LABEL, REQUEST_TAG, SEALED_BUNDLE_NEW_PAD_DELETED_WORLD, SEALED_KEY_PADS_STEP_BYTES,
     SECTION_KEY_CONTEXT, SECTION_LABEL, SECTION_PAD_FLOOR, SECTION_RECIPIENT, SECTION_TAG_CONTEXT,
     SIGNATURE_CONTEXT, SLOT_LABEL, SLOT_PLAINTEXT_LEN, SLOT_RECIPIENT, SLOT_STEP, SYMMETRIC,
-    SealedObject, even_sizes, fit, fitting_total, open_framed, open_outer, open_parts, open_slots,
-    parse_envelope, parse_frame, put_counted, seal_outer, seal_params, seal_parts, seal_slots,
-    symmetric_policy,
+    SealedObject, open_framed, open_outer, open_parts, open_slots, parse_envelope, parse_frame,
+    put_counted, seal_params, seal_slots, symmetric_policy,
 };
 #[cfg(feature = "sync")]
 use self::codec::{EraseKey, SEALED_BUNDLE_ERASE_KEY_SOURCE, open_outer_with_key};
+use self::frame_seal::{seal_outer, section_padded_len, signed_digest};
 pub(crate) use self::key_erase::{PadEraseSubject, stage_retained_pad_key_erase_in_txn};
 use self::plan::{SealPlan, seal_object};
 pub(crate) use self::publication::bundle_publish_executor;
 #[cfg(feature = "sync")]
 pub use self::publication_grant::SealedPublicationGrant;
+#[cfg(feature = "sync")]
+pub(crate) use self::publication_grant::publication_grant_requests;
 pub use self::retirement::{
     SEALED_BUNDLE_KEEP, SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS,
     SealedBundleGeneration, retired_bundle_generations, sealed_bundle_slot,

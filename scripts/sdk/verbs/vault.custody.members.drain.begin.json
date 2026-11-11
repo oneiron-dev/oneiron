@@ -1,0 +1,15 @@
+{
+  "name": "vault.custody.members.drain.begin",
+  "description": "The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter.",
+  "input": "crate::task_verb::sdk::CustodyMemberRef",
+  "output": "crate::task_verb::sdk::CustodyDrainTicketView",
+  "call": "crate::task_verb::sdk::custody_member_drain_begin_as(memory.vault(), &memory.embedded_owner(\"vault.custody.members.drain.begin\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

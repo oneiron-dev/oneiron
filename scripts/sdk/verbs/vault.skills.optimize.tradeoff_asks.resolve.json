@@ -1,0 +1,16 @@
+{
+  "name": "vault.skills.optimize.tradeoff_asks.resolve",
+  "description": "The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference.",
+  "input": "SkillOptimizeTradeoffResolveRequest",
+  "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+  "call": "crate::task_verb::sdk::skill_optimize_tradeoff_resolve_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.tradeoff_asks.resolve\")?, &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

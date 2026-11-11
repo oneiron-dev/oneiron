@@ -2,6 +2,7 @@ use super::json_payload;
 use super::parse_entity_id_param;
 use super::query_params;
 use super::require_entity_type;
+use super::require_entity_type_in_txn;
 use super::unix_seconds_now;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -343,29 +344,27 @@ pub(crate) async fn read_turn_vad_annotation(
     auth.require_unrestricted_record_scope()?;
     let params = query_params(query)?;
     let turn_id = parse_entity_id_param(&params.turn_id, "turn_id")?;
-    require_entity_type(&server, &turn_id, ENTITY_TYPE_TURN, "turn")?;
-    // A turn the TURN routes do not serve the caller, one of a private thread
-    // it does not read above all, has no annotation here either: its affect
-    // is read from its words (FIX 5868).
-    let read = super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth)?;
-    if !super::conversations::core_turn_served(&server.vault, &read, &turn_id)? {
-        return Err(ApiError::not_found("turn", Some(&params.turn_id)).into());
-    }
-
-    let annotation = if let Some(message_id_hex) = &params.message_id {
-        let message_id = parse_entity_id_param(message_id_hex, "message_id")?;
-        require_entity_type(&server, &message_id, ENTITY_TYPE_MESSAGE, "message")?;
-        require_message_in_turn(&server, &turn_id, &message_id)?;
-        server
-            .vault
-            .get_message_vad_annotation(&message_id)
-            .map_err(vad_annotation_core_error)?
-    } else {
-        server
-            .vault
-            .get_turn_vad_annotation(&turn_id)
-            .map_err(vad_annotation_core_error)?
+    // The turn's type answers before the caller's key, as it always has. A
+    // key that resolves reads that type, the turn's admission and then its
+    // annotation in one snapshot (FIX 10782).
+    let read = match super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth) {
+        Ok(read) => read,
+        Err(refused) => {
+            require_entity_type(&server, &turn_id, ENTITY_TYPE_TURN, "turn")?;
+            return Err(refused.into());
+        }
     };
+    let annotation = read
+        .with_grant_read_snapshot(|txn| {
+            Ok::<_, oneiron::Error>(served_vad_annotation_in_txn(
+                &server.vault,
+                &read,
+                txn,
+                &params,
+                &turn_id,
+            ))
+        })
+        .map_err(super::conversations::core_turn_snapshot_error)??;
 
     let Some(annotation) = annotation else {
         let id = params.message_id.as_deref().unwrap_or(&params.turn_id);
@@ -379,15 +378,67 @@ pub(crate) async fn read_turn_vad_annotation(
     )))
 }
 
+/// The annotation `params` asks of the turn `turn_id`, every read in the
+/// route's one snapshot `txn` (FIX 10782), in the route's order: the turn's
+/// type, whether the TURN routes serve the turn to `read`'s caller, then the
+/// message's id, type and place in the turn, then the annotation. A turn not
+/// served answers as missing before any message is asked of it.
+fn served_vad_annotation_in_txn(
+    vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    params: &TurnVadAnnotateQuery,
+    turn_id: &oneiron::EntityId,
+) -> Result<Option<VadAnnotation>, ApiError> {
+    require_entity_type_in_txn(vault, txn, turn_id, ENTITY_TYPE_TURN, "turn")?;
+    // A turn the TURN routes do not serve the caller, one of a private thread
+    // it does not read above all, has no annotation here either: its affect
+    // is read from its words (FIX 5868).
+    if !super::conversations::core_turn_served(vault, read, txn, turn_id)? {
+        return Err(ApiError::not_found("turn", Some(&params.turn_id)));
+    }
+    let Some(message_id_hex) = &params.message_id else {
+        return vault
+            .get_turn_vad_annotation_in_txn(txn, turn_id)
+            .map_err(vad_annotation_core_error);
+    };
+    let message_id = parse_entity_id_param(message_id_hex, "message_id")?;
+    require_entity_type_in_txn(vault, txn, &message_id, ENTITY_TYPE_MESSAGE, "message")?;
+    require_message_in_turn_in_txn(vault, txn, turn_id, &message_id)?;
+    vault
+        .get_message_vad_annotation_in_txn(txn, &message_id)
+        .map_err(vad_annotation_core_error)
+}
+
 pub(crate) fn require_message_in_turn(
     server: &SyncServer,
     turn_id: &oneiron::EntityId,
     message_id: &oneiron::EntityId,
 ) -> Result<(), ApiError> {
-    match server
-        .vault
-        .edge_exists(message_id, EdgeKind::ChildOf, turn_id)
-    {
+    require_message_in_turn_lookup(
+        server
+            .vault
+            .edge_exists(message_id, EdgeKind::ChildOf, turn_id),
+    )
+}
+
+/// [`require_message_in_turn`] in the route's snapshot `txn` (FIX 10782).
+fn require_message_in_turn_in_txn(
+    vault: &oneiron::Vault,
+    txn: &heed::RoTxn<'_>,
+    turn_id: &oneiron::EntityId,
+    message_id: &oneiron::EntityId,
+) -> Result<(), ApiError> {
+    require_message_in_turn_lookup(vault.edge_exists_in_txn(
+        txn,
+        message_id,
+        EdgeKind::ChildOf,
+        turn_id,
+    ))
+}
+
+fn require_message_in_turn_lookup(lookup: oneiron::Result<bool>) -> Result<(), ApiError> {
+    match lookup {
         Ok(true) => Ok(()),
         Ok(false) => Err(ApiError::bad_request(
             "message_id does not belong to turn_id",

@@ -37,6 +37,16 @@ pub struct ScopedReadActorKey {
     /// The proof's Scope as every read door checks it; see
     /// [`Self::authority_scope`].
     authority: Option<oneiron_authority::federation::Scope>,
+    /// Set only on a credential the owner's agent Grants naming its holder
+    /// bind (FIX AGENT-GRAPHFS-GRANT-WORLDS): the credential's Scope met with
+    /// each standing Grant alone. `authority` is met with their envelope; a
+    /// row must lie inside one of them. See [`Self::within_agent_grants`].
+    grant_alternatives: Option<std::sync::Arc<[oneiron_authority::federation::Scope]>>,
+    /// Set only on a key whose holder's agent Grants bind its read (FIX
+    /// AGENT-GRAPHFS-GRANT-WORLDS): each serving txn reads that holder's
+    /// standing Grants again, so a lane held past a revoke or a lapse narrows
+    /// with it (REVIEW-7051 P1). See [`Self::bound_by_live_agent_grants`].
+    agent_grant_holder: Option<EntityId>,
     /// A host-bound channel on a channel-aware read door, never a grant.
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
@@ -46,6 +56,8 @@ pub struct ScopedReadActorKey {
     pub(super) owner_exemption: Option<EntityId>,
     /// The room turn this key reads inside, when a host bound one.
     pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
+    /// Every phone call this key reads inside; each is an independent ceiling.
+    pub(super) phone_lines: Vec<crate::phone_line::PhoneLineReadCeiling>,
     /// The room whose signed facets a named-room read outside a turn reads
     /// inside (FIX 643); see [`Self::within_room_facets`].
     pub(super) room_facets: Option<EntityId>,
@@ -68,6 +80,9 @@ pub struct ScopedReadActorKey {
     /// A saved lane's records caveat, carried with no proof (OF-506); see
     /// [`Self::within_records`].
     pub(super) record_bound: Option<std::collections::BTreeSet<String>>,
+    /// Set on every key that names a base agent (untangle 6.3, X04); see
+    /// [`Self::for_engine_actor`].
+    system_agent: Option<EntityId>,
 }
 
 pub use crate::settings::CallerLocality;
@@ -350,6 +365,8 @@ impl ScopedReadActorKey {
     ) -> Option<Self> {
         let mut key = Self::from_parts(actor_ref.into(), Some(actor_class.into()))?;
         key.authority = Some(Scope::default());
+        // It reads nothing, so it is held to no grant either.
+        key.system_agent = None;
         Some(key)
     }
 
@@ -359,6 +376,12 @@ impl ScopedReadActorKey {
         }
         let actor_class = actor_class
             .and_then(|class| (!class.trim().is_empty()).then(|| class.trim().to_owned()));
+        // A base agent's key is held to its Steward grant and its live
+        // MACHINE binding whichever constructor built it (review of #6916):
+        // the guard follows the actor's id, not the call site.
+        let system_agent = EntityId::from_hex(actor_ref.trim())
+            .ok()
+            .filter(|actor| crate::federation::holds_system_agent_grant(*actor));
         Some(Self {
             actor_ref: actor_ref.trim().to_owned(),
             actor_class,
@@ -367,10 +390,13 @@ impl ScopedReadActorKey {
             unscoped_rows_open: false,
             proof: None,
             authority: None,
+            grant_alternatives: None,
+            agent_grant_holder: None,
             channel: None,
             owner: None,
             owner_exemption: None,
             room_turn: None,
+            phone_lines: Vec::new(),
             room_facets: None,
             worlds: None,
             destination: crate::settings::ReadDestination::on_device(),
@@ -378,6 +404,7 @@ impl ScopedReadActorKey {
             owner_proof: None,
             owner_by_census: false,
             record_bound: None,
+            system_agent,
         })
     }
 
@@ -407,10 +434,13 @@ impl ScopedReadActorKey {
             unscoped_rows_open: false,
             proof: None,
             authority: None,
+            grant_alternatives: None,
+            agent_grant_holder: None,
             channel: None,
             owner: Some(owner),
             owner_exemption: None,
             room_turn: None,
+            phone_lines: Vec::new(),
             room_facets: None,
             worlds: None,
             destination: crate::settings::ReadDestination::on_device(),
@@ -418,6 +448,7 @@ impl ScopedReadActorKey {
             owner_proof: None,
             owner_by_census: false,
             record_bound: None,
+            system_agent: None,
         }
     }
 
@@ -458,6 +489,29 @@ impl ScopedReadActorKey {
     /// The host action this key reads for, when it is one's.
     pub(crate) fn host_action_guard(&self) -> Option<&crate::authority::HostActionGuard> {
         self.host_action.as_ref()
+    }
+
+    /// The read key of the engine actor `reader` (untangle 6.3, census X04):
+    /// [`Self::with_actor_class`] for its id and class. A key that names a
+    /// base agent whose reach a Steward grant carries (the Dreamer) is held
+    /// to that grant and to its live MACHINE binding, whichever constructor
+    /// built it: every read proves both again in its own snapshot
+    /// ([`crate::Vault::system_agent_reads_live_in`]), as a client slip
+    /// proves its issuance, vault and revocation, so a revoked grant or
+    /// binding reads nothing. A vault no host has given the grant yet keeps
+    /// reading by its policy rows.
+    #[must_use]
+    pub(crate) fn for_engine_actor(reader: crate::WriteActor) -> Option<Self> {
+        Self::with_actor_class(
+            reader.entity_ref().to_hex(),
+            reader.actor_class().gate_actor_class(),
+        )
+    }
+
+    /// The base agent whose Steward grant and MACHINE binding this key is
+    /// held to, when it is one's.
+    pub(crate) fn system_agent_guard(&self) -> Option<EntityId> {
+        self.system_agent
     }
 
     /// This key, held to the owner proof a request authenticated (WILL-PLAN
@@ -543,6 +597,49 @@ impl ScopedReadActorKey {
     #[must_use]
     pub(crate) fn in_room_turn(mut self, ceiling: RoomTurnCeiling) -> Self {
         self.room_turn = Some(Box::new(ceiling));
+        self
+    }
+
+    /// Add a phone call's consent ceiling without dropping an earlier one.
+    #[must_use]
+    /// Copies only a genuine call ceiling to a Memory handle holding this
+    /// exact credential. Neither an actor label nor a raw Scope can bind it.
+    pub(crate) fn phone_line_ceilings_for(
+        &self,
+        proof: &crate::authority::VerifiedSlip,
+        actor: EntityId,
+    ) -> crate::Result<&[crate::phone_line::PhoneLineReadCeiling]> {
+        if self.actor_ref != actor.to_hex()
+            || self.proof.as_ref() != Some(proof)
+            || self.phone_lines.is_empty()
+        {
+            return Err(crate::phone_line::invalid());
+        }
+        Ok(&self.phone_lines)
+    }
+
+    /// Keeps the original call credential beside a newly resolved identity
+    /// key, so a later proof or host-action binder cannot replace it.
+    pub(crate) fn within_phone_read(mut self, original: &Self) -> crate::Result<Self> {
+        let proof = self.proof.as_ref().ok_or_else(crate::phone_line::invalid)?;
+        let actor = EntityId::from_hex(&self.actor_ref)?;
+        let ceilings = original.phone_line_ceilings_for(proof, actor)?;
+        self = self.at(CallerLocality::OffDevice);
+        for ceiling in ceilings {
+            self = self.within_phone_line(ceiling.clone());
+        }
+        if let Some(worlds) = &original.worlds {
+            self = self.within_worlds(worlds.clone());
+        }
+        Ok(self)
+    }
+
+    pub(crate) fn within_phone_line(
+        mut self,
+        ceiling: crate::phone_line::PhoneLineReadCeiling,
+    ) -> Self {
+        self = self.within_authority(Self::read_authority(ceiling.frozen_scope()));
+        self.phone_lines.push(ceiling);
         self
     }
 
@@ -693,6 +790,43 @@ impl ScopedReadActorKey {
         Some(key)
     }
 
+    /// The read key of a rendered brief only. The presented credential has
+    /// no read verb, so no generic read constructor accepts it. Callers keep
+    /// this key inside the shared view and never return it to the holder.
+    pub(crate) fn from_share_view_slip(
+        proof: &crate::authority::VerifiedSlip,
+        verb: &str,
+    ) -> Option<Self> {
+        if proof.claims().share_ref.is_none()
+            || !matches!(verb, "vault.shares.view" | "vault.notes.follow_citation")
+            || !proof.allows_verb(verb)
+            || proof.allows_verb("read")
+            || proof.allows_verb("core:read")
+        {
+            return None;
+        }
+        let mut key = Self::from_parts(
+            proof.claims().holder_ref.clone(),
+            proof.claims().actor_class.clone(),
+        )?;
+        let holder = EntityId::from_hex(&proof.claims().holder_ref).ok()?;
+        let mut authority = proof.scope().clone();
+        authority.verbs = ["read".to_owned()].into_iter().collect();
+        key.authority = Some(authority);
+        key.proof = Some(proof.clone());
+        Some(key.require_relationship_grants(Some(holder)))
+    }
+
+    /// A renderer-confined credential's share, never a resident key's.
+    pub(crate) fn share_view_ref(&self) -> Option<EntityId> {
+        self.proof
+            .as_ref()?
+            .claims()
+            .share_ref
+            .as_deref()
+            .and_then(|value| EntityId::from_hex(value).ok())
+    }
+
     /// [`Self::from_verified_slip`] for a credential that names a row it
     /// writes about rather than reads (FIX 8155): the same holder, class,
     /// proof and record, world, facet and channel bounds, its verb axis
@@ -742,6 +876,71 @@ impl ScopedReadActorKey {
     /// [`Self::from_verified_slip`] already does.
     pub(crate) fn authority_scope(&self) -> Option<&oneiron_authority::federation::Scope> {
         self.authority.as_ref()
+    }
+
+    /// This key bound by the owner's agent Grants that name its holder (FIX
+    /// AGENT-GRAPHFS-GRANT-WORLDS): its Scope met with their `envelope`,
+    /// whose verbs are left open, and its rows held to one of `alternatives`
+    /// alone, each the credential's Scope met with one standing Grant and
+    /// taken as every read door checks a proof of it
+    /// ([`Self::read_authority`]). It only narrows; with no alternative it
+    /// reads nothing.
+    #[must_use]
+    pub(crate) fn within_agent_grants(
+        self,
+        envelope: oneiron_authority::federation::Scope,
+        alternatives: &[oneiron_authority::federation::Scope],
+    ) -> Self {
+        self.within_authority(envelope)
+            .within_grant_alternatives(alternatives)
+    }
+
+    /// This key's rows held to one of `alternatives` alone, each taken as
+    /// every read door checks a proof of it ([`Self::read_authority`]): a
+    /// live key's agent Grants, or a saved lane's frozen ones (OF-506). It
+    /// only narrows: a key that already holds alternatives keeps each
+    /// pairing of one it held with one of these, met, so a row still lies
+    /// inside one of each. With no alternative it reads nothing.
+    #[must_use]
+    pub(super) fn within_grant_alternatives(mut self, alternatives: &[Scope]) -> Self {
+        let alternatives: Vec<Scope> = alternatives.iter().map(Self::read_authority).collect();
+        self.grant_alternatives = Some(match self.grant_alternatives.take() {
+            Some(held) => held
+                .iter()
+                .flat_map(|kept| {
+                    alternatives
+                        .iter()
+                        .map(move |alternative| kept.meet(alternative))
+                })
+                .collect(),
+            None => alternatives.into(),
+        });
+        self
+    }
+
+    /// The Scopes a row must lie inside one of, alone, beside this key's own
+    /// ([`Self::within_grant_alternatives`]); `None` when no agent Grant
+    /// binds it.
+    pub(crate) fn grant_alternatives(&self) -> Option<&[oneiron_authority::federation::Scope]> {
+        self.grant_alternatives.as_deref()
+    }
+
+    /// This key's rows also held, in each serving txn, to the agent Grants
+    /// that name `holder` and stand for `read` in that txn's snapshot, each
+    /// alone and met with this key's own Scope, once a Grant has ever named
+    /// `holder` (`Vault::agent_grant_read_bounds_in_txn`). It only narrows:
+    /// the bound the key was built with still binds beside it.
+    #[must_use]
+    pub(crate) fn bound_by_live_agent_grants(mut self, holder: EntityId) -> Self {
+        self.agent_grant_holder = Some(holder);
+        self
+    }
+
+    /// The holder whose standing agent Grants each serving txn reads for
+    /// this key ([`Self::bound_by_live_agent_grants`]); `None` when none
+    /// binds it.
+    pub(crate) fn agent_grant_holder(&self) -> Option<EntityId> {
+        self.agent_grant_holder
     }
 
     /// The worlds this read asked for, as a world-only ceiling; `None` when

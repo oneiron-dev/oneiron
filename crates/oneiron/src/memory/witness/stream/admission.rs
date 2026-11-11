@@ -610,6 +610,11 @@ pub(super) fn authorize(
     text: &str,
     edits_document: bool,
 ) -> MessageStreamResult<()> {
+    // A generation an erase dropped writes and publishes nothing more (FIX
+    // 9973), judged in this write's own snapshot.
+    if storage::stream_generation_erased_in_txn(vault, txn, seed)? {
+        return Err(MessageStreamError::StreamNotFound);
+    }
     verify_actor_binding_in_txn(vault, txn, seed.actor, seed.class()?)?;
     if vault.local_hard_delete_marker_exists_in_txn(txn, &seed.message_id)? {
         return Err(Error::EntityNotFound.into());

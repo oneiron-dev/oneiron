@@ -52,11 +52,13 @@ impl ScopedChildDoor {
         match scoped_child_authority(&self.vault, &self.job) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(code)) => Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: code.to_owned(),
             }),
             Err(error) => {
                 tracing::warn!(%error, task = %self.job.task.to_hex(), "a scoped child's authority was not read");
                 Err(AgentVerbRefusal {
+                    hook_notice: None,
                     code: "engine_error".to_owned(),
                 })
             }
@@ -74,6 +76,7 @@ impl AgentVerbDoor for ScopedChildDoor {
         _: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {
+            hook_notice: None,
             code: SCOPED_CHILD_PORT_NOT_LENT.to_owned(),
         }))
     }
@@ -95,6 +98,7 @@ impl AgentVerbDoor for ScopedChildDoor {
                 | SelfEffect::AgentVerb,
             ) => Ok(None),
             _ => Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: crate::server::READER_CHILD_READ_ONLY.to_owned(),
             }),
         }
@@ -190,6 +194,16 @@ impl ReaderParentClock {
         Self {
             origin: Instant::now(),
             budget_ms,
+        }
+    }
+
+    /// A native reader's already-bounded monotonic cutoff, never a new
+    /// default window. The caller samples it before the wall-clock budget.
+    pub(crate) fn until(cutoff: Instant) -> Self {
+        let origin = Instant::now();
+        Self {
+            origin,
+            budget_ms: millis(cutoff.saturating_duration_since(origin)),
         }
     }
 

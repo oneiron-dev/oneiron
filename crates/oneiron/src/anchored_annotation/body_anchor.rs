@@ -18,23 +18,24 @@
 
 use std::collections::HashMap;
 
-use oneiron_docedit::xlsx_body::{XlsxAxis, XlsxAxisEdit};
-
-use super::anchor_text::{docx_blocks, remap_span};
+use super::anchor_text::{docx_blocks, remap_span, stories};
 use super::codec::ThreadHead;
-use super::deck_anchor::{deck_body_locator, deck_file_locator, move_deck_locator};
-use super::failed_stamps::FailedStampKey;
-use super::model::{
-    Anchor, AnnotationThread, BodyAnchor, DriftMarker, Locator, ReanchorOp, ReanchorOutcome,
+use super::deck_anchor::{
+    deck_body_locator, deck_file_locator, deck_needs_held_ids, move_deck_locator,
 };
+use super::failed_stamps::FailedStampKey;
+use super::model::{Anchor, AnnotationThread, BodyAnchor, DriftMarker, Locator, ReanchorOutcome};
 use super::reanchor::replay_locator;
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::office_body::OfficeBodyUnits;
+use crate::office_body::{DocxUnits, HeldDeckIds, OfficeBodyUnits};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+
+mod sheet_edits;
+use sheet_edits::sheet_ops;
 
 /// Live bodies one sweep run settles at most; a run that reaches the cap
 /// leaves a cursor, and the next pass goes on from it.
@@ -49,7 +50,7 @@ type UnitsAt = HashMap<Vec<u8>, Option<OfficeBodyUnits>>;
 /// A Word version's file, read once a pass.
 enum Filed {
     /// The version's blocks.
-    Blocks(Vec<(String, String)>),
+    Blocks(DocxUnits),
     /// No blob is filed at the version; it may still arrive by sync.
     Missing,
     /// A blob is filed but does not parse as Word.
@@ -59,7 +60,20 @@ enum Filed {
 }
 
 /// A Word version's file by version, read once a pass.
-type FiledAt = HashMap<u64, Filed>;
+type FiledAt = HashMap<(u64, bool), Filed>;
+
+fn filed_key(version: u64, locator: &Locator) -> (u64, bool) {
+    (version, matches!(locator, Locator::DocxStory { .. }))
+}
+
+/// A deck export's held ids, read once a pass; an unread record retries.
+enum HeldIds {
+    Read(Option<HeldDeckIds>),
+    Unread,
+}
+
+/// A deck export's held ids by version (FIX 12346).
+type HeldAt = HashMap<u64, HeldIds>;
 
 /// One thread's next head, planned in a read and written in a write.
 struct Planned {
@@ -223,7 +237,7 @@ impl Vault {
             *self.vault_id().as_bytes(),
             export.as_ref().map(|(version, _)| *version),
         );
-        let (mut units, mut filed) = (UnitsAt::new(), FiledAt::new());
+        let (mut units, mut filed, mut held) = (UnitsAt::new(), FiledAt::new(), HeldAt::new());
         let mut unread = 0_u64;
         let mut plans = Vec::new();
         for thread in threads {
@@ -240,7 +254,7 @@ impl Vault {
                         txn,
                         (artifact, head.as_slice()),
                         &thread.anchor,
-                        (&mut units, &mut filed),
+                        (&mut units, &mut filed, &mut held),
                         &mut unread,
                     ) {
                         Stamp::Held(body) => Some((body, true)),
@@ -284,11 +298,27 @@ impl Vault {
             if let Some((version, frontier)) = landing {
                 self.load_units(txn, artifact, frontier, &mut units, &mut unread);
                 // Only a Word span lands through the file's own blocks.
-                if matches!(thread.anchor.locator, Locator::Docx { .. }) {
-                    self.load_filed(txn, artifact, *version, &mut filed, &mut unread);
+                if matches!(
+                    thread.anchor.locator,
+                    Locator::Docx { .. } | Locator::DocxStory { .. }
+                ) {
+                    self.load_filed(
+                        txn,
+                        artifact,
+                        *version,
+                        &thread.anchor.locator,
+                        &mut filed,
+                        &mut unread,
+                    );
+                }
+                if matches!(thread.anchor.locator, Locator::Pptx { .. })
+                    && let Some(OfficeBodyUnits::Pptx(deck)) = units_at(&units, frontier)
+                    && deck_needs_held_ids(deck, units_at(&units, &head), *version)
+                {
+                    self.load_held(txn, artifact, *version, &mut held, &mut unread);
                 }
             }
-            match plan_thread(thread, body, stamped, &head, landing, &units, &filed) {
+            match plan_thread(thread, body, stamped, &head, landing, &units, &filed, &held) {
                 Follow::Planned(plan) => plans.push(plan),
                 Follow::Idle => {}
                 Follow::OutOfOrder => {
@@ -309,7 +339,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         (artifact, head): (&EntityId, &[u8]),
         anchor: &Anchor,
-        (units, filed): (&mut UnitsAt, &mut FiledAt),
+        (units, filed, held): (&mut UnitsAt, &mut FiledAt, &mut HeldAt),
         unread: &mut u64,
     ) -> Stamp {
         let read = self.office_body_frontier_of_version_in_txn(txn, artifact, anchor.version);
@@ -328,11 +358,21 @@ impl Vault {
         }
         let held = match (units_at(units, &frontier), &anchor.locator) {
             (None, _) => return Stamp::Retry,
-            (Some(OfficeBodyUnits::Docx(blocks)), Locator::Docx { .. }) => {
-                self.load_filed(txn, artifact, anchor.version, filed, unread);
-                return match filed.get(&anchor.version) {
+            (
+                Some(OfficeBodyUnits::Docx(blocks)),
+                Locator::Docx { .. } | Locator::DocxStory { .. },
+            ) => {
+                self.load_filed(
+                    txn,
+                    artifact,
+                    anchor.version,
+                    &anchor.locator,
+                    filed,
+                    unread,
+                );
+                return match filed.get(&filed_key(anchor.version, &anchor.locator)) {
                     Some(Filed::Blocks(filed)) => {
-                        match unique_docx_locator(filed, blocks, &anchor.locator) {
+                        match docx_locator(filed, blocks, &anchor.locator) {
                             Some(locator) => Stamp::Held(BodyAnchor { frontier, locator }),
                             None => Stamp::Missed,
                         }
@@ -350,10 +390,20 @@ impl Vault {
             }
             (Some(OfficeBodyUnits::Pptx(deck)), Locator::Pptx { .. }) => {
                 let head = units_at(units, head);
-                return match deck_body_locator(deck, head, anchor.version, &anchor.locator) {
+                let (held, held_unread) = if deck_needs_held_ids(deck, head, anchor.version) {
+                    self.load_held(txn, artifact, anchor.version, held, unread);
+                    match held.get(&anchor.version) {
+                        Some(HeldIds::Read(ids)) => (ids.as_ref(), false),
+                        Some(HeldIds::Unread) | None => (None, true),
+                    }
+                } else {
+                    (None, false)
+                };
+                return match deck_body_locator(deck, head, anchor.version, held, &anchor.locator) {
                     Some(locator) => Stamp::Held(BodyAnchor { frontier, locator }),
-                    // A head deck that did not read may yet bind the version.
-                    None if head.is_none() => Stamp::Retry,
+                    // An unread head may yet bind the version; an unread
+                    // optional-id record must not memoize a missing match.
+                    None if head.is_none() || held_unread => Stamp::Retry,
                     None => Stamp::Missed,
                 };
             }
@@ -389,15 +439,38 @@ impl Vault {
         units.insert(frontier.to_vec(), read);
     }
 
+    fn load_held(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact: &EntityId,
+        version: u64,
+        held: &mut HeldAt,
+        unread: &mut u64,
+    ) {
+        if held.contains_key(&version) {
+            return;
+        }
+        let read = match self.office_body_held_ids_in_txn(txn, artifact, version) {
+            Ok(ids) => HeldIds::Read(ids),
+            Err(error) => {
+                warn_unread(artifact, &error, unread);
+                HeldIds::Unread
+            }
+        };
+        held.insert(version, read);
+    }
+
     fn load_filed(
         &self,
         txn: &heed::RoTxn<'_>,
         artifact: &EntityId,
         version: u64,
+        locator: &Locator,
         filed: &mut FiledAt,
         unread: &mut u64,
     ) {
-        if filed.contains_key(&version) {
+        let key = filed_key(version, locator);
+        if filed.contains_key(&key) {
             return;
         }
         let read = (|| -> Result<Filed> {
@@ -405,8 +478,21 @@ impl Vault {
             else {
                 return Ok(Filed::Missing);
             };
-            match docx_blocks(&bytes, &self.text_limits_in_txn(txn)?)? {
-                Some(blocks) => Ok(Filed::Blocks(blocks)),
+            let limits = self.text_limits_in_txn(txn)?;
+            if key.1 {
+                return Ok(match stories::units(&bytes, &limits)? {
+                    Some(stories) => Filed::Blocks(DocxUnits {
+                        blocks: Vec::new(),
+                        stories,
+                    }),
+                    None => Filed::NotWord,
+                });
+            }
+            match docx_blocks(&bytes, &limits)? {
+                Some(blocks) => Ok(Filed::Blocks(DocxUnits {
+                    blocks,
+                    stories: Vec::new(),
+                })),
                 None => Ok(Filed::NotWord),
             }
         })()
@@ -414,7 +500,7 @@ impl Vault {
             warn_unread(artifact, &error, unread);
             Filed::Unread
         });
-        filed.insert(version, read);
+        filed.insert(key, read);
     }
 }
 
@@ -423,7 +509,7 @@ fn warn_unread(artifact: &EntityId, error: &crate::error::Error, unread: &mut u6
     tracing::warn!(
         artifact = %artifact.to_hex(),
         error = ?error,
-        "a body or version did not read; its comments keep their version pin",
+        "an annotation body-anchor input could not be read",
     );
 }
 
@@ -440,6 +526,7 @@ fn plan_thread(
     landing: Option<&(u64, Vec<u8>)>,
     units: &UnitsAt,
     filed: &FiledAt,
+    held: &HeldAt,
 ) -> Follow {
     let (Some(from), Some(to)) = (units_at(units, &body.frontier), units_at(units, body_head))
     else {
@@ -479,7 +566,11 @@ fn plan_thread(
         ReanchorOutcome::Mapped(at_head) => {
             let landing_unread = landing.is_some_and(|(version, frontier)| {
                 units_at(units, frontier).is_none()
-                    || matches!(filed.get(version), Some(Filed::Missing | Filed::Unread))
+                    || matches!(
+                        filed.get(&filed_key(*version, &body.locator)),
+                        Some(Filed::Missing | Filed::Unread)
+                    )
+                    || matches!(held.get(version), Some(HeldIds::Unread))
             });
             let landed = landing.and_then(|(version, frontier)| {
                 let target = units_at(units, frontier)?;
@@ -488,14 +579,18 @@ fn plan_thread(
                 else {
                     return None;
                 };
-                let filed = match filed.get(version) {
-                    Some(Filed::Blocks(blocks)) => Some(blocks.as_slice()),
+                let filed = match filed.get(&filed_key(*version, &body.locator)) {
+                    Some(Filed::Blocks(blocks)) => Some(blocks),
                     _ => None,
                 };
                 let located = match target {
                     OfficeBodyUnits::Pptx(deck) => {
                         let head = units_at(units, body_head);
-                        deck_file_locator(deck, head, *version, &at_export)
+                        let held = match held.get(version) {
+                            Some(HeldIds::Read(ids)) => ids.as_ref(),
+                            _ => None,
+                        };
+                        deck_file_locator(deck, head, *version, held, &at_export)
                     }
                     _ => file_locator(filed, target, &at_export),
                 };
@@ -567,10 +662,30 @@ fn move_body_locator(
                 char_end,
             },
         ) => {
-            let was = text_of(before, para_path)?;
-            let moved = text_of(after, para_path)
+            let was = text_of(&before.blocks, para_path)?;
+            let moved = text_of(&after.blocks, para_path)
                 .and_then(|now| remap_span(was, now, *char_start, *char_end))
                 .and_then(|(start, end)| Locator::docx(para_path.clone(), start, end).ok());
+            Some(moved.map_or(ReanchorOutcome::Drifted, ReanchorOutcome::Mapped))
+        }
+        (
+            OfficeBodyUnits::Docx(before),
+            OfficeBodyUnits::Docx(after),
+            Locator::DocxStory {
+                scope,
+                para_path,
+                char_start,
+                char_end,
+            },
+        ) => {
+            let was = text_of(before.story(scope)?, para_path)?;
+            let moved = after
+                .story(scope)
+                .and_then(|units| text_of(units, para_path))
+                .and_then(|now| remap_span(was, now, *char_start, *char_end))
+                .and_then(|(start, end)| {
+                    Locator::docx_story(scope.clone(), para_path.clone(), start, end).ok()
+                });
             Some(moved.map_or(ReanchorOutcome::Drifted, ReanchorOutcome::Mapped))
         }
         (
@@ -598,14 +713,31 @@ fn move_body_locator(
 /// stands at the same place: the body's addresses are the file's. A Word
 /// span stands in the one file block with the body's paragraph text.
 fn file_locator(
-    filed: Option<&Units>,
+    filed: Option<&DocxUnits>,
     target: &OfficeBodyUnits,
     locator: &Locator,
 ) -> Option<Locator> {
-    let (OfficeBodyUnits::Docx(body), Locator::Docx { .. }) = (target, locator) else {
+    let (OfficeBodyUnits::Docx(body), Locator::Docx { .. } | Locator::DocxStory { .. }) =
+        (target, locator)
+    else {
         return Some(locator.clone());
     };
-    unique_docx_locator(body, filed?, locator)
+    docx_locator(body, filed?, locator)
+}
+
+/// Body spans retain the original mapping. A story span requires the SAME
+/// native scope, local paragraph id and text in the version and frontier.
+fn docx_locator(from: &DocxUnits, to: &DocxUnits, locator: &Locator) -> Option<Locator> {
+    match locator {
+        Locator::Docx { .. } => unique_docx_locator(&from.blocks, &to.blocks, locator),
+        Locator::DocxStory {
+            scope, para_path, ..
+        } => {
+            let text = text_of(from.story(scope)?, para_path)?;
+            (text_of(to.story(scope)?, para_path)? == text).then(|| locator.clone())
+        }
+        _ => None,
+    }
 }
 
 /// Maps a Word span between file ordinals and stable body ids by unique
@@ -626,69 +758,4 @@ fn unique_docx_locator(from: &Units, to: &Units, locator: &Locator) -> Option<Lo
         return None;
     }
     Locator::docx(id.clone(), *char_start, *char_end).ok()
-}
-
-/// The version sweep's operations for a workbook body's edits between two
-/// frontiers: the row and column edits the later one added, then each sheet
-/// removed and each renamed, through a name no sheet holds so swapped names
-/// stay apart. `None` when the later log does not begin with the earlier.
-fn sheet_ops(
-    before: &Units,
-    was: &[(String, XlsxAxisEdit)],
-    after: &Units,
-    now: &[(String, XlsxAxisEdit)],
-) -> Option<Vec<ReanchorOp>> {
-    let added = now.strip_prefix(was)?;
-    let mut ops: Vec<ReanchorOp> = added
-        .iter()
-        .filter_map(|(key, edit)| Some(axis_op(text_of(before, key)?.to_owned(), *edit)))
-        .collect();
-    let mut renamed = Vec::new();
-    for (index, (key, name)) in before.iter().enumerate() {
-        match text_of(after, key) {
-            None => ops.push(ReanchorOp::RemoveSheet {
-                sheet: name.clone(),
-            }),
-            Some(new) if new != name.as_str() => {
-                let parked = format!("\u{0}{index}");
-                ops.push(ReanchorOp::RenameSheet {
-                    from: name.clone(),
-                    to: parked.clone(),
-                });
-                renamed.push(ReanchorOp::RenameSheet {
-                    from: parked,
-                    to: new.to_owned(),
-                });
-            }
-            Some(_) => {}
-        }
-    }
-    ops.extend(renamed);
-    Some(ops)
-}
-
-fn axis_op(sheet: String, edit: XlsxAxisEdit) -> ReanchorOp {
-    let (at, count) = (edit.at, edit.count);
-    match (edit.axis, edit.delete) {
-        (XlsxAxis::Row, false) => ReanchorOp::InsertRows {
-            sheet,
-            at_row: at,
-            count,
-        },
-        (XlsxAxis::Row, true) => ReanchorOp::DeleteRows {
-            sheet,
-            at_row: at,
-            count,
-        },
-        (XlsxAxis::Column, false) => ReanchorOp::InsertCols {
-            sheet,
-            at_col: at,
-            count,
-        },
-        (XlsxAxis::Column, true) => ReanchorOp::DeleteCols {
-            sheet,
-            at_col: at,
-            count,
-        },
-    }
 }

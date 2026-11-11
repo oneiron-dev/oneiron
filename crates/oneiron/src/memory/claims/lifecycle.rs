@@ -105,10 +105,11 @@ impl Memory<'_> {
         self.commit_claim_batch("vault.commit", &batch)
     }
 
-    /// Commits one claim with single-cardinality auto-supersede (S3):
-    /// prior Active claim matching `subject+scope+predicate` (plus
-    /// `value.question_id` for declared multi-cardinality predicates, B1c)
-    /// is superseded by the new revision.
+    /// Commits one claim with cardinality-aware auto-supersede (ARCH-0044 S3).
+    /// A single-cardinality predicate replaces its prior standing head on
+    /// `subject+scope+predicate`; declared set/multi predicates replace only
+    /// an agreeing answer. Keyed multi predicates additionally match
+    /// `value.question_id` (B1c).
     pub fn claim_upsert(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
         self.commit_one(input, true, None)
     }
@@ -180,15 +181,17 @@ impl Memory<'_> {
                     &self.actor,
                 )?
                 .is_some_and(|registration| {
-                    ["vault.recall", "vault.remember"].iter().all(|tool| {
-                        registration.slate.tool_setting(tool)
-                            != crate::connector_key::SlateDisposition::NeverAllow
-                    })
+                    use crate::connector_key::SlateDisposition::{AlwaysAsk, NeverAllow};
+                    let setting = |tool| registration.slate.tool_setting(tool);
+                    // A write the owner set to always ask is never made: the
+                    // proxy cannot ask the owner per call (FIX 4843).
+                    setting("vault.recall") != NeverAllow
+                        && !matches!(setting("vault.remember"), NeverAllow | AlwaysAsk)
                 });
             if !registered {
                 return Err(Error::Claim(
                     crate::error::ClaimError::ActorLacksClaimAuthority {
-                        reason: "the proxy's read or write grant is revoked",
+                        reason: "the proxy's read or write grant is revoked, or its write asks per call",
                     },
                 ));
             }
@@ -284,7 +287,7 @@ impl Memory<'_> {
         let now = self.vault.store.clock.now_recorded_at();
         before_txn();
         let (approval, consent_decision_id) = self
-            .with_actor_content_write_txn(|content| content.update_claim(id, |wtxn| {
+            .with_actor_content_write_txn(|content| content.update_claim(id, |wtxn, _lane| {
             // A retraction only restricts: it reads a held history whole.
             let body = self
                 .vault

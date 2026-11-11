@@ -110,6 +110,52 @@ fn attempt_of(case: &EvalCase) -> Option<AttemptId> {
     AttemptId::from_bytes(id.as_bytes()).ok()
 }
 
+/// One attempt case's task input as comparison text, for the cut audit's
+/// comparison alone (FIX 3639, FIX 10440): the kept attempt's input
+/// rendered as JSON text, with its row id for the listing. `None` for every
+/// other shape — a non-attempt case, a gone attempt, an undecodable
+/// payload — a gap, never an error. It grants no measurement: the measuring
+/// host's gate stays on [`Vault::released_eval_task`]. Comparison text and
+/// the attempt id only, never the structured input, labels, hashes or kind.
+pub(super) fn cut_audit_task_text_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipts: &[String],
+    parents: &[EntityId],
+) -> Result<Option<(EntityId, String)>> {
+    let [receipt] = receipts else {
+        return Ok(None);
+    };
+    if !parents.is_empty() {
+        return Ok(None);
+    }
+    let Some(hex) = receipt.strip_prefix(ATTEMPT_RECEIPT) else {
+        return Ok(None);
+    };
+    let Ok(id) = EntityId::from_hex(hex) else {
+        return Ok(None);
+    };
+    let Ok(attempt) = AttemptId::from_bytes(id.as_bytes()) else {
+        return Ok(None);
+    };
+    let Some(record) = AttemptQueue::new(vault).get_in_txn(txn, attempt)? else {
+        return Ok(None);
+    };
+    let Ok(payload) = decode_dreamer_attempt_payload(&record.payload) else {
+        return Ok(None);
+    };
+    let Some(input) = strict_json(&payload.input) else {
+        return Ok(None);
+    };
+    if matches!(input, JsonValue::Null) {
+        return Ok(None);
+    }
+    let Ok(text) = serde_json::to_string(&input) else {
+        return Ok(None);
+    };
+    Ok(Some((id, text)))
+}
+
 /// The case's task from its kept attempt.
 fn hydrate(vault: &Vault, txn: &heed::RoTxn<'_>, case: EvalCase) -> Result<Released> {
     let Some(attempt) = attempt_of(&case) else {

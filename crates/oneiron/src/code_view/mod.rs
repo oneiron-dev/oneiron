@@ -2,6 +2,7 @@
 use crate::build_cache::{ActionResult, BuildAction, BuildCache, BuildCacheResult, CachedBuildLeg};
 use crate::codebase::CodebaseSnapshotMount;
 use crate::error::{Error, Result};
+use crate::git_wire::{git_path_bytes, git_path_os_str, git_path_text_of_os};
 use crate::side_table::{self, LegacyJson, Named, SideTable};
 use crate::store::checkout_task::CheckoutTaskClass;
 use crate::{EntityId, Vault};
@@ -201,12 +202,12 @@ impl<'a> CodeViewSet<'a> {
         receipt.files.clear();
         let mut directories = vec![String::new()];
         while let Some(directory) = directories.pop() {
-            for entry in std::fs::read_dir(root.join(&directory))? {
+            for entry in std::fs::read_dir(view_path_on_disk(&root, &directory)?)? {
                 let entry = entry?;
-                let name = entry
-                    .file_name()
-                    .into_string()
-                    .map_err(|_| Error::InvalidClaimBody("view path is not UTF-8"))?;
+                let name = entry.file_name();
+                let name = git_path_text_of_os(&name)
+                    .map_err(|_| Error::InvalidClaimBody("view path is not a Git path"))?
+                    .into_owned();
                 let path = if directory.is_empty() {
                     name
                 } else {
@@ -282,12 +283,12 @@ impl<'a> CodeViewSet<'a> {
                 .ok_or(Error::CorruptedIndex("cached output unavailable"))?;
             // A DOCX output shows its default author (FIX 4513).
             let bytes = cache.artifact_vault().resolve_docx_authors(bytes)?;
-            let target = path.join(output.as_str());
+            let target = view_path_on_disk(&path, output.as_str())?;
             // Reject any output parent symlink rather than following it out of the view.
             let mut parent = path.clone();
             let parts: Vec<_> = output.as_str().split('/').collect();
             for part in &parts[..parts.len() - 1] {
-                parent.push(part);
+                parent.push(&*git_path_os_str(part)?);
                 if parent.try_exists()? {
                     if !std::fs::symlink_metadata(&parent)?.is_dir() {
                         return Err(Error::InvalidClaimBody("unsafe build output parent").into());
@@ -375,21 +376,25 @@ pub(crate) fn read_view_file(root: &Path, path: &str) -> Result<Vec<u8>> {
     let parts: Vec<_> = path.split('/').collect();
     let mut target = root.to_path_buf();
     for part in &parts[..parts.len() - 1] {
-        target.push(part);
+        target.push(&*git_path_os_str(part)?);
         if !std::fs::symlink_metadata(&target)?.is_dir() {
             return Err(Error::CorruptedIndex("view parent was replaced"));
         }
     }
-    target.push(parts[parts.len() - 1]);
+    target.push(&*git_path_os_str(parts[parts.len() - 1])?);
     if !std::fs::symlink_metadata(&target)?.is_file() {
         return Err(Error::CorruptedIndex("view file was replaced"));
     }
     Ok(std::fs::read(target)?)
 }
 
+/// A view path, a Git path's text (FIX 21326): a name outside UTF-8 holds its
+/// canonical escape, the only NUL it may hold, and lands on disk as its own
+/// bytes through [`view_path_on_disk`].
 pub(crate) fn relative(path: &str) -> Result<()> {
     if path.is_empty()
-        || path.contains(['\\', '\0'])
+        || path.contains('\\')
+        || git_path_bytes(path).is_err()
         || path
             .split('/')
             .any(|p| p.is_empty() || p == "." || p == ".." || p == ".git" || p.contains(':'))
@@ -398,6 +403,13 @@ pub(crate) fn relative(path: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// The file the view path `path` names under `root`: its own bytes, so a
+/// name outside UTF-8 lands as Git holds it (FIX 21326).
+pub(crate) fn view_path_on_disk(root: &Path, path: &str) -> Result<PathBuf> {
+    Ok(root.join(&*git_path_os_str(path)?))
+}
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

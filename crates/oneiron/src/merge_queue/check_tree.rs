@@ -4,7 +4,7 @@ use super::MergeQueue;
 use super::check_inputs::{QueueCheckFile, QueueCheckTreeSource};
 use crate::code_revision::{CodeTreeInventory, CodeTreeInventoryRuntime};
 use crate::error::Result;
-use crate::git_wire::{GitOid, GitWire, GitWireRepo};
+use crate::git_wire::{GitOid, GitWire, GitWireRepo, git_path_bytes};
 use crate::store::contract_oracle::invalid;
 
 /// Git's mode of a tree entry that is itself a tree.
@@ -87,17 +87,17 @@ impl QueueCheckTreeSource for PinnedTree<'_> {
     /// ([`CodeTreeInventory::entries`], FIX 7395): every level counted, in
     /// path order, submodule links left out.
     fn files(&self) -> Result<Vec<QueueCheckFile>> {
-        Ok(
-            CodeTreeInventory::entries(&self.wire, self.repo, &self.tree)?
-                .into_iter()
-                .filter(|(_, (_, mode))| *mode != MODE_GITLINK)
-                .map(|(path, (oid, mode))| QueueCheckFile {
-                    path: path.into_bytes(),
+        CodeTreeInventory::entries(&self.wire, self.repo, &self.tree)?
+            .into_iter()
+            .filter(|(_, (_, mode))| *mode != MODE_GITLINK)
+            .map(|(path, (oid, mode))| {
+                Ok(QueueCheckFile {
+                    path: git_path_bytes(&path)?.into_owned(),
                     mode,
                     oid,
                 })
-                .collect(),
-        )
+            })
+            .collect()
     }
 
     fn blob(&self, oid: &str) -> Result<Vec<u8>> {

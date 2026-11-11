@@ -1,11 +1,17 @@
 //! Every configured model and seat by id: the raw `/v1/llm` routes call
 //! whichever model they name, through its ladder and a run.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, PoisonError, RwLock};
 
-use oneiron::{LlmCatalogEntry, ModelId, ModelLocality};
+use oneiron::llm::model_pack::AccessSnapshot;
+use oneiron::llm::run_admission::OfferBinding;
+use oneiron::{LlmCatalogEntry, ModelId, ModelLocality, Vault};
 
+use super::catalog::engine_model_id;
 use super::ladder::OfferLadder;
+use super::offer::provider_offer;
+use super::{referenced_models, reranker_models};
+use crate::config::models::{ModelsConfig, ProviderConfig};
 
 /// Each model by id: where it runs and the ladder that serves it.
 pub(super) type Routes = BTreeMap<ModelId, (ModelLocality, Arc<OfferLadder>)>;
@@ -153,6 +159,102 @@ impl ModelRouter {
         served
     }
 
+    /// The access this router's offers hold now, each with the models it
+    /// serves by their own id, configured or mesh-discovered, as
+    /// [`Self::served`] finds them, and on device, as [`Self::served_at`]
+    /// finds them there (FIX 5366): what a vault's model pack picks a role's
+    /// variant from. A local GPU is held only by an on-device view's offers
+    /// ([`oneiron::llm::model_pack::model_pack_access_for`]). Read from the
+    /// host-bound offers alone; nothing is probed. A seat's rungs, reached
+    /// only through the seat, are left out.
+    pub fn access_snapshot(&self) -> AccessSnapshot {
+        let mut snapshot = AccessSnapshot::new();
+        let discovered = self.discovered();
+        let ladders = self
+            .routes
+            .iter()
+            .chain(discovered.iter())
+            .map(|(model, (_, ladder))| (model, ladder))
+            .chain(self.on_device.iter());
+        for (model, ladder) in ladders {
+            for offer in ladder.offer_bindings() {
+                if offer.model == *model {
+                    snapshot.insert_offer(offer);
+                }
+            }
+        }
+        snapshot
+    }
+
+    /// The access the router a `serve` of `vault` builds from `config` would
+    /// hold, as [`Self::access_snapshot`] reads it (FIX 22059, 22189): what
+    /// `oneiron maintain` lends a stopped vault's model pack retirement
+    /// sweep. It holds each model a role's ladder names on a provider that
+    /// generates, and each the reranker's ladder names on one that reranks,
+    /// with the offer its route binds; the on-device view of each such chat
+    /// model a managed EXL3 worker row serves, which plain `serve` binds
+    /// beside the workers it launches; and, with or without `config`, each
+    /// model the vault's mesh discovery rows hold that no configured route
+    /// serves, which `serve` routes to the owner's node that offers it from
+    /// its start, before its first mesh refresh. A `serve` with the mesh off
+    /// marks those rows stale at its start (FIX 22227), so after it none
+    /// counts. Read from `config` and the
+    /// vault's rows alone: no backend is built, no worker is launched, no
+    /// key is read and nothing is sent, so a provider that would not start
+    /// (its key variable unset, say) still counts.
+    pub(crate) fn stopped_vault_access_snapshot(
+        config: Option<&ModelsConfig>,
+        vault: &Vault,
+    ) -> AccessSnapshot {
+        let mut snapshot = AccessSnapshot::new();
+        // The ids a configured route serves, which keep that route.
+        let mut configured = BTreeSet::new();
+        let providers = config
+            .into_iter()
+            .flat_map(|config| config.providers.iter().map(move |entry| (config, entry)));
+        for (config, (name, provider)) in providers {
+            let chat_routes = provider
+                .kind
+                .generates()
+                .then(|| (referenced_models(config, name), false));
+            let rerank_routes = provider
+                .kind
+                .reranks()
+                .then(|| (reranker_models(config, name), true));
+            for (models, rerank) in chat_routes.into_iter().chain(rerank_routes) {
+                for model in &models {
+                    let Ok(id) = engine_model_id(model, provider) else {
+                        continue;
+                    };
+                    if let Ok(offer) = provider_offer(provider, id.clone(), rerank) {
+                        snapshot.insert_offer(&offer);
+                    }
+                    configured.insert(id);
+                }
+            }
+            for offer in configured_on_device_offers(name, provider, config) {
+                snapshot.insert_offer(&offer);
+            }
+        }
+        #[cfg(feature = "mesh")]
+        match super::discovered::discovered_offers(vault) {
+            Ok(offers) => {
+                for offer in offers
+                    .iter()
+                    .filter(|offer| !configured.contains(&offer.model))
+                {
+                    snapshot.insert_offer(offer);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "mesh model offers left out: the vault's discovery rows did not read");
+            }
+        }
+        #[cfg(not(feature = "mesh"))]
+        let _ = (vault, configured);
+        snapshot
+    }
+
     /// Each model the last mesh catalog refresh found, with the machine id
     /// of the owner's node that offers it and the ladder that serves it, in
     /// id order.
@@ -187,4 +289,50 @@ impl ModelRouter {
             .write()
             .unwrap_or_else(PoisonError::into_inner) = Arc::new(routes);
     }
+}
+
+/// The on-device offers of `provider`'s chat models a plain `serve` built
+/// from `config` binds (I2-LOCAL), read from `config` alone: each model a
+/// chat ladder names on `provider` that a row whose supervisor holds a
+/// native launch slot serves (`WorkerConfig::has_native_launch`, the
+/// worker host's own rule), as `build_native_local` and `native_rung` bind
+/// it. No supervisor is made and nothing is launched.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn configured_on_device_offers(
+    name: &str,
+    provider: &ProviderConfig,
+    config: &ModelsConfig,
+) -> Vec<OfferBinding> {
+    use super::catalog::catalog_entry;
+    use super::offer::native_local_binding;
+
+    if !super::speaks_native_local(provider) {
+        return Vec::new();
+    }
+    let workers: BTreeMap<&str, &str> = config
+        .workers
+        .iter()
+        .filter(|row| row.binding.provider == name && row.has_native_launch())
+        .map(|row| (row.binding.model.as_str(), row.id.as_str()))
+        .collect();
+    referenced_models(config, name)
+        .iter()
+        .filter(|model| catalog_entry(model, provider).is_ok())
+        .filter_map(|model| {
+            let worker = workers.get(model.model.as_str())?;
+            let id = engine_model_id(model, provider).ok()?;
+            native_local_binding(provider, id, worker).ok()
+        })
+        .collect()
+}
+
+/// No native channel here checks its peer against the supervised child, so
+/// no chat model has an on-device view.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn configured_on_device_offers(
+    _name: &str,
+    _provider: &ProviderConfig,
+    _config: &ModelsConfig,
+) -> Vec<OfferBinding> {
+    Vec::new()
 }

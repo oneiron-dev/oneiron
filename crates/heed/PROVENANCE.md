@@ -136,6 +136,16 @@ LC backup shipper rows (FIX 5826 batch) add one read accessor:
   records; `src/mdb/lmdb_ffi.rs` re-exports `mdb_txn_id`, which
   `lmdb-master3-sys` already binds. No other behaviour changes.
 
+The result-body collector (FIX 22101) adds one read accessor:
+
+- `src/env.rs`: `Env::oldest_reader_txn_id` clears stale reader slots
+  (`mdb_reader_check`), then reads the reader table through
+  `mdb_reader_list` and returns the lowest transaction id a live slot
+  holds, or `None` when no read transaction is live; the collector unlinks
+  a released body file only once that id reaches the transaction that
+  released it. `src/mdb/lmdb_ffi.rs` re-exports `mdb_reader_list`, which
+  `lmdb-master3-sys` already binds. No other behaviour changes.
+
 The descriptor seam's audit holds for mdb.master3: `me_path` is still only
 declared, assigned, null-checked, freed and returned by `mdb_env_get_path`
 (mdb.master3 `mdb.c:1659, 6248, 6252, 6362, 11646`), and every file open goes

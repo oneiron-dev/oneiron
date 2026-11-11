@@ -90,6 +90,46 @@ impl Vault {
         policy.validate()?;
         self.with_write_txn_grouped(|txn| POLICY.put(&self.store, txn, &(), policy))
     }
+
+    /// The owner, by its proof, or a holder of `engine.controls` sets the consolidation strength
+    /// policy (untangle 6.6b; maintenance cadence), through the one check, with a receipt naming
+    /// it. Untangle 6.6d gives it its verb. Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
+    /// holder of `engine.controls`; the row's own validation; store failures.
+    pub fn set_consolidation_strength_policy_by(
+        &self,
+        actor: crate::federation::EngineControlActor<'_>,
+        policy: &ConsolidationStrengthPolicy,
+    ) -> Result<EntityId> {
+        policy.validate()?;
+        self.apply_engine_control(
+            actor,
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_CONSOLIDATION_STRENGTH_POLICY",
+            &crate::federation::rendered_change(policy)?,
+            |txn| POLICY.put(&self.store, txn, &(), policy),
+        )
+    }
+
+    /// [`Self::set_consolidation_strength_policy_by`] for a holder of `engine.controls` (untangle
+    /// 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_consolidation_strength_policy_by`].
+    pub fn set_consolidation_strength_policy_as_holder(
+        &self,
+        holder: EntityId,
+        policy: &ConsolidationStrengthPolicy,
+    ) -> Result<EntityId> {
+        self.set_consolidation_strength_policy_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            policy,
+        )
+    }
     pub fn consolidation_strength_policy(&self) -> Result<ConsolidationStrengthPolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in_txn(self, &txn)
@@ -106,7 +146,10 @@ impl Vault {
             .collect())
     }
 }
-fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ConsolidationStrengthPolicy> {
+pub(crate) fn policy_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<ConsolidationStrengthPolicy> {
     let policy = POLICY.get(&vault.store, txn, &())?.unwrap_or_default();
     policy.validate()?;
     Ok(policy)
@@ -196,9 +239,17 @@ pub(crate) fn restored_in_txn(
 
 /// One nightly recipe child. Snapshot, recheck and local archive share the
 /// writer's revision. No confidence, lifecycle, claim bytes or graph edges change.
+/// The archive takes back what the Dreamer landed, so it is judged in this
+/// writer by the policy rows that let it land (X02): with the owner's Auto
+/// ceiling or `Generated` permit for the Dreamer narrowed or removed, nothing
+/// is archived and no receipt is written.
 pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u64) -> Result<u64> {
     let actor = vault.dreamer_actor_for_attempt(attempt)?;
     vault.with_write_txn_grouped(|txn| {
+        let Some(verdict) = crate::gate::dreamer_landing_verdict_in_txn(&vault.store, txn, actor)?
+        else {
+            return Ok(0);
+        };
         let policy = policy_in_txn(vault, txn)?;
         let selection = vault.consolidation_selection_in_txn(txn)?;
         let key = read_key(actor)?;
@@ -218,22 +269,18 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
             }
             let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
             if body.predicate != observations.predicate
-                || body.source != Some(ClaimSource::Generated)
-                || body.lifecycle != ClaimLifecycleStatus::Active
-                || !matches!(
-                    body.approval,
-                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                )
-                || crate::claim::session_claim_producer(&body) != Some(actor.entity_ref())
-                || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)?
-                || vault.store.pending_gate_consent_in_txn(txn, &id)?.is_some()
+                || archive_fence_in_txn(
+                    vault,
+                    txn,
+                    actor.entity_ref(),
+                    &id,
+                    &body,
+                    header.learned_at,
+                    now_ms,
+                    &policy,
+                )?
+                .is_some()
             {
-                continue;
-            }
-            let last_change = observations
-                .last_activity_ms
-                .max(header.learned_at.saturating_mul(1_000));
-            if now_ms < last_change || now_ms - last_change < policy.quiet_ms {
                 continue;
             }
             // Losing read authority or changing a cited revision is not weak
@@ -284,42 +331,153 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
                 selection: selection.clone(),
                 policy: policy.clone(),
             };
-            ARCHIVES.put(&vault.store, txn, &(id, now_ms), &snapshot)?;
-            let deleted_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            let marker = crate::deletion::TombstoneValueV2 {
-                reason: crate::deletion::TombstoneReason::ArchivedByCleanup,
-                deleted_at,
-                request_id: *attempt.as_bytes(),
-            };
-            // The archive drops a fact: its person's `about` lines hide
-            // until a wake pass reads the facts left (FIX 3196).
-            super::mark_person_about_dropped_in_txn(&vault.store, txn, &id)?;
-            vault.put_archive_tombstone_in_txn(txn, &id, &marker)?;
+            archive_claim_in_txn(vault, txn, id, &snapshot, *attempt.as_bytes())?;
             let link = vault.attempt_action_link_in_txn(&*txn, attempt);
-            let receipt = archive_receipt(actor, id, &snapshot, now_ms, link);
+            let receipt = archive_receipt(actor, id, &snapshot, now_ms, link, &verdict);
             vault.store.append_gate_decision_in_txn(txn, &receipt)?;
             archived += 1;
         }
         Ok(archived)
     })
 }
+/// Why the archive fence keeps a claim (untangle 6.7a): the nightly
+/// strength archive and a derivation batch's archive item meet the same
+/// fence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArchiveFence {
+    /// The claim is not the archiving actor's own `Generated` claim.
+    NotOwnGenerated,
+    /// It is not active.
+    NotActive,
+    /// It is neither Auto nor Approved.
+    NotApproved,
+    /// A critical confirmation on it is not settled.
+    ConfirmOpen,
+    /// A gate consent on it is pending.
+    ConsentPending,
+    /// It gained evidence, or was learned, within the policy's quiet window.
+    NotQuiet,
+}
+
+impl ArchiveFence {
+    /// The stable reason token a derivation receipt names.
+    pub(crate) const fn token(self) -> &'static str {
+        match self {
+            Self::NotOwnGenerated => "gate.deny.derive.archive_not_own_generated",
+            Self::NotActive => "gate.deny.derive.archive_not_active",
+            Self::NotApproved => "gate.deny.derive.archive_not_approved",
+            Self::ConfirmOpen => "gate.deny.derive.archive_confirm_open",
+            Self::ConsentPending => "gate.deny.derive.archive_consent_pending",
+            Self::NotQuiet => "gate.deny.derive.archive_not_quiet",
+        }
+    }
+}
+
+/// The archive eligibility fence over the stored claim `id` (`body`,
+/// learned at `learned_at` seconds) for `actor` at `now_ms` under `policy`:
+/// `None` when it may be archived. Only the actor's own active `Generated`
+/// claim at Auto or Approved, with any critical confirmation settled,
+/// nothing pending, and quiet for the policy's window.
+///
+/// # Errors
+///
+/// Storage errors.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fence reads the claim's body, its learned time, the clock and the policy"
+)]
+pub(crate) fn archive_fence_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    id: &EntityId,
+    body: &crate::claim::ClaimBody,
+    learned_at: u64,
+    now_ms: u64,
+    policy: &ConsolidationStrengthPolicy,
+) -> Result<Option<ArchiveFence>> {
+    if body.source != Some(ClaimSource::Generated)
+        || crate::claim::session_claim_producer(body) != Some(actor)
+    {
+        return Ok(Some(ArchiveFence::NotOwnGenerated));
+    }
+    if body.lifecycle != ClaimLifecycleStatus::Active {
+        return Ok(Some(ArchiveFence::NotActive));
+    }
+    if !matches!(
+        body.approval,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    ) {
+        return Ok(Some(ArchiveFence::NotApproved));
+    }
+    if !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, id)? {
+        return Ok(Some(ArchiveFence::ConfirmOpen));
+    }
+    if vault.store.pending_gate_consent_in_txn(txn, id)?.is_some() {
+        return Ok(Some(ArchiveFence::ConsentPending));
+    }
+    let last_activity = OBSERVATIONS
+        .get(&vault.store, txn, id)?
+        .map_or(0, |observations| observations.last_activity_ms);
+    let last_change = last_activity.max(learned_at.saturating_mul(1_000));
+    if now_ms < last_change || now_ms - last_change < policy.quiet_ms {
+        return Ok(Some(ArchiveFence::NotQuiet));
+    }
+    Ok(None)
+}
+
+/// Archives the claim `id` at `snapshot`: the snapshot row, the drop of its
+/// person's `about` lines, and the cleanup-archive tombstone the owner's
+/// cleanup restore lifts. `request_id` names the act (the attempt that
+/// scored it).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn archive_claim_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    snapshot: &ConsolidationStrengthSnapshot,
+    request_id: [u8; 16],
+) -> Result<()> {
+    ARCHIVES.put(&vault.store, txn, &(id, snapshot.at_ms), snapshot)?;
+    let deleted_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    let marker = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::ArchivedByCleanup,
+        deleted_at,
+        request_id,
+    };
+    // The archive drops a fact: its person's `about` lines hide until a wake
+    // pass reads the facts left (FIX 3196).
+    super::mark_person_about_dropped_in_txn(&vault.store, txn, &id)?;
+    vault.put_archive_tombstone_in_txn(txn, &id, &marker)
+}
+
 /// The receipt one archive leaves (owner ruling 10-18: the Dreamer applies
 /// and the owner reverts): the Dreamer's, naming the claim and the revision
 /// its snapshot scored, so the owner finds it and restores the claim through
-/// the cleanup restore door. `link` is the scoring attempt's (FIX 7500).
+/// the cleanup restore door. `link` is the scoring attempt's (FIX 7500). The
+/// verdict is the policy's (X02): what it was judged by (the Dreamer's
+/// Steward grant once a host minted it, else its landing rows), and the
+/// policy frontier it was judged under.
 fn archive_receipt(
     actor: WriteActor,
     claim: EntityId,
     snapshot: &ConsolidationStrengthSnapshot,
     now_ms: u64,
     link: crate::store::GateLoopLink,
+    verdict: &crate::gate::DreamerLandingVerdict,
 ) -> crate::store::GateDecisionRecord {
     crate::store::GateDecisionRecord {
         version: crate::store::GATE_DECISION_LEDGER_VERSION,
         decision_id: crate::store::GateDecisionId::now(),
         created_at: now_ms,
         outcome: "approved".to_owned(),
-        reason_codes: vec!["gate.dreamer.strength.archived".to_owned()],
+        reason_codes: vec![
+            "gate.dreamer.strength.archived".to_owned(),
+            "gate.dreamer.policy.lands_generated_auto".to_owned(),
+        ],
         receipt_reasons: Vec::new(),
         system_notices: Vec::new(),
         actor_class: actor.actor_class().gate_actor_class().to_owned(),
@@ -327,20 +485,16 @@ fn archive_receipt(
         content_kind: "dreamer_strength_archive".to_owned(),
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
         claim_id: Some(*claim.as_bytes()),
-        grant_ref: None,
+        grant_ref: Some(verdict.grant_ref.clone()),
         diff_handle: snapshot.revision.to_vec(),
-        read_frontier_hash: [0; 32],
+        read_frontier_hash: verdict.frontier,
         context: crate::store::GateDecisionContext::linked(link, None),
         redacted_at: None,
     }
 }
 
 fn read_key(actor: WriteActor) -> Result<ScopedReadActorKey> {
-    ScopedReadActorKey::with_actor_class(
-        actor.entity_ref().to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or(Error::InvalidClaimBody(
+    ScopedReadActorKey::for_engine_actor(actor).ok_or(Error::InvalidClaimBody(
         "invalid consolidation strength reader",
     ))
 }

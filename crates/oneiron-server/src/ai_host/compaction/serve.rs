@@ -2,9 +2,10 @@
 //! pass's request, admitted on the role's live route or as exactly the
 //! model the host resolved, held to the admitted model's context, dressed in
 //! the room it leaves, sent on the run's meter and booked. A live fork's
-//! call (FIX 4465 C) is admitted its own way and sent the same way; the
-//! first one of a flight under a row on `auto` goes out only while its live
-//! prefix is still warm (FIX 6029).
+//! call (FIX 4465 C) is admitted its own way and sent the same way, held to
+//! its rung's raw configured context (FIX 4932); the first one of a flight
+//! under a row on `auto` goes out only while its live prefix is still warm
+//! (FIX 6029).
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -19,9 +20,9 @@ use oneiron::compaction::{
 use oneiron::engine_executor::ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmCapability, LlmError,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
-    TierPrecedence, WorkClass, WorkContext,
+    BudgetDenied, CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmCapability,
+    LlmError, LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef,
+    ResponseFormat, TierPrecedence, WorkClass, WorkContext,
 };
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{BudgetGuard, EntityId, LlmResponse};
@@ -56,18 +57,21 @@ impl ServedCompactionBackend {
                 },
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: self.prompt.clone(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: compaction_request_input(request, retry).to_string(),
+                        signature: None,
                     }],
                 },
             ],
@@ -95,19 +99,39 @@ pub(super) enum Admit {
 }
 
 /// How a pass's admitted call goes out: on its route's walk, as the house's
-/// calls do; as exactly its one model, with no fallback; or, for the first
-/// live-fork call of a flight under a row on `auto` (FIX 6029), as exactly
-/// its one model only while the live prefix it forks is still warm, asked
-/// again right before it is dispatched; any stop before it goes out leaves
-/// the flight to its cheap writer.
+/// calls do; as exactly its one model, with no fallback; or, for a live
+/// fork's call (FIX 4465 C), as exactly its captured rung, held to that
+/// rung's raw configured `context` (FIX 4932). `while_warm` is the first
+/// live-fork call of a flight under a row on `auto` (FIX 6029): it goes out
+/// only while the live prefix it forks is still warm, asked again right
+/// before it is dispatched, and any stop before it goes out leaves the
+/// flight to its cheap writer.
 pub(super) enum Dispatch<'a> {
     Walk,
     Exact,
-    WhileWarm(&'a LiveCompactionFork),
+    Live {
+        fork: &'a LiveCompactionFork,
+        context: u64,
+        while_warm: bool,
+    },
 }
 
-/// What one admitted call leaves room for: the admitted model's context,
-/// the input it already holds and the reply's reserve.
+impl Dispatch<'_> {
+    /// Whether this is a live flight's first call under `auto` (FIX 6029).
+    const fn while_warm(&self) -> bool {
+        matches!(
+            self,
+            Self::Live {
+                while_warm: true,
+                ..
+            }
+        )
+    }
+}
+
+/// What one admitted call leaves room for: the context that holds it (a
+/// live fork's, its rung's raw context, FIX 4932), the input it already
+/// holds and the reply's reserve.
 #[derive(Clone, Copy)]
 pub(super) struct CallRoom {
     pub(super) context: u64,
@@ -178,9 +202,9 @@ impl ServedCompactionBackend {
 
     /// One admitted call, sent as `dispatch` says (one admitted as exactly
     /// one model is sent with no fallback, and its request kept for its
-    /// step): held to the admitted model's context, `dress`ed in the room it
-    /// leaves, sent on the run's meter with a permit of its own, and booked.
-    /// `None` only for [`Dispatch::WhileWarm`], when anything stopped it
+    /// step): held to its context, `dress`ed in the room it leaves, sent on
+    /// the run's meter with a permit of its own, and booked. `None` only for
+    /// a [`Dispatch::Live`] call `while_warm`, when anything stopped it
     /// before it went out, a cold prefix included: nothing was sent, and
     /// the flight's cheap writer runs instead (FIX 6029).
     pub(super) fn send<D>(
@@ -196,13 +220,26 @@ impl ServedCompactionBackend {
         ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
     ) -> Result<Option<Served<D>>, CompactionRefusal> {
         let (worn, home_rows, guard, payer) =
-            match self.ready(&mut call, summary_token_budget, dress) {
+            match self.ready(&mut call, &dispatch, summary_token_budget, dress) {
                 Ok(ready) => ready,
                 // Under `auto` nothing has gone out yet: the flight's cheap
                 // writer runs instead (FIX 6029).
-                Err(_) if matches!(dispatch, Dispatch::WhileWarm(_)) => return Ok(None),
+                Err(_) if dispatch.while_warm() => return Ok(None),
                 Err(refusal) => return Err(refusal),
             };
+        // Admit on the original generation before sending. The owned ticket
+        // also settles zero if unwinding drops this call before a response.
+        let generation = match &self.meter {
+            CompactionMeter::Profiled { generation, .. } => {
+                Some(generation.admit().ok_or_else(|| {
+                    refused(
+                        CompactionSuppression::NoCredit,
+                        LlmError::BudgetDenied(BudgetDenied::AdmissionDenied).to_string(),
+                    )
+                })?)
+            }
+            _ => None,
+        };
         let step_hash = call.request.canonical_hash().ok();
         let sent = if matches!(dispatch, Dispatch::Walk) {
             None
@@ -213,9 +250,12 @@ impl ServedCompactionBackend {
         let run = self
             .models
             .funded_run(COMPACTION_RUN, guard.clone(), payer)
-            .with_work_context(WorkContext {
-                class: WorkClass::Foreground,
-                ..Default::default()
+            .with_work_context(match &self.meter {
+                CompactionMeter::Profiled { generation, .. } => generation.work_context(),
+                _ => WorkContext {
+                    class: WorkClass::Foreground,
+                    ..Default::default()
+                },
             })
             .sourced(union_source_rows([sources, home_rows]));
         // A run's scope lends this call a live lease, as a reader child's
@@ -232,7 +272,9 @@ impl ServedCompactionBackend {
                     0,
                 ))
             }
-            CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => None,
+            CompactionMeter::CodeMode(_)
+            | CompactionMeter::Chat { .. }
+            | CompactionMeter::Profiled { .. } => None,
         };
         if let Some(live) = &live {
             live.book_and_revise();
@@ -242,23 +284,42 @@ impl ServedCompactionBackend {
                 .handle
                 .block_on(call.ladder.generate(&run, call.request, None))
                 .map(Some),
-            Dispatch::Exact => self
+            Dispatch::Exact
+            | Dispatch::Live {
+                while_warm: false, ..
+            } => self
                 .handle
                 .block_on(call.ladder.generate_exact(&run, call.request, None))
                 .map(Some),
-            Dispatch::WhileWarm(fork) => {
-                self.handle.block_on(call.ladder.generate_exact_while_warm(
-                    &run,
-                    call.request,
-                    fork.rung(),
-                    fork.request(),
-                ))
-            }
+            Dispatch::Live {
+                fork,
+                while_warm: true,
+                ..
+            } => self.handle.block_on(call.ladder.generate_exact_while_warm(
+                &run,
+                call.request,
+                fork.rung(),
+                fork.request(),
+            )),
         };
         if let Some(live) = &live
             && let Err(error) = live.book_rest()
         {
             tracing::error!(%error, "a compaction call's spend did not book on its run's scope");
+        }
+        if let Some(generation) = generation {
+            let units = reply
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .map_or(0, |response| {
+                    response
+                        .usage
+                        .input
+                        .total
+                        .saturating_add(response.usage.output.total)
+                });
+            generation.settle(units);
         }
         match reply {
             Ok(Some(response)) => Ok(Some(Served {
@@ -281,12 +342,14 @@ impl ServedCompactionBackend {
         }
     }
 
-    /// What a call needs before it is sent: held to the admitted model's
-    /// context, `dress`ed in the room it leaves, asked in plain text on a
+    /// What a call needs before it is sent: held to its context (the
+    /// admitted model's allowance, or a live fork's raw rung context, FIX
+    /// 4932), `dress`ed in the room it leaves, asked in plain text on a
     /// route that cannot hold a schema, and the meter it spends on.
     fn ready<D>(
         &self,
         call: &mut RoleCall,
+        dispatch: &Dispatch<'_>,
         summary_token_budget: u64,
         dress: impl FnOnce(
             &mut LlmRequest,
@@ -295,7 +358,14 @@ impl ServedCompactionBackend {
     ) -> Result<(D, Option<Vec<EntityId>>, BudgetGuard, Option<PayerPerson>), CompactionRefusal>
     {
         // The admitted model, not the configured ladder, must hold the call.
-        let Some(&context) = self.allowances.get(&call.request.model) else {
+        // A live fork's prefix already holds its rung's prompt, so it is held
+        // to that rung's raw context, never to an allowance that took the
+        // prompt out already (FIX 4932).
+        let context = match dispatch {
+            Dispatch::Live { context, .. } => Some(*context),
+            Dispatch::Walk | Dispatch::Exact => self.allowances.get(&call.request.model).copied(),
+        };
+        let Some(context) = context else {
             return Err(refused(
                 CompactionSuppression::TurnScoped { check: None },
                 format!("no context is known for {}", call.request.model),
@@ -336,7 +406,9 @@ impl ServedCompactionBackend {
         // and one the owners must first approve holds it until they say yes
         // (FIX 3740).
         let (guard, payer) = match &self.meter {
-            CompactionMeter::CodeMode(guard) => (guard.clone(), None),
+            CompactionMeter::CodeMode(guard) | CompactionMeter::Profiled { guard, .. } => {
+                (guard.clone(), None)
+            }
             // A chat turn's flight bills the payer its turn resolved, on its
             // own guard on the chat actor's line (FIX 4465 D).
             CompactionMeter::Chat { guard, payer } => (guard.clone(), payer.clone()),
@@ -347,7 +419,9 @@ impl ServedCompactionBackend {
                             PayerFault::Needed { .. } => {
                                 refused(CompactionSuppression::PayerNeeded, fault.to_string())
                             }
-                            PayerFault::Missing { .. } => turn(fault.to_string()),
+                            PayerFault::Missing { .. } | PayerFault::GrantWalletUnbound { .. } => {
+                                turn(fault.to_string())
+                            }
                         },
                     )?;
                 let guard = AgentDispatcher::new(&self.vault)
@@ -396,7 +470,9 @@ impl CompactionBackend for ServedCompactionBackend {
     fn funded(&self) -> bool {
         match &self.meter {
             CompactionMeter::Scope(scope) => scope_funding(&self.vault, Some(scope), false).is_ok(),
-            CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => true,
+            CompactionMeter::CodeMode(_)
+            | CompactionMeter::Chat { .. }
+            | CompactionMeter::Profiled { .. } => true,
         }
     }
 
@@ -462,7 +538,7 @@ pub(super) fn product_of(response: &LlmResponse, latency: Duration) -> Compactio
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect(),
@@ -478,7 +554,7 @@ pub(super) fn request_input_tokens(request: &LlmRequest) -> u64 {
         .iter()
         .flat_map(|message| &message.content)
         .map(|part| match part {
-            ContentPart::Text { text } => oneiron::count_context_pack_tokens(text) as u64,
+            ContentPart::Text { text, .. } => oneiron::count_context_pack_tokens(text) as u64,
             _ => 0,
         })
         .sum()

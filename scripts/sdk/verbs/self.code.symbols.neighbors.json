@@ -1,0 +1,8 @@
+{
+  "name": "self.code.symbols.neighbors",
+  "input": "crate::memory::repo_doors::RepoSymbolsNeighborsInput",
+  "output": "crate::memory::repo_doors::RepoSymbolsNeighborsOutput",
+  "scope": "Read",
+  "context": "run",
+  "effect": "RepoSymbolsNeighbors"
+}

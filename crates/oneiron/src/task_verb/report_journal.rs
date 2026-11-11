@@ -197,6 +197,45 @@ pub(crate) fn erase_in_txn(
     Ok(())
 }
 
+/// The owner's discard of TASK `id`'s local copy (FIX 14534 rule 4): each
+/// entry journaled for it stays identifier-only history: its key, try,
+/// reporter, TASK, report key, digest and receipt, outcome, refs, times and
+/// every lifecycle field but those that hold the call's words
+/// ([`super::lifecycle_receipt::lifecycle_field_holds_words`]); a Done's
+/// judge model stays for the runs that read it. Rewritten in place, in the
+/// discard's transaction, with no receipt of its own. A no-op for any other
+/// entity.
+///
+/// # Errors
+///
+/// Storage errors, or an entry that cannot be read.
+pub(crate) fn discard_payload_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> crate::Result<()> {
+    let mut entries = Vec::new();
+    for (key, mut entry) in REPORTS.scan(store, txn)? {
+        if entry.identity.task_ref != *id {
+            continue;
+        }
+        let Some(lifecycle) = entry.receipt.lifecycle.as_mut() else {
+            continue;
+        };
+        let before = lifecycle.fields.len();
+        lifecycle
+            .fields
+            .retain(|name, _| !super::lifecycle_receipt::lifecycle_field_holds_words(name));
+        if lifecycle.fields.len() != before {
+            entries.push((key, entry));
+        }
+    }
+    for (key, entry) in entries {
+        REPORTS.put(store, txn, &key, &entry)?;
+    }
+    Ok(())
+}
+
 /// Erasing `actor` from the journal (FIX 3520): each entry it reported keeps
 /// its key, try, TASK, report key, digest and receipt, times and outcome
 /// included, and names no one, in its identity and in the lifecycle its

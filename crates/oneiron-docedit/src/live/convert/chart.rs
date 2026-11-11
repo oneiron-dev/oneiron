@@ -22,20 +22,37 @@ use std::collections::BTreeMap;
 /// ([`ChartSeries::plot`]), so two adjacent plots of one family stay two;
 /// after an empty first plot when the chart's family is not its first
 /// series'; and the plot each series is drawn in, by its identity.
-fn held_plots(was: &NodePayload) -> (Vec<(ChartKind, usize)>, BTreeMap<NodeId, usize>) {
+fn held_plots(
+    was: &NodePayload,
+) -> (
+    Vec<(ChartKind, usize)>,
+    BTreeMap<NodeId, usize>,
+    Vec<Option<NodeId>>,
+) {
     let NodePayload::Chart { family, series, .. } = was else {
-        return (Vec::new(), BTreeMap::new());
+        return (Vec::new(), BTreeMap::new(), Vec::new());
     };
     let mut runs: Vec<(ChartKind, usize)> = Vec::new();
     let mut own = BTreeMap::new();
+    let mut plot_ids: Vec<Option<NodeId>> = Vec::new();
     let mut last_plot = None;
     for line in series {
         let kind = line.family.unwrap_or(*family);
         let same_plot = last_plot == Some((kind, line.plot));
         last_plot = Some((kind, line.plot));
         match runs.last_mut() {
-            Some((last, count)) if *last == kind && same_plot => *count += 1,
-            _ => runs.push((kind, 1)),
+            Some((last, count)) if *last == kind && same_plot => {
+                *count += 1;
+                if let Some(id) = plot_ids.last_mut()
+                    && id.is_none()
+                {
+                    *id = line.plot_id;
+                }
+            }
+            _ => {
+                runs.push((kind, 1));
+                plot_ids.push(line.plot_id);
+            }
         }
         if let Some(id) = line.id {
             own.entry(id).or_insert(runs.len() - 1);
@@ -43,11 +60,12 @@ fn held_plots(was: &NodePayload) -> (Vec<(ChartKind, usize)>, BTreeMap<NodeId, u
     }
     if runs.first().is_none_or(|(first, _)| first != family) {
         runs.insert(0, (*family, 0));
+        plot_ids.insert(0, None);
         for plot in own.values_mut() {
             *plot += 1;
         }
     }
-    (runs, own)
+    (runs, own, plot_ids)
 }
 
 /// `targets` and the plot each series is drawn in (`assign`, each series
@@ -472,15 +490,16 @@ pub(in crate::live) fn settle_chart(
     else {
         return Err(LiveError::Invalid(WRITTEN_FRAME));
     };
-    let (plots, own, was) = match held {
+    let (plots, own, held_plot_ids, was) = match held {
         None => (
             vec![(reshape::seed_family(wanted), series.len())],
             BTreeMap::new(),
+            vec![None],
             None,
         ),
         Some(was @ NodePayload::Chart { .. }) => {
-            let (plots, own) = held_plots(was);
-            (plots, own, Some(was))
+            let (plots, own, plot_ids) = held_plots(was);
+            (plots, own, plot_ids, Some(was))
         }
         Some(_) => return Err(LiveError::Invalid(WRITTEN_FRAME)),
     };
@@ -516,6 +535,19 @@ pub(in crate::live) fn settle_chart(
         }
         (targets, assign) = reshape::plot_plan(&plots, *family, &resolved, &own);
     }
+    // Preserve logical continuity before ordinal rank compaction can reuse
+    // an emptied plot's position for another surviving plot (FIX 12770).
+    let mut line_plot_ids: Vec<Option<NodeId>> = series
+        .iter()
+        .zip(&assign)
+        .map(|(line, &at)| {
+            if was.is_none() {
+                line.plot_id
+            } else {
+                targets[at].held.and_then(|from| held_plot_ids[from])
+            }
+        })
+        .collect();
     // A series asked into another plot of its family, as Plot Series On
     // Secondary Axis moves it (FIX 10295): a held one whose plot changed
     // while its family did not, or a new one naming its plot.
@@ -540,6 +572,17 @@ pub(in crate::live) fn settle_chart(
                 }
             })
             .collect();
+        for (index, destination) in moves.iter().enumerate() {
+            if let Some(ordinal) = destination {
+                line_plot_ids[index] = held_series
+                    .iter()
+                    .find(|line| {
+                        line.family.unwrap_or(*held_family) == resolved[index]
+                            && line.plot.unwrap_or(0) == *ordinal
+                    })
+                    .and_then(|line| line.plot_id);
+            }
+        }
         place_ordinals(&mut targets, &mut assign, &resolved, &moves);
     }
     // An of-pie plot drawn once per placement its series' sets give its
@@ -600,6 +643,7 @@ pub(in crate::live) fn settle_chart(
         .map(|&index| ChartSeries {
             family: combo.then_some(resolved[index]),
             plot: ordinals.get(assign[index]).copied().flatten(),
+            plot_id: line_plot_ids[index],
             ..series[index].clone()
         })
         .collect();

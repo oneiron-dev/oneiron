@@ -79,6 +79,7 @@ async fn reply(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: false,
+            host_paid: false,
             seat_effort: effort,
         },
         messages: Vec::new(),
@@ -241,7 +242,9 @@ async fn reply(
     }
     // The call reads what the board assembled from `rows` (FIX 6935): its
     // permit and metered settlement carry them.
-    let read = oneiron::skill_optimize::union_source_rows([Some(rows.as_slice())]);
+    let read = oneiron::skill_optimize::union_source_rows([context
+        .rows_complete
+        .then_some(rows.as_slice())]);
     let run = run.sourced(read);
     let response = ladder
         .generate_exact(&run, request, None)
@@ -269,7 +272,7 @@ async fn reply(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -303,7 +306,10 @@ async fn reply(
 fn text_message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }
 fn unavailable() -> MemoryError {

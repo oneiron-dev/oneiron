@@ -16,6 +16,7 @@ mod milestone;
 pub mod observation;
 mod outage_due;
 mod owner_doors;
+mod park_release;
 mod program;
 #[cfg(feature = "sync")]
 mod progress;
@@ -29,9 +30,9 @@ mod wake_park;
 #[cfg(test)]
 mod tests;
 
-// `admission` is impl-only: it re-opens `impl DreamerRunnerStore` and owns no
-// name the rest of the crate reaches for, so it needs no re-export. The globs
-// below keep the pre-split surface byte-identical: `pub` items stay `pub`,
+pub(crate) use self::admission::AdmittedBudgetLine;
+
+// The globs below keep the pre-split surface byte-identical: `pub` items stay `pub`,
 // `pub(crate)` seams stay `pub(crate)`, and `pub(super)` internals become
 // visible to the whole dreamer_runner tree, tests.rs included.
 // ONE-1707 registration: the plugin-suggestion payload type rides the
@@ -50,13 +51,20 @@ pub(crate) use self::deferral::{
     BACKLOG_DEFERRED_REASON, SELECTION_DEFERRED_REASON, selection_deferred,
 };
 pub use self::free_time::*;
-pub(crate) use self::home::reelect_home_in_txn;
+pub(crate) use self::home::{declared_home_candidate, home_candidate_rank, reelect_home_in_txn};
 pub(crate) use self::lease_fence::DreamerTryLease;
 pub use self::milestone::*;
 pub use self::outage_due::{outage_park_reason, outage_retry_after};
 pub use self::owner_doors::*;
+pub use self::park_release::{
+    PARK_RELEASE_OWED_PRODUCER, ParkReleaseAction, ParkReleaseView, ReleaseParkedAttemptRequest,
+    release_parked_attempt_as_owner,
+};
+// The owner notice's source, for the integration test doors (`test_doors::wake_d1_park_release`).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::park_release::park_release_notice_source;
 pub use self::program::{
-    ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin,
+    ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, ProgramTrigger,
     TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
     TurnProgramRegistration,
 };
@@ -64,14 +72,19 @@ pub(crate) use self::program::{
     ProgramHold, ProgramWrite, TurnProgramAuthority, TurnProgramBinding, TurnProgramBound,
     TurnProgramEntered, arm_turn_program_in_txn, bind_program_write_in_txn,
     disarm_turn_program_in_txn, drain_turn_program_wakes, erase_turn_program_actor_in_txn,
-    is_withdrawal_refusal, join_program_checkpoint_in_txn, note_program_write_uncertain,
-    program_milestone_envelope, record_turn_program_wakes_in_txn, settle_program_outbound_in_txn,
-    settle_program_write_in_txn, turn_program_erase_details, turn_programs_armed_in_txn,
+    is_withdrawal_refusal, join_program_checkpoint_in_txn, next_program_timer_at,
+    note_program_write_uncertain, program_actor_for_attempt_in_txn, program_milestone_envelope,
+    record_turn_program_wakes_in_txn, release_idle_programs, release_program_wakes,
+    settle_program_outbound_in_txn, settle_program_write_in_txn, turn_program_erase_details,
+    turn_programs_armed_in_txn,
 };
 // KS-2B1: a turn program's STEP bodies and run actor, for body custody.
 pub(crate) use self::program::{
     program_run_actor_in_txn, program_step_carriage, program_step_owners,
 };
+// FIX 11906: the project a turn program's code run sends in, for browser
+// consent.
+pub(crate) use self::program::program_run_project_in_txn;
 // DOOR-141 PR3a/PR3b: a turn program's reads, for its host doors and the SDK.
 pub use self::program::{
     OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
@@ -96,6 +109,12 @@ pub use self::recipe::*;
 pub use self::store::*;
 pub use self::types::*;
 pub use self::wake_park::DreamerCheckpointDue;
+// The park resume table (the wake lifecycle owner).
+pub use oneiron_wake_contract::dreamer_runner::park_resume::{
+    AGENT_RUNS_PARK_OWNER, DRAFTER_RETRAIN_PARK_OWNER, DREAMER_SERVER_PARK_OWNER,
+    FEEDBACK_TRIAGE_PARK_OWNER, ParkOwnerClass, ParkResume, ParkResumer, TRAP_PARK_OWNER_PREFIX,
+    TURN_PROGRAM_PARK_OWNER, WORKFLOWS_PARK_OWNER,
+};
 
 // The flat dreamer_runner.rs module used to provide these names to the test
 // module through `use super::*`; after the directory split the seam re-imports
@@ -123,6 +142,7 @@ pub mod authority;
 
 pub mod connector_event;
 pub mod maintenance;
+pub(crate) mod tables;
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.

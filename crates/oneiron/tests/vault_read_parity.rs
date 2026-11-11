@@ -335,6 +335,7 @@ fn query_request() -> CoreQueryRequest {
         limit: 10,
         view: Some(View::Full),
         count_mode: CountMode::Exact,
+        filter: None,
     }
 }
 
@@ -348,6 +349,7 @@ fn context_pack_request() -> CoreContextPackRequest {
         edge_hop: Some(1),
         max_neighbors: Some(4),
         budget: None,
+        filter: None,
     }
 }
 
@@ -357,6 +359,7 @@ fn hydrate_request(reference: &str) -> CoreHydrateRequest {
         short_id: None,
         content_hash: None,
         view: Some(View::Full),
+        filter: None,
     }
 }
 
@@ -364,6 +367,7 @@ fn timeline_request(id: &EntityId) -> CoreMemoryTimelineRequest {
     CoreMemoryTimelineRequest {
         id: id.to_hex(),
         view: Some(View::Summary),
+        filter: None,
     }
 }
 
@@ -454,6 +458,7 @@ fn scope_denial_preserves_not_found_and_reports_withholding() {
     let batch = |reference: &str| CoreBatchShortIdHydrateRequest {
         refs: vec![reference.to_owned()],
         view: Some(View::Full),
+        filter: None,
     };
     let denied_item = in_process
         .hydrate_many(batch(&fixture.denied_ref))

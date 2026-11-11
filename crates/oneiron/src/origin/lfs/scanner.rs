@@ -341,7 +341,7 @@ impl CredentialStream {
 
     fn check_token(&self) -> Result<()> {
         if self.token.len() >= 20
-            && matches!(self.token[0], b'A' | b'g' | b's' | b'x' | b'r')
+            && crate::batch::secret_scan::provider_prefix_head(self.token[0])
             && let Some(reason) = crate::batch::secret_scan::scan_file_content("", &self.token)
         {
             return Err(denied(reason));
@@ -353,7 +353,7 @@ impl CredentialStream {
     /// [`Self::inner`], as the write door reads one after leading token bytes.
     fn check_inner(&self, starts: usize) -> Result<()> {
         for (start, &byte) in self.inner.iter().enumerate().take(starts) {
-            if !matches!(byte, b'A' | b'g' | b's' | b'x' | b'r') {
+            if !crate::batch::secret_scan::provider_prefix_head(byte) {
                 continue;
             }
             let candidate = &self.inner[start..self.inner.len().min(start + KEY_MAX)];

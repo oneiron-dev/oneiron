@@ -120,6 +120,7 @@ impl SiwcResponses {
             result = opening => result.map_err(|_| FatalLlmError::Auth)?,
         };
         let release = || {
+            lease.check_dispatch_release()?;
             if cancel.is_cancelled() {
                 return Err(RetryableLlmError::DeviceAdmissionStopped.into());
             }

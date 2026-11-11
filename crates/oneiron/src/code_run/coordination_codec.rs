@@ -180,6 +180,11 @@ pub(super) fn spawn_value(result: &SelfAgentSpawnResult) -> Result<Value> {
             ("kind", Value::from("agent_spawn")),
             ("state", Value::from("target_erased")),
         ]),
+        // FIX 9183: an asker's erase replays as its own cause.
+        SelfAgentSpawnResult::AskerErased => request_map(vec![
+            ("kind", Value::from("agent_spawn")),
+            ("state", Value::from("asker_erased")),
+        ]),
     })
 }
 
@@ -208,6 +213,7 @@ pub(super) fn decode_spawn(value: &Value) -> Result<SelfAgentSpawnResult> {
             unapplied: decode_unapplied(m)?,
         }),
         "target_erased" => Ok(SelfAgentSpawnResult::TargetErased),
+        "asker_erased" => Ok(SelfAgentSpawnResult::AskerErased),
         _ => Err(invalid_code_run_replay("spawn state")),
     }
 }

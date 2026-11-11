@@ -212,6 +212,8 @@ pub struct WorkflowStepCapture {
     pub requested_agent_ref: EntityId,
     pub agent_def_ref: EntityId,
     pub definition: AgentDefinitionSpec,
+    /// The caller provenance this step captured at admission.
+    pub caller_origin: crate::agent_dispatch::CallerOrigin,
 }
 
 /// A settled step's attempt and the result it pinned.
@@ -260,6 +262,7 @@ fn run_view(status: &WorkflowDispatchStatus) -> MemoryResult<WorkflowRunView> {
                 requested_agent_ref: *requested,
                 agent_def_ref: frozen.target.agent_definition_ref()?,
                 definition: (&frozen.definition).into(),
+                caller_origin: frozen.caller_origin,
             })
         })
         .collect::<MemoryResult<_>>()?;
@@ -298,6 +301,25 @@ pub fn dispatch_workflow_as(
     owner: &AuthenticatedOwner,
     input: WorkflowDispatchRequest,
 ) -> MemoryResult<WorkflowRunView> {
+    // FIX 4973: this native signature carries no origin fact, so the new
+    // root is genuinely unstamped; the served door passes its own.
+    dispatch_workflow_as_with_origin(
+        vault,
+        owner,
+        input,
+        crate::agent_dispatch::CallerOrigin::Unknown,
+    )
+}
+
+/// Starts one run of a saved workflow as the owner with the host's explicit
+/// caller origin (FIX 4973): the served door's admitted transport locality,
+/// or Unknown for a genuinely unstamped new root. Provenance only.
+pub fn dispatch_workflow_as_with_origin(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: WorkflowDispatchRequest,
+    caller_origin: crate::agent_dispatch::CallerOrigin,
+) -> MemoryResult<WorkflowRunView> {
     owner.revalidate(vault)?;
     let request = DispatchAgent {
         target: AgentDispatchTarget::Workflow(input.workflow_ref),
@@ -310,12 +332,14 @@ pub fn dispatch_workflow_as(
         run_id: None,
         now: vault.now_recorded_at(),
     };
-    let spawn = AgentSpawnContext::default().with_context_spec(
-        input
-            .context_spec
-            .unwrap_or_default()
-            .with_briefing(input.briefing),
-    );
+    let spawn = AgentSpawnContext::default()
+        .with_context_spec(
+            input
+                .context_spec
+                .unwrap_or_default()
+                .with_briefing(input.briefing),
+        )
+        .with_caller_origin(caller_origin);
     // FIX 4391: a run that realizes a TASK has its own admission; without
     // one the dispatch is the one it always was.
     let outcome = match input.task_ref {
@@ -466,7 +490,8 @@ pub fn dispatch_workflow_bound_as_person(
         )
         .with_spend(SpawnSpend {
             scope: funding.scope.clone(),
-        });
+        })
+        .with_caller_origin(memory.caller_origin());
     let lane = || memory.read_key();
     let binder = WorkflowBinder::Person {
         person,

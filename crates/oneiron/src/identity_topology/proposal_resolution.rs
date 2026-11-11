@@ -17,24 +17,26 @@ use super::act_admission::{EngineCause, ResolvedSeal, TopologySeal, resolve_seal
 use super::event_body_codec::{decode_action, decode_str_field, encode_action_entries};
 use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
 use super::op_apply::{IdentityOpOutcome, IdentityOpWrite};
-use super::op_vocabulary::{IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp};
+use super::op_vocabulary::{FacetOp, IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp};
 use super::reassignment_map::{ReassignmentEntry, ReassignmentTarget};
 use super::store_entity_helpers::identity_topology_entity_type_for_store_in_txn;
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::{
     IdentityTopologyRejection, ProposalOutcome, ProposalRuling, ProposalScope,
 };
-use super::wire_keys::{BODY_KEY_KIND, EVENT_KIND_MERGE, EVENT_KIND_SPLIT};
+use super::wire_keys::{BODY_KEY_KIND, EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_SPLIT};
 use crate::error::SyncError;
 
 /// The op's primary target — the entity whose registry class names the
-/// ramp scope: the merge SURVIVOR (what the merged records become) and the
-/// split ORIGINAL (what is being divided).
+/// ramp scope: the merge SURVIVOR (what the merged records become), the
+/// split ORIGINAL (what is being divided) and the facet BASE (whose masks are
+/// being partitioned, FIX 7814).
 pub(super) fn proposal_scope_target(op: &IdentityTopologyOp) -> Result<EntityId> {
     match op {
         IdentityTopologyOp::Merge(merge) => Ok(merge.survivor),
         IdentityTopologyOp::Split(split) => Ok(split.entity),
-        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => Err(Error::Sync(
+        IdentityTopologyOp::Facet(facet) => Ok(facet.entity),
+        IdentityTopologyOp::AssertDistinct(_) => Err(Error::Sync(
             SyncError::IdentityTopologyUnarmed("resolution of this op kind"),
         )),
     }
@@ -55,6 +57,10 @@ pub(super) fn proposal_scope_target(op: &IdentityTopologyOp) -> Result<EntityId>
 /// every head target stay bounded to the proposal's named set, and an
 /// amendment may narrow the map but never route through an entity the
 /// decider never saw. Bare claim items are not routes ([`reassignment_entry_in_scope`]).
+///
+/// A FACET amendment keeps its base (the one subject) and its map rows under
+/// the same bound; it may replace the parked specs, which name no entity
+/// until its ruling mints them (FIX 7814).
 pub(super) fn assert_amendment_in_scope(
     proposed: &IdentityTopologyOp,
     amended: &IdentityTopologyOp,
@@ -71,15 +77,18 @@ pub(super) fn assert_amendment_in_scope(
             "amended body names a subject outside the proposal",
         )));
     }
-    if let IdentityTopologyOp::Split(split) = amended
-        && split
-            .reassignment
-            .entries
+    let amended_map = match amended {
+        IdentityTopologyOp::Split(split) => Some(&split.reassignment),
+        IdentityTopologyOp::Facet(facet) => Some(&facet.reassignment),
+        IdentityTopologyOp::Merge(_) | IdentityTopologyOp::AssertDistinct(_) => None,
+    };
+    if amended_map.is_some_and(|map| {
+        map.entries
             .iter()
             .any(|entry| !reassignment_entry_in_scope(entry, &proposed_subjects))
-    {
+    }) {
         return Err(Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(
-            "amended split map references an entity outside the proposal",
+            "amended map references an entity outside the proposal",
         )));
     }
     Ok(())
@@ -204,7 +213,10 @@ pub(super) fn validate_resolution_scope_stateless(record: &StoredIdentityOpEvent
     let StoredIdentityOpAction::ProposalResolution { scope, .. } = &record.action else {
         return Ok(());
     };
-    let proposal_is_op = matches!(scope.op_kind, EVENT_KIND_MERGE | EVENT_KIND_SPLIT);
+    let proposal_is_op = matches!(
+        scope.op_kind,
+        EVENT_KIND_MERGE | EVENT_KIND_SPLIT | EVENT_KIND_FACET
+    );
     if !proposal_is_op {
         return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology proposal resolution scope names a non-op kind",
@@ -220,15 +232,16 @@ pub(super) fn validate_resolution_scope_stateless(record: &StoredIdentityOpEvent
     Ok(())
 }
 
-/// The AMENDABLE op kinds: only the two ops whose apply door is armed and
-/// whose subject set is expressible on the wire. A resolution's scope
-/// `op_kind` is one of these by construction (a proposal of an unarmed kind
-/// never reaches the ledger), so a stored value outside the set is
-/// malformed.
+/// The AMENDABLE op kinds: the three ops the resolution door rules — merge,
+/// split and facet (FIX 7814) — whose subject set is expressible on the wire.
+/// A resolution's scope `op_kind` is one of these by construction (a parked
+/// assert_distinct is ruled by re-assertion, never here), so a stored value
+/// outside the set is malformed.
 pub(super) fn decode_amendable_kind(value: &str) -> Result<&'static str> {
     match value {
         EVENT_KIND_MERGE => Ok(EVENT_KIND_MERGE),
         EVENT_KIND_SPLIT => Ok(EVENT_KIND_SPLIT),
+        EVENT_KIND_FACET => Ok(EVENT_KIND_FACET),
         _ => Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology proposal scope op kind is unknown",
         ))),
@@ -258,9 +271,15 @@ pub fn encode_identity_op_amendment(op: &IdentityTopologyOp) -> Result<Vec<u8>> 
             applied_assigned: 0,
             applied_residue: 0,
         },
-        // A facet op has no propose lane (see `apply_identity_topology_op`),
-        // so it has no park to amend either.
-        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {
+        // A facet amendment is a parked body (FIX 7814): the specs a ruling
+        // mints, never minted ids.
+        IdentityTopologyOp::Facet(facet) => StoredIdentityOpAction::ParkedFacet {
+            entity: facet.entity,
+            specs: facet.facets.clone(),
+            reassignment: facet.reassignment.canonicalized(),
+        },
+        // A parked assert_distinct is ruled by re-assertion, never amended.
+        IdentityTopologyOp::AssertDistinct(_) => {
             return Err(Error::Sync(SyncError::IdentityTopologyUnarmed(
                 "amendment of this op kind",
             )));
@@ -354,11 +373,7 @@ impl Vault {
             let IdentityTopologyAction::Apply(op) = event.action else {
                 continue;
             };
-            if !matches!(
-                op,
-                IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
-            ) || !op.participants().contains(participant)
-            {
+            if !op.is_resolvable_when_parked() || !op.participants().contains(participant) {
                 continue;
             }
             let write = IdentityOpWrite::auto(crate::claim::ClaimSource::Inferred);
@@ -638,6 +653,12 @@ impl Vault {
                 IdentityTopologyOp::Split(SplitOp {
                     evidence: evidence.clone(),
                     ..split.clone()
+                })
+            }
+            (Some(evidence), IdentityTopologyOp::Facet(facet)) => {
+                IdentityTopologyOp::Facet(FacetOp {
+                    evidence: evidence.clone(),
+                    ..facet.clone()
                 })
             }
             _ => op.clone(),

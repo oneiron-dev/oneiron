@@ -7,8 +7,9 @@
 use oneiron::run_tree::{RunTreeWire, RunTreeWireNode};
 
 use super::{
-    CoreRunTreeEvent, CoreRunTreeEventKind, CoreRunTreeFailure, CoreRunTreeNode, CoreRunTreeRepair,
-    CoreRunTreeResponse, CoreRunTreeStatus, CoreRunTreeTimestamps,
+    CoreRunTreeDeletion, CoreRunTreeEvent, CoreRunTreeEventKind, CoreRunTreeFailure,
+    CoreRunTreeNode, CoreRunTreeRepair, CoreRunTreeResponse, CoreRunTreeStatus,
+    CoreRunTreeTimestamps,
 };
 
 /// `tree` as the core run-tree response: its flat table, with every node,
@@ -18,11 +19,20 @@ pub(super) fn core_run_tree(tree: oneiron::RunTree) -> CoreRunTreeResponse {
         nodes,
         roots,
         repairs,
+        deletions,
     } = RunTreeWire::from(tree);
     CoreRunTreeResponse {
         nodes: nodes.into_iter().map(core_run_tree_node).collect(),
         roots,
         repairs: repairs.into_iter().map(core_run_tree_repair).collect(),
+        deletions: deletions
+            .into_iter()
+            .map(|line| CoreRunTreeDeletion {
+                attempt_id: line.attempt_id,
+                deleted_by: line.deleted_by,
+                deleted_at: line.deleted_at,
+            })
+            .collect(),
     }
 }
 

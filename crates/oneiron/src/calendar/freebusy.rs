@@ -14,18 +14,20 @@
 //! conversion fails typed only when the interval actually emitted has no
 //! half-open representation.
 //!
-//! A floating or all-day EVENT names civil time, not an instant: it occupies
-//! the span its civil start and exclusive end cover in some zone
-//! (`CalendarEventRow::wall_span`), so an all-day EVENT keeps its whole day
-//! busy wherever its owner reads it (FIX 7844).
+//! A floating or all-day EVENT names civil time, not an instant
+//! (`CalendarEventRow::wall_span`). An all-day EVENT in a zone this engine
+//! resolves (`calendar.tz`) occupies its days in that zone (fix list row
+//! 17868). Any other occupies the span its civil start and exclusive end
+//! cover in some zone, so an all-day EVENT keeps its whole day busy wherever
+//! its owner reads it (FIX 7844).
 //!
 //! Series masters expand inside the query range before busy intervals are
 //! merged. Recurrence projection failures propagate; they never silently
 //! become an empty busy union.
 
 use super::query::{
-    CalendarEventRow, CalendarRead, CalendarSel, matches_selectors, validate_selectors,
-    visit_calendar_events_busy,
+    CalendarEventRow, CalendarRead, CalendarSel, SeriesCursors, matches_selectors,
+    validate_selectors, visit_calendar_events_busy,
 };
 use crate::claim::{ScopedRead, ScopedReadResult};
 use crate::entity_id::EntityId;
@@ -117,7 +119,7 @@ fn freebusy_listed_in(
     range: TimeRange,
     listed: Option<&mut std::collections::BTreeMap<EntityId, Vec<EntityId>>>,
 ) -> Result<BusyUnion> {
-    PreparedBusy::read(read, calendars)?.union(calendars, range, listed)
+    PreparedBusy::read(read, calendars)?.union(calendars, range, listed, &mut Default::default())
 }
 
 /// [`freebusy_scoped`] as one page (FIX 11998): the range from `from` (or
@@ -141,8 +143,10 @@ pub(in crate::calendar) fn freebusy_page_scoped(
         let mut slices =
             super::query::Slices::new(from.unwrap_or(range.start), range.end, deadline, false);
         let mut intervals = Vec::new();
+        // Each series' walk carries from one slice to the next (FIX 16174).
+        let mut cursors = Default::default();
         while let Some(slice) = slices.next_slice() {
-            intervals.extend(prepared.union(calendars, slice, None)?);
+            intervals.extend(prepared.union(calendars, slice, None, &mut cursors)?);
         }
         Ok((normalize_busy(intervals), slices.resume_from()))
     })
@@ -191,15 +195,22 @@ impl PreparedBusy {
     }
 
     /// The busy union over `range`, listing in `listed` the EVENTs it keeps.
+    /// Each series expands under `cursors`, which a page's slices share: one
+    /// for the rows as written and one for the rows as held, since both
+    /// reads carry the same EVENTs.
     fn union(
         &self,
         calendars: &[CalendarSel],
         range: TimeRange,
         mut listed: Option<&mut std::collections::BTreeMap<EntityId, Vec<EntityId>>>,
+        cursors: &mut [SeriesCursors; 2],
     ) -> Result<BusyUnion> {
         let bounds = ordered(range);
         let mut intervals = Vec::new();
-        for (rows, withheld_exception) in [(&self.written, &self.all), (&self.held, &self.settled)]
+        for ((rows, withheld_exception), cursors) in
+            [(&self.written, &self.all), (&self.held, &self.settled)]
+                .into_iter()
+                .zip(cursors.iter_mut())
         {
             let exceptions: Vec<_> = rows
                 .iter()
@@ -234,8 +245,13 @@ impl PreparedBusy {
                             .or_insert_with(|| exception.claims.clone());
                     }
                 }
-                let occurrences =
-                    super::query::occurrences(row, bounds, &exceptions, withheld_exception)?;
+                let occurrences = super::query::occurrences(
+                    row,
+                    bounds,
+                    &exceptions,
+                    withheld_exception,
+                    cursors,
+                )?;
                 for occurrence in occurrences {
                     if let Some(clipped) = clip(occurrence, bounds) {
                         let (start_utc, end_utc) = half_open(clipped)?;

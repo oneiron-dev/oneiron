@@ -9,6 +9,7 @@ use crate::gate::{
     ApprovalTarget, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, OutboundSendFacts,
 };
+use crate::outbound::OutboundRecipient;
 use crate::outbound::capability::{normalize_key, outbound_verb_contract};
 
 #[derive(Deserialize)]
@@ -16,6 +17,10 @@ struct FrozenDispatch {
     verb: String,
     channel: String,
     target: String,
+    /// Every recipient of a message to several, frozen only then (fix list
+    /// row 17645).
+    #[serde(default)]
+    recipients: Vec<OutboundRecipient>,
     content_ref: Option<String>,
     job_ref: Option<String>,
     actor_class: String,
@@ -36,7 +41,8 @@ struct FrozenDispatch {
     policy_risk: String,
 }
 
-/// Rebuilds only the ordinary frozen send's approve-once composition. The
+/// Rebuilds only the ordinary frozen send's approve-once composition, every
+/// recipient of a message to several in its role (fix list row 17645). The
 /// current admission still uses its original Gate input, not this snapshot.
 /// Other payload formats and target families name no candidate here.
 pub(crate) fn connector_slate_effect_from_frozen_payload(
@@ -76,16 +82,19 @@ pub(crate) fn connector_slate_effect_from_frozen_payload(
         (target, send_ref)
     } else {
         let send_ref = frozen.approval_send_ref?;
-        let target = ApprovalTarget::for_outbound(&OutboundSendFacts {
-            connector: &connector,
-            target: &frozen.target,
-            sender,
-            native_mail_recipient: frozen.native_mail_recipient == Some(true),
-            thread_ref: frozen.reply_thread_ref.as_deref(),
-            content_ref: frozen.content_ref.as_deref(),
-            send_ref: &send_ref,
-            calendar_invite: frozen.calendar_invite.as_ref(),
-        })?;
+        let target = ApprovalTarget::for_outbound_to(
+            &OutboundSendFacts {
+                connector: &connector,
+                target: &frozen.target,
+                sender,
+                native_mail_recipient: frozen.native_mail_recipient == Some(true),
+                thread_ref: frozen.reply_thread_ref.as_deref(),
+                content_ref: frozen.content_ref.as_deref(),
+                send_ref: &send_ref,
+                calendar_invite: frozen.calendar_invite.as_ref(),
+            },
+            &frozen.recipients,
+        )?;
         if target.pinned_family() != Some(PinnedApprovalFamily::ConnectorSlate) {
             return None;
         }
@@ -107,6 +116,7 @@ pub(crate) fn connector_slate_effect_from_frozen_payload(
         provenance: GateProvenanceHandles {
             actor_entity_ref,
             mail_content_ref: frozen.content_ref,
+            mail_recipients: frozen.recipients,
             approval_target: Some(target),
             ..GateProvenanceHandles::default()
         },

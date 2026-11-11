@@ -30,6 +30,11 @@ use oneiron_authority::federation::Scope;
 /// One reader's live Grants, each id with its Scope.
 type ReaderGrants = Rc<[(EntityId, Scope)]>;
 
+/// What each agent Grant that names one credential's holder and stands for
+/// `read` lets a read reach; `None` when no Grant has ever named the holder
+/// (`Vault::agent_grant_read_bounds_in_txn`).
+pub(super) type HolderGrantBounds = Rc<Option<Vec<Scope>>>;
+
 /// What one read asked of its rows beyond its key's own floor, so A resolves
 /// its filter under a Grant as the read resolved its own.
 #[derive(Clone, Default)]
@@ -44,12 +49,15 @@ pub(super) enum AskedFilter {
 }
 
 /// The Grants one serving txn's row checks hold: each reader's own, loaded at
-/// the first row that reader's B refuses and dropped with the txn's
+/// the first row that reader's B refuses, and each credential holder's
+/// standing read bounds, loaded at the first row its key judges
+/// ([`ScopedReadActorKey::agent_grant_holder`]); both dropped with the txn's
 /// [`HeldAuthority`]. A peer's and a named read's row checks share them, each
 /// reading its own actor's entry, never another's.
 #[derive(Clone, Default)]
 pub(super) struct HeldGrants {
     by_reader: Rc<RefCell<BTreeMap<EntityId, ReaderGrants>>>,
+    by_holder: Rc<RefCell<BTreeMap<EntityId, HolderGrantBounds>>>,
     asked: AskedFilter,
 }
 
@@ -58,6 +66,7 @@ impl HeldGrants {
     pub(super) fn fresh(asked: AskedFilter) -> Self {
         Self {
             by_reader: Rc::default(),
+            by_holder: Rc::default(),
             asked,
         }
     }
@@ -66,6 +75,7 @@ impl HeldGrants {
     pub(super) fn shared_asking(&self, asked: AskedFilter) -> Self {
         Self {
             by_reader: Rc::clone(&self.by_reader),
+            by_holder: Rc::clone(&self.by_holder),
             asked,
         }
     }
@@ -85,6 +95,27 @@ impl HeldGrants {
             .borrow_mut()
             .insert(reader, Rc::clone(&grants));
         grants
+    }
+
+    /// `holder`'s standing read bounds in this txn: `load`ed at the first
+    /// ask, then held. A failed load holds nothing, so the next row asks
+    /// again.
+    ///
+    /// # Errors
+    /// `load`'s.
+    pub(super) fn bounds_of(
+        &self,
+        holder: EntityId,
+        load: impl FnOnce() -> Result<Option<Vec<Scope>>>,
+    ) -> Result<HolderGrantBounds> {
+        if let Some(bounds) = self.by_holder.borrow().get(&holder) {
+            return Ok(Rc::clone(bounds));
+        }
+        let bounds: HolderGrantBounds = Rc::new(load()?);
+        self.by_holder
+            .borrow_mut()
+            .insert(holder, Rc::clone(&bounds));
+        Ok(bounds)
     }
 }
 
@@ -158,6 +189,10 @@ impl ScopedRead<'_> {
         let Some(reader) = self.grant_reader() else {
             return filter.clone();
         };
+        // Each Grant reads under what the read asked, its bound caller
+        // filter among it (FIX 3977).
+        let requested = self.asked_request(requested);
+        let requested = requested.as_deref();
         let grants = reader_grants_in(self.vault, rtxn, reader).unwrap_or_else(|error| {
             warn_grant_errors(1, &[], Some(error.kind()));
             Vec::new()
@@ -210,8 +245,10 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let floor = policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(grant));
-        let filter = crate::gate::narrow_retrieval_filter(&floor, request)?
-            .under_credential_of(&self.actor_key);
+        let filter = self.under_caller_filter(
+            crate::gate::narrow_retrieval_filter(&floor, request)?
+                .under_credential_of(&self.actor_key),
+        );
         self.own_row_readable_in(rtxn, policy, id, raw, &filter, authority, Some(grant))
     }
 
@@ -292,10 +329,27 @@ fn reader_grants_in(
     if !undecoded.is_empty() {
         warn_grant_errors(undecoded.len(), &undecoded, None);
     }
+    let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+        &vault.store,
+        txn,
+        grants
+            .iter()
+            .filter(|standing| standing.grant.member_ref == reader)
+            .map(|standing| &standing.grant),
+    )?;
+    // A Grant whose `read` a class it names admits reads under its Scope
+    // with `read` listed (FIX 8735); an unclassed Grant's Scope is its own.
     Ok(grants
-        .into_iter()
-        .filter(|standing| standing.stands_in_txn(vault, txn, reader, "read", now, &owners))
-        .map(|standing| (standing.id, standing.grant.authority_scope))
+        .iter()
+        .filter(|standing| {
+            standing.stands_in_txn(vault, txn, reader, "read", now, &owners, &classes)
+        })
+        .map(|standing| {
+            (
+                standing.id,
+                standing.grant.scope_for_verb("read", &classes).into_owned(),
+            )
+        })
         .collect())
 }
 
