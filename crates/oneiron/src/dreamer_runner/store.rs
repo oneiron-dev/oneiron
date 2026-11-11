@@ -1145,9 +1145,10 @@ impl<'a> DreamerRunnerStore<'a> {
         self.park_attempt_with_wait_in_txn(wtxn, input, None)
     }
 
-    /// [`Self::park_attempt_in_txn`] with a typed wait: the refill that resumes the park. A wait
-    /// exists only on a trap park (any other owner fails); the writer stamps its lease fence from
-    /// the queue row's `attempt_count`, read in this same transaction, never from the caller.
+    /// [`Self::park_attempt_in_txn`] with a typed wait: the refill or the delivery that resumes
+    /// the park. A wait exists only on a trap park (any other owner fails); the writer stamps its
+    /// lease fence from the queue row's `attempt_count`, read in this same transaction, never from
+    /// the caller.
     pub(crate) fn park_attempt_with_wait_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
