@@ -29,7 +29,7 @@ use crate::error::{Error, Result};
 use crate::federation::{
     ConnectGrantRequest, FederationDirectionScope, FederationGrantScope, INQUIRE_VERB_CLASS, Scope,
     ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling, connect_direction_projection,
-    decode_federation_grant_body,
+    decode_federation_grant_body, require_one_connect_per_peer,
 };
 use crate::receipt::GuestRevokeOutcome;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT};
@@ -248,10 +248,12 @@ impl Vault {
     /// in one writer: the empty WORLD "What <company> can ask about", then
     /// the Connect guest grant with verbs `inquire` alone over that WORLD
     /// and the request's terms. Every Connect mint check holds (a live
-    /// Owner, an unconflicted root, not this vault, no live Connect with
-    /// the company, the manifest's Connect guest ceiling, a future expiry);
-    /// a refusal leaves neither the WORLD nor the grant. The edge is inert
-    /// until the Connect pact with the company is Active.
+    /// Owner, an unconflicted root, not this vault, the manifest's Connect
+    /// guest ceiling, a future expiry); a refusal leaves neither the WORLD
+    /// nor the grant. A live Connect with the company refuses, saying the
+    /// member disconnects it first: an edge does not join it (Engine ruling
+    /// INQUIRE-EDGE-JOIN = A). The edge is inert until the Connect pact
+    /// with the company is Active.
     pub fn mint_inquiry_edge(
         &self,
         owner: &AuthenticatedOwner,
@@ -263,6 +265,16 @@ impl Vault {
         }
         let name = format!("What {company} can ask about");
         self.with_write_txn_grouped(|txn| {
+            // An edge cannot join a live Connect with the company: the grant
+            // row is never widened in place and a re-scope only narrows
+            // (Engine ruling INQUIRE-EDGE-JOIN = A).
+            let fold = self.authority_fold_readonly_in_txn(txn)?;
+            if require_one_connect_per_peer(&fold, &request.company_vault_id, None).is_err() {
+                return Err(refused(
+                    "this vault already has a live Connect with that company, and an inquiry \
+                     edge cannot join it yet: disconnect that Connect first, then mint the edge",
+                ));
+            }
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let opened_world = self.create_world_in_txn(txn, owner, &name, now)?;
             let terms = InquiryTerms {

@@ -15,7 +15,8 @@
 //!   statements;
 //! - the company's reciprocal grant (`propose` alone over "Inquiry edge:
 //!   <member>") and the member's edge make the existing Connect pact Active
-//!   on both vaults, and neither grant confers read.
+//!   on both vaults, neither grant confers read, and a second edge to the
+//!   company refuses while that Connect stands.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_edge`.
 
@@ -560,6 +561,18 @@ fn the_reciprocal_grant_and_the_edge_make_the_connect_pact_active_on_both_vaults
     assert_eq!(member_pact.status, FederationPactStatus::Active);
     assert_eq!(member_pact.grant_ref, edge.grant);
     assert_eq!(member_pact.peer_vault_id, company.vault_id);
+
+    let join = member
+        .vault
+        .mint_inquiry_edge(
+            &member.proof,
+            &InquiryEdgeRequest::member_defaults(company.vault_id, "Acme again"),
+        )
+        .expect_err("an edge does not join a live Connect with the company");
+    assert!(
+        format!("{join:?}").contains("disconnect that Connect first"),
+        "the refusal says why and what the member can do: {join:?}",
+    );
 
     assert!(
         !edge_grant(&edge).confers_at(T0),
