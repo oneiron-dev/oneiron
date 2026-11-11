@@ -25,7 +25,7 @@ export type GlyphProps = GlyphIdentity &
   Omit<React.ComponentPropsWithRef<'span'>, 'children'> & {
     /* Who this is: the accessible name. */
     label: string
-    size?: 18 | 24 | 32
+    size?: 18 | 20 | 24 | 32
     /* Defaults: residents square, people round. */
     shape?: GlyphShape
     /* Presence, derived by the caller from the process. Absent: no mark. */
