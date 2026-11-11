@@ -146,6 +146,17 @@ const RESERVED_SUFFIXES: [&str; 7] = [
     ".invalid",
     ".localhost",
 ];
+/// Hosts whose URIs are names, not addresses: XML namespaces and schema
+/// dialects (`xmlns`, `$schema`), which a parser compares as text and no
+/// client fetches. A URI on one of them dials nothing.
+const IDENTIFIER_HOSTS: [&str; 6] = [
+    "schemas.openxmlformats.org",
+    "schemas.microsoft.com",
+    "schemas.xmlsoap.org",
+    "json-schema.org",
+    "www.w3.org",
+    "purl.org",
+];
 const ALLOW_MARK: &str = "testkit-lint: allow(";
 /// Directories the walk never enters.
 const SKIPPED_DIRS: [&str; 5] = ["target", "vendor", "node_modules", ".git", "fixtures-out"];
@@ -455,7 +466,7 @@ fn line_rules(code: &str, code_and_strings: &str) -> Vec<Rule> {
                 .any(|model| host == *model || host.ends_with(&format!(".{model}")))
             {
                 real_model = true;
-            } else if !is_local_or_reserved(host) {
+            } else if !is_local_or_reserved(host) && !is_identifier_host(host) {
                 network = true;
             }
         }
@@ -511,6 +522,12 @@ fn is_local_or_reserved(host: &str) -> bool {
             // A reserved domain: `example.com` itself or any subdomain.
             None => host == *suffix || host.ends_with(&format!(".{suffix}")),
         })
+}
+
+/// Whether `host` names identifiers only ([`IDENTIFIER_HOSTS`]).
+fn is_identifier_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    IDENTIFIER_HOSTS.contains(&host.as_str())
 }
 
 /// The findings in one file's source. `path` is workspace-relative; it

@@ -11,7 +11,9 @@ use crate::{
     skill::{SkillLifecycle, SkillRecord},
 };
 
-/// Ordered friction. Every variant still needs the same human approve-once receipt.
+/// Ordered friction: how the ask reads. No variant decides whether the
+/// candidate installs; only a permission widening needs the owner's answer
+/// (ARCH-0053 #r4b-hubs-h).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HubAskSurface {
     OneTap,
@@ -88,8 +90,9 @@ pub(super) struct AdmissionSnapshot {
 }
 impl Vault {
     /// Builds the ask from a locally stored Candidate or explicitly restored
-    /// Quarantined skill and an admitted publisher. Both require the same
-    /// exact owner consent, source checks and fresh held-out admission.
+    /// Quarantined skill and an admitted publisher. Both take the same source
+    /// checks and fresh held-out admission; the owner answers only a
+    /// candidate that declares a capability (ARCH-0053 #promise-gate-22).
     /// `evidence_skill` names an active local evaluation baseline with real attributed
     /// outcomes. The held-out split is engine-selected, never caller-supplied evidence.
     pub fn prepare_marketplace_activation(
