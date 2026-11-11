@@ -66,6 +66,11 @@
   height: 18px;
 }
 
+/* A done task: a plain check in the reading ink, no ring. */
+.sl-task-flow-check {
+  color: var(--sl-ink-2);
+}
+
 .sl-task-flow-name {
   min-width: 0;
 }
