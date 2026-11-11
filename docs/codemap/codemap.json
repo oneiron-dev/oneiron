@@ -1199,7 +1199,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 2,
       "re-export": 31
      }
@@ -1614,7 +1614,7 @@
      "path": "src/agent_dispatch/spend_handoff.rs",
      "purpose": "FIX 5661 seam (L09's spend tree, Engine-approved 10-20 11:5x): a home move carries each free-time cycle's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -1669,7 +1669,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GrantSpendBinding",
@@ -1684,7 +1684,7 @@
      "path": "src/agent_dispatch/spend_record.rs",
      "purpose": "Durable spend scopes and their typed reads (OF-532)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 1,
       "re-export": 2,
@@ -25764,7 +25764,7 @@
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed when its own session ends…",
      "surface": {
       "const": 2,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 6,
       "struct": 4
@@ -57973,7 +57973,7 @@
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 17,
       "enum": 2,
       "fn": 4,
       "re-export": 1,
@@ -58212,7 +58212,7 @@
      "path": "src/note/verbs.rs",
      "purpose": "Actor-bound NOTE creation, edit and source-entity bridge",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 6
      }
     },
@@ -74927,7 +74927,7 @@
       "HubAdmissionReceipt"
      ],
      "path": "src/skill_hub/admission.rs",
-     "purpose": "Consent-bound held-out admission, using the existing host scorer and lifecycle write door",
+     "purpose": "Held-out admission, using the existing host scorer and lifecycle write door",
      "surface": {
       "crate-vis": 6,
       "enum": 1,
@@ -99401,6 +99401,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/note_edit_lands_by_grant.rs",
+     "purpose": "Whether a NOTE edit lands or waits is the Grant's answer for the actor and the NOTE, never the writer's…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/origin_register_host_git.rs",
      "purpose": "Origin registration on the host's Git (E2E CODE-CUSTODY-06, `origin.register`)",
      "surface": {}
@@ -99637,6 +99645,14 @@
      "notable": [],
      "path": "tests/skill_call_caller_sandbox.rs",
      "purpose": "Pins callable execution in the caller's sandbox and lease",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/skill_hub_admission_holds.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -101451,7 +101467,7 @@
    "over_bar": 244,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7268,
-   "test_files": 947
+   "test_files": 949
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -120841,17 +120857,17 @@
      "path": "src/native/verify/verify_chain_gates.rs",
      "purpose": "Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/native/verify/verify_dss_core.rs",
      "purpose": "DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 14
      }
     },
     {
@@ -120891,7 +120907,7 @@
      "path": "src/native/verify/verify_revocation.rs",
      "purpose": "CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -120913,6 +120929,30 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_tests_dss_shadow.rs",
+     "purpose": "Verifier tests: same-subject shadow CRL signers (lead rulings SEAL-SHADOW-ETSI, 10 Nov 05:38, and F, 06:50)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_tests_dss_tampering.rs",
+     "purpose": "Verifier tests: how presented DSS material that is not usable reports (lead ruling F, SEAL-SHADOW-ETSI, 10…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_tests_dss_unknown.rs",
+     "purpose": "Verifier tests: which authenticated OCSP `unknown` statuses count (Engine call…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -121090,7 +121130,7 @@
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
     },
     "native": {
-     "files": 55,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -121104,9 +121144,9 @@
      "purpose": "The seal organ: `seal.pdf` (schema 2) and `seal.verify`, `seal.inspect` and `seal.prepare` (schema 1), run…"
     }
    },
-   "over_bar": 4,
+   "over_bar": 5,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 60,
+   "source_files": 63,
    "test_files": 12
   },
   "oneiron-server": {
