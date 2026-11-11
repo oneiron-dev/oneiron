@@ -1,4 +1,8 @@
-//! Owner-enabled phone-line arrival metadata. This does not answer calls or accept audio.
+//! Owner-enabled phone-line metadata and call-bound reads. This does not answer calls or accept audio.
+
+mod answer;
+pub(crate) mod tables;
+pub(crate) use answer::PhoneLineReadCeiling;
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -36,7 +40,7 @@ pub struct PhoneLineState {
     pub bridge_actor: EntityId,
     pub owner_actor: EntityId,
     pub enabled: bool,
-    /// Consent data only. A future answering reader must enforce this ceiling itself.
+    /// Consent data only, enforced beside an answering reader's actual credential.
     pub share_scope: Scope,
     pub updated_at: u64,
 }

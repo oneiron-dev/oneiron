@@ -67,9 +67,10 @@ pub struct AgentDefinition {
     /// owner's words on when (FIX 4472). Empty: its one house-routed model.
     /// A dial, not identity: deliberately NOT in the freeze-set.
     pub models: Vec<AgentModel>,
-    /// The model that compacts the agent's window; absent takes the default
-    /// its host supplies (for a `self` writer, the self-compaction row's
-    /// cheap model, FIX 6029). It need not be listed; resolve through
-    /// [`crate::agent_def::resolve_compaction_model`].
+    /// The model that compacts the agent's window; absent takes the active
+    /// model pack's compaction model where its host serves it (FIX 20042),
+    /// else the default its host supplies (for a `self` writer, the
+    /// self-compaction row's cheap model, FIX 6029). It need not be listed;
+    /// resolve through [`crate::agent_def::resolve_compaction_model`].
     pub compaction_model: Option<ModelId>,
 }

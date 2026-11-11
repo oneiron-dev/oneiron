@@ -173,6 +173,9 @@ impl Store {
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
             key_custody,
+            #[cfg(unix)]
+            body_instance_pool: crate::store::BodyInstancePool::default(),
+            result_body_pins: Default::default(),
             env: StoreEnv::new(shared_env),
             raw,
             kind_registry,
@@ -233,6 +236,7 @@ impl Store {
             l2_base_cache: Mutex::new(crate::store::l2_evidence::L2BaseCache::default()),
             ppr_cache_invalidation: &crate::ppr::PprCacheInvalidator,
             legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),
+            host_legal_prospective: crate::store::legal_hold::ProspectiveWake::default(),
             backup_hold_rechecks: tokio::sync::watch::channel(0).0,
             clock,
             group_commit: crate::store::GroupCommit::default(),
@@ -240,6 +244,7 @@ impl Store {
             proactivity_updates: tokio::sync::watch::channel(0).0,
             proactivity_suspended: Mutex::new(None),
             policy_manifest_updates: tokio::sync::watch::channel(0).0,
+            verb_hook_ask_updates: tokio::sync::watch::channel(0).0,
             decision_answers: tokio::sync::watch::channel(0).0,
             consent_answers: Default::default(),
             notification_updates: tokio::sync::watch::channel(0).0,

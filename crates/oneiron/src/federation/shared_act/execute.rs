@@ -1,11 +1,11 @@
-//! Executing a matured delete-the-vault, ownership-transfer or owner-removal act.
+//! Executing a matured delete-the-vault or Owner-change act.
 
 use super::membership::{MemberMove, UnsignedExecution};
 use super::*;
 use crate::authority::{MembershipExecutionCause, MembershipHandover};
 
 impl Vault {
-    /// Execute a completed `delete_vault`, `transfer_ownership` or
+    /// Execute a completed `delete_vault`, `add_owner`, `transfer_ownership` or
     /// `remove_owner` act. Any live Owner may run it once its window has
     /// passed on the store clock with no live objection, while its starter
     /// is still a live Owner. The claim, the effect, the receipt and every
@@ -142,7 +142,34 @@ impl Vault {
                     },
                     grants: Vec::new(),
                     revoked_slips: Vec::new(),
+                    detach: None,
                     notify: BTreeSet::new(),
+                }
+            }
+            SharedActKind::AddOwner => {
+                let plan: AddOwnerPlan = decode(&act.payload)?;
+                if plan.v != PLAN_VERSION {
+                    return Err(invalid());
+                }
+                let owner = hex_id(&plan.owner)?;
+                let mut notify =
+                    live_owners(&self.live_act_holders(&txn, act.vault_id, now)?, None);
+                let moved = self.add_owner_in_txn(
+                    &mut txn,
+                    act.vault_id,
+                    &notify,
+                    hex_id(&act.starter)?,
+                    owner,
+                    now,
+                )?;
+                handover_ids = moved.handover_ids();
+                notify.insert(owner);
+                Effect {
+                    change: SharedVaultChange::OwnerAdded { owner: plan.owner },
+                    grants: moved.grants,
+                    revoked_slips: moved.revoked_slips,
+                    detach: None,
+                    notify,
                 }
             }
             SharedActKind::TransferOwnership => {
@@ -159,12 +186,14 @@ impl Vault {
                     plan.from_keeps,
                     Some(to),
                     slips,
+                    &receipt_id,
                     now,
                 )?;
                 handover_ids = moved.handover_ids();
                 let MemberMove {
                     grants,
                     revoked_slips,
+                    detach,
                     unsigned_withdrawals: unsigned,
                     ..
                 } = moved;
@@ -177,6 +206,7 @@ impl Vault {
                     },
                     grants,
                     revoked_slips,
+                    detach,
                     notify: BTreeSet::from([from, to]),
                 }
             }
@@ -197,12 +227,14 @@ impl Vault {
                     plan.target_keeps,
                     successor,
                     slips,
+                    &receipt_id,
                     now,
                 )?;
                 handover_ids = moved.handover_ids();
                 let MemberMove {
                     grants,
                     revoked_slips,
+                    detach,
                     unsigned_withdrawals: unsigned,
                     ..
                 } = moved;
@@ -215,19 +247,28 @@ impl Vault {
                     },
                     grants,
                     revoked_slips,
+                    detach,
                     notify: BTreeSet::from_iter([Some(target), successor].into_iter().flatten()),
                 }
             }
             SharedActKind::Erase => return Err(invalid()),
         };
+        let owner_keeps = Some(Role::Owner);
         let handover = match &effect.change {
+            SharedVaultChange::OwnerAdded { owner } => Some((
+                OwnerHandoverCause::Addition,
+                None,
+                &act.starter,
+                Some(owner),
+                &owner_keeps,
+            )),
             SharedVaultChange::OwnershipTransferred {
                 from,
                 to,
                 from_keeps,
             } => Some((
                 OwnerHandoverCause::Transfer,
-                MembershipExecutionCause::TransferOwnership,
+                Some(MembershipExecutionCause::TransferOwnership),
                 from,
                 Some(to),
                 from_keeps,
@@ -238,7 +279,7 @@ impl Vault {
                 target_keeps,
             } => Some((
                 OwnerHandoverCause::Removal,
-                MembershipExecutionCause::RemoveOwner,
+                Some(MembershipExecutionCause::RemoveOwner),
                 target,
                 successor.as_ref(),
                 target_keeps,
@@ -276,25 +317,27 @@ impl Vault {
                 // issuer that signs the handover passed `require_host`, as
                 // each withdrawal it signed did, so none is left unsigned.
                 None => {
-                    record = self.file_membership_execution_in_txn(
-                        &mut txn,
-                        act.vault_id,
-                        &receipt_id,
-                        actor,
-                        now,
-                        UnsignedExecution {
-                            cause: execution_cause,
-                            member: from,
-                            act: Some(act.id.clone()),
-                            withdrawn_grants: unsigned_withdrawals,
-                            handover: Some(MembershipHandover {
-                                to,
-                                from_keeps,
-                                affected_grants,
-                                retired_own_device_grants,
-                            }),
-                        },
-                    )?;
+                    if let Some(execution_cause) = execution_cause {
+                        record = self.file_membership_execution_in_txn(
+                            &mut txn,
+                            act.vault_id,
+                            &receipt_id,
+                            actor,
+                            now,
+                            UnsignedExecution {
+                                cause: execution_cause,
+                                member: from,
+                                act: Some(act.id.clone()),
+                                withdrawn_grants: unsigned_withdrawals,
+                                handover: Some(MembershipHandover {
+                                    to,
+                                    from_keeps,
+                                    affected_grants,
+                                    retired_own_device_grants,
+                                }),
+                            },
+                        )?;
+                    }
                 }
             }
         }
@@ -363,9 +406,7 @@ impl Vault {
             _ => None,
         };
         txn.commit()?;
-        if !receipt.revoked_slips.is_empty() {
-            self.store.notify_credential_revocations();
-        }
+        self.store.notify_credential_revocations();
         Ok(SharedActExecution {
             receipt,
             delivery,

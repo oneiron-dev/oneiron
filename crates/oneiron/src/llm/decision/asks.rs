@@ -555,6 +555,79 @@ impl Vault {
         Ok(Some(seq))
     }
 
+    /// The vault owner `by`'s answer to ask `seq` of the typed queue `queue`, in the
+    /// caller's writer beside the state the answer settles (FIX 16029, L06-A): the typed
+    /// door checked the ask is its own, and the answer and that state commit or roll back
+    /// together. It lands as the owner role, a person, with no reason, rule or grant
+    /// draft; a person-changed record lands in the same write, as at the answer door. The
+    /// same answer again is a no-op. An ask of another queue, a world-privacy widen ask,
+    /// one that does not reach the owners, a withdrawn one, a different answer to an
+    /// answered one and an answer its contract refuses are refused. `true` when this
+    /// answered it: the door wakes its waiters once that writer committed
+    /// ([`Self::signal_decision_answer`]).
+    pub(crate) fn answer_owner_queue_ask_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        queue: &str,
+        seq: u64,
+        by: EntityId,
+        answer: DecisionAnswer,
+    ) -> Result<bool> {
+        let mut ask = ASKS
+            .get(&self.store, &*txn, &seq)?
+            .ok_or_else(|| invalid("no such decision ask"))?;
+        if ask.queue_pin.model != queue || ask.queue_pin.model == WORLD_PRIVACY_ASK_QUEUE {
+            return Err(invalid("the decision ask is not this queue's"));
+        }
+        if ask.to.ceiling != RoleRank::Owner {
+            return Err(invalid("the decision ask does not reach the owners"));
+        }
+        match &ask.answer {
+            Some(prior) if prior.answer == answer => return Ok(false),
+            Some(_) => return Err(invalid("decision ask already answered")),
+            None if ask.withdrawn_at.is_some() => return Err(invalid("decision ask withdrawn")),
+            None => {}
+        }
+        let changed = ask.request()?.changed_by(answer.clone())?;
+        if let Some(record) = &changed {
+            self.record_person_changed_answer_in_txn(txn, ask.id, record)?;
+        }
+        ask.answer = Some(AskAnswer {
+            answer,
+            answered_at: self.store.clock.now_recorded_at(),
+            by: AnswerActor::Actor(by),
+            role: AskRole::Owner,
+            kind: HolderKind::Person,
+            changed: changed.is_some(),
+            reason: None,
+            rule: None,
+            grant: None,
+        });
+        ASKS.put(&self.store, txn, &seq, &ask)?;
+        Ok(true)
+    }
+
+    /// Every open ask of the typed queue `queue`, oldest first, in the caller's snapshot
+    /// (FIX 16029): how a typed queue finds its asks to reconcile them with its own rows,
+    /// which a restore can leave apart (this table is content; a queue's rows may be live).
+    pub(crate) fn open_queue_asks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        queue: &str,
+    ) -> Result<Vec<DecisionAsk>> {
+        let mut asks = Vec::new();
+        for row in ASKS.iter_from(&self.store, txn, &[])? {
+            let (seq, ask) = row?;
+            if ask.seq != seq {
+                return Err(Error::CorruptedIndex("decision ask identity"));
+            }
+            if ask.queue_pin.model == queue && ask.is_open() {
+                asks.push(ask);
+            }
+        }
+        Ok(asks)
+    }
+
     /// Moves an open ask to the next role on its chain with a live holder, up to its
     /// ceiling; an unresolved ask resolves from its first role again. None, and the ask
     /// stays where it is, when no such role is left.

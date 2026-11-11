@@ -44,9 +44,9 @@ mod resolve;
 pub(crate) use self::chain::{
     ControlRows, StoreRows, chain_transitions, machine_history_for_restriction,
     machine_history_rows, machine_history_rows_at, machine_history_rows_from, read_handoff_chain,
-    resolved_machine_history, resolved_machine_history_from, restricts_held_machine_history,
-    trusted_machine_handoff, verified_handoff_chain, verified_handoff_chain_from,
-    verify_handoff_signature,
+    resolved_machine_history, resolved_machine_history_from, resolved_machine_history_with_sources,
+    restricts_held_machine_history, trusted_machine_handoff, verified_handoff_chain,
+    verified_handoff_chain_from, verify_handoff_signature,
 };
 pub(crate) use self::pin::{PIN_PREFIX, pin_key};
 pub(crate) use self::resolve::project_machine_claim;

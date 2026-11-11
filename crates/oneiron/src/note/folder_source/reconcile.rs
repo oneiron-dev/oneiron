@@ -708,7 +708,12 @@ impl Vault {
         // folder's import MACHINE writes them, as its new notes' are.
         self.with_write_txn(|txn| {
             let actor = WriteActor::new(author, EdgeActorClass::System);
-            let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
+            let mut content = crate::federation::ActorContentTxn::new(
+                self,
+                txn,
+                actor,
+                crate::core_write::CoreWriteLaneRef::Unbound,
+            )?;
             let mut batch = self.batch_in();
             for id in &deletes {
                 batch = batch.delete_edge(note, EdgeKind::Mentions, id);

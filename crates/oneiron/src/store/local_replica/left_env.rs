@@ -81,6 +81,10 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::AUTHORITY_CHECKPOINT_TOTALS,
     &side_table::AUTHORITY_CHECKPOINT_UNHELD,
     &side_table::AUTHORITY_HANDOFF_ALARM,
+    // The leave-notice delegations the roots signed at their handoffs (FIX
+    // 7932): authority evidence, kept as the log is.
+    &side_table::AUTHORITY_LEAVE_NOTICE_DELEGATION_BY_HANDOFF,
+    &side_table::AUTHORITY_LEAVE_NOTICE_DELEGATION,
     &side_table::AUTHORITY_CHECKPOINT_ADOPTED_PIN,
     &side_table::AUTHORITY_CHECKPOINT_ATTESTATION,
     &side_table::AUTHORITY_CHECKPOINT_ATTESTED_HEAD,
@@ -130,8 +134,10 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::LEGAL_HOLD_USE_LIMIT,
     &side_table::LEGAL_HOLD_PENDING_ERASE,
     &side_table::LEGAL_HOLD_HOST_ROW,
+    &side_table::LEGAL_HOLD_HOST_PROSPECTIVE,
+    &side_table::LEGAL_HOLD_HOST_PROSPECTIVE_OUTBOX,
+    &side_table::LEGAL_HOLD_HOST_PROSPECTIVE_RELEASED,
     &side_table::LEGAL_HOLD_HOST_EVENT,
-    &side_table::LEGAL_HOLD_HOST_ERASE_LINK,
     // The body collector's queue, and the device's residence choice.
     &side_table::PROVENANCE_BODY_RELEASED,
     &side_table::SYNC_RESIDENCE_DEVICE_MODE,

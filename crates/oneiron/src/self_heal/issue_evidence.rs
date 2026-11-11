@@ -24,8 +24,8 @@ use super::issue_work::{
 use super::tiered::{DetectorPolicy, ProposedTier};
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::dreamer_runner::maintenance::coach_diagnostic::{
-    EffectProof, EffectiveRevision, ProducerLinks, ProducerTarget, bind_producer,
-    issue_effective_revision,
+    EffectProof, EffectiveRevision, ProducerTarget, bind_producer, issue_effective_revision,
+    links_from_runs,
 };
 use crate::limit_ask::EngineLimit;
 use crate::llm::decision::DecisionReceipt;
@@ -480,11 +480,7 @@ impl Vault {
     /// recurrence key, with the wake of the Coach's Issues job in the same write. With no such
     /// issue it writes nothing. An error leaves the window to the next pass.
     pub(super) fn record_issue_observation(&self, observed: Observation<'_>) -> Result<()> {
-        // A retrieval window records no link to an attempt or a manifest.
-        let links = ProducerLinks {
-            attempts: Vec::new(),
-            manifests: Vec::new(),
-        };
+        let links = links_from_runs(observed.runs);
         let producer = bind_producer(self, observed.runs, &links)?;
         let (runs, coordinate) = observed_window(observed.runs)?;
         let recurrence_key = IssueCoalescingPolicy::ExactFindingRecipe.recurrence_key(

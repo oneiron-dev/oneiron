@@ -29,6 +29,10 @@ use crate::origin::receive_scan_verdict::DoorScanVerdict;
 use crate::receive_scan::PushedBlob;
 use crate::store::code_snapshot::RepoRef;
 
+mod blob_header;
+pub(super) use blob_header::decode_tip_path;
+use blob_header::parse_blob_record_header;
+
 /// What the door answered while the objects were quarantined.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DoorWindowVerdict {
@@ -438,9 +442,9 @@ fn read_framed_stream(
         let header = header
             .strip_suffix(b"\n")
             .ok_or_else(|| serve_failed("door blob stream ends inside a record header"))?;
-        let header = std::str::from_utf8(header)
-            .map_err(|_| serve_failed("door blob record header must be UTF-8"))?;
-        if moves && let Some(framed) = header.strip_prefix("move ") {
+        if moves && let Some(framed) = header.strip_prefix(b"move ") {
+            let framed = std::str::from_utf8(framed)
+                .map_err(|_| serve_failed("door move record header must be UTF-8"))?;
             at = Some(parse_framed_move(framed)?);
             continue;
         }
@@ -456,7 +460,7 @@ fn read_framed_stream(
         }
         if terminated {
             let mut end = [0_u8];
-            if stream.read(&mut end)? != 1 || end != [b'\n'] {
+            if stream.read(&mut end)? != 1 || end != *b"\n" {
                 return Err(serve_failed("door history record is not terminated").into());
             }
         }
@@ -725,60 +729,4 @@ fn parse_framed_move(framed: &str) -> Result<FramedMove> {
         old: parse_optional_oid(old)?,
         new: parse_optional_oid(new)?.ok_or_else(unshaped)?,
     })
-}
-
-/// `blob <oid> <bytes> <path>` — the path is last because it is the one field
-/// that may carry spaces; the three before it are fixed and are validated here.
-fn parse_blob_record_header(header: &str) -> Result<(String, u64, String)> {
-    let mut fields = header.splitn(4, ' ');
-    let unshaped = || serve_failed("door blob record header is not `blob <oid> <bytes> <path>`");
-    if fields.next() != Some("blob") {
-        return Err(unshaped());
-    }
-    let oid = fields.next().ok_or_else(unshaped)?;
-    let len = fields.next().ok_or_else(unshaped)?;
-    let path = fields.next().ok_or_else(unshaped)?;
-    if oid.is_empty() || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) || path.is_empty() {
-        return Err(unshaped());
-    }
-    let len = len
-        .parse::<u64>()
-        .map_err(|_| serve_failed("door blob record declares an unparsable length"))?;
-    Ok((oid.to_owned(), len, path.to_owned()))
-}
-
-/// Decode exact TIP-stream path bytes for LFS attribution, dotenv classification and receive marks.
-///
-/// The tip producer frames `git diff-tree --raw` text, so a tip path that
-/// starts with `"` is git's C-quoted form; plain tip paths pass through
-/// byte-identical. History labels are cat-file `%(rest)` and never reach
-/// here. A malformed actual tip quote is the existing generic refusal, never
-/// an echoed input. The scanner still receives the original textual label.
-pub(super) fn decode_tip_path(path: &str) -> Result<Vec<u8>> {
-    if !path.starts_with('"') {
-        return Ok(path.as_bytes().to_vec());
-    }
-    let input = gix::bstr::BStr::new(path);
-    let (decoded, consumed) = gix_quote::ansi_c::undo(input)
-        .map_err(|_| serve_failed("door tip path quoting is malformed"))?;
-    if consumed != input.len() {
-        return Err(serve_failed("door tip path quoting is malformed"));
-    }
-    // `undo` also accepts an unterminated quote, so require a genuine
-    // unescaped closing quote: the last byte is `"` preceded by an even run
-    // of backslashes (an odd run escapes the quote itself).
-    let bytes = path.as_bytes();
-    let mut backslashes = 0;
-    for &byte in bytes[..bytes.len().saturating_sub(1)].iter().rev() {
-        if byte == b'\\' {
-            backslashes += 1;
-        } else {
-            break;
-        }
-    }
-    if bytes.last() != Some(&b'"') || backslashes % 2 == 1 {
-        return Err(serve_failed("door tip path quoting is malformed"));
-    }
-    let decoded_bstr: &gix::bstr::BStr = &decoded;
-    Ok(decoded_bstr.to_vec())
 }

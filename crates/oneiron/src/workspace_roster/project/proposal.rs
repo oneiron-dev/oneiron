@@ -428,6 +428,12 @@ pub(crate) fn project_house_agent(vault: &Vault) -> Result<Option<EntityId>> {
     )
 }
 
+/// The root's seeded leader, `sys.team_lead`: the house mind a vault has
+/// before a workspace names its own. `None` when no seeded row is so named.
+pub(crate) fn seeded_house_agent() -> Result<Option<EntityId>> {
+    crate::agent_def::legacy_logical_id_row(super::ROOT_SEED_LEADER)
+}
+
 fn mark_minted_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

@@ -1,0 +1,17 @@
+{
+  "name": "vault.devices.predecessor.name",
+  "description": "Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately.",
+  "input": "crate::memory::device_succession::DevicePredecessor",
+  "output": "crate::memory::device_succession::DevicePredecessor",
+  "call": "memory.device_predecessor_name_as(&memory.embedded_owner(\"vault.devices.predecessor.name\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_precheck": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

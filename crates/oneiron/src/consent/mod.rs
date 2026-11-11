@@ -40,12 +40,13 @@
 //!
 //! # Folding existing shapes
 //!
-//! Four grant-shaped records predate this contract. They fold through
+//! Three grant-shaped records predate this contract. They fold through
 //! ADAPTERS ([`disclosure_grant_from_access_grant`],
-//! [`action_grant_from_standing_outbound_grant`],
 //! `action_grant_from_policy_scoped_grant`,
 //! [`disclosure_grant_from_disclosure_scope`]) — never a migration, a
-//! rewrite, or a byte/status/codec change to the source record.
+//! rewrite, or a byte/status/codec change to the source record. A standing
+//! outbound grant needs none: it is a standing grant row
+//! ([`crate::outbound_grant::StandingOutboundGrant`]).
 
 mod adapters;
 mod answer_wake;
@@ -54,6 +55,17 @@ mod ask_holders;
 mod bound;
 mod browser;
 pub mod bypass_lifecycle;
+mod lifecycle_table_imports {
+    pub(super) use super::{
+        ConsentLifecycle, GrantCommand, GrantStep, MarkerCommand, MarkerRefusal, MarkerState,
+    };
+}
+/// The consent lifecycle owner: one transition table per axis (oneiron-consent-state).
+pub use oneiron_consent_state::consent::lifecycle_table::{
+    CodeWaitCommand, CodeWaitEdgeRefused, ConsentLifecycle, GrantCommand, GrantStep, MarkerCommand,
+    MarkerRefusal, MarkerState, WidenCommand, WidenState, WidenStep,
+};
+pub(crate) mod code_settlement;
 pub mod code_wait_state;
 mod codec;
 mod contact_clearance;
@@ -73,8 +85,8 @@ mod bypass;
 mod tests;
 
 pub use self::adapters::{
-    access_grant_projection_is_active, action_grant_from_standing_outbound_grant,
-    disclosure_grant_from_access_grant, disclosure_grant_from_disclosure_scope,
+    access_grant_projection_is_active, disclosure_grant_from_access_grant,
+    disclosure_grant_from_disclosure_scope,
 };
 pub use self::bound::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
@@ -97,7 +109,8 @@ pub use self::contact_clearance::{
     contact_disclosure_voice_channel,
 };
 pub use self::doors::{
-    AuthenticatedOwner, ConsentEvaluation, bound_catastrophe_class, load_active_standing_grants,
+    AuthenticatedOwner, ConsentEvaluation, ConsentRevocation, bound_catastrophe_class,
+    load_active_standing_grants,
 };
 pub(crate) use self::effect::CATASTROPHE_FLOOR_ROW_KEY;
 pub use self::effect::{
@@ -105,13 +118,15 @@ pub use self::effect::{
     CatastropheClass, CatastropheFloor, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts,
     EffectPlace, ReversibilityClass, UndoFidelity,
 };
+pub(crate) use self::grant::code_wait_receipt_links_from_gate_record;
 pub use self::grant::{
     ActionGrant, CONSENT_CONTENT_KIND, CONSENT_REASON_APPROVE_ONCE, CONSENT_REASON_BYPASS_CREATED,
     CONSENT_REASON_BYPASSED, CONSENT_REASON_CODE_WAIT_CONSUMED, CONSENT_REASON_CODE_WAIT_SETTLED,
     CONSENT_REASON_DENIED, CONSENT_REASON_REVOKED, CONSENT_REASON_STANDING_CREATED,
     CONSENT_REASON_STANDING_USED, CodeWaitReceiptLinks, ConsentGrant, ConsentGrantRow,
     ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal, ConsentReceipt,
-    DisclosureGrant, StandingConsentGrant,
+    DisclosureGrant, StandingConsentGrant, consent_grant_row_grant_ref,
+    consent_receipt_diff_handle, consent_receipt_grant_ref,
 };
 pub use self::owner_reason::{
     OWNER_REASON_UNDO_COMMAND, OwnerReasonConfirm, OwnerReasonConfirmation, OwnerReasonUndo,
@@ -119,8 +134,8 @@ pub use self::owner_reason::{
 };
 pub use self::registry::{
     AGENT_GRANT_CLASS, CONSENT_REVOKE_COMMAND, ConsentRegistry, ConsentRegistryAgentGrant,
-    ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRevokeAction,
-    SUPPORT_GRANT_CLASS,
+    ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRegrantAction,
+    ConsentRevokeAction, SUPPORT_GRANT_CLASS,
 };
 /// FIX 6424 part 2a: the approve-once digest an owner's press on one
 /// campaign enrollment's outbound leg names, by the Gate's own composer over
@@ -148,9 +163,12 @@ pub use crate::outbound_consent::scoped_mcp_approve_once_digest;
 pub(crate) use self::bound::bound_exceeded;
 pub(crate) use self::doors::QueuedCheckApproval;
 pub(crate) use self::doors::{
-    OwnerAuthoredWrite, approve_once_authorization_in_txn, approve_once_decision_in_txn,
-    person_is_live_for_store_in_txn, person_is_live_in_txn, revoke_standing_grant_in_txn,
+    DerivedGrantOrigin, DerivedGrantSetting, OwnerAuthoredWrite, active_standing_grant_rows_in_txn,
+    approve_once_authorization_in_txn, approve_once_decision_in_txn,
+    person_is_live_for_store_in_txn, person_is_live_in_txn,
+    record_standing_grant_use_for_store_in_txn, revoke_standing_grant_in_txn,
     spend_approve_once_in_txn, standing_grant_is_active_in_txn, standing_grant_row_in_txn,
+    standing_grant_rows_in_txn,
 };
 pub(crate) use self::effect::{
     ApproveOnceAuthorization, classify_composed_effect, evaluate_consent,
@@ -171,12 +189,10 @@ use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::gate::PolicyScopedGrant;
 #[cfg(test)]
-use crate::outbound_grant::StandingOutboundGrantScope;
-#[cfg(test)]
 use crate::store::GateDecisionId;
 
 #[cfg(test)]
-use self::adapters::{action_grant_from_policy_scoped_grant, outbound_scope_axes};
+use self::adapters::action_grant_from_policy_scoped_grant;
 #[cfg(test)]
 use self::bound::DOMAIN_ACTION;
 #[cfg(test)]
@@ -190,3 +206,4 @@ use self::support::SUBJECT_KIND_AUDIENCE;
 pub mod bundle_projection;
 
 pub mod settlement_fact;
+pub(crate) mod tables;

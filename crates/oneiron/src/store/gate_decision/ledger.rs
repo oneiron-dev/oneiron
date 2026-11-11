@@ -170,6 +170,30 @@ impl Store {
         Ok(())
     }
 
+    /// Deletes the row of `run_id`'s attempt index naming `attempt_id`, the
+    /// one [`Self::put_attempt_run_index_in_txn`] wrote: a row that leaves the
+    /// queue leaves no index entry naming it (FIX 12327).
+    pub(crate) fn delete_attempt_run_index_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: Option<&str>,
+        attempt_id: &[u8; 16],
+    ) -> Result<()> {
+        let Some(run_id) = run_id else {
+            return Ok(());
+        };
+        ATTEMPT_RUN_INDEX.delete(
+            self,
+            wtxn,
+            &suffix_of(
+                attempt_run_index_key(run_id, attempt_id),
+                ATTEMPT_RUN_INDEX_PREFIX,
+            ),
+        )?;
+        self.refresh_pending_gate_consent_group_aliases_for_run_in_txn(wtxn, run_id)?;
+        Ok(())
+    }
+
     /// Deletes every attempt run index row, for a restore that rebuilds the
     /// index from the attempt rows it landed (FIX 6577).
     pub(crate) fn clear_attempt_run_index_in_txn(&self, wtxn: &mut RwTxn<'_>) -> Result<()> {
@@ -268,6 +292,7 @@ impl Store {
         self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
         self.forget_gate_scrubs_of_decision_in_txn(wtxn, record.decision_id)?;
         LEDGER.delete(self, wtxn, &record.decision_id)?;
+        crate::claim::erase_weave_decision_labels_in_txn(self, wtxn, record.decision_id)?;
         Ok(())
     }
 
@@ -323,6 +348,7 @@ impl Store {
             self.discard_unapplied_preflight_marker_in_txn(wtxn, *decision_id)?;
             self.forget_gate_scrubs_of_decision_in_txn(wtxn, *decision_id)?;
             LEDGER.delete(self, wtxn, decision_id)?;
+            crate::claim::erase_weave_decision_labels_in_txn(self, wtxn, *decision_id)?;
             // A policy row (FIX 7806) names no claim, so no claim's ask
             // waits on it.
             if orcb::is_policy_partition(claim_id) {
@@ -358,15 +384,25 @@ impl Store {
                 callback();
             }
         });
+        self.gate_decisions_for_grant_ref_in_txn(&rtxn, grant_ref)
+    }
+
+    /// [`Self::gate_decisions_for_grant_ref`] in the caller's snapshot, which holds the custody read guard
+    /// (`custody_snapshot`) so claim-bound rows decrypt.
+    pub(crate) fn gate_decisions_for_grant_ref_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        grant_ref: &str,
+    ) -> Result<Vec<GateDecisionRecord>> {
         let scan_prefix = suffix_of(
             gate_decision_grant_ref_index_prefix(grant_ref),
             GATE_DECISION_GRANT_REF_INDEX_PREFIX,
         );
         let mut records = Vec::new();
-        for key in GRANT_REF_INDEX.scan_keys(self, &rtxn, &scan_prefix)? {
+        for key in GRANT_REF_INDEX.scan_keys(self, rtxn, &scan_prefix)? {
             let decision_id =
                 GateDecisionId::from_bytes(tail_id(&key, "gate decision grant ref index")?);
-            let Some(record) = self.gate_decision_in_txn(&rtxn, decision_id)? else {
+            let Some(record) = self.gate_decision_in_txn(rtxn, decision_id)? else {
                 return Err(Error::CorruptedIndex("gate decision grant ref index"));
             };
             if record.grant_ref.as_deref() != Some(grant_ref) {

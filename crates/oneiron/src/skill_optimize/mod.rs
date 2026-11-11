@@ -187,9 +187,13 @@ pub use self::eval_set::{
 };
 pub use self::eval_set::{
     EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
-    EvalMeasurement, EvalMeasurementRequest, EvalTaskInput, FloorSlicePolicy, JUDGE_SCORE_AXIS,
-    JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
-    ScoreDirection, eval_seat_canary,
+    EvalMeasurement, EvalMeasurementRequest, EvalServingOffer, EvalTaskInput, FloorSlicePolicy,
+    JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState,
+    MeasurementUnavailable, ScoreDirection, eval_seat_canary,
+};
+pub use self::eval_set::{
+    EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
+    EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
 };
 pub(crate) use self::eval_set::{
     PairedScores, erase_eval_source_in_txn, estimate_paired, forget_eval_case_source_rows,
@@ -234,8 +238,8 @@ pub use self::offer::{
     training_offers, union_source_rows,
 };
 pub(crate) use self::offer::{
-    erase_offer_source_in_txn, live_source_rows_in, pending_training_offer_in_txn,
-    settle_training_offer_in_txn,
+    erase_offer_answer_actor_in_txn, erase_offer_source_in_txn, live_source_rows_in,
+    pending_training_offer_in_txn, settle_training_offer_in_txn,
 };
 pub(crate) use self::offer_pilot::erase_pilot_source_in_txn;
 pub use self::offer_switch::{
@@ -243,8 +247,10 @@ pub use self::offer_switch::{
     seat_model_role, training_offer_switch, undo_training_offer_switch,
 };
 pub(crate) use self::offer_switch::{
-    erase_switch_actor_in_txn, settle_staged_switch_in_txn, undo_staged_switch_in_txn,
+    STOCK_SWITCH_NOTIFICATION_PRODUCER, erase_switch_actor_in_txn, settle_staged_switch_in_txn,
+    training_offer_switch_undo_available_in_txn, undo_staged_switch_in_txn,
 };
+pub(crate) use self::offer_training::erase_offer_training_actor_in_txn;
 pub use self::offer_training::{
     OfferTrainingHandoff, TrainingChoice, authorize_offer_training, check_offer_training_plan,
     offer_training_handoff, settle_training_offer, suggested_training_plan,
@@ -290,9 +296,11 @@ pub(crate) use gate::{
     project_goal_revision_proposals_in_txn, settle_skill_tradeoff_ask_as_in_txn,
     settle_skill_tradeoff_ask_in_txn, skill_edit_preflight_passed_in_txn,
     skill_edit_trial_basis_in_txn, skill_edit_verdict_in_txn, skill_edit_verdict_receipts,
-    validate_judge_revision, with_optimized_skill_admission,
+    skill_edit_verdict_sourced, skill_tradeoff_ask_sourced, validate_judge_revision,
+    with_optimized_skill_admission,
 };
 pub(crate) use gate::{project_axes, project_rules_for_record};
+pub(crate) use gate::{skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn};
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
 use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
@@ -305,7 +313,7 @@ pub(crate) use self::job::{
 
 use self::dials::invalid;
 pub(crate) use self::tier::tier_verdict_in_txn;
-
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

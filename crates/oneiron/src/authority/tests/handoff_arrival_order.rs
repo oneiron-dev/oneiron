@@ -71,7 +71,7 @@ fn fork(seed: u8) -> Fork {
     let old = ed_key(seed);
     let next = ed_key(seed + 1);
     let forger_heir = ed_key(seed + 2);
-    let genesis = genesis_entry(seed, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(seed, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let handoff = re_root_entry(id, &genesis, &old, 1, &next);
     let forged = re_root_entry(id, &genesis, &old, 2, &forger_heir);
@@ -211,7 +211,7 @@ fn a_row_below_its_floor_outside_any_handoffs_line_stays_refused() {
 fn a_door_records_each_retired_signer_and_only_rows_that_verify() {
     let old = ed_key(240);
     let (first, second, next) = (ed_key(241), ed_key(242), ed_key(243));
-    let genesis = genesis_entry(240, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(240, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let enroll_first = enroll_entry(id, &genesis, &old, 241, 1, 2);
     let enroll_second = cosign_ed(

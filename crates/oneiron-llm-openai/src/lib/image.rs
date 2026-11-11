@@ -52,6 +52,10 @@ impl<T> DirectOpenAiImageBackend<T> {
     }
 }
 impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
+    fn supports_mask(&self) -> bool {
+        true
+    }
+
     fn generate<'a>(&'a self, intent: ImageIntent, lease: &'a BudgetLease) -> ImageFuture<'a> {
         Box::pin(async move {
             let (model, fields) = fields(&intent)?;
@@ -69,6 +73,7 @@ impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
         &'a self,
         intent: ImageIntent,
         references: Vec<ImageBytes>,
+        mask: Option<ImageBytes>,
         lease: &'a BudgetLease,
     ) -> ImageFuture<'a> {
         Box::pin(async move {
@@ -76,6 +81,19 @@ impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
             // however many (FIX 8614): no count is refused here.
             if references.is_empty() {
                 return Err(FatalLlmError::InvalidRequest.into());
+            }
+            if let Some(mask) = mask {
+                let (model, fields) = fields(&intent)?;
+                let request = OpenAiImageHttpRequest {
+                    path: "/v1/images/edits",
+                    body: OpenAiImageBody::Json(masked_edit_body(
+                        fields.clone(),
+                        references,
+                        mask,
+                    )?),
+                };
+                let response = self.transport.execute(request, lease).await?;
+                return decode_response(response, model, &fields);
             }
             let images = references
                 .into_iter()
@@ -94,6 +112,48 @@ impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
             decode_response(response, model, &fields)
         })
     }
+}
+
+/// Checks the masked JSON edit's added fields, borrowing all image bytes.
+pub(super) fn check_edit_mask(
+    mask: Option<&ImageBytes>,
+    references: usize,
+    params: &BTreeMap<String, Value>,
+) -> LlmResult<()> {
+    oneiron::llm::image::validate_edit_mask(mask, references)?;
+    if let Some(mask) = mask {
+        if reference_extension(&mask.media_type).is_none()
+            || params.contains_key("images")
+            || params.contains_key("mask")
+        {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+    }
+    Ok(())
+}
+
+/// The documented JSON edit wire, used only when a caller supplies a mask.
+pub(super) fn masked_edit_body(
+    mut fields: BTreeMap<String, Value>,
+    references: Vec<ImageBytes>,
+    mask: ImageBytes,
+) -> LlmResult<Value> {
+    check_edit_mask(Some(&mask), references.len(), &fields)?;
+    let image_url = |image: ImageBytes| -> LlmResult<Value> {
+        if image.bytes.is_empty() || reference_extension(&image.media_type).is_none() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        Ok(serde_json::json!({
+            "image_url": format!("data:{};base64,{}", image.media_type, STANDARD.encode(image.bytes))
+        }))
+    };
+    let images = references
+        .into_iter()
+        .map(image_url)
+        .collect::<LlmResult<Vec<_>>>()?;
+    fields.insert("images".into(), Value::Array(images));
+    fields.insert("mask".into(), image_url(mask)?);
+    Ok(Value::Object(fields.into_iter().collect()))
 }
 
 /// One ordered reference image as the multipart file part `name`.

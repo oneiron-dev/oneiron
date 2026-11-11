@@ -54,6 +54,7 @@ pub use self::types::{
 
 pub(crate) use self::stale::maintain_skill_source_index_for_put;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

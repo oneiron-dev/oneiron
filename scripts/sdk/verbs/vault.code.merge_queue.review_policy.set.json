@@ -1,0 +1,18 @@
+{
+  "name": "vault.code.merge_queue.review_policy.set",
+  "description": "Set the vault's opt-in review policy for merge queue work, a lens catalog with overridable limits, or clear it with null. While set, work naming no catalog waits for critics or Approve. Owner, or one covering Grant.",
+  "input": "crate::memory::merge_queue_doors::QueueReviewPolicySetRequest",
+  "output": "crate::memory::merge_queue_doors::QueueReviewPolicyView",
+  "call": "memory.merge_queue_review_policy_set_as(&memory.merge_queue_review_policy_proof(\"vault.code.merge_queue.review_policy.set\"), input)?",
+  "scope": "Write",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "openapi": true,
+  "host_door_proof": "review_policy"
+}

@@ -587,9 +587,11 @@ fn answer_here(server: &SyncServer, request: &LeafKeyRequest, peer: PeerMachine,
     let id = request.request_id();
     let (holder, executor) = (request.holder_machine(), request.executor_machine());
     let answered = match server.vault().answer_leaf_key_request(request, peer) {
+        // An own answer that does not encode is the home's fault, not a
+        // refusal: HolderFault keeps the ask pending (FIX 22236).
         Ok(answer) => encode_leaf_key_answer(&answer)
             .into_result()
-            .map_err(|error| LeafKeyFailureCause::HolderRefused(error.to_string())),
+            .map_err(|_| LeafKeyFailureCause::HolderFault),
         // A fault, not a refusal: HolderFault keeps the ask pending (FIX 12131).
         Err(error) => {
             Err(LeafKeyFailureCause::of_refusal(&error).unwrap_or(LeafKeyFailureCause::HolderFault))

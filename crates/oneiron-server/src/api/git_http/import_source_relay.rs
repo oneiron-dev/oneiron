@@ -1,5 +1,5 @@
-//! An outside import's bound source fetch through the credential broker
-//! (ARCH-0069 OSH-3, FIX 15702).
+//! An outside import's bound source fetch, and its Git-LFS objects, through
+//! the credential broker (ARCH-0069 OSH-3, FIX 15702, FIX 19876).
 //!
 //! A source bound to a custody credential is read only through the broker,
 //! which alone installs the credential and sends each git exchange:
@@ -23,45 +23,62 @@
 //!   once more, copied once and handed to the broker. The reply streams back to Git exactly as
 //!   the repository sent it; a reply the broker cut ends Git's read broken,
 //!   never clean.
+//! - **Git-LFS.** The import's Git-LFS objects come through the same broker
+//!   with no relay (FIX 19876), bound or not: the engine's LFS orchestration
+//!   runs here over the broker's LFS transport (`super::lfs_broker`), each
+//!   batch call and object action judged again first as each git exchange
+//!   is (the call's credential not revoked, and for a bound source the
+//!   binding still admitting this importer for this host). A bound batch
+//!   call's credential is read at the same custody door in the same one
+//!   snapshot, only after the broker acknowledged the call's body, and
+//!   handed to the broker, which installs it again only on an action at the
+//!   source's own origin that the batch reply handed it back for; an
+//!   unbound import's exchanges all go with none. Object actions carry the
+//!   headers the batch reply named, as given. Each object streams into the
+//!   vault's LFS upload door, whose read ends clean only when the broker's
+//!   does.
 //!
 //! No pack size or call time is bounded here: each step waits at most the
 //! host's transfer idle limit without progress, and Git's exit or the
 //! import's own cancel ends the relay. The relay is no public route, mints
 //! no token and stops when the fetch returns. A refused exchange's code is
-//! the fetch's refusal.
+//! the fetch's refusal. Its spool, digest, reply and listener helpers are
+//! shared with an exact publish's mirror relay (`super::broker_relay`).
 
 use std::collections::BTreeSet;
 use std::future::Future;
-use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{RawQuery, State};
 use axum::http::StatusCode;
-use axum::http::header::{CONTENT_ENCODING, CONTENT_TYPE, HeaderValue};
+use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::http::request::Parts;
 use axum::response::Response;
 use axum::routing::{get, post};
-use futures_util::StreamExt as _;
-use oneiron::EntityId;
 use oneiron::git_wire::{
     GitImportFetchOutcome, GitOid, GitRefName, GitWire, SOURCE_RELAY_TICKET_HEADER,
 };
+use oneiron::origin::lfs::{LfsBatchCredential, LfsOid, LfsTransferReport, download_lfs_objects};
 use oneiron::repo_mutation::external_import::{ExternalImportSource, REDIRECT_REFUSED};
+use oneiron::{EntityId, Vault};
 use oneiron_broker::{
-    BrokerError, GitCallHeader, GitExchange, GitReply, GitRepository, GitRequestDigest, GitTarget,
-    MAX_SECRET, Outcome, StreamPart, git_request_digest,
+    GitCallHeader, GitExchange, GitReply, GitRepository, GitTarget, MAX_SECRET, Outcome,
 };
 use tokio::io::AsyncRead;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use zeroize::Zeroizing;
 
+use super::broker_relay::{
+    RelayNotes, answer, broker_code, code, digest_body, serve_loopback, spool_request,
+};
 use super::gate::{advertised_service, header_value, text_response};
 use super::import_relay::{authority, redirected_repository, revoked};
+use super::lfs_broker::{BrokeredLfsTransport, LfsCustody};
 use super::routes::GitService;
 use crate::auth::CoreAuth;
 use crate::models::BrokerContext;
@@ -73,8 +90,14 @@ const SOURCE_REPO_SEGMENT: &str = "source.git";
 /// The content type of an upload-pack RPC request.
 const UPLOAD_PACK_REQUEST: &str = "application/x-git-upload-pack-request";
 
-/// How much of a spool one read takes as its digest is taken.
-const SPOOL_READ: usize = 64 << 10;
+/// The prefix of every refusal code a source relay notes.
+const SOURCE_CODE_PREFIX: &str = "source";
+
+/// The prefix of every refusal code an import's Git-LFS fetch meets.
+const SOURCE_LFS_CODE_PREFIX: &str = "source_lfs";
+
+/// The code of an exchange judged after the call's credential was revoked.
+const CREDENTIAL_REVOKED_CODE: &str = "external_import_credential_revoked";
 
 /// One bound fetch's call: its server, its verified credential and that
 /// credential's principal, the runtime its relay serves on, and the
@@ -117,7 +140,7 @@ pub(super) fn fetch_through_broker(
         idle: call.server.transfers.idle,
         id: id.iter().map(|byte| format!("{byte:02x}")).collect(),
         sequence: AtomicU64::new(0),
-        noted: Mutex::new(None),
+        notes: Arc::new(RelayNotes::new(SOURCE_CODE_PREFIX)),
     });
     let resolved = match block_on(call.runtime, leg.resolve(&source.repository)) {
         Ok(repository) => repository,
@@ -166,79 +189,38 @@ struct SourceLeg {
     /// This fetch's random id, which each exchange's call id carries.
     id: String,
     sequence: AtomicU64,
-    noted: Mutex<Option<String>>,
+    /// The first refusal code any exchange met.
+    notes: Arc<RelayNotes>,
 }
 
 impl SourceLeg {
-    /// Notes the first refusal code any exchange met.
-    fn note(&self, code: &str) {
-        if let Ok(mut noted) = self.noted.lock() {
-            noted.get_or_insert_with(|| code.to_owned());
-        }
-    }
-
     /// Notes `code` and answers Git with it.
     fn refuse(&self, status: StatusCode, code: &str) -> Response {
-        self.note(code);
-        text_response(status, code)
+        self.notes.refuse(status, code)
     }
 
     /// The call's credential, not revoked, and the binding, still admitting
     /// this importer for this host, judged again now.
     fn admitted(&self) -> Result<(), String> {
         if revoked(&self.server, &self.auth) {
-            return Err("external_import_credential_revoked".to_owned());
+            return Err(CREDENTIAL_REVOKED_CODE.to_owned());
         }
-        self.server
-            .vault()
-            .check_external_import_source_binding(&self.binding, &self.origin, self.importer)
-            .map_err(|error| match error {
-                oneiron::Error::Refused(reason) => reason
-                    .split(':')
-                    .next()
-                    .unwrap_or("binding_refused")
-                    .to_owned(),
-                _ => "binding_unreadable".to_owned(),
-            })
+        binding_admitted(
+            self.server.vault(),
+            &self.binding,
+            &self.origin,
+            self.importer,
+        )
     }
 
-    /// The binding's credential, read at the custody door in the one
-    /// snapshot that judges the binding again (its scopes still this host,
-    /// its actor still this importer or behind its Grant), and copied once
-    /// into a buffer wiped on drop. A binding rebound since it was judged
-    /// never reaches the broker.
+    /// The binding's credential ([`binding_credential`]).
     fn credential(&self) -> Result<Zeroizing<Vec<u8>>, String> {
-        let mut secret = Zeroizing::new(Vec::new());
-        let mut oversized = false;
-        self.server
-            .vault()
-            .inject_external_import_source_credential(
-                &self.binding,
-                &self.origin,
-                self.importer,
-                &mut |value: &[u8]| {
-                    if value.len() > MAX_SECRET {
-                        oversized = true;
-                        return Ok(());
-                    }
-                    // Sized once, so no reallocation leaves a copy behind.
-                    secret.reserve_exact(value.len());
-                    secret.extend_from_slice(value);
-                    Ok(())
-                },
-            )
-            .map_err(|error| match error {
-                oneiron::Error::Refused(reason) => reason
-                    .split(':')
-                    .next()
-                    .unwrap_or("binding_refused")
-                    .to_owned(),
-                _ => "binding_refused_at_door".to_owned(),
-            })?;
-        if oversized || secret.is_empty() {
-            return Err("binding_not_a_header".to_owned());
-        }
-        Ok(secret)
+        binding_credential(
+            self.server.vault(),
+            &self.binding,
+            &self.origin,
+            self.importer,
+        )
     }
 
     /// Sends one upload-pack exchange with `repository` through the broker:
@@ -263,7 +245,8 @@ impl SourceLeg {
             .map(|value| ("git-protocol".to_owned(), value))
             .into_iter()
             .collect();
-        let (digest, len, body) = digest_body(&target, &headers, body)?;
+        let (digest, len, body) =
+            digest_body(&target, &headers, body).map_err(|fault| fault.code(SOURCE_CODE_PREFIX))?;
         let call = format!(
             "import-source/{}/{}",
             self.id,
@@ -285,9 +268,12 @@ impl SourceLeg {
         let prepared = connection
             .prepare_git(&header, &mut body)
             .await
-            .map_err(broker_code)?;
+            .map_err(|error| broker_code(SOURCE_CODE_PREFIX, error))?;
         let secret = self.credential()?;
-        let reply = prepared.open(secret).await.map_err(broker_code)?;
+        let reply = prepared
+            .open(secret)
+            .await
+            .map_err(|error| broker_code(SOURCE_CODE_PREFIX, error))?;
         tracing::info!(
             exchange = ?exchange,
             digest = %header.digest,
@@ -352,49 +338,155 @@ impl SourceLeg {
     }
 }
 
-/// The digest of an exchange to `target` with `headers` and the spooled
-/// `body` (none for an advertisement), its length, and the body rewound.
-fn digest_body(
-    target: &GitTarget,
-    headers: &[(String, String)],
-    body: Option<std::fs::File>,
-) -> Result<(String, u64, Option<std::fs::File>), String> {
-    let spool = || "source_request_spool_failed".to_owned();
-    let Some(mut file) = body else {
-        let digest = git_request_digest(target, headers, &[]).map_err(|_| spool())?;
-        return Ok((digest, 0, None));
+/// Whether the custody secret `binding` still admits `importer`'s fetch
+/// from the https `origin` in `vault`, judged again now; otherwise the
+/// refusal's code.
+fn binding_admitted(
+    vault: &Vault,
+    binding: &str,
+    origin: &str,
+    importer: EntityId,
+) -> Result<(), String> {
+    vault
+        .check_external_import_source_binding(binding, origin, importer)
+        .map_err(|error| match error {
+            oneiron::Error::Refused(reason) => reason
+                .split(':')
+                .next()
+                .unwrap_or("binding_refused")
+                .to_owned(),
+            _ => "binding_unreadable".to_owned(),
+        })
+}
+
+/// The custody secret `binding`'s credential for `importer`'s fetch from the
+/// https `origin`, read at the custody door in the one snapshot of `vault`
+/// that judges the binding again (its scopes still this host, its actor
+/// still this importer or behind its Grant), and copied once into a buffer
+/// wiped on drop. A binding rebound since it was judged never reaches the
+/// broker.
+fn binding_credential(
+    vault: &Vault,
+    binding: &str,
+    origin: &str,
+    importer: EntityId,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    let mut secret = Zeroizing::new(Vec::new());
+    let mut oversized = false;
+    vault
+        .inject_external_import_source_credential(
+            binding,
+            origin,
+            importer,
+            &mut |value: &[u8]| {
+                if value.len() > MAX_SECRET {
+                    oversized = true;
+                    return Ok(());
+                }
+                // Sized once, so no reallocation leaves a copy behind.
+                secret.reserve_exact(value.len());
+                secret.extend_from_slice(value);
+                Ok(())
+            },
+        )
+        .map_err(|error| match error {
+            oneiron::Error::Refused(reason) => reason
+                .split(':')
+                .next()
+                .unwrap_or("binding_refused")
+                .to_owned(),
+            _ => "binding_refused_at_door".to_owned(),
+        })?;
+    if oversized || secret.is_empty() {
+        return Err("binding_not_a_header".to_owned());
+    }
+    Ok(secret)
+}
+
+/// One import's Git-LFS fetch: its server, its verified credential and that
+/// credential's principal, and the custody secret its source is bound to,
+/// if any.
+pub(super) struct SourceLfsCall<'a> {
+    pub(super) server: &'a SyncServer,
+    pub(super) auth: &'a CoreAuth,
+    pub(super) importer: EntityId,
+    pub(super) binding: Option<&'a str>,
+}
+
+/// Fetches each of `objects` from the normalized `source`'s Git-LFS batch
+/// API through the broker and installs it through `vault`'s LFS upload
+/// door at `now` (`download_lfs_objects`): each batch call under the
+/// binding's credential when the call names one, else none. Answers the
+/// objects that did not arrive, the broker's isolation and its rewrite
+/// count. Nothing is sent when the host has no broker or the source's
+/// repository is not one the broker takes; there is never a fallback.
+pub(super) fn fetch_lfs_through_broker(
+    call: &SourceLfsCall<'_>,
+    vault: &Vault,
+    source: &ExternalImportSource,
+    objects: &[(LfsOid, u64)],
+    now: u64,
+) -> LfsTransferReport {
+    let unsent = |code: String| LfsTransferReport {
+        missing: Err(oneiron::Error::Refused(format!(
+            "{code}: the import's Git-LFS objects were not fetched through the credential broker"
+        ))),
+        broker_isolation: None,
+        credential_rewrites: 0,
     };
-    let len = file.metadata().map_err(|_| spool())?.len();
-    let mut digest = GitRequestDigest::new(target, headers, len);
-    let mut buffer = vec![0; SPOOL_READ];
-    loop {
-        let read = file.read(&mut buffer).map_err(|_| spool())?;
-        if read == 0 {
-            break;
+    let Some(broker) = call.server.broker_context() else {
+        return unsent(format!("{SOURCE_LFS_CODE_PREFIX}_broker_unavailable"));
+    };
+    let Ok(repository) = GitRepository::parse(&source.repository) else {
+        return unsent(format!("{SOURCE_LFS_CODE_PREFIX}_url_malformed"));
+    };
+    let custody = SourceLfsCustody {
+        call,
+        vault,
+        origin: &source.host,
+    };
+    let transport = BrokeredLfsTransport::new(
+        broker,
+        &custody,
+        repository,
+        call.server.transfers.idle,
+        &call.server.transfers.disk,
+        SOURCE_LFS_CODE_PREFIX,
+    );
+    let credential = match call.binding {
+        Some(_) => LfsBatchCredential::Remote,
+        None => LfsBatchCredential::Anonymous,
+    };
+    let missing = download_lfs_objects(vault, &transport, credential, objects, now);
+    transport.report(missing)
+}
+
+/// An import's custody for its Git-LFS fetch: the call's credential and, for
+/// a bound source, the binding, judged again before each exchange as the
+/// source leg's are, and the binding's credential.
+struct SourceLfsCustody<'a> {
+    call: &'a SourceLfsCall<'a>,
+    vault: &'a Vault,
+    /// The source's own `https://host[:port]`.
+    origin: &'a str,
+}
+
+impl LfsCustody for SourceLfsCustody<'_> {
+    fn admitted(&self) -> Result<(), String> {
+        if revoked(self.call.server, self.call.auth) {
+            return Err(CREDENTIAL_REVOKED_CODE.to_owned());
         }
-        digest.update(&buffer[..read]);
+        self.call.binding.map_or(Ok(()), |binding| {
+            binding_admitted(self.vault, binding, self.origin, self.call.importer)
+        })
     }
-    file.seek(SeekFrom::Start(0)).map_err(|_| spool())?;
-    let digest = digest.finish().map_err(|_| spool())?;
-    Ok((digest, len, Some(file)))
-}
 
-/// A broker error's refusal code.
-fn broker_code(error: BrokerError) -> String {
-    match error {
-        BrokerError::Refused(reason) => format!("source_refused_{}", code(&reason)),
-        BrokerError::Lost => "source_broker_lost".to_owned(),
-        BrokerError::Unreachable => "source_broker_unreachable".to_owned(),
-        BrokerError::Peer => "source_broker_peer_refused".to_owned(),
+    fn credential(&self) -> Result<Zeroizing<Vec<u8>>, String> {
+        let Some(binding) = self.call.binding else {
+            return Err(format!("{SOURCE_LFS_CODE_PREFIX}_binding_absent"));
+        };
+        binding_credential(self.vault, binding, self.origin, self.call.importer)
     }
-}
-
-/// A broker code's wire spelling.
-fn code<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".to_owned())
 }
 
 /// What one source relay serves: its leg, the one resolved repository, and
@@ -409,18 +501,7 @@ impl RelayState {
     /// Whether `parts` carries this relay's ticket, compared in constant
     /// time.
     fn ticketed(&self, parts: &Parts) -> bool {
-        let presented = parts
-            .headers
-            .get(SOURCE_RELAY_TICKET_HEADER)
-            .map(HeaderValue::as_bytes)
-            .unwrap_or_default();
-        let expected = self.ticket.as_bytes();
-        presented.len() == expected.len()
-            && presented
-                .iter()
-                .zip(expected)
-                .fold(0_u8, |differ, (left, right)| differ | (left ^ right))
-                == 0
+        carries_relay_ticket(parts, &self.ticket)
     }
 
     /// Sends Git's request through the broker and answers with the reply:
@@ -432,64 +513,15 @@ impl RelayState {
         body: Option<std::fs::File>,
     ) -> Response {
         let git_protocol = header_value(&parts.headers, "git-protocol");
-        let reply = match self
+        match self
             .leg
             .send(&self.repository, exchange, git_protocol, body)
             .await
         {
-            Ok(reply) => reply,
-            Err(code) => return self.leg.refuse(StatusCode::BAD_GATEWAY, &code),
-        };
-        let (status, headers) = match reply.outcome() {
-            Outcome::Answered { status, headers } => (*status, headers.clone()),
-            Outcome::Refused { reason } => {
-                let code = format!("source_refused_{}", code(reason));
-                return self.leg.refuse(StatusCode::BAD_GATEWAY, &code);
-            }
-            Outcome::Failed { reason } => {
-                let code = format!("source_failed_{}", code(reason));
-                return self.leg.refuse(StatusCode::BAD_GATEWAY, &code);
-            }
-        };
-        if !(200..300).contains(&status) {
-            self.leg.note(&format!("source_http_{status}"));
+            Ok(reply) => answer(reply, &self.leg.notes),
+            Err(code) => self.leg.refuse(StatusCode::BAD_GATEWAY, &code),
         }
-        let mut response = Response::new(reply_body(reply, Arc::clone(&self.leg)));
-        *response.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
-        if let Some(value) = headers
-            .iter()
-            .find(|(name, _)| name == "content-type")
-            .and_then(|(_, value)| HeaderValue::from_str(value).ok())
-        {
-            response.headers_mut().insert(CONTENT_TYPE, value);
-        }
-        response
     }
-}
-
-/// A reply's body as Git reads it: each chunk as it comes, the end clean
-/// only when the broker says so. A cut or broken reply ends with an error,
-/// so Git never reads a cut pack as whole.
-fn reply_body(reply: GitReply, leg: Arc<SourceLeg>) -> Body {
-    let chunks = futures_util::stream::unfold(Some((reply, leg)), |state| async move {
-        let (mut reply, leg) = state?;
-        match reply.next().await {
-            Ok(StreamPart::Chunk(mut chunk)) => Some((
-                Ok::<Vec<u8>, io::Error>(std::mem::take(&mut *chunk)),
-                Some((reply, leg)),
-            )),
-            Ok(StreamPart::End) => None,
-            Ok(StreamPart::Cut(reason)) => {
-                leg.note(&format!("source_cut_{}", code(&reason)));
-                Some((Err(io::Error::other("the brokered reply was cut")), None))
-            }
-            Err(_) => {
-                leg.note("source_broker_lost");
-                Some((Err(io::Error::other("the brokered reply broke")), None))
-            }
-        }
-    });
-    Body::from_stream(chunks)
 }
 
 /// `GET <relay>/info/refs?service=git-upload-pack`: the advertisement.
@@ -531,73 +563,17 @@ async fn source_upload_pack(
             "source_request_not_upload_pack",
         );
     }
-    let spool = match spool_request(&parts, body, relay.leg.idle).await {
+    // No disk floor: a source fetch's spool stays the host's temp file, as
+    // before the spool was shared.
+    let spool = match spool_request(&parts, body, relay.leg.idle, None).await {
         Ok(spool) => spool,
-        Err(code) => return relay.leg.refuse(StatusCode::BAD_REQUEST, code),
+        Err(fault) => {
+            return relay
+                .leg
+                .refuse(StatusCode::BAD_REQUEST, &fault.code(SOURCE_CODE_PREFIX));
+        }
     };
     relay.forward(GitExchange::Rpc, &parts, Some(spool)).await
-}
-
-/// Where a request body is spooled: as it came, or decoded from gzip.
-enum Sink {
-    Plain(std::fs::File),
-    Gzip(flate2::write::GzDecoder<std::fs::File>),
-}
-
-impl Sink {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
-        match self {
-            Self::Plain(file) => file.write_all(bytes),
-            Self::Gzip(decoder) => decoder.write_all(bytes),
-        }
-    }
-
-    fn finish(self) -> io::Result<std::fs::File> {
-        match self {
-            Self::Plain(file) => Ok(file),
-            Self::Gzip(decoder) => decoder.finish(),
-        }
-    }
-}
-
-/// Spools Git's request body to a private unnamed file, decoded from its
-/// outer gzip when it carries one, so the digest and the send cover the
-/// identity bytes; rewound. Each frame waits at most `idle`.
-async fn spool_request(
-    parts: &Parts,
-    body: Body,
-    idle: Duration,
-) -> Result<std::fs::File, &'static str> {
-    let encoding = header_value(&parts.headers, CONTENT_ENCODING.as_str()).unwrap_or_default();
-    let encoding = encoding.trim();
-    let gzip = if encoding.is_empty() || encoding.eq_ignore_ascii_case("identity") {
-        false
-    } else if encoding.eq_ignore_ascii_case("gzip") || encoding.eq_ignore_ascii_case("x-gzip") {
-        true
-    } else {
-        return Err("source_request_encoding_unsupported");
-    };
-    let file = tempfile::tempfile().map_err(|_| "source_request_spool_failed")?;
-    let mut sink = if gzip {
-        Sink::Gzip(flate2::write::GzDecoder::new(file))
-    } else {
-        Sink::Plain(file)
-    };
-    let mut frames = body.into_data_stream();
-    loop {
-        let frame = match tokio::time::timeout(idle, frames.next()).await {
-            Err(_) => return Err("source_request_idle"),
-            Ok(None) => break,
-            Ok(Some(Err(_))) => return Err("source_request_broken"),
-            Ok(Some(Ok(frame))) => frame,
-        };
-        sink.write(&frame)
-            .map_err(|_| "source_request_unreadable")?;
-    }
-    let mut file = sink.finish().map_err(|_| "source_request_unreadable")?;
-    file.seek(SeekFrom::Start(0))
-        .map_err(|_| "source_request_spool_failed")?;
-    Ok(file)
 }
 
 /// One bound fetch's loopback source relay.
@@ -621,13 +597,7 @@ impl SourceRelay {
         let mut secret = [0_u8; 32];
         rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut secret);
         let secret: String = secret.iter().map(|byte| format!("{byte:02x}")).collect();
-        let mut ticket = Zeroizing::new([0_u8; 32]);
-        rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut *ticket);
-        let mut hex = Zeroizing::new(String::with_capacity(64));
-        for &byte in ticket.iter() {
-            hex.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
-            hex.push(char::from(b"0123456789abcdef"[usize::from(byte & 15)]));
-        }
+        let hex = mint_relay_ticket();
         let state = Arc::new(RelayState {
             leg: Arc::clone(&leg),
             repository,
@@ -638,25 +608,7 @@ impl SourceRelay {
             .route(&format!("{base}/info/refs"), get(source_info_refs))
             .route(&format!("{base}/git-upload-pack"), post(source_upload_pack))
             .with_state(state);
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-        listener.set_nonblocking(true)?;
-        let port = listener.local_addr()?.port();
-        let listener = {
-            let _entered = runtime.enter();
-            tokio::net::TcpListener::from_std(listener)?
-        };
-        let (stop, stopped) = oneshot::channel::<()>();
-        drop(runtime.spawn(async move {
-            let shutdown = async move {
-                let _ = stopped.await;
-            };
-            if let Err(error) = axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown)
-                .await
-            {
-                tracing::warn!(%error, "an outside import's source relay stopped with an error");
-            }
-        }));
+        let (port, stop) = serve_loopback(runtime, app, "an outside import's source relay")?;
         Ok(Self {
             url: format!("http://127.0.0.1:{port}{base}"),
             ticket: hex,
@@ -670,7 +622,7 @@ impl SourceRelay {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
-        self.leg.noted.lock().ok().and_then(|noted| noted.clone())
+        self.leg.notes.first()
     }
 }
 
@@ -680,4 +632,35 @@ impl Drop for SourceRelay {
             let _ = stop.send(());
         }
     }
+}
+
+/// A fresh relay ticket: 32 random bytes as lowercase hex, drawn apart from
+/// the relay's unguessable path, held only in wiped memory. A relay child
+/// carries it in its environment alone (FIX 19233 for the door relay).
+pub(super) fn mint_relay_ticket() -> Zeroizing<String> {
+    let mut ticket = Zeroizing::new([0_u8; 32]);
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut *ticket);
+    let mut hex = Zeroizing::new(String::with_capacity(64));
+    for &byte in ticket.iter() {
+        hex.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
+        hex.push(char::from(b"0123456789abcdef"[usize::from(byte & 15)]));
+    }
+    hex
+}
+
+/// Whether `parts` carries `ticket` in the [`SOURCE_RELAY_TICKET_HEADER`]
+/// header, compared in constant time.
+pub(super) fn carries_relay_ticket(parts: &Parts, ticket: &str) -> bool {
+    let presented = parts
+        .headers
+        .get(SOURCE_RELAY_TICKET_HEADER)
+        .map(HeaderValue::as_bytes)
+        .unwrap_or_default();
+    let expected = ticket.as_bytes();
+    presented.len() == expected.len()
+        && presented
+            .iter()
+            .zip(expected)
+            .fold(0_u8, |differ, (left, right)| differ | (left ^ right))
+            == 0
 }

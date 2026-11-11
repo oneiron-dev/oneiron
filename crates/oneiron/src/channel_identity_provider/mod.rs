@@ -9,13 +9,16 @@ pub mod gmail;
 mod gmail_header;
 mod inbound_types;
 mod line_adapter;
+mod line_chat_archive_pins;
 mod line_chat_binding;
 mod line_chat_erase;
+pub(crate) mod mail_html;
 pub mod mail_placement;
 pub mod mailbox_cursor;
 pub mod mailbox_skipped;
 pub(crate) mod member_mail;
 mod shared_validate;
+pub mod sheets;
 mod slack_adapter;
 mod slack_personas;
 mod slack_validate;
@@ -28,12 +31,18 @@ pub use self::email_adapter::{
 };
 pub use self::inbound_types::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
-    ChannelIdentityProviderProvision, EmailProviderInbound, EmailThreadHeaders, LineChat,
-    LineChatKind, LineOfficialAccountInbound, SlackProviderInbound,
+    ChannelIdentityProviderProvision, EMAIL_ATTRIBUTION_COLONS, EMAIL_QUOTE_MARKERS,
+    EMAIL_REPLY_TOP_TEXT_MAX_BYTES, EMAIL_SIGNATURE_DELIMITER, EmailProviderInbound,
+    EmailThreadHeaders, LineChat, LineChatKind, LineOfficialAccountInbound, SlackProviderInbound,
 };
 pub use self::line_adapter::{
     LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier,
     is_line_chat_audience_key, line_audience_key, line_source_audience_key,
+};
+pub(crate) use self::line_chat_archive_pins::{
+    erase_line_chat_source_observations_in_txn, line_chat_archive_keeps_version_in_txn,
+    line_chat_archive_releases_owed_in_txn, prune_line_chat_archive_pins_in_txn,
+    release_line_chat_archive_pin_in_txn, settle_line_chat_archive_releases_in_txn,
 };
 pub(crate) use self::line_chat_binding::validate_line_chat_observation_claim_structure;
 pub use self::line_chat_binding::{
@@ -78,3 +87,4 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 pub mod native_mail;
+pub(crate) mod tables;

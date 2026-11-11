@@ -21,6 +21,7 @@ pub mod public_lens;
 pub mod publication;
 mod reminder;
 pub mod solver;
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

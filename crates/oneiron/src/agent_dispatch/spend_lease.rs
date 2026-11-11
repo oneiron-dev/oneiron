@@ -19,6 +19,12 @@
 //! boundary for its subtree (FIX 9563): no more than its room is drawn
 //! through it, and the child's settlement is tallied there too, while only
 //! the open ancestor pays, so nothing is charged twice.
+//!
+//! A root may be funded by one of the owner's agent Grants that names a
+//! host wallet (FIX 7766, Engine 19:59 = A): chosen explicitly when the
+//! root opens, validated in that writer, and frozen on the root as its
+//! [`GrantSpendBinding`]. Children, retries, reservations and top-ups read
+//! it by the same root walk the payer's consent takes; none rebinds it.
 
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
@@ -26,16 +32,17 @@ use crate::error::Result;
 use crate::llm::run_admission::{DeclaredMaximum, JobMaximum, MaximumShown};
 use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 
-use self::ancestry::{Host, ScopeWalk};
+use self::ancestry::Host;
 use super::AgentDispatcher;
 use super::spend_record::{
-    ChildSpend, SCOPE, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendScopeId,
-    SpendSettlement, SpendSignal, SpendState,
+    ChildSpend, GrantSpendBinding, SCOPE, SpendPayer, SpendRead, SpendRefused, SpendScope,
+    SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 use super::widen_record::invalid;
 
 mod ancestry;
 mod closed_scope;
+mod funding;
 mod late_spend;
 
 pub(super) use self::ancestry::observe as observe_spend_walk;
@@ -65,7 +72,7 @@ impl AgentDispatcher<'_> {
         shown: Option<MaximumShown>,
         now: u64,
     ) -> std::result::Result<SpendScope, SpendRefused> {
-        self.open_root_in_txn(txn, launch, maximum, shown, None, now)
+        self.open_root_in_txn(txn, launch, maximum, shown, None, None, now)
     }
 
     /// [`Self::open_root_spend_scope`] for a tree a payer funds (OF-531):
@@ -100,9 +107,50 @@ impl AgentDispatcher<'_> {
         if !payer_binds_in_txn(self.vault, txn, &payer)? {
             return Err(invalid("the payer's consent is not bound to the payer").into());
         }
-        self.open_root_in_txn(txn, launch, maximum, shown, Some(payer), now)
+        self.open_root_in_txn(txn, launch, maximum, shown, Some(payer), None, now)
     }
 
+    /// Opens a root as [`Self::open_root_spend_scope_in_txn`] does, or for
+    /// `payer` as [`Self::open_root_spend_scope_for_payer_in_txn`] does,
+    /// funded by the owner's agent Grant `selected`, as the authenticated
+    /// `owner` selected it (FIX 7766): the selection proves itself in this
+    /// writer, immediately before the root is put
+    /// ([`crate::federation::SelectedOwnerAgentFundingGrant`]), and the root
+    /// freezes the binding it yields. Re-opening the same root with the same
+    /// cap, payer and binding returns it; nothing falls back to an unbound
+    /// root or a default wallet.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a funded root states its launch, cap, showing, payer, owner, Grant and time"
+    )]
+    pub(crate) fn open_root_spend_scope_funded_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        launch: SpendScopeId,
+        maximum: DeclaredMaximum,
+        shown: Option<MaximumShown>,
+        payer: Option<SpendPayer>,
+        owner: &crate::consent::AuthenticatedOwner,
+        selected: EntityId,
+        now: u64,
+    ) -> std::result::Result<SpendScope, SpendRefused> {
+        if let Some(payer) = &payer
+            && !payer_binds_in_txn(self.vault, txn, payer)?
+        {
+            return Err(invalid("the payer's consent is not bound to the payer").into());
+        }
+        let funding = GrantSpendBinding::from_proof(
+            &self
+                .vault
+                .selected_owner_agent_funding_grant_in_txn(&*txn, owner, selected)?,
+        );
+        self.open_root_in_txn(txn, launch, maximum, shown, payer, Some(funding), now)
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a root states its launch, cap, showing, payer, funding and time"
+    )]
     fn open_root_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -110,6 +158,7 @@ impl AgentDispatcher<'_> {
         maximum: DeclaredMaximum,
         shown: Option<MaximumShown>,
         payer: Option<SpendPayer>,
+        funding: Option<GrantSpendBinding>,
         now: u64,
     ) -> std::result::Result<SpendScope, SpendRefused> {
         // The owner's start conditions are JobMaximum's; one rule, one place.
@@ -121,18 +170,21 @@ impl AgentDispatcher<'_> {
                 && existing.unit == maximum.unit
                 && existing.cap_units == maximum.units
                 && existing.payer == payer
+                && existing.funding == funding
             {
                 return Ok(existing);
             }
-            return Err(
-                invalid("the launch's spend scope exists with another cap or payer").into(),
-            );
+            return Err(invalid(
+                "the launch's spend scope exists with another cap, payer or funding grant",
+            )
+            .into());
         }
         let scope = SpendScope {
             scope: launch,
             parent: None,
             unit: maximum.unit,
             cap_units: maximum.units,
+            ceiling_units: None,
             hard: true,
             spent_units: 0,
             held_units: 0,
@@ -144,6 +196,7 @@ impl AgentDispatcher<'_> {
             calibration_sample: None,
             exploration_attempt: None,
             payer,
+            funding,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
         Ok(scope)
@@ -271,6 +324,7 @@ impl AgentDispatcher<'_> {
             parent: Some(parent.clone()),
             unit: host.unit,
             cap_units: amount,
+            ceiling_units: None,
             hard,
             spent_units: 0,
             held_units: 0,
@@ -282,13 +336,20 @@ impl AgentDispatcher<'_> {
             calibration_sample: None,
             exploration_attempt: None,
             payer: None,
+            funding: None,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
         Ok(scope)
     }
 
     /// A launch's own hard scope outside any tree: the spawn pinned `budget`
-    /// and its parent spends unmetered. It narrows; it grants nothing.
+    /// and its parent spends unmetered. It narrows; it grants nothing. Work
+    /// an owner's agent Grant funds keeps that Grant's `funding` here (FIX
+    /// 7766): the pinned scope is its tree's root.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a pinned scope states its attempt, agent, unit, cap, funding and time"
+    )]
     pub(super) fn open_pinned_scope_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -296,6 +357,7 @@ impl AgentDispatcher<'_> {
         agent: Option<EntityId>,
         unit: crate::llm::run_admission::LeaseUnit,
         cap_units: u64,
+        funding: Option<GrantSpendBinding>,
         now: u64,
     ) -> Result<SpendScope> {
         let id = SpendScopeId::for_attempt(attempt);
@@ -307,6 +369,7 @@ impl AgentDispatcher<'_> {
             parent: None,
             unit,
             cap_units,
+            ceiling_units: None,
             hard: true,
             spent_units: 0,
             held_units: 0,
@@ -318,6 +381,7 @@ impl AgentDispatcher<'_> {
             calibration_sample: None,
             exploration_attempt: None,
             payer: None,
+            funding,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
         Ok(scope)
@@ -475,6 +539,42 @@ impl AgentDispatcher<'_> {
         Ok(root.payer.map(|payer| (root.scope, payer)))
     }
 
+    /// The owner's agent Grant the root of `scope`'s tree is funded by (FIX
+    /// 7766), with that root's id: the wallet every host-paid call spending
+    /// under `scope` must draw on. `None` when the root carries none. A
+    /// missing scope or ancestor is an error, never an unbound tree.
+    pub fn root_funding(
+        &self,
+        scope: &SpendScopeId,
+    ) -> Result<Option<(SpendScopeId, GrantSpendBinding)>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let (_, root) = self
+            .scope_with_root_in_txn(&txn, scope)?
+            .ok_or_else(|| invalid("spend scope is missing"))?;
+        Ok(root.funding.map(|funding| (root.scope, funding)))
+    }
+
+    /// The owner's agent Grant `attempt`'s work is funded by (FIX 7766): its
+    /// spend root's, when it spends under a scope whose root a Grant funds
+    /// (a retry's scope is the try it retries); else the one its durable
+    /// dispatch input carries, which an unmetered root froze and its
+    /// descendants inherited. `None` when no Grant funds it.
+    pub fn attempt_funding(&self, attempt: AttemptId) -> Result<Option<GrantSpendBinding>> {
+        let txn = self.vault.store.env.read_txn()?;
+        if let Some(scope) = self.scope_for_attempt_in_txn(&txn, attempt)? {
+            let (_, root) = self
+                .scope_with_root_in_txn(&txn, &scope)?
+                .ok_or_else(|| invalid("spend scope is missing"))?;
+            if root.funding.is_some() {
+                return Ok(root.funding);
+            }
+        }
+        Ok(crate::attempt_queue::AttemptQueue::new(self.vault)
+            .get_in_txn(&txn, attempt)?
+            .and_then(|record| super::codec::record_dispatch_input(&record))
+            .and_then(|input| input.funding))
+    }
+
     /// The scope an attempt spends under. A retry spends under the scope of
     /// the try it retries: one logical launch, one lease. `None`: unmetered.
     pub fn spend_scope_for_attempt(&self, attempt: AttemptId) -> Result<Option<SpendScopeId>> {
@@ -618,9 +718,16 @@ impl AgentDispatcher<'_> {
             host: target,
             boundaries,
         } = self.booking_in_txn(txn, scope)?;
+        let booking = Host {
+            host: target.clone(),
+            boundaries: boundaries.clone(),
+        };
         let drawn = if record_whole {
-            units.min(self.available_from_in_txn(txn, &target)?)
+            units.min(self.available_through_in_txn(txn, &booking)?)
         } else {
+            if let Some(refused) = closed_scope::boundary_refusal(&boundaries, units) {
+                return Err(refused);
+            }
             units
         };
         let mut target = self.make_local_in_txn(txn, target, drawn)?;
@@ -667,85 +774,6 @@ impl AgentDispatcher<'_> {
         let binding = self.binding_cap_in_txn(txn, &booking.host)?;
         Ok(spend_read_with(&booking.host, available, &binding))
     }
-
-    /// Makes `need` units local to `scope`, topping a soft scope up from its
-    /// open ancestors, no more through a closed hard scope than its room
-    /// (FIX 9563), and returns it for the caller to spend or hold from and
-    /// write. The ancestors' and boundaries' moves are written here, and only
-    /// once the whole chain is known to cover `need`: a refusal writes
-    /// nothing. The chain is read however long it is (rule 5).
-    fn make_local_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        scope: SpendScope,
-        need: u64,
-    ) -> std::result::Result<SpendScope, SpendRefused> {
-        // Each entry draws its deficit from the next one up, through the
-        // closed hard scopes between them.
-        let mut chain: Vec<(SpendScope, u64, Vec<SpendScope>)> = Vec::new();
-        let from = scope.scope.clone();
-        let mut hosts = std::collections::HashSet::from([from.clone()]);
-        let mut walk = ScopeWalk::default();
-        let mut current = scope;
-        let mut wanted = need;
-        let mut reachable = 0u64;
-        let drawn = loop {
-            let local = current.local_available();
-            reachable = reachable.saturating_add(local);
-            if local >= wanted {
-                chain.push((current, 0, Vec::new()));
-                break Ok(());
-            }
-            if current.hard || current.parent.is_none() {
-                break Err(SpendRefused::OverCap {
-                    scope: current.scope,
-                    available_units: reachable,
-                    asked_units: need,
-                });
-            }
-            let deficit = wanted - local;
-            let hop = match self.host_in_walk(txn, &current, &mut walk) {
-                Ok(hop) => hop,
-                Err(error) => break Err(error.into()),
-            };
-            if !hosts.insert(hop.host.scope.clone()) {
-                break Err(invalid("spend scope ancestor cycle").into());
-            }
-            if let Some(boundary) = hop
-                .boundaries
-                .iter()
-                .find(|boundary| boundary.local_available() < deficit)
-            {
-                break Err(SpendRefused::OverCap {
-                    scope: boundary.scope.clone(),
-                    available_units: reachable.saturating_add(boundary.local_available()),
-                    asked_units: need,
-                });
-            }
-            chain.push((current, deficit, hop.boundaries));
-            current = hop.host;
-            wanted = deficit;
-        };
-        walk.finish(&self.vault.store, txn, &from);
-        drawn?;
-        for index in 0..chain.len() - 1 {
-            let deficit = chain[index].1;
-            chain[index].0.cap_units = chain[index].0.cap_units.saturating_add(deficit);
-            for boundary in &mut chain[index].2 {
-                boundary.held_units = boundary.held_units.saturating_add(deficit);
-            }
-            chain[index + 1].0.held_units = chain[index + 1].0.held_units.saturating_add(deficit);
-        }
-        for (index, (scope, _, boundaries)) in chain.iter().enumerate() {
-            if index > 0 {
-                SCOPE.put(&self.vault.store, txn, &scope.scope.0, scope)?;
-            }
-            for boundary in boundaries {
-                SCOPE.put(&self.vault.store, txn, &boundary.scope.0, boundary)?;
-            }
-        }
-        Ok(chain.swap_remove(0).0)
-    }
 }
 
 /// Assembles what one booking host reports: its identity and spend, what is
@@ -753,12 +781,12 @@ impl AgentDispatcher<'_> {
 fn spend_read_with(host: &SpendScope, available: u64, binding: &SpendScope) -> SpendRead {
     let signal = if available == 0 {
         Some(SpendSignal::AtCap {
-            cap_units: binding.cap_units,
+            cap_units: binding.limit_units(),
         })
-    } else if u128::from(available) * 100 <= u128::from(binding.cap_units) * 5 {
+    } else if u128::from(available) * 100 <= u128::from(binding.limit_units()) * 5 {
         Some(SpendSignal::WrapUp {
             available_units: available,
-            cap_units: binding.cap_units,
+            cap_units: binding.limit_units(),
         })
     } else {
         None
@@ -769,7 +797,7 @@ fn spend_read_with(host: &SpendScope, available: u64, binding: &SpendScope) -> S
         spent_units: host.spent_units,
         available_units: available,
         cap_scope: binding.scope.clone(),
-        cap_units: binding.cap_units,
+        cap_units: binding.limit_units(),
         signal,
     }
 }

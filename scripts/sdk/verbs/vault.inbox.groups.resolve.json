@@ -1,0 +1,17 @@
+{
+  "name": "vault.inbox.groups.resolve",
+  "description": "The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items.",
+  "input": "crate::inbox::InboxGroupResolveRequest",
+  "output": "crate::inbox::InboxGroupResolution",
+  "call": "memory.resolve_inbox_group_of_kind(&memory.embedded_owner(\"vault.inbox.groups.resolve\")?, None, &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

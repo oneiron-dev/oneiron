@@ -42,6 +42,9 @@ pub(crate) fn attempt_read_context(
             }
             about
         }
+        dreamer_consolidation::root_evidence::ROOT_BRIDGE_ATTEMPT_TYPE => {
+            dreamer_consolidation::root_evidence::root_bridge_read_context(input)?
+        }
         dreamer_consolidation::DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE => {
             vec![crate::edit_distance::miner::miner_session_from_input(input).ok()?]
         }
@@ -111,6 +114,13 @@ pub(crate) fn attempt_read_context(
                     .ok()?
                     .cited(true)
             }
+        }
+        // The message's TURN and MESSAGE revisions; its source is a pack
+        // row, never an entity (FIX 15414).
+        maintenance::CLAIM_SOURCE_RECHECK_FACET => {
+            maintenance::claim_source_recheck::ClaimSourceRecheckDeclaration::from_input(input)
+                .ok()?
+                .about()
         }
         feedback::COACH_FEEDBACK_TRIAGE_FACET => {
             let (_, evidence) = feedback::job_target(input).ok()?;

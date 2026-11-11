@@ -207,6 +207,7 @@ impl CampaignChannelSender {
             hygiene_headers: BTreeMap::new(),
             apns_interruption_level: None,
             calendar_invite: None,
+            engine_send_id: None,
         };
         let execution = sink.execute(&request);
         self.settle_execution(execution)
@@ -304,6 +305,7 @@ impl CampaignChannelSender {
                 hygiene_headers: BTreeMap::new(),
                 apns_interruption_level: None,
                 calendar_invite: None,
+                engine_send_id: None,
             };
             sink.execute(&request)
         };
@@ -455,6 +457,7 @@ impl OutboundResultSender for CampaignChannelSender {
             hygiene_headers: BTreeMap::new(),
             apns_interruption_level: None,
             calendar_invite: None,
+            engine_send_id: None,
         };
         let execution = self.sink.execute(&request);
         self.settle_execution(execution)

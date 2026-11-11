@@ -1,7 +1,7 @@
-//! The typed refusals of the direct error vocabulary (FIX 6032). Each keeps
-//! the 403 its route answered with as a generic `FORBIDDEN` and names its own
-//! code, its bound (`requiredScope`) and its way out. Kept apart from
-//! `error/mod.rs` so that file stays under the giant-file bar.
+//! Typed refusals and their payloads in the direct error vocabulary. The
+//! FIX 6032 refusals keep their route's 403 and name their own code, bound
+//! (`requiredScope`) and way out. Kept apart from `error/mod.rs` so that
+//! file stays under the giant-file bar.
 
 use super::{ApiError, ApiErrorDetails};
 
@@ -70,5 +70,19 @@ impl ApiError {
             },
             ["Use a control credential that grants this operation."],
         )
+    }
+}
+
+impl ApiError {
+    pub(crate) fn with_room_join_hold(
+        mut self,
+        room_join_hold: Box<oneiron::workspace_roster::RoomJoinHold>,
+    ) -> Self {
+        self.room_join_hold = Some(room_join_hold);
+        self
+    }
+
+    pub(crate) fn room_join_hold(&self) -> Option<&oneiron::workspace_roster::RoomJoinHold> {
+        self.room_join_hold.as_deref()
     }
 }

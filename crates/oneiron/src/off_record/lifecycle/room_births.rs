@@ -8,7 +8,7 @@
 //!
 //! The births are the room's bookkeeping. A birth spends none of the room's
 //! byte budget (`session_overlay::keyspace::unbudgeted_row`); a NOTE's document,
-//! which repeats text its row already holds, is marked as the write's own
+//! born from the birth text its write carries, is marked as the write's own
 //! bookkeeping before it is put, so a room at its limit takes exactly the
 //! NOTE it took before (N2). The host's own memory accounting still counts
 //! their bytes. Neither is a journal entry, so no promote or save replays
@@ -34,13 +34,13 @@ use crate::write_envelope::{WriteActor, WriteEnvelope};
 const STAGED_CLAIM_DOOR: &str = "off_record.claims.stage";
 
 /// The door identity of a claim a room derives from its sources
-/// (`OffRecordSession::stage_session_derived_claim`).
+/// (`OffRecordSession::prepare_session_derived_claim`).
 const DERIVED_CLAIM_DOOR: &str = "off_record.claims.derive";
 
 /// What a room write stages beside its row: who wrote it, its class, the
 /// door it came in by and when, the rows it derives from, the evidence its
-/// caller supplied, whether it is a NOTE whose document is born with it, and
-/// a claim's gate decision.
+/// caller supplied, for a NOTE the birth text its document is born from
+/// with it, and a claim's gate decision.
 pub(crate) struct RoomRowAttachments {
     actor: WriteActor,
     class: MadeByClass,
@@ -48,18 +48,20 @@ pub(crate) struct RoomRowAttachments {
     at: u64,
     sources: Vec<EntityId>,
     evidence: Vec<SuppliedEvidence>,
-    note_document: bool,
+    note_document: Option<String>,
     gate_decision: Option<RoomGateDecision>,
 }
 
 impl RoomRowAttachments {
     /// A NOTE `actor` wrote through `door` at `at`, naming `evidence` as its
-    /// caller supplied it: its document is born beside it.
+    /// caller supplied it: its document is born beside it from `markdown`,
+    /// its explicit birth text (FIX 7783).
     pub(crate) fn note(
         actor: WriteActor,
         door: &'static str,
         evidence: Vec<SuppliedEvidence>,
         at: u64,
+        markdown: String,
     ) -> Self {
         Self {
             actor,
@@ -68,7 +70,7 @@ impl RoomRowAttachments {
             at,
             sources: Vec::new(),
             evidence,
-            note_document: true,
+            note_document: Some(markdown),
             gate_decision: None,
         }
     }
@@ -88,7 +90,7 @@ impl RoomRowAttachments {
             at,
             sources: Vec::new(),
             evidence,
-            note_document: false,
+            note_document: None,
             gate_decision: None,
         }
     }
@@ -139,8 +141,8 @@ impl OffRecordSession<'_> {
         attachments: &RoomRowAttachments,
     ) -> Result<()> {
         let view = self.read_view()?;
-        if attachments.note_document {
-            self.stage_note_document(&view, wtxn, row)?;
+        if let Some(markdown) = &attachments.note_document {
+            self.stage_note_document(&view, wtxn, row, markdown)?;
         }
         let mut inputs = Vec::with_capacity(attachments.sources.len());
         for source in &attachments.sources {
@@ -168,19 +170,21 @@ impl OffRecordSession<'_> {
         Ok(())
     }
 
-    /// Stages the document birth of `note`, the NOTE row `view`'s room has
-    /// just staged: its snapshot and state vector, each marked as the
-    /// write's bookkeeping before it is put (N2). Its body's bytes are
-    /// measured against their threshold row, the check waiting with the
-    /// room ([`Self::pending_scan_checks`]); no size refuses it (rule 5).
-    fn stage_note_document(
+    /// Stages the document birth of `note`, the NOTE core `view`'s room has
+    /// just staged, from `markdown`, its explicit birth text: its snapshot
+    /// and state vector, each marked as the write's bookkeeping before it is
+    /// put (N2). Its body's bytes are measured against their threshold row,
+    /// the check waiting with the room ([`Self::pending_scan_checks`]); no
+    /// size refuses it (rule 5).
+    pub(crate) fn stage_note_document(
         &self,
         view: &SessionStoreView<'_>,
         wtxn: &mut RwTxn<'_>,
         note: EntityId,
+        markdown: &str,
     ) -> Result<()> {
         let Some(document) =
-            crate::note::room_birth_document_in_txn(self.vault, view, &*wtxn, note)?
+            crate::note::room_birth_document_in_txn(self.vault, view, &*wtxn, note, markdown)?
         else {
             return Ok(());
         };

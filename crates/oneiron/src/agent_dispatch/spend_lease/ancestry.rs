@@ -170,7 +170,7 @@ impl AgentDispatcher<'_> {
         walk.finish(store, txn, &row.scope);
         Ok(match open? {
             Some(mut hop) => {
-                if row.hard {
+                if row.is_boundary() {
                     hop.boundaries.insert(0, row);
                 }
                 hop
@@ -241,7 +241,7 @@ impl AgentDispatcher<'_> {
                 }));
             }
             cursor = row.parent.clone();
-            if row.hard {
+            if row.is_boundary() {
                 boundaries.push(row);
             }
         }
@@ -283,12 +283,14 @@ impl AgentDispatcher<'_> {
         walk.finish(&self.vault.store, txn, &scope.scope);
         let mut through = 0u64;
         for hop in hops?.iter().rev() {
-            through = hop.host.local_available().saturating_add(through);
+            through = hop
+                .host
+                .clamp_available(hop.host.local_available().saturating_add(through));
             for boundary in &hop.boundaries {
-                through = through.min(boundary.local_available());
+                through = through.min(boundary.boundary_available());
             }
         }
-        Ok(scope.local_available().saturating_add(through))
+        Ok(scope.clamp_available(scope.local_available().saturating_add(through)))
     }
 
     /// The hard scope whose cap binds `scope`: itself when hard, else the
@@ -299,6 +301,9 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         scope: &SpendScope,
     ) -> Result<SpendScope> {
+        if scope.is_boundary() {
+            return Ok(scope.clone());
+        }
         let mut walk = ScopeWalk::default();
         let hops = self.top_up_hops_in_walk(txn, scope, &mut walk);
         walk.finish(&self.vault.store, txn, &scope.scope);
@@ -306,7 +311,7 @@ impl AgentDispatcher<'_> {
             if let Some(boundary) = hop.boundaries.into_iter().next() {
                 return Ok(boundary);
             }
-            if hop.host.hard || hop.host.parent.is_none() {
+            if hop.host.is_boundary() || hop.host.parent.is_none() {
                 return Ok(hop.host);
             }
         }

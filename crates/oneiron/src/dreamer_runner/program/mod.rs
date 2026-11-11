@@ -59,8 +59,8 @@ pub(crate) use self::arm::{
 };
 pub(crate) use self::authority::{
     TurnProgramAuthority, TurnProgramBinding, TurnProgramBound, apply_program_started_in_txn,
-    program_attempt_receipt_in_txn, program_milestone_envelope, require_program_actor_in_txn,
-    stamp_program_attempt,
+    program_actor_for_attempt_in_txn, program_attempt_receipt_in_txn, program_milestone_envelope,
+    require_program_actor_in_txn, stamp_program_attempt,
 };
 pub(crate) use self::bodies::{
     program_run_actor_in_txn, program_step_carriage, program_step_owners,
@@ -87,6 +87,9 @@ pub(crate) use self::run::{
     ProgramWrite, TurnProgramEntered, bind_program_write_in_txn, join_program_checkpoint_in_txn,
     note_program_write_uncertain, settle_program_outbound_in_txn, settle_program_write_in_txn,
 };
+// The owner's stop of a parked try (`park_release`) abandons the try's
+// Pending sends as a held program's Stop does (FIX 7188).
+pub(in crate::dreamer_runner) use self::stop_sends::abandon_stopped_sends_in_txn;
 pub use self::types::{
     ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin,
     TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
@@ -115,7 +118,7 @@ const WAKE: SideTable<(EntityId, EntityId), TurnProgramWake, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_WAKE);
 
 /// Who parks a program attempt the program runtime holds.
-pub(crate) const PROGRAM_PARK_OWNER: &str = "dreamer.turn_program";
+pub(crate) const PROGRAM_PARK_OWNER: &str = crate::dreamer_runner::TURN_PROGRAM_PARK_OWNER;
 /// The park DOOR-141 PR1 left on each admitted attempt, exactly: the runtime
 /// resumes these (`lease`), and no other park.
 const PR1_PARK_REASON: &str = "admitted; the turn program runtime lands with DOOR-141 PR2";

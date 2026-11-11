@@ -561,7 +561,10 @@ impl Vault {
                             id: attempt.id,
                             lease_owner,
                             attempt_count: attempt.attempt_count,
-                            backoff_until: now.saturating_add(60),
+                            // FIX 11660: never before the edge its receipt names.
+                            backoff_until: now
+                                .saturating_add(60)
+                                .max(result.retry_at().unwrap_or(0)),
                             last_error: Some("notice_not_dispatched".into()),
                             now,
                         },

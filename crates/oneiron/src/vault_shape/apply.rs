@@ -11,6 +11,7 @@
 //! there back into its journal. Each apply is one run-tree root with a child
 //! per item (see [`super::run`]), and its waiting items are one inbox group
 //! (see [`super::group`]).
+mod actor;
 mod journal;
 
 use super::approval::{
@@ -23,9 +24,8 @@ use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::run::ShapeApplyRun;
 use super::shared_setup::{CreatorAnswer, ShapeLearningOutcome, creator_answer, report_unread};
 use super::{ShapeRow, ShapeTarget, invalid};
-use crate::agent_def::{AgentDefinition, AgentScope};
 use crate::authority::{ActSurface, HostSlipIssuer, VerifiedSlip};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use crate::claim::ClaimApprovalStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::error::Result;
@@ -139,6 +139,10 @@ pub struct ShapeApplyItem {
     /// be followed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt_refs: Option<Vec<String>>,
+    /// The native setup Gate decision for an actor creation attempt. This is
+    /// a ledger reference, not an entity id or authority to read the target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_decision: Option<String>,
 }
 
 /// One apply: its journal row, and `vault.shape.apply`'s answer.
@@ -250,12 +254,13 @@ impl Vault {
     /// [`Self::plan_shape_into`]), the seed revision it stored, every live
     /// read an owner's landing made, the staged source a pack installs
     /// from, the custody record a delegated channel provision reads, the
-    /// hub a refused skill import read, and the entity each landing wrote.
-    /// The journal keeps them (FIX 3411, 3513), so a resumed apply lists
-    /// them beside its own reads without planning again. `None` once a read
-    /// ran whose rows it does not follow (a skill import refused after its
-    /// import began), and from then on for every apply of that journal. A
-    /// refusal answers beside the rows read before it.
+    /// hub a skill import read and the stored skill its content
+    /// deduplicated to, landed or refused (FIX 11699), and the entity each
+    /// landing wrote. The journal keeps them (FIX 3411, 3513), so a resumed
+    /// apply lists them beside its own reads without planning again. `None`
+    /// once a read ran whose rows it does not follow, and from then on for
+    /// every apply of that journal. A refusal answers beside the rows read
+    /// before it.
     pub fn apply_shape_listing(
         &self,
         applier: ShapeApplier<'_>,
@@ -264,7 +269,29 @@ impl Vault {
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> (Result<ShapeApplyReceipt>, Option<Vec<EntityId>>) {
         let mut sources = ShapeSources::on();
-        let receipt = self.apply_shape_into(applier, request, now, visible, &mut sources);
+        let receipt = self.apply_shape_into(applier, request, now, visible, &mut sources, None);
+        (receipt, sources.into_rows())
+    }
+
+    /// [`Self::apply_shape_listing`] with the host's actual consuming signer
+    /// for credential-bound setup writes. No signer is inferred from the actor.
+    pub fn apply_shape_with_setup_issuer_listing(
+        &self,
+        applier: ShapeApplier<'_>,
+        request: &ShapeApplyRequest,
+        now: u64,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
+        setup_issuer: &HostSlipIssuer,
+    ) -> (Result<ShapeApplyReceipt>, Option<Vec<EntityId>>) {
+        let mut sources = ShapeSources::on();
+        let receipt = self.apply_shape_into(
+            applier,
+            request,
+            now,
+            visible,
+            &mut sources,
+            Some(setup_issuer),
+        );
         (receipt, sources.into_rows())
     }
 
@@ -276,6 +303,7 @@ impl Vault {
         now: u64,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
         sources: &mut ShapeSources,
+        setup_issuer: Option<&HostSlipIssuer>,
     ) -> Result<ShapeApplyReceipt> {
         // The owner's proof names the author; it must still hold.
         let author = match applier {
@@ -317,6 +345,7 @@ impl Vault {
                             approval: Some(pin.clone()),
                             slips_kept: false,
                             receipt_refs: None,
+                            setup_decision: None,
                         })
                         .collect(),
                     done: false,
@@ -749,29 +778,7 @@ impl Vault {
                 }),
             ) => {
                 let id = EntityId::now();
-                let def = AgentDefinition::new(
-                    agent_id.clone(),
-                    "Declared by the vault's shape.",
-                    "1",
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    AgentScope::All,
-                    (*ceiling).into(),
-                    None,
-                    ClaimApprovalStatus::Approved,
-                    ClaimLifecycleStatus::Active,
-                    ClaimSource::UserStated,
-                    1.0,
-                    false,
-                    true,
-                    rmpv::Value::Map(Vec::new()),
-                    None,
-                    *enabled,
-                    None,
-                );
+                let def = actor::shape_agent_definition(agent_id, (*ceiling).into(), *enabled);
                 owner.revalidate(self)?;
                 self.put_agent_definition(&id, &def, occurred, now)?;
                 sources.list(id);
@@ -873,7 +880,7 @@ impl Vault {
                 Ok(grant_ref.clone())
             }
             (ShapeChange::Retire, ShapeTarget::Grant { grant_ref }, _) => {
-                let _receipt = self.revoke_consent_grant(owner, grant_ref)?;
+                self.consent_revocation(owner, grant_ref)?;
                 Ok(grant_ref.clone())
             }
             (

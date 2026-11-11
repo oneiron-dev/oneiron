@@ -228,7 +228,7 @@ impl Memory<'_> {
             ClaimRelationships::Relationships(ids) => Some(
                 ids.iter()
                     .map(|id| self.resolve_ref(id))
-                    .collect::<Result<std::collections::BTreeSet<EntityId>, _>>()?,
+                    .collect::<Result<crate::claim::RelationshipSet, _>>()?,
             ),
         };
         if input.sensitivity.is_some_and(|band| band > 3) {

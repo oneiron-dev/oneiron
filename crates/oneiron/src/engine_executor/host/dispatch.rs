@@ -16,11 +16,18 @@ impl RecordingJsHost<'_, '_> {
         seq: u64,
         mut outcome: SelfDispatchOutcome,
     ) -> Result<SelfDispatchOutcome> {
+        if let SelfDispatchOutcome::AgentVerb(answer) = &mut outcome
+            && let Some(output) = answer.stored_output.take()
+        {
+            answer.output = self.import_write_answer(output);
+            return Ok(outcome);
+        }
         // Typed replies use the guest's sweeping sink and full result card.
         if matches!(
             &outcome,
             SelfDispatchOutcome::InferenceDefaults(_)
                 | SelfDispatchOutcome::TaskAskStatus(_)
+                | SelfDispatchOutcome::TaskWaitSet(_)
                 | SelfDispatchOutcome::Team(_)
         ) {
             return self.store_large_typed_reply(outcome);
@@ -29,8 +36,21 @@ impl RecordingJsHost<'_, '_> {
             SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
             SelfDispatchOutcome::SkillCall(result) => &mut result.output,
             // Kept as its JSON text, framed under `output` as the others are
-            // (FIX 1190): the row keeps the card's text in its place.
-            SelfDispatchOutcome::Fold(json) | SelfDispatchOutcome::Leader(json) => {
+            // (FIX 1190): the row keeps the card's text in its place. A fold
+            // answer's card keeps the folds whose words it copies, and its
+            // body depends on their sources (FIX 18924).
+            SelfDispatchOutcome::Fold(answer) => {
+                if answer.json.len() <= RESULT_REPLY_INLINE_BYTES {
+                    return Ok(outcome);
+                }
+                let sources = answer.word_sources();
+                let card = self.store_sourced_answer(seq, &sources, |sink| {
+                    sink.write(answer.json.as_bytes())
+                })?;
+                answer.json = card.to_string();
+                return Ok(outcome);
+            }
+            SelfDispatchOutcome::Leader(json) => {
                 if json.len() <= RESULT_REPLY_INLINE_BYTES {
                     return Ok(outcome);
                 }
@@ -51,10 +71,64 @@ impl RecordingJsHost<'_, '_> {
         Ok(outcome)
     }
 
+    /// Retain a fresh decline's released reason without changing its outcome.
+    fn capture_task_refusal_output(&mut self, seq: u64, outcome: &SelfDispatchOutcome) {
+        let Some(bytes) = self.gated_write.take_task_refusal_output() else {
+            return;
+        };
+        if !matches!(outcome, SelfDispatchOutcome::TaskRefusal(refusal)
+            if refusal.declined() && !refusal.replay)
+        {
+            return;
+        }
+        let capture = || -> Result<Option<CodeRunRawOutput>> {
+            let Some(storage) = self.storage else {
+                return Ok(None);
+            };
+            let mut sink = storage.code_run_reply_spool()?;
+            sink.write(&bytes)?;
+            Ok(storage
+                .publish_code_run_reply(
+                    bridge_result_output_path(seq),
+                    sink,
+                    self.run_id,
+                    &[],
+                    None,
+                )?
+                .ok())
+        };
+        match capture() {
+            Ok(Some(output)) => self.captured.push(output),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(run = %self.run_id.to_hex(), seq, error = %error,
+                    "accepted task refusal output is unavailable");
+            }
+        }
+    }
+
+    /// Registers the write receipt's already-published body as this run's result.
+    fn import_write_answer(&mut self, output: CodeRunRawOutput) -> serde_json::Value {
+        let name = self.next_auto_name();
+        self.bind(name.clone(), output.handle.clone(), output.path.clone());
+        let mut card = result_handle_json(self.run_id, &output);
+        card["name"] = json!(name);
+        if !self
+            .results
+            .iter()
+            .chain(&self.captured)
+            .any(|held| held == &output)
+        {
+            self.captured.push(output);
+        }
+        card
+    }
+
     /// A typed reply too large for one message (FIX449): the inference
-    /// defaults, a settled ask, a world-privacy answer, or a direct team's
-    /// native receipt, spilled through the sweeping result sink and tainted
-    /// card with facets, never `store_answer`. Under the inline size, or with no
+    /// defaults, a settled ask, a world-privacy answer, a wait set without
+    /// program feedback, or a direct team's native receipt, spilled through
+    /// the sweeping result sink and tainted card with facets, never
+    /// `store_answer`. Under the inline size, or with no
     /// result store, the original outcome stays inline, unchanged.
     fn store_large_typed_reply(
         &mut self,
@@ -84,6 +158,10 @@ impl RecordingJsHost<'_, '_> {
                 SelfStoredReplyKind::TaskAskWorldPrivacy,
                 json!({"output": TaskAskWait::WorldPrivacyReady(request.clone())}),
             ),
+            // Nonempty feedback stays typed for its independent release projection.
+            SelfDispatchOutcome::TaskWaitSet(result) if result.program_steps.is_empty() => {
+                (SelfStoredReplyKind::TaskWaitSet, json!({"output": result}))
+            }
             SelfDispatchOutcome::Team(result)
                 if result.source_rows.is_some()
                     && matches!(
@@ -144,13 +222,28 @@ impl RecordingJsHost<'_, '_> {
         seq: u64,
         write: impl FnOnce(&mut BodySink) -> Result<()>,
     ) -> Result<serde_json::Value> {
+        self.store_sourced_answer(seq, &[], write)
+    }
+
+    /// [`Self::store_answer`] for an answer that copies the words of records
+    /// `sources`: its body is published as a dependent of each of them, so
+    /// a withdrawal of one reaches it (FIX 18924).
+    fn store_sourced_answer(
+        &mut self,
+        seq: u64,
+        sources: &[EntityId],
+        write: impl FnOnce(&mut BodySink) -> Result<()>,
+    ) -> Result<serde_json::Value> {
+        // The card stands for the answer: no skill body it holds reaches the
+        // guest (FIX 3608).
+        self.held_delivery.clear();
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
         let mut sink = storage.code_run_reply_spool()?;
         write(&mut sink)?;
         let path = bridge_result_output_path(seq);
-        let output = match storage.publish_code_run_reply(path, sink, self.run_id)? {
+        let output = match storage.publish_code_run_reply(path, sink, self.run_id, sources, None)? {
             Ok(output) => output,
             Err(unavailable) => return Ok(unavailable),
         };
@@ -164,7 +257,8 @@ impl RecordingJsHost<'_, '_> {
 
     /// A callable skill's checked answer as the guest gets it: its JSON up
     /// to the inline reply size, else its card, the answer copied whole from
-    /// the call's spool into a body of the run, never read into one value.
+    /// the call's spool into a body of the run; only the large-answer copy
+    /// here streams in frames without reading into one value.
     pub(super) fn skill_answer(
         &mut self,
         seq: u64,
@@ -207,9 +301,45 @@ impl RecordingJsHost<'_, '_> {
     /// (FIX 600). A cancelled skill answers `code_step_cancelled`, and the
     /// caller's step goes on. A callable's own call nests inside it: past
     /// the `[limits] callable_nest_depth` row it asks, and the call runs.
+    /// Near the stack floor, a supported target lends the call another stack
+    /// segment on this thread. Other targets retain the stack-floor refusal.
     /// A call that would start below the thread's stack floor answers
-    /// `skills_call_stack_floor` instead.
+    /// `skills_call_stack_floor` instead. A call the step's own program made
+    /// that answered is kept for the step's replay context (FIX 3608): what
+    /// its load selected, its arguments and where its own calls end.
     pub(super) fn call_skill(
+        &mut self,
+        seq: u64,
+        started_at_ms: u64,
+        call: &SelfCall,
+        skill: SelfSkillCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+        parent: &StepCancellation,
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
+        let answered = on_callable_stack(|| {
+            self.call_skill_on_stack(seq, started_at_ms, call, skill, runtime, parent)
+        })
+        .unwrap_or_else(|| {
+            Ok((
+                SelfDispatchOutcome::Failed(SelfFailedResult {
+                    effect: SelfEffect::SkillsCall,
+                    error: "skills_call_stack_floor".to_owned(),
+                    code: None,
+                    disk_floor: None,
+                }),
+                None,
+            ))
+        });
+        // However the call ended, before its caller goes on: a callable that
+        // ran its body again must have met every call it settled before
+        // (FIX 5878).
+        if let Some(injection) = self.injection.as_mut() {
+            injection.returned(seq);
+        }
+        answered
+    }
+
+    fn call_skill_on_stack(
         &mut self,
         seq: u64,
         started_at_ms: u64,
@@ -229,15 +359,12 @@ impl RecordingJsHost<'_, '_> {
                 None,
             )
         };
-        // Each nested level keeps its host loop's frames on this thread.
-        if below_stack_floor() {
-            return Ok(failed("skills_call_stack_floor".to_owned()));
-        }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         let lease = match self
             .gated_write
@@ -265,10 +392,19 @@ impl RecordingJsHost<'_, '_> {
                 Err(stopped) => return Ok((stopped, None)),
             }
         };
+        // A callable running its body again runs the call it ran before: a
+        // hook that redirects it holds the entry, and the body's calls are
+        // refused (FIX 5878).
+        if hooked.as_ref().is_some_and(|hooked| hooked.1.is_some())
+            && let Some(injection) = self.injection.as_mut()
+        {
+            injection.redirected(seq);
+        }
         let Some(executor) = self.skill_executor.clone() else {
             return Ok(failed("skills_call_no_executor".to_owned()));
         };
         let (run_id, determinism) = (self.run_id, self.determinism);
+        let from_program = self.callable_depth == 0;
         self.callable_depth += 1;
         lease.vault.measure_limit(
             crate::limit_ask::EngineLimit::CallableNestDepth,
@@ -277,7 +413,11 @@ impl RecordingJsHost<'_, '_> {
         // The skill's stored body and its own calls reach the run (FIX 6130).
         let cause = crate::code_run::ReadWorldUnknown::CallableSkill;
         self.gated_write.read_worlds_unknown(run_id, cause);
-        let mut loaded = Vec::new();
+        let (mut loaded, mut selected) = (Vec::new(), None);
+        // The stores its own calls make, fresh or reusing a recorded one
+        // (FIX 5878): a later entry that answers it whole replays none of
+        // them.
+        let stored_before = (self.captured.len(), self.replayed_stores.len());
         // The answer check holds its buffers on the run's own share (FIX
         // 10149); a host lent none checks unheld, as before.
         let memory = self.result_share.zip(self.storage).map(|(share, storage)| {
@@ -300,10 +440,37 @@ impl RecordingJsHost<'_, '_> {
             started_at_ms / 1000,
             parent,
             &mut loaded,
+            &mut selected,
             memory,
         );
         self.callable_rows.0.extend(loaded);
         self.callable_depth -= 1;
+        // A pinned entry's callable (FIX 5878): where its own calls end in
+        // the entry's log, and how a later entry answers it. A body that
+        // unwound on the entry's wait runs again; one that returned past that
+        // wait (a caught wait's owner sits inside it), one the bridge halted
+        // inside, or one whose own calls stored outputs, fresh or reusing a
+        // recorded one, that a whole answer would leave unconsumed for a
+        // later store of the same bytes, holds; any other answers whole.
+        if let Some(injection) = self.injection.as_mut() {
+            let kind = if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some()
+            {
+                ProgramResumeKind::HeldCallable
+            } else if self.durable_wait.is_some() {
+                if ran.is_ok() {
+                    ProgramResumeKind::HeldCallable
+                } else {
+                    ProgramResumeKind::OpenCallable
+                }
+            } else if (self.captured.len(), self.replayed_stores.len()) != stored_before {
+                ProgramResumeKind::HeldCallable
+            } else {
+                ProgramResumeKind::Settled
+            };
+            let log_end = injection.log_len();
+            self.program_callables
+                .push(ProgramCallableSpan { seq, log_end, kind });
+        }
         // The callable's type feedback stays beside the run, however the
         // call ended (FIX 10389).
         self.keep_callable_check(seq, ran.is_ok());
@@ -343,6 +510,19 @@ impl RecordingJsHost<'_, '_> {
             }),
             Err(error) => failed(error.to_string()).0,
         };
+        if from_program
+            && matches!(outcome, SelfDispatchOutcome::SkillCall(_))
+            && let Some(selected) = selected
+        {
+            let callable = crate::code_run::CapturedCallable {
+                seq,
+                nested_end: self.next_seq,
+                skill: skill.skill,
+                selected,
+                args: skill.args,
+            };
+            self.context_capture.callables.push(callable);
+        }
         // The post chain reads the answer as the guest gets it: a large one
         // by its handle.
         let outcome = self.store_large_answer(seq, outcome)?;
@@ -365,6 +545,9 @@ impl RecordingJsHost<'_, '_> {
         call: SelfCall,
         runtime: Option<(&mut dyn JsCodeModeRuntime, &StepCancellation)>,
     ) -> Result<SelfDispatchResponse> {
+        // No skill body an earlier call's answer held reaches this call's
+        // reply (FIX 3608).
+        self.held_delivery.clear();
         // A resumed turn program's settled calls answer from the rows that
         // settled them, before a position is taken or anything dispatched
         // (DOOR-141 PR3b). Only a pinned entry binds an injection.
@@ -417,8 +600,20 @@ impl RecordingJsHost<'_, '_> {
                 }
             }
         }
+        // A resumed pending step's calls answer from the rows its program
+        // already made, before a position is taken (FIX 7703).
+        if let Some(answered) = self.answer_from_pending_prefix(&call) {
+            return Ok(answered);
+        }
         let seq = self.next_seq;
         self.next_seq += 1;
+        if self.callable_depth == 0 {
+            self.guest_calls.push(seq);
+        }
+        // A pinned entry logs the call it issues here (FIX 5878).
+        if let Some(injection) = self.injection.as_mut() {
+            injection.issued(seq);
+        }
         let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
         // ONE-1686: the speech family's order and timestamp are the BRIDGE's,
         // stamped here — on the one ordering path every `self.*` call takes —
@@ -492,6 +687,18 @@ impl RecordingJsHost<'_, '_> {
         // The call, a callable skill's or a reader's included, holds the
         // attempt's tool witness open until it is answered (OF-568 L5).
         let _tool = self.gated_write.activity_tool();
+        // The ordinary dispatcher cannot mutate this host's bindings. Its
+        // result name is fixed now; the native descriptor is adopted only
+        // after the dispatch and its inner receipt have succeeded.
+        let reply_publisher = self.storage.map(|storage| {
+            reply::CallReplyPublisher::new(
+                storage,
+                self.result_share,
+                self.run_id,
+                seq,
+                self.next_auto_name(),
+            )
+        });
         let dispatched = match (&call, runtime) {
             (SelfCall::SkillsCall(skill), Some((runtime, parent))) => {
                 let skill = skill.clone();
@@ -515,24 +722,52 @@ impl RecordingJsHost<'_, '_> {
                     seq,
                     step_start: self.step_start,
                     earlier: &self.bridge_calls,
+                    reply_publisher: reply_publisher
+                        .as_ref()
+                        .map(|publisher| publisher as &dyn crate::code_run::ExecutorReplyPublisher),
                 };
                 self.gated_write
                     .dispatch_for_executor_run(site, call.clone())
             }
         };
+        if dispatched.is_ok()
+            && let Some(reply) = reply_publisher
+                .as_ref()
+                .and_then(|publisher| publisher.take())
+        {
+            self.bind(
+                reply.name,
+                reply.output.handle.clone(),
+                reply.output.path.clone(),
+            );
+            if !self
+                .results
+                .iter()
+                .chain(&self.captured)
+                .any(|held| held.path == reply.output.path)
+            {
+                self.captured.push(reply.output);
+            }
+        }
         // A verb hook's view of this call's result, taken whatever came of
         // the call: the guest reads it, the row keeps the outcome and whether
         // a view was served (the view's own read rows stay unwitnessed).
         let view = self.gated_write.take_hook_view();
+        // The skill bodies its producer witnessed, held while the guest's
+        // reply may still carry them whole (FIX 3608).
+        let given = dispatched.as_ref().ok().map(|(outcome, _)| outcome);
+        self.hold_delivery(seq, view.is_some(), given);
         // The seats this call's spawn resolved, taken whatever came of it:
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
         let (outcome, rewritten) = match dispatched.and_then(|(outcome, rewritten)| {
+            self.capture_task_refusal_output(seq, &outcome);
             self.store_large_answer(seq, outcome)
                 .map(|outcome| (outcome, rewritten))
         }) {
             Ok(answered) => answered,
             Err(err) => {
+                self.held_delivery.clear();
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
                     // Infrastructure failure: no guest-visible response
                     // exists for this call at all.
@@ -581,6 +816,7 @@ pub(super) fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<Sel
             outcome,
             reason_codes,
         }) => Some(SelfDispatchOutcome::Denied(SelfDeniedResult {
+            hook_notice: None,
             effect: call.effect(),
             outcome: (*outcome).to_owned(),
             reason_codes: reason_codes

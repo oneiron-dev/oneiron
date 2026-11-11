@@ -13,9 +13,10 @@ use super::questions::QuestionCriteria;
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
 use crate::Result;
+use crate::llm::run_admission::RunAdmission;
 use crate::llm::{
     BudgetGuard, BudgetLease, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout,
-    LabelSet, LlmResult, LlmUsage, joint_marginals,
+    LabelSet, LlmError, LlmResult, LlmUsage, joint_marginals,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use std::time::Instant;
@@ -28,6 +29,12 @@ pub enum GatedRead {
     /// Admission waited past the work time, so the read never started.
     NotStarted,
     Read(LlmResult<LabelReadResponse>),
+    /// The gate's own run, carried only after its settlement attempt. The
+    /// provider borrows it for terminal evidence and drops it in this frame.
+    ReadOnRun {
+        read: LlmResult<LabelReadResponse>,
+        run: RunAdmission,
+    },
 }
 
 /// Admits one decision read, lends `read` its lease and settles what it returns: nothing
@@ -57,12 +64,35 @@ impl DecisionReadGate for BudgetGuard {
         let gated = read(&lease);
         match &gated {
             GatedRead::NotStarted => self.settle_per_call(&lease, &LlmUsage::zero()),
-            GatedRead::Read(Ok(read)) => self.settle_per_call(&lease, &read.usage),
-            GatedRead::Read(Err(_)) => self.settle_reserved(&lease),
+            GatedRead::Read(Ok(read)) | GatedRead::ReadOnRun { read: Ok(read), .. } => {
+                self.settle_per_call(&lease, &read.usage)
+            }
+            GatedRead::Read(Err(_)) | GatedRead::ReadOnRun { read: Err(_), .. } => {
+                self.settle_reserved(&lease)
+            }
         }
         .map_err(|_| invalid("decision read settlement refused"))?;
         Ok(gated)
     }
+}
+
+/// A terminal read borrowed after its gate returns, before response data is discarded.
+pub enum DecisionReadOutcome<'a> {
+    Failed(&'a LlmError),
+    Malformed(&'a LabelReadResponse),
+    Completed(&'a LabelReadResponse),
+}
+
+/// An optional evidence observer. It cannot change the read or its settlement.
+/// Gates that return an error after a terminal do not reach this observer.
+pub trait DecisionReadObserver: Send + Sync {
+    /// `gate_run` is present only when the gate returned its own settled run.
+    fn observe(
+        &self,
+        request: &LabelReadRequest<'_>,
+        outcome: DecisionReadOutcome<'_>,
+        gate_run: Option<&RunAdmission>,
+    );
 }
 
 /// Fills the escalation slot. It reads only the call's state, admits and settles each read
@@ -73,6 +103,7 @@ pub struct DecisionReadProvider<'a> {
     gate: &'a dyn DecisionReadGate,
     paired: &'a DecisionQuestion,
     person: Option<&'a DecisionQuestion>,
+    observer: Option<&'a dyn DecisionReadObserver>,
 }
 
 impl<'a> DecisionReadProvider<'a> {
@@ -106,7 +137,26 @@ impl<'a> DecisionReadProvider<'a> {
             gate,
             paired,
             person,
+            observer: None,
         })
+    }
+
+    /// Observes only terminals returned by the gate, after response validation.
+    #[must_use]
+    pub fn observed_by(mut self, observer: &'a dyn DecisionReadObserver) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    fn observe(
+        &self,
+        request: Option<&LabelReadRequest<'_>>,
+        outcome: DecisionReadOutcome<'_>,
+        gate_run: Option<&RunAdmission>,
+    ) {
+        if let (Some(observer), Some(request)) = (self.observer, request) {
+            observer.observe(request, outcome, gate_run);
+        }
     }
 }
 
@@ -139,6 +189,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             state: call.state,
             deadline: call.deadline,
             run: call.run,
+            labels: call.labels,
         })?;
         answers
             .pop()
@@ -166,12 +217,28 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         // (FIX 2181); a yes/no keeps its label descriptions.
         let texts: Vec<Option<String>> = asked
             .iter()
-            .map(|question| match question.contract {
-                AnswerContract::Noul => None,
-                _ => QuestionCriteria::rubric_in(state, &question.contract)
-                    .map(|rubric| format!("{}\n\n{rubric}", question.text)),
+            .map(|question| {
+                let text = match question.contract {
+                    AnswerContract::Noul => None,
+                    _ => QuestionCriteria::rubric_in(state, &question.contract)
+                        .map(|rubric| format!("{}\n\n{rubric}", question.text)),
+                };
+                match pack
+                    .labels
+                    .and_then(|labels| labels.question_label(question.id))
+                {
+                    Some(label) => Some(format!(
+                        "{label}: {}",
+                        text.as_deref().unwrap_or(&question.text),
+                    )),
+                    None => text,
+                }
             })
             .collect();
+        let paired_text = pack
+            .labels
+            .and_then(|labels| labels.question_label(self.paired.id))
+            .map(|label| format!("{label}: {}", self.paired.text));
         // Each asked question's place among the read ones; `None` abstains.
         let mut slots = Vec::with_capacity(asked.len());
         let mut questions = Vec::with_capacity(asked.len());
@@ -200,7 +267,8 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             questions.push(LabelReadout {
                 text: texts[index].as_deref().unwrap_or(&question.text),
                 labels,
-                paired: (!person).then_some(self.paired.text.as_str()),
+                paired: (!person)
+                    .then_some(paired_text.as_deref().unwrap_or(self.paired.text.as_str())),
             });
         }
         let abstained = || ProviderDecision {
@@ -214,6 +282,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         if questions.is_empty() {
             return Ok(slots.iter().map(|_| abstained()).collect());
         }
+        let mut sent_request = None;
         let gated = self.gate.read(deadline, &mut |lease| {
             // Admission may wait; a read admitted after the work time is spent never starts.
             if !deadline.decision_may_start() {
@@ -225,14 +294,27 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 // An instant, not a duration, so the reader's own preparation spends it too.
                 work_until: Some(Instant::now() + deadline.decision_time_left()),
             };
-            GatedRead::Read(self.reader.read(&request, lease))
+            sent_request = Some(request);
+            GatedRead::Read(
+                self.reader
+                    .read_with_cancel(&request, lease, &deadline.work_cancel()),
+            )
         })?;
-        let read = match gated {
+        let (read, gate_run) = match gated {
             GatedRead::NotStarted => {
                 return Err(invalid("decision read admitted after the work time"));
             }
-            GatedRead::Read(Ok(read)) => read,
-            GatedRead::Read(Err(error)) => {
+            GatedRead::Read(read) => (read, None),
+            GatedRead::ReadOnRun { read, run } => (read, Some(run)),
+        };
+        let read = match read {
+            Ok(read) => read,
+            Err(error) => {
+                self.observe(
+                    sent_request.as_ref(),
+                    DecisionReadOutcome::Failed(&error),
+                    gate_run.as_ref(),
+                );
                 return Err(invalid(&format!("decision read failed: {error}")));
             }
         };
@@ -245,8 +327,18 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         if read.readouts.len() != questions.len()
             || !read.readouts.iter().zip(&questions).all(distribution)
         {
+            self.observe(
+                sent_request.as_ref(),
+                DecisionReadOutcome::Malformed(&read),
+                gate_run.as_ref(),
+            );
             return Err(invalid("malformed decision read"));
         }
+        self.observe(
+            sent_request.as_ref(),
+            DecisionReadOutcome::Completed(&read),
+            gate_run.as_ref(),
+        );
         let decisions: Vec<ProviderDecision> = questions
             .iter()
             .zip(&read.readouts)

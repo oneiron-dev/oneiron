@@ -95,14 +95,7 @@ impl HomeCandidates {
             .map(|(node_id, _)| *node_id);
         let mut candidates: Vec<_> = declared
             .iter()
-            .filter(|declaration| declaration.owner_machine && declaration.macro_ready)
-            .map(|declaration| DreamerHomeNodeCandidate {
-                node_id: declaration.node_id,
-                cloud: declaration.cloud,
-                attached: true,
-                always_on_local: declaration.always_on,
-                primary_device: declaration.primary,
-            })
+            .filter_map(declared_home_candidate)
             .collect();
         let named: BTreeSet<u64> = candidates
             .iter()
@@ -133,6 +126,36 @@ impl HomeCandidates {
             ambiguous,
         }
     }
+}
+
+/// The candidate an election ranks for one machine's judged declaration: one
+/// that stands as one of the owner's machines and can run MACRO now, attached,
+/// with its declared facts; `None` for any other. [`HomeCandidates::of`] and
+/// the standby order of a down home's peers (FIX 4748) both read it.
+pub(crate) fn declared_home_candidate(
+    declaration: &JudgedHomeCandidacy,
+) -> Option<DreamerHomeNodeCandidate> {
+    (declaration.owner_machine && declaration.macro_ready).then_some(DreamerHomeNodeCandidate {
+        node_id: declaration.node_id,
+        cloud: declaration.cloud,
+        attached: true,
+        always_on_local: declaration.always_on,
+        primary_device: declaration.primary,
+    })
+}
+
+/// The rank the MACRO election gives `candidate` under the owner's `pick`:
+/// lower wins, and the lowest node id breaks a tie within a rank. `None` for a
+/// candidate no class makes eligible. The election ranks by these classes,
+/// and so does the standby order device sync asks its other machines in
+/// while its home is down (FIX 4748).
+pub(crate) fn home_candidate_rank(
+    candidate: &DreamerHomeNodeCandidate,
+    pick: Option<u64>,
+) -> Option<u8> {
+    candidate
+        .designation_class()
+        .map(|class| class.rank(pick == Some(candidate.node_id)))
 }
 
 /// The candidates an election in `txn` ranks: the vault's authorized home

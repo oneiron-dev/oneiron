@@ -49,12 +49,9 @@ impl ScriptExecutionPlan {
         }
         let script_index =
             script_index.ok_or_else(|| invalid("declared adapter script is absent"))?;
-        // The output may take what the workspace has left, up to the
-        // sandbox's own file bound. The `[limits]` row a run asks past is
-        // measured at launch, never here (Rule 5).
-        let output = ScriptOutputContract::new(oneiron_sandbox_contract::MAX_FILE_BYTES.min(
-            oneiron_sandbox_contract::MAX_WORKSPACE_BYTES.saturating_sub(snapshot.total_bytes()),
-        ))?;
+        // Keep the output-file bound independent of source bytes. The run
+        // measures `[limits]`; it does not shrink this reservation.
+        let output = ScriptOutputContract::new(oneiron_sandbox_contract::MAX_FILE_BYTES)?;
         let reserved_shape = shape(snapshot.with_output(&output.reservation))?;
         let program = shape(ProgramBudget::new(MAX_GRANT_PRELUDE_BYTES))?;
         shape(program.qualify_source(source.files()[script_index].content.len()))?;
@@ -100,16 +97,20 @@ impl ScriptExecutionPlan {
     /// The program the guest runs: `prepared`, the authored script's one
     /// preparation, after the grants prelude. TypeScript runs as the
     /// JavaScript Oxc printed for it, JavaScript as written; the pack's
-    /// source tree stays as admitted.
+    /// source tree stays as admitted. Beside it, the prelude's line count,
+    /// counted from its text: a guest error position moves past those
+    /// lines before it is mapped (FIX 9209).
     pub(crate) fn assemble_program(
         &self,
         prepared: &PreparedSource<'_>,
         grants: &BTreeMap<String, Value>,
-    ) -> Result<String> {
+    ) -> Result<(String, u32)> {
         let script = prepared.executed();
         let prelude = GrantPrelude::encode(grants)?;
         shape(self.program.assemble(script.len(), prelude.0.len()))?;
-        Ok(format!("{}{script}", prelude.0))
+        let lines = u32::try_from(prelude.0.matches('\n').count())
+            .map_err(|_| invalid("grant prelude line count overflow"))?;
+        Ok((format!("{}{script}", prelude.0), lines))
     }
     pub(crate) fn output_bytes(&self, write: &SandboxProposalWrite) -> Result<Vec<u8>> {
         self.output.bytes(write)

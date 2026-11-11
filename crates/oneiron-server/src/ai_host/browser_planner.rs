@@ -354,9 +354,11 @@ impl RunState {
             content: vec![
                 ContentPart::Text {
                     text: HANDOFF_FRAME.to_owned(),
+                    signature: None,
                 },
                 ContentPart::Text {
                     text: data.to_string(),
+                    signature: None,
                 },
             ],
         }

@@ -13,10 +13,9 @@
 use std::sync::Arc;
 
 use oneiron::code_run::shadow_runner::{
-    ShadowArmLease, ShadowMeterContext, ShadowRunRequest, ShadowRunResult, ShadowRunner,
-    ShadowUnavailable,
+    ShadowArmLease, ShadowBodyRef, ShadowMeterContext, ShadowRunRequest, ShadowRunResult,
+    ShadowSourceAdmission, ShadowSourceWitness, ShadowUnavailable,
 };
-use oneiron::compaction::output::OutputRef;
 use oneiron::dreamer_runner::maintenance::code_fix::{CodeFixShadowHost, PublisherCandidate};
 
 use crate::ai_host::shadow_runner::{ServerShadowRunner, checked_in_runtimes};
@@ -73,17 +72,26 @@ impl CoachShadow {
 }
 
 impl CodeFixShadowHost for CoachShadow {
-    fn run_arm(&self, request: ShadowRunRequest) -> oneiron::Result<ShadowRunResult> {
+    fn run_arm(
+        &self,
+        request: ShadowRunRequest,
+        witness: ShadowSourceWitness,
+    ) -> oneiron::Result<ShadowRunResult> {
         // The arm runs on the server's runtime; this blocking worker waits.
-        self.handle.block_on(self.runner.run(request))
+        // FIX 9446: its source is prepared again under the Coach's witness.
+        self.handle
+            .block_on(self.runner.run_witnessed(request, witness))
     }
 
-    fn read_arm_body(
+    fn read_arm_body_for_model(
         &self,
         lease: &ShadowArmLease,
-        body: OutputRef,
+        body: &ShadowBodyRef,
+        admission: &dyn ShadowSourceAdmission,
     ) -> oneiron::Result<Result<Vec<u8>, ShadowUnavailable>> {
-        self.runner.read_body(lease, body)
+        // FIX 9468: the questions read an arm's body through the runner's
+        // model release alone.
+        self.runner.read_body_for_model(lease, body, admission)
     }
 
     fn release_arm(&self, lease: &ShadowArmLease) {

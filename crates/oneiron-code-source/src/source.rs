@@ -157,6 +157,20 @@ pub struct GuestPosition {
     column: u32,
 }
 
+impl GuestPosition {
+    /// The same throw in the prepared program, when the host put `lines`
+    /// lines before that program after it was prepared (a pack's grants, FIX
+    /// 9209). `None` for a throw inside those lines.
+    #[must_use]
+    pub fn after_prefix(self, lines: u32) -> Option<Self> {
+        let line = self.line.checked_sub(lines).filter(|line| *line > 0)?;
+        Some(Self {
+            line,
+            column: self.column,
+        })
+    }
+}
+
 /// The typed per-program record of a TypeScript preparation (CALL, FIX
 /// 8276), kept beside the original source: the executed JavaScript's digest,
 /// the position map and the Oxc version and options pin.

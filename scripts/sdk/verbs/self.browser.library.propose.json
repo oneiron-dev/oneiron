@@ -1,0 +1,18 @@
+{
+  "name": "self.browser.library.propose",
+  "description": "Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the replay library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires.",
+  "input": "crate::task_verb::sdk::BrowserLibraryProposeInput",
+  "output": "crate::task_verb::sdk::BrowserLibraryProposeOutput",
+  "call": "oneiron_browser::BrowserAnswer::of(driver.library_propose(input)?)",
+  "scope": "Write",
+  "context": "browser",
+  "mcp": "none",
+  "section": false,
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryProposeInput>",
+    "description": "Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the run's library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires.",
+    "host_door_caller": true,
+    "openapi": true
+  }
+}

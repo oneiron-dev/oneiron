@@ -1,0 +1,17 @@
+{
+  "name": "vault.identity.split",
+  "description": "The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map.",
+  "input": "crate::task_verb::sdk::IdentitySplitRequest",
+  "output": "crate::task_verb::sdk::IdentityTopologyResult",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.split\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

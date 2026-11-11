@@ -354,7 +354,8 @@ impl DreamerWakeDriver<'_> {
     /// (FIX 6100). Incurred spend is never refused (FIX 8702). A nonzero
     /// charge whose settlement fails is never refunded at zero: it stays
     /// owed on the reservation, which its next settlement or abort charges
-    /// (FIX 8728), and the attempt still parks or fails as before. The
+    /// (FIX 8728), the owed rows of the steps it covers going with it, and
+    /// the attempt still parks or fails as before. The
     /// static code says which of those it did, for the attempt's outcome
     /// line (FIX 7271).
     pub(super) fn settle_metered_charge(
@@ -364,14 +365,13 @@ impl DreamerWakeDriver<'_> {
         meter: &WakeAttemptMeter,
         now: u64,
     ) -> Result<&'static str> {
-        let charged = meter.charged_units();
+        let (charged, receipts) = meter.settlement();
         let settlement = SettleDreamerBudget {
             budget_id: line.to_owned(),
             child_attempt: attempt_id,
             actual_units: charged,
             now,
         };
-        let receipts = meter.step_receipts();
         let error = match self
             .store
             .settle_budget_with_step_receipts(settlement.clone(), &receipts)
@@ -390,7 +390,7 @@ impl DreamerWakeDriver<'_> {
             charged,
             "the measured charge did not settle; it stays owed on the reservation"
         );
-        self.store.owe_unsettled_charge(&settlement)?;
+        self.store.owe_unsettled_charge(&settlement, &receipts)?;
         Ok("charge_owed")
     }
 

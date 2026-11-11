@@ -14,10 +14,19 @@
 //! room-bound call whose root names no payer, is a typed error, and so is a
 //! step of a member's bound run (FIX 5316), whose member funds its root. Any
 //! other call no room pays for keeps the owner default.
+//!
+//! Work an owner's agent Grant funds (FIX 7766) draws on that Grant's wallet:
+//! a host path that binds it into its run ([`scope_run_funding`],
+//! [`attempt_grant_funding`]) admits each host-paid call only on a live
+//! allocation of that wallet. Every other path refuses such work with
+//! [`PayerFault::GrantWalletUnbound`] ([`scope_funding`]), never bills it to
+//! the host's default allocation.
 
 use std::fmt;
 
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId, decode_agent_dispatch_input};
+use oneiron::agent_dispatch::{
+    AgentDispatcher, GrantSpendBinding, SpendScopeId, decode_agent_dispatch_input,
+};
 use oneiron::attempt_queue::{AttemptId, AttemptState};
 use oneiron::dreamer_runner::{
     DreamerParkCause, ParkDreamerAttempt, decode_dreamer_attempt_payload,
@@ -51,6 +60,11 @@ pub(crate) enum PayerFault {
     /// once they say yes it bills the vault. `None` when the ask could not be
     /// queued; the next read queues it.
     Needed { person: EntityId, ask: Option<u64> },
+    /// The work is funded by an owner's agent Grant's wallet (FIX 7766), on
+    /// a host path whose run does not bind that wallet: the call is refused
+    /// rather than billed to the host's default allocation. `scope` is the
+    /// spend scope it would spend under, when it has one.
+    GrantWalletUnbound { scope: Option<SpendScopeId> },
 }
 
 impl PayerFault {
@@ -59,6 +73,7 @@ impl PayerFault {
         match self {
             Self::Missing { .. } => "payer_missing",
             Self::Needed { .. } => "payer_needed",
+            Self::GrantWalletUnbound { .. } => "grant_wallet_unbound",
         }
     }
 }
@@ -82,6 +97,12 @@ impl fmt::Display for PayerFault {
                     None => f.write_str("its payer-needed ask is queued on the next try"),
                 }
             }
+            Self::GrantWalletUnbound { scope } => write!(
+                f,
+                "grant_wallet_unbound: the work under spend scope {} is funded by an owner's agent \
+                 grant's wallet, which this host path does not bind",
+                scope.as_ref().map_or("(none)", SpendScopeId::as_str)
+            ),
         }
     }
 }
@@ -119,6 +140,62 @@ fn billing_account(vault: &Vault, person: EntityId) -> Option<PayerAccount> {
 /// the account the call bills. `room` says the caller knows the call is
 /// room-bound, so its root must name a payer.
 pub(crate) fn scope_funding(
+    vault: &Vault,
+    scope: Option<&SpendScopeId>,
+    room: bool,
+) -> Result<Option<PayerPerson>, PayerFault> {
+    let (payer, grant) = scope_run_funding(vault, scope, room)?;
+    if grant.is_some() {
+        return Err(PayerFault::GrantWalletUnbound {
+            scope: scope.cloned(),
+        });
+    }
+    Ok(payer)
+}
+
+/// [`scope_funding`] for a host path that binds the funding Grant into its
+/// run (FIX 7766): the payer, as [`scope_funding`] reads it, and the owner's
+/// agent Grant the root of `scope` is funded by, `None` when it carries
+/// none. A scope or ancestor that cannot be read is
+/// [`PayerFault::Missing`], never an unbound tree.
+pub(crate) fn scope_run_funding(
+    vault: &Vault,
+    scope: Option<&SpendScopeId>,
+    room: bool,
+) -> Result<(Option<PayerPerson>, Option<GrantSpendBinding>), PayerFault> {
+    let payer = scope_payer(vault, scope, room)?;
+    let Some(scope) = scope else {
+        return Ok((payer, None));
+    };
+    match AgentDispatcher::new(vault).root_funding(scope) {
+        Ok(grant) => Ok((payer, grant.map(|(_, funding)| funding))),
+        Err(error) => {
+            tracing::warn!(%error, %scope, "a spend scope's funding grant could not be read");
+            Err(PayerFault::Missing {
+                scope: Some(scope.clone()),
+            })
+        }
+    }
+}
+
+/// The owner's agent Grant the attempt `attempt`'s work is funded by (FIX
+/// 7766): its spend root's, else the one its unmetered dispatch input
+/// carries. One that cannot be read is [`PayerFault::Missing`].
+pub(crate) fn attempt_grant_funding(
+    vault: &Vault,
+    attempt: AttemptId,
+) -> Result<Option<GrantSpendBinding>, PayerFault> {
+    AgentDispatcher::new(vault)
+        .attempt_funding(attempt)
+        .map_err(|error| {
+            tracing::warn!(%error, ?attempt, "an attempt's funding grant could not be read");
+            PayerFault::Missing { scope: None }
+        })
+}
+
+/// The payer half of [`scope_funding`]: who a call that spends under
+/// `scope` bills, its root's payer and the account the host resolved.
+fn scope_payer(
     vault: &Vault,
     scope: Option<&SpendScopeId>,
     room: bool,
@@ -366,7 +443,7 @@ pub(crate) fn resume_payer_parks(
             continue;
         };
         if park.park_owner != owner
-            || park.cause != DreamerParkCause::Signal
+            || !park.resumable_by(oneiron::dreamer_runner::ParkResumer::PayerFunding)
             || !park.reason.starts_with(PAYER_PARK_REASON)
         {
             continue;
@@ -376,7 +453,7 @@ pub(crate) fn resume_payer_parks(
             .and_then(|input| requires_payer(vault, row.id, input.room.is_some()));
         let waits = match (dispatcher.spend_scope_for_attempt(row.id), strict) {
             (Ok(scope), Ok(strict)) => matches!(
-                scope_funding(vault, scope.as_ref(), strict),
+                scope_run_funding(vault, scope.as_ref(), strict),
                 Err(PayerFault::Needed { .. })
             ),
             (Err(error), _) | (_, Err(error)) => {
@@ -430,7 +507,8 @@ pub(crate) fn resume_reader_payer_parks(
     for job in parked {
         let resume = now_ms >= job.binding.child_cutoff_unix_ms
             || job.binding.spend.scope().is_none()
-            || scope_funding(vault, Some(&SpendScopeId::for_attempt(&job.attempt)), false).is_ok();
+            || scope_run_funding(vault, Some(&SpendScopeId::for_attempt(&job.attempt)), false)
+                .is_ok();
         if !resume {
             waiting += 1;
             continue;

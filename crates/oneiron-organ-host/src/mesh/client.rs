@@ -231,6 +231,10 @@ pub(crate) async fn call_on(
         .send(&encode(&Request::Call { call: carried }).map_err(absent)?)
         .await
         .map_err(absent)?;
+    let mut receipts = AttemptReceipts {
+        asked: &asks.asked,
+        lines: Vec::new(),
+    };
     let reply = {
         let mut reply = stream.recv();
         loop {
@@ -242,7 +246,7 @@ pub(crate) async fn call_on(
                 incoming = conn.accept_stream() => match incoming {
                     // An ask this side failed to answer leaves the organ
                     // a refusal from its own host; the call goes on.
-                    Ok(ask) => drop(answer(conn, ask, asks, &mut sent, here).await),
+                    Ok(ask) => drop(answer(conn, ask, asks, &mut sent, here, &mut receipts.lines).await),
                     Err(err) => break Err(err),
                 },
             }
@@ -256,12 +260,13 @@ pub(crate) async fn call_on(
         other => return Err(absent(unexpected(&other))),
     };
     match result {
-        PeerResult::Done(outcome) => {
-            keep_lines(asks, &outcome.receipt.asks);
+        PeerResult::Done(mut outcome) => {
+            receipts.reconcile(std::mem::take(&mut outcome.receipt.asks));
+            outcome.receipt.asks = receipts.lines.clone();
             received(conn, outcome, here).await
         }
         PeerResult::Failed(failure) => {
-            keep_lines(asks, &failure.asks);
+            receipts.reconcile(failure.asks);
             Err(match failure.kind {
                 FailureKind::Absent => PeerError::Absent(failure.detail),
                 FailureKind::Organ => PeerError::Failed(match failure.organ {
@@ -282,12 +287,81 @@ pub(crate) async fn call_on(
     }
 }
 
-/// The serving host's ask lines, kept as a local call keeps its own.
-fn keep_lines(asks: &AskHandlers<'_>, lines: &[crate::receipt::AskReceipt]) {
-    asks.asked
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .extend(lines.iter().cloned());
+/// This one mesh attempt's receipt, retained before each callback and
+/// published on every exit, just as `CallAsks` publishes its local lines.
+/// Router retries each own a fresh instance; ids are never merged globally.
+struct AttemptReceipts<'a> {
+    asked: &'a Mutex<Vec<crate::receipt::AskReceipt>>,
+    lines: Vec<crate::receipt::AskReceipt>,
+}
+
+impl AttemptReceipts<'_> {
+    /// The serving host records what the organ was lent, in call order.
+    /// Keep those facts, adding this node's own signing fact when present.
+    fn reconcile(&mut self, mut peer: Vec<crate::receipt::AskReceipt>) {
+        let local_unique: Vec<_> = self
+            .lines
+            .iter()
+            .map(|local| {
+                self.lines
+                    .iter()
+                    .filter(|other| same_ask(local, other))
+                    .count()
+                    == 1
+            })
+            .collect();
+        let mut used = vec![false; peer.len()];
+        let mut unmatched = Vec::new();
+        for (local, unique) in self.lines.drain(..).zip(local_unique) {
+            // A signing fact already recorded by the serving host proves
+            // this occurrence, even when an earlier refusal has the same id.
+            let proven = local.signed.as_ref().and_then(|signed| {
+                peer.iter().enumerate().position(|(index, line)| {
+                    !used[index] && same_ask(&local, line) && line.signed.as_ref() == Some(signed)
+                })
+            });
+            let matched = proven.or_else(|| {
+                if !unique || peer.iter().filter(|line| same_ask(&local, line)).count() != 1 {
+                    return None;
+                }
+                peer.iter().enumerate().position(|(index, line)| {
+                    !used[index]
+                        && same_ask(&local, line)
+                        && (local.signed.is_none() || line.signed.is_none())
+                })
+            });
+            if let Some(index) = matched {
+                used[index] = true;
+                if local.signed.is_some() {
+                    peer[index].signed = local.signed;
+                }
+            } else {
+                // Duplicate identities without a signing proof do not name
+                // an occurrence. Keep the local evidence separate instead.
+                unmatched.push(local);
+            }
+        }
+        if !unmatched.is_empty() {
+            peer.extend(unmatched);
+            // Only this attempt's one serving call is here. Stable sorting
+            // retains peer and local occurrence order for repeated ids.
+            peer.sort_by_key(|line| line.id);
+        }
+        self.lines = peer;
+    }
+}
+
+fn same_ask(left: &crate::receipt::AskReceipt, right: &crate::receipt::AskReceipt) -> bool {
+    left.id == right.id && left.verb == right.verb && left.value_digest == right.value_digest
+}
+
+impl Drop for AttemptReceipts<'_> {
+    fn drop(&mut self) {
+        self.asked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .append(&mut self.lines);
+    }
 }
 
 /// Takes the outputs back and checks each against the serving host's
@@ -349,9 +423,10 @@ async fn answer(
     asks: &AskHandlers<'_>,
     sent: &mut HashSet<Hash32>,
     here: Here<'_>,
+    lines: &mut Vec<crate::receipt::AskReceipt>,
 ) -> Result<(), MeshError> {
     let ask: PeerAsk = decode(&stream.recv().await?)?;
-    let (answered, signed) = run_handler(&ask, asks);
+    let (answered, signed, slot) = run_handler(&ask, asks, lines);
     let _held = match &answered {
         Ok(Answered { value, data, .. }) => {
             let value_len = oneiron_organ_protocol::encoded_len(value).unwrap_or(0);
@@ -371,24 +446,44 @@ async fn answer(
         }),
         Err(refusal) => Err(refusal),
     };
-    stream
-        .send(&encode(&PeerAnswer { answered, signed })?)
-        .await
+    let encoded = encode(&PeerAnswer { answered, signed })?;
+    // Sending may partially succeed even on an error. Only the serving
+    // host's final receipt can confirm what the organ received.
+    lines[slot].unanswered = Some(crate::receipt::Unanswered::Unknown);
+    stream.send(&encoded).await
 }
 
 fn run_handler(
     ask: &PeerAsk,
     asks: &AskHandlers<'_>,
+    lines: &mut Vec<crate::receipt::AskReceipt>,
 ) -> (
     Result<Answered, AskRefusal>,
     Option<crate::receipt::SignedReceipt>,
+    usize,
 ) {
+    let slot = lines.len();
+    lines.push(crate::receipt::AskReceipt {
+        id: ask.id,
+        verb: ask.verb.clone(),
+        value_digest: crate::receipt::digest(&ask.value),
+        refused: None,
+        answer_len: 0,
+        answer_digest: None,
+        data_hash: None,
+        data_len: 0,
+        fetch: None,
+        handler_us: 0,
+        unanswered: Some(crate::receipt::Unanswered::NotSent),
+        signed: None,
+    });
     let Some(handler) = asks.get(&ask.verb) else {
         let refusal = AskRefusal::new(
             AskCode::NotGranted,
             "the asking node has no handler for this ask",
         );
-        return (Err(refusal), None);
+        lines[slot].refused = Some(refusal.code);
+        return (Err(refusal), None, slot);
     };
     // The organ's memory is its own host's to reserve, where the organ runs
     // (FIX 7654): this node holds neither its room nor its machine, so a
@@ -398,7 +493,8 @@ fn run_handler(
             AskCode::NotGranted,
             "memory is reserved where the organ runs, never on the asking node",
         );
-        return (Err(refusal), None);
+        lines[slot].refused = Some(refusal.code);
+        return (Err(refusal), None, slot);
     }
     let signing = Mutex::new(None);
     // A fetch runs where the organ runs, under that install's allowlist.
@@ -412,6 +508,8 @@ fn run_handler(
         organ: &ask.organ,
         call_verb: &ask.call_verb,
         grant: &ask.grant,
+        call: ask.call,
+        id: ask.id,
         deadline,
         clock: Clock::fixed(deadline),
         max_bytes: ask.max_bytes,
@@ -421,10 +519,56 @@ fn run_handler(
         room: None,
         revoked: Stop::NEVER,
     };
+    let mut recording = RecordingAsk {
+        line: &mut lines[slot],
+        signing: &signing,
+        started: Instant::now(),
+    };
     let answered = {
         let _scope = HandlerScope::enter();
         handler.answer(&request)
     };
-    let signed = signing.into_inner().unwrap_or_else(PoisonError::into_inner);
-    (answered, signed)
+    recording.finish(&answered);
+    drop(recording);
+    let signed = lines[slot].signed.clone();
+    (answered, signed, slot)
+}
+
+/// The running callback's exact line and signing mutex. Both normal
+/// return and unwind retain its prehash before any async send can fail.
+struct RecordingAsk<'a> {
+    line: &'a mut crate::receipt::AskReceipt,
+    signing: &'a Mutex<Option<crate::receipt::SignedReceipt>>,
+    started: Instant,
+}
+
+impl RecordingAsk<'_> {
+    fn finish(&mut self, answered: &Result<Answered, AskRefusal>) {
+        match answered {
+            Ok(Answered { value, data, fetch }) => {
+                self.line.fetch = fetch.clone();
+                let value_len = oneiron_organ_protocol::encoded_len(value).unwrap_or(0);
+                let data_len = data.as_ref().map_or(0, |bytes| bytes.len() as u64);
+                self.line.answer_len = value_len.saturating_add(data_len);
+                self.line.answer_digest = Some(crate::receipt::digest(value));
+                if let Some(bytes) = data {
+                    self.line.data_hash = Some(Hash32::of(bytes));
+                    self.line.data_len = data_len;
+                }
+            }
+            Err(refusal) => self.line.refused = Some(refusal.code),
+        }
+    }
+}
+
+impl Drop for RecordingAsk<'_> {
+    fn drop(&mut self) {
+        self.line.signed = self
+            .signing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        self.line.handler_us =
+            u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    }
 }

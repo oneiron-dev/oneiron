@@ -1,0 +1,16 @@
+{
+  "name": "vault.consent.graduation.policy.set",
+  "description": "The owner sets a scope-pattern streak, posterior guard and two snooze backoffs; zero-second backoff is supported.",
+  "input": "crate::consent_graduation::api::GraduationPolicySetRequest",
+  "output": "crate::consent_graduation::api::GraduationChanged",
+  "call": "crate::consent_graduation::api::set_policy(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.policy.set\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

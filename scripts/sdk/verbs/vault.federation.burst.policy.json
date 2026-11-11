@@ -1,0 +1,17 @@
+{
+  "name": "vault.federation.burst.policy",
+  "description": "The owner reads one grant-bound peer's relative-burst outcome policy.",
+  "input": "crate::sync::federation_burst::FederationBurstPeerRequest",
+  "output": "crate::sync::federation_burst::FederationBurstPolicy",
+  "call": "crate::task_verb::sdk::federation_burst_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.policy\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "rust_feature": "sync",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

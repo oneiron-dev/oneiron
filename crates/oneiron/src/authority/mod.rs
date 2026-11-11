@@ -38,12 +38,16 @@ mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
 mod agent_grant_act;
+mod agent_grant_bound;
+mod agent_principal;
+mod agent_tier;
 mod agent_world_undo;
 mod ai_grant;
 mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
+mod ask_forward_holder;
 mod backup_signer_delegation;
 mod carried_act;
 mod causal_write;
@@ -102,6 +106,7 @@ mod ingest_observation;
 mod install_fold;
 mod invitee_slip;
 mod invocation_slip;
+mod leave_notice_continuity;
 mod left_notices;
 mod local_host_root;
 mod local_open;
@@ -117,6 +122,7 @@ mod machine_write;
 mod managed_owner_check;
 mod membership_execution;
 mod mesh_machine;
+mod oauth_server;
 mod observation_policy;
 mod op_apply;
 mod origin_cut;
@@ -149,6 +155,7 @@ mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod stale_roster;
+mod step_up;
 pub(crate) mod store_order;
 mod support_admission;
 mod support_grant;
@@ -190,10 +197,10 @@ pub use oneiron_authority::authority::{
     FEDERATION_SCOPE_COMMIT_DOMAIN, FederationGrantActivation, FederationLifecycleAction,
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
     FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
-    GenesisRecoveryStep, GrantTravelSet, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MAX_PACT_SCOPE_BYTES, MachineDeviceClass,
-    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, ModelOrder,
-    OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
+    GenesisRecoveryStep, GrantTravelSet, LeaveNoticeDelegation, LeaveNoticeDelegationPurpose,
+    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MAX_PACT_SCOPE_BYTES,
+    MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
+    ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
     OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
     OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
@@ -212,8 +219,8 @@ pub use oneiron_authority::authority::{
 // The custody work body's own types (WILL L04 row 04), its permits in
 // pieces (FIX 11866) and its shared permit set (FIX 12281).
 pub use oneiron_authority::authority::{
-    CustodyChange, CustodyPermitPiece, CustodyPermitPieces, CustodyRecipientPermit,
-    CustodyRecipientPermits, CustodyRequestAuthority,
+    CustodyChange, CustodyPermitPiece, CustodyPermitPieces, CustodyPermitSet,
+    CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority,
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
@@ -233,6 +240,11 @@ pub use oneiron_authority::authority::{
 };
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
+mod federation_status;
+pub(crate) mod tables;
+pub use federation_status::{
+    FederationPactInactiveReason, FederationPactStatusRow, FederationStatus,
+};
 
 // Re-exports reproduce the pre-split `crate::authority::` surface exactly: each
 // glob carries every item of its file at that item's own visibility, so `pub`
@@ -310,11 +322,17 @@ pub(crate) use home_candidacy::{
 pub(crate) use home_pick::{
     HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
 };
-pub use host_action::HostActionAuthority;
+pub(crate) use host_action::StoredHostAction;
+pub use host_action::{HostActionAuthority, HostActionIdentity};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
-pub use local_host_root::{LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace};
+pub use leave_notice_continuity::LeaveNoticeContinuity;
+#[cfg(feature = "sync")]
+pub(crate) use leave_notice_continuity::{LeaveNoticeDelegationRows, NoticeSignerStanding};
+pub use local_host_root::{
+    HostIssuerSeedSlot, LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace,
+};
 pub use local_open::LocalOpenProfile;
 pub use log_budget::{
     AUTHORITY_LOG_SIGNER_COUNT_ADVISORY, AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER,
@@ -330,8 +348,24 @@ pub use machine_write::machine_claim_transcript;
 pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
 pub use mesh_machine::{
-    MeshAlpnGrant, MeshBindingIdentity, MeshMachineAddress, MeshMachineAddressEnvelope,
-    MeshMachineBinding,
+    MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
+    MeshMachineAddressEnvelope, MeshMachineBinding,
+};
+// The vault as its own `/mcp`'s OAuth 2.1 authorization server (FIX 4902 slice B), and the
+// agent tiers it and `oneiron token agent` share.
+pub use agent_tier::AgentTier;
+pub use oauth_server::{
+    OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER,
+    OAUTH_AUTHORIZATIONS_PER_HOUR, OAUTH_AUTHORIZATIONS_PER_SOURCE_PER_HOUR, OAUTH_CIMD_TTL_SECS,
+    OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_CODE_PREFIX, OAUTH_CODE_TTL_SECS,
+    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX,
+    OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR,
+    OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR, OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES,
+    OAUTH_URI_MAX_BYTES, OAuthAccess, OAuthAuthorizationAllowed, OAuthAuthorizationPending,
+    OAuthAuthorizationStart, OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration,
+    OAuthClientSource, OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal,
+    OAuthTokenRefusal, OAuthTokens, oauth_client_id_is_metadata_url, oauth_code_challenge_admitted,
+    oauth_redirect_uri_admitted, oauth_requested_tier, oauth_scopes_supported,
 };
 pub use observation_policy::*;
 // The origin cut a repo manifest is written and judged by (FIX 15740).
@@ -368,6 +402,18 @@ pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
     HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
+};
+pub use step_up::{
+    EnrolledPasskey, EnrolledTotp, PasskeyAssertion, PasskeyDescriptor, PasskeyRegistration,
+    STEP_UP_CHALLENGE_STALE, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_NO_PASSKEY, STEP_UP_NOT_HOLDER,
+    STEP_UP_REFUSED, STEP_UP_REQUIRED, StepUpCeremony, StepUpChallenge, StepUpDone, StepUpFactor,
+    StepUpPasskeysReset, StepUpPasskeysResetRequest, StepUpTotpReset, StepUpTotpResetRequest,
+    TotpCode, TotpEnrollment, WeaveAdminDigestRequest, WeaveAdminItemWrongRequest,
+    WeaveAdminLensRequest, WeaveAdminLinkWrongRequest, WeaveAdminReportRequest,
+};
+pub(crate) use step_up::{
+    erase_step_up_challenges_actor_in_txn, erase_step_up_passkeys_actor_in_txn,
+    erase_step_up_records_actor_in_txn, erase_step_up_totp_actor_in_txn,
 };
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,
@@ -416,7 +462,7 @@ pub(crate) use handover_evidence::HandoverEvidence;
 pub(crate) use history_admission::{
     RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
 };
-pub(crate) use host_action::{HostActionGuard, HostActionIdentity, host_action_refused};
+pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
 #[cfg(test)]
@@ -424,7 +470,7 @@ pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
-pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn};
+pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 pub(crate) use past_grant_standing::preserved_topology_act_in_txn;
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
@@ -445,6 +491,8 @@ use readonly_fold::authority_log_rows_in_txn;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
+#[cfg(feature = "sync")]
+pub(crate) use readonly_fold::is_history_incomplete;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
@@ -461,10 +509,11 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
-    machine_history_authority_descends, machine_history_authority_descends_with_image,
-    machine_history_host_context, resign_machine_claim_after_mask_in_txn,
-    verify_machine_claim_in_txn,
+    evidence_without_machine_signature, machine_claim_needs_history,
+    machine_claim_needs_history_observing, machine_claim_read_admitted,
+    machine_claim_signer_bound_in_txn, machine_history_authority_descends,
+    machine_history_authority_descends_with_image, machine_history_host_context,
+    resign_machine_claim_after_mask_in_txn, verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;

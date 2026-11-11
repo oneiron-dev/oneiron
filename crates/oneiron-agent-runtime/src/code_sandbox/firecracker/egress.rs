@@ -1,0 +1,196 @@
+//! Native VM network channels terminate at the engine's one egress proxy.
+//!
+//! Each vsock request is host work: it takes its room on the relay's host
+//! floor before its thread starts, and a full floor answers it `EAGAIN`
+//! naming the floor, unread (FIX 5979). The VM's own floor charges nothing:
+//! this is where the VM's network work is counted on the host.
+//!
+//! A datagram is admitted before it is relayed (FIX 6298). Its thread reads
+//! it, replies `Admitted`, and only then relays it and replies its `Answer`.
+//! The VM acknowledges the guest's send on `Admitted`, so host back-pressure
+//! reaches the send before it succeeds. The request keeps its room until its
+//! relay has ended, even when the VM's channel is gone. Rebuild the code
+//! guest image from the same commit as this host: both speak one wire.
+use oneiron_container::{
+    EgressRelay, RelayAnswer, RelayReply, RelayRequest, read_relay, write_relay,
+};
+use std::{
+    io::{Read, Write},
+    net::Shutdown,
+    os::unix::net::{UnixListener, UnixStream},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
+
+/// What one vsock request holds of the host floor until it ends, as
+/// (descriptors, workers): its channel, the relay's own socket, and its
+/// thread.
+const REQUEST: (usize, usize) = (2, 1);
+/// What a relayed stream holds besides: the copies of its channel and of
+/// the remote socket, and its upload thread.
+const STREAM: (usize, usize) = (2, 1);
+
+pub(super) fn serve(listener: UnixListener, relay: Arc<dyn EgressRelay>, alive: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        while alive.load(Ordering::Acquire) {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let (fds, workers) = REQUEST;
+                    let room = match relay.host_net_floor().acquire(fds, workers) {
+                        Ok(room) => room,
+                        Err(error) => {
+                            back_pressure(stream, &error);
+                            continue;
+                        }
+                    };
+                    let relay = Arc::clone(&relay);
+                    let alive = Arc::clone(&alive);
+                    // A thread the host cannot start drops the channel and
+                    // its room; the VM reads the channel's end.
+                    let _ = std::thread::Builder::new().spawn(move || {
+                        let _ = request(stream, relay, alive);
+                        drop(room);
+                    });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                Err(_) => return,
+            }
+        }
+    });
+}
+fn request(
+    mut channel: UnixStream,
+    relay: Arc<dyn EgressRelay>,
+    alive: Arc<AtomicBool>,
+) -> std::io::Result<()> {
+    channel.set_read_timeout(Some(Duration::from_secs(30)))?;
+    channel.set_write_timeout(Some(Duration::from_secs(30)))?;
+    let op: RelayRequest = read_relay(&mut channel)?;
+    let result = match op {
+        RelayRequest::Connect { target } => match relay
+            .host_net_floor()
+            .acquire(STREAM.0, STREAM.1)
+            .and_then(|room| relay.connect_stream(target).map(|remote| (room, remote)))
+        {
+            Ok((_room, (mut remote, gated))) => {
+                write_relay(&mut channel, &RelayReply::answered(Vec::new()))?;
+                let mut upload = channel.try_clone()?;
+                let mut send = remote.try_clone()?;
+                let upload_alive = Arc::clone(&alive);
+                upload.set_read_timeout(Some(Duration::from_millis(250)))?;
+                remote.set_read_timeout(Some(Duration::from_millis(250)))?;
+                // A gated stream's opening bytes pass the relay's name gate,
+                // after the VM was told its connect succeeded and before any
+                // reaches the remote; a refused one ends with nothing sent
+                // (FIX 7652).
+                let gate = gated.then(|| Arc::clone(&relay));
+                let thread = std::thread::spawn(move || {
+                    if let Some(gate) = gate {
+                        let opening = gate.open_upload(target, &mut upload, &upload_alive);
+                        if opening.and_then(|bytes| send.write_all(&bytes)).is_err() {
+                            let _ = send.shutdown(Shutdown::Both);
+                            return;
+                        }
+                    }
+                    let mut bytes = [0; 32768];
+                    while upload_alive.load(Ordering::Acquire) {
+                        match upload.read(&mut bytes) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                if send.write_all(&bytes[..n]).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e)
+                                if matches!(
+                                    e.kind(),
+                                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                                ) =>
+                            {
+                                continue;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    let _ = send.shutdown(Shutdown::Write);
+                });
+                let mut hash = blake3::Hasher::new();
+                let mut count = 0;
+                let mut bytes = [0; 32768];
+                while alive.load(Ordering::Acquire) {
+                    match remote.read(&mut bytes) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            hash.update(&bytes[..n]);
+                            count += n as u64;
+                            if channel.write_all(&bytes[..n]).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            continue;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let _ = remote.shutdown(Shutdown::Both);
+                let _ = channel.shutdown(Shutdown::Both);
+                let _ = thread.join();
+                relay.transferred(target, *hash.finalize().as_bytes(), count);
+                return Ok(());
+            }
+            Err(error) => Err(error),
+        },
+        RelayRequest::AuthorizeDatagram { target } => {
+            relay.authorize_datagram(target).map(|()| Vec::new())
+        }
+        RelayRequest::Refusal(refusal) => relay.record_refusal(&refusal).map(|()| Vec::new()),
+        RelayRequest::Fetch { request } => relay
+            .fetch(request)
+            .and_then(|response| serde_json::to_vec(&response).map_err(std::io::Error::other)),
+        RelayRequest::Datagram { target, bytes } => {
+            // The VM acknowledges the guest's send on this reply, so it goes
+            // before the relay; when it cannot be written, nothing is
+            // relayed (FIX 6298).
+            write_relay(&mut channel, &RelayReply::Admitted)?;
+            relay.datagram(target, &bytes)
+        }
+    };
+    let reply = match result {
+        Ok(bytes) => RelayReply::answered(bytes),
+        Err(error) => failed(&error),
+    };
+    write_relay(&mut channel, &reply)
+}
+
+/// The last reply to a request that failed. A host floor's back-pressure is
+/// `EAGAIN`, carrying the floor's name.
+fn failed(error: &std::io::Error) -> RelayReply {
+    let floor = oneiron_container::saturated_floor(error);
+    RelayReply::Answer(RelayAnswer {
+        errno: match floor {
+            Some(_) => libc::EAGAIN,
+            None => error.raw_os_error().unwrap_or(libc::EIO),
+        },
+        bytes: Vec::new(),
+        floor: floor.map(str::to_owned),
+    })
+}
+
+/// Answers a request the host floor has no room for, unread and on the
+/// accepting thread, so never by a wait: an answer that does not fit the
+/// fresh channel at once goes with it.
+fn back_pressure(mut channel: UnixStream, error: &std::io::Error) {
+    let _ = channel.set_nonblocking(true);
+    let _ = write_relay(&mut channel, &failed(error));
+}

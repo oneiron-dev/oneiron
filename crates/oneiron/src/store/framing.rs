@@ -76,7 +76,8 @@ pub enum TransportError {
     WebSocket(String),
     ConnectionClosed,
     /// Engine/storage failure surfaced at the transport boundary (LMDB
-    /// write, window open/recovery). The wire payload itself was valid.
+    /// write, window open/recovery, a frame of this machine's own that does
+    /// not encode, FIX 22179). The wire payload itself was valid.
     Storage(String),
     /// A Gate door refused the inbound bytes on policy grounds, carrying the
     /// door's own typed taxonomy. Distinct from [`Self::Storage`] on purpose:

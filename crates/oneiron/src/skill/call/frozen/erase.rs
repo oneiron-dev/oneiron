@@ -6,6 +6,7 @@ use super::{CASES, CaseCaller, FrozenCall, delete_case_in_txn, index};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::receipt::FIELD_ATTEMPT_CALLER;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::helper::CallableGateVerdict;
 use crate::store::Store;
@@ -97,7 +98,11 @@ pub(crate) fn erase_callable_cases_in_txn(
                 sealed.job_ref.as_deref().is_some_and(names)
                     || sealed.trigger_ref.as_deref().is_some_and(names)
                     || sealed.policy_trace.iter().any(|step| names(step.as_str()))
-                    || sealed.fields.values().any(|value| names(value.as_str()))
+                    || sealed
+                        .fields
+                        .iter()
+                        .filter(|(name, _)| name.as_str() != FIELD_ATTEMPT_CALLER)
+                        .any(|(_, value)| names(value.as_str()))
             }
             // No sealed receipt yet: the attempt may still be running, so
             // its live read set names the row instead.
@@ -149,7 +154,7 @@ fn live_attempt_names_source(
 }
 
 /// The attempt a pack receipt id names (`attempt:` + its hex), when it is one.
-fn receipt_attempt(receipt: &str) -> Option<crate::attempt_queue::AttemptId> {
+pub(super) fn receipt_attempt(receipt: &str) -> Option<crate::attempt_queue::AttemptId> {
     let (_, hex) = receipt.rsplit_once(':')?;
     let attempt =
         crate::attempt_queue::AttemptId::from_bytes(EntityId::from_hex(hex).ok()?.as_bytes())

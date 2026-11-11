@@ -5,6 +5,16 @@
 use super::*;
 
 impl EffectorBudgetCharge {
+    /// Refreshes the admission snapshot after its same-writer reservation marks.
+    pub(crate) fn refresh_read_in_txn(
+        &mut self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        now: u64,
+    ) -> Result<()> {
+        refresh_read_in_txn(store, txn, &mut self.read, now)
+    }
+
     /// Folds the catalog pool's own charge into this per-grant key's: the
     /// pool's read rides `read.pool`, the rest `pool`.
     fn meet_pool(&mut self, mut pool: Self) {
@@ -17,6 +27,24 @@ impl EffectorBudgetCharge {
             ladder_events: pool.ladder_events,
         });
     }
+}
+
+fn refresh_read_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    read: &mut EffectorBudgetRead,
+    now: u64,
+) -> Result<()> {
+    let record = crate::connector_key::txn::read_connector_key_in_txn(store, txn, &read.key_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    let states = load_budget_row_states(store, txn, &read.key_ref, &record, None, false, now)?;
+    let pool = read.pool.take();
+    *read = budget_read_from_states(&read.key_ref, &record, &states);
+    read.pool = pool;
+    if let Some(pool) = read.pool.as_mut() {
+        refresh_read_in_txn(store, txn, pool, now)?;
+    }
+    Ok(())
 }
 
 impl EffectorBudgetChargeOutcome {
@@ -328,6 +356,36 @@ pub(crate) fn charge_effector_budgets(
     Ok(outcome)
 }
 
+/// The single emission policy for admission and confirmed settlement.
+/// Both use the combined live usage and the same per-window fired memory.
+pub(super) fn fire_ladder_thresholds(
+    row: EffectorBudgetRowId,
+    budget: &EffectorBudget,
+    usage: &mut ConnectorKeyUsage,
+) -> Vec<EffectorBudgetLadderEvent> {
+    let mut events = Vec::new();
+    // Spend-ladder signals remain an explicit v1 non-goal (M3b).
+    if budget.dimension != EffectorBudgetDimension::Spend {
+        let percent = percent_used(usage.used(), budget.limit);
+        for threshold in [
+            BudgetThreshold::Silent50,
+            BudgetThreshold::Plan80,
+            BudgetThreshold::Land95,
+        ] {
+            let name = budget_threshold_fired_name(threshold);
+            if percent >= threshold.percent() && !usage.fired.iter().any(|fired| fired == name) {
+                usage.fired.push(name.to_owned());
+                events.push(EffectorBudgetLadderEvent {
+                    row,
+                    threshold,
+                    steering: effector_steering_signal(threshold),
+                });
+            }
+        }
+    }
+    events
+}
+
 /// Evaluates and (only when every matched row passes) debits a key's budget
 /// rows for one admitted external effect. Evaluate-all-then-apply-all across
 /// the key/compiled union: an exhausted outcome applies NO debits. The charge
@@ -403,10 +461,13 @@ fn charge_key_budgets(
     let mut debits = Vec::new();
     for state in states.iter_mut().filter(|state| state.matched) {
         if state.amount > 0 {
-            state.usage.entries.push((now, state.amount));
+            let entry = UsageEntry::settled(store, wtxn, now, state.amount)?;
+            state.usage.entries.push(entry);
             debits.push(EffectorBudgetDebit {
+                entry_id: entry.id,
                 key_ref: *key_id,
                 row: state.row,
+                approval: EffectorBudgetApproval::capture(key, state.row)?,
                 amount: state.amount,
                 at: now,
             });
@@ -414,33 +475,11 @@ fn charge_key_budgets(
                 sends_debit = 1;
             }
         }
-        // Fire ladder thresholds crossed by the post-debit usage, once per
-        // window per row (persisted in `fired`). Spend rows advance only via
-        // settlement — spend-ladder signals are an explicit v1 non-goal (M3b).
-        if state.budget.dimension != EffectorBudgetDimension::Spend {
-            let percent = percent_used(state.usage.used(), state.budget.limit);
-            for threshold in [
-                BudgetThreshold::Silent50,
-                BudgetThreshold::Plan80,
-                BudgetThreshold::Land95,
-            ] {
-                let name = budget_threshold_fired_name(threshold);
-                if percent >= threshold.percent()
-                    && !state.usage.fired.iter().any(|fired| fired == name)
-                {
-                    state.usage.fired.push(name.to_owned());
-                    // Each event carries the row that fired it: a dispatch
-                    // matching several rows can cross the same threshold on
-                    // more than one, and the consumer must be able to tell
-                    // "sends at 80%" from "rate at 80%".
-                    ladder_events.push(EffectorBudgetLadderEvent {
-                        row: state.row,
-                        threshold,
-                        steering: effector_steering_signal(threshold),
-                    });
-                }
-            }
-        }
+        ladder_events.extend(fire_ladder_thresholds(
+            state.row,
+            state.budget,
+            &mut state.usage,
+        ));
         USAGE.put(store, wtxn, &(*key_id, state.row.usage_key()), &state.usage)?;
     }
 

@@ -452,6 +452,8 @@ pub struct CompiledConnectorPolicy {
 /// never `text`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ConnectorCharterBlock {
+    /// This exact approval act, including an identical reapproval that resets usage.
+    pub approval_id: EntityId,
     pub text: String,
     pub text_hash: [u8; 32],
     pub compiled: CompiledConnectorPolicy,

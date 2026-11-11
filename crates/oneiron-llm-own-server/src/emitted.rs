@@ -1,7 +1,7 @@
 //! What a checked stream has already shown its caller (FIX 8617): each
 //! part in the order it started, its text as it arrived, a tool call's and
 //! an image's whole content once it ended. A terminal message is held to
-//! it in order (FIX 9324): adjacent text is one run, and adjacent reasoning
+//! it in order (FIX 9324): adjacent unsigned text is one run, and adjacent reasoning
 //! one run with its signatures, since backends cut chunks where they like,
 //! but no run reaches across a tool call or an image, so where text stands
 //! between them is held too; every tool call's identity and input, and
@@ -18,7 +18,10 @@ use serde_json::Value as JsonValue;
 
 /// One part as it was shown.
 enum Shown {
-    Text(String),
+    Text {
+        text: String,
+        signature: Option<String>,
+    },
     Reasoning {
         text: String,
         signature: Option<String>,
@@ -44,11 +47,14 @@ pub(crate) struct Emitted {
 }
 
 /// One part of a message in the shape a terminal is held to: a run of
-/// adjacent text, a run of adjacent reasoning with its signatures in order,
+/// adjacent unsigned text, a signed text part, adjacent reasoning with its signatures in order,
 /// or one tool call or image in its place.
 #[derive(PartialEq)]
 enum OrderedReplyPart<'a> {
-    Text(String),
+    Text {
+        text: String,
+        signature: Option<&'a str>,
+    },
     Reasoning {
         text: String,
         signatures: Vec<&'a str>,
@@ -71,7 +77,13 @@ impl Emitted {
     pub(crate) fn note(&mut self, event: &LlmStreamEvent) {
         use LlmStreamEvent as Event;
         match event {
-            Event::TextStart { part_id } => self.start(part_id, Shown::Text(String::new())),
+            Event::TextStart { part_id } => self.start(
+                part_id,
+                Shown::Text {
+                    text: String::new(),
+                    signature: None,
+                },
+            ),
             Event::ReasoningStart {
                 part_id,
                 signature,
@@ -87,10 +99,22 @@ impl Emitted {
                 },
             ),
             Event::TextDelta { part_id, text } | Event::ReasoningDelta { part_id, text } => {
-                if let Some(Shown::Text(shown) | Shown::Reasoning { text: shown, .. }) =
-                    self.parts.get_mut(part_id)
+                if let Some(
+                    Shown::Text { text: shown, .. } | Shown::Reasoning { text: shown, .. },
+                ) = self.parts.get_mut(part_id)
                 {
                     shown.push_str(text);
+                }
+            }
+            Event::TextEnd {
+                part_id,
+                signature: Some(signature),
+            } => {
+                if let Some(Shown::Text {
+                    signature: shown, ..
+                }) = self.parts.get_mut(part_id)
+                {
+                    *shown = Some(signature.clone());
                 }
             }
             Event::ReasoningEnd { part_id, signature } => {
@@ -141,7 +165,7 @@ impl Emitted {
     /// is the answer then.
     pub(crate) fn is_empty(&self) -> bool {
         self.parts.values().all(|part| match part {
-            Shown::Text(text) => text.is_empty(),
+            Shown::Text { text, signature } => text.is_empty() && signature.is_none(),
             Shown::Reasoning {
                 text,
                 signature,
@@ -178,7 +202,10 @@ impl Emitted {
         self.order
             .iter()
             .filter_map(|id| match self.parts.get(id)? {
-                Shown::Text(text) => Some(ContentPart::Text { text: text.clone() }),
+                Shown::Text { text, signature } => Some(ContentPart::Text {
+                    text: text.clone(),
+                    signature: signature.clone(),
+                }),
                 Shown::Reasoning {
                     text,
                     signature,
@@ -198,6 +225,7 @@ impl Emitted {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     input: input.clone()?,
+                    signature: None,
                 }),
                 Shown::Image { media_type, image } => Some(ContentPart::Image {
                     media_type: media_type.clone(),
@@ -208,16 +236,22 @@ impl Emitted {
     }
 }
 
-/// `content` as a terminal is held to it: in order, adjacent text and
-/// adjacent reasoning each one run, an empty chunk adding nothing to it.
+/// `content` as a terminal is held to it: adjacent unsigned text and reasoning
+/// form runs; signed text retains its original part and empty unsigned chunks add nothing.
 fn ordered<'a>(content: impl Iterator<Item = &'a ContentPart>) -> Vec<OrderedReplyPart<'a>> {
     let mut parts: Vec<OrderedReplyPart<'a>> = Vec::new();
     for part in content {
         match part {
-            ContentPart::Text { text } => match parts.last_mut() {
-                Some(OrderedReplyPart::Text(run)) => run.push_str(text),
-                _ if text.is_empty() => {}
-                _ => parts.push(OrderedReplyPart::Text(text.clone())),
+            ContentPart::Text { text, signature } => match parts.last_mut() {
+                Some(OrderedReplyPart::Text {
+                    text: run,
+                    signature: None,
+                }) if signature.is_none() => run.push_str(text),
+                _ if text.is_empty() && signature.is_none() => {}
+                _ => parts.push(OrderedReplyPart::Text {
+                    text: text.clone(),
+                    signature: signature.as_deref(),
+                }),
             },
             ContentPart::Reasoning {
                 text,
@@ -246,6 +280,7 @@ fn ordered<'a>(content: impl Iterator<Item = &'a ContentPart>) -> Vec<OrderedRep
                 call_id,
                 name,
                 input,
+                ..
             } => parts.push(OrderedReplyPart::Tool {
                 call_id: call_id.as_str(),
                 name: name.as_str(),

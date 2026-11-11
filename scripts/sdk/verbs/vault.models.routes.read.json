@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.routes.read",
+  "description": "Reads one independent model slot route with its manifest pin and effective resident narrowing.",
+  "input": "crate::llm::manifest::doors::ModelRouteRead",
+  "output": "crate::llm::manifest::doors::ModelRouteView",
+  "call": "crate::task_verb::sdk::read_model_route(memory, input)?",
+  "scope": "Read",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

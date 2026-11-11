@@ -13,6 +13,9 @@ import { ScriptedProviders, openaiText } from "./support/providers.ts";
 import type { ProviderStep } from "./support/providers.ts";
 import { defineFile, redactor } from "./support/run.ts";
 
+const recipeDefaults = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_wake/recipe_policy_defaults.json", import.meta.url)).text());
+const extractionPrompt = JSON.parse(await Bun.file(new URL("../../crates/oneiron/src/dreamer_consolidation/executor/extraction_prompt.json", import.meta.url)).text());
+
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
 const suite = defineFile(import.meta, { profile, slots: 1 });
@@ -31,6 +34,13 @@ interface PrivacyFixtures {
       refusalReason: "held_record";
       confirmEvent: "lift_and_erase_confirmed";
       unprivilegedLiftStatus: 403;
+      // Final completion via vault.records.erase_sweep (erase_complete_at +
+      // final_ref), not the immediate lift_and_erase state. Immediate may be
+      // erased (completed at once) or completion_pending (confirmed, sweep or
+      // custody still retiring). verbs/legal_hold.rs LegalHoldEraseState.
+      // Read via catalog.readJson("privacy-scenarios") ->
+      // tests/e2e/fixtures/privacy/scenarios.json (manifest map), not a
+      // guessed filename. JSON value "erased" is the completed state.
       ownerEraseState: "erased";
     };
   };
@@ -114,7 +124,9 @@ async function eraseRecord(client: PublicHttpClient, record: string): Promise<De
   expect(outcome.first_act ?? null).toBeNull(); // Personal vault: no shared-owner veto.
   expect(outcome.same_bytes).toEqual([]); // Same-bytes fan-out was not requested.
   expect(outcome.first.existed).toBe(true);
-  expect(outcome.first.reason).toBe("user_hard_delete");
+  // The owner erase_confirm door records OwnerErase (byte 6, rendered
+  // owner_erase), distinct from an ordinary restorable user_hard_delete.
+  expect(outcome.first.reason).toBe("owner_erase");
   return outcome.first;
 }
 
@@ -313,7 +325,7 @@ async function mcpRead(mcp: McpClient, tools: McpTools, name: string, spec: unkn
 const receiptKinds = [
   "outbound", "gate", "identity_lifecycle", "scoped_read", "share", "artifact_settle",
   "proposal_outcome", "commitment_lifecycle", "extraction", "served_form", "hook",
-  "reference_refusal", "task_lifecycle",
+  "reference_refusal", "task_lifecycle", "run_hold_override",
 ];
 async function allReceipts(client: PublicHttpClient) {
   const rows: FacadeResult<"vault.receipts">["receipts"] = [];
@@ -375,6 +387,9 @@ async function anonymousPolicy(engine: EngineFixture, policyRow: string): Promis
   expect(readback.configuration.owner_policy_patterns).toEqual(configured.owner_policy_patterns);
 }
 
+const SUMMARY_PROMPT = "Summarize the admitted source text and retain its location fact.";
+const PERSON_ABOUT_PROMPT = "You write the one-line `about` of a person on an agent's roster of people. The facts below are everything you may use, one per line as `predicate: value`. Write one plain sentence of at most 25 words that says who this person is. Never add, guess or imply a fact that is not listed, and never say that facts are missing. A fact marked (observed) was read from what the person did; where it disagrees with a fact marked (stated), go by the stated one. No markup and no quotes.";
+
 function dreamerConfig(providers: ScriptedProviders, summary = false): string {
   return `
 [models]
@@ -393,10 +408,36 @@ revision = "e2e-v1"
 model = "summary:privacy-summary"
 [models.dreamer]
 enabled = true
-${summary ? 'summary_prompt = "Summarize the admitted source text and retain its location fact."' : ""}
+${summary ? 'summary_prompt = "' + SUMMARY_PROMPT + '"' : ""}
 [models.workflows]
 enabled = false
 `;
+}
+
+type BackgroundKey = "follower_instruction" | "follower_keyframe_instruction" | "novelty_instruction" | "audit_window_instruction";
+// The Dreamer's background extraction producers. A keyframe fold accepts
+// any non-blank text and a window audit accepts an empty finding, so both
+// get that valid answer. The follower (one reading per asked span) and the
+// novelty rung (a decision pack keyed by span-derived question ids) have no
+// static valid answer: they keep a declared 503, which the step retries
+// and then parks. A case that scripts one of them itself omits its rule.
+const BACKGROUND_REPLIES: Partial<Record<BackgroundKey, string>> = {
+  follower_keyframe_instruction: "No change to the keyframe.",
+  audit_window_instruction: JSON.stringify({ discovered: [] }),
+};
+function backgroundExtraction(model: string, omit: readonly BackgroundKey[] = []): ProviderStep[] {
+  return (["follower_instruction", "follower_keyframe_instruction", "novelty_instruction", "audit_window_instruction"] as const)
+    .filter(key => !omit.includes(key))
+    .map(key => {
+      const text = BACKGROUND_REPLIES[key];
+      return { id: `background-${key}`, origin: "extraction", role: "extraction_teacher",
+        purpose: `background ${key}`, standing: true as const,
+        request: { method: "POST" as const, path: "/v1/chat/completions", model, system: recipeDefaults[key] },
+        response: text === undefined
+          ? { kind: "json" as const, status: 503,
+            body: { error: { type: "fixture_background_unscripted", message: "Background producer is not scripted" } } }
+          : openaiText(`background-${key}`, model, text, { inputTokens: 64, outputTokens: 8 }) };
+    });
 }
 
 async function grantExtraction(engine: EngineFixture): Promise<void> {
@@ -488,11 +529,17 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
   redactor.add(...names, spec.protected.claimText);
   const providers = await ScriptedProviders.start({ id: "privacy-archive", steps: [{
     id: "eligible-people", origin: "extraction", role: "extraction_teacher", purpose: "extract witnessed people",
-    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract" }, barrier: "extract",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system }, barrier: "extract",
     response: openaiText("eligible-people", "privacy-extract", JSON.stringify({ candidates: [],
       persons: names.map((name, index) => ({ id: `new:P${index + 1}`, name, evidence_turn_refs: ["T1"] })) }),
       { inputTokens: 128, outputTokens: 64 }),
-  }] });
+  }, {
+    id: "archive-summary", origin: "summary", role: "dreamer_current", purpose: "background scope summary",
+    standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", fields: { response_format: { type: "json_schema" } } },
+    response: openaiText("archive-summary", "privacy-summary", JSON.stringify({ text: "A short note was recorded.", keep: "" }),
+      { inputTokens: 128, outputTokens: 16 }),
+  }, ...backgroundExtraction("privacy-extract")] });
   let engine: EngineFixture | undefined;
   let primaryFailed: boolean = false;
   let primary: unknown;
@@ -577,7 +624,7 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     const receipts = await allReceipts(engine.client);
     expect(receipts.filter(row => /delete|erase/i.test([row.kind, row.outcome, ...row.reason_codes].join(" "))))
       .toEqual([]);
-    expect(providers.seenFixtureCalls).toHaveLength(1);
+    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "eligible-people")).toHaveLength(1);
   } catch (error) {
     primaryFailed = true;
     primary = error;
@@ -610,18 +657,84 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
   redactor.add(...forbidden, spec.unrelatedText);
   const providers = await ScriptedProviders.start({ id: "privacy-erase", steps: [{
     id: "source-claim", origin: "extraction", role: "extraction_teacher", purpose: "extract cited location",
-    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract" }, barrier: "extract",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system }, barrier: "extract",
     response: openaiText("source-claim", "privacy-extract", JSON.stringify({
       persons: [{ id: "new:P1", name: "Mira", evidence_turn_refs: ["T1"] }],
       candidates: [{ subject: "new:P1", predicate: "privacy.location", value: spec.claimText,
         confidence: 0.95, evidence_refs: [{ source: "T1", quote: spec.sourceText }] }],
     }), { inputTokens: 128, outputTokens: 96 }),
   }, {
+    // G6 exact source contract (FIX21902 closure, Engine 12:03). P02 authors
+    // one TURN via a single vault.witness with one visible text message
+    // (sourceText); ownerRoom/claims/summaries create no TURNs. sourceText =
+    // "privacyeraseaurelium: Mira keeps the cobalt notebook at the north
+    // observatory." Sieve over it (RULES_VERSION 1, no saved oneiroNER tags
+    // in a fresh vault): leading marker lowercase so no capitalized run;
+    // ':' never opens a sentence (words.rs:90-92 opens_next only .!? newline
+    // and JP); "Mira" is the sole capitalized non-stop word (words.rs:17-70
+    // NOT_NAMES, 222-229 capitalized), mid-sentence (opens false) so
+    // RuleClass::Name (words.rs:268-272), not InitialName; no numbers/months
+    // /weekdays/phrases so no Absolute/Relative/VagueDate; no katakana
+    // U+30A1-30FA runs (words.rs:283-317); no backticks/fences so no code
+    // exclusion. Exactly one RuleSpan. read.rs:273-287 maps non-date
+    // RuleClass without saved tags to SpanKind::Name (snake_case date|name,
+    // sieve/mod.rs); policy sieve_policy_defaults.json gives name_confidence
+    // 70, uncertain [35,75), so band Uncertain, owed [Novelty, Typing]
+    // (read.rs:371-374), score 7000. Caller is the batched follower on the
+    // extraction route, not a per-span novelty rung: follower_enabled
+    // defaults true (recipe_policy_defaults.json); follower_attempt/mod.rs:
+    // 165-172 resolves DREAMER_EXTRACTION_ROLE (roles.rs:30
+    // ExtractionTeacher) and factory.rs:492-507 lends that model's window;
+    // narrative DreamerCurrent stays separate (factory.rs:480-487,
+    // roles.rs:34). dreamerConfig binds extraction_teacher to
+    // privacy:privacy-extract (origin extraction) and dreamer_current to
+    // summary:privacy-summary (origin summary), so origin extraction + role
+    // extraction_teacher + model privacy-extract is exact; no remap. Suffix
+    // numbers owed readable spans from 1 (request.rs:70-76 span index+1), so
+    // the real question asks exactly span 1. WireReadings
+    // (follower_attempt/output.rs:18-35 deny_unknown_fields) requires exactly
+    // one reading per asked span in order; decode rejects omissions, repeats,
+    // unknown spans, out-of-candidate entities and confidence>100 (:40-81).
+    // Response readings [{span:1,kind:"name",novel:true,confidence:50}] is
+    // lawful: span exists, kind matches Name, novel true = new info worth
+    // retaining (follower_instruction), confidence 50 in 0..100, entity
+    // omitted (optional; P-labels runtime-assigned per request.rs:49-59,
+    // inventing one would be speculative). Strict errors preserved; observed
+    // second failed send is the same digest retried (durable step), not two
+    // independent responses. No source contract changed.
+    id: "source-follower", origin: "extraction", role: "extraction_teacher",
+    purpose: "consolidation follower span readings",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract" },
+    response: openaiText("source-follower", "privacy-extract", JSON.stringify({
+      readings: [{ span: 1, kind: "name", novel: true, confidence: 50 }],
+    }), { inputTokens: 128, outputTokens: 32 }),
+  }, {
+    // FIX 22183: the consolidation pass re-extracts the source with P2 Mira
+    // and claim C1 listed (one durable step; its two failed sends were two
+    // ladder passes of one generate, P22183-CARDINALITY). An empty reply is
+    // lawful (wire.rs contract_reply) and writes nothing; a restatement citing
+    // C1 would meet resources/write.rs "claim evidence cannot support itself".
+    id: "source-reextract", origin: "extraction", role: "extraction_teacher",
+    purpose: "consolidation re-extraction of the listed source claim",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system },
+    response: openaiText("source-reextract", "privacy-extract", JSON.stringify({ candidates: [] }),
+      { inputTokens: 128, outputTokens: 16 }),
+  }, {
+    // The extracted person's roster About producer shares the narrative origin,
+    // but is not the declared source SUMMARY. R36's captured rejected bodies
+    // carried this prompt with no response_format; answer separately and strictly.
+    id: "source-person-about", origin: "summary", role: "dreamer_current", purpose: "summarize extracted person for roster About",
+    standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", system: PERSON_ABOUT_PROMPT },
+    response: openaiText("source-person-about", "privacy-summary", "Mira has a stated fact.",
+      { inputTokens: 128, outputTokens: 16 }),
+  }, {
     id: "source-summary", origin: "summary", role: "dreamer_current", purpose: "summarize declared source",
-    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary" },
+    standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", system: SUMMARY_PROMPT, fields: { response_format: { type: "json_schema" } } },
     response: openaiText("source-summary", "privacy-summary", JSON.stringify({ text: spec.summaryText, keep: "" }),
       { inputTokens: 128, outputTokens: 48 }),
-  }] });
+  }, ...backgroundExtraction("privacy-extract", ["follower_instruction"])] });
   let engine: EngineFixture | undefined;
   let primaryFailed: boolean = false;
   let primary: unknown;
@@ -790,12 +903,18 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     expect(sweep.deadline_at - sweep.requested_at).toBeLessThanOrEqual(spec.expected.historicalSweepMaxSeconds);
     await finishHistoricalSweep(engine);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-claim")).toHaveLength(1);
-    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary")).toHaveLength(1);
+    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-person-about").length).toBeGreaterThanOrEqual(1);
+    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary").length).toBeGreaterThanOrEqual(1);
+    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary").every(call => (call.body as any)?.response_format?.json_schema?.schema?.required?.join(",") === "text,keep")).toBe(true);
   } catch (error) {
     primaryFailed = true;
     primary = error;
   } finally {
     const cleanups: string[] = [];
+    // Capture the real summary wire body before provider cleanup. The standing
+    // matcher stays strict; this artifact makes any mismatching field visible.
+    try { await engine?.artifacts.json("diagnostic-privacy-02-provider-calls.json", { seen: providers.seenFixtureCalls }); }
+    catch (error) { cleanups.push(errorText(error)); }
     try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
     try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
     if (primaryFailed) {
@@ -807,15 +926,19 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
 });
 
 // PRIVACY-03. ARCH-0038 #harderase-v1 and ARCH-0023b #two-planes.
-// Keep the full replay scenario: capture a valid same-build peer update with
-// grants and ACKs, disconnect B, erase at A, reconnect and replay that exact
-// update. Source and every document fork must stay absent on both peers,
-// before and after restart. No raw WS counterfeit or private storage edits.
-// WsClient handles app RPC, not entity-document sync. EngineFixture.peers
-// creates independent vaults, not enrolled copies of one vault. This file's
-// one slot is unchanged; increasing it would not supply either missing setup.
-suite.todo(test, "PRIVACY-03",
-  "waits on typed HTTP+SDK entity-document/fork sync replay with ACK observation and genuine same-vault peer enrolment setup; slots remain 1. Erasure resists offline replay should work");
+// Keep the whole replay/erasure oracle, using the real public flow ruled by
+// Engine 2026-11-07 07:36 JST: pair a machine link, device enrol B as a copy of
+// A's vault, and serve receiver B. Back up B before erasure, sync the genuine
+// source and document forks, disconnect B, then erase at A. Restore B's
+// pre-erase backup and sync again to exercise replay of its stale state.
+// Observe rows still owed to home and their Durable/Held receipts through
+// vault.sync.outbox, not a test-only capture endpoint. Source and every fork
+// must stay absent on both peers before and after restart. No raw WS
+// counterfeit, independent-vault substitute, or private storage edits.
+// Keep this whole journey BLOCKED until vault.sync.outbox AND L03 #4343's
+// empty-vault enrolment merge. This file's one slot remains unchanged.
+suite.skip(test, "PRIVACY-03",
+  "waits on merged vault.sync.outbox and L03 #4343 empty-vault enrolment for genuine machine-link/device-enrol receiver B, pre-erase backup/restore/sync replay and ACK observation. Erasure resists offline replay should work [FIX 3966; qualif 17866]");
 
 suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should work", async () => {
   const catalog = await loadFixtures();
@@ -952,7 +1075,21 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     expect(erased.holds).toContain(hold.hold_id);
     expect(erased.records).toHaveLength(1);
     expect(erased.records[0]?.record).toBe(record.id_hex);
-    expect(erased.records[0]?.status.state).toBe(spec.expected.ownerEraseState);
+    // Confirmation is not completion (G5 FIX21902 closure): immediate may be
+    // erased (completed at once, fixture ownerEraseState via
+    // readJson("privacy-scenarios")) or completion_pending (confirmed, sweep
+    // or custody still retiring). Typed in verbs/legal_hold.rs:63-82;
+    // pending reasons exhaustive in deletion/legal_hold/types.rs:295-306.
+    // Accept confirmed, fail fast on failed, then observe final completion
+    // through erase_sweep. 10s poll + instant asserts below unchanged.
+    const status = erased.records[0]!.status;
+    if (status.state === "failed") throw new Error(`Owner confirm failed: ${status.message}`);
+    expect(status.state === spec.expected.ownerEraseState || status.state === "completion_pending").toBe(true);
+    if (status.state === "completion_pending" && status.reason != null) {
+      expect(["historical_sweep", "custody_retirement", "veto_window"]).toContain(status.reason);
+    }
+    const receiptRef = status.receipt_ref;
+    if (!receiptRef) throw new Error("Confirmed erase has no redaction receipt");
     expect((await engine.client.call("vault.get", { entity_ref: record.id_hex })).value).toBeNull();
     await expectBlobGone(engine.client, record.id_hex, 1);
     const after = await engine.client.call("vault.legal_holds.log", {});
@@ -963,9 +1100,19 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     const lifted = (await engine.client.call("vault.legal_holds.list", {}))
       .find(row => row.hold_id === hold.hold_id);
     expect(lifted?.lifted_at).toBeGreaterThanOrEqual(hold.placed_at);
-    const status = erased.records[0]!.status;
-    if (status.state !== "erased") throw new Error("Owner confirm did not erase the held record");
-    await readAudit(engine.client, status.receipt_ref, record.id_hex,
+    // G-ERASE-DRIVER (FIX21914): force the existing historical sweep before
+    // polling completion; status polling alone never triggers it.
+    await finishHistoricalSweep(engine);
+    const sweep = await awaitPublic(
+      () => engine.client.call("vault.records.erase_sweep", { receipt_ref: receiptRef }),
+      value => value != null && value.erase_complete_at != null && value.final_ref != null,
+      { label: "held-record erase completion" },
+    );
+    if (!sweep || sweep.erase_complete_at == null || sweep.final_ref == null) {
+      throw new Error("Held-record erase did not reach final completion");
+    }
+    expect(sweep.custody?.pending ?? []).toEqual([]);
+    await readAudit(engine.client, receiptRef, record.id_hex,
       [spec.name, new TextDecoder().decode(bytes)]);
   } catch (error) {
     primaryFailed = true;
@@ -985,17 +1132,22 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
 // Session-bound start/witness/notes.create/claims.upsert/recall/discard now
 // have generated HTTP+SDK types. self.off_record.execute genuinely owns a
 // session-bound production code run; an unowned self.run.attach is not setup.
-// Do not replace the original scenario with a note-only discard test. It
-// needs durable base + overlay union reads, an actual spilling MCP output,
-// and decoded full export, backup AND authenticated sync captures while the
-// overlay is LIVE. All three carriers must contain zero overlay/spill bytes.
+// Keep durable base + overlay union reads, an actual spilling MCP output,
+// and decoded full export and backup while the overlay is LIVE: neither
+// carrier may contain overlay/spill bytes. No note-only discard substitute.
+// Engine 2026-11-07 07:36 JST replaces the capture-door premise with real
+// public flows: pair a machine link, device enrol and serve receiver B;
+// back up B, sync, erase at A, restore B's pre-erase backup and sync again.
+// Observe ACK state through vault.sync.outbox. While A's overlay is LIVE,
+// read A's actual overlay and spill ids FROM B and expect nothing, while
+// proving base sync works. No test-only capture door or independent vault.
 // Close without saving, restart, then prove session-not-found, absent overlay
 // bodies/receipts/spill handles and unchanged durable memory. No floor event
 // is provoked, so no floor-receipt exception applies here.
-// The public session calls do not provide a typed sync-carrier capture or
-// same-vault receiver. App WS RPC or a second independent vault proves neither.
-suite.todo(test, "PRIVACY-06",
-  "waits on typed HTTP+SDK authenticated sync-carrier capture and same-vault receiver setup for the LIVE overlay/spill exclusion assertion; session write/read/execute doors exist. Off-record session discard should work");
+// Keep the whole journey BLOCKED until vault.sync.outbox AND L03 #4343's
+// empty-vault enrolment merge; no weakening of the privacy oracle.
+suite.skip(test, "PRIVACY-06",
+  "waits on merged vault.sync.outbox and L03 #4343 empty-vault enrolment for real receiver B backup/restore/sync replay and LIVE overlay/spill-id exclusion reads FROM B; session write/read/execute doors exist. Off-record session discard should work [FIX 3967; qualif 17866]");
 
 // PRIVACY-07. ARCH-0052 #d5-notice/#d5-save-grant, ARCH-0040 #mcp-actor-ceilings.
 // rooms.start/witness/status/save/save_from_here/suggest_save/confirm_save/
@@ -1018,8 +1170,8 @@ suite.todo(test, "PRIVACY-06",
 // evaporate this live stretch. No raw leave route, fake saver or fifth actor
 // is substituted. Once that setup exists, also assert content-free notices
 // {act,by,at}, guest-only visible attachment talk, and notice removal at close.
-suite.todo(test, "PRIVACY-07",
-  "waits on a named typed HTTP+SDK live room-leave or saver-grant revoke/regrant setup for the four real participants; existing room save/suggest/export DTOs are not the blocker. Off-record save from the middle should work");
+suite.skip(test, "PRIVACY-07",
+  "waits on a named typed HTTP+SDK live room-leave or saver-grant revoke/regrant setup for the four real participants; existing room save/suggest/export DTOs are not the blocker. Off-record save from the middle should work [FIX 3968; qualif 17820]");
 
 // PRIVACY-08. ARCH-0052 anonymous mode and G10=B require zero durable
 // records, including hash-only safety receipts. Script only the external model wire.
@@ -1059,7 +1211,6 @@ enabled = false
 enabled = false
 ` });
     await engine.requireHttpDoor("/v1/ai/anonymous-chat", "POST");
-    await engine.requireHttpDoor("/v1/core/facade/ai.anonymous_chat", "POST");
     await anonymousPolicy(engine, spec.policyRow);
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
     const normal = await engine.client.call("vault.claims.upsert", {
@@ -1087,11 +1238,12 @@ enabled = false
     const first = await chat(spec.input);
     if (first.type !== "reply") throw new Error("Ordinary anonymous turn was blocked");
     expect(first.content).toBe(spec.modelReplies[0]);
-    expect(first.skipped_checks).toEqual([]);
+    // G-ANONYMOUS (FIX21914): document-free fixture correctly skips input+output.
+    expect(first.skipped_checks).toEqual([{input:true,reason:"no-document"},{input:false,reason:"no-document"}]);
     const second = await chat(spec.followUp);
     if (second.type !== "reply") throw new Error("Independent anonymous turn was blocked");
     expect(second.content).toBe(spec.modelReplies[1]);
-    expect(second.skipped_checks).toEqual([]);
+    expect(second.skipped_checks).toEqual([{input:true,reason:"no-document"},{input:false,reason:"no-document"}]);
     const calls = providers.seenFixtureCalls;
     expect(calls).toHaveLength(2);
     expect(JSON.stringify(calls[0]!.body)).toContain(spec.input);

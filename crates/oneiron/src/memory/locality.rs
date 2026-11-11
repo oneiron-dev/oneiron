@@ -4,6 +4,7 @@
 
 use super::{Memory, MemoryError, MemoryResult};
 use crate::entity_id::EntityId;
+use crate::runtime_hooks::InvocationId;
 
 /// The rows the reads of a [`Memory`] surface derived their answers from.
 ///
@@ -11,23 +12,76 @@ use crate::entity_id::EntityId;
 /// here as it reads: a room thread's TASKs and their results, the TASK an ask
 /// takes its class from, every row a native query reads, the ones it counts
 /// but does not return among them. A host lists the rows its caller names by
-/// ref.
+/// ref. A retry that answers what settlement's drain already ran lists the
+/// rows that answer was saved beside (FIX 21054).
 #[derive(Debug, Default)]
-pub struct ProducerRows(std::sync::Mutex<Vec<EntityId>>);
+pub struct ProducerRows(std::sync::Mutex<ProducerListing>);
+
+/// The rows listed so far, and whether a saved answer's listing among them
+/// is unknown (FIX 21054). Unknown is sticky: no later row makes the
+/// listing known again.
+#[derive(Debug, Default)]
+struct ProducerListing {
+    rows: Vec<EntityId>,
+    unknown: bool,
+    drained: bool,
+}
 
 impl ProducerRows {
     /// The rows listed so far; the set is left empty.
     #[must_use]
     pub fn take(&self) -> Vec<EntityId> {
-        std::mem::take(&mut *self.rows())
+        std::mem::take(&mut *self.listing()).rows
+    }
+
+    /// The rows listed so far, or `None` when they are unknown: the answer
+    /// is a drained call's saved one whose door listed no rows (FIX 21054).
+    /// An unknown listing never reads as an empty one. The set is left
+    /// empty.
+    #[must_use]
+    pub fn take_listed(&self) -> Option<Vec<EntityId>> {
+        let listing = std::mem::take(&mut *self.listing());
+        (!listing.unknown).then_some(listing.rows)
+    }
+
+    /// The rows listed so far when the answer is a drained call's saved
+    /// one whose rows its door listed (FIX 21054): the rows that run read,
+    /// which this retry did not read again. `None` for a fresh answer, or a
+    /// drained one whose rows are unknown. The set is kept.
+    #[must_use]
+    pub fn drained_rows(&self) -> Option<Vec<EntityId>> {
+        let listing = self.listing();
+        (listing.drained && !listing.unknown).then(|| listing.rows.clone())
+    }
+
+    /// The listing of a drained call's saved answer: the rows it was saved
+    /// beside, `None` when its door listed none (FIX 22294). A door that
+    /// answers a saved answer itself, before any surface lists it, releases
+    /// it by this listing.
+    #[must_use]
+    pub fn saved(saved: Option<Vec<EntityId>>) -> Self {
+        let producers = Self::default();
+        producers.list_saved(saved);
+        producers
     }
 
     /// Lists `rows` as producers of the answer being read.
     pub(crate) fn list(&self, rows: impl IntoIterator<Item = EntityId>) {
-        self.rows().extend(rows);
+        self.listing().rows.extend(rows);
     }
 
-    fn rows(&self) -> std::sync::MutexGuard<'_, Vec<EntityId>> {
+    /// Lists the rows a drained call's answer was saved beside, `saved`, as
+    /// producers of that answer; `None` marks the listing unknown.
+    fn list_saved(&self, saved: Option<Vec<EntityId>>) {
+        let mut listing = self.listing();
+        listing.drained = true;
+        match saved {
+            Some(rows) => listing.rows.extend(rows),
+            None => listing.unknown = true,
+        }
+    }
+
+    fn listing(&self) -> std::sync::MutexGuard<'_, ProducerListing> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -89,6 +143,35 @@ impl Memory<'_> {
     pub(crate) fn produced_from(&self, rows: impl IntoIterator<Item = EntityId>) {
         if let Some(producers) = self.producers {
             producers.list(rows);
+        }
+    }
+
+    /// Lists, when a host collects them ([`Memory::listing_producers`]), the
+    /// rows that the answer settlement's drain saved under `invocation` was
+    /// derived from (FIX 21054). A retry that answers that saved result read
+    /// no row now: its producers are the drained run's, as its door listed
+    /// them (`Vault::verb_hook_saved_producers`). A listing its door did not
+    /// keep, or one that does not read, is unknown, never an empty one.
+    pub(crate) fn produced_by_drained(&self, invocation: Option<InvocationId>) {
+        if self.producers.is_none() {
+            return;
+        }
+        let saved = invocation.and_then(|invocation| {
+            self.vault
+                .verb_hook_saved_producers(invocation)
+                .inspect_err(|error| tracing::warn!(%error, "a drained call's rows did not read"))
+                .ok()
+                .flatten()
+        });
+        self.produced_by_saved(saved);
+    }
+
+    /// Lists the rows a drained or paced call's saved answer was saved
+    /// beside, `saved`, as that answer's producers; `None` marks them
+    /// unknown (FIX 22294).
+    pub(crate) fn produced_by_saved(&self, saved: Option<Vec<EntityId>>) {
+        if let Some(producers) = self.producers {
+            producers.list_saved(saved);
         }
     }
 

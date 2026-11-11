@@ -47,6 +47,11 @@ pub(in crate::batch) struct PutRow<'a> {
     pub(in crate::batch) learned_at: u64,
     pub(in crate::batch) data: &'a [u8],
     pub(in crate::batch) row_version: Option<u64>,
+    /// The bytes an ASSET body file holds when `data` is its manifest and
+    /// the batch read them (FIX 22075, 22091): an owning adapter's put
+    /// checks and custody read these, never the manifest. `None` for every
+    /// other row.
+    pub(in crate::batch) file_body: Option<&'a [u8]>,
 }
 
 /// Every flag a put is admitted under, grouped by what it governs.
@@ -221,6 +226,10 @@ pub(in crate::batch) struct PutContext<'a> {
     /// Pending-birth prompt sources for FIX 11000 anchors: `Some` proven
     /// from batch state (possibly empty), `None` unknown (incomplete).
     pub(in crate::batch) pending_prompt: Option<&'a [EntityId]>,
+    pub(in crate::batch) prepared_person_substrate:
+        Option<&'a crate::batch::PreparedPersonSubstrate>,
+    pub(in crate::batch) prepared_agent_birth:
+        Option<&'a crate::agent_def::PreparedAgentDefinitionBirth>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its

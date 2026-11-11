@@ -9,14 +9,23 @@ pub mod action_mode;
 pub mod agent_health;
 mod applied;
 pub mod attribution_audits;
+pub mod attribution_labels;
+pub(crate) use attribution_labels::{
+    erase_label_proposals_naming_in_txn, erase_unclear_note_copies_in_txn,
+    forget_unclear_notes_in_txn, withdraw_label_proposals_judged_by_in_txn,
+    withdraw_label_proposals_quoting_in_txn,
+};
 pub mod browser_candidate;
 pub mod browser_programs;
 mod calibration_asks;
+pub mod claim_source_recheck;
+pub use claim_source_recheck::CLAIM_SOURCE_RECHECK_FACET;
 pub mod coach;
 pub mod coach_diagnostic;
 mod coach_environment;
 pub mod coach_heal;
 pub mod coach_learning;
+mod coach_person;
 mod coach_prompt_repair;
 mod coach_repair;
 mod coach_research;
@@ -58,9 +67,11 @@ pub mod seal_checks;
 mod source_erase;
 pub(crate) use source_erase::erase_source_copies_in_txn;
 pub mod stewardship;
+
 #[cfg(test)]
 mod tests;
 mod type_tree_gate;
+pub(crate) use type_tree_gate::team_shape_tree_judge;
 pub(crate) mod type_tree_prior;
 pub mod type_tree_upkeep;
 use super::{
@@ -142,6 +153,29 @@ impl DreamerRunnerStore<'_> {
                 parent_attempt: None,
             },
             Some(dedupe),
+            None,
+            now,
+        )
+    }
+    /// The Coach's drain of pending topology-audit candidates (FIX 7817),
+    /// queued in the writer that kept a candidate under the facet's one
+    /// fixed key: a queued or running drain absorbs it, and the drain reads
+    /// every pending candidate, so no candidate is ever without a way to its
+    /// review. The host's Coach runs it on its own line and clock.
+    pub(crate) fn enqueue_coach_topology_audit_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            txn,
+            coach::COACH_HOST_QUEUE_KIND,
+            DreamerAttemptPayload {
+                attempt_type: coach::COACH_TOPOLOGY_AUDIT_FACET.into(),
+                input: Value::Nil,
+                parent_attempt: None,
+            },
+            Some(coach::COACH_TOPOLOGY_AUDIT_FACET.into()),
             None,
             now,
         )
@@ -287,6 +321,12 @@ pub(crate) fn execute(
         // Judged on the host's lent model: the wake driver hands it to the
         // host's executor, so here it can only wait for one.
         compaction_check::COMPACTION_CHECK_FACET => return Ok(compaction_check::unlent()),
+        // A provider-deleted, kept message's claims are judged on the host's
+        // lent model (FIX 15414): the wake driver hands the re-check to the
+        // host's executor, so here it can only wait for one.
+        claim_source_recheck::CLAIM_SOURCE_RECHECK_FACET => {
+            return Ok(claim_source_recheck::unlent());
+        }
         // An urgent digest's harm question is asked on the host's shared
         // ladder (OF-194): the wake driver hands it to the host's executor,
         // so here it can only wait for one. Its witnessed answer runs here.
@@ -298,7 +338,7 @@ pub(crate) fn execute(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(

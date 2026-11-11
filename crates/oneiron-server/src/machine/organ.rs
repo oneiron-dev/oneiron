@@ -45,6 +45,38 @@ pub(crate) struct OrganFloor(pub(crate) MachineMemory);
 
 #[cfg(unix)]
 impl oneiron_organ_host::MachineFloor for OrganFloor {
+    fn check_irreducible_peak(
+        &self,
+        pinned: u64,
+        bytes: u64,
+    ) -> Result<(), oneiron_organ_host::FloorRefusal> {
+        self.0
+            .empty_lease()
+            .check_irreducible_peak(pinned, bytes)
+            .map_err(organ_refusal)
+    }
+
+    fn try_lease(
+        &self,
+        bytes: u64,
+    ) -> Result<Option<Box<dyn oneiron_organ_host::FloorLease>>, oneiron_organ_host::FloorRefusal>
+    {
+        self.0
+            .try_lease(bytes)
+            .map(|lease| {
+                lease.map(|lease| {
+                    Box::new(OrganLease(lease)) as Box<dyn oneiron_organ_host::FloorLease>
+                })
+            })
+            .map_err(organ_refusal)
+    }
+
+    fn track_allocated(&self, bytes: u64) -> Box<dyn oneiron_organ_host::FloorLease> {
+        let mut lease = self.0.empty_lease();
+        lease.materialized(0, bytes);
+        Box::new(OrganLease(lease))
+    }
+
     fn lease(
         &self,
         bytes: u64,

@@ -18,6 +18,7 @@ use super::{history_import, local_servers};
 
 mod hooks;
 mod page_seal;
+mod startup_gate;
 mod stop;
 mod workers;
 pub(crate) use self::hooks::hook_sandbox;
@@ -141,6 +142,10 @@ pub(super) async fn serve_anchored(
         .with_artifact_listener(artifact_addr.port())
         .with_api_listener(listener.local_addr()?);
     tracing::info!(%addr, artifacts = %artifact_addr, "listening");
+    // From bind the API listener answers: health says the server is starting,
+    // and every other request waits for the router startup installs, so a
+    // client's connect is never left in the backlog (FIX 22117).
+    let gate = startup_gate::StartupGate::spawn(listener, config.limits.connections());
     // Borrowed uniquely, so the closure is `Send` whenever the host is.
     let awake_host = &mut host;
     let started = start_desktop_workers(
@@ -222,6 +227,8 @@ pub(super) async fn serve_anchored(
     }
     .await;
     if let Err(error) = startup {
+        // The requests the gate held get a 503, and the listener closes.
+        gate.fail().await;
         let _ = stopping.send(true);
         stop::stop_serving(&mesh_server, mesh, device_sync, upgrades).await;
         if let Err(cleanup) = workers.shutdown(|| host.on_stop()).await {
@@ -244,20 +251,22 @@ pub(super) async fn serve_anchored(
     // Connections are admitted, and their headers timed, before any route
     // runs. Both listeners draw on one pool, so the descriptor floor and each
     // address's unauthenticated share hold for the daemon, not per socket.
-    // Past the floor the API listener's sockets may take the pool's owner
-    // reserve, which this server judges (FIX 8274).
+    // The floor is the process's descriptor line the server's construction
+    // sized, which its guests' network work shares (FIX 6299). Past the
+    // floor the API listener's sockets may take the pool's owner reserve,
+    // which this server judges (FIX 8274).
     let limits = config.limits.connections();
-    let pool = crate::http_listener::ConnectionPool::new(
-        &limits,
-        questions,
-        Some(Arc::clone(&mesh_server.retained)),
-    );
-    let floor_vault = mesh_server.vault();
-    floor_vault.lend_host_net_floor(pool.host_net_floor());
+    let pool = crate::http_listener::ConnectionPool::served(&limits, &questions);
     // Foreign guests' proposal spools keep the disk floor uploads keep, on
     // its one shared ledger (FIX 7650).
-    floor_vault.lend_proposal_spool(Arc::new(mesh_server.transfers.disk.clone()));
+    mesh_server
+        .vault()
+        .lend_proposal_spool(Arc::new(mesh_server.transfers.disk.clone()));
     let owner_judge = Arc::clone(&mesh_server);
+    // Startup succeeded: the requests the gate held run on the real router,
+    // and the listener moves to the real accept loop.
+    let listener = gate.hand_over(app.clone()).await;
+    tracing::info!("startup finished; the API listener serves the real router");
     // Each listener's connections are tasks of its set here (FIX 9261).
     let (mut api_http, mut artifact_http) = (JoinSet::new(), JoinSet::new());
     let api = crate::http_listener::serve_api_with_pool(
@@ -365,6 +374,7 @@ pub(crate) async fn build_server(
                 .as_ref()
                 .map(crate::config::DesktopConfig::guest),
         )
+        .with_artifact_backend(config.artifact_backend.clone())?
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,

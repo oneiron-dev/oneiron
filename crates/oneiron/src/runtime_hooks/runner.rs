@@ -2,10 +2,15 @@
 //! its bindings' cursors, filters in Rust, runs each matching body once per
 //! run key, and commits the run's memo, its run index row, local outcomes,
 //! receipt, intents and cursor in one write. Delivery is at least once, in
-//! commit order, per hook and per source.
+//! commit order, per hook and per source. Due watcher TASKs tick on the
+//! runner's own wake: each pass on the vault's home releases them into the
+//! tick feed, hooks on or off, with a binding to take a tick or none, and the
+//! [`HOOK_RUNNER_TICK`] re-read bounds how late a tick runs (FIX 4749, 22180).
 
 mod body;
+mod commit;
 mod evaluation;
+mod hook_feeds;
 mod retained;
 
 use std::collections::{HashMap, HashSet};
@@ -20,20 +25,16 @@ use crate::skill_hub::pack_catalog::{HookActorClass, HookPhase, PackHookBinding}
 use crate::{EntityId, Error, Result, Vault};
 
 use super::apply;
-use super::block::{self, HookBlock};
+use super::block;
 use super::body::{HookBodyRuntime, HookVerdict};
 use super::filter;
 use super::grant::{self, HookGrant};
-use super::lineage::{self, HookCheck, LineageLink};
-use super::outcome::HookOutcome;
 use super::read::{self, SeenFact};
 use super::source::{self, FactEntry, FactKind, FactPosition, FactSource};
-use super::store::{
-    self, CursorRow, HookIntent, HookIntentState, HookRunRecord, HookRunRef, HookRunState, RunKey,
-};
+use super::store::{self, HookRunState, RunKey};
 
-use body::receipt;
 pub(super) use body::{Verdict, ask_verdict, judge, verdict_context};
+pub(crate) use hook_feeds::prune_hook_feeds;
 use retained::RetainedPass;
 
 /// Entries one pass reads from each source: the in-memory cap. A source with
@@ -73,7 +74,7 @@ impl std::fmt::Debug for FactHookRunner {
 /// What one pass did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HookPassReport {
-    /// `hooks.enabled` is off; the pass read nothing.
+    /// `hooks.enabled` is off; the pass released due ticks and read nothing.
     pub disabled: bool,
     pub entries_read: usize,
     pub runs: usize,
@@ -86,7 +87,7 @@ pub struct HookPassReport {
     pub intents_refused: usize,
     /// Owner checks raised for cycles and deep chains.
     pub checks: usize,
-    /// A source held more entries than this pass read.
+    /// A source held more entries than this pass read, or due ticks remain.
     pub more: bool,
 }
 
@@ -115,6 +116,24 @@ impl HookPassReport {
     }
 }
 
+/// Enabled fact bindings from the caller's live-binding snapshot, in run order.
+pub(crate) fn fact_bindings(
+    all: &[(EntityId, PackHookBinding)],
+) -> Vec<(EntityId, PackHookBinding)> {
+    let mut bindings: Vec<(EntityId, PackHookBinding)> = all
+        .iter()
+        .filter(|(_, binding)| binding.enabled && binding.selector.phase == HookPhase::Fact)
+        .cloned()
+        .collect();
+    bindings.sort_by(|(_, a), (_, b)| {
+        b.selector
+            .priority
+            .cmp(&a.selector.priority)
+            .then_with(|| a.body_hash.cmp(&b.body_hash))
+    });
+    bindings
+}
+
 impl FactHookRunner {
     #[must_use]
     pub fn new() -> Self {
@@ -129,8 +148,9 @@ impl FactHookRunner {
     }
 
     /// One pass over every source for every enabled fact binding, in
-    /// priority order (higher first, ties by body hash). With no binding it
-    /// reads nothing.
+    /// priority order (higher first, ties by body hash). With hooks off or no
+    /// binding it runs no hook, and still releases the due watcher ticks (FIX
+    /// 22180) and prunes the hook feeds (FIX 22178).
     pub fn run_pass(
         &self,
         vault: &Vault,
@@ -158,12 +178,22 @@ impl FactHookRunner {
         vault: &Vault,
         runtime: &dyn HookBodyRuntime,
         max_entries: usize,
-        retained: Option<RetainedPass<'_>>,
+        mut retained: Option<RetainedPass<'_>>,
     ) -> Result<HookPassReport> {
         let mut report = HookPassReport::default();
+        // Due watcher TASKs tick first, hooks on or off and with or without a
+        // binding to take a tick, as a watch TASK settles with it (FIX 22180).
+        // A binding whose cursor this node first places below is bound after
+        // these ticks: it runs an open TASK's (`open_tick_start_in_txn`), and
+        // never a watch TASK's they settled (`enabled_before_tick_in_txn`).
+        let now = vault.store.clock.now_recorded_at();
+        match source::release_due_ticks(vault, now) {
+            Ok(more) => report.more = more,
+            Err(error) => tracing::warn!(%error, "due watcher ticks wait for the next pass"),
+        }
         if !vault.hooks_enabled()? {
             report.disabled = true;
-            return Ok(report);
+            return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
         }
         // Calls a settled verb hook ask made ready run here, the first pass
         // at start included: outside any write, at hook depth 0. A failed
@@ -180,21 +210,10 @@ impl FactHookRunner {
         }
         let all = vault.pack_hook_bindings()?;
         pause_disabled(vault, &all)?;
-        let mut bindings: Vec<(EntityId, PackHookBinding)> = all
-            .iter()
-            .filter(|(_, binding)| binding.enabled && binding.selector.phase == HookPhase::Fact)
-            .cloned()
-            .collect();
+        let bindings = fact_bindings(&all);
         if bindings.is_empty() {
-            return Ok(report);
+            return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
         }
-        bindings.sort_by(|(_, a), (_, b)| {
-            b.selector
-                .priority
-                .cmp(&a.selector.priority)
-                .then_with(|| a.body_hash.cmp(&b.body_hash))
-        });
-        let mut retained = retained;
         if let Some(pass) = &mut retained {
             pass.runs.keep_source_order_for(&bindings);
         }
@@ -229,6 +248,7 @@ impl FactHookRunner {
                 pass.run_source(source, max_entries, &bindings)?;
             }
         }
+        hook_feeds::prune_hook_feeds(vault, max_entries)?;
         Ok(pass.report)
     }
 
@@ -452,23 +472,21 @@ impl Pass<'_, '_> {
         Ok(())
     }
 
-    /// A binding's cursor in `source`. A new binding starts where its binding
-    /// claim was last written, a re-enabled one where it was re-enabled. The
-    /// settlement feed holds no such mark, so there both start at its head.
+    /// A binding's cursor in `source`, or where it starts when it holds none
+    /// or was re-enabled ([`store::enable_cursor_in_txn`]); one that holds no
+    /// row at all is fresh to the source.
     fn cursor_for(&self, binding: EntityId, source: FactSource) -> Result<Option<FactPosition>> {
-        if let Some(row) = store::cursor(self.vault, binding, source)?
+        let held = store::cursor(self.vault, binding, source)?;
+        if let Some(row) = held
             && !row.paused
         {
             return Ok(row.position());
         }
-        let start = match source {
-            FactSource::ClaimChangelog => match source::binding_written_at(self.vault, &binding)? {
-                Some(position) => Some(position),
-                None => source::head(self.vault, source)?,
-            },
-            FactSource::Settlement => source::head(self.vault, source)?,
+        let row = {
+            let rtxn = self.vault.store.env.read_txn()?;
+            store::enable_cursor_in_txn(self.vault, &rtxn, &binding, source, held.is_none())?
         };
-        let row = CursorRow::new(start, self.vault.store.clock.now_recorded_at());
+        let start = row.position();
         self.vault.with_write_txn_grouped(|txn| {
             store::put_cursor_in_txn(self.vault, txn, binding, source, &row)
         })?;
@@ -483,7 +501,7 @@ impl Pass<'_, '_> {
         binding: &PackHookBinding,
         entry: &FactEntry,
     ) -> Result<bool> {
-        if !filter::verbs_admit_kind(&binding.selector.verbs, entry.kind) {
+        if !filter::admits_entry(self.vault, binding_id, &binding.selector.verbs, entry)? {
             self.report.skipped += 1;
             return Ok(false);
         }
@@ -504,7 +522,14 @@ impl Pass<'_, '_> {
                 return Ok(false);
             }
         };
-        let Some(seen) = read::fact_row(&lane, &grant, entry)? else {
+        let seen = if read::fact_point(entry).is_some() {
+            let _bodies = lane.prepare_point_read::<crate::Error>()?;
+            let txn = self.vault.store.env.read_txn()?;
+            read::fact_row_in_txn(&lane, &txn, &grant, entry)?
+        } else {
+            None
+        };
+        let Some(seen) = seen else {
             self.report.skipped += 1;
             return Ok(false);
         };
@@ -512,8 +537,7 @@ impl Pass<'_, '_> {
         if !filter::fact_matches(
             self.vault,
             &binding.selector,
-            entry.kind,
-            entry.entity,
+            entry,
             seen.claim.as_ref(),
             actor,
         )? {
@@ -576,119 +600,6 @@ impl Pass<'_, '_> {
         Ok(false)
     }
 
-    /// The run's one write: lineage and any owner check, local outcomes,
-    /// saved intents, memo and its run index row, receipt and the cursor.
-    /// Returns whether an intent waits.
-    fn commit(&mut self, run: &Run<'_>, memo: HookRunRecord, verdict: &Verdict) -> Result<bool> {
-        let vault = self.vault;
-        let at = vault.store.clock.now_recorded_at();
-        let key = run.key;
-        let mut queued = verdict.outcome.as_ref().is_some_and(HookOutcome::is_queued);
-        let proposal = match &verdict.outcome {
-            Some(HookOutcome::Propose { .. }) => Some(apply::proposal_id(&key)?),
-            _ => None,
-        };
-        let added = match &verdict.outcome {
-            Some(HookOutcome::AddBlock { block }) => Some((
-                block_id(&key)?,
-                HookBlock::from_request(
-                    run.binding_id,
-                    format!("{}/{}", run.binding.pack, run.binding.hook),
-                    hex_lower(&key),
-                    block,
-                    at,
-                    None,
-                )?,
-            )),
-            _ => None,
-        };
-        let rows_read = memo.reads.iter().map(|pin| pin.rows.len()).sum::<usize>();
-        let (duration_ms, now) = (memo.duration_ms, memo.now);
-        let link = LineageLink {
-            binding: run.binding_id,
-            run_key: hex_lower(&key),
-            entity: run.entry.entity,
-            position: run.entry.position.hex(),
-        };
-        let mut memo = HookRunRecord {
-            committed_at: at.saturating_mul(1_000),
-            ..memo
-        };
-        let check = vault.with_write_txn_grouped(|txn| {
-            // A body that ran across a permanent erase keeps its content-free
-            // run identity, never the erased bytes or a pending effect.
-            let erased =
-                store::dependencies_erased_in_txn(vault, txn, &memo.derivation.dependencies)?;
-            if erased {
-                store::scrub_memo_payload(&mut memo);
-                queued = false;
-                if let Some(mut intent) = store::INTENTS.get(&vault.store, txn, &key)? {
-                    store::scrub_intent_payload(&mut intent, at);
-                    store::INTENTS.put(vault, txn, &key, &intent)?;
-                }
-            }
-            let parent = lineage::chain_of(vault, txn, &run.entry.entity)?;
-            let (chain, check) = lineage::extend(&parent, link);
-            if let Some(reason) = check {
-                let raised = HookCheck {
-                    binding: run.binding_id,
-                    run_key: hex_lower(&key),
-                    reason,
-                    chain: chain.clone(),
-                    raised_at: at,
-                };
-                lineage::raise_check_in_txn(vault, txn, &key, &raised)?;
-            }
-            if !erased {
-                if let Some((id, added)) = &added {
-                    block::put_block_in_txn(vault, txn, *id, added)?;
-                    lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
-                }
-                if let Some(id) = proposal {
-                    lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
-                }
-            }
-            if queued {
-                let intent = HookIntent {
-                    dependencies: memo.derivation.dependencies.clone(),
-                    binding: run.binding_id,
-                    author: run.binding.author_id(),
-                    outcome_json: verdict.outcome_json.clone().unwrap_or_default(),
-                    lineage: chain,
-                    state: HookIntentState::Pending,
-                    landed: None,
-                    reason: None,
-                    created_at: at,
-                    settled_at: None,
-                };
-                store::INTENTS.put(vault, txn, &key, &intent)?;
-            }
-            let previous = store::MEMOS
-                .get(&vault.store, txn, &key)?
-                .map(|old| old.committed_at);
-            store::MEMOS.put(vault, txn, &key, &memo)?;
-            store::index_run_in_txn(
-                vault,
-                txn,
-                run.binding_id,
-                previous,
-                memo.committed_at,
-                HookRunRef::Fact(key),
-            )?;
-            let mut hook_receipt = receipt(run, verdict, check, rows_read, duration_ms, now);
-            if erased {
-                store::scrub_receipt_payload(&mut hook_receipt);
-            }
-            store::RECEIPTS.put(vault, txn, &key, &hook_receipt)?;
-            store::advance_cursor_in_txn(vault, txn, run.binding_id, run.entry.position, at)?;
-            Ok(check)
-        })?;
-        if check.is_some() {
-            self.report.checks += 1;
-        }
-        Ok(queued)
-    }
-
     fn body(
         &mut self,
         binding_id: EntityId,
@@ -719,7 +630,9 @@ impl Pass<'_, '_> {
 }
 
 /// The input a body sees as `input`. `now` is Unix milliseconds from the
-/// vault clock; `recorded_at` is the fact's own, in seconds.
+/// vault clock; `recorded_at` is the fact's own, in seconds. A tick adds
+/// `tick` (its TASK and due time, seconds), an inbound surface event adds
+/// `surface` (its ids and tokens).
 pub(super) fn input_json(
     binding_id: EntityId,
     binding: &PackHookBinding,
@@ -756,6 +669,23 @@ pub(super) fn input_json(
         input["fact"]["settlement"] = json!({
             "kind": settlement.kind,
             "outcome": settlement.outcome,
+        });
+    }
+    if let Some(tick) = entry.tick {
+        input["tick"] = json!({
+            "task": entry.entity.to_hex(),
+            "due_at": tick.due_at,
+        });
+    }
+    if let Some(surface) = &entry.surface {
+        input["surface"] = json!({
+            "connector": surface.connector,
+            "channel": surface.channel,
+            "action": surface.action,
+            "receiving_identity": surface.receiving_identity.to_hex(),
+            "actor": surface.actor.to_hex(),
+            "attempt": hex_lower(&surface.attempt),
+            "received_at": surface.received_at,
         });
     }
     serde_json::to_string(&input).map_err(|_| Error::InvariantViolation("hook input encode"))

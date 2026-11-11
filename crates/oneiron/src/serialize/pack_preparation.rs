@@ -353,3 +353,53 @@ fn prepare_entities(
         })
         .collect()
 }
+
+/// A single admitted row, using the pack's field-release rules without budgets.
+/// `reference` is the resolved reference the caller already accepted.
+pub(crate) fn project_entity_json_row(
+    entity: &ContextEntity,
+    reference: &str,
+    profile: FieldProfile,
+) -> Option<Value> {
+    let config = SerializeConfig {
+        format: PackFormat::Json,
+        profile,
+        budget: 0,
+        allocation: TokenAllocation::default(),
+        include_stats: false,
+        merge_neighbors: false,
+        max_field_chars: 0,
+        max_item_tokens: 0,
+    };
+    let mut stats = PackStats {
+        candidates_considered: 0,
+        signals_used: Vec::new(),
+        query_time_us: 0,
+        entities_hydrated: 0,
+        neighbors_hydrated: 0,
+        cosine_ghosts_dampened: 0,
+        claims_suppressed: 0,
+        tokens: Default::default(),
+        items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
+        items_dropped: crate::context_pack::PackItemAccounting::item_budget(),
+        critical_over_budget: false,
+        critical_count: 0,
+        deadline_exceeded: false,
+    };
+    let mut rows = prepare_entities(
+        std::slice::from_ref(entity),
+        PreparedEntitySource::Result,
+        None,
+        &config,
+        true,
+        crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER,
+        None,
+        &mut stats,
+    );
+    let row = rows.first_mut()?;
+    if row.fields.is_empty() {
+        return None;
+    }
+    row.id = reference.to_owned();
+    super::json_format::json_rows(&rows, false).pop()
+}

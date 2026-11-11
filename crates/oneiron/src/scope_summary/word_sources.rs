@@ -21,8 +21,8 @@ pub(crate) enum WordSources {
 
 /// The word sources of the stored revision `raw` of `id`: an epoch summary,
 /// a scope summary, a TURN that copies one, a claim whose merge header names
-/// one, a `conversation.summary` claim's typed coverage, or a native conflict
-/// pair's two claims.
+/// one, a `conversation.summary` claim's typed coverage, a native conflict
+/// pair's two claims, or the MESSAGE an owner's stated intent cites.
 pub(crate) fn word_sources_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -90,7 +90,7 @@ pub(crate) fn word_sources_through_in(
             }
             Ok(Some(sources))
         }
-        ENTITY_TYPE_SUMMARY => {
+        ENTITY_TYPE_SUMMARY | crate::registry::ENTITY_TYPE_COMM_RECORD => {
             super::body_covers_through_in(vault, dbs, txn, id, header.entity_type, body)
         }
         // A reply carries its summary under the `summary` key, in any
@@ -114,7 +114,8 @@ pub(crate) fn word_sources_through_in(
         ENTITY_TYPE_CLAIM
             if names(b"merge.summary")
                 || names(b"conversation.summary")
-                || names(b"core.conflict.open") =>
+                || names(b"core.conflict.open")
+                || names(PROFILE_INTENT_PREDICATE.as_bytes()) =>
         {
             let claim = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
             if claim.predicate == crate::claim::PREDICATE_CONFLICT_OPEN
@@ -122,11 +123,16 @@ pub(crate) fn word_sources_through_in(
             {
                 Ok(Some(conflict_pair_sources(&claim).unwrap_or_default()))
             } else {
-                match super::merge_word_sources_through_in(vault, dbs, txn, &claim) {
+                let merged = match super::merge_word_sources_through_in(vault, dbs, txn, &claim) {
                     Ok(None) => {
                         crate::store::conversation_summary::conversation_summary_covers(&claim)
                     }
                     merged => merged,
+                };
+                if claim.predicate == PROFILE_INTENT_PREDICATE {
+                    merged.map(|sources| with_cited_sources(sources, &claim))
+                } else {
+                    merged
                 }
             }
         }
@@ -151,6 +157,30 @@ pub(crate) fn word_sources_through_in(
         ) => WordSources::Unresolved,
         Err(error) => return Err(error),
     })
+}
+
+/// The predicate an owner's stated intent is kept under
+/// (`dreamer_consolidation::gap::intent`). Its value is the owner's exact
+/// words, quoted from the MESSAGE its consolidation envelope cites.
+const PROFILE_INTENT_PREDICATE: &str = "profile.intent";
+
+/// `sources` and every ref `claim`'s consolidation envelope cites: an
+/// intent quotes the MESSAGE it cites word for word, so a reader reads it
+/// only while it reads that MESSAGE (OPUS-LEAKS, review round 2 of #6969).
+/// `sources` unchanged when the envelope cites nothing.
+fn with_cited_sources(
+    sources: Option<Vec<EntityId>>,
+    claim: &crate::write_envelope::claim_body::ClaimBody,
+) -> Option<Vec<EntityId>> {
+    let cited = crate::provenance::consolidation_refs(claim);
+    if cited.is_empty() {
+        return sources;
+    }
+    let mut sources = sources.unwrap_or_default();
+    sources.extend(cited);
+    sources.sort_unstable();
+    sources.dedup();
+    Some(sources)
 }
 
 /// The two landed claims a string-valued native conflict marker names.

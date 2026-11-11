@@ -72,10 +72,11 @@ pub fn use_secret_as_caller(
             &[super::host::SERVED_CLIENT_HINT],
         ));
     }
-    let outcome = memory
-        .vault()
+    let vault = memory.vault();
+    let t1 = vault.secret_use_t1_operations();
+    let outcome = vault
         .use_secret_handle(&user, &input.handle, &input.operation, &input.arguments)
-        .map_err(|error| use_refusal(error, &input.operation))?;
+        .map_err(|error| use_refusal(error, &input.operation, &t1))?;
     Ok(answer(outcome))
 }
 
@@ -147,7 +148,7 @@ pub fn use_secret_for_connector_call<H: ConnectorCallHost>(
                 }
             },
         )
-        .map_err(|error| use_refusal(error, SECRET_USE_CONNECTOR_CALL))?;
+        .map_err(|error| use_refusal(error, SECRET_USE_CONNECTOR_CALL, &[]))?;
     Ok(answer(outcome))
 }
 
@@ -264,7 +265,7 @@ pub(super) fn grant_refusal(error: Error, operation: &str) -> MemoryError {
             error.to_string(),
             &["Mint a grant for this operation or connector."],
         ),
-        other => use_refusal(other, operation),
+        other => use_refusal(other, operation, &[]),
     }
 }
 
@@ -367,8 +368,10 @@ fn answer(outcome: SecretUseOutcome) -> SecretUseAnswer {
 }
 
 /// A refusal in words the agent can act on: a missing binding names the
-/// owner door that adds one, an unknown operation lists the table.
-fn use_refusal(error: Error, operation: &str) -> MemoryError {
+/// owner door that adds one, an unknown operation lists the table, and a use
+/// below its rung's ceiling names the cap (FIX 2616: a T1 operation whose
+/// binding or floor stops below T1).
+fn use_refusal(error: Error, operation: &str, t1: &[(String, String)]) -> MemoryError {
     match error {
         Error::Secret(SecretError::SecretBindingDenied {
             effector,
@@ -387,20 +390,43 @@ fn use_refusal(error: Error, operation: &str) -> MemoryError {
                 &[bind.as_str(), "A reveal's grant does not reach self.use."],
             )
         }
+        Error::Secret(SecretError::SecretTierDenied {
+            requested,
+            floor_max,
+            binding_ceiling,
+            ..
+        }) => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!(
+                "{operation} needs T{}, capped at T{} by the binding's ceiling (T{}) and the live \
+                 floor (T{})",
+                requested.as_u8(),
+                binding_ceiling.min(floor_max).as_u8(),
+                binding_ceiling.as_u8(),
+                floor_max.as_u8()
+            ),
+            &["The owner raises the binding's tier ceiling, or the floor, to reach the rung."],
+        ),
         Error::Gate(GateError::InvalidConsentBound(reason))
             if operation != SECRET_USE_CONNECTOR_CALL
-                && !SECRET_USE_OPERATIONS.iter().any(|op| op.name == operation) =>
+                && !SECRET_USE_OPERATIONS.iter().any(|op| op.name == operation)
+                && !t1.iter().any(|(name, _)| name == operation) =>
         {
-            let names = SECRET_USE_OPERATIONS
+            let mut names = SECRET_USE_OPERATIONS
                 .iter()
                 .map(|op| format!("{} ({})", op.name, op.what))
-                .collect::<Vec<_>>()
-                .join("; ");
+                .collect::<Vec<_>>();
+            names.extend(t1.iter().map(|(name, what)| format!("{name} ({what})")));
             let list = format!(
-                "The operations are: {names}; and, on a server, {SECRET_USE_CONNECTOR_CALL} \
-                 (one connector call with the secret as its credential)."
+                "The operations are: {}; and, on a server, {SECRET_USE_CONNECTOR_CALL} \
+                 (one connector call with the secret as its credential).",
+                names.join("; ")
             );
-            MemoryError::new(MEMORY_CODE_BAD_REQUEST, reason, &[list.as_str()])
+            MemoryError::new(
+                MEMORY_CODE_BAD_REQUEST,
+                format!("{operation}: {reason}"),
+                &[list.as_str()],
+            )
         }
         other => other.into(),
     }

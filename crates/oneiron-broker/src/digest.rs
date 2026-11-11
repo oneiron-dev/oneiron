@@ -3,6 +3,8 @@
 //! permit binds it at admission, the broker recomputes it before it sends, and
 //! the daemon checks the reply carries it.
 
+use crate::Refusal;
+
 /// The blake3 key-derivation context: a digest of this form never equals a
 /// digest of another one.
 const CONTEXT: &str = "oneiron-broker 2026-10-11 request digest v1";
@@ -65,4 +67,53 @@ pub(crate) fn sorted_headers(headers: &[(String, String)]) -> Vec<(String, &str)
 pub(crate) fn field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
     hasher.update(&(bytes.len() as u64).to_le_bytes());
     hasher.update(bytes);
+}
+
+/// Whether `text` is a 32-byte digest in its lowercase hex form: a request
+/// digest, or an LFS object's SHA-256.
+pub(crate) fn is_hex_digest(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// The body half of a digest taken as its body passes (a git or an LFS
+/// exchange): the hasher its target and headers began, then the body's
+/// length and its bytes, checked against that length once the body ended.
+pub(crate) struct BodyDigest {
+    hasher: blake3::Hasher,
+    expected: u64,
+    seen: u64,
+}
+
+impl BodyDigest {
+    /// Begins a body of `body_len` bytes after what `hasher` holds.
+    pub(crate) fn new(mut hasher: blake3::Hasher, body_len: u64) -> Self {
+        hasher.update(&body_len.to_le_bytes());
+        Self {
+            hasher,
+            expected: body_len,
+            seen: 0,
+        }
+    }
+
+    /// Takes the next `bytes` of the body.
+    pub(crate) fn update(&mut self, bytes: &[u8]) {
+        self.seen = self.seen.saturating_add(bytes.len() as u64);
+        self.hasher.update(bytes);
+    }
+
+    /// The digest, as lowercase hex, once the whole body passed.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Body`] when the body's bytes are not the length the
+    /// digest began with.
+    pub(crate) fn finish(self) -> Result<String, Refusal> {
+        if self.seen != self.expected {
+            return Err(Refusal::Body);
+        }
+        Ok(self.hasher.finalize().to_hex().to_string())
+    }
 }

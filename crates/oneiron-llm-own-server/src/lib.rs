@@ -131,7 +131,9 @@ fn validate_terminal(
     if *reason != oneiron::FinishReason::Cancelled
         && (message.content.is_empty()
             || message.content.iter().all(|p| match p {
-                oneiron::ContentPart::Text { text } => text.trim().is_empty(),
+                oneiron::ContentPart::Text { text, signature } => {
+                    text.trim().is_empty() && signature.is_none()
+                }
                 oneiron::ContentPart::Reasoning {
                     text,
                     signature,
@@ -150,6 +152,7 @@ fn validate_terminal(
                 call_id,
                 name,
                 input,
+                ..
             } => call_id.trim().is_empty() || name.trim().is_empty() || !input.is_object(),
             // Tool results are history from a tool, never an assistant generation.
             oneiron::ContentPart::ToolResult { .. } => true,
@@ -212,7 +215,7 @@ impl CheckedStream<'_> {
             Event::ReasoningDelta { part_id, .. } => {
                 self.parts.get(part_id) != Some(&StreamPart::Reasoning)
             }
-            Event::TextEnd { part_id } => return self.end(part_id, StreamPart::Text),
+            Event::TextEnd { part_id, .. } => return self.end(part_id, StreamPart::Text),
             Event::ReasoningEnd { part_id, .. } => return self.end(part_id, StreamPart::Reasoning),
             Event::ToolCallStart {
                 part_id,
@@ -239,6 +242,7 @@ impl CheckedStream<'_> {
                 call_id,
                 name,
                 input,
+                ..
             } => {
                 if !input.is_object() || call_id.trim().is_empty() || name.trim().is_empty() {
                     true

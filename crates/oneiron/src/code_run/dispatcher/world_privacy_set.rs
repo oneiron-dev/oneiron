@@ -32,6 +32,7 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<SelfDispatchOutcome> {
         let refused = |code: &str| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: SelfEffect::WorldPrivacySet,
                 outcome: code.to_owned(),
                 reason_codes: Vec::new(),

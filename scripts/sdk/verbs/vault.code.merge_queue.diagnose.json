@@ -1,0 +1,15 @@
+{
+  "name": "vault.code.merge_queue.diagnose",
+  "description": "Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only.",
+  "input": "crate::memory::merge_queue_doors::MergeQueueDiagnoseRequest",
+  "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
+  "call": "memory.merge_queue_diagnose_as(&memory.embedded_owner(\"vault.code.merge_queue.diagnose\")?, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_proof": "owner"
+}

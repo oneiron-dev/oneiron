@@ -95,4 +95,21 @@ impl Erased<crate::code_run::CodeRunReplayRecord> {
         }
         Self(record)
     }
+
+    /// Takes the named fold answers from the stored replay record (FIX
+    /// 18924): each call fails with `response_erased` and keeps the folds it
+    /// named, and the preview of each body one spilled to reads erased.
+    /// Every other outcome and output stays as it was. The withdrawal
+    /// releases the spilled bodies in the same writer.
+    ///
+    /// # Errors
+    ///
+    /// An erased outcome that does not encode.
+    pub(crate) fn code_run_fold_answers(
+        mut record: crate::code_run::CodeRunReplayRecord,
+        answers: &[crate::code_run::WithdrawnFoldAnswer],
+    ) -> Result<Self> {
+        crate::code_run::redact_fold_answers(&mut record, answers)?;
+        Ok(Self(record))
+    }
 }

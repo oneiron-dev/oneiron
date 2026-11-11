@@ -2,12 +2,17 @@
 //! OF-568): the run it forks from, the step it starts at, the owner's
 //! approval and the exact prompt bytes approved, written once; and the one
 //! transaction that seeds the child run's replay row from that fork, with
-//! its read-world ledger from the source's (FIX 7085).
+//! its read-world ledger from the source's (FIX 7085) and its compaction as
+//! the proved start captured it (FIX 4198, [`compaction`]).
+
+mod compaction;
 
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
+use self::compaction::seed_continuation_compaction_in_txn;
+pub(crate) use self::compaction::{InheritedCompaction, StartCompaction};
 use super::super::replay::{
     CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, ResultOccurrence,
 };
@@ -101,7 +106,13 @@ pub(crate) fn put_run_continuation_row_in_txn(
 /// read-world ledger is seeded from the source's proof of the calls before
 /// `cut`, the proved cut's bridge position, and before every copied call
 /// past it (FIX 7085). A child that copied fewer calls than `cut` begins a
-/// ledger that misses them.
+/// ledger that misses them. In the same write the child takes `compaction`,
+/// its source's at the proved cut, as its own epochs and fold ledger (FIX
+/// 4198): no pass runs or bills again.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the child's seed parts: its row, source, cut, actor, outputs and compaction"
+)]
 pub(crate) fn seed_continuation_run(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -110,6 +121,7 @@ pub(crate) fn seed_continuation_run(
     cut: u64,
     actor: EntityId,
     inherited: &[CodeRunRawOutput],
+    compaction: &StartCompaction,
 ) -> Result<CodeRunReplayGeneration> {
     if REPLAY_RECORDS.contains(&vault.store, txn, &child.run_id)? {
         return Err(Error::ConcurrentWrite("code-run continuation seed"));
@@ -127,6 +139,7 @@ pub(crate) fn seed_continuation_run(
     let copied = child.bridge_calls.len() as u64;
     let copied_cut = (copied >= cut).then_some(copied);
     seed_read_world_prefix_in_txn(vault, txn, source, copied_cut, child.run_id)?;
+    seed_continuation_compaction_in_txn(vault, txn, source, child, compaction)?;
     let generation = child.generation()?;
     let child = fence_replay_in_txn(vault, txn, Cow::Borrowed(child))?;
     REPLAY_RECORDS.put(vault, txn, &child.run_id, &child)?;

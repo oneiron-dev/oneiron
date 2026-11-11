@@ -27,6 +27,26 @@ fn nightly_link_bound(actor: WriteActor) -> Result<GrantBound> {
     )
 }
 
+/// The owner grants the vault's own Dreamer its existing nightly-link bound.
+/// The writer is resolved by the vault, never supplied by the caller.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NightlyLinkGrantRequest {}
+
+/// Mint the same bound the nightly landing door checks, with the normal
+/// standing-grant receipt and revocation lifecycle. Nothing is minted by default.
+pub fn mint_nightly_link_grant(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    _input: NightlyLinkGrantRequest,
+) -> oneiron_contracts::memory::MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    let receipt = vault.with_write_txn_grouped(|txn| {
+        let actor = vault.dreamer_authority_in_txn(txn, vault.now_recorded_at())?;
+        vault.create_standing_grant_in_txn(txn, owner, nightly_link_bound(actor)?)
+    })?;
+    Ok(receipt.into())
+}
+
 /// The ref of the owner's live standing grant letting `actor` apply its
 /// nightly SameAs links, read in `txn`, the write that applies them: an
 /// active grant whose bound contains [`nightly_link_bound`] and whose

@@ -1,0 +1,26 @@
+{
+  "name": "vault.artifacts.view",
+  "description": "One artifact: its kind, name, type, head and every version with its made_by and born-from.",
+  "input": "crate::blob_artifact::ArtifactRefRequest",
+  "output": "Option<crate::blob_artifact::ArtifactView>",
+  "call": "memory.artifacts_view(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// One artifact's kind, head and versions, each with its made_by and born-from.\n",
+      "ts": "/** One artifact's kind, head and versions, each with its made_by and born-from. */",
+      "py": "One artifact's kind, head and versions, each with its made_by and born-from."
+    }
+  }
+}

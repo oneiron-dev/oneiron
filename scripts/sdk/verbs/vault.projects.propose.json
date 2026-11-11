@@ -1,0 +1,13 @@
+{
+  "name": "vault.projects.propose",
+  "description": "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority.",
+  "input": "crate::workspace_roster::ProjectProposalRequest",
+  "output": "crate::genui::ProjectProposalCard",
+  "call": "memory.projects_propose(&input)?",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

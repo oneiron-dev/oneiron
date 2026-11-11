@@ -319,6 +319,15 @@ impl DreamerWakeDriver<'_> {
             }
         }
         if !run_indices.is_empty() {
+            let deadlines: Vec<_> = slots
+                .iter()
+                .map(|slot| {
+                    crate::dreamer_wake::deadline::wake_pass_deadline_for_admitted(
+                        &self.deadline,
+                        &slot.admitted,
+                    )
+                })
+                .collect();
             let mut window_args: Vec<(&DreamerAdmittedAttempt, WakeAttemptContext<'_>)> =
                 Vec::with_capacity(run_indices.len());
             for &index in &run_indices {
@@ -343,7 +352,7 @@ impl DreamerWakeDriver<'_> {
                     &slot.admitted,
                     WakeAttemptContext {
                         vault: self.vault,
-                        deadline: &self.deadline,
+                        deadline: &deadlines[index],
                         cancel: Some(cancel),
                         device_cancel: Some(self.device_cancel.clone()),
                         budget_id: &slot.line,

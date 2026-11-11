@@ -54,17 +54,17 @@ impl From<Error> for MemoryError {
         }
         // The hold is a valid write parked on the parties it names, not a
         // bad request: INVALID_STATE, filed by the join it names.
-        if matches!(
-            err,
-            Error::Record(crate::error::RecordError::RoomJoinHeld(_))
-        ) {
-            return Self::new(
-                MEMORY_CODE_INVALID_STATE,
-                message,
-                &[
-                    "File the join with vault.rooms.join and the intent_key named here; the write goes through once those parties consent.",
-                ],
-            );
+        if let Error::Record(crate::error::RecordError::RoomJoinHeld(hold)) = err {
+            return Self {
+                room_join_hold: Some(hold),
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    message,
+                    &[
+                        "File the join with vault.rooms.join and the intent_key named here; the write goes through once those parties consent.",
+                    ],
+                )
+            };
         }
         // The hold names the live call a room's assembly waits on: refresh
         // that call's roster and speaker entries, then assemble again.

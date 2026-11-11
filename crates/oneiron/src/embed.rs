@@ -41,7 +41,7 @@ pub(crate) use eligibility::{
     turn_text_in_txn,
 };
 pub use evidence::EmbeddingMatchEvidence;
-pub(crate) use locality::clear_embedding_locality_in_txn;
+pub(crate) use locality::{clear_embedding_locality_in_txn, stamp_embedding_locality_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use media::text_vector_sources_in_txn;
 pub use media::{
@@ -767,6 +767,21 @@ impl PendingEmbeddingReconciler {
                     &work.input.entity_id,
                 )?;
             }
+            // A fill the revision door staged keeps its locality with it, for
+            // idle publication to stamp beside the vector (FIX 12783).
+            if token_was_current
+                && current_after.as_deref() == Some(work.input.pending_embedding_token.as_slice())
+            {
+                crate::vault::entity_revision::defer_index_inputs(
+                    &self.vault.store,
+                    wtxn,
+                    &work.input.entity_id,
+                    None,
+                    Some((vector, Some(provenance))),
+                    Some(work.input.pending_embedding_token.as_slice()),
+                    Some(locality),
+                )?;
+            }
             filled_current = token_was_current && current_after.is_none();
             if filled_current {
                 locality::stamp_embedding_locality_in_txn(
@@ -972,5 +987,6 @@ fn unix_millis_now() -> u64 {
         .map_or(0, |d| d.as_millis().min(u128::from(u64::MAX)) as u64)
 }
 
+pub(crate) mod tables;
 #[cfg(all(test, feature = "sync"))]
 mod tests;

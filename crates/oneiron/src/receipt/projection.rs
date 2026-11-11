@@ -116,7 +116,9 @@ pub fn project_receipts_by_counterparty(
 }
 
 /// Each counterparty's totals count every receipt; its listed receipts are
-/// its newest `limit`.
+/// its newest `limit`. A message to several counts for every recipient it
+/// lists (fix list row 17645): each one's projection lists the message and
+/// counts its one debit, as a send to that recipient alone would.
 pub(super) fn project_receipts_by_counterparty_with_contacts(
     receipts: impl IntoIterator<Item = ReceiptRecord>,
     contact_records: &BTreeMap<String, CounterpartyContactProjection>,
@@ -127,6 +129,12 @@ pub(super) fn project_receipts_by_counterparty_with_contacts(
     sort_receipts_newest_first(&mut receipts);
 
     for receipt in receipts {
+        for counterparty_ref in receipt_other_recipients(&receipt) {
+            projections
+                .entry(counterparty_ref.clone())
+                .or_insert_with(|| CounterpartyProjectionBuilder::new(counterparty_ref))
+                .count(receipt.clone(), limit);
+        }
         let Some(counterparty_ref) = receipt_counterparty_ref(&receipt) else {
             continue;
         };
@@ -492,6 +500,14 @@ impl CounterpartyProjectionBuilder {
         if let Some(promo_consent) = bool_field(&receipt, FIELD_PROMO_CONSENT) {
             self.promo_consent.get_or_insert(promo_consent);
         }
+        self.count(receipt, limit);
+    }
+
+    /// Counts `receipt`'s debit and lists it, within `limit`. Alone, for a
+    /// message to several that names this counterparty beside its own (fix
+    /// list row 17645): the contact facts that receipt carries are its own
+    /// counterparty's, never this one's.
+    fn count(&mut self, receipt: ReceiptRecord, limit: usize) {
         self.budget_debit_total = self
             .budget_debit_total
             .saturating_add(receipt_budget_debit(&receipt));
@@ -590,6 +606,26 @@ fn receipt_counterparty_ref(receipt: &ReceiptRecord) -> Option<String> {
     field_ref(receipt, FIELD_COUNTERPARTY_REF)
         .or_else(|| field_ref(receipt, "target"))
         .map(str::to_owned)
+}
+
+/// The other recipients a message to several lists beside its counterparty
+/// (fix list row 17645), each address once, in their place; none for a send
+/// to one. An unreadable list names none.
+fn receipt_other_recipients(receipt: &ReceiptRecord) -> Vec<String> {
+    let counterparty_ref = receipt_counterparty_ref(receipt);
+    let listed: Vec<crate::outbound::OutboundRecipient> =
+        field_ref(receipt, crate::outbound::RECIPIENTS_FIELD)
+            .and_then(|listed| serde_json::from_str(listed).ok())
+            .unwrap_or_default();
+    let mut others: Vec<String> = Vec::new();
+    for recipient in listed {
+        if counterparty_ref.as_deref() != Some(recipient.address.as_str())
+            && !others.contains(&recipient.address)
+        {
+            others.push(recipient.address);
+        }
+    }
+    others
 }
 
 fn receipt_identity_ref(receipt: &ReceiptRecord) -> Option<EntityId> {
@@ -759,18 +795,22 @@ pub(super) fn counterparty_contact_records_for_receipts(
 ) -> Result<BTreeMap<String, CounterpartyContactProjection>> {
     let mut wanted_by_identity = BTreeMap::<EntityId, BTreeMap<String, BTreeSet<String>>>::new();
     for receipt in receipts {
-        let (Some(counterparty_ref), Some(identity_ref)) = (
-            receipt_counterparty_ref(receipt),
-            receipt_identity_ref(receipt),
-        ) else {
+        let Some(identity_ref) = receipt_identity_ref(receipt) else {
             continue;
         };
-        wanted_by_identity
-            .entry(identity_ref)
-            .or_default()
-            .entry(counterparty_ref.trim().to_owned())
-            .or_default()
-            .insert(counterparty_ref);
+        // Fix list row 17645: each recipient a message to several lists
+        // joins its own contact facts, as its counterparty does.
+        for counterparty_ref in receipt_counterparty_ref(receipt)
+            .into_iter()
+            .chain(receipt_other_recipients(receipt))
+        {
+            wanted_by_identity
+                .entry(identity_ref)
+                .or_default()
+                .entry(counterparty_ref.trim().to_owned())
+                .or_default()
+                .insert(counterparty_ref);
+        }
     }
 
     let mut contacts = BTreeMap::<String, CounterpartyContactProjection>::new();

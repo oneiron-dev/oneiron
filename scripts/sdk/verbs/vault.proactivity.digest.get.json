@@ -1,0 +1,16 @@
+{
+  "name": "vault.proactivity.digest.get",
+  "description": "Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant.",
+  "input": "crate::dreamer_runner::maintenance::digest::DigestReadRequest",
+  "output": "Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.proactivity.digest.get\", &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

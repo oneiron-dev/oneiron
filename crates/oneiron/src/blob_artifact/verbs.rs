@@ -87,6 +87,10 @@ pub struct ArtifactExportFile {
     pub content_hash: String,
     pub born_with: BornWith,
     pub content_base64: String,
+    /// The owner's export only: worlds carried despite the recipient
+    /// setting, with the existing owner notice wording (FIX 3184).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<crate::share_travel::WorldRecipientNotice>,
 }
 
 /// Exactly one source: a task, ask, code-mode run or skill row, or an agent run ref.
@@ -131,6 +135,9 @@ pub struct DeckProposeRequest {
     /// The envelope Keep gives the version, with the task or ask it answers.
     #[serde(default)]
     pub made_by: Option<MadeBy>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    pub delta_receipt: Option<String>,
 }
 
 /// A held proposal, or the refusal naming the step and its check.
@@ -158,6 +165,9 @@ pub struct NativeOutputRequest {
     /// must admit each row. This is not authority or a complete read log.
     #[serde(default)]
     pub read_rows: Vec<String>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    pub delta_receipt: Option<String>,
 }
 
 /// Keep, Discard or Undo of one proposal by its ref.
@@ -321,6 +331,9 @@ pub enum ArtifactAskUnits {
     /// lands as a Word comment quoting it.
     Paragraphs {
         blocks: Vec<String>,
+        /// Native story for these local ids, omitted for the document body.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<oneiron_docedit::docx_body::DocxStoryScope>,
         /// The comments' author name.
         author: String,
         /// The display words, severity words included.
@@ -346,14 +359,21 @@ pub struct FolderItemInput {
     pub row: u32,
 }
 
-/// What an ask did: the proposal held for Keep (none when no unit was
-/// answered), the units left unanswered with their receipts, and those it
-/// refused.
+/// What an ask did: a staged proposal or paid answers still needing staging,
+/// the units left unanswered with their receipts, and those it refused.
+/// Both held-result fields are empty when no unit produced work to retain.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactAskOutcome {
     pub proposed: Option<PendingProposalView>,
+    /// Paid decisions retained before byte staging; the existing Keep can
+    /// stage and settle them without asking those units again.
+    pub needs_staging: Option<PendingProposalView>,
     pub abstained: Vec<UnitAbstention>,
     pub refused: Vec<UnitRefusal>,
+    /// First selected sheet row not completed; narrow the original range
+    /// from this row and use a fresh run_ref to ask the remainder. This is
+    /// an explicit partial result, not an automatic or durable queue.
+    pub next_sheet_row: Option<u32>,
 }
 
 /// `vault.artifacts.admit`'s input: one artifact ask whose provider output
@@ -463,8 +483,10 @@ impl Memory<'_> {
         )
     }
 
-    /// A person's settle is the owner's consent; an agent's rides a standing
-    /// grant on the brief it names.
+    /// A person's settle asks as the owner; an agent's rides a standing
+    /// grant on the brief it names. The settle writer verifies the person is
+    /// the vault's owner, and holds anyone else to a standing grant on the
+    /// brief (FIX 9620).
     fn artifact_consent(&self, brief_ref: Option<String>) -> MemoryResult<SettleConsent> {
         if self.actor_class() == EdgeActorClass::Human {
             return Ok(SettleConsent::OwnerConsent { brief_ref });
@@ -569,12 +591,29 @@ impl Memory<'_> {
         // off an unknown machine, and prompt text only from the sources its
         // own read lane reads (FIX 6054).
         let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact);
-        let text = if self.secret_sight()? == SecretSight::Owner {
-            vault.born_with_text(&file.artifact_id, Some(&file.made_by))?
+        let (born_with, notices) = if self.secret_sight()? == SecretSight::Owner {
+            // Like an agent-pack export, a local download can travel onward
+            // to an unproved recipient. This judges a notice, not admission.
+            let onward = if self.destination().is_off_device() {
+                self.destination().clone()
+            } else {
+                crate::claim::CallerLocality::OffDevice.into()
+            };
+            vault.artifact_export_text_with_notices(
+                &file.artifact_id,
+                &file.made_by,
+                &travel,
+                &onward,
+            )?
         } else {
-            self.born_with_text_for_reader(&file.artifact_id, &file.made_by, &travel)?
+            let text = self.born_with_text_for_reader(&file.artifact_id, &file.made_by, &travel)?;
+            (travel.project(text), Vec::new())
         };
-        let born_with = travel.project(text);
+        let result_notices = notices
+            .iter()
+            .cloned()
+            .map(|notice| notice.in_artifact_export_result(vault, self.destination()))
+            .collect();
         // The hash names the copy beside it (FIX 5491): the sighted export's
         // own `content_hash` stays the stored version's, which its internal
         // readers (deck doors) bind their edits to.
@@ -585,6 +624,7 @@ impl Memory<'_> {
             content_hash.clone(),
             &self.actor(),
             &born_with,
+            notices,
         )?;
         Ok(Some(ArtifactExportFile {
             artifact_ref: file.artifact_id.to_hex(),
@@ -595,6 +635,7 @@ impl Memory<'_> {
             content_hash,
             born_with,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&file.bytes),
+            notices: result_notices,
         }))
     }
 
@@ -875,6 +916,7 @@ impl Memory<'_> {
                 self.made_by_reader(made_by)?,
                 (actor, at),
                 &read,
+                None,
             )?),
             None => None,
         };
@@ -1003,6 +1045,7 @@ impl Memory<'_> {
             )?,
             ArtifactAskUnits::Paragraphs {
                 blocks,
+                scope,
                 author,
                 labels,
             } => vault.ask_blob_artifact_paragraphs(
@@ -1010,6 +1053,7 @@ impl Memory<'_> {
                 &ParagraphAsk {
                     ask,
                     blocks,
+                    scope: scope.as_ref(),
                     author,
                     labels,
                 },
@@ -1042,9 +1086,12 @@ impl Memory<'_> {
                 let mut run = if asked.is_empty() {
                     crate::edit_roundtrip::ArtifactAskRun {
                         proposal: None,
+                        sheet_answers: None,
+                        deferred_floor: None,
                         abstained: Vec::new(),
                         refused: Vec::new(),
                         read_rows: Vec::new(),
+                        next_sheet_row: None,
                     }
                 } else {
                     vault.ask_folder_items_into_sheet(
@@ -1073,21 +1120,46 @@ impl Memory<'_> {
         // What the ask read beside its base and its evidence waits with its
         // proposal for that proposal's readers (FIX 9312).
         let read: Vec<EntityId> = run.read_rows.iter().chain(&evidence).copied().collect();
-        let proposed = match &run.proposal {
-            Some(proposal) => Some(vault.retain_edit_proposal_with_reads(
+        let held = if let Some(work) = &run.sheet_answers {
+            vault.retain_sheet_answer_work_with_reads(
                 &artifact,
-                proposal,
+                &input.run_ref,
+                work,
                 made_by,
                 self.made_by_reader(made_by)?,
                 (actor, at),
                 &read,
-            )?),
-            None => None,
+            )?;
+            if let Some(refusal) = run.deferred_floor {
+                return Err(crate::office_body::machine_memory_refused(refusal).into());
+            }
+            Some(vault.finish_pending_sheet_answers(&artifact, &input.run_ref, work.deadline)?)
+        } else {
+            match &run.proposal {
+                Some(proposal) => Some(vault.retain_edit_proposal_with_reads(
+                    &artifact,
+                    proposal,
+                    made_by,
+                    self.made_by_reader(made_by)?,
+                    (actor, at),
+                    &read,
+                    None,
+                )?),
+                None => None,
+            }
+        };
+        let (needs_staging, proposed) = match held {
+            Some(view) if view.kind == crate::edit_settle::PendingProposalKind::NeedsStaging => {
+                (Some(view), None)
+            }
+            view => (None, view),
         };
         let outcome = ArtifactAskOutcome {
             proposed,
+            needs_staging,
             abstained: run.abstained,
             refused: run.refused,
+            next_sheet_row: run.next_sheet_row,
         };
         Ok((outcome, run.read_rows))
     }
@@ -1177,6 +1249,7 @@ impl Memory<'_> {
                     self.made_by_reader(input.made_by.as_ref())?,
                     (self.artifact_actor(), self.vault().now_recorded_at()),
                     &read_rows,
+                    input.delta_receipt.as_deref(),
                 )?),
                 rejected: None,
             }),
@@ -1195,25 +1268,46 @@ impl Memory<'_> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&input.content_base64)
             .map_err(|_| invalid("content_base64 is not base64"))?;
-        let output = NativeOutput {
-            run_ref: input.run_ref.clone(),
-            name: input.name.clone(),
-            media_type: input.media_type.clone(),
-            bytes,
-            report: input.report.to_string(),
-            made_by: input.made_by.clone(),
-        };
-        let read_rows = input
-            .read_rows
-            .iter()
-            .map(|reference| entity(reference))
-            .collect::<MemoryResult<Vec<_>>>()?;
+        let output = native_output_of(input, bytes);
+        let read_rows = read_row_ids(input)?;
         Ok(self.vault().propose_native_output_with_reads(
             &entity(&input.artifact_ref)?,
             &output,
             self.made_by_reader(output.made_by.as_ref())?,
             (self.artifact_actor(), self.vault().now_recorded_at()),
             &read_rows,
+            input.delta_receipt.as_deref(),
+        )?)
+    }
+
+    /// [`Self::artifacts_propose_output`] of an output an ingress door
+    /// decoded into `body` before any writer opened (FIX 22074): `input`
+    /// names the output and holds no content of its own. A body past the
+    /// asset plane's inline size waits in its own body file, staged from
+    /// `body`, never held whole.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::artifacts_propose_output`]'s errors, an `input` that holds
+    /// content, and the file's read errors.
+    pub fn artifacts_propose_output_file(
+        &self,
+        input: &NativeOutputRequest,
+        body: &crate::blob_artifact::BlobBodyFile<'_>,
+    ) -> MemoryResult<PendingProposalView> {
+        if !input.content_base64.is_empty() {
+            return Err(invalid("content arrives in the body file, not in the request").into());
+        }
+        let output = native_output_of(input, Vec::new());
+        let read_rows = read_row_ids(input)?;
+        Ok(self.vault().propose_native_output_file(
+            &entity(&input.artifact_ref)?,
+            &output,
+            body,
+            self.made_by_reader(output.made_by.as_ref())?,
+            (self.artifact_actor(), self.vault().now_recorded_at()),
+            &read_rows,
+            input.delta_receipt.as_deref(),
         )?)
     }
 
@@ -1301,4 +1395,25 @@ fn slide_review_error(error: SlideReviewError) -> MemoryError {
         SlideReviewError::Vault(error) => MemoryError::from(error),
         other => MemoryError::from(Error::InvalidConfig(other.to_string())),
     }
+}
+
+/// The native output `input` names, holding `bytes`.
+fn native_output_of(input: &NativeOutputRequest, bytes: Vec<u8>) -> NativeOutput {
+    NativeOutput {
+        run_ref: input.run_ref.clone(),
+        name: input.name.clone(),
+        media_type: input.media_type.clone(),
+        bytes,
+        report: input.report.to_string(),
+        made_by: input.made_by.clone(),
+    }
+}
+
+/// The rows `input` declares it read.
+fn read_row_ids(input: &NativeOutputRequest) -> MemoryResult<Vec<EntityId>> {
+    input
+        .read_rows
+        .iter()
+        .map(|reference| entity(reference))
+        .collect()
 }

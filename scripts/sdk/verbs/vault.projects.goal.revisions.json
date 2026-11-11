@@ -1,0 +1,16 @@
+{
+  "name": "vault.projects.goal.revisions",
+  "description": "The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first.",
+  "input": "ProjectRefRequest",
+  "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
+  "call": "memory.projects_goal_revisions(crate::EntityId::from_hex(&input.project_ref)?)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

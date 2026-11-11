@@ -1,4 +1,5 @@
 //! Own-server raw LLM transport over the SDK's single authenticated HTTP client.
+mod response;
 use crate::remote::RemoteClient;
 use futures_core::Stream;
 use oneiron::llm::BudgetDenied;
@@ -142,33 +143,24 @@ async fn read_generate(
     request: &LlmRequest,
     lease: &BudgetLease,
 ) -> oneiron::LlmResult<oneiron::LlmResponse> {
-    let mut response = remote.llm_post(request, lease).await?;
+    let response = remote.llm_post(request, lease).await?;
     let status = response.status();
     let limit = if status.is_success() {
         32 * 1024 * 1024
     } else {
         65_536
     };
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|e| {
-        if e.is_timeout() {
-            RetryableLlmError::Timeout
-        } else {
-            RetryableLlmError::StreamCut
-        }
-    })? {
-        if bytes.len().saturating_add(chunk.len()) > limit {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
     if !status.is_success() {
         return Err(classify_status(
             status.as_u16(),
-            &serde_json::from_slice(&bytes).unwrap_or_default(),
+            &response::read_json(response, limit)
+                .await?
+                .unwrap_or_default(),
         ));
     }
-    serde_json::from_slice(&bytes).map_err(|_| FatalLlmError::InvalidRequest.into())
+    response::read_json(response, limit)
+        .await?
+        .map_err(|_| FatalLlmError::InvalidRequest.into())
 }
 
 async fn read_stream(
@@ -179,12 +171,18 @@ async fn read_stream(
 ) -> oneiron::LlmResult<()> {
     let mut response = remote.llm_stream(request, lease).await?;
     let status = response.status();
-    let limit = if status.is_success() {
-        32 * 1024 * 1024
-    } else {
-        65_536
-    };
-    let mut buffer = Vec::new();
+    if !status.is_success() {
+        return Err(classify_status(
+            status.as_u16(),
+            &response::read_json(response, 65_536)
+                .await?
+                .unwrap_or_default(),
+        ));
+    }
+    let limit = 32 * 1024 * 1024;
+    let mut frame_bytes = 0usize;
+    let mut whitespace = true;
+    let (mut send_frame, mut decoded_frame) = response::decoder();
     while let Some(chunk) = response.chunk().await.map_err(|e| {
         if e.is_timeout() {
             RetryableLlmError::Timeout
@@ -192,41 +190,41 @@ async fn read_stream(
             RetryableLlmError::StreamCut
         }
     })? {
+        let mut offset = 0;
         for piece in chunk.split_inclusive(|b| *b == b'\n') {
-            if buffer.len().saturating_add(piece.len()) > limit {
+            frame_bytes = frame_bytes.saturating_add(piece.len());
+            if frame_bytes > limit {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
-            buffer.extend_from_slice(piece);
-            if !status.is_success() {
-                continue;
-            }
+            whitespace &= piece.iter().all(u8::is_ascii_whitespace);
+            let end = offset + piece.len();
+            let _ = send_frame.send(chunk.slice(offset..end)).await;
+            offset = end;
             if !piece.ends_with(b"\n") {
                 continue;
             }
-            if buffer.iter().all(u8::is_ascii_whitespace) {
-                buffer.clear();
-                continue;
+            drop(send_frame);
+            let decoded = decoded_frame
+                .await
+                .map_err(|_| RetryableLlmError::StreamCut)?;
+            if !whitespace {
+                let value: serde_json::Value =
+                    decoded.map_err(|_| FatalLlmError::InvalidRequest)?;
+                if let Some(error) = value.pointer("/error/llm") {
+                    return Err(serde_json::from_value(error.clone())
+                        .map_err(|_| FatalLlmError::InvalidRequest)?);
+                }
+                let event: LlmStreamEvent =
+                    serde_json::from_value(value).map_err(|_| FatalLlmError::InvalidRequest)?;
+                let done = matches!(event, LlmStreamEvent::Done { .. });
+                if send.send(Ok(event)).await.is_err() || done {
+                    return Ok(());
+                }
             }
-            let value: serde_json::Value =
-                serde_json::from_slice(&buffer).map_err(|_| FatalLlmError::InvalidRequest)?;
-            if let Some(error) = value.pointer("/error/llm") {
-                return Err(serde_json::from_value(error.clone())
-                    .map_err(|_| FatalLlmError::InvalidRequest)?);
-            }
-            let event: LlmStreamEvent =
-                serde_json::from_value(value).map_err(|_| FatalLlmError::InvalidRequest)?;
-            let done = matches!(event, LlmStreamEvent::Done { .. });
-            buffer.clear();
-            if send.send(Ok(event)).await.is_err() || done {
-                return Ok(());
-            }
+            frame_bytes = 0;
+            whitespace = true;
+            (send_frame, decoded_frame) = response::decoder();
         }
-    }
-    if !status.is_success() {
-        return Err(classify_status(
-            status.as_u16(),
-            &serde_json::from_slice(&buffer).unwrap_or_default(),
-        ));
     }
     Err(RetryableLlmError::StreamCut.into())
 }

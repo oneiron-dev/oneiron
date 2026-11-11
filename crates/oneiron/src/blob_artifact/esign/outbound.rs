@@ -416,15 +416,18 @@ impl OutboundExecutionSink for EsignSink<'_> {
             Some(scope) => EntityId::from_hex(&self.command.document)
                 .map_err(NotApplied::from)
                 .and_then(|document| {
-                    self.vault
-                        .try_with_actor_content_write_txn(scope.writer, |content| {
-                            content.update_artifact(document, |txn| {
+                    self.vault.try_with_actor_content_write_txn(
+                        scope.writer,
+                        crate::core_write::CoreWriteLaneRef::Unbound,
+                        |content| {
+                            content.update_artifact(document, |txn, _lane| {
                                 if !(scope.reaches)(txn)? {
                                     return Err(NotApplied::ScopeChanged);
                                 }
                                 act(txn)
                             })
-                        })
+                        },
+                    )
                 }),
         };
         match result {

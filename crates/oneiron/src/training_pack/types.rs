@@ -428,6 +428,8 @@ pub struct RoleSwapReceipt {
     pub at: u64,
     pub role: ModelRole,
     pub previous: Option<ModelBinding>,
+    /// The actual ROLES receipt replaced at bind time, not a history search.
+    pub previous_swap: Option<EntityId>,
     pub binding: ModelBinding,
     pub checkpoint: PinnedCheckpoint,
     pub evaluation: Option<HeldOutResult>,

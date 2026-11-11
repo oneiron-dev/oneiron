@@ -132,6 +132,10 @@ impl Vault {
                     },
                     now,
                 ),
+                crate::codebase::CaptureRepository {
+                    anchor: anchor.repo,
+                    project: Some(source.project),
+                },
                 |txn| {
                     owner.revalidate_in_txn(self, txn)?;
                     self.import_source_still_admitted_in_txn(txn, anchor.repo, source, &record)

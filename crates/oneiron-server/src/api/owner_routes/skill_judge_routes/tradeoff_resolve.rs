@@ -37,7 +37,7 @@ pub(super) fn owner_table() -> OwnerTable {
 
 /// The OpenAPI schema of `POST /v1/owner/skills/judge/tradeoff-asks/resolve`'s body (FIX 9125):
 /// [`TradeoffResolve`].
-pub(crate) fn tradeoff_resolve_body_schema() -> serde_json::Value {
+fn tradeoff_resolve_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<TradeoffResolve>()
 }
 

@@ -263,6 +263,7 @@ impl Vault {
                 Ok(Some(_)) => erased += 1,
                 Ok(None) => {}
                 Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "a withheld queue source copy could not be erased");
                     first_error.get_or_insert(error);
                 }
             }

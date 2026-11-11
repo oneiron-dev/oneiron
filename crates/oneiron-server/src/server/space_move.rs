@@ -241,10 +241,12 @@ impl ServerProbeAuthor<'_> {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: false,
+                host_paid: false,
             },
             operation: AiOperation::Transcribe,
             parts,
             references: Vec::new(),
+            mask: None,
             params: BTreeMap::new(),
             voice: None,
         }
@@ -266,12 +268,14 @@ impl ServerProbeAuthor<'_> {
                 response_format: ResponseFormat::Text,
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: PROBE_INSTRUCTION.to_owned(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
@@ -371,6 +375,7 @@ impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
                     .chars()
                     .take(PROBE_SOURCE_MAX_CHARS)
                     .collect(),
+                signature: None,
             },
             InputKind::Image => ContentPart::Image {
                 media_type: document.media_type.to_owned(),
@@ -381,6 +386,7 @@ impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
             InputKind::Audio => match self.transcribe(document)? {
                 Some(transcript) => ContentPart::Text {
                     text: transcript.chars().take(PROBE_SOURCE_MAX_CHARS).collect(),
+                    signature: None,
                 },
                 None => return Ok(None),
             },
@@ -419,7 +425,7 @@ impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();

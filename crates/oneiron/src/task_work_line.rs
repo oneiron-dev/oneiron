@@ -78,6 +78,20 @@ impl Vault {
         }
     }
 
+    /// [`Self::admit_task_work_blocking`], reporting its wait to the serving
+    /// call's durable admission receipt when it has one (FIX 21154).
+    pub fn admit_task_work_blocking_observed(
+        &self,
+        caller: EntityId,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> TaskWorkTurn {
+        TaskWorkTurn {
+            _permit: self
+                .task_work
+                .admit_blocking_untimed_observed(caller, observer),
+        }
+    }
+
     /// [`Self::admit_task_work_until`] on this thread.
     pub fn admit_task_work_blocking_until(
         &self,

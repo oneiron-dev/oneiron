@@ -30,7 +30,6 @@ use oneiron::recovery::checkpoint::{
     RestoreAdmissionReason, RestoreCommitFacts, RestoreDestinationState, RestorePhase,
     RestoreReport,
 };
-#[cfg(target_os = "linux")]
 use oneiron_vault_contract::restore::FreshRecipient;
 use oneiron_vault_contract::restore::plan::RestoreCustodyPlan;
 use oneiron_vault_contract::restore::{
@@ -44,7 +43,6 @@ use self::host_holds::AdmittedHostOrderHolds;
 #[cfg(target_os = "linux")]
 pub(super) use self::input::adopt;
 // The carrier watch's first look runs the begin-check's plan check again.
-#[cfg(target_os = "linux")]
 pub(super) use self::input::fresh_authorizes;
 // The start seals the argv recipient bytes the begin-check verified (FIX 11988).
 pub(super) use self::input::CheckedRecipients;
@@ -242,7 +240,6 @@ impl ManagedRestore {
     /// The plan's fresh escrow recipients, for the carrier watch's first
     /// look (FIX 11851): it seals only to those the begin-check accepted.
     /// Read before [`Self::verified`] spends the restore.
-    #[cfg(target_os = "linux")]
     pub(super) fn fresh_recipients(&self) -> &[FreshRecipient] {
         &self.plan.request.fresh
     }

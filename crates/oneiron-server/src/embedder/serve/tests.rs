@@ -231,7 +231,7 @@ fn a_request_without_the_key_is_refused_before_its_body_is_read() {
     );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     for key in [None, Some("another key")] {
-        let mut stream = post_head(addr, key, MAX_BODY_BYTES);
+        let mut stream = post_head(addr, key, LARGE_BODIES_BYTES / 2);
         assert_eq!(
             status(&mut stream).expect("answered with the body unsent"),
             401
@@ -243,10 +243,11 @@ fn a_request_without_the_key_is_refused_before_its_body_is_read() {
 /// Review P2: callers with the key share a byte budget for bodies, taken
 /// before a body is read. Past it a large body is not read until an earlier
 /// one's request ends, and a query, which draws on its own budget, still
-/// answers. Review R7-3 (Sol): a body of no declared length waited on the
-/// large budget whatever its size. Review r2 (Sol and Astra, P1): past 32
-/// waiters the next request with the key was refused with a 503; under the
-/// rate law it waits its turn like the rest.
+/// answers. Review r2 (Sol and Astra, P1): past 32 waiters the next request
+/// with the key was refused with a 503; under the rate law it waits its turn
+/// like the rest. FIX 149: a body of no declared length is no longer refused
+/// with a 411; it is read a piece at a time on the large budget, so it waits
+/// there behind the uploads.
 #[test]
 fn bodies_wait_for_their_budget_before_they_are_read() {
     use std::io::Write;
@@ -263,7 +264,7 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
     );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     let mut uploads: Vec<_> = (0..2 + WAITERS)
-        .map(|_| post_head(addr, Some(KEY), MAX_BODY_BYTES))
+        .map(|_| post_head(addr, Some(KEY), LARGE_BODIES_BYTES / 2))
         .collect();
     let queued = (0..500).any(|_| {
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -280,16 +281,20 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
     );
 
     let mut chunked = std::net::TcpStream::connect(addr).expect("connected");
-    chunked
-        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
-        .expect("timeout");
     write!(
         chunked,
         "POST /v1/embeddings HTTP/1.1\r\nHost: endpoint\r\nAuthorization: Bearer {KEY}\r\n\
          Transfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
     )
     .expect("sent");
-    assert_eq!(status(&mut chunked).expect("refused at once"), 411);
+    let parked = (0..500).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        served.large_bodies.waiting() == WAITERS + 1
+    });
+    assert!(
+        parked,
+        "a body of no declared length waits on the large budget, never refused"
+    );
 
     let query = serde_json::json!({
         "model": SYNTHETIC_MODEL,
@@ -304,7 +309,7 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
     // Whichever two were reading, the one left holds its bytes once the
     // others hang up: one that waited was let in.
     uploads.truncate(1);
-    assert!(holds(&served, MAX_BODY_BYTES), "one body left");
+    assert!(holds(&served, LARGE_BODIES_BYTES / 2), "one body left");
     drop(uploads);
     assert!(holds(&served, 0), "every request's bytes returned");
 }
@@ -332,15 +337,19 @@ async fn a_wait_after_the_line_ran_empty_crosses_the_body_row_again() {
             .latest(LimitRow::EmbedderBodyBytes)
             .map_or(0, |question| question.crossings)
     };
-    let first = budget.reserve(MAX_BODY_BYTES, wait, &questions).await;
-    let second = budget.reserve(MAX_BODY_BYTES, wait, &questions).await;
+    let first = budget
+        .reserve(LARGE_BODIES_BYTES / 2, wait, &questions)
+        .await;
+    let second = budget
+        .reserve(LARGE_BODIES_BYTES / 2, wait, &questions)
+        .await;
     assert!(first.is_some() && second.is_some(), "two bodies fit");
     let waiter = tokio::spawn({
         let budget = Arc::clone(&budget);
         let questions = Arc::clone(&questions);
         async move {
             budget
-                .reserve(MAX_BODY_BYTES, wait, &questions)
+                .reserve(LARGE_BODIES_BYTES / 2, wait, &questions)
                 .await
                 .is_some()
         }
@@ -354,7 +363,7 @@ async fn a_wait_after_the_line_ran_empty_crosses_the_body_row_again() {
     // this one, on the same thread, yields. Nobody waits now.
     drop(first);
     let next = budget
-        .reserve(MAX_BODY_BYTES, wait, &questions)
+        .reserve(LARGE_BODIES_BYTES / 2, wait, &questions)
         .now_or_never();
     assert!(next.is_none(), "no bytes are free for it");
     assert_eq!(crossings(), 2, "a wait after the line ran empty crosses");
@@ -514,7 +523,7 @@ pub(crate) fn cross_the_bodies(callers: usize) -> crate::admission::Crossing {
     );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     let holders: Vec<_> = (0..2)
-        .map(|_| post_head(addr, Some(KEY), MAX_BODY_BYTES))
+        .map(|_| post_head(addr, Some(KEY), LARGE_BODIES_BYTES / 2))
         .collect();
     assert!(holds(&served, LARGE_BODIES_BYTES), "the budget is full");
     // Over the small-body size, so each draws on the large budget.

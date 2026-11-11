@@ -326,6 +326,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => "world_route_not_admitted",
         LlmError::Fatal(FatalLlmError::InvalidRequest) => "invalid_request",
         LlmError::Fatal(FatalLlmError::InvalidRequestDetail { .. }) => "invalid_request",
+        LlmError::Fatal(FatalLlmError::ContextWindowExceeded { .. }) => "context_window_exceeded",
         LlmError::Fatal(FatalLlmError::Auth) => "auth",
         LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
         LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
@@ -359,6 +360,7 @@ pub(crate) fn ends_call(error: &LlmError) -> bool {
         LlmError::Fatal(
             FatalLlmError::InvalidRequest
                 | FatalLlmError::InvalidRequestDetail { .. }
+                | FatalLlmError::ContextWindowExceeded { .. }
                 | FatalLlmError::ContentFiltered
                 | FatalLlmError::Unsupported(_)
                 | FatalLlmError::ResponseErased

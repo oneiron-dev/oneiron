@@ -76,6 +76,9 @@ pub struct HostedRelayDecision {
     pub service_identity: String,
     pub verdict: Option<super::PolicyClassifyVerdict>,
     pub degraded: Option<super::RelayBoundaryDegrade>,
+    /// Every configured row whose check remained unresolved in this outage.
+    /// These are not selected violations; the outage verdict names no row.
+    pub outage_bounds: Vec<super::HostedLegalRowBound>,
     pub resolution: Option<super::RelayResolution>,
     pub hosted_evidence: Option<super::HostedPassEvidence>,
     pub receipt_ref: Option<String>,
@@ -125,21 +128,61 @@ pub async fn enforce_hosted_relay(
         })
         .into_iter()
         .collect();
-    if halted && pass.degraded().is_some() {
-        system_notices.push(crate::store::GateSystemNoticeRecord {
-            notice_type: "policy_relay_unavailable".to_owned(),
-            channel: super::notice::SYSTEM_NOTICE_CHANNEL.to_owned(),
-            voice: super::notice::SYSTEM_NOTICE_VOICE_SYSTEM.to_owned(),
-            audience: super::notice::SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL.to_owned(),
-            body: unavailable_notice.to_owned(),
-            row_ref: None,
-            setting_change_offer: super::notice::safe_setting_change_offer(
-                config.hosted_local_model_offer.as_ref(),
-            ),
-            policy_plane: Some(super::PolicyPlane::HostedLegal.as_str().to_owned()),
-            policy_version: Some(policy.version.clone()),
-            docs_url: Some(policy.docs_url.clone()),
-        });
+    let outage_bounds: Vec<super::HostedLegalRowBound> = if pass.degraded().is_some() {
+        policy
+            .rows
+            .iter()
+            .map(super::HostedLegalRow::bound)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if let Some(degrade) = pass.degraded() {
+        system_notices.extend(super::notice::hosted_notice_parts(
+            crate::store::GateSystemNoticeRecord {
+                notice_type: if halted {
+                    "policy_relay_unavailable"
+                } else {
+                    "policy_relay_degraded"
+                }
+                .to_owned(),
+                channel: super::notice::SYSTEM_NOTICE_CHANNEL.to_owned(),
+                voice: super::notice::SYSTEM_NOTICE_VOICE_SYSTEM.to_owned(),
+                audience: super::notice::SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL.to_owned(),
+                body: if halted {
+                    format!("{}\n{unavailable_notice}", degrade.as_str())
+                } else {
+                    degrade.as_str().to_owned()
+                },
+                row_ref: None,
+                setting_change_offer: halted
+                    .then(|| {
+                        super::notice::safe_setting_change_offer(
+                            config.hosted_local_model_offer.as_ref(),
+                        )
+                    })
+                    .flatten(),
+                policy_plane: Some(super::PolicyPlane::HostedLegal.as_str().to_owned()),
+                policy_version: Some(policy.version.clone()),
+                docs_url: Some(policy.docs_url.clone()),
+            },
+        ));
+        for bound in &outage_bounds {
+            system_notices.extend(super::notice::hosted_bound_notices(
+                &bound.row_ref,
+                &bound.basis,
+                policy,
+                false,
+            ));
+        }
+    } else if let Some(super::PolicyClassifyVerdict {
+        category: super::PolicyVerdictCategory::HostedLegal { row_ref, basis, .. },
+        ..
+    }) = &verdict
+    {
+        system_notices.extend(super::notice::hosted_bound_notices(
+            row_ref, basis, policy, true,
+        ));
     }
     let hosted_evidence = match &pass {
         super::RelayBoundaryPass::Classified(classified) => classified.hosted_evidence.clone(),
@@ -149,6 +192,7 @@ pub async fn enforce_hosted_relay(
         service_identity: domain.service_identity().to_owned(),
         verdict,
         degraded: pass.degraded(),
+        outage_bounds,
         resolution: pass.resolution(),
         hosted_evidence,
         receipt_ref,

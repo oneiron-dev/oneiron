@@ -53,7 +53,7 @@ fn push<'a, T>(
     Ok(())
 }
 
-fn name<'a>(
+pub(super) fn name<'a>(
     input: ParserInput<'a>, admission: Option<&dyn DecodeAdmission>, refused: &Cell<Option<DecodeAdmissionError>>,
 ) -> NomResult<'a, Vec<u8>> {
     let (mut rest, _) = tag(&b"/"[..]).parse(input)?;

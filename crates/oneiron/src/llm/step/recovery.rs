@@ -6,13 +6,16 @@
 
 use super::super::{BudgetGuard, LlmRequest, LlmResponse};
 use super::execute::{erased_step, failure_policy, step_legibility};
+use super::source::StepSource;
 use super::step_claim::{
     decode_step_claim_value, load_step_response_in_txn, log_terminal_step,
     step_claim_matches_request, step_index_lookup_in_txn,
 };
 use super::step_index::step_claim_is_runner_execution;
-use super::step_state::{step_state_delete, step_state_read_in_txn};
-use super::types::{DurableStepContext, DurableStepResult, StepOutcome, StepProgression};
+use super::step_state::{StepStateOwners, step_state_delete, step_state_read_in_txn};
+use super::types::{
+    DurableStepContext, DurableStepResult, StepEffectBinding, StepOutcome, StepProgression,
+};
 use crate::dreamer_wake::StepTerminal;
 use crate::error::Error;
 
@@ -21,8 +24,16 @@ use crate::error::Error;
 /// becomes a synthetic provider failure.
 pub(super) enum StepRecovery {
     Erased,
-    Memo(LlmResponse),
-    Payload(Vec<u8>),
+    Memo {
+        binding: StepEffectBinding,
+        response: LlmResponse,
+    },
+    Payload {
+        binding: StepEffectBinding,
+        payload: Vec<u8>,
+        owners: StepStateOwners,
+        source: StepSource,
+    },
 }
 
 /// Read the existing memo/checkpoint recovery path in one snapshot. This
@@ -34,6 +45,10 @@ pub(super) fn recovery_in_txn(
     step_hash: &[u8; 32],
     request: &LlmRequest,
 ) -> DurableStepResult<Option<StepRecovery>> {
+    let binding = StepEffectBinding {
+        attempt_id,
+        step_hash: *step_hash,
+    };
     let state = step_state_read_in_txn(vault, txn, attempt_id, step_hash)?;
     if state.as_ref().is_some_and(|row| row.erased) {
         return Ok(Some(StepRecovery::Erased));
@@ -51,18 +66,29 @@ pub(super) fn recovery_in_txn(
             && step_claim_matches_request(&decoded, request)?
         {
             let response = load_step_response_in_txn(vault, txn, &decoded)?;
-            return Ok(Some(StepRecovery::Memo(response)));
+            return Ok(Some(StepRecovery::Memo { binding, response }));
         }
     }
-    Ok(state.and_then(|row| {
-        if matches!(
-            row.progression,
-            StepProgression::ResponseReceived | StepProgression::Logged
-        ) {
-            row.response_payload.map(StepRecovery::Payload)
-        } else {
-            None
-        }
+    let Some(row) = state else {
+        return Ok(None);
+    };
+    if !matches!(
+        row.progression,
+        StepProgression::ResponseReceived | StepProgression::Logged
+    ) {
+        return Ok(None);
+    }
+    let payload = row.response_payload.ok_or(Error::InvalidClaimBody(
+        "dreamer step saved response is missing",
+    ))?;
+    let source = row.source.ok_or(Error::InvalidClaimBody(
+        "dreamer step saved source is missing",
+    ))?;
+    Ok(Some(StepRecovery::Payload {
+        binding,
+        payload,
+        owners: row.owners,
+        source,
     }))
 }
 
@@ -70,25 +96,31 @@ pub(super) fn recovery_in_txn(
 /// exact payload and memoized result are shared with ordinary execution.
 pub(super) fn recover_step(
     ctx: &DurableStepContext<'_>,
-    step_hash: &[u8; 32],
     request: &LlmRequest,
     recovery: StepRecovery,
     guard: Option<&BudgetGuard>,
 ) -> DurableStepResult<StepOutcome> {
-    let (response, failure_policy) = match recovery {
+    let (binding, response, failure_policy) = match recovery {
         StepRecovery::Erased => return Err(erased_step()),
-        StepRecovery::Memo(response) => {
+        StepRecovery::Memo { binding, response } => {
             let policy = failure_policy(ctx.vault, &response)?;
-            (response, policy)
+            (binding, response, policy)
         }
-        StepRecovery::Payload(payload) => {
+        StepRecovery::Payload {
+            binding,
+            payload,
+            owners,
+            source,
+        } => {
             let response: LlmResponse = serde_json::from_slice(&payload)?;
             // Resolve the same policy before any terminal write, as on
             // the original stored-payload recovery path.
             let policy = failure_policy(ctx.vault, &response)?;
             if log_terminal_step(
                 ctx,
-                step_hash,
+                binding,
+                owners,
+                &source,
                 request,
                 &response,
                 &payload,
@@ -98,11 +130,12 @@ pub(super) fn recover_step(
             {
                 return Err(erased_step());
             }
-            step_state_delete(ctx.vault, ctx.attempt_id, step_hash)?;
-            (response, policy)
+            step_state_delete(ctx.vault, binding.attempt_id, &binding.step_hash)?;
+            (binding, response, policy)
         }
     };
     Ok(StepOutcome::Finished {
+        binding,
         response,
         memoized: true,
         legibility: guard.and_then(|guard| step_legibility(ctx, guard)),

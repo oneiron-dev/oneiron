@@ -282,6 +282,32 @@ pub(crate) fn apply_actor_ops(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: &WriteActor,
+    lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+    gate_mode: ApplyOpsGateMode,
+    origin: BaseWriteOrigin<'_>,
+) -> Result<()> {
+    let gated = super::builder::reference_read::admit_lane_before_staging(vault, lane, txn, &ops)?;
+    apply_actor_ops_admitted(
+        vault,
+        txn,
+        actor,
+        ops,
+        text_index_trusted,
+        gate_mode,
+        origin,
+    )?;
+    if let crate::core_write::CoreWriteLaneRef::Read(reader) = lane {
+        super::builder::reference_read::check_staged_references(vault, txn, reader, &gated)?;
+    }
+    Ok(())
+}
+
+pub(super) fn apply_actor_ops_admitted(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &WriteActor,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,

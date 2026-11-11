@@ -4,17 +4,22 @@
 //! store (WILL L11-01 S01-2c); and the queued outcomes the vault lands once
 //! its write committed.
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 
+use crate::Result;
 use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
 use crate::runtime_hooks::runner::{MAX_PINNED_INPUT, bounded};
 use crate::runtime_hooks::{HookPassReport, apply, block, filter, lineage, store};
-use crate::{EntityId, Result};
 
 use super::super::ask;
 use super::super::record::{self, HookVerbRunRecord};
 use super::super::storage::VerbHookStorage;
 use super::{Chain, RunRecord, hook_name, phase_token};
+
+/// One run as a write lands it ([`Chain::landed_in_txn`]): its receipt, its
+/// saved copy, and whether its payload retired.
+pub(super) type Landed = (ReceiptRecord, HookVerbRunRecord, bool);
 
 impl Chain<'_> {
     /// Commits the chain's rows. A resumed chain commits even with no run
@@ -23,7 +28,8 @@ impl Chain<'_> {
     /// ([`Self::hold_in_session`]), a resumed one after using its answer up
     /// in the keep ([`Self::take_session_answer`], L13 PR-D); a call with no
     /// room overlay writes its blocks and intents in the vault
-    /// ([`Self::write_consequences`]), and a room has none.
+    /// ([`Self::write_consequences`]), and a room has none. The runs are
+    /// held as that write landed them, so the hold reads none again.
     pub(super) fn commit(&self) -> Result<()> {
         if self.runs.is_empty() && self.token.is_none() {
             return Ok(());
@@ -34,8 +40,12 @@ impl Chain<'_> {
                 .with_write_txn_grouped(|txn| self.write_in_txn(txn)),
             VerbHookStorage::Session(hooks) => {
                 self.take_session_answer(hooks)?;
-                self.hold_in_session(hooks);
-                self.write_consequences()
+                let (landed, written) = match self.write_consequences() {
+                    Ok(landed) => (landed, Ok(())),
+                    Err(error) => (None, Err(error)),
+                };
+                self.hold_in_session(hooks, landed);
+                written
             }
         }
     }
@@ -45,28 +55,74 @@ impl Chain<'_> {
     /// blocks with their lineage and its intents, each written once in the
     /// vault as [`Self::write_in_txn`] writes them. Its receipts and saved
     /// runs stay in the keep. A room's chain, and a call whose consequences
-    /// do not run, holds none.
-    pub(super) fn consequences_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    /// do not run, holds none. Each run as this write lands it, in run
+    /// order, for the hold ([`Self::hold_in_session`]); `None` when there
+    /// was nothing to write.
+    pub(super) fn consequences_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<Option<Vec<Landed>>> {
+        if self.blocks.is_empty() && self.intents.is_empty() {
+            return Ok(None);
+        }
+        let at = self.vault.store.clock.now_recorded_at();
+        let mut landed = Vec::with_capacity(self.runs.len());
+        let mut retired = BTreeSet::new();
+        for run in &self.runs {
+            let run_landed = self.landed_in_txn(txn, run, at.saturating_mul(1_000))?;
+            if run_landed.2 {
+                retired.insert(run.key);
+            }
+            landed.push(run_landed);
+        }
+        self.consequences_at_in_txn(txn, at, &retired)?;
+        Ok(Some(landed))
+    }
+
+    /// The chain's blocks with their lineage and its intents, each written
+    /// once; `at` (Unix seconds) stamps when a block or intent of a run in
+    /// `retired` ([`Self::landed_in_txn`]), or a block naming a row a
+    /// permanent erase fenced before this write, expires or is refused, as
+    /// that erase's own scrub would have left it had the chain committed
+    /// first (FIX 22191). An erased caller leaves the lineage of each
+    /// ([`lineage::erase_entity`]; FIX 22184).
+    fn consequences_at_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        at: u64,
+        retired: &BTreeSet<store::RunKey>,
+    ) -> Result<()> {
+        if self.blocks.is_empty() && self.intents.is_empty() {
+            return Ok(());
+        }
         let vault = self.vault;
-        let at = vault.store.clock.now_recorded_at();
-        let erased = self.erased_sources(txn)?;
+        let retired_refs: BTreeSet<String> = retired.iter().map(|key| hex_lower(key)).collect();
+        let caller =
+            store::source_erased_in_txn(vault, txn, &self.call.actor)?.then_some(self.call.actor);
         for (id, row, chain) in &self.blocks {
-            if row.refs.iter().any(|id| erased.contains(id)) {
+            let chain = lineage::without_erased(chain, caller.as_ref());
+            if retired_refs.contains(&row.run_key) || block::names_erased_in_txn(vault, txn, row)? {
                 let mut row = row.clone();
                 block::scrub_block_payload(&mut row, at);
                 block::put_block_in_txn(vault, txn, *id, &row)?;
-                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
+                lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
                 continue;
             }
             if block::put_new_block_in_txn(vault, txn, *id, row)? {
-                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
+                lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
             }
         }
         for (key, intent, proposal) in &self.intents {
-            if store::dependencies_erased_in_txn(vault, txn, &intent.dependencies)? {
-                let mut intent = intent.clone();
-                store::scrub_intent_payload(&mut intent, at);
-                store::INTENTS.put(vault, txn, key, &intent)?;
+            let mut intent = Cow::Borrowed(intent);
+            if let Some(caller) = &caller {
+                lineage::erase_entity(&mut intent.to_mut().lineage, caller);
+            }
+            if retired.contains(key)
+                || store::dependencies_erased_in_txn(vault, txn, &intent.dependencies)?
+            {
+                let intent = intent.to_mut();
+                store::scrub_intent_payload(intent, at);
+                store::INTENTS.put(vault, txn, key, intent)?;
                 continue;
             }
             if store::INTENTS.get(&vault.store, txn, key)?.is_some() {
@@ -75,41 +131,16 @@ impl Chain<'_> {
             if let Some(id) = proposal {
                 lineage::put_in_txn(vault, txn, id.as_bytes(), &intent.lineage)?;
             }
-            store::INTENTS.put(vault, txn, key, intent)?;
+            store::INTENTS.put(vault, txn, key, &intent)?;
         }
         Ok(())
     }
 
-    /// The permanently erased sources this chain carries, checked in its
-    /// own write snapshot before any original payload can be committed.
-    fn erased_sources(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<std::collections::BTreeSet<EntityId>> {
-        let vault = self.vault;
-        let mut erased = std::collections::BTreeSet::new();
-        for run in &self.runs {
-            erased.extend(store::erased_dependency_ids_in_txn(
-                vault,
-                txn,
-                &run.hook_dependencies(),
-            )?);
-        }
-        for (_, intent, _) in &self.intents {
-            erased.extend(store::erased_dependency_ids_in_txn(
-                vault,
-                txn,
-                &intent.dependencies,
-            )?);
-        }
-        Ok(erased)
-    }
-
     /// [`Self::consequences_in_txn`] in a vault write of its own, when the
     /// chain holds any.
-    fn write_consequences(&self) -> Result<()> {
+    fn write_consequences(&self) -> Result<Option<Vec<Landed>>> {
         if self.blocks.is_empty() && self.intents.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         self.vault
             .with_write_txn_grouped(|txn| self.consequences_in_txn(txn))
@@ -127,48 +158,43 @@ impl Chain<'_> {
             self.used.set(true);
             return Err(ask::used_error());
         }
+        if self.call.verb == "host.turn.generate"
+            && let (Some(token), Some(turn)) = (&self.token, &self.call.turn)
+        {
+            crate::code_run::clear_parked_wait_in_txn(vault, txn, turn.run, token.ask())?;
+        }
         let at = vault.store.clock.now_recorded_at().saturating_mul(1_000);
+        let mut retired = BTreeSet::new();
         for run in &self.runs {
-            let mut receipt = self.receipt(run);
-            let mut saved = self.saved(run, at);
-            if !store::erased_dependency_ids_in_txn(vault, txn, &run.hook_dependencies())?
-                .is_empty()
-            {
-                store::scrub_receipt_payload(&mut receipt);
-                store::scrub_verb_payload(&mut saved);
+            let (receipt, saved, gone) = self.landed_in_txn(txn, run, at)?;
+            if gone {
+                retired.insert(run.key);
             }
             store::RECEIPTS.put(vault, txn, &run.key, &receipt)?;
             record::put_in_txn(vault, vault, txn, &run.key, &saved)?;
         }
-        let erased = self.erased_sources(txn)?;
-        for (id, row, chain) in &self.blocks {
-            if row.refs.iter().any(|id| erased.contains(id)) {
-                let mut row = row.clone();
-                block::scrub_block_payload(&mut row, at / 1_000);
-                block::put_block_in_txn(vault, txn, *id, &row)?;
-                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
-                continue;
-            }
-            if block::put_new_block_in_txn(vault, txn, *id, row)? {
-                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
-            }
-        }
-        for (key, intent, proposal) in &self.intents {
-            if store::dependencies_erased_in_txn(vault, txn, &intent.dependencies)? {
-                let mut intent = intent.clone();
-                store::scrub_intent_payload(&mut intent, at / 1_000);
-                store::INTENTS.put(vault, txn, key, &intent)?;
-                continue;
-            }
-            if store::INTENTS.get(&vault.store, txn, key)?.is_some() {
-                continue;
-            }
-            if let Some(id) = proposal {
-                lineage::put_in_txn(vault, txn, id.as_bytes(), &intent.lineage)?;
-            }
-            store::INTENTS.put(vault, txn, key, intent)?;
-        }
-        Ok(())
+        self.consequences_at_in_txn(txn, at / 1_000, &retired)
+    }
+
+    /// `run`'s receipt and saved copy as a write at `at` (Unix ms) lands
+    /// them, read in that write's snapshot, and whether its payload retired.
+    /// A caller or tail actor a permanent erase fenced names the erased
+    /// marker (FIX 22178); a run across a source's erase keeps none of its
+    /// bytes, nor one whose caller's own args or result name an erased row
+    /// (FIX 22191). So each lands as the erase's own scrub would have left it
+    /// had the chain committed first, and no later sweep scrubs it again
+    /// ([`store::scrub_erased_verb_run_in_txn`]).
+    pub(super) fn landed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        run: &RunRecord<'_>,
+        at: u64,
+    ) -> Result<Landed> {
+        let mut receipt = self.receipt(run);
+        let mut saved = self.saved(run, at);
+        let retired =
+            store::scrub_erased_verb_run_in_txn(self.vault, txn, &mut saved, &mut receipt)?;
+        Ok((receipt, saved, retired))
     }
 
     /// Lands the post chain's queued outcomes, each once, as its hook's
@@ -263,9 +289,17 @@ impl Chain<'_> {
             phase: self.phase,
             verb: self.call.verb.clone(),
             input_json: (run.input.len() <= MAX_PINNED_INPUT).then(|| run.input.clone()),
+            landing_original: run
+                .landing_original
+                .as_ref()
+                .filter(|original| original.len() <= MAX_PINNED_INPUT)
+                .cloned(),
+            had_landing: run.had_landing,
+            args_withheld: run.args_withheld,
             history_erased: false,
             input_hash: blake3::hash(run.input.as_bytes()).to_hex().to_string(),
             dependencies: run.dependencies.clone(),
+            named_rows: store::rows_named_by_call(&run.input, run.landing_original.as_deref()),
             unattributed: run.unattributed,
             grant: run.grant.clone(),
             preparation: run.preparation.clone(),

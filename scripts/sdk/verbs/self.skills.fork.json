@@ -1,0 +1,13 @@
+{
+  "name": "self.skills.fork",
+  "description": "An agent forks a stored skill under its own identity, keeping its import ancestry.",
+  "input": "crate::skill::helper::SkillForkRequest",
+  "output": "crate::memory::SkillAuthoringReceipt",
+  "call": "{ let (parent, id) = crate::skill::helper::fork_target(&input)?; memory.skill_fork(parent, id, &input.skill_id, crate::unix_seconds_now())? }",
+  "scope": "Write",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -21,13 +21,16 @@ impl Memory<'_> {
         occurred_at: u64,
     ) -> MemoryResult<LandedImage> {
         let description = intent.instruction.clone();
-        let response = catalog.render(intent, None, lease).await.map_err(|error| {
-            MemoryError::new(
-                MEMORY_CODE_MODEL_UNAVAILABLE,
-                format!("image generation failed: {error}"),
-                &[],
-            )
-        })?;
+        let response = catalog
+            .render(intent, None, None, lease)
+            .await
+            .map_err(|error| {
+                MemoryError::new(
+                    MEMORY_CODE_MODEL_UNAVAILABLE,
+                    format!("image generation failed: {error}"),
+                    &[],
+                )
+            })?;
         self.land_generated_image(&response, &description, occurred_at)
     }
 
@@ -152,6 +155,7 @@ impl Memory<'_> {
         let weight = EdgeKind::DerivedFrom.default_weight().unwrap_or(1.0);
         self.vault.ensure_text_index_trusted()?;
         let writer = self.write_actor();
+        let lane = self.core_write_lane()?;
         self.vault.try_with_write_txn_grouped(|wtxn| {
             crate::memory::verify_actor_binding_in_txn(
                 self.vault,
@@ -159,7 +163,8 @@ impl Memory<'_> {
                 self.actor,
                 self.actor_class,
             )?;
-            let mut content = crate::federation::ActorContentTxn::new(self.vault, wtxn, writer)?;
+            let mut content =
+                crate::federation::ActorContentTxn::new(self.vault, wtxn, writer, lane.as_ref())?;
             let landed = self.land_asset_rows(
                 &mut content,
                 asset,
@@ -211,6 +216,19 @@ impl Memory<'_> {
             self.vault
                 .batch_in()
                 .put(&asset, ENTITY_TYPE_ASSET, occurred, occurred_at, body);
+        // A narrowed writer's ASSET is born in its writer's world and facet,
+        // as its TASKs are (FIX 22223; ARCH-0067 §5): an `InWorld` edge, its
+        // live world, and a `FacetOf` edge, its birth facet. Its caption then
+        // sits in the same world, its one source's. Base reality and a
+        // writer bound to no facet take no edge.
+        if let Some(world) = self.birth_position.claim_world() {
+            let kind = EdgeKind::InWorld;
+            batch = batch.edge(&asset, kind, &world, kind.default_weight().unwrap_or(1.0));
+        }
+        if let Some(facet) = self.birth_position.facet {
+            let kind = EdgeKind::FacetOf;
+            batch = batch.edge(&asset, kind, &facet, kind.default_weight().unwrap_or(1.0));
+        }
         if let (Some(text), Some(description)) = (text, description) {
             batch = batch
                 .asset_text_birth(

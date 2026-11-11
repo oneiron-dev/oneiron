@@ -65,7 +65,9 @@ pub(super) fn commit_terminal(
 /// Retires a Retry its terminal's own proof refused (FIX 3152): its
 /// requester's standing lapsed, or its source or room changed. No TURN,
 /// MESSAGE, link or receipt lands, as for a Retry never admitted; its seed
-/// goes, and the stream ends.
+/// goes, and the stream ends. The chat breakpoint its host kept for this
+/// generation before its call was sent goes with it (FIX 5028), at open-time
+/// recovery too.
 fn retire_refused_retry(vault: &Vault, state: &mut State) -> MessageStreamResult<()> {
     let seed = &state.seed;
     vault.try_with_write_txn_grouped(|txn| -> MessageStreamResult<()> {
@@ -74,6 +76,11 @@ fn retire_refused_retry(vault: &Vault, state: &mut State) -> MessageStreamResult
             .is_some_and(|row| row.generation == seed.generation)
         {
             storage::ACTIVE.delete(&vault.store, txn, &seed.message_id)?;
+            crate::conversation::forget_chat_breakpoint_in_txn(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                &(seed.conversation, seed.message_id, seed.generation),
+            )?;
         }
         Ok(())
     })?;

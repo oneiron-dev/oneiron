@@ -331,3 +331,88 @@ impl Vault {
         Ok(bound)
     }
 }
+
+impl Vault {
+    /// Sets binding `binding`'s dial to `enabled` in `txn`, as the owner
+    /// writes it, the owner revalidated here. A regen revert's restored
+    /// body takes the dial of the body it replaces (FIX 4690): the install
+    /// keeps a returning binding's own dial, which the adoption turned off.
+    ///
+    /// # Errors
+    ///
+    /// The owner's revalidation, an unknown binding and storage errors.
+    pub(crate) fn set_pack_hook_enabled_by_owner_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        binding: EntityId,
+        enabled: bool,
+    ) -> Result<()> {
+        let owner_id = owner.revalidate_in_txn(self, txn)?;
+        self.write_pack_hook_dial_in_txn(txn, binding, enabled, |row| {
+            owner_envelope(owner, owner_id, &row.pack, &row.source)
+        })
+    }
+
+    /// [`Self::set_pack_hook_enabled_by_owner_in_txn`] as `agent` writes
+    /// it, for a binding the agent authored.
+    ///
+    /// # Errors
+    ///
+    /// An unknown binding, one another author stands on, and storage
+    /// errors.
+    pub(crate) fn set_pack_hook_enabled_by_agent_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        agent: WriteActor,
+        binding: EntityId,
+        enabled: bool,
+    ) -> Result<()> {
+        let author = bindings_in_txn(&self.store, txn)?
+            .into_iter()
+            .find(|(id, _)| *id == binding)
+            .map(|(_, row)| row)
+            .ok_or(Error::EntityNotFound)?;
+        if !HookBinder::Agent(agent).writes(&author) {
+            return Err(Error::InvariantViolation(
+                "an agent sets the dial of its own hook binding only",
+            ));
+        }
+        self.write_pack_hook_dial_in_txn(txn, binding, enabled, |row| {
+            agent_envelope(agent, &row.pack, &row.source)
+        })
+    }
+
+    /// Writes binding `binding` with its dial at `enabled`, stamped with
+    /// `envelope`'s envelope for its row; a dial already there writes
+    /// nothing.
+    fn write_pack_hook_dial_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        binding: EntityId,
+        enabled: bool,
+        envelope: impl FnOnce(&PackHookBinding) -> Result<WriteEnvelope>,
+    ) -> Result<()> {
+        let (id, mut row) = bindings_in_txn(&self.store, txn)?
+            .into_iter()
+            .find(|(id, _)| *id == binding)
+            .ok_or(Error::EntityNotFound)?;
+        if row.enabled == enabled {
+            return Ok(());
+        }
+        let previous = row.clone();
+        row.enabled = enabled;
+        let envelope = envelope(&row)?;
+        let at = crate::unix_seconds_now();
+        self.batch_in()
+            .claim_candidate(
+                &id,
+                binding_candidate(&row)?,
+                &envelope,
+                TimeRange { start: at, end: at },
+                at,
+            )
+            .apply(txn)?;
+        crate::runtime_hooks::sync_binding_cursor_in_txn(self, txn, binding, Some(&previous), &row)
+    }
+}

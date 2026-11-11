@@ -49,6 +49,7 @@ mod vault_doors;
 mod vault_key;
 mod wrap;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 
@@ -56,6 +57,8 @@ mod tests;
 pub(crate) use self::bundle::BundleCarry;
 #[cfg(feature = "sync")]
 pub(crate) use self::bundle::PadEraseSubject;
+#[cfg(feature = "sync")]
+pub(crate) use self::bundle::publication_grant_requests;
 pub use self::bundle::{
     OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
     SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,
@@ -68,6 +71,8 @@ pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublic
 pub(crate) use self::content::purge_world_mirrors_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::content_landed::unland_window_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use self::content_window::{any_mirror_in, rewrite_mirrors_in_txn};
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::kit::{

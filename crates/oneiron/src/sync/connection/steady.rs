@@ -21,6 +21,9 @@ use super::session::{
 };
 use super::{LocalUpdate, LoopExit, SyncConnection, flush_to_queue};
 
+mod upkeep_tasks;
+pub(super) use upkeep_tasks::UpkeepTasks;
+
 impl SyncConnection {
     /// Steady-state event loop: multiplexes WS reads, local updates, and debounce.
     pub(super) async fn steady_state(
@@ -32,7 +35,11 @@ impl SyncConnection {
         debounce_buffer: &mut Vec<LocalUpdate>,
         promotion_rx: &mut tokio::sync::broadcast::Receiver<crate::sync::WindowKey>,
         shutdown_rx: &mut tokio::sync::oneshot::Receiver<()>,
+        upkeep: &mut UpkeepTasks,
     ) -> LoopExit {
+        // This connection's upkeep slots start free. The earlier connections'
+        // tasks still running stay with the run until its end (FIX 12785).
+        upkeep.retire_slots();
         let (mut write, mut read) = ws_stream.split();
         // A staged import body pass a returned run left settles first
         // (FIX 12408); its socket closed with that run.
@@ -54,6 +61,9 @@ impl SyncConnection {
         // buffer, and where this connection stands in them (FIX 9575).
         let mut publication_cursor = crate::artifact_hosting::ArtifactPublicationCursor::default();
         let mut publication_slot = None;
+        // Where this connection stands in the windows a policy wake readied
+        // (FIX 19634): a new connection asks again for every one.
+        let mut ready_windows = crate::sync::manager::ReadyProgress::default();
         let mut debounce_deadline = (!debounce_buffer.is_empty())
             .then(|| Instant::now() + Duration::from_millis(debounce_ms));
         let mut ephemeral_housekeeping =
@@ -64,10 +74,6 @@ impl SyncConnection {
         let mut sealed_relay =
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut sealed_task: Option<tokio::task::JoinHandle<()>> = None;
-        // The committed pad tombstones no postcommit published (FIX 3849): one
-        // retry at a time on the same tick, every lane, federation's included.
-        let mut tombstone_task: Option<tokio::task::JoinHandle<()>> = None;
         // One staged import body pass at a time (FIX 12408): its producer's
         // socket runs off this loop, and its frames are handled here.
         let mut staged_pump: Option<crate::sync::client::StagedBodyPump> = None;
@@ -78,7 +84,6 @@ impl SyncConnection {
             tokio::time::interval(Duration::from_secs(MACHINE_HISTORY_RETRY_INTERVAL_SECS));
         machine_history.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let machine_history_due = std::sync::Arc::new(AtomicBool::new(false));
-        let mut machine_history_tasks = Vec::new();
         // A residence-mode switch closes this socket; the next connect sends
         // the new mode's hello. A live lane never changes mode.
         let mut mode_rx = self.mode.subscribe();
@@ -88,9 +93,23 @@ impl SyncConnection {
         let mut left_rx = self.left.subscribe();
         // The host's admission for each batch, and its pause (FIX 12036).
         let mut gate = self.batch_gate();
+        // FIX 4748: a peer session takes none of the home's upkeep (residence
+        // directives, home handoff rounds, machine history, authority
+        // catch-up, leaf-key requests, publications), and it probes the home
+        // on its cadence, with this session's own hello, ending once the
+        // home sends a probe its root; a 401 there is told as a home dial's.
+        let peer_session = client.peer_session;
+        let mut home_probe = super::peer_session::HomeProbe::new(
+            peer_session.is_some(),
+            self.manager.vault(),
+            &client.config,
+            event_tx,
+        );
 
         // Every `break` is the run's shutdown; any other exit returns, and
-        // its upkeep rounds run on beside the next connection.
+        // its upkeep rounds run on beside the next connection, still owned
+        // by the run (FIX 12785). The run ends them all, this connection's
+        // included, once its loop ends ([`UpkeepTasks::end`], FIX 12037).
         let exit = loop {
             // What the home sent, then the promotions asked, go first, in
             // order, each under its own admission; a pause keeps the rest.
@@ -111,13 +130,15 @@ impl SyncConnection {
                 }
                 return exit;
             }
-            self.run_machine_history(
-                &mut machine_history_tasks,
-                &machine_history_due,
-                event_tx,
-                &mut gate,
-            )
-            .await;
+            if peer_session.is_none() {
+                self.run_machine_history(
+                    &mut upkeep.machine_history,
+                    &machine_history_due,
+                    event_tx,
+                    &mut gate,
+                )
+                .await;
+            }
             // Compute sleep future for debounce timer
             let debounce_sleep = match debounce_deadline {
                 Some(deadline) => tokio::time::sleep_until(deadline),
@@ -232,8 +253,8 @@ impl SyncConnection {
 
                 frame = client.document_updates.recv() => {
                     match frame {
-                        Ok(frame) => {
-                            let id = match transport::decode_document(&frame[1..]) {
+                        Ok(mut frame) => {
+                            let (id, convert) = match transport::decode_unsplit_document(&frame[1..]) {
                                 Ok(doc) => {
                                     if client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE) {
                                         // A NOTE's own commands, requests and fork uploads
@@ -241,11 +262,49 @@ impl SyncConnection {
                                         if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST | transport::document_sub_tags::NOTE_FORK_UPLOAD) { continue; }
                                         if !client.note_session_bound { continue; }
                                     }
-                                    doc.entity
+                                    // An empty UPDATE here is a typed-body invalidation:
+                                    // a NOTE's other kinds left above.
+                                    let convert = doc.kind == transport::document_sub_tags::UPDATE
+                                        && doc.payload.is_empty();
+                                    (doc.entity, convert)
                                 },
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
                             let withheld = client.frame_withheld(&frame);
+                            // Owner lane only: ask the home for its body instead, and
+                            // the VV exchange carries the edit up. A body gone since
+                            // the commit drops; it never sends a doomed empty upload.
+                            if !withheld
+                                && convert
+                                && client.config.federation_peer.is_none()
+                                && client.config.note_session.is_some()
+                                && client.note_session_bound
+                            {
+                                let holds = client
+                                    .vault
+                                    .store
+                                    .env
+                                    .read_txn()
+                                    .map(|txn| {
+                                        crate::typed_body::sync_frame::has_typed_body_in_txn(
+                                            &client.vault.store,
+                                            &txn,
+                                            &id,
+                                        )
+                                        .unwrap_or(false)
+                                    })
+                                    .unwrap_or(false);
+                                if !holds {
+                                    continue;
+                                }
+                                match client.manager.documents().owner_body_request(id) {
+                                    Ok(request) => frame = request,
+                                    Err(error) => return LoopExit::Disconnected(error.to_string()),
+                                }
+                            }
+                            // FIX 10872: a marked source's own edit, withheld, leaves
+                            // as its copy lineage's operations under its copy id.
+                            let released = if withheld { client.copy_release_frames(id) } else { Vec::new() };
                             let subscribed = (|| -> crate::error::Result<bool> {
                                 let rtxn = client.vault.store.env.read_txn()?;
                                 Ok(DS_E.contains(&client.vault.store, &rtxn, &HexId(id))? && !withheld)
@@ -253,6 +312,11 @@ impl SyncConnection {
                             match subscribed {
                                 Ok(true) => {
                                     document_buffer.push(frame);
+                                    debounce_deadline.get_or_insert_with(||
+                                        Instant::now() + Duration::from_millis(debounce_ms));
+                                }
+                                Ok(false) if !released.is_empty() => {
+                                    document_buffer.extend(released);
                                     debounce_deadline.get_or_insert_with(||
                                         Instant::now() + Duration::from_millis(debounce_ms));
                                 }
@@ -314,8 +378,11 @@ impl SyncConnection {
                         }
                         Ok(None) => {}
                     }
-                    // The next owed part goes on the next tick.
-                    if let Err(error) = client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot) {
+                    // The next owed part goes on the next tick; the home's
+                    // receipt retires it, so none goes to a peer.
+                    if peer_session.is_none()
+                        && let Err(error) = client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot)
+                    {
                         let _ = event_tx.send(SyncEvent::Error(format!("Artifact publication sync failed: {error}")));
                     }
                     if !debounce_buffer.is_empty() || !document_buffer.is_empty() || publication_slot.is_some() {
@@ -334,11 +401,13 @@ impl SyncConnection {
                         continue;
                     };
                     // The home handoff's delivery round (FIX 5661 C2a).
-                    self.home_handoff_wake.notify_one();
-                    if tombstone_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
+                    if peer_session.is_none() {
+                        self.home_handoff_wake.notify_one();
+                    }
+                    if upkeep.tombstone.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
                         let vault = std::sync::Arc::clone(self.manager.vault());
                         let events = event_tx.clone();
-                        tombstone_task = Some(tokio::task::spawn_blocking(move || {
+                        upkeep.tombstone = Some(tokio::task::spawn_blocking(move || {
                             let _batch = tombstone_batch;
                             if let Err(error) = crate::sync::residence::retry_pending_tombstones(&vault) {
                                 let _ = events.send(SyncEvent::Error(format!(
@@ -371,14 +440,16 @@ impl SyncConnection {
                         }));
                     }
                     if self.config.client_config.federation_peer.is_none()
-                        && sealed_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
+                        && peer_session.is_none()
+                        && upkeep.sealed.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
                     {
                         let manager = std::sync::Arc::clone(&self.manager);
                         let config = self.client_config();
                         let events = event_tx.clone();
                         let directives = std::sync::Arc::clone(&self.directive_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
-                        sealed_task = Some(tokio::spawn(async move {
+                        let jobs = upkeep.blocking_jobs();
+                        upkeep.sealed = Some(tokio::spawn(async move {
                             let _batch = sealed_batch;
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
@@ -421,7 +492,7 @@ impl SyncConnection {
                             // The owner work those rows name this machine to
                             // do (a world's key work) runs once they are in.
                             let vault = std::sync::Arc::clone(manager.vault());
-                            match tokio::task::spawn_blocking(move || vault.run_pending_owner_work(|| true)).await {
+                            match jobs.run(move || vault.run_pending_owner_work(|| true)).await {
                                 Ok(Ok(_)) => {}
                                 Ok(Err(error)) => {
                                     let _ = events.send(SyncEvent::Error(format!(
@@ -437,7 +508,7 @@ impl SyncConnection {
                             // A machine those rows made mine gets each portable
                             // credential's value sealed to it again (OF-422).
                             let vault = std::sync::Arc::clone(manager.vault());
-                            match tokio::task::spawn_blocking(move || vault.reseal_custody_for_roster()).await {
+                            match jobs.run(move || vault.reseal_custody_for_roster()).await {
                                 Ok(Ok(_)) => {}
                                 Ok(Err(error)) => {
                                     let _ = events.send(SyncEvent::Error(format!(
@@ -523,8 +594,19 @@ impl SyncConnection {
                         }
                         result = async {
                             crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await?;
-                            crate::sync::client::send_leaf_key_requests(client, &mut write).await?;
-                            crate::sync::client::send_sealed_updates(client, &mut write).await
+                            if peer_session.is_none() {
+                                crate::sync::client::send_leaf_key_requests(client, &mut write).await?;
+                            }
+                            crate::sync::client::send_sealed_updates(client, &mut write).await?;
+                            // The windows a policy wake readied since this
+                            // connection last asked, on this tick (FIX 19634).
+                            // They are owed the home: a peer session (FIX 4748)
+                            // asks none, and the home's next session asks again
+                            // for every one.
+                            if peer_session.is_none() {
+                                send_ready_window_requests(client, &mut write, &mut ready_windows).await?;
+                            }
+                            Ok::<(), String>(())
                         } => result,
                     };
                     if let Err(e) = send_result {
@@ -560,8 +642,13 @@ impl SyncConnection {
                         pump.send(client.poll_staged_body_pull(now));
                     }
                     // Pinned artifact pointers this device still owes the server,
-                    // one part at a time.
-                    match client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot) {
+                    // one part at a time; the home's, never a peer's.
+                    let pulled = if peer_session.is_none() {
+                        client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot)
+                    } else {
+                        Ok(false)
+                    };
+                    match pulled {
                         Ok(true) => {
                             debounce_deadline.get_or_insert_with(||
                                 Instant::now() + Duration::from_millis(debounce_ms));
@@ -579,6 +666,23 @@ impl SyncConnection {
 
                 // The host thawed: what the pause held goes first (FIX 12036).
                 () = gate.thawed(), if gate.paused() => {}
+
+                // FIX 4748: the home sent a peer session's probe its root:
+                // this session ends, what it buffered queued, and the next
+                // connect is the home's turn.
+                () = home_probe.root_received() => {
+                    self.queue_on_exit(&mut gate, debounce_buffer).await;
+                    let mut send_left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                            break LoopExit::Shutdown;
+                        }
+                        _ = write.send(Message::Close(None)) => {}
+                    }
+                    return LoopExit::HomeReturned;
+                }
 
                 changed = mode_rx.changed() => {
                     if changed.is_ok() {
@@ -645,23 +749,6 @@ impl SyncConnection {
             pump.stop().await;
         }
         client.end_staged_body_pull();
-        // FIX 12037: the run ends with its residence upkeep ended, so none of
-        // its writes lands after it (a reap's export waits on this): the
-        // async rounds are aborted, and each task, the blocking tombstone
-        // retry included, is waited for.
-        if let Some(task) = &sealed_task {
-            task.abort();
-        }
-        for task in &machine_history_tasks {
-            task.abort();
-        }
-        for task in sealed_task
-            .into_iter()
-            .chain(tombstone_task)
-            .chain(machine_history_tasks)
-        {
-            let _ = task.await;
-        }
         exit
     }
 
@@ -705,4 +792,42 @@ impl SyncConnection {
             }
         }));
     }
+}
+
+/// Sends the version requests `client` owes the home for ready windows (fix
+/// list row 19634), up to [`crate::sync::manager::READY_WINDOWS_PER_PASS`] a
+/// tick, and stamps each window's generation once its request is on the
+/// socket. Requests that cannot be read now stay owed for the next tick; a
+/// failed send ends the connection, and the next one asks again from the
+/// start.
+async fn send_ready_window_requests<S>(
+    client: &mut SyncClient,
+    write: &mut S,
+    progress: &mut crate::sync::manager::ReadyProgress,
+) -> Result<(), String>
+where
+    S: futures_util::Sink<Message> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    // A window whose answer could not be judged whole is asked again.
+    for key in client.take_ready_retries() {
+        progress.retry(&key);
+    }
+    let requests = match client
+        .ready_window_requests(progress, crate::sync::manager::READY_WINDOWS_PER_PASS)
+    {
+        Ok(requests) => requests,
+        Err(error) => {
+            tracing::warn!(%error, "ready window requests not made");
+            return Ok(());
+        }
+    };
+    for (key, generation, frame) in requests {
+        write
+            .send(Message::Binary(frame.into()))
+            .await
+            .map_err(|error| format!("Send failed: {error}"))?;
+        progress.stamp(key, generation);
+    }
+    Ok(())
 }

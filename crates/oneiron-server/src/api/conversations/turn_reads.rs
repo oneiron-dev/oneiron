@@ -22,6 +22,33 @@ use oneiron::registry::ENTITY_TYPE_TURN;
 /// A served row: its kind, time and body.
 type TurnParts = (u8, u64, Vec<u8>);
 
+/// Checks the kind only after the TURN door's admission, in the same
+/// snapshot. The owner's conversation listing keeps its existing parent
+/// exception; the owner's single TURN read still checks private threads.
+pub(super) fn require_core_turn_type(
+    vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
+    id: &oneiron::EntityId,
+    expected_type: u8,
+    resource: &'static str,
+) -> Result<(), ApiError> {
+    let kind = vault.with_read_snapshot(|txn| {
+        let owner = vault.turn_doors_owner_in_txn(read, txn)?;
+        if !owner || expected_type == ENTITY_TYPE_TURN {
+            let admitted = match vault.turn_door_admits_in_txn(read, txn, owner, id) {
+                Ok(admitted) => admitted,
+                Err(error) if error.kind() == oneiron::ErrorKind::InvalidSecretCustodyBody => false,
+                Err(error) => return Err(error),
+            };
+            if !admitted {
+                return Ok(None);
+            }
+        }
+        vault.entity_type_in_txn(txn, id)
+    });
+    crate::api::require_entity_type_lookup(kind, id, expected_type, resource)
+}
+
 /// What the owner's read of one turn found in its one snapshot.
 enum OwnerTurn<V> {
     /// The TURN doors serve the caller below the owner; its request's own

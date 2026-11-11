@@ -1,0 +1,16 @@
+{
+  "name": "vault.models.trials.get",
+  "description": "Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown.",
+  "input": "crate::llm::catalog_doors::ModelTrialRef",
+  "output": "crate::llm::catalog_doors::ModelTrialView",
+  "call": "memory.vault().model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.get\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

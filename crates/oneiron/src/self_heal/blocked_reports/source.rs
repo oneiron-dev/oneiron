@@ -399,7 +399,7 @@ pub(crate) fn capture_durable_step(
     call: u32,
     now_ms: u64,
 ) {
-    if !vault.config.failure_signals.exports() {
+    if !vault.config.failure_signals.exports() || steps_uncaptured(vault, attempt) {
         return;
     }
     let kept = keep_durable_step(vault, attempt, step, actor, subject, request, call, now_ms);
@@ -409,6 +409,59 @@ pub(crate) fn capture_durable_step(
             "a step's request was not kept; its replay is not exact"
         );
     }
+}
+
+/// The attempts, by vault, whose durable steps keep no request capture while
+/// an [`UncapturedSteps`] guard holds them, with how many guards hold each.
+type UncapturedAttempts = std::collections::BTreeMap<([u8; 32], AttemptId), usize>;
+
+/// Every live [`UncapturedSteps`] registration in this process.
+static UNCAPTURED: std::sync::Mutex<UncapturedAttempts> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Keeps one attempt's durable-step requests, its corrective calls'
+/// included, out of the replay capture while it is alive: a step whose
+/// request quotes words the capture's owners (actor, subject, terminal claim)
+/// would not retire when those words are erased (fix list row 20501, the
+/// mail claim re-check's judge request). Each guard counts once and removes
+/// only its own registration, so an overlapping guard never lets capture
+/// back early. Every other step is captured as before.
+pub(crate) struct UncapturedSteps {
+    key: ([u8; 32], AttemptId),
+}
+
+impl UncapturedSteps {
+    /// Holds `attempt` of `vault` out of the capture until the guard drops.
+    pub(crate) fn hold(vault: &Vault, attempt: AttemptId) -> Self {
+        let key = (*vault.vault_id().as_bytes(), attempt);
+        let mut held = UNCAPTURED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *held.entry(key).or_insert(0) += 1;
+        Self { key }
+    }
+}
+
+impl Drop for UncapturedSteps {
+    fn drop(&mut self) {
+        let mut held = UNCAPTURED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(count) = held.get_mut(&self.key) {
+            *count -= 1;
+            if *count == 0 {
+                held.remove(&self.key);
+            }
+        }
+    }
+}
+
+/// Whether a live [`UncapturedSteps`] guard holds `attempt` of `vault`.
+fn steps_uncaptured(vault: &Vault, attempt: AttemptId) -> bool {
+    UNCAPTURED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains_key(&(*vault.vault_id().as_bytes(), attempt))
 }
 
 #[expect(

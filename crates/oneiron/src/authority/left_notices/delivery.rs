@@ -56,7 +56,7 @@ impl Vault {
         request_timestamp: u64,
         signature: &[u8],
         request_nonce: &[u8],
-    ) -> Result<(EntityId, Vec<(u64, RemovalExportCopy)>)> {
+    ) -> Result<(EntityId, Vec<(u64, RemovalExportFile)>)> {
         let _spend_guard = crate::authority::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let person =
@@ -90,11 +90,11 @@ impl Vault {
         };
         let mut owed = Vec::new();
         for copy in copies {
-            let key = delivery_key(person, &copy.receipt_id, holder);
+            let key = delivery_key(person, copy.receipt_id(), holder);
             let mut cursor = REMOVAL_DELIVERY
                 .get(&self.store, &txn, &key)?
                 .unwrap_or_default();
-            let version = copy.delivered_at;
+            let version = copy.delivered_at();
             if cursor.acked >= version {
                 continue;
             }

@@ -333,6 +333,7 @@ fn carried(resident: &EntityId, craft: &LlmMessage) -> Option<LlmMessage> {
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: serde_json::to_string(&carrier).ok()?,
+            signature: None,
         }],
     })
 }
@@ -340,7 +341,10 @@ fn carried(resident: &EntityId, craft: &LlmMessage) -> Option<LlmMessage> {
 fn system(text: String) -> LlmMessage {
     LlmMessage {
         role: LlmMessageRole::System,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }
 
@@ -349,7 +353,7 @@ pub(super) fn message_text(message: &LlmMessage) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()

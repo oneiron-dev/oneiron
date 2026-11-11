@@ -7,16 +7,17 @@
 //! Loro seam (`crate::entity_doc::checkpoint`).
 //!
 //! A group is its basis, then its native rows in replay order. The basis is
-//! the full snapshot and the pending rows of the slot the entity's text
-//! plane appends to, read from the capture's one view and taken only as the
-//! image takes them; a cached item's STATE whose payload is itself a full
-//! history is its own basis. The basis is context: its parts rest at the
-//! group's first native row as fragments, and a restore never writes them.
+//! the snapshot (full, or shallow when it names no one, FIX 21429) and the
+//! pending rows of the slot the entity's text plane appends to, read from
+//! the capture's one view and taken only as the image takes them; a cached
+//! item's STATE whose payload is itself a snapshot is its own basis. The
+//! basis is context: its parts rest at the group's first native row as
+//! fragments, and a restore never writes them.
 //! Each native part keeps its frame's sub-tag before its no-one content, its
 //! locator naming its entity and sequence. A group's parts are published
 //! only once their all-open rebuild gives every native row back; a group
-//! with no full basis, or one that does not split or rebuild, publishes
-//! nothing and its rows stay as one row alone leaves them.
+//! with no basis the split takes, or one that does not split or rebuild,
+//! publishes nothing and its rows stay as one row alone leaves them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -118,11 +119,16 @@ fn native<'a>(index: usize, row: &CapturedSyncRow<'a>) -> Option<(Family, Entity
     Some((family, entity, native))
 }
 
-/// Whether `bytes` is a full Loro history: a snapshot export, never a
-/// shallow or state-only one, which reads as a shallow snapshot.
-fn full_history(bytes: &[u8]) -> bool {
-    LoroDoc::decode_import_blob_meta(bytes, true)
-        .is_ok_and(|meta| meta.mode == EncodedBlobMode::Snapshot)
+/// Whether `bytes` is a snapshot export the split takes: a full one, or a
+/// shallow or state-only one, which the split keeps only when it names no
+/// one (`shallow_names_no_one`, FIX 6442; else the group stays sealed).
+fn snapshot_export(bytes: &[u8]) -> bool {
+    LoroDoc::decode_import_blob_meta(bytes, true).is_ok_and(|meta| {
+        matches!(
+            meta.mode,
+            EncodedBlobMode::Snapshot | EncodedBlobMode::ShallowSnapshot
+        )
+    })
 }
 
 /// Whether `snapshot` is `entity`'s by its birth: an entity document's
@@ -192,7 +198,7 @@ pub(super) fn project(
             .all(|row| row.kind == document_sub_tags::UPDATE);
         let seed = match natives.as_slice() {
             [only] if only.kind == document_sub_tags::STATE => {
-                if !full_history(only.payload) || !born_of(only.payload, entity) {
+                if !snapshot_export(only.payload) || !born_of(only.payload, entity) {
                     continue;
                 }
                 None
@@ -200,7 +206,7 @@ pub(super) fn project(
             _ if updates => {
                 let found = basis(entity)?;
                 match found.snapshot {
-                    Some(snapshot) if full_history(&snapshot) && born_of(&snapshot, entity) => {
+                    Some(snapshot) if snapshot_export(&snapshot) && born_of(&snapshot, entity) => {
                         Some((snapshot, found.pending))
                     }
                     _ => continue,
@@ -330,8 +336,8 @@ fn rebuild(
 
 /// Refuses a rebuilt native row unless its frame reads as its locator names
 /// it: the entity its key names, a pending edit's UPDATE at a sequence key,
-/// or a cached item's full-history STATE or UPDATE, its payload the blob its
-/// sub-tag says.
+/// or a cached item's STATE (a full or shallow snapshot) or UPDATE, its
+/// payload the blob its sub-tag says.
 fn check(family: Family, at: &RowLocator, value: &[u8]) -> Result<()> {
     let named = Family::named_by(&at.key);
     let frame = frame(value).ok_or_else(bad_part)?;
@@ -339,7 +345,11 @@ fn check(family: Family, at: &RowLocator, value: &[u8]) -> Result<()> {
     let shaped = match frame.kind {
         document_sub_tags::UPDATE => blob.mode == EncodedBlobMode::Updates,
         document_sub_tags::STATE => {
-            family == Family::ResidenceItem && blob.mode == EncodedBlobMode::Snapshot
+            family == Family::ResidenceItem
+                && matches!(
+                    blob.mode,
+                    EncodedBlobMode::Snapshot | EncodedBlobMode::ShallowSnapshot
+                )
         }
         _ => false,
     };

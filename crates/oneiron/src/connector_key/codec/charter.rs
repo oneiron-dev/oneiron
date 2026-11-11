@@ -7,11 +7,11 @@ use crate::error::Result;
 
 use super::super::record::{ConnectorCharterBlock, PendingConnectorCharter};
 use super::{
-    decode_compiled_policy, decode_hash32, decode_non_empty_string, encode_compiled_policy,
-    malformed, required_value, validate_keys,
+    decode_compiled_policy, decode_hash32, decode_non_empty_string, decode_optional_entity_id,
+    encode_compiled_policy, entity_id_value, malformed, required_value, validate_keys,
 };
 
-const CHARTER_BLOCK_KEYS: [&str; 7] = [
+const CHARTER_BLOCK_KEYS: [&str; 8] = [
     "text",
     "text_hash",
     "compiled",
@@ -19,6 +19,7 @@ const CHARTER_BLOCK_KEYS: [&str; 7] = [
     "stamped_aggregate",
     "stamped_by",
     "stamped_at",
+    "approval_id",
 ];
 const PENDING_CHARTER_KEYS: [&str; 5] = [
     "text",
@@ -57,6 +58,10 @@ pub(super) fn encode_charter_block(charter: &ConnectorCharterBlock) -> Value {
         (
             Value::from(CHARTER_BLOCK_KEYS[6]),
             Value::from(charter.stamped_at),
+        ),
+        (
+            Value::from(CHARTER_BLOCK_KEYS[7]),
+            entity_id_value(Some(&charter.approval_id)),
         ),
     ])
 }
@@ -97,6 +102,8 @@ pub(super) fn decode_optional_charter_block(
     };
     validate_keys(entries, &CHARTER_BLOCK_KEYS)?;
     Ok(Some(ConnectorCharterBlock {
+        approval_id: decode_optional_entity_id(required_value(entries, CHARTER_BLOCK_KEYS[7])?)?
+            .ok_or_else(malformed)?,
         text: decode_non_empty_string(required_value(entries, CHARTER_BLOCK_KEYS[0])?)?,
         text_hash: decode_hash32(required_value(entries, CHARTER_BLOCK_KEYS[1])?)?,
         compiled: decode_compiled_policy(required_value(entries, CHARTER_BLOCK_KEYS[2])?)?,

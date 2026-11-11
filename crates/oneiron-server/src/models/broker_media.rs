@@ -7,9 +7,10 @@
 //! for the OpenAI-compatible paths, `x-goog-api-key` for the Gemini API's.
 //!
 //! A JSON or form body over 16 MiB travels in the broker's chunked call
-//! form, up to `MAX_STREAM` (512 MiB) (FIX 1895). Media replies stream
-//! back in 1 MiB frames, checked for the key and never rewritten, up to
-//! 512 MiB, within the provider's `timeout_secs` (FIX 1896).
+//! form in 1 MiB chunks (FIX 1895). Media replies stream back in 1 MiB
+//! frames, checked for the key and never rewritten (FIX 1896). Neither
+//! ordinary path has a cumulative byte cap; actual allocation failures and
+//! the provider's `timeout_secs` still end the exchange.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,6 +62,7 @@ struct Exchange {
     shape: Shape,
     path: String,
     content_type: Option<String>,
+    headers: BTreeMap<String, String>,
     body: Vec<u8>,
 }
 
@@ -199,9 +201,11 @@ impl BrokerMedia {
             shape,
             path,
             content_type,
+            headers: request_headers,
             body,
         } = exchange;
         let mut headers = self.headers.clone();
+        headers.extend(request_headers);
         if let Some(kind) = content_type {
             headers.insert("content-type".to_owned(), kind);
         }
@@ -258,13 +262,19 @@ impl BrokerMedia {
             },
             path: join(&self.prefix, &path),
             content_type: Some(JSON.to_owned()),
+            headers: BTreeMap::new(),
             body: json_bytes(&body)?,
         })
     }
 
     /// An OpenAI-compatible media request as its broker shape takes it.
     fn openai(&self, request: OpenAiMediaHttpRequest) -> LlmResult<Exchange> {
-        let OpenAiMediaHttpRequest { method, path, body } = request;
+        let OpenAiMediaHttpRequest {
+            method,
+            path,
+            headers,
+            body,
+        } = request;
         // Cohere's v2 embed route has its own broker shape (FIX 11467 H7):
         // exactly `POST /v2/embed` as JSON takes it, before the existing
         // `/v1/` classification below, which is otherwise unchanged.
@@ -290,7 +300,7 @@ impl BrokerMedia {
                 (
                     OpenAiMediaMethod::Post,
                     ["images", "edits"],
-                    OpenAiMediaBody::Multipart { .. },
+                    OpenAiMediaBody::Json(_) | OpenAiMediaBody::Multipart { .. },
                 ) => Shape::OpenAiImageEdits,
                 (OpenAiMediaMethod::Post, ["audio", "speech"], OpenAiMediaBody::Json(_)) => {
                     Shape::OpenAiSpeech
@@ -344,6 +354,7 @@ impl BrokerMedia {
             shape,
             path: join(&self.prefix, &path),
             content_type,
+            headers,
             body,
         })
     }
@@ -362,12 +373,14 @@ impl BrokerMedia {
                 },
                 path: format!("{}{path}", self.prefix),
                 content_type: Some(JSON.to_owned()),
+                headers: BTreeMap::new(),
                 body: json_bytes(&body)?,
             },
             GeminiMediaHttpRequest::Get { path } => Exchange {
                 shape: Shape::GeminiOperation,
                 path: format!("{}{path}", self.prefix),
                 content_type: None,
+                headers: BTreeMap::new(),
                 body: Vec::new(),
             },
             GeminiMediaHttpRequest::Fetch { uri } => {
@@ -382,6 +395,7 @@ impl BrokerMedia {
                         None => target.path().to_owned(),
                     },
                     content_type: None,
+                    headers: BTreeMap::new(),
                     body: Vec::new(),
                 }
             }

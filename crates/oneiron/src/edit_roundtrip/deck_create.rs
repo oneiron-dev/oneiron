@@ -422,7 +422,7 @@ impl crate::Vault {
                 template: &template,
                 assets: &stored,
                 names: request.names,
-                limits: GraphicLimits::default(),
+                limits: request.graphics.unwrap_or_else(GraphicLimits::default),
             },
         )?;
         let now = self.now_recorded_at();

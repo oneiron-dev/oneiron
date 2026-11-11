@@ -61,6 +61,10 @@ pub struct ConsentRegistryRow {
     pub created_at: u64,
     /// The one-tap revoke command the host interprets.
     pub revoke_action: ConsentRevokeAction,
+    /// A revoked witness-read grant's owner re-grant command and its exact
+    /// arguments; absent on every other row. This is a projection, not authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regrant_action: Option<ConsentRegrantAction>,
     /// Where a scoped catastrophe bypass grant applies; `None` for an
     /// ordinary standing grant.
     pub bypass: Option<super::bypass::BypassExtent>,
@@ -76,8 +80,10 @@ pub struct ConsentRegistryRow {
 
 /// An owner's agent grant as the registry shows it (FIX 5628): the agent it
 /// names, the owner who granted it, its expiry (absent: it stands until
-/// revoked), the repo bounds he gave it (FIX 6894) and whether its scope
-/// confers now. Its exact scope is the row's `scope`.
+/// revoked), the repo bounds he gave it (FIX 6894), the verb classes it
+/// names beside its exact verbs (FIX 8735), the host wallet its funded work
+/// draws on (FIX 7766) and whether its scope confers now. Its exact scope is
+/// the row's `scope`.
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -93,8 +99,17 @@ pub struct ConsentRegistryAgentGrant {
     /// the agent, as the mint answer shows them; absent on a general grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_bounds: Option<RepoAccessBounds>,
-    /// Whether it confers now: unexpired, with `read` among its verbs and no
-    /// empty world, band, audience or sensitivity axis.
+    /// The verb classes the owner named beside its exact verbs, each
+    /// resolved when a door judges a verb; absent when it names none.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub verb_classes: std::collections::BTreeSet<String>,
+    /// The host wallet the owner named for the work the grant funds; absent
+    /// when it names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ref: Option<crate::federation::WalletRef>,
+    /// Whether it confers now: unexpired, with `read` among its verbs (or
+    /// admitted by a class it names) and no empty world, band, audience or
+    /// sensitivity axis.
     pub confers: bool,
 }
 
@@ -127,6 +142,20 @@ pub struct ConsentRevokeAction {
     pub grant_ref: String,
 }
 
+/// A pre-filled owner re-grant of a revoked connector witness-read grant.
+/// Invoking it still runs the command's full owner-proof grant flow.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct ConsentRegrantAction {
+    /// Pinned command name.
+    pub command: String,
+    /// The stored agent principal, in the grant command's input shape.
+    pub agent: String,
+    /// The stored conversation, in the grant command's input shape.
+    pub conversation: String,
+}
+
 /// Pinned one-tap revoke command for a consent registry row.
 pub const CONSENT_REVOKE_COMMAND: &str = "vault.consent.revoke";
 
@@ -142,7 +171,7 @@ pub struct ConsentRegistry {
 impl ConsentRegistryRow {
     pub(super) fn from_row(row: &ConsentGrantRow) -> Self {
         let bound = row.grant.bound();
-        let grant_ref = row.grant_ref();
+        let grant_ref = crate::consent::consent_grant_row_grant_ref(&row);
         Self {
             domain: bound.domain(),
             subject: render_subject(bound.subject()),
@@ -158,6 +187,7 @@ impl ConsentRegistryRow {
                 command: CONSENT_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: row.bypass,
             delegation: None,
@@ -184,6 +214,7 @@ impl ConsentRegistryRow {
                 command: CONTACT_CLEARANCE_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: None,
             delegation: None,
@@ -221,6 +252,7 @@ impl ConsentRegistryRow {
                 command: SUPPORT_GRANT_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: None,
             delegation: Some(ConsentRegistryDelegation {
@@ -243,6 +275,7 @@ impl ConsentRegistryRow {
     pub(crate) fn from_agent_grant(
         standing: &crate::federation::AgentGrantStanding,
         now: u64,
+        classes: &crate::federation::AgentVerbClasses,
     ) -> Self {
         let grant = &standing.grant;
         Self::from_agent_grant_fields(
@@ -253,7 +286,9 @@ impl ConsentRegistryRow {
                 delegated_by: standing.delegated_by,
                 expires_at: grant.expires_at,
                 repo_bounds: grant.repo_bounds.clone(),
-                confers: grant.confers_at(now),
+                verb_classes: grant.verb_classes.clone(),
+                wallet_ref: grant.wallet_ref.clone(),
+                confers: grant.confers_with_classes_at(now, classes),
             },
             if standing.stands_at(now) {
                 ConsentGrantStatus::Active
@@ -302,6 +337,7 @@ impl ConsentRegistryRow {
                 command: crate::federation::AGENT_GRANT_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: None,
             delegation: None,

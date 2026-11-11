@@ -23,12 +23,28 @@ pub struct ImageResponse {
     pub metadata: BTreeMap<String, serde_json::Value>,
 }
 pub type ImageFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<ImageResponse>> + Send + 'a>>;
+/// Checks an optional edit mask without copying its bytes.
+pub fn validate_edit_mask(mask: Option<&ImageBytes>, references: usize) -> LlmResult<()> {
+    if mask.is_some_and(|mask| {
+        references == 0 || mask.bytes.is_empty() || !mask.media_type.starts_with("image/")
+    }) {
+        return Err(super::FatalLlmError::InvalidRequest.into());
+    }
+    Ok(())
+}
+
 pub trait ImageBackend: Send + Sync {
+    /// Whether this wire carries an explicit image-edit mask.
+    fn supports_mask(&self) -> bool {
+        false
+    }
+
     fn generate<'a>(&'a self, intent: ImageIntent, lease: &'a BudgetLease) -> ImageFuture<'a>;
     fn reference_edit<'a>(
         &'a self,
         intent: ImageIntent,
         references: Vec<ImageBytes>,
+        mask: Option<ImageBytes>,
         lease: &'a BudgetLease,
     ) -> ImageFuture<'a>;
 }
@@ -70,6 +86,7 @@ impl ImageCatalog {
         &self,
         intent: ImageIntent,
         references: Option<Vec<ImageBytes>>,
+        mask: Option<ImageBytes>,
         lease: &BudgetLease,
     ) -> LlmResult<ImageResponse> {
         let row = self
@@ -87,6 +104,10 @@ impl ImageCatalog {
             .adapters
             .get(&row.adapter)
             .ok_or(super::FatalLlmError::InvalidRequest)?;
+        validate_edit_mask(mask.as_ref(), references.as_ref().map_or(0, Vec::len))?;
+        if mask.is_some() && !adapter.supports_mask() {
+            return Err(super::FatalLlmError::InvalidRequest.into());
+        }
         let model = intent.model.clone();
         let response = match references {
             None if row.generate => adapter.generate(intent, lease).await?,
@@ -97,7 +118,7 @@ impl ImageCatalog {
                         .iter()
                         .all(|r| !r.bytes.is_empty() && r.media_type.starts_with("image/")) =>
             {
-                adapter.reference_edit(intent, refs, lease).await?
+                adapter.reference_edit(intent, refs, mask, lease).await?
             }
             _ => return Err(super::FatalLlmError::InvalidRequest.into()),
         };

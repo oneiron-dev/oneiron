@@ -16,11 +16,24 @@ impl Vault {
         HARD_DELETE_MARKER.contains(&self.store, txn, &HexId(*id))
     }
 
+    /// The target has a permanent hard-delete marker and the delete rail
+    /// finds no active body or residue left to purge. This proves neither
+    /// owner authority nor checkpoint retirement.
+    pub(crate) fn hard_deleted_without_active_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(self.local_hard_delete_marker_exists_in_txn(txn, id)?
+            && !self.active_delete_scope_exists_in_txn(txn, id)?)
+    }
+
     /// Removes a headerless tombstone replay's stale `dt:` and row-fence
     /// poison once a delete-protected engine row is successfully admitted.
     /// This is called in the SAME transaction as protected-row
     /// materialization and tombstone quarantine; such a marker never
-    /// represented valid delete authority.
+    /// represented valid delete authority. A hook scrub marked under it is
+    /// forgotten too, so a later real erase of the id is scrubbed (FIX 22240).
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn neutralize_delete_protected_marker_in_txn(
         &self,
@@ -37,6 +50,7 @@ impl Vault {
             ));
         }
         let fenced = ROW_DELETION_FENCE.delete(&self.store, wtxn, &HexId(*id))?;
+        crate::runtime_hooks::forget_scrubbed_source_in_txn(self, wtxn, id)?;
         Ok(HARD_DELETE_MARKER.delete(&self.store, wtxn, &HexId(*id))? | fenced)
     }
 

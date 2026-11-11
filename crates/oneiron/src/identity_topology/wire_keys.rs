@@ -73,6 +73,12 @@ pub(super) const BODY_KEY_AMENDED: &str = "amended";
 pub(super) const BODY_KEY_APPLIED_EVENT: &str = "applied";
 /// Minted FACET entity ids of a facet event, in the op's spec order.
 pub(super) const BODY_KEY_FACETS: &str = "facets";
+/// The facet specs a PARKED facet event records instead of minted ids (FIX
+/// 7814), in the op's spec order: what its approving ruling mints. Present
+/// exactly on a parked facet, so an applied facet keeps its bytes.
+pub(super) const BODY_KEY_FACET_SPECS: &str = "specs";
+/// The label of one parked facet spec.
+pub(super) const FACET_SPEC_KEY_LABEL: &str = "label";
 /// Map rows the apply door actually recorded, and rows it left as ambiguous
 /// residue. DECLARED counts live in the map itself
 /// ([`ReassignmentMap::assigned_and_residue_counts`](super::ReassignmentMap::assigned_and_residue_counts)); these two are what

@@ -185,3 +185,28 @@ pub(super) fn validate_request(
     }
     Ok(sealed::ValidatedVaultReadRequest(request))
 }
+
+impl VaultReadRequest {
+    /// Validates `body`, the inner request of one `method` call, as that
+    /// method's dispatch validates it: decoded as the method's own typed
+    /// request, then through the one validation door (FIX 1435). A host
+    /// checks a verb hook's rewrite of a native read here, so the read never
+    /// runs on a request its own validation refuses.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultReadError::InvalidRequest`](super::VaultReadError::InvalidRequest)
+    /// when `body` does not decode as `method`'s request or fails its
+    /// validation.
+    pub fn validate_body(method: VaultReadMethod, body: &serde_json::Value) -> VaultReadResult<()> {
+        let tagged = serde_json::json!({ "op": method.wire_op().as_str(), "request": body });
+        let request: Self = serde_json::from_value(tagged).map_err(|_| {
+            invalid_request(
+                method,
+                "request",
+                "request does not match the native method schema",
+            )
+        })?;
+        validate_request(request).map(drop)
+    }
+}

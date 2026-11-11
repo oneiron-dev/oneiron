@@ -1,0 +1,26 @@
+{
+  "name": "vault.artifacts.export",
+  "description": "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it.",
+  "input": "crate::blob_artifact::ArtifactExportRequest",
+  "output": "Option<crate::blob_artifact::ArtifactExportFile>",
+  "call": "memory.artifacts_export(&input)?",
+  "scope": "Read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "wire": "json",
+    "args": [
+      {
+        "name": "request",
+        "kind": "json"
+      }
+    ],
+    "docs": {
+      "remote": "    /// One version's export file (base64), with its pinned name and media type.\n",
+      "ts": "/** One version's export file (base64), with its pinned name and media type. */",
+      "py": "One version's export file (base64), with its pinned name and media type."
+    }
+  }
+}

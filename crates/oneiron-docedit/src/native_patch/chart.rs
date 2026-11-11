@@ -337,20 +337,15 @@ pub(super) fn set_series(
         .get(series)
         .ok_or(NativeRefusal::Stale("no such series"))?;
     let seq = match target {
-        Target::Name => &entry.name,
-        Target::Categories => &entry.categories,
-        Target::Values => &entry.values,
+        Target::Name => entry.name.as_ref(),
+        Target::Categories => entry.categories.as_ref(),
+        Target::Values => entry.values.as_ref(),
+        Target::Size => entry.other.first(),
     }
-    .as_ref()
     .ok_or(NativeRefusal::AmbiguousChartData(
         "the sequence has no workbook source",
     ))?;
-    if seq.block.is_some() {
-        return Err(NativeRefusal::AmbiguousChartData(
-            "a multi-level category block is written by the chart rewrite",
-        ));
-    }
-    let cells = seq.range.cells();
+    let cells = seq.keys();
     if cells.len() != values.len() {
         return Err(NativeRefusal::LengthChange {
             have: cells.len(),
@@ -387,11 +382,6 @@ pub(super) fn set_series(
         if !keys.iter().any(|key| written.contains_key(key)) {
             continue;
         }
-        if seq.block.is_some() {
-            return Err(NativeRefusal::AmbiguousChartData(
-                "a write into a multi-level category block",
-            ));
-        }
         let held = model.cache(seq)?;
         let mut cache = held.clone();
         for (slot, key) in cache.iter_mut().zip(&keys) {
@@ -399,7 +389,25 @@ pub(super) fn set_series(
                 *slot = as_kind(seq.kind, value.clone());
             }
         }
-        edits.extend(cache::patched(&model, seq.cache, &held, &cache)?);
+        if let Some(block) = &seq.block {
+            for (level, (at, _)) in model
+                .tree
+                .children(seq.cache)
+                .filter(|(_, child)| child.is(C, "lvl"))
+                .enumerate()
+            {
+                let start = level * block.points;
+                let end = start + block.points;
+                edits.extend(cache::patched_level(
+                    &model,
+                    at,
+                    &held[start..end],
+                    &cache[start..end],
+                )?);
+            }
+        } else {
+            edits.extend(cache::patched(&model, seq.cache, &held, &cache)?);
+        }
     }
     let out = xml::splice(&model.bytes, edits)
         .map_err(|_| NativeRefusal::Invalid("overlapping cache writes"))?;
@@ -412,6 +420,12 @@ pub(super) fn set_series(
 
 fn points(p: &str, values: &[Cell]) -> String {
     let mut out = format!("<{p}ptCount val=\"{}\"/>", values.len());
+    out.push_str(&point_values(p, values));
+    out
+}
+
+fn point_values(p: &str, values: &[Cell]) -> String {
+    let mut out = String::new();
     for (idx, value) in values.iter().enumerate() {
         let text = match value {
             Cell::Missing => continue,

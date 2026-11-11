@@ -1,16 +1,8 @@
-//! Whether this host serves a trained checkpoint (OF-577, FIX 857, FIX
-//! 3864).
+//! Actual trained-checkpoint serving, separate from a bound custody receipt.
 //!
-//! An approved role swap writes the role's binding and its custody receipt
-//! and marks the run `Bound`; serving the returned weights takes a host
-//! loader that resolves that custody pin and checks the host can run it. No
-//! role loader exists yet, so a role's checkpoint reads unavailable here: a
-//! `Bound` receipt is never reported as deployed or serving. The custody pin
-//! a loader would load is shown beside it.
-//!
-//! A question head the owner bound to a typed question serves on this
-//! host's Local rung (`QuestionHeadRung`) once the host's decision ladder is
-//! staffed, from its first call on: it loads once from custody, and a head
+//! A question head the owner bound to a typed question (FIX 3864) serves on
+//! this host's Local rung (`QuestionHeadRung`) once the host's decision ladder
+//! is staffed, from its first call on: it loads once from custody, and a head
 //! that cannot load or read steps to the next rung.
 
 use oneiron::EntityId;
@@ -20,7 +12,6 @@ use serde::Serialize;
 
 use crate::server::SyncServer;
 
-/// Why no role checkpoint serves on this host.
 const NO_LOADER: &str = "no trained-weight loader on this host";
 /// Why a question head serves.
 const HEAD_SERVES: &str = "the bound head answers its question on this host's Local rung, for calls \
@@ -33,33 +24,25 @@ const HEAD_UNBOUND: &str =
 /// Why a bound head does not serve on a host whose ladder is unstaffed.
 const NO_LADDER: &str = "no [models] config staffs this host's decision ladder";
 
-/// Whether a trained checkpoint serves on this host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum ServingState {
-    /// It answers calls here.
-    Serving,
-    /// Nothing here loads it.
     Unavailable,
+    Serving,
 }
 
-/// How a trained checkpoint serves on this host.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct TrainedServing {
     state: ServingState,
     reason: &'static str,
-    /// The custody pin a loader loads: for a role, the role's bound
-    /// checkpoint while it is this one, the manifest still binds it and its
-    /// custody verifies; for a question head, its bound checkpoint while it
-    /// is this one; `None` otherwise.
     custody: Option<PinnedCheckpoint>,
 }
 
-/// How `checkpoint` serves for `role` on this host.
+/// Serving needs the actual bound role, current text-slot selection, matching
+/// declared space, and a live local runtime. Loading alone never means serving.
 ///
 /// # Errors
-///
-/// Storage errors, or a bound checkpoint whose custody does not verify.
+/// Storage errors or a custody pin that no longer verifies.
 pub(crate) fn trained_serving(
     server: &SyncServer,
     role: ModelRole,
@@ -69,9 +52,22 @@ pub(crate) fn trained_serving(
         .vault()
         .training_role_checkpoint(role)?
         .filter(|pin| pin == checkpoint);
+    let serving = role == ModelRole::RetrievalEmbedder
+        && custody.is_some()
+        && server.serves_training_checkpoint(checkpoint)?;
     Ok(TrainedServing {
-        state: ServingState::Unavailable,
-        reason: NO_LOADER,
+        state: if serving {
+            ServingState::Serving
+        } else {
+            ServingState::Unavailable
+        },
+        reason: if serving {
+            "the bound checkpoint serves the active text space"
+        } else if role == ModelRole::RetrievalEmbedder {
+            "no active local runtime serves this checkpoint's text space"
+        } else {
+            NO_LOADER
+        },
         custody,
     })
 }

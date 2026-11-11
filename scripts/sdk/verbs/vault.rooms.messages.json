@@ -1,0 +1,44 @@
+{
+  "name": "vault.rooms.messages",
+  "description": "One page of the turns in a room this reader may read; with thread_ref, of that one thread alone.",
+  "input": "crate::workspace_roster::RoomMessagesRequest",
+  "output": "crate::workspace_roster::RoomPage",
+  "call": "memory.rooms_messages_selected(&input)?",
+  "scope": "Read",
+  "mcp_fields": {
+    "room_ref": "room_ref",
+    "turn_ref": "after",
+    "thread_ref": "thread_ref"
+  },
+  "mcp_required_fields": [
+    "room_ref"
+  ],
+  "page": {
+    "rows": "rows",
+    "cursor": "next_after",
+    "resume": "turn_ref"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "binding": {
+    "generic": true,
+    "args": [
+      {
+        "name": "room_ref",
+        "type": "String"
+      },
+      {
+        "name": "after",
+        "type": "Option<String>"
+      },
+      {
+        "name": "limit",
+        "type": "Option<usize>"
+      },
+      {
+        "name": "thread_ref",
+        "type": "Option<String>"
+      }
+    ]
+  }
+}

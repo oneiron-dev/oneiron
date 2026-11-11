@@ -30,7 +30,15 @@ impl Vault {
         slip_lifetime_secs: u64,
         principal: PairingPrincipal,
     ) -> Result<PairingLink> {
-        self.issue_pairing_link_in(issuer, scope, slip_lifetime_secs, principal, None, None)
+        self.issue_pairing_link_in(
+            issuer,
+            scope,
+            slip_lifetime_secs,
+            principal,
+            None,
+            None,
+            None,
+        )
     }
     /// [`Self::issue_pairing_link_for_principal`] made by the authenticated
     /// owner. The link records that owner, revalidated as it is stored.
@@ -48,6 +56,7 @@ impl Vault {
             slip_lifetime_secs,
             principal,
             Some(owner),
+            None,
             None,
         )
     }
@@ -73,8 +82,46 @@ impl Vault {
             principal,
             Some(owner),
             Some((owner, surface, ownership)),
+            None,
         )
     }
+    /// Issues a one-use link for the live share's own recipient. The issuer
+    /// supplies the recipient's class; redemption supplies only its key.
+    /// This credential can open the rendered view and its citations, not read
+    /// vault records or enrol a machine.
+    pub fn issue_share_view_link(
+        &self,
+        issuer: &HostSlipIssuer,
+        actor: &crate::write_envelope::WriteActor,
+        share_id: crate::EntityId,
+        actor_class: crate::edge::EdgeActorClass,
+        slip_lifetime_secs: u64,
+    ) -> Result<PairingLink> {
+        use oneiron_authority::federation::{ScopeAxis, SensitivityCeiling};
+        let scope = Scope {
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::All,
+            audience: ScopeAxis::All,
+            verbs: [
+                "vault.shares.view".to_owned(),
+                "vault.notes.follow_citation".to_owned(),
+            ]
+            .into_iter()
+            .collect(),
+            sensitivity: SensitivityCeiling::TOP,
+        };
+        self.issue_pairing_link_in(
+            issuer,
+            scope,
+            slip_lifetime_secs,
+            PairingPrincipal::default(),
+            None,
+            None,
+            Some((share_id, *actor, actor_class)),
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
     fn issue_pairing_link_in(
         &self,
         issuer: &HostSlipIssuer,
@@ -87,11 +134,32 @@ impl Vault {
             ActSurface,
             MachineOwnership,
         )>,
+        share: Option<(
+            crate::EntityId,
+            crate::write_envelope::WriteActor,
+            crate::edge::EdgeActorClass,
+        )>,
     ) -> Result<PairingLink> {
         if slip_lifetime_secs == 0 {
             return Err(invalid_authority());
         }
         let mut txn = self.store.env.write_txn()?;
+        let (principal, share_ref) = match share {
+            None => (principal, None),
+            Some((id, actor, class)) => {
+                let now = self.instant_in_txn(&txn)?.secs();
+                let share =
+                    crate::share::authorize_share_link_in_txn(self, &txn, &id, &actor, now)?;
+                (
+                    PairingPrincipal {
+                        holder_ref: Some(share.recipient_ref.to_hex()),
+                        actor_class: Some(class.gate_actor_class().to_owned()),
+                        ..PairingPrincipal::default()
+                    },
+                    Some(id),
+                )
+            }
+        };
         let owner = link_owner
             .map(|owner| owner.revalidate_as_vault_owner_in_txn(self, &txn))
             .transpose()?;
@@ -136,6 +204,7 @@ impl Vault {
             scope,
             host_key: issuer.binding_key(),
             principal,
+            share_ref,
             machine,
             pin,
             owner,
@@ -205,6 +274,7 @@ impl Vault {
                 actor_class: Some(ACTOR_CLASS_HUMAN.to_owned()),
                 ..PairingPrincipal::default()
             },
+            share_ref: None,
             machine: None,
             pin: None,
             owner: Some(owner),
