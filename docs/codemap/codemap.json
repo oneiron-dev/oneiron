@@ -99402,6 +99402,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/report_route_one_reader.rs",
+     "purpose": "Regression coverage for report routing with LMDB's one reader slot per thread",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/retrieval_policy_default_floor.rs",
      "purpose": "Default retrieval-policy updates keep tiny trials as offers; only an explicit owner reward floor admits the…",
      "surface": {}
@@ -101308,7 +101316,7 @@
    "over_bar": 244,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7260,
-   "test_files": 940
+   "test_files": 941
   },
   "oneiron-agent-runtime": {
    "files": [
