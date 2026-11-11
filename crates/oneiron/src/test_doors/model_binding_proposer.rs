@@ -19,13 +19,13 @@ use crate::llm::catalog_doors::{
     ModelTrialRef,
 };
 use crate::llm::decision::questions::{
-    OutcomeBinding, OutcomeSource, QuestionActivation, QuestionAudience, QuestionCriteria,
-    QuestionDefinitionInput, QuestionMedia, RefreshPolicy, StandingAnswer,
-    backfill_standing_answer, create_question, outcome_labels, project_bound_outcomes,
-    standing_source_frontier,
+    GraphAnswerer, GraphPrediction, GraphQuestionInput, GraphUnitContext, OutcomeBinding,
+    OutcomeSource, QuestionActivation, QuestionAudience, QuestionCriteria, QuestionDefinitionInput,
+    QuestionMedia, RefreshPolicy, create_question, outcome_labels, project_bound_outcomes,
+    refresh_due_questions_with, schedule_backfill,
 };
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion,
     DecisionQuestionInput, DecisionReceipt, DecisionRung, ProviderPin, TypedDecision,
 };
 use crate::llm::manifest::{
@@ -211,9 +211,32 @@ fn manifest(incumbent: &ModelId) -> Result<ModelManifest> {
     })
 }
 
+struct UnitFixtureAnswerer;
+
+impl GraphAnswerer for UnitFixtureAnswerer {
+    fn answer(
+        &mut self,
+        _question: &DecisionQuestion,
+        _context: &GraphUnitContext,
+    ) -> Result<Option<GraphPrediction>> {
+        Ok(Some(GraphPrediction {
+            answer: DecisionAnswer::Noul(true),
+            probability: 0.9,
+            provider: ProviderPin {
+                rung: DecisionRung::Big,
+                model: "bp-backfill".to_owned(),
+                version: "r1".to_owned(),
+            },
+            cost_per_thousand: 0.0,
+            paired: None,
+            rule: None,
+        }))
+    }
+}
+
 /// Builds one completed held-out trial offer for [`PROPOSE_ROLE`] under the
 /// vault's embedded owner: two fixture units, a standing yes/no question over
-/// them, one backfilled answer each, the later outcome facts bound as labels,
+/// them, one scheduled graph answer each, the later outcome facts bound as labels,
 /// a catalog revision pinning the incumbent and candidate arms, the manifest
 /// with the incumbent binding, and the trial nominated, approved, run with
 /// scripted readings and completed to an offer. Never writes a proposal.
@@ -261,7 +284,7 @@ pub fn ensure_completed_trial_offer(vault: &Vault) -> Result<TrialFixture> {
             },
             adapter: "graph".to_owned(),
             units: units.clone(),
-            recipe: "near_neighbourhood".to_owned(),
+            recipe: "unit_only".to_owned(),
             profile: "default".to_owned(),
             dial: DecisionDial {
                 first: DecisionRung::Big,
@@ -301,31 +324,41 @@ pub fn ensure_completed_trial_offer(vault: &Vault) -> Result<TrialFixture> {
         now,
     )?;
     let question = record.definition.question.id;
+    // The question needs only each unit's own body, not its neighbourhood.
+    // Scheduled graph backfill records both body pins and the refresh frontier
+    // that the public trial doors revalidate; bare host backfill records neither
+    // that receipt nor that frontier format.
+    schedule_backfill(
+        vault,
+        owner,
+        question,
+        1,
+        now,
+        units
+            .iter()
+            .map(|unit| GraphQuestionInput {
+                unit: *unit,
+                evidence: Vec::new(),
+            })
+            .collect(),
+    )?;
+    let batch = refresh_due_questions_with(vault, now, |_, _| Ok(UnitFixtureAnswerer))?;
+    if let Some(failure) = batch.failures.into_iter().next() {
+        return Err(failure.error);
+    }
+    if batch.answers.len() != CASES {
+        return Err(Error::InvalidConfig(format!(
+            "fixture stored {} answers, expected {CASES}",
+            batch.answers.len()
+        )));
+    }
     let mut held_out = Vec::new();
     for (index, unit) in units.iter().enumerate() {
-        let frontier = standing_source_frontier(vault, owner, question, 1, actor, *unit, &[])?;
-        let answer = backfill_standing_answer(
-            vault,
-            owner,
-            question,
-            1,
-            actor,
-            StandingAnswer {
-                unit: *unit,
-                answer: DecisionAnswer::Noul(true),
-                probability: Some(0.9),
-                evidence: Vec::new(),
-                providers: vec![ProviderPin {
-                    rung: DecisionRung::Big,
-                    model: "bp-backfill".to_owned(),
-                    version: "r1".to_owned(),
-                }],
-                paired: Vec::new(),
-                rule: None,
-                source_frontier: frontier,
-            },
-            now,
-        )?;
+        let answer = batch
+            .answers
+            .iter()
+            .find(|answer| answer.unit == *unit && answer.decision.receipt.question == question)
+            .ok_or_else(|| Error::InvalidConfig("fixture unit has no graph answer".to_owned()))?;
         let fact = EntityId::now();
         vault
             .memory(owner, EdgeActorClass::Human)
