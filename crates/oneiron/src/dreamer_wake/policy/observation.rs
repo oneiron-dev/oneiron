@@ -224,7 +224,9 @@ impl Vault {
     /// Re-evaluate against the writer snapshot and co-commit wake + cursor.
     /// A competing check cannot enqueue again for the same rows. An idle
     /// host also asks for the curator pass (OF-191), once per rubric
-    /// cadence, in the same commit ([`queue_idle_curator_in_txn`]).
+    /// cadence, in the same commit ([`queue_idle_curator_in_txn`]), and wakes
+    /// each idle turn program once per idle stretch, in a write of its own
+    /// (untangle slice 6.8c).
     pub fn enqueue_due_dreamer_wake(
         &self,
         idle: WakeIdleState,
@@ -234,6 +236,9 @@ impl Vault {
         if matches!(curator, Some(EnqueueDreamerAttemptOutcome::Enqueued(_))) {
             self.store.notify_attempt_observers();
         }
+        // Idle turn programs wake on the same idle sample (untangle slice
+        // 6.8c), in their own write after this check's.
+        crate::dreamer_runner::release_idle_programs(self, idle, now);
         Ok(outcome)
     }
 

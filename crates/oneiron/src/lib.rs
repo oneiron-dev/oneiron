@@ -709,6 +709,10 @@ pub(crate) mod test_util;
 #[cfg(oneiron_test_support)]
 #[doc(hidden)]
 pub mod test_doors;
+/// The fixture writes `test_util`, `test_support` and `test_doors` share,
+/// compiled under any of their gates. Not API.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) mod test_fixtures;
 /// Doors for tests that drive the engine from another crate. Not API.
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]

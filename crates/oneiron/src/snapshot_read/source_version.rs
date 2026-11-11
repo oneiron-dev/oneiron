@@ -129,8 +129,32 @@ pub(super) fn served_turn_text_in_txn(
     let Some(words) = text.text() else {
         return Ok((None, false));
     };
+    let masked =
+        turn_lifted_keys_in_txn(memory, read, txn, turn, text)?.and_then(|keys| keys.masked(words));
+    Ok(match masked {
+        Some(served) => (Some(served), true),
+        None => (Some(words.to_owned()), false),
+    })
+}
+
+/// The lifted keys `memory`'s bound reader reads as handles in TURN `turn`'s
+/// projected `text`: those the marks of the TURN's own body and of each
+/// MESSAGE row its words come from name, each row read through `read`.
+/// `None` for a reader who reads each key as stored (the owner, a granted
+/// agent).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn turn_lifted_keys_in_txn(
+    memory: &crate::memory::Memory<'_>,
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    text: &TurnText,
+) -> crate::memory::MemoryResult<Option<crate::batch::secret_scan::LiftedKeys>> {
     if !memory.reads_lifted_keys_masked_in_txn(txn)? {
-        return Ok((Some(words.to_owned()), false));
+        return Ok(None);
     }
     let mut sources = vec![*turn];
     sources.extend(text.spans(None)?.into_iter().map(|span| span.message));
@@ -142,8 +166,7 @@ pub(super) fn served_turn_text_in_txn(
         .flatten()
         .map(|(_, _, body)| body)
         .collect();
-    let (served, masked) = memory.lifted_projection_in_txn(txn, &bodies, words)?;
-    Ok((Some(served), masked))
+    memory.lifted_keys_of_bodies_in_txn(txn, &bodies)
 }
 
 /// `blake3:<hex>` for a 32-byte BLAKE3 digest.
