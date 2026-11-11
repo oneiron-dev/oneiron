@@ -136,6 +136,7 @@ impl Vault {
                     git_push_bounds: Some(bounds.clone()),
                     verb_classes: BTreeSet::new(),
                     wallet_ref: None,
+                    steward: false,
                 },
             )?;
             self.apply_grant_row_op_in_txn(

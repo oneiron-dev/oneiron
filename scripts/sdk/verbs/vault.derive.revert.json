@@ -1,0 +1,16 @@
+{
+  "name": "vault.derive.revert",
+  "description": "Takes back one derivation batch, item by item where each still stands as committed, for the agent that committed it through its attached live run or for the vault owner under the owner's proof.",
+  "input": "crate::derive::DeriveRevertInput",
+  "output": "crate::derive::DeriveRevertView",
+  "call": "crate::code_run::fold_api::host_required(memory, &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_session": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false
+}
