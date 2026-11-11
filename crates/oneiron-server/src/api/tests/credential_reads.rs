@@ -450,7 +450,7 @@ async fn an_owner_credential_handed_to_another_key_reads_no_relationship_words()
 #[tokio::test]
 async fn a_host_slip_handed_to_another_key_reads_no_relationship_words() {
     let room = room();
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"secret").unwrap();
+    let issuer = crate::test_credentials::host_issuer(&room.server);
     let mut slip = room.server.vault.ensure_host_root_slip(&issuer).unwrap();
     let holder = ed25519_dalek::SigningKey::from_bytes(&[0x51; 32]);
     issuer

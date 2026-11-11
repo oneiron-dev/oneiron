@@ -468,6 +468,7 @@ async fn headerless_vector_delete_refreshes_only_its_local_read() {
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"");
     let server = Arc::new(
         crate::server::SyncServer::new(
             vault,

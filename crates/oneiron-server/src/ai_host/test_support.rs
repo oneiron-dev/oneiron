@@ -12,11 +12,15 @@ use crate::fake_llm::Reply;
 
 pub(crate) const TEST_SECRET: &str = "ai-host-test-host-secret";
 
-/// A vault rooted by the test host, with its engine machine writers.
+/// A vault rooted by the test host, with its engine machine writers. The
+/// root is this install's own issuer seed (FIX-LIST 3018), the one the
+/// fixture keystore holds for [`TEST_SECRET`], so a server opened over it
+/// with that secret loads the same root.
 pub(crate) fn rooted_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(TEST_SECRET.as_bytes()).unwrap();
+    crate::test_credentials::install_fixture_keystore(&vault, TEST_SECRET.as_bytes());
+    let issuer = vault.bootstrap_host_slip_issuer().unwrap();
     vault.ensure_host_root_slip(&issuer).unwrap();
     vault.provision_engine_machine_identities(&issuer).unwrap();
     (dir, vault)
