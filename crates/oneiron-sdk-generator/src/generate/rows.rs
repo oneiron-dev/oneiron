@@ -10,6 +10,7 @@ use regex::Regex;
 
 use super::{Generator, MCP_NONE_CONTEXTS, MCP_SCOPES, RowId, RowStore, SESSION_READS};
 use crate::error::GenerateError;
+use crate::facade_types::{Inventory, type_names};
 use crate::py::re::compile_fullmatch;
 use crate::py::text::{repr_str, repr_str_tuple, strip};
 use crate::py::value::{Dict, Value, set_add};
@@ -727,9 +728,19 @@ fn filter(rows: &RowStore, ids: &[RowId], keep: impl Fn(&Dict) -> bool) -> Vec<R
 impl Generator {
     /// Port of generate.py:4-343, the module level, in source order: the first failure wins, with Python's message.
     pub(crate) fn new(root: &Path) -> Result<Self, GenerateError> {
+        Self::module_level(root, true)
+    }
+
+    /// The module level as `scripts/sdk/port_harness.py rows` runs it: facade_types.py's import still reads
+    /// type_names.json, but the stubbed `Inventory` reads no Rust source and builds nothing (`inventory` is `None`).
+    pub(crate) fn rows_only(root: &Path) -> Result<Self, GenerateError> {
+        Self::module_level(root, false)
+    }
+
+    fn module_level(root: &Path, build_inventory: bool) -> Result<Self, GenerateError> {
         // generate.py:4-15, the imports. facade_types.py's module level runs here, before any verb file is read: it
-        // reads type_names.json (facade_types.py:372). G1b ports it at this place. catalog_fragment.py and
-        // uniffi_types.py read nothing at import.
+        // reads type_names.json (facade_types.py:372), beside the resolved scripts/sdk (its `__file__`), so it is
+        // read below once that directory is known. catalog_fragment.py and uniffi_types.py read nothing at import.
         //
         // generate.py:16 `ROOT = Path(__file__).resolve().parents[2]`, and verb_table.py:7's `VERBS_DIR` beside
         // the resolved scripts/sdk.
@@ -742,6 +753,8 @@ impl Generator {
             .and_then(Path::parent)
             .unwrap_or(&sdk)
             .to_path_buf();
+        // facade_types.py:372 `TYPE_NAMES = json.loads(...)` (the import, generate.py:12).
+        let type_names = type_names(&root)?;
         // generate.py:17 `MANIFEST = {'verbs': load_verbs()}`
         let mut rows = RowStore::default();
         let manifest: Vec<RowId> = load_verbs(&sdk.join("verbs"))?
@@ -765,6 +778,8 @@ impl Generator {
             code_mode_rows: Vec::new(),
             schema_rows: Vec::new(),
             facade_rows: Vec::new(),
+            type_names,
+            inventory: None,
         };
         generator.host_sets()?;
         generator.callable_sets()?;
@@ -782,9 +797,15 @@ impl Generator {
             .into_iter()
             .chain(generator.board_host_rows.iter().copied())
             .collect();
-        // generate.py:343 `INVENTORY = Inventory(ROOT, FACADE_ROWS)`: G1b builds it here. The module level after it
-        // binds constant tables only (left to the PRs that port their emitters) and CORE_VERB_NAMES and
-        // CORE_COUNT_DEFAULTS (`super`); it checks no row.
+        // generate.py:343 `INVENTORY = Inventory(ROOT, FACADE_ROWS)`. The module level after it binds constant
+        // tables only (left to the PRs that port their emitters) and CORE_VERB_NAMES and CORE_COUNT_DEFAULTS
+        // (`super`); it checks no row.
+        if build_inventory {
+            let facade_rows = generator.rows.select(&generator.facade_rows);
+            let inventory =
+                Inventory::with_type_names(&generator.root, &facade_rows, &generator.type_names)?;
+            generator.inventory = Some(inventory);
+        }
         Ok(generator)
     }
 
@@ -970,6 +991,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let verbs = root.join("scripts/sdk/verbs");
         fs::create_dir_all(&verbs).expect("a scratch tree");
+        // facade_types.py's import reads it before any verb file.
+        fs::write(root.join("scripts/sdk/type_names.json"), "{}\n").expect("type_names.json");
         for (file, text) in files {
             fs::write(verbs.join(file), text).expect("a verb file");
         }
@@ -1067,6 +1090,26 @@ mod tests {
             .expect_err("1 == 1.0")
             .to_string();
         assert_eq!(error, "ValueError: duplicate SDK verb");
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn type_names_is_read_before_the_verbs() {
+        // facade_types.py's import reads type_names.json (generate.py:12) before load_verbs (generate.py:17): with
+        // both broken, Python's `generate.py` and `port_harness.py rows` stop on type_names.json.
+        let root = tree("type-names-first", &[("zz_fixture.json", "{")]);
+        fs::write(root.join("scripts/sdk/type_names.json"), "{\n").expect("type_names.json");
+        let expected = "json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 2 column \
+                        1 (char 2)";
+        for got in [
+            Generator::new(&root).map(drop),
+            Generator::rows_only(&root).map(drop),
+        ] {
+            assert_eq!(
+                got.expect_err("type_names.json is broken").to_string(),
+                expected
+            );
+        }
         fs::remove_dir_all(&root).expect("cleanup");
     }
 

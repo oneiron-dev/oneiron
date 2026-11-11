@@ -2,6 +2,7 @@
 //! subcommand prints the same canonical dump as the Python half, so `diff` proves the port.
 
 mod floats;
+mod replay;
 mod rows;
 mod unicode;
 
@@ -16,6 +17,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), GenerateError> {
         Some("floats") => floats::run(&args[1..]),
         Some("rows") => rows::run(&args[1..]),
         Some("unicode") => unicode::run(&args[1..]),
+        Some("replay") => replay::run(&args[1..]),
         _ => Err(GenerateError::exit(USAGE)),
     }
 }
