@@ -329,6 +329,19 @@ impl Vault {
         changes.sort_by_key(|(id, change)| (change.changed_at, *id));
         Ok(changes)
     }
+
+    /// The receipt [`Self::apply_engine_control`] wrote under `id`, for the
+    /// verb that made the change to answer with (untangle 6.6d).
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when no receipt has this id; a store failure.
+    pub(crate) fn engine_control_change(&self, id: EntityId) -> Result<EngineControlChange> {
+        let txn = self.store.env.read_txn()?;
+        ENGINE_CONTROL_CHANGE
+            .get(&self.store, &txn, &id)?
+            .ok_or_else(|| Error::InvalidConfig("no engine-control receipt has this id".into()))
+    }
 }
 
 /// The engine-control receipts' actor scrub, named in the table's

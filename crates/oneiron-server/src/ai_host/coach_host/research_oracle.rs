@@ -82,7 +82,9 @@ fn stated_axes(vault: &Vault, basis: &ResearchGoalBasis) -> oneiron::Result<Opti
     let Some((project, _)) = basis.pin.project else {
         return Ok(None);
     };
-    let Some(record) = vault.project_intake_goal_for_coach(project)? else {
+    let Some(record) = vault
+        .project_intake_goal_as(oneiron::dreamer_runner::authority::coach_reader()?, project)?
+    else {
         return Ok(None);
     };
     let stated: Vec<_> = record

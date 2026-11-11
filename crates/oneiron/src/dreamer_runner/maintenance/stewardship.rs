@@ -241,23 +241,24 @@ impl Vault {
         })
     }
 
-    /// A holder of `engine.controls` sets how often one standing rule falls
-    /// due (untangle 6.6b; maintenance cadence). The rule's person, draft
-    /// route, `since` and the rule set's owner stay as the owner set them.
-    /// Returns the receipt.
+    /// The owner, by its proof, or a holder of `engine.controls` sets how often one standing rule
+    /// falls due (untangle 6.6b; maintenance cadence). The rule's person, draft route, `since` and
+    /// the rule set's owner stay as the owner set them. Untangle 6.6d gives it its verb. Returns
+    /// the receipt.
     ///
     /// # Errors
     ///
-    /// `InvalidConfig` when `holder` holds no live `engine.controls`; an
-    /// unknown rule id or a period the rule refuses; store failures.
-    pub fn set_stewardship_rule_period_as_holder(
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
+    /// holder of `engine.controls`; an unknown rule id or a period the rule refuses; store
+    /// failures.
+    pub fn set_stewardship_rule_period_by(
         &self,
-        holder: EntityId,
+        actor: crate::federation::EngineControlActor<'_>,
         rule_id: &str,
         every_secs: u64,
     ) -> Result<EntityId> {
         self.apply_engine_control(
-            crate::federation::EngineControlActor::Holder(holder),
+            actor,
             crate::federation::EngineControlClass::MaintenanceCadence,
             "DREAMER_STEWARDSHIP_RULES",
             &crate::federation::rendered_change(&serde_json::json!({
@@ -277,6 +278,25 @@ impl Vault {
                 RULES.put(&self.store, txn, &(), &row)?;
                 Ok(())
             },
+        )
+    }
+
+    /// [`Self::set_stewardship_rule_period_by`] for a holder of `engine.controls` (untangle
+    /// 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_stewardship_rule_period_by`].
+    pub fn set_stewardship_rule_period_as_holder(
+        &self,
+        holder: EntityId,
+        rule_id: &str,
+        every_secs: u64,
+    ) -> Result<EntityId> {
+        self.set_stewardship_rule_period_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            rule_id,
+            every_secs,
         )
     }
 

@@ -13,6 +13,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron::dreamer_runner::authority::coach_reader;
 use oneiron::federation::{
     EngineControlActor, EngineControlClass, SystemAgentGrantNarrowing, SystemFunction,
 };
@@ -21,7 +22,7 @@ use oneiron::test_doors::steward::{
     GrantMark, STEWARD_READ_VERB, STEWARD_VERBS, grant_mark, open_owner_carrier_vault, owner,
     stand_steward_grant,
 };
-use oneiron::{EntityId, Vault};
+use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 const CLASSES: [EngineControlClass; 4] = [
     EngineControlClass::MaintenanceCadence,
@@ -48,7 +49,14 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
     let owner = owner(&vault).expect("owner proof");
     let coach = coach(&vault).expect("the Coach");
     let project = write_root_goal(&vault, &owner).expect("goal");
-    let goal = vault.project_intake_goal(project).expect("owner read");
+    let owner_reader = WriteActor::new(
+        vault.ensure_embedded_owner_actor().expect("owner"),
+        EdgeActorClass::Human,
+    );
+    let coach_reader = coach_reader().expect("the Coach as a reader");
+    let goal = vault
+        .project_intake_goal_as(owner_reader, project)
+        .expect("owner read");
     assert!(goal.is_some(), "the owner reads the goal");
 
     // Before any grant: the owner tunes, the Coach does not.
@@ -107,7 +115,7 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
     assert_eq!(change.knob, "DREAMER_PROACTIVITY_CADENCE");
     assert_eq!(
         vault
-            .project_intake_goal_for_coach(project)
+            .project_intake_goal_as(coach_reader, project)
             .expect("coach read"),
         goal,
         "the Coach reads the goal through its grant"
@@ -119,13 +127,15 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
     stand_steward_grant(&vault, coach, &[ENGINE_CONTROLS_VERB]).expect("controls only");
     assert_eq!(
         vault
-            .project_intake_goal_for_coach(project)
+            .project_intake_goal_as(coach_reader, project)
             .expect("coach read"),
         None,
         "a grant without read reads no goal"
     );
     assert_eq!(
-        vault.project_intake_goal(project).expect("owner read"),
+        vault
+            .project_intake_goal_as(owner_reader, project)
+            .expect("owner read"),
         goal
     );
     assert!(vault.coach_offer_reach().expect("offer reach"));

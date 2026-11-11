@@ -87,7 +87,12 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
         assert!(!allowed(&vault, EngineControlActor::Holder(coach), class));
     }
     assert_eq!(
-        vault.project_intake_goal_for_coach(project).unwrap(),
+        vault
+            .project_intake_goal_as(
+                crate::dreamer_runner::authority::coach_reader().unwrap(),
+                project
+            )
+            .unwrap(),
         Some(goal())
     );
     assert!(vault.coach_offer_reach().unwrap());
@@ -123,7 +128,12 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
     assert!(!change.owner);
     assert_eq!(change.class, EngineControlClass::WakeCadence);
     assert_eq!(
-        vault.project_intake_goal_for_coach(project).unwrap(),
+        vault
+            .project_intake_goal_as(
+                crate::dreamer_runner::authority::coach_reader().unwrap(),
+                project
+            )
+            .unwrap(),
         Some(goal())
     );
     assert!(vault.coach_offer_reach().unwrap());
@@ -165,7 +175,12 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
             .is_err()
     );
     assert_eq!(
-        vault.project_intake_goal_for_coach(project).unwrap(),
+        vault
+            .project_intake_goal_as(
+                crate::dreamer_runner::authority::coach_reader().unwrap(),
+                project
+            )
+            .unwrap(),
         Some(goal())
     );
 
@@ -174,7 +189,15 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
     vault
         .stand_steward_grant_for_test(coach, &[ENGINE_CONTROLS_VERB])
         .expect("controls only");
-    assert_eq!(vault.project_intake_goal_for_coach(project).unwrap(), None);
+    assert_eq!(
+        vault
+            .project_intake_goal_as(
+                crate::dreamer_runner::authority::coach_reader().unwrap(),
+                project
+            )
+            .unwrap(),
+        None
+    );
     assert_eq!(vault.project_intake_goal(project).unwrap(), Some(goal()));
     assert!(vault.coach_offer_reach().unwrap());
 }
