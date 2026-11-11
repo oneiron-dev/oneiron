@@ -1,0 +1,43 @@
+/* Kind, name, maker, time. The time column is fixed so figures line up. */
+.sl-file-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 16ch 19ch;
+  column-gap: 12px;
+  align-items: center;
+  width: calc(100% + 12px);
+  margin: 0 -6px;
+  padding: 6px;
+  border-radius: var(--sl-radius);
+  color: var(--sl-ink-2);
+  text-align: left;
+}
+
+.sl-file-row:hover,
+.sl-file-row:focus-visible {
+  background: var(--sl-hover);
+  outline: none;
+}
+
+.sl-file-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--sl-t-say);
+  color: var(--sl-ink-1);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sl-file-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+}
+
+.sl-file-time {
+  text-align: right;
+}
