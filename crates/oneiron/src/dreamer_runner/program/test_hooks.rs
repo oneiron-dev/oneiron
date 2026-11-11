@@ -101,7 +101,11 @@ pub(crate) fn hold_wake_on_lapsed_slip(
 }
 
 /// Whether this machine owes the wake TURN `turn` owes `registration`.
-pub(crate) fn wake_owed_here(vault: &Vault, turn: EntityId, registration: EntityId) -> Result<bool> {
+pub(crate) fn wake_owed_here(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     WAKE.contains(vault, &txn, &(turn, registration))
 }
@@ -123,6 +127,26 @@ pub(crate) fn wake_decisions_here(
         }
     }
     Ok(decisions)
+}
+
+/// How the wake TURN `turn` owes `registration` was refused here, when it
+/// was: the admission's reason. `None` when no admission refused it here,
+/// either because this machine holds no decision for it or because the
+/// decision queued.
+pub(crate) fn wake_refusal_here(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+) -> Result<Option<String>> {
+    let txn = vault.store.env.read_txn()?;
+    let all: &[u8] = &[];
+    for row in ADMISSION.iter_from(vault, &txn, all)? {
+        let (_, record) = row?;
+        if record.wake.turn.turn == turn && record.wake.registration == registration {
+            return Ok(record.refused);
+        }
+    }
+    Ok(None)
 }
 
 /// Plants an agent arming without a wake, keeping the supplied definition
