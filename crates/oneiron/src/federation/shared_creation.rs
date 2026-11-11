@@ -77,8 +77,9 @@ pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
 /// own-device grant (FIX 3134): pairing a device never closes sharing. Nor
 /// does a base agent's Steward grant, which the host mints by default on the
 /// vault's own root when it opens the vault (untangle 6.3; review of #6917,
-/// round 2): it is the engine's actor's reach, not a member. The creation
-/// row still closes a vault that was shared.
+/// round 2): it is the engine's actor's reach, not a member. Nor does an
+/// owner's `engine.controls` grant to a principal (6.6): his grant, not a
+/// membership. The creation row still closes a vault that was shared.
 fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
         &vault.store,
@@ -99,6 +100,7 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
             && !grant.is_git_push()
             && !super::is_own_device_grant(&grant)
             && !super::holds_system_agent_grant(grant.member_ref)
+            && !super::is_engine_controls_grant(&grant)
         {
             return Ok(true);
         }

@@ -1,0 +1,15 @@
+{
+  "name": "vault.free_time.schedule.set",
+  "description": "A holder of engine.controls.wake_cadence moves the schedule of an agent's standing free-time policy at the revision it read; the owner's units and split stay, and setting or clearing a policy stays his act at vault.free_time.policy.set.",
+  "input": "crate::task_verb::sdk::FreeTimeScheduleSetRequest",
+  "output": "crate::task_verb::sdk::EngineControlChangeEntry",
+  "call": "crate::task_verb::sdk::set_free_time_schedule_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "engine_controller"
+}

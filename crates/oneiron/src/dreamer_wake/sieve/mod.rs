@@ -68,7 +68,7 @@ use std::collections::{BTreeSet, HashMap};
 use serde::{Deserialize, Serialize};
 
 use chunks::{Admission, ChunkRef};
-pub use policy::SievePolicy;
+pub use policy::{SievePassBudgets, SievePolicy};
 pub use rules::RuleClass;
 
 use super::read_phase::{OnStale, ReadWrite, WakeStop};
