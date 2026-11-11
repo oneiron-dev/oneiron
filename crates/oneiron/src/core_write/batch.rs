@@ -169,11 +169,17 @@ impl Vault {
         lane: &CoreWriteLane<'_>,
         writer: Option<&crate::WriteActor>,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
-        let (mut batch, entities) = self.stage_core_batch(input, announcement)?;
+        let (mut batch, mut entities) = self.stage_core_batch(input, announcement)?;
         if let Some(writer) = writer {
             batch = batch.authored_through(writer, "vault.batch", lane.actor_key());
         }
+        let receipts = batch.agent_definition_write_receipts();
         batch.commit_in_core_lane(lane, commit)?;
+        for entity in &mut entities {
+            if let Ok(staged) = crate::entity_id::EntityId::from_hex(&entity.id) {
+                entity.agent_definition = receipts.get(&staged);
+            }
+        }
         Ok(CoreBatchWriteReceipt {
             count: entities.len(),
             entities,
@@ -228,6 +234,7 @@ impl Vault {
             entities.push(CoreBatchEntityReceipt {
                 id: id.to_hex(),
                 entity_type: entity.entity_type,
+                agent_definition: None,
             });
         }
         Ok((batch, entities))

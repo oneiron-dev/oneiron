@@ -140,14 +140,22 @@ fn write_dag_record_listing(
 }
 
 /// `vault.batch`: an atomic core entity batch. Beside it, each entity it
-/// put: a put reads no row.
+/// put, and the proposal row an agent's widening put was stored at instead:
+/// a put reads no row.
 pub(crate) async fn vault_batch(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: CoreBatchWriteInput,
 ) -> Listed<CoreBatchWriteReceipt> {
     naming(write_core_batch(server, auth, input).await, |receipt| {
-        hex_rows(receipt.entities.iter().map(|entity| entity.id.as_str()))
+        hex_rows(receipt.entities.iter().flat_map(|entity| {
+            std::iter::once(entity.id.as_str()).chain(
+                entity
+                    .agent_definition
+                    .as_ref()
+                    .and_then(|written| written.proposal_id.as_deref()),
+            )
+        }))
     })
 }
 
