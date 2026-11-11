@@ -195,3 +195,71 @@ pub(crate) fn program_armed_here(
     let txn = vault.store.env.read_txn()?;
     ARM.contains(vault, &txn, &(actor, registration))
 }
+
+/// Plants a one-shot timer with the same slip authority a landed turn seals.
+pub(crate) fn plant_timer_arming(
+    vault: &Vault,
+    actor: EntityId,
+    proof: &VerifiedSlip,
+    binding: &InvocationSlipBinding,
+    armed_at: u64,
+    first_at: u64,
+) -> Result<EntityId> {
+    let authority = TurnProgramAuthority::slip(actor, EdgeActorClass::Agent, proof, binding)
+        .ok_or_else(|| Error::InvalidConfig("the slip seals no turn program authority".into()))?;
+    let registration = vault.new_entity_id()?;
+    let definition = ProgramRecipePin {
+        skill: registration,
+        version: "1".into(),
+        content_hash: "0".repeat(64),
+        entry: "main".into(),
+        contract_digest: [0; 32],
+        executor: "test".into(),
+        args: "{}".into(),
+    };
+    let arming = TurnProgramArming {
+        registration,
+        actor,
+        actor_class: authority.class_byte(),
+        conversation: None,
+        revision: definition.revision(),
+        definition,
+        armed_at,
+        trigger: ProgramTrigger::Timer {
+            first_at,
+            every_secs: 0,
+        },
+        sealed: Some(authority),
+        next_due: Some(first_at),
+    };
+    vault.with_write_txn_grouped(|txn| {
+        ARM.put(vault, txn, &(actor, registration), &arming)?;
+        super::trigger::index_trigger_in_txn(vault, txn, &arming)
+    })?;
+    Ok(registration)
+}
+
+/// Whether a disarm row for this registration is kept here.
+pub(crate) fn disarm_kept_here(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    DISARMED.contains(vault, &txn, &(actor, registration))
+}
+
+/// Encodes the mirror's externally tagged `ArmingRow::Armed` envelope directly,
+/// without its outbound filter. The replica module's row enum is private.
+pub(crate) fn arming_row_bytes(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<Vec<u8>> {
+    let txn = vault.store.env.read_txn()?;
+    let arming = ARM
+        .get(vault, &txn, &(actor, registration))?
+        .ok_or(Error::EntityNotFound)?;
+    serde_json::to_vec(&std::collections::BTreeMap::from([("armed", arming)]))
+        .map_err(|_| Error::InvalidConfig("the arming row does not encode".into()))
+}

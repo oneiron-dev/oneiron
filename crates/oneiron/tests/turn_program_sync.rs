@@ -537,3 +537,65 @@ fn a_wake_rides_with_an_arming_of_an_older_month() {
         1
     );
 }
+
+#[test]
+fn a_timer_arming_stays_on_the_machine_that_armed_it() {
+    let a = Machine::open("machine-a");
+    let b = Machine::open("machine-b");
+    doors::node_id(&a.vault).unwrap();
+    let home = doors::node_id(&b.vault).unwrap();
+    elect(&[&a, &b], home);
+    let (actor, slip, instrument) = agent_slip(&a);
+    let registration =
+        doors::plant_timer_arming(&a.vault, actor, &slip, &instrument, T0 - 60, T0).unwrap();
+
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    a.housekeeping();
+    b.housekeeping();
+    assert!(doors::program_armed_here(&a.vault, actor, registration).unwrap());
+    assert!(!doors::program_armed_here(&b.vault, actor, registration).unwrap());
+
+    // A due time is released on the elected home alone, here B, and B holds
+    // no arming: this timer fires nowhere, as on main. Which machine should
+    // release it is an open design question, so no occurrence is asserted.
+    doors::disarm_program(&a.vault, actor, registration).unwrap();
+    exchange(&doc_a, &doc_b);
+    // The disarm's recording clock can put it in a different month.
+    let disarm_window = WindowKey::from_timestamp(a.vault.now_recorded_at());
+    let disarm_a = a.manager.open_window(&disarm_window).unwrap().doc.clone();
+    let disarm_b = b.manager.open_window(&disarm_window).unwrap().doc.clone();
+    exchange(&disarm_a, &disarm_b);
+    a.housekeeping();
+    b.housekeeping();
+    assert!(!doors::disarm_kept_here(&a.vault, actor, registration).unwrap());
+    assert!(!doors::disarm_kept_here(&b.vault, actor, registration).unwrap());
+}
+
+#[test]
+fn a_carried_arming_that_no_turn_wakes_is_refused() {
+    let a = Machine::open("machine-a");
+    let b = Machine::open("machine-b");
+    doors::node_id(&a.vault).unwrap();
+    let home = doors::node_id(&b.vault).unwrap();
+    elect(&[&a, &b], home);
+    let (actor, slip, instrument) = agent_slip(&a);
+    let registration =
+        doors::plant_timer_arming(&a.vault, actor, &slip, &instrument, T0 - 60, T0).unwrap();
+    let bytes = doors::arming_row_bytes(&a.vault, actor, registration).unwrap();
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    // B reads an injected row, not one selected by A's outbound filter.
+    doc_a
+        .get_map("turn_program_arms")
+        .insert(
+            &registration.to_hex(),
+            loro::LoroValue::Binary(bytes.into()),
+        )
+        .unwrap();
+    doc_a.commit();
+    exchange(&doc_a, &doc_b);
+    b.housekeeping();
+    assert!(!doors::program_armed_here(&b.vault, actor, registration).unwrap());
+}
