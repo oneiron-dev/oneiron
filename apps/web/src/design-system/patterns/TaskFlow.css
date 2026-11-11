@@ -1,0 +1,82 @@
+/* The tasks of a message as a row of chips joined by short lines. */
+.sl-task-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 0;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  --sl-mark-ground: var(--sl-chip);
+}
+
+.sl-task-flow-item {
+  display: flex;
+  align-items: center;
+}
+
+/* The line from the task before. */
+.sl-task-flow-item + .sl-task-flow-item::before {
+  content: "";
+  flex: none;
+  width: 22px;
+  height: 1px;
+  background: var(--sl-ink-4);
+}
+
+.sl-task-flow-task {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px 0 9px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-chip);
+  color: var(--sl-ink-1);
+  font-size: var(--sl-t-do);
+  line-height: 1;
+  white-space: nowrap;
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-task-flow-task:hover {
+  background: var(--sl-disc);
+  --sl-mark-ground: var(--sl-disc);
+}
+
+.sl-task-flow-task:focus-visible {
+  outline: 1.5px solid var(--sl-ink-4);
+  outline-offset: 2px;
+}
+
+.sl-task-flow-task:active {
+  transform: scale(0.96);
+}
+
+.sl-task-flow-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.sl-task-flow-name {
+  min-width: 0;
+}
+
+.sl-task-flow-who {
+  display: grid;
+  place-items: center;
+  flex: none;
+  margin-left: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-task-flow-task {
+    transition: none;
+  }
+  .sl-task-flow-task:active {
+    transform: none;
+  }
+}
