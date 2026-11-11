@@ -469,6 +469,30 @@ pub fn class_key_reads(vault: &Vault, actor: EntityId, entity: EntityId) -> Resu
         .is_ok_and(|row| row.is_some()))
 }
 
+/// Every grant row that stands as a Steward grant naming `agent`, whichever
+/// the marker names.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn standing_steward_grants(vault: &Vault, agent: EntityId) -> Result<Vec<EntityId>> {
+    use crate::ports::EntityStoreRead;
+    let txn = vault.store.env.read_txn()?;
+    let mut standing = Vec::new();
+    for id in vault.store.port_entity_ids_by_type(
+        &txn,
+        crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+        None,
+    )? {
+        let id = id?;
+        if !crate::federation::standing_steward_verbs_in(&vault.store, &txn, id, agent)?.is_empty()
+        {
+            standing.push(id);
+        }
+    }
+    Ok(standing)
+}
+
 /// Where `agent`'s Steward grant stands, or `None` before any mint.
 ///
 /// # Errors
