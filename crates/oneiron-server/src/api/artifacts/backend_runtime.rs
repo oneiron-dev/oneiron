@@ -134,6 +134,7 @@ impl HttpBody for BackendBody {
 
 pub(super) async fn forward(
     profile: ArtifactBackendConfig,
+    backends: Arc<dyn oneiron::code_sandbox::microvm::SandboxBackends>,
     staged: StagedBackend,
     request: Request,
 ) -> Result<Response, EnvelopedApiError> {
@@ -142,7 +143,7 @@ pub(super) async fn forward(
         profile.validate().map_err(io::Error::other)?;
         let spec = profile.spec(staged.source).map_err(io::Error::other)?;
         let backend = oneiron::code_sandbox::microvm::select_backend_for_session(
-            &oneiron_agent_runtime::code_sandbox::SANDBOX_BACKENDS,
+            &*backends,
             oneiron::code_sandbox::SandboxGuestTier::Untrusted,
             profile.runtime,
             &profile.image,

@@ -37,10 +37,11 @@ pub(super) fn enrol_here(host: &Host) -> EntityId {
         .unwrap();
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     request.machine
@@ -52,10 +53,11 @@ pub(super) fn other_machine(host: &Host, seed: u8, role: MachineRole) -> (Entity
     let machine = EntityId::now();
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request_for(host.vault_id, machine, &key),
             role,
+            None,
         )
         .unwrap();
     (machine, key)
@@ -337,11 +339,14 @@ fn a_world_orphaned_by_a_shared_key_is_re_picked() {
             machine: twin,
             owner: host.owner.actor(),
             machine_key: request.machine_key,
+            device_class: request.device_class,
             encryption_key: request.encryption_key,
             role: MachineRole::Owned(MachineOwnership::Yours),
             revision: 1,
             machine_proof: request.machine_proof,
             seen_world_edits: BTreeSet::new(),
+            carrier: None,
+            act: None,
         }),
         3,
     )
@@ -715,7 +720,7 @@ fn a_hold_resting_on_a_later_mark_still_edits() {
     // The owner marks the laptop "yours" again: the widening counts, and
     // this machine holds the world on a head its own mark does not carry.
     host.vault
-        .set_machine_role(&host.issuer, &host.owner, laptop, yours)
+        .set_machine_role(&host.owner, ActSurface::ThisInstall, laptop, yours, None)
         .unwrap();
     assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
     let fold = host.vault.authority_fold().unwrap();
@@ -921,11 +926,14 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
                 machine: stray,
                 owner: host.owner.actor(),
                 machine_key: request.machine_key,
+                device_class: request.device_class,
                 encryption_key: request.encryption_key,
                 role: MachineRole::Owned(MachineOwnership::Yours),
                 revision: 1,
                 machine_proof: request.machine_proof,
                 seen_world_edits: BTreeSet::new(),
+                carrier: None,
+                act: None,
             }),
             2,
         )
@@ -1004,8 +1012,10 @@ fn a_replayed_edit_or_a_restore_never_loosens_a_world() {
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
 
     // A restore that keeps the live authority keeps the live settings.
+    let key = host.vault.checkpoint_key().unwrap();
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         VaultConfig::default(),
         &host.vault,
@@ -1022,9 +1032,11 @@ fn a_replayed_edit_or_a_restore_never_loosens_a_world() {
     // the live log's entries narrow it back on the first sync.
     let live = stored_entries(&host.vault);
     let Host { _dir, vault, .. } = host;
+    let key = vault.checkpoint_key().unwrap();
     drop(vault);
     let (direct, _) = Vault::restore_checkpoint(
         &image,
+        &key,
         &backups.path().join("direct"),
         VaultConfig::default(),
         crate::recovery::checkpoint::RestoreReason::Restore,
@@ -1070,7 +1082,7 @@ fn a_conflicted_root_never_lets_a_private_world_go() {
     assert!(withheld(&host.vault).unwrap().contains(&world));
 
     // No door stores a rival genesis (H72); build the conflicted log here.
-    let rival = genesis_entry(78, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let rival = genesis_entry(78, 1);
     crate::authority::with_authority_doors_open_for_test(|| {
         host.vault
             .put_authority_log_entry(&rival, TimeRange { start: 3, end: 3 }, 3)

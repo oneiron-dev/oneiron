@@ -38,7 +38,6 @@ use crate::analyzer::{ANALYZER_VERSION, AnalyzerManifest};
 use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
 };
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::deletion::DeleteEntityOutcome;
 use crate::deletion::{
     DeleteReason, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope,
@@ -86,6 +85,9 @@ pub(crate) mod type_registry;
 pub(crate) mod vad_annotations;
 pub(crate) mod vectors_hnsw;
 use support::*;
+
+/// The retired static COMPANION_REGISTER kind byte (OF-274, 7d892007139, #1940 deleted the constant).
+const ENTITY_TYPE_COMPANION_REGISTER: u8 = 115;
 
 fn test_config() -> VaultConfig {
     // Build from the public preset so tests exercise the same construction

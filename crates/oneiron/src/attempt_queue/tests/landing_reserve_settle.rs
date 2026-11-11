@@ -130,41 +130,43 @@ fn each_answer_consumes_the_request_it_names_not_the_newest() -> Result<()> {
 /// force, and no lease-expiry cleanup.
 #[test]
 fn a_full_receipt_history_still_settles_every_terminal_door() -> Result<()> {
+    // Ruled refusal removed (Rule 5, counts never refuse; fb7481d2e6f
+    // #3167): a cancel-receipt history no longer refuses at 256 rows. Past
+    // the old cap every row is kept, and every terminal door still settles.
+    const OLD_MAX_ATTEMPT_CANCEL_RECEIPTS: usize = 256;
     let (_dir, vault) = open_queue();
     let queue = AttemptQueue::new(&vault);
-    assert_eq!(
-        MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS + TERMINAL_CANCEL_RECEIPT_RESERVE,
-        MAX_ATTEMPT_CANCEL_RECEIPTS
-    );
 
-    // 1. Landing finish at the cap.
+    // 1. Landing finish past the old cap.
     let landing = landing_at_receipt_cap(&queue, "turn:cap-landed")?;
-    // Non-terminal evidence refuses at the cap rather than dropping a row.
-    assert!(matches!(
-        queue
-            .record_resume_point(RecordAttemptResumePoint {
-                id: landing.id,
-                lease_owner: "worker-a".to_owned(),
-                attempt_count: landing.attempt_count,
-                resume_point: AttemptResumePoint::new("one-too-many", 15),
-                now: 15,
-            })
-            .expect_err("a full history refuses non-terminal rows"),
-        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(reason)) if reason == ERR_CANCEL_RECEIPTS_FULL
-    ));
-    let FinishLandingOutcome::Landed(landed) = queue.finish_landing(FinishAttemptLanding {
+    // Non-terminal evidence past the old cap is kept rather than refused.
+    let resumed = queue.record_resume_point(RecordAttemptResumePoint {
         id: landing.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: landing.attempt_count,
+        resume_point: AttemptResumePoint::new("one-too-many", 15),
+        now: 15,
+    })?;
+    assert_eq!(
+        resumed.cancel_receipts().len(),
+        OLD_MAX_ATTEMPT_CANCEL_RECEIPTS
+    );
+    let FinishLandingOutcome::Landed(landed) = queue.finish_landing(FinishAttemptLanding {
+        id: resumed.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: resumed.attempt_count,
         hand_off: false,
         scheduled_at: None,
         now: 16,
     })?
     else {
-        panic!("a landing at the cap still finishes");
+        panic!("a landing past the old cap still finishes");
     };
     assert_eq!(landed.state, AttemptState::Cancelled);
-    assert_eq!(landed.cancel_receipts().len(), MAX_ATTEMPT_CANCEL_RECEIPTS);
+    assert_eq!(
+        landed.cancel_receipts().len(),
+        OLD_MAX_ATTEMPT_CANCEL_RECEIPTS + 1
+    );
     let terminal = landed.cancel_receipts().last().expect("terminal receipt");
     assert_eq!(terminal.kind, AttemptCancelReceiptKind::Landed);
     assert!(terminal.kind.is_terminal());
@@ -179,7 +181,7 @@ fn a_full_receipt_history_still_settles_every_terminal_door() -> Result<()> {
     );
     assert_eq!(queue.get(landed.id)?.expect("row"), landed);
 
-    // 2. Hard force at the cap.
+    // 2. Hard force at the old cap.
     let forced_landing = landing_at_receipt_cap(&queue, "turn:cap-forced")?;
     let ForceCancelOutcome::Cancelled(forced) = queue.force_cancel(ForceAttemptCancel {
         id: forced_landing.id,
@@ -190,7 +192,10 @@ fn a_full_receipt_history_still_settles_every_terminal_door() -> Result<()> {
     else {
         panic!("the hard rung is never blocked by a full history");
     };
-    assert_eq!(forced.cancel_receipts().len(), MAX_ATTEMPT_CANCEL_RECEIPTS);
+    assert_eq!(
+        forced.cancel_receipts().len(),
+        OLD_MAX_ATTEMPT_CANCEL_RECEIPTS
+    );
     assert_eq!(
         forced
             .cancel_receipts()
@@ -205,7 +210,7 @@ fn a_full_receipt_history_still_settles_every_terminal_door() -> Result<()> {
     );
     assert_eq!(queue.get(forced.id)?.expect("row"), forced);
 
-    // 3. Lease-expiry cleanup at the cap.
+    // 3. Lease-expiry cleanup at the old cap.
     let expiring = landing_at_receipt_cap(&queue, "turn:cap-expired")?;
     let report = queue.cleanup_leases(CleanupAttemptLeases {
         now: 10_000,
@@ -216,7 +221,7 @@ fn a_full_receipt_history_still_settles_every_terminal_door() -> Result<()> {
     assert_eq!(reclaimed.state, AttemptState::Cancelled);
     assert_eq!(
         reclaimed.cancel_receipts().len(),
-        MAX_ATTEMPT_CANCEL_RECEIPTS
+        OLD_MAX_ATTEMPT_CANCEL_RECEIPTS
     );
     let terminal = reclaimed
         .cancel_receipts()
@@ -335,6 +340,7 @@ fn a_persisted_cancel_receipt_must_agree_with_its_own_kind() -> Result<()> {
     let mut draft_target = record.clone();
     let before = draft_target.cancel_state.receipts.len();
     let err = append_cancel_receipt(
+        &vault.store.limit_watch,
         &mut draft_target,
         AttemptCancelReceiptKind::SoftRejected,
         "worker-a".to_owned(),

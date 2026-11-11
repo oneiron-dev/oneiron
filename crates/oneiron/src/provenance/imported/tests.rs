@@ -95,8 +95,17 @@ fn imported_closing_serialization_preserves_source_scope_and_actor() -> Result<(
 fn imported_serialization_does_not_relax_ambiguous_actor_rejection() -> Result<()> {
     let claim = imported_claim();
     for evidence in [
-        encode_actor_class_evidence(claim.actor_class),
-        encode_actor_class_evidence(EdgeActorClass::Agent),
+        // Legacy evid maps {"actor_class": <u8>}, inlined: the codec that
+        // built them is deleted, and any wrapper evid beside the imported
+        // body key is still the ambiguous shape.
+        Value::Map(vec![(
+            Value::from("actor_class"),
+            Value::from(claim.actor_class as u8),
+        )]),
+        Value::Map(vec![(
+            Value::from("actor_class"),
+            Value::from(EdgeActorClass::Agent as u8),
+        )]),
         Value::Map(vec![(
             Value::from("source_id"),
             Value::from("external-corpus"),

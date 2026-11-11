@@ -21,7 +21,7 @@ pub(crate) mod tests {
     fn not_ready_scores_are_unmeasured_and_do_not_publish_zero_overall() {
         let report = run_builtin_smoke().expect("BEAM smoke report");
         let report_json = serde_json::to_value(&report).expect("report serializes");
-        let competitors = report_json["cases"][0]["competitors"]
+        let competitors = report_json["cases"][0]["appendix"]
             .as_array()
             .expect("competitors array");
         let deterministic = competitors
@@ -33,7 +33,7 @@ pub(crate) mod tests {
 
         for competitor_id in ["agentic-adapter", "chat-adapter"] {
             let typed_competitor = report.cases[0]
-                .competitors
+                .appendix
                 .iter()
                 .find(|competitor| competitor.competitor_id == competitor_id)
                 .expect("not-ready competitor report");
@@ -79,7 +79,7 @@ pub(crate) mod tests {
         assert_eq!(context_pack.serialized_tokens, 0);
         assert_eq!(context_pack.query_cost.output_tokens, 0);
         let solo = case
-            .competitors
+            .appendix
             .iter()
             .find(|competitor| competitor.competitor_id == "backbone-solo")
             .expect("backbone-solo competitor");

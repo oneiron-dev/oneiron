@@ -745,9 +745,11 @@ pub struct ConsentRevocation {
     pub receipt: Option<ConsentReceipt>,
     /// The grant was already revoked; nothing was written.
     pub already_revoked: bool,
-    /// The record that revoked the current issuance without a consent receipt, where that path writes one: a
-    /// graduation demotion's receipt id. An office-edit erase and an owner-less pack update write no record
-    /// that names the grant.
+    /// What revoked the grant, when the receipt alone does not name it: the record that revoked
+    /// the current issuance without a consent receipt, where that path writes one (a graduation
+    /// demotion's receipt id). An office-edit erase and an owner-less pack update write no record
+    /// that names the grant. On the grantee path always the renouncing grantee's actor ref, even
+    /// beside a receipt.
     pub revoked_by: Option<String>,
 }
 

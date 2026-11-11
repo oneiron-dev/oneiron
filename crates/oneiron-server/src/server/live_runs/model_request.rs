@@ -3,6 +3,8 @@
 use std::sync::{Arc, Mutex};
 
 use oneiron::agent_def::ensure_listed;
+use oneiron::agent_dispatch::SpendScopeId;
+use oneiron::attempt_queue::AttemptId;
 use oneiron::authority::VerifiedSlip;
 use oneiron::code_run::live_run::CodeRunLiveRunBinding;
 use oneiron::code_run::{RepoModelGenerateInput, RepoRequestWitness};
@@ -44,6 +46,43 @@ impl Drop for ScopeBooking {
 }
 
 impl HeldLiveRun {
+    /// The definition the run entered with: what its own actor's model
+    /// calls are held to.
+    pub(crate) fn definition(&self) -> &oneiron::agent_def::AgentDefinition {
+        &self.entry.definition
+    }
+
+    /// The scope the run's entries spend under; `None` for an unmetered
+    /// run.
+    pub(crate) fn spend_scope(&self) -> Option<&SpendScopeId> {
+        self.entry.spend_scope.as_ref()
+    }
+
+    /// The try the run's runner holds leased.
+    pub(crate) fn leased_try(&self) -> AttemptId {
+        self.entry.leased.id
+    }
+
+    /// Whether this exact attachment still stands for `credential`, as a
+    /// check a whole call keeps asking: the entry's lease, the binding, the
+    /// credential's read key, and the credential itself, unexpired and
+    /// unrevoked. A read that fails answers no.
+    pub(crate) fn attachment_watch(
+        &self,
+        server: &SyncServer,
+        credential: VerifiedSlip,
+    ) -> Box<dyn Fn() -> bool + Send + Sync> {
+        let (vault, runs, entry, binding) = (
+            Arc::clone(server.vault()),
+            Arc::clone(&server.live_runs),
+            Arc::clone(&self.entry),
+            self.binding.clone(),
+        );
+        Box::new(move || {
+            attachment_holds(&runs, &vault, &entry, &binding, &credential).unwrap_or(false)
+        })
+    }
+
     /// The last request this exact credential attachment was actually served.
     /// A different issue, credential or leased generation never inherits it.
     pub(crate) fn repo_request(&self) -> Option<RepoRequestWitness> {
@@ -169,7 +208,11 @@ fn attachment_holds(
     binding: &CodeRunLiveRunBinding,
     credential: &VerifiedSlip,
 ) -> oneiron::Result<bool> {
+    // An agent's read key is built whether or not its credential still
+    // holds (only an owner-grade key checks that), so the credential's own
+    // liveness is asked here: a revoked or expired one ends the attachment.
     Ok(runs.holds(vault, entry)?
         && lock(&entry.attached).as_ref() == Some(binding)
-        && vault.credential_read_key(credential)?.is_some())
+        && vault.credential_read_key(credential)?.is_some()
+        && vault.capability_slip_is_live(credential)?)
 }

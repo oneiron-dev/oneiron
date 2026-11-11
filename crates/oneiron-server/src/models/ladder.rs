@@ -158,6 +158,11 @@ pub(super) struct PendingReceipt {
     rung: usize,
     failed: usize,
     passed_over: JsonValue,
+    /// The engine model id of the rung that answered
+    /// (`provider/name@revision`). `None` for a row persisted before this
+    /// field existed, which stamps a receipt with no `model_id` key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_id: Option<String>,
 }
 
 impl PendingReceipt {
@@ -170,6 +175,7 @@ impl PendingReceipt {
             self.failed,
             self.passed_over.clone(),
             raw_provider,
+            self.model_id.as_deref(),
         )
     }
 }
@@ -740,6 +746,7 @@ impl OfferLadder {
             rung: rung.position,
             failed: self.prefix.failed + walk.went_out(),
             passed_over: JsonValue::Array(self.passed_over(walk)),
+            model_id: Some(rung.model.as_str().to_owned()),
         }
     }
 

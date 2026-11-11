@@ -4,6 +4,7 @@
 
 mod admission;
 mod agent_verb;
+mod agent_wait;
 mod binding;
 mod browser_admission;
 mod connector_answer;
@@ -31,8 +32,6 @@ mod skill_bodies;
 mod spawn_capture;
 mod summarize;
 mod team_submit;
-mod team_submit_entity;
-mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
 mod wake_policy;

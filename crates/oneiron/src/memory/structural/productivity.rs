@@ -192,7 +192,7 @@ impl Memory<'_> {
                 rows.push(ProductivityNode {
                     task_ref: ref_of(&node.id)?,
                     id_hex: node.id.to_hex(),
-                    parent_ref: node.parent.as_ref().map(&ref_of).transpose()?,
+                    parent_ref: node.parent.as_ref().map(ref_of).transpose()?,
                     depth: node.depth,
                     role: node.node.role,
                     label: node.node.label,
