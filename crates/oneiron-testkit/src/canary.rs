@@ -314,7 +314,9 @@ pub const PENDING: [PendingClass; 6] = [
     PendingClass {
         name: "claim/relationship",
         reason: "a relationship-stamped CLAIM needs a live RELATIONSHIP row, and no public door \
-                 mints one (batch/claim_candidate_apply.rs)",
+                 mints one (batch/claim_candidate_apply.rs); so neither can a Dreamer pass land \
+                 a claim extracted from the relationship message, which inherits its \
+                 relationship set, and the rescan of a derived row waits for that door",
     },
     PendingClass {
         name: "room/project",
