@@ -18,16 +18,22 @@ use crate::claim::ClaimReadStatus;
 use crate::code_run::{CodeRunRawOutput, ExecutorStorage};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::federation::ScopeAxis;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{Error, Vault};
 
+/// Bytes of the inline reply budget kept for the view around the body:
+/// its field names, run ref, handle, offsets and markers.
+const REPLY_EVIDENCE_VIEW_RESERVE_BYTES: usize = 4096;
+
 /// The most stored bytes one read serves: three quarters of the inline
-/// reply budget (`RESULT_REPLY_INLINE_BYTES`), so their base64 fits it. A
-/// read that asks for no limit reads this many; `next_byte_offset` names
-/// where the rest starts.
-pub const REPLY_EVIDENCE_MAX_BYTES: u32 = 393_216;
-const _: () = assert!(REPLY_EVIDENCE_MAX_BYTES as usize == RESULT_REPLY_INLINE_BYTES / 4 * 3);
+/// reply budget (`RESULT_REPLY_INLINE_BYTES`) less the view's reserve, so the
+/// whole view, base64 body included, fits the budget. A read that asks for
+/// no limit reads this many; `next_byte_offset` names where the rest starts.
+pub const REPLY_EVIDENCE_MAX_BYTES: u32 = 390_144;
+const _: () = assert!(
+    REPLY_EVIDENCE_MAX_BYTES as usize
+        == (RESULT_REPLY_INLINE_BYTES - REPLY_EVIDENCE_VIEW_RESERVE_BYTES) / 4 * 3
+);
 
 /// One byte range of one step's kept reply.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -70,8 +76,8 @@ pub enum ReplyEvidenceWithheld {
     /// The secret scan marked the reply, it is under live or stale taint,
     /// or a row it was produced from was erased or withdrawn.
     SecretOrTaint,
-    /// The run's placement was never witnessed and the reader is bounded to
-    /// some worlds: an unknown placement is never read as base reality.
+    /// The run's placement was never witnessed and the reader is not the
+    /// owner's own key: an unknown placement is never read as base reality.
     UnknownPlacement,
 }
 
@@ -140,8 +146,12 @@ pub(crate) fn reply_evidence_projection(
         return Ok(None);
     };
     // The reader's grant, live in this snapshot even for a reply served
-    // from no row, then the run's placement under its world ceiling.
-    let bounded = !matches!(memory.read_key()?.world_ceiling().worlds, ScopeAxis::All);
+    // from no row, then the run's placement under its world ceiling. Only
+    // the owner's own key is known to read without bounds; every other
+    // reader (a narrowed credential of the owner's too) is bounded by its
+    // worlds, records, facets or grants, and never reads an unwitnessed
+    // placement as base reality.
+    let bounded = !memory.read_key()?.reads_as_vault_owner();
     let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
@@ -201,13 +211,11 @@ fn read_range(
     }
     let len = usize::try_from(u64::from(limit).min(output.raw_len - offset))
         .map_err(|_| Error::ArithmeticOverflow("reply evidence range"))?;
-    let bytes = if len == 0 {
-        Vec::new()
-    } else {
-        vault
-            .read_code_run_raw_output_range(output, offset, len)?
-            .ok_or(Error::CorruptedIndex("executor reply evidence body"))?
-    };
+    // A read at the end still reads: a kept reply whose body is gone is a
+    // corrupt store, never an empty reply.
+    let bytes = vault
+        .read_code_run_raw_output_range(output, offset, len)?
+        .ok_or(Error::CorruptedIndex("executor reply evidence body"))?;
     let read = u64::try_from(bytes.len())
         .map_err(|_| Error::ArithmeticOverflow("reply evidence range"))?;
     let end = offset
