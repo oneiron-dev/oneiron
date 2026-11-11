@@ -112,6 +112,13 @@ pub(in crate::sync::selector) fn filter_window_doc(
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
+    // SCOPED-EXPORT-RULE = A (ARCH-0027 :382): a row bound for another vault
+    // is judged by the typed release rule before it can be a candidate, so a
+    // row the rule withholds pulls no closure, edge, birth or file reference
+    // after it, and its stored bytes never enter this copy. The owner's own
+    // machines take every row as stored.
+    let other_vault = matches!(reach, BirthReach::OtherVault(_));
+    let mut rewritten = std::collections::BTreeMap::<EntityId, Vec<u8>>::new();
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else {
@@ -255,6 +262,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 }
             }
         }
+        if other_vault && !is_tombstoned {
+            match released_for_other_vault(vault, &rtxn, &id, blob) {
+                RowRelease::Exact => {}
+                RowRelease::Rewritten(bytes) => {
+                    rewritten.insert(id, bytes);
+                }
+                RowRelease::Withheld => return,
+            }
+        }
         candidates.insert(id);
         if facets.is_some() {
             if decision.facet_visible {
@@ -379,6 +395,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 crate::workspace_roster::exportable_revisions_in_txn(&vault.store, &rtxn, *project)?
             {
                 if let Some(raw) = vault.get_raw_in(&rtxn, &companion)? {
+                    let raw = if other_vault {
+                        match released_for_other_vault(vault, &rtxn, &companion, &raw) {
+                            RowRelease::Exact => raw,
+                            RowRelease::Rewritten(bytes) => bytes,
+                            RowRelease::Withheld => continue,
+                        }
+                    } else {
+                        raw
+                    };
                     revision_rows.push((companion, raw));
                 }
             }
@@ -402,11 +427,20 @@ pub(in crate::sync::selector) fn filter_window_doc(
         if id.to_hex() != raw_key || !shipped.contains(&id) {
             return;
         }
-        let _ = map_insert_bytes(&out_entities, raw_key, blob);
+        let bytes = rewritten.get(&id).map_or(blob, Vec::as_slice);
+        let _ = map_insert_bytes(&out_entities, raw_key, bytes);
     });
 
     let authorized_base = if key.world().is_some() {
-        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position, withhold)?
+        authorized_base_edge_endpoints(
+            vault,
+            &source_edges,
+            &kept,
+            selector,
+            position,
+            withhold,
+            reach,
+        )?
     } else {
         BTreeSet::new()
     };
@@ -479,4 +513,47 @@ pub(in crate::sync::selector) fn filter_window_doc(
     crate::sync::note::copy_selected(source, &out, &notes)?;
     out.commit();
     Ok(out)
+}
+
+/// What one row's bytes become on their way to another vault.
+enum RowRelease {
+    /// The stored bytes, byte-exact.
+    Exact,
+    /// The typed rule's Nulled body under the row's own header and id.
+    Rewritten(Vec<u8>),
+    /// Nothing: the row stays home.
+    Withheld,
+}
+
+/// SCOPED-EXPORT-RULE = A for a row this filter would ship to another vault.
+/// ARCH-0027 :382: "There the serializer zeroes a credential the grant does
+/// not admit", and no federation grant admits one. A by-reference ASSET is
+/// judged by its whole file body, which its carrier lets the receiver fetch,
+/// and leaves as its carrier only when that body passes unchanged: the rule
+/// never rewrites an ASSET. A row this export cannot read or judge is
+/// withheld, not a failed export, as an undecodable CLAIM is above: one bad
+/// row must not fail the whole window closed.
+fn released_for_other_vault(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    blob: &[u8],
+) -> RowRelease {
+    let Some(header) = EntityMetadataHeader::parse(blob) else {
+        return RowRelease::Withheld;
+    };
+    if header.entity_type == crate::registry::ENTITY_TYPE_ASSET {
+        let Ok(row) = vault.materialized_row_in_txn(rtxn, id, blob.to_vec()) else {
+            return RowRelease::Withheld;
+        };
+        return match crate::batch::export::export_released_record(header.entity_type, row) {
+            Ok(Some(_)) => RowRelease::Exact,
+            Ok(None) | Err(_) => RowRelease::Withheld,
+        };
+    }
+    match crate::batch::export::export_released_record(header.entity_type, blob.to_vec()) {
+        Ok(Some(released)) if released == blob => RowRelease::Exact,
+        Ok(Some(released)) => RowRelease::Rewritten(released),
+        Ok(None) | Err(_) => RowRelease::Withheld,
+    }
 }
