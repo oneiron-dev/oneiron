@@ -200,7 +200,7 @@ fn pin_writer_in(
     body: &PinnedBody,
 ) -> Result<(EntityId, Option<EntityId>)> {
     let actor = caller.entity_ref();
-    let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
     let person = person_of_actor_in_txn(vault, txn, actor, at)?.ok_or_else(|| lacks(NO_PEN))?;
     let agent = (person != actor).then_some(actor);
     if !vault
