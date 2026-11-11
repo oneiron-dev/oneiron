@@ -87,9 +87,8 @@ fn wire_tokens_are_the_fanout_tokens() {
             serde_json::to_value(mode).ok(),
             Some(serde_json::Value::String(token.to_owned()))
         );
-        let back: CheckInMode =
-            serde_json::from_value(serde_json::Value::String(token.to_owned()))
-                .unwrap_or_else(|error| panic!("{token}: {error}"));
+        let back: CheckInMode = serde_json::from_value(serde_json::Value::String(token.to_owned()))
+            .unwrap_or_else(|error| panic!("{token}: {error}"));
         assert_eq!(back, mode);
     }
     assert_eq!(CheckInMode::default(), AskWhenUnsure);
@@ -102,7 +101,7 @@ fn tables_have_one_row_per_act_and_role() {
         assert_eq!(row.act, act);
         assert_eq!(act.row().act, act);
     }
-    let names: BTreeSet<_> = ActClass::ALL.iter().map(|act| act.as_str()).collect();
+    let names: BTreeSet<_> = ActClass::ALL.into_iter().map(ActClass::as_str).collect();
     assert_eq!(names.len(), ActClass::ALL.len());
     assert_eq!(ROLE_PRESET.len(), RolePreset::ALL.len());
     for (row, role) in ROLE_PRESET.iter().zip(RolePreset::ALL) {
@@ -225,7 +224,10 @@ fn power_then_role_default_then_explicit_row() {
         ResolvedMode::Absent
     );
     assert_eq!(
-        resolve_mode(&without_power(RolePreset::Steward, ActClass::AddOrRaiseMember)),
+        resolve_mode(&without_power(
+            RolePreset::Steward,
+            ActClass::AddOrRaiseMember
+        )),
         ResolvedMode::Propose
     );
     // Any actor, in any role, may open an erase proposal.
@@ -269,11 +271,41 @@ fn power_then_role_default_then_explicit_row() {
 fn ladder_goes_waits_or_asks_the_model() {
     let act = ActClass::SpendAboveCap;
     let cases = [
-        (NeverAsk, None, Some(false), CheckInAnswer::Go(GoReason::NeverAsk), 0),
-        (AlwaysAsk, None, Some(true), CheckInAnswer::Wait(WaitReason::AlwaysAsk), 0),
-        (AskWhenUnsure, None, Some(true), CheckInAnswer::Go(GoReason::Sure), 1),
-        (AskWhenUnsure, None, Some(false), CheckInAnswer::Wait(WaitReason::Unsure), 1),
-        (AskWhenUnsure, None, None, CheckInAnswer::Wait(WaitReason::UnsureTestFailed), 1),
+        (
+            NeverAsk,
+            None,
+            Some(false),
+            CheckInAnswer::Go(GoReason::NeverAsk),
+            0,
+        ),
+        (
+            AlwaysAsk,
+            None,
+            Some(true),
+            CheckInAnswer::Wait(WaitReason::AlwaysAsk),
+            0,
+        ),
+        (
+            AskWhenUnsure,
+            None,
+            Some(true),
+            CheckInAnswer::Go(GoReason::Sure),
+            1,
+        ),
+        (
+            AskWhenUnsure,
+            None,
+            Some(false),
+            CheckInAnswer::Wait(WaitReason::Unsure),
+            1,
+        ),
+        (
+            AskWhenUnsure,
+            None,
+            None,
+            CheckInAnswer::Wait(WaitReason::UnsureTestFailed),
+            1,
+        ),
         (
             AlwaysAsk,
             Some("standing:spend"),
@@ -305,7 +337,10 @@ fn ladder_goes_waits_or_asks_the_model() {
     );
     let stub = Stub::new(Some(true));
     assert_eq!(
-        check_in(&request(RolePreset::Deputy, ActClass::WidenAnothersGrant), &stub),
+        check_in(
+            &request(RolePreset::Deputy, ActClass::WidenAnothersGrant),
+            &stub
+        ),
         CheckInAnswer::Wait(WaitReason::ModelNotAllowed)
     );
     assert_eq!(stub.calls.get(), 0);

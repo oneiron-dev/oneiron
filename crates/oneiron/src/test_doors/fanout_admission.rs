@@ -5,11 +5,11 @@
 
 use std::cell::Cell;
 
+use crate::check_in::CheckInMode;
 use crate::error::{Error, Result};
 use crate::outbound_chokepoint::{
-    FanoutAdmission, FanoutApprovalMode, FanoutApprovalRow, FanoutAutoDecider,
-    FanoutAutoDisposition, FanoutEstimate, FanoutHistory, FanoutPlan, FanoutPlanEdge,
-    FanoutSurfaceSink, admit_fanout_with_history,
+    FanoutAdmission, FanoutApprovalRow, FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate,
+    FanoutHistory, FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink, admit_fanout_with_history,
 };
 use crate::receipt::ReceiptRecord;
 
@@ -81,9 +81,8 @@ pub fn admit_one(
     total: u32,
     threshold: u32,
 ) -> Result<AdmissionOutcome> {
-    let mode: FanoutApprovalMode =
-        serde_json::from_value(serde_json::Value::String(mode.to_owned()))
-            .map_err(|error| Error::InvalidConfig(format!("mode token: {error}")))?;
+    let mode: CheckInMode = serde_json::from_value(serde_json::Value::String(mode.to_owned()))
+        .map_err(|error| Error::InvalidConfig(format!("mode token: {error}")))?;
     let edges = if total == 0 {
         Vec::new()
     } else {
