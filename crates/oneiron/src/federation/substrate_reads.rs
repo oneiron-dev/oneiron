@@ -27,12 +27,14 @@ pub(crate) enum SubstrateRead {
     Evidence,
     /// The learning dials, the read side of `engine.controls`.
     Dials,
+    /// A project's intake goal (untangle 6.6d, F4): the Steward `read` verb.
+    Goal,
 }
 
 impl SubstrateRead {
     const fn grant(self) -> &'static str {
         match self {
-            Self::Evidence => grant_scope::STEWARD_READ_VERB,
+            Self::Evidence | Self::Goal => grant_scope::STEWARD_READ_VERB,
             Self::Dials => grant_scope::ENGINE_CONTROLS_VERB,
         }
     }

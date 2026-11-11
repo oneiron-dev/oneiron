@@ -95,6 +95,8 @@ mod dispatch {
 }
 mod drafter_doors;
 mod embedding_space_doors;
+// Untangle 6.6d: the engine-control knob verbs, for the owner or a holder.
+mod engine_control_doors;
 mod errors;
 mod eval_doors;
 pub(super) mod export_transfer;

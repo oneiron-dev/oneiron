@@ -1,0 +1,15 @@
+{
+  "name": "vault.proactivity.period.set",
+  "description": "The owner, or a holder of engine.controls, sets the proactivity digest's period; the change writes an engine-control receipt.",
+  "input": "crate::task_verb::sdk::ProactivityPeriodSetRequest",
+  "output": "crate::task_verb::sdk::EngineControlChangeEntry",
+  "call": "crate::task_verb::sdk::set_proactivity_period_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "engine_controller"
+}

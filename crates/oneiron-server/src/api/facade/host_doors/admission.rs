@@ -114,6 +114,12 @@ pub(in crate::api::facade) fn door_admits(
         Proof::SubstrateReader => {
             crate::api::facade::substrate_read_doors::substrate_reader(server, auth, verb).map(drop)
         }
+        // An engine-control knob (untangle 6.6d): the owner under its proof, or a person or agent on
+        // its own slip, whose engine.controls grant the knob's writer checks in the write.
+        Proof::EngineController => {
+            crate::api::facade::engine_control_doors::engine_controller(server, auth, verb)
+                .map(drop)
+        }
         Proof::ClaimSettler => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
         }

@@ -126,25 +126,27 @@ impl Vault {
         })
     }
 
-    /// A holder of `engine.controls` lowers the sieve's per-pass budgets
-    /// (untangle 6.6b, the B1 family; work budget; S66B-BUDGETS B1 = A).
+    /// The owner, by its proof, or a holder of `engine.controls` lowers the
+    /// sieve's per-pass budgets (untangle 6.6b, the B1 family; work budget;
+    /// S66B-BUDGETS B1 = A; its verb is 6.6d's `vault.sieve.budgets.lower`).
     /// The values in force are the owner's cap: each new budget must be at
-    /// or below its value in force, so a holder never raises one. Raising a
-    /// budget and every scoring field stay the owner's act. Returns the
-    /// receipt.
+    /// or below its value in force, so this door never raises one. Raising a
+    /// budget and every scoring field stay the owner's act, at
+    /// `vault.sieve.policy.set`. Returns the receipt.
     ///
     /// # Errors
     ///
-    /// `InvalidConfig` when `holder` holds no live `engine.controls`, for a
-    /// budget above its value in force, or for a row the policy refuses;
-    /// store failures.
-    pub fn lower_dreamer_sieve_budgets_as_holder(
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that
+    /// still holds, nor a live holder of `engine.controls`; for a budget
+    /// above its value in force, or for a row the policy refuses; store
+    /// failures.
+    pub fn lower_dreamer_sieve_budgets_by(
         &self,
-        holder: crate::entity_id::EntityId,
+        actor: crate::federation::EngineControlActor<'_>,
         budgets: SievePassBudgets,
     ) -> Result<crate::entity_id::EntityId> {
         self.apply_engine_control(
-            crate::federation::EngineControlActor::Holder(holder),
+            actor,
             crate::federation::EngineControlClass::WorkBudget,
             "DREAMER_SIEVE_POLICY",
             &crate::federation::rendered_change(&budgets)?,
@@ -155,7 +157,7 @@ impl Vault {
                     || budgets.max_text_bytes_per_pass > held.max_text_bytes_per_pass
                 {
                     return Err(Error::InvalidConfig(
-                        "a holder only lowers the sieve's per-pass budgets; raising one is the owner's act"
+                        "this door only lowers the sieve's per-pass budgets; raising one is the owner's act at vault.sieve.policy.set"
                             .into(),
                     ));
                 }
@@ -168,6 +170,23 @@ impl Vault {
                 .validate()?;
                 POLICY.put(&self.store, txn, &(), &policy)
             },
+        )
+    }
+
+    /// [`Self::lower_dreamer_sieve_budgets_by`] for a holder of
+    /// `engine.controls` (untangle 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::lower_dreamer_sieve_budgets_by`].
+    pub fn lower_dreamer_sieve_budgets_as_holder(
+        &self,
+        holder: crate::entity_id::EntityId,
+        budgets: SievePassBudgets,
+    ) -> Result<crate::entity_id::EntityId> {
+        self.lower_dreamer_sieve_budgets_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            budgets,
         )
     }
 }

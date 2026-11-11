@@ -112,7 +112,10 @@ impl<'a> ServeAxisBandit<'a> {
             })
             .collect();
         if let Some((project, _)) = goal.project
-            && let Some(record) = vault.project_intake_goal_for_coach(project)?
+            && let Some(record) = vault.project_intake_goal_as(
+                oneiron::dreamer_runner::authority::coach_reader()?,
+                project,
+            )?
         {
             for axis in record
                 .primary_axes
