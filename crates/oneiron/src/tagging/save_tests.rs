@@ -12,7 +12,8 @@ use super::*;
 use crate::affect::{Vad, VadAnnotationSource};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::memory::extraction::{
-    CorefLink, EncoderInput, EncoderOutput, ExtractionEncoder, NerSpan,
+    CorefLink, EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork,
+    NerSpan,
 };
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::ports::ManualClock;
@@ -63,9 +64,13 @@ impl ExtractionEncoder for Names {
     fn locality(&self) -> crate::embed::EmbedderLocality {
         crate::embed::EmbedderLocality::OnDevice
     }
-    fn infer(&self, input: &EncoderInput) -> crate::Result<EncoderOutput> {
+    fn infer(&self, input: &EncoderInput, _work: ExtractionWork) -> EncoderAttempt {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(names_in(input, &self.known.lock().expect("known lock")))
+        EncoderAttempt {
+            execution: None,
+            panicked: false,
+            result: Ok(names_in(input, &self.known.lock().expect("known lock"))),
+        }
     }
 }
 
@@ -111,6 +116,7 @@ fn names_in(input: &EncoderInput, known: &[&str]) -> EncoderOutput {
         context_links: Vec::new(),
         speaker_links: Vec::new(),
         stack_sha16: None,
+        mood_parts: Vec::new(),
     }
 }
 
@@ -171,8 +177,12 @@ fn turn(turn_ref: &str, messages: &[(u32, &str)]) -> WitnessTurn {
                 metadata: None,
                 is_visible: true,
                 order: *order,
+                parts: None,
+                quote: None,
             })
             .collect(),
+        thread_audience: None,
+        assertions: Default::default(),
     }
 }
 
@@ -444,6 +454,7 @@ fn an_import_that_holds_its_tags_makes_no_tagger_call() {
         context_links: Vec::new(),
         speaker_links: Vec::new(),
         stack_sha16: None,
+        mood_parts: Vec::new(),
     };
 
     let (_, outcome) = memory
@@ -502,6 +513,7 @@ fn held_tags_from_messages_sent_last_first_are_saved() {
         context_links: Vec::new(),
         speaker_links: Vec::new(),
         stack_sha16: None,
+        mood_parts: Vec::new(),
     };
 
     let (_, outcome) = memory
@@ -552,6 +564,8 @@ fn held_tags_are_saved_on_the_messages_they_were_read_from() {
                 metadata: None,
                 is_visible: *visible,
                 order,
+                parts: None,
+                quote: None,
             })
             .collect(),
         ..turn(turn_ref, &[])
@@ -574,6 +588,7 @@ fn held_tags_are_saved_on_the_messages_they_were_read_from() {
         context_links: Vec::new(),
         speaker_links: Vec::new(),
         stack_sha16: None,
+        mood_parts: Vec::new(),
     };
 
     let (_, outcome) = memory
@@ -631,6 +646,7 @@ fn held_tags_for_an_append_leave_the_turn_to_the_tagger() {
         context_links: Vec::new(),
         speaker_links: Vec::new(),
         stack_sha16: None,
+        mood_parts: Vec::new(),
     };
     let (_, outcome) = memory
         .witness_with_held_tags(
@@ -685,6 +701,7 @@ fn merge_evidence_goes_when_its_spans_stop_naming_different_entities() {
                     context_links: Vec::new(),
                     speaker_links: Vec::new(),
                     stack_sha16: None,
+                    mood_parts: Vec::new(),
                 },
             )
             .expect("import");
@@ -1107,7 +1124,7 @@ fn an_entity_write_never_lands_under_a_provisional_id() {
     message.conversation_ref = String::new();
     message.turn_ref = None;
     message.messages[0].id = Some(mirela.to_hex());
-    let as_message = memory.witness_into_session(&session, &message, None);
+    let as_message = memory.witness_into_session(&session, &message, None, None);
     session.close().expect("close session");
 
     let envelope = WriteEnvelope::new(

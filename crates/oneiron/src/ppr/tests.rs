@@ -8,10 +8,10 @@ use crate::batch::EdgeValueFields;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
 };
+use crate::code_document::CodeSpanAnchor;
 use crate::code_memory::{
     AttachCodeMemory, CodeMemoryAnchor, CodeMemoryLocator, CodeMemoryPayloadRef,
-    CodeMemoryPullRequest, CodeMemoryPullResult, CodeMemoryRevision, CodeMemorySlotName,
-    CodeMemorySlotValue,
+    CodeMemoryPullRequest, CodeMemoryPullResult, CodeMemorySlotName, CodeMemorySlotValue,
 };
 use crate::{EdgeActorClass, EdgeKind, Error, TimeRange, Vad, Vault, edge::EdgeProvenanceFlags};
 
@@ -912,9 +912,16 @@ fn scoped_pull_note(
     let at = 1_780_000_100;
     let anchor = CodeMemoryAnchor {
         symbol_id,
+        // A cursor-anchored span on the symbol's file document at a version
+        // replaced the path and commit revision (029b5966b0a, FIX 7810).
         locator: CodeMemoryLocator {
-            path_at_revision: "src/a.rs".to_owned(),
-            revision: CodeMemoryRevision::Commit("9d561405a81ffbf2".to_owned()),
+            span: CodeSpanAnchor {
+                document_id: [0xD0; 32],
+                start: b"cursor-start".to_vec(),
+                end: b"cursor-end".to_vec(),
+                content_hash: [0xC0; 32],
+            },
+            version: vec![(1, 0)],
             validity: fixture_range(at),
         },
     };

@@ -335,4 +335,36 @@ mod tests {
         assert!(!scope.admits("read", &Scope::top(), &Scope::top()));
         assert!(serde_json::from_str::<Scope>(r#"{"worlds":null}"#).is_err());
     }
+    #[test]
+    fn six_axis_meet_and_narrowing_laws() {
+        let top = Scope::top();
+        let bottom = Scope::default();
+        let one = ScopeId(EntityId::from_bytes([1; 16]).unwrap());
+        let mut samples = vec![top.clone(), bottom];
+        for axis in 0..6 {
+            let mut scope = top.clone();
+            match axis {
+                0 => scope.worlds = ScopeAxis::Some(BTreeSet::from([one])),
+                1 => scope.facets = ScopeAxis::Some(BTreeSet::from([one])),
+                2 => scope.bands = ScopeAxis::Some(BTreeSet::from([4])),
+                3 => scope.audience = ScopeAxis::Some(BTreeSet::from([one])),
+                4 => scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".into()])),
+                _ => scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Private),
+            }
+            samples.push(scope);
+        }
+        for a in &samples {
+            assert_eq!(&a.meet(a), a);
+            assert!(a.is_narrowing_of(&top));
+            let bytes = serde_json::to_vec(a).unwrap();
+            assert_eq!(serde_json::from_slice::<Scope>(&bytes).unwrap(), *a);
+            for b in &samples {
+                assert_eq!(a.meet(b), b.meet(a));
+                assert!(a.meet(b).is_narrowing_of(a));
+                for c in &samples {
+                    assert_eq!(a.meet(b).meet(c), a.meet(&b.meet(c)));
+                }
+            }
+        }
+    }
 }

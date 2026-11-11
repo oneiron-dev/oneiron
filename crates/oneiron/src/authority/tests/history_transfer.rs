@@ -19,7 +19,7 @@ fn signed_history_export_import_re_root_preserves_identity_and_bytes() {
     let c = Vault::open(c.path(), VaultConfig::default()).unwrap();
     let old = ed_key(110);
     let new = ed_key(111);
-    let genesis = genesis_entry(110, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(110, 1);
     store(&a, &genesis);
     let export = a.export_signed_authority_history().unwrap();
     b.import_signed_authority_history(&export).unwrap();
@@ -49,9 +49,7 @@ fn signed_history_export_import_re_root_preserves_identity_and_bytes() {
     corrupt[0][last] ^= 1;
     assert!(c.import_signed_authority_history(&corrupt).is_err());
     assert_eq!(c.export_signed_authority_history().unwrap(), moved);
-    let other =
-        encode_authority_log_entry_body(&genesis_entry(112, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1))
-            .unwrap();
+    let other = encode_authority_log_entry_body(&genesis_entry(112, 1)).unwrap();
     assert!(c.import_signed_authority_history(&[other]).is_err());
     assert_eq!(c.export_signed_authority_history().unwrap(), moved);
 }
@@ -71,7 +69,7 @@ fn account_auth_migrates_managed_root_without_widening() {
     let old = ed_key(140);
     let new = ed_key(141);
     let key = authority_key_from_ed(&old);
-    let mut genesis = genesis_entry(140, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let mut genesis = genesis_entry(140, 1);
     if let AuthorityOp::Genesis { device, .. } = &mut genesis.op {
         device.roles |= ROLE_CLOUD;
         device.tier = AuthorityTier::CloudCustodial;
@@ -147,7 +145,7 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
     let old_key = authority_key_from_ed(&old);
     let next_key = authority_key_from_ed(&next);
     let host = HostSlipIssuer::from_secret(b"handoff-root-for-one-2276").unwrap();
-    let genesis = genesis_entry(115, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(115, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let rotation = rotate_entry(id, &genesis, &old, old_key.clone(), 116, 1);
     store(&source, &genesis);
@@ -221,15 +219,21 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
     assert!(rejected.roster[&old_key].revoked);
     assert!(rejected.slip_is_live(&root_slip.claims.slip_id));
 
-    // A validly signed sibling floor is not an ancestor of the handoff.
-    // Even its unrestricted probe must not restore the old root.
+    // A validly signed sibling row is not an ancestor of the handoff.
+    // Even its unrestricted probe must not restore the old root. The row is
+    // a retired device-key op (an owner enrollment), the class the deleted
+    // tier floor belonged to (cb0899ccc91, `op_is_retired_device_op`).
     let floor = sign_ed(
         unsigned_entry(
             Some(id),
             2,
             vec![authority_entry_hash(&genesis).unwrap()],
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::Hardware,
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    authority_key_from_ed(&ed_key(178)),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Hardware,
+                ),
             },
             old_key.clone(),
             5,
@@ -252,7 +256,7 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
                 (authority_entry_hash(&rotation).unwrap(), 0),
                 (floor_hash, 0),
             ]),
-            DEFAULT_PENDING_WIDEN_DELAY_SECS,
+            86_400,
             &BTreeMap::new(),
             crate::HostingPrivacyPosture::Hosted,
         );
@@ -301,7 +305,7 @@ fn handoff_only_preserves_its_valid_pre_handoff_ancestors() {
     let host_key = authority_key_from_ed(&host);
     let client_key = authority_key_from_ed(&client);
     let successor_key = authority_key_from_ed(&successor);
-    let genesis = genesis_entry(118, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(118, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let rotation = rotate_entry(id, &genesis, &old, old_key.clone(), 119, 1);
     let rotation_hash = authority_entry_hash(&rotation).unwrap();
@@ -403,7 +407,7 @@ fn handoff_only_preserves_its_valid_pre_handoff_ancestors() {
         let no_handoff = fold_authority_log_for_posture(
             &[genesis.clone(), rotation.clone(), invalid_handoff.clone()],
             &seen,
-            1 + DEFAULT_PENDING_WIDEN_DELAY_SECS,
+            1 + 86_400,
             &BTreeMap::new(),
             posture,
         );
@@ -423,7 +427,7 @@ fn handoff_only_preserves_its_valid_pre_handoff_ancestors() {
             let folded = fold_authority_log_for_posture(
                 &ordered,
                 &seen,
-                1 + DEFAULT_PENDING_WIDEN_DELAY_SECS,
+                1 + 86_400,
                 &BTreeMap::new(),
                 posture,
             );
@@ -488,7 +492,7 @@ fn a_retired_root_installs_no_second_root() {
     let next = ed_key(161);
     let fork = ed_key(162);
     let after_fork = ed_key(163);
-    let genesis = genesis_entry(160, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(160, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let handoff = re_root_entry(id, &genesis, &old, 1, &next);
     let forked = re_root_entry(id, &genesis, &old, 2, &fork);
@@ -532,7 +536,7 @@ fn every_door_refuses_a_row_the_retired_root_signs() {
     let old = ed_key(164);
     let next = ed_key(165);
     let fork = ed_key(166);
-    let genesis = genesis_entry(164, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(164, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     store(&vault, &genesis);
     let handoff = re_root_entry(id, &genesis, &old, 1, &next);
@@ -630,7 +634,7 @@ fn a_retired_root_withdraws_no_slip_the_new_root_minted() {
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     let old = ed_key(167);
     let host = HostSlipIssuer::from_secret(b"successor root that mints").unwrap();
-    let genesis = genesis_entry(167, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(167, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     store(&vault, &genesis);
     vault
@@ -679,7 +683,7 @@ fn a_key_rotated_out_before_the_handoff_forks_no_root() {
     let next = ed_key(169);
     let fork = ed_key(171);
     let host = HostSlipIssuer::from_secret(b"successor after a rotation").unwrap();
-    let genesis = genesis_entry(168, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(168, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let rotation = rotate_entry(id, &genesis, &old, authority_key_from_ed(&old), 169, 1);
     store(&vault, &genesis);
@@ -721,7 +725,7 @@ fn a_successor_merge_of_a_fenced_row_installs_nothing_anywhere() {
     let old = ed_key(172);
     let next = ed_key(173);
     let third = ed_key(174);
-    let genesis = genesis_entry(172, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(172, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let missed = sign_ed(
         unsigned_entry(
@@ -782,8 +786,8 @@ fn a_successor_merge_of_a_fenced_row_installs_nothing_anywhere() {
 fn a_handoff_hides_no_second_genesis() {
     let old = ed_key(175);
     let next = ed_key(176);
-    let genesis = genesis_entry(175, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let other = genesis_entry(175, DEFAULT_PENDING_WIDEN_DELAY_SECS, 2);
+    let genesis = genesis_entry(175, 1);
+    let other = genesis_entry(175, 2);
     assert_ne!(
         genesis_vault_id(&genesis).unwrap(),
         genesis_vault_id(&other).unwrap()
@@ -803,7 +807,7 @@ fn a_retired_root_confirmation_displaces_no_confirmation_of_the_new_root() {
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     let old = ed_key(177);
     let host = HostSlipIssuer::from_secret(b"successor root that confirms").unwrap();
-    let genesis = genesis_entry(177, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(177, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     store(&vault, &genesis);
     vault

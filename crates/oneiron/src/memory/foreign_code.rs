@@ -163,11 +163,9 @@ impl From<MemoryError> for ForeignCodeFailure {
     }
 }
 
-/// What a foreign program launches with: the isolating backends it may run
-/// on, its interpreter, its budget and the disk floor its proposed files
-/// spool on.
+/// What a foreign program launches with: its interpreter, its budget and
+/// the disk floor its proposed files spool on.
 type ForeignLaunch<'a> = (
-    &'a dyn crate::code_sandbox::microvm::SandboxBackends,
     ForeignCodeArtifact<'a>,
     crate::code_sandbox::microvm::ExecutionBudget,
     std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>,
@@ -196,8 +194,8 @@ impl Memory<'_> {
     /// preparation or launch, so every way out of the run after it keeps
     /// the program's feedback on the vault's rows and answers it, beside the
     /// result or beside the refusal. A host that lends no service answers
-    /// that no checker is attached. It runs on the isolating backend
-    /// `backends` carries for the Foreign tier.
+    /// that no checker is attached. It runs on the isolating backend the
+    /// vault's installed backends carry for the Foreign tier (F1-6).
     ///
     /// # Errors
     ///
@@ -205,7 +203,6 @@ impl Memory<'_> {
     /// source was admitted.
     pub fn execute_foreign_code(
         &self,
-        backends: &dyn crate::code_sandbox::microvm::SandboxBackends,
         input: ForeignCodeRunRequest,
         artifact: ForeignCodeArtifact<'_>,
         budget: crate::code_sandbox::microvm::ExecutionBudget,
@@ -228,7 +225,7 @@ impl Memory<'_> {
             &input.source,
             &prepared,
         );
-        let launch = (backends, artifact, budget, spool);
+        let launch = (artifact, budget, spool);
         let ran = self.run_foreign_program(input.reads, &prepared, run_id, proof, launch);
         let program_steps = vec![check.feedback()];
         match ran {
@@ -255,7 +252,7 @@ impl Memory<'_> {
         prepared: &PreparedSource<'_>,
         run_id: EntityId,
         proof: &crate::authority::VerifiedSlip,
-        (backends, artifact, budget, spool): ForeignLaunch<'_>,
+        (artifact, budget, spool): ForeignLaunch<'_>,
     ) -> MemoryResult<ForeignCodeRunResult> {
         let workspace = tempfile::tempdir().map_err(crate::Error::from)?;
         let mut reads = Vec::new();
@@ -282,8 +279,9 @@ impl Memory<'_> {
             crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
         // A failed program's own error is masked with this vault's custody
         // values before it is answered (FIX 9209).
+        let backends = self.vault.runtime().sandbox_backends();
         let outcome = execute_foreign_code(
-            backends,
+            &*backends,
             prepared,
             mounts,
             artifact,
