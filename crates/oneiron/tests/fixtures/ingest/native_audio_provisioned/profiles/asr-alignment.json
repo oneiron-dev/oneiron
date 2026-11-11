@@ -12,7 +12,7 @@
   },
   "asr": {
     "model_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
-    "snapshot": "/Users/olety/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+    "snapshot": "<host-home>/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
     "access_ref": "owner-retained-existing-a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
     "files": {
       "model.safetensors": "bf304b009cc7eca79283056f787b44c952d24ac22cec787b39732bba3c23c13c",

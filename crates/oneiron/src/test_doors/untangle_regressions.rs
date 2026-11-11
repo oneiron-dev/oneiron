@@ -389,7 +389,7 @@ impl crate::LlmBackend for ScriptedBackend {
 }
 
 /// One extraction reply: the listed entity `P1` has `profile.name`
-/// `Oleksii`, quoted from the turn `T1`. The Dreamer tests'
+/// `Owen`, quoted from the turn `T1`. The Dreamer tests'
 /// `extraction_response` named the subject by its 32-hex id and cited a
 /// byte range of the turn's id; since FIX 7506 (call-local labels) a model
 /// reply names only what its call listed, and that shape is refused at
@@ -398,8 +398,8 @@ impl crate::LlmBackend for ScriptedBackend {
 /// wire.
 fn extraction_response() -> crate::LlmResponse {
     let json = "{\"candidates\": [{\"subject\": \"P1\", \"predicate\": \"profile.name\", \
-                \"value\": \"Oleksii\", \"confidence\": 0.8, \
-                \"evidence_refs\": [{\"source\": \"T1\", \"quote\": \"Oleksii\"}]}]}"
+                \"value\": \"Owen\", \"confidence\": 0.8, \
+                \"evidence_refs\": [{\"source\": \"T1\", \"quote\": \"Owen\"}]}]}"
         .to_owned();
     crate::LlmResponse {
         message: crate::LlmMessage {
