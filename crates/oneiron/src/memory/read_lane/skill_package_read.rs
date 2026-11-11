@@ -18,7 +18,10 @@ impl Memory<'_> {
     /// a skill with no stored package answer `None`. A resident-owned fork the
     /// lane admits reads as its package: the runtime loads resident forks.
     /// A package that does not read (custody or hash) answers `None`, never an
-    /// error, as a reader's skill list does. A carrier-sourced package answers
+    /// error, as a reader's skill list does. A caller that sees stored keys
+    /// masked is served no package whose files hold one (in their bytes or
+    /// their paths): that skill answers `None`, as `vault.skills.get`
+    /// withholds it. A carrier-sourced package answers
     /// only while the lane admits its carrier ASSET in the same snapshot;
     /// otherwise it answers `None`. There is no revision pin: the row is read
     /// live. Record verbs serve every claim status, so the lane is `Recorded`
@@ -87,6 +90,15 @@ impl Memory<'_> {
                 }
                 Err(error) => return Err(MemoryError::from(error)),
             };
+            // A caller that sees stored keys masked is served no package whose
+            // files hold one: package files carry no custody marks to mask by,
+            // so the skill answers `None`, as `vault.skills.get` withholds it
+            // (#7149 review round 1).
+            if self.secret_sight_in_txn(txn)? == crate::secret_custody::SecretSight::Masked
+                && crate::snapshot_read::package_holds_credential(&package)
+            {
+                return Ok((None, None));
+            }
             let Some(carrier) = self
                 .vault()
                 .runtime_package_carrier_in_txn(txn, entity, &record)?

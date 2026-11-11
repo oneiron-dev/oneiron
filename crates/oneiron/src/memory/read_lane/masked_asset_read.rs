@@ -17,9 +17,13 @@ impl Memory<'_> {
     /// reads them in that same snapshot
     /// ([`repo_asset_body_in_txn`](crate::memory::repo_secret_reads::repo_asset_body_in_txn)):
     /// a repo file a mark covers, or a value custody knows reads in, answers
-    /// its projection; every other ASSET answers its stored bytes unchanged.
-    /// The snapshot is the known-value pass's own
-    /// ([`with_known_snapshot`](crate::Vault::with_known_snapshot), FIX 8966),
+    /// its projection; a file stored with keys in it answers its copy with
+    /// each key overwritten
+    /// ([`sighted_bytes_in_txn`](crate::store::file_key_masks::sighted_bytes_in_txn));
+    /// a file no masked copy is served of, and bytes in which the release
+    /// scan still reads a credential, answer `None`, as a withheld row does;
+    /// every other ASSET answers its stored bytes unchanged. The snapshot is
+    /// the known-value pass's own ([`with_known_snapshot`](crate::Vault::with_known_snapshot), FIX 8966),
     /// so the bytes and the values matched against them are one state and the
     /// thread holds one read transaction (LMDB's one reader slot per thread).
     /// There is no cap and no pin: the row is read live. Record verbs serve
@@ -65,6 +69,30 @@ impl Memory<'_> {
                         known,
                     )?
                     .unwrap_or(body);
+                    // A file stored with keys in it reads as its copy with each
+                    // key overwritten; a file no masked copy is served of
+                    // (sealed, or one whose copy still holds a key) answers
+                    // `None`, as a withheld row does (#7149 review round 1).
+                    let served = match crate::store::file_key_masks::sighted_bytes_in_txn(
+                        &vault.store,
+                        txn,
+                        served,
+                        None,
+                        crate::secret_custody::SecretSight::Masked,
+                    ) {
+                        Ok(served) => served,
+                        Err(crate::error::Error::Secret(
+                            crate::error::SecretError::MaskedCopyWithheld { .. }
+                            | crate::error::SecretError::SealedFileWithheld,
+                        )) => return Ok(None),
+                        Err(error) => return Err(MemoryError::from(error)),
+                    };
+                    // Bytes the release scan still reads a credential in, such
+                    // as a body stored while the write door's scan was off with
+                    // no mark to mask by, answer `None` too: serve still redacts.
+                    if crate::batch::secret_scan::scan_file_content("", &served).is_some() {
+                        return Ok(None);
+                    }
                     if let Some(candidate) = candidate {
                         candidate.served();
                     }

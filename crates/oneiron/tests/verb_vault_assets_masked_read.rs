@@ -1,6 +1,9 @@
 //! `vault.assets.masked_read`: an agent with an ordinary read permit but no Grant is
 //! refused, the holder reads its lane's repo ASSET always masked with no secret bytes
 //! left, and a revoked Grant is refused again. An ASSET outside the lane answers none.
+//! An ASSET under an id its bytes do not derive, stored with the write door's scan off
+//! and holding a token, answers none, while its clean twin is served its stored bytes
+//! (#7149 review round 1).
 //! The verb is called by name through the string-keyed embedded door, and the output
 //! is read as JSON, so this file uses no item the row adds.
 //!
@@ -16,6 +19,7 @@ use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::claim::base_world_id;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
+use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::secret_custody::{
     CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
@@ -385,5 +389,93 @@ fn masked_asset_read_revoked_grant_is_refused_again() {
         error.code, MEMORY_CODE_FORBIDDEN,
         "a revoked-grant refusal names FORBIDDEN; got {}: {}",
         error.code, error.message,
+    );
+}
+
+/// A GitHub token shape the release scan reads, joined at run time so no token
+/// literal sits in the source.
+fn masked_asset_read_token() -> String {
+    ["gh", "p_", "0123456789abcdefghijklmnopqrstuvwxyz"].concat()
+}
+
+/// An ASSET under an id its bytes do not derive is no repo file, so no repo
+/// projection reaches it. With the write door's scan off, one whose body holds a
+/// token is stored raw with no mark; the masked read answers it none, and no
+/// answer carries the token. Its clean twin under such an id is served its
+/// stored bytes unchanged, so the none is the withhold, not the lane.
+#[test]
+fn masked_asset_read_withholds_a_non_repo_asset_whose_bytes_hold_a_key() {
+    let fixture = masked_asset_read_fixture();
+    let owner_proof = fixture
+        .vault
+        .authenticate_owner(
+            fixture.owner,
+            &fixture.owner.to_hex(),
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("owner proof");
+    fixture
+        .vault
+        .set_secret_scan_mode(
+            &owner_proof,
+            SecretScanMode::Off,
+            MASKED_ASSET_READ_TEST_NOW,
+        )
+        .expect("owner turns the write door's scan off");
+    let token = masked_asset_read_token();
+    let keyed_body = format!("deploy token {token}\n");
+    let clean_body = "deploy notes with no key\n";
+    let keyed_asset = EntityId::now();
+    let clean_asset = EntityId::now();
+    for (asset, body) in [
+        (&keyed_asset, keyed_body.as_bytes()),
+        (&clean_asset, clean_body.as_bytes()),
+    ] {
+        fixture
+            .vault
+            .put_entity(
+                asset,
+                ENTITY_TYPE_ASSET,
+                TimeRange {
+                    start: MASKED_ASSET_READ_TEST_NOW,
+                    end: MASKED_ASSET_READ_TEST_NOW,
+                },
+                MASKED_ASSET_READ_TEST_NOW,
+                body,
+            )
+            .expect("owner stores the non-repo asset with the scan off");
+    }
+    masked_asset_read_mint_lane_grant(&fixture, fixture.holder);
+    let memory = fixture.vault.memory(fixture.holder, EdgeActorClass::Agent);
+    let clean =
+        masked_asset_read_call(&memory, &clean_asset.to_hex()).expect("the clean asset answers");
+    let encoded = clean
+        .get("value")
+        .and_then(|value| value.get("body_base64"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("the clean non-repo asset is served; got {clean}"));
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .expect("standard base64 decodes");
+    assert_eq!(
+        decoded,
+        clean_body.as_bytes(),
+        "a clean non-repo asset is served its stored bytes unchanged",
+    );
+    let keyed =
+        masked_asset_read_call(&memory, &keyed_asset.to_hex()).expect("the keyed asset answers");
+    assert!(
+        keyed.get("value").is_some_and(Value::is_null),
+        "a non-repo asset whose bytes hold a token answers none; got {keyed}",
+    );
+    assert!(
+        !keyed.to_string().contains(&token),
+        "no answer carries the token",
+    );
+    let base64_token = base64::engine::general_purpose::STANDARD.encode(keyed_body.as_bytes());
+    assert!(
+        !keyed.to_string().contains(&base64_token),
+        "no answer carries the token's body as base64",
     );
 }

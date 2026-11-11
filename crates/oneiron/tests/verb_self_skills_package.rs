@@ -2,7 +2,9 @@
 //! refused, the holder reads its lane's usable skill package with its stored record,
 //! files, capabilities and format, and a revoked Grant is refused again. A second
 //! skill excluded by the credential's record list answers none as withheld, and a
-//! candidate skill in the lane answers none as unloadable. The verb is called by name through the
+//! candidate skill in the lane answers none as unloadable. A skill whose package files hold a
+//! token answers none to the masked holder, while its clean twin is served (#7149 review
+//! round 1). The verb is called by name through the
 //! string-keyed embedded door, and the output is read as JSON, so this file uses no
 //! item the row adds.
 //!
@@ -302,6 +304,14 @@ fn skill_package_read_revoke_grant(fixture: &SkillPackageReadFixture, grant_ref:
 /// A live holder credential narrowed to the two skill rows this lane may read.
 /// The separate owner Grant still supplies live verb standing on every call.
 fn skill_package_read_proof(fixture: &SkillPackageReadFixture) -> VerifiedSlip {
+    skill_package_read_proof_for(fixture, &[fixture.usable_skill, fixture.candidate_skill])
+}
+
+/// A live holder credential narrowed to `records`.
+fn skill_package_read_proof_for(
+    fixture: &SkillPackageReadFixture,
+    records: &[EntityId],
+) -> VerifiedSlip {
     let issuer = fixture
         .vault
         .bootstrap_host_slip_issuer()
@@ -325,14 +335,7 @@ fn skill_package_read_proof(fixture: &SkillPackageReadFixture) -> VerifiedSlip {
         .attenuate(
             &mut slip,
             SlipCaveat {
-                records: Some(
-                    [
-                        fixture.usable_skill.to_hex(),
-                        fixture.candidate_skill.to_hex(),
-                    ]
-                    .into_iter()
-                    .collect(),
-                ),
+                records: Some(records.iter().map(EntityId::to_hex).collect()),
                 ..SlipCaveat::default()
             },
         )
@@ -577,5 +580,111 @@ fn skill_package_read_revoked_grant_is_refused_again() {
         error.code, MEMORY_CODE_FORBIDDEN,
         "a revoked-grant refusal names FORBIDDEN; got {}: {}",
         error.code, error.message,
+    );
+}
+
+/// A GitHub token shape the release scan reads, joined at run time so no token
+/// literal sits in the source.
+fn skill_package_read_key() -> Vec<u8> {
+    ["gh", "p_", "0123456789abcdefghijklmnopqrstuvwxyz"]
+        .concat()
+        .into_bytes()
+}
+
+/// Lands an approved, active skill named `skill_id` whose `config.json` holds
+/// `config`, through the package store's door.
+fn skill_package_read_land_configured_skill(
+    vault: &Vault,
+    skill_id: &str,
+    config: Vec<u8>,
+) -> EntityId {
+    let files = vec![
+        HubFile::new(
+            "SKILL.md",
+            b"# Configured skill\n\nRead the config.\n".to_vec(),
+        ),
+        HubFile::new("config.json", config),
+    ];
+    let tree = canonical_skill_tree_hash(
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_slice())),
+    )
+    .expect("configured tree hash");
+    let record = SkillRecord::new(
+        skill_id,
+        "Skill package with a config file",
+        "1.0.0",
+        ClaimApprovalStatus::Approved,
+        SkillLifecycle::Candidate,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        Vec::new(),
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("source"),
+            rmpv::Value::from("skill-package-read-fixture"),
+        )]),
+    )
+    .with_content_hash(tree);
+    land_active_skill_with_files(vault, &record, files).expect("land the configured skill")
+}
+
+/// Whether `haystack` holds `needle`.
+fn skill_package_read_holds(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+/// A caller that sees stored keys masked is served no package whose files hold
+/// one (#7149 review round 1): the skill whose `config.json` holds a token
+/// answers none, as `vault.skills.get` withholds it, and no answer carries the
+/// token. Its clean twin, landed the same way with the same credential, is
+/// served with its `config.json`, so the none is the withhold, not the lane.
+#[test]
+fn skill_package_read_holder_is_not_served_a_package_that_holds_a_key() {
+    let fixture = skill_package_read_fixture();
+    let key = skill_package_read_key();
+    let mut keyed_config = b"{\"token\": \"".to_vec();
+    keyed_config.extend_from_slice(&key);
+    keyed_config.extend_from_slice(b"\"}\n");
+    let keyed_skill = skill_package_read_land_configured_skill(
+        &fixture.vault,
+        "skill-package-read.keyed",
+        keyed_config,
+    );
+    let clean_skill = skill_package_read_land_configured_skill(
+        &fixture.vault,
+        "skill-package-read.clean",
+        b"{\"retries\": 3}\n".to_vec(),
+    );
+    skill_package_read_mint_lane_grant(&fixture, fixture.holder);
+    let proof = skill_package_read_proof_for(&fixture, &[clean_skill, keyed_skill]);
+    let memory = fixture
+        .vault
+        .memory(fixture.holder, EdgeActorClass::Agent)
+        .with_read_proof(&proof);
+    let clean = skill_package_read_call(&memory, &clean_skill).expect("the clean skill answers");
+    let clean_files = clean
+        .get("value")
+        .and_then(|value| value.get("files"))
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("the clean twin is served with its files; got {clean}"));
+    assert!(
+        clean_files
+            .iter()
+            .any(|file| file.get("path").and_then(Value::as_str) == Some("config.json")),
+        "the clean twin is served with its config file; got {clean}",
+    );
+    let keyed = skill_package_read_call(&memory, &keyed_skill).expect("the keyed skill answers");
+    assert!(
+        keyed.get("value").is_some_and(Value::is_null),
+        "a package whose files hold a token answers none; got {keyed}",
+    );
+    assert!(
+        !skill_package_read_holds(keyed.to_string().as_bytes(), &key),
+        "no answer carries the token",
     );
 }
